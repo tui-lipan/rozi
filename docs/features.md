@@ -1,10 +1,10 @@
 # Feature overview
 
-A single-page inventory of everything `hyprmux` does. Each section links to the reference doc that
+A single-page inventory of everything `rozi` does. Each section links to the reference doc that
 explains the feature in depth; this page exists to answer "what is in here?" without reading
 sixteen documents.
 
-`hyprmux` is a Hyprland-style tiling **terminal multiplexer** built on the
+`rozi` is a Hyprland-style tiling **terminal multiplexer** built on the
 [`tui-lipan`](https://crates.io/crates/tui-lipan) TUI framework. Panes are live PTY shells arranged
 by a window manager: tiling layouts, floating windows, workspaces, animated geometry, and
 tmux-style prefix commands. It builds natively on Linux, macOS, and Windows.
@@ -34,9 +34,9 @@ tmux-style prefix commands. It builds natively on Linux, macOS, and Windows.
 
 ## Architecture
 
-hyprmux is **always-server**. A background session server owns every PTY; the UI is always a
+rozi is **always-server**. A background session server owns every PTY; the UI is always a
 client that attaches to it and parses raw pane output into its own `TerminalScreen`. This is not an
-optional mode — a bare `hyprmux` launch attaches to a disposable per-process ephemeral session
+optional mode — a bare `rozi` launch attaches to a disposable per-process ephemeral session
 (`eph-<pid>`).
 
 ```text
@@ -57,7 +57,7 @@ lib.rs -> app.rs: AppRoot (tui-lipan Component)
 
 The app is Elm-style: one root `Component`, a central `State`, and `Msg` updates. `tui-lipan`
 supplies runtime primitives (canvas, frames, transitions, mouse regions, overlays, terminal
-widgets); hyprmux owns all window-manager policy.
+widgets); rozi owns all window-manager policy.
 
 Consequences worth knowing:
 
@@ -118,9 +118,9 @@ states agree). Unfocused blocked and finished-unseen agents can mark pane border
 `cycle-alert-border` and `cycle-workbar-alert` each select off/static/pulse in **Alerts**. **Focus-on-hover** is available as a
 toggle. Focus survives layout changes.
 
-**Smart focus (vim-aware)** — `smart-focus-<dir>` moves hyprmux focus *unless* the focused pane
+**Smart focus (vim-aware)** — `smart-focus-<dir>` moves rozi focus *unless* the focused pane
 runs a split-aware program listed in `[navigation] editors`, in which case it forwards the matching
-`Ctrl-h/j/k/l` to that program. One binding navigates both hyprmux panes and vim/neovim splits,
+`Ctrl-h/j/k/l` to that program. One binding navigates both rozi panes and vim/neovim splits,
 vim-tmux-navigator style. A companion [Vim/Neovim plugin](../integrations/vim-rozi-navigator/)
 handles the editor side.
 
@@ -167,13 +167,13 @@ Sessions are server-backed and survive client detach.
 
 | Kind | Created by | Lifetime |
 | --- | --- | --- |
-| Ephemeral | bare `hyprmux` launch | `eph-<pid>`; shut down on a clean quit |
-| Named | `hyprmux new <name>` | Survives detach; explicit shutdown |
+| Ephemeral | bare `rozi` launch | `eph-<pid>`; shut down on a clean quit |
+| Named | `rozi new <name>` | Survives detach; explicit shutdown |
 | Temporary | `new-temporary-session` action | In-session scratch session |
 
-**Target resolution** — `hyprmux <name>` (or `--session <name>`) attaches to session `<name>` or
+**Target resolution** — `rozi <name>` (or `--session <name>`) attaches to session `<name>` or
 launches its canonical same-name profile. Unknown targets do **not** silently create a session;
-use `hyprmux new <name>` for that. `hyprmux attach <name>` is attach-only.
+use `rozi new <name>` for that. `rozi attach <name>` is attach-only.
 
 **Actions** — attach, detach (`prefix d`), rename (`prefix Shift+S`), kill, and **restart** (shut the server down and
 immediately recreate it while staying attached).
@@ -187,7 +187,7 @@ hosts, and cached remote sessions, with `ctrl+t` to reach a scratch ephemeral sh
 survive a *server* restart, not just a client detach. Snapshots are written off the server loop and
 reuse unchanged panes' replay files.
 
-**Read-only attach** — `hyprmux attach <name> --read-only` joins as a viewer.
+**Read-only attach** — `rozi attach <name> --read-only` joins as a viewer.
 
 See [Sessions](sessions.md).
 
@@ -215,21 +215,21 @@ scrollback position, and theme are per client.
 `--remote <HOST|ssh://URL>` attaches to a session on another machine over SSH, via a remote-side
 `--remote-serve` stdio proxy.
 
-- **Bootstrap and install** — hyprmux can install or update its own binary on the remote host.
+- **Bootstrap and install** — rozi can install or update its own binary on the remote host.
   `ROZI_REMOTE_BINARY` forces which local binary is shipped.
 - **Configured hosts** — `[remote]` / `[[remote.host]]` entries appear directly in the session
   picker, with cached session lists for hosts that are currently unreachable.
 - **`ROZI_REMOTE_HOST`** is injected into hooks while attached remotely.
 - The workbar `location` badge shows the active remote (`󰒍 workbox`) or a count of retained remote
   attachments, colored by connection state.
-- `hyprmux list-sessions --remote <host>` and `hyprmux kill-session <name> --remote <host>` work
+- `rozi list-sessions --remote <host>` and `rozi kill-session <name> --remote <host>` work
   without attaching.
 
 See [Remote SSH sessions](remote.md) for the local-vs-remote feature split.
 
 ## Profiles
 
-Profiles are named, reusable launch recipes stored in `~/.config/hyprmux/profiles/`.
+Profiles are named, reusable launch recipes stored in `~/.config/rozi/profiles/`.
 
 - **Capture** the current session as a profile (`save-profile`).
 - **Launch** the canonical same-name session, or open a profile under another name.
@@ -245,7 +245,7 @@ See [Named profiles](profiles.md) and [Project profiles & pane identity](project
 
 ## Terminal features
 
-Provided by `tui-lipan`'s terminal primitives and wired into hyprmux panes:
+Provided by `tui-lipan`'s terminal primitives and wired into rozi panes:
 
 - True color, and **terminal images** (`terminal-images`).
 - **Mouse reporting** forwarded to programs that request it.
@@ -257,7 +257,7 @@ Provided by `tui-lipan`'s terminal primitives and wired into hyprmux panes:
   OSC 7 cwd. It emits only an executable basename, never a command line, and never modifies a
   dotfile, `$PROFILE`, or the `AutoRun` registry key.
 - **`copy-last-output`** uses those markers to yank the previous command's output.
-- **Terminal ANSI palette** is derived from the active hyprmux theme.
+- **Terminal ANSI palette** is derived from the active rozi theme.
 - **Desktop notifications** via `[notifications]`.
 
 See [Terminal features](terminal.md).
@@ -366,7 +366,7 @@ plus `text` placeholders and `command:<interval>:<cmdline>` segments.
 ## Appearance and themes
 
 **Themes** — 29 built-in presets, a host-derived `system` theme, an `ansi` fallback, and drop-in
-custom theme files in `~/.config/hyprmux/themes/` that can `extends` another theme. Themes
+custom theme files in `~/.config/rozi/themes/` that can `extends` another theme. Themes
 **hot-reload** on file change (`theme-reload`), and the terminal ANSI palette is derived from the
 active theme.
 
@@ -390,7 +390,7 @@ See [Themes](themes.md).
 
 ## Configuration
 
-One TOML file: `$ROZI_CONFIG` or `~/.config/hyprmux/hyprmux.toml`. It **live-reloads** on change.
+One TOML file: `$ROZI_CONFIG` or `~/.config/rozi/config.toml`. It **live-reloads** on change.
 
 Top-level tables:
 
@@ -462,7 +462,7 @@ event's fields, `ROZI_SOCKET`, and `ROZI_REMOTE_HOST` when remote:
 `controller-changed`, `client-joined`, `client-left`, `profile-loaded`, `profile-applied`,
 `profile-saved`, `config-reloaded`.
 
-**Runtime metrics** — `hyprmux metrics` exposes resource counters for monitoring.
+**Runtime metrics** — `rozi metrics` exposes resource counters for monitoring.
 
 **Editor integration** — the [Vim/Neovim navigator](../integrations/vim-rozi-navigator/) plugin
 pairs with `smart-focus-<dir>`.
@@ -495,7 +495,7 @@ variables, Unix permission bits, or named-pipe APIs directly.
   (blocks name squatting) on the Windows backend.
 - Windows discovery entries are **hints only** — never read a pipe name out of one; derive it.
   Every endpoint still completes the authenticated protocol handshake.
-- Session endpoints are scoped to validated hyprmux session names, with defensive stale-endpoint
+- Session endpoints are scoped to validated rozi session names, with defensive stale-endpoint
   handling.
 
 See the [platform support matrix](getting-started.md#platform-support).
@@ -503,7 +503,7 @@ See the [platform support matrix](getting-started.md#platform-support).
 ## Installation and releases
 
 - **Bootstrap scripts** — `install.sh` and `install.ps1`.
-- **Managed installs** — `hyprmux install`, `hyprmux update check|apply|rollback`.
+- **Managed installs** — `rozi install`, `rozi update check|apply|rollback`.
 - **Signed releases** — Ed25519-signed manifests verified against keys in `release-keys.json`,
   with checksum validation and rollback to the previous version.
 - **Release archives** for Linux x86_64/arm64, macOS x86_64/arm64, and Windows x86_64, built on a

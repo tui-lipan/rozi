@@ -1,6 +1,6 @@
 # Installation and releases
 
-`hyprmux` has a small bootstrap helper for Unix and Windows. It downloads the host release archive,
+`rozi` has a small bootstrap helper for Unix and Windows. It downloads the host release archive,
 downloads the adjacent checksum, verifies the archive bytes, safely extracts the canonical payload,
 and executes that payload with `install`. The payload's managed installer verifies the signed
 release metadata before activating the version. Bootstrap helpers do not edit shell startup files
@@ -33,8 +33,8 @@ Default locations are:
 
 | Platform | Managed data root | Stable command |
 | --- | --- | --- |
-| Unix/macOS | `${XDG_DATA_HOME:-$HOME/.local/share}/hyprmux` | `$HOME/.local/bin/hyprmux` |
-| Windows | `%LOCALAPPDATA%\hyprmux` | `%LOCALAPPDATA%\hyprmux\bin\hyprmux.exe` |
+| Unix/macOS | `${XDG_DATA_HOME:-$HOME/.local/share}/rozi` | `$HOME/.local/bin/rozi` |
+| Windows | `%LOCALAPPDATA%\rozi` | `%LOCALAPPDATA%\rozi\bin\rozi.exe` |
 
 `XDG_DATA_HOME` changes the Unix data root only; the Unix stable command remains under
 `$HOME/.local/bin`. The CLI has no `--root`, `--bin-dir`, or updater-version argument.
@@ -44,7 +44,7 @@ Unix layout:
 ```text
 <managed data root>/
 ├── versions/<version>/
-│   ├── hyprmux
+│   ├── rozi
 │   ├── release.json
 │   ├── release.signatures.json
 │   └── version.json
@@ -53,19 +53,19 @@ Unix layout:
 ├── .lock                    # mutation lock
 └── .staging/                # transaction staging
 
-$HOME/.local/bin/hyprmux -> <managed data root>/versions/<version>/hyprmux
+$HOME/.local/bin/rozi -> <managed data root>/versions/<version>/rozi
 ```
 
 Windows layout:
 
 ```text
-%LOCALAPPDATA%\hyprmux\
+%LOCALAPPDATA%\rozi\
 ├── versions\<version>\
-│   ├── hyprmux.exe
+│   ├── rozi.exe
 │   ├── release.json
 │   ├── release.signatures.json
 │   └── version.json
-├── bin\hyprmux.exe         # stable launcher; retained across updates
+├── bin\rozi.exe         # stable launcher; retained across updates
 ├── active                   # authoritative active-version selector
 ├── install.json
 ├── pending-activation.json  # transient activation journal
@@ -103,7 +103,7 @@ The helper's optional version selects the archive used to bootstrap. It is not f
 argument to the payload: the extracted binary's package version is the version passed to its
 `install` command. The helper deletes its temporary download and extraction directory after the
 payload exits. Unix PATH setup is left to the user; Windows `-AddToPath` appends
-`%LOCALAPPDATA%\hyprmux\bin` to the user PATH only after a successful install.
+`%LOCALAPPDATA%\rozi\bin` to the user PATH only after a successful install.
 
 `ROZI_RELEASE_REPO` changes the GitHub repository used by the helper. `ROZI_RELEASE_BASE_URL`
 can point at an HTTPS mirror with the same release-directory layout. When no version is supplied,
@@ -118,16 +118,16 @@ version arguments:
 
 ```bash
 # Verify signed latest metadata and compare it with the active managed version.
-hyprmux update --check
+rozi update --check
 
 # Download and activate the signed latest release.
-hyprmux update
+rozi update
 
 # Activate the retained previous version.
-hyprmux update --rollback
+rozi update --rollback
 ```
 
-`hyprmux install` is the bootstrap payload operation. It installs the exact package version compiled
+`rozi install` is the bootstrap payload operation. It installs the exact package version compiled
 into that payload and is normally invoked by `install.sh` or `install.ps1`.
 
 ### 0.2 update boundaries
@@ -135,11 +135,11 @@ into that payload and is normally invoked by `install.sh` or `install.ps1`.
 - Every installed version is retained. There is no automatic pruning, cleanup command, or process
   lease yet.
 - Startup performs local crash recovery for managed installs, but no passive network check. Update
-  checks are explicit through `hyprmux update --check`; there is no workbar notice or in-TUI install.
+  checks are explicit through `rozi update --check`; there is no workbar notice or in-TUI install.
 - Local activation does not update, restart, or otherwise change remote sessions. The existing
   exact-version remote bootstrap remains separate until its later signed-manifest migration.
 - Windows launcher protocol 1 is stable and is not replaced by self-update. A launcher security fix
-  requires rerunning the bootstrap installer after closing hyprmux.
+  requires rerunning the bootstrap installer after closing rozi.
 
 Help exits `0`. Download, checksum, archive, or managed-install failures exit `1`; invalid
 bootstrap command-line usage exits `2`. A failed bootstrap leaves no managed layout changes made
@@ -150,16 +150,16 @@ by the helper itself.
 Every release contains canonical assets for the supported targets:
 
 ```text
-hyprmux-<version>-<target>.tar.gz       # Unix
-hyprmux-<version>-<target>.zip          # Windows
+rozi-<version>-<target>.tar.gz       # Unix
+rozi-<version>-<target>.zip          # Windows
 ```
 
-Each archive has a root directory with the same stem. It contains `hyprmux` on Unix, `hyprmux.exe`
-on Windows, and `hyprmux-launcher.exe` on Windows. The release assets also include:
+Each archive has a root directory with the same stem. It contains `rozi` on Unix, `rozi.exe`
+on Windows, and `rozi-launcher.exe` on Windows. The release assets also include:
 
 ```text
-hyprmux-release.json
-hyprmux-release.signatures.json
+rozi-release.json
+rozi-release.signatures.json
 <archive>.sha256                         # adjacent to every archive
 ```
 
@@ -183,15 +183,15 @@ Signing and metadata live in the sibling [`relswap`](https://github.com/tui-lipa
 Build its optional `release-tool` binary:
 
 ```bash
-mkdir -p "$HOME/.config/hyprmux/release-keys"
+mkdir -p "$HOME/.config/rozi/release-keys"
 cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
   keygen \
   --id release-2026-a \
-  --private-key "$HOME/.config/hyprmux/release-keys/release-2026-a.private.b64" \
-  --public-key /tmp/hyprmux-release-keys.json
+  --private-key "$HOME/.config/rozi/release-keys/release-2026-a.private.b64" \
+  --public-key /tmp/rozi-release-keys.json
 
 # Review the strict document, then replace the initial empty trust file deliberately.
-mv /tmp/hyprmux-release-keys.json release-keys.json
+mv /tmp/rozi-release-keys.json release-keys.json
 ```
 
 Both paths are mandatory. Key generation uses OS randomness, refuses to overwrite either path, and
@@ -204,17 +204,17 @@ After build/package jobs have produced final archives, generate and sign metadat
 
 ```bash
 cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
-  manifest --name hyprmux --version 0.2.0 --artifacts-dir dist --output dist/hyprmux-release.json
+  manifest --name rozi --version 0.2.0 --artifacts-dir dist --output dist/rozi-release.json
 
-ROZI_RELEASE_PRIVATE_KEY="$(tr -d '\n' < "$HOME/.config/hyprmux/release-keys/release-2026-a.private.b64")" \
+ROZI_RELEASE_PRIVATE_KEY="$(tr -d '\n' < "$HOME/.config/rozi/release-keys/release-2026-a.private.b64")" \
 cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
-  sign --name hyprmux --manifest dist/hyprmux-release.json \
-       --output dist/hyprmux-release.signatures.json \
+  sign --name rozi --manifest dist/rozi-release.json \
+       --output dist/rozi-release.signatures.json \
        --key-id release-2026-a
 
 cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
-  verify --name hyprmux --manifest dist/hyprmux-release.json \
-         --signatures dist/hyprmux-release.signatures.json \
+  verify --name rozi --manifest dist/rozi-release.json \
+         --signatures dist/rozi-release.signatures.json \
          --keys release-keys.json --artifacts-dir dist
 ```
 

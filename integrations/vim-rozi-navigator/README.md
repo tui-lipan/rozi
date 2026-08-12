@@ -4,7 +4,7 @@ Seamless navigation between Vim/Neovim splits and rozi panes.
 
 ## Setup
 
-Enable rozi's editor-aware bindings in `~/.config/rozi/rozi.toml`:
+Enable rozi's editor-aware bindings in `~/.config/rozi/config.toml`:
 
 ```toml
 [keys]

@@ -1,6 +1,6 @@
 # Project Overview
 
-`hyprmux` is a Hyprland-style tiling terminal multiplexer built on `tui-lipan`.
+`rozi` is a Hyprland-style tiling terminal multiplexer built on `tui-lipan`.
 It runs real PTY-backed panes inside a TUI window manager with dwindle/master/grid/columns/rows/
 scrollable/monocle layouts, floating panes, workspaces, scrollback tools, command palettes, profiles, and optional
 server-backed named sessions for detach/reattach workflows.
@@ -52,7 +52,7 @@ cargo run -- dev
 Attach to an already-running named session:
 
 ```bash
-hyprmux attach dev
+rozi attach dev
 cargo run -- attach dev
 ```
 
@@ -140,7 +140,7 @@ Profile an optimized build with debug symbols:
 
 ```bash
 cargo build --profile release-debug
-samply record ./target/release-debug/hyprmux profile
+samply record ./target/release-debug/rozi profile
 ```
 
 See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, and hot-path notes.
@@ -152,7 +152,7 @@ See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, a
   never `std::os::unix` / `/proc` / Win32 directly from a feature module.
 - Use `cargo fmt`; avoid hand-formatting style debates.
 - Use `cargo clippy` for linting before commits that touch Rust code.
-- Hyprmux is in active development with no users or external compatibility obligations. Prefer a
+- Rozi is in active development with no users or external compatibility obligations. Prefer a
   clean breaking change when it improves the design; do not add migrations, deprecated aliases, or
   compatibility shims unless the user explicitly requests them or an internal protocol test
   intentionally covers version skew.
@@ -166,7 +166,7 @@ See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, a
   entries that carry each command's label, description, group, and `default_keys`. Help and the
   palettes render from that registry, so adding an action means touching both files.
 - Adding a config key means three edits: the serde model in `config/file.rs`, a row in
-  `docs/configuration.md`, and a line commented at its default in `examples/hyprmux.toml`. That
+  `docs/configuration.md`, and a line commented at its default in `examples/config.toml`. That
   example is the copyable form of the reference - it ships inert, and a test uncomments the whole
   file and loads it, so a key renamed out from under it fails `cargo test` rather than rotting.
   Prose there is commented `# like this`, settings `#key = value`, which is what lets the test tell
@@ -209,12 +209,12 @@ lib.rs -> app.rs: AppRoot (tui-lipan Component)
   +--> session/client <-> session/server <-> server-owned PTYs
 ```
 
-`hyprmux` is an Elm-style app with one root `Component` (`AppRoot`), a central `State`, and
+`rozi` is an Elm-style app with one root `Component` (`AppRoot`), a central `State`, and
 `Msg` updates. `tui-lipan` supplies runtime primitives such as `Canvas`, `Frame`, transitions,
 mouse regions, overlays, and terminal widgets. The app owns window-manager policy: tiling trees,
 floating geometry, focus, input routing, profiles, sessions, and terminal palette synchronization.
 
-`hyprmux` is always-server: the session server owns every PTY and the client always attaches,
+`rozi` is always-server: the session server owns every PTY and the client always attaches,
 parsing raw pane output into its own `TerminalScreen`. A bare launch attaches to a disposable
 ephemeral session (`eph-<pid>`); a positional target / `--session` attaches to a named session or
 launches its canonical same-name profile, while `new` creates a session explicitly.
@@ -321,7 +321,7 @@ under Code Style.
   never reimplement session framing or use raw Unix sockets in cross-platform tests.
 - Tests never write to the developer's own config, state, or cache directories. Ordinary actions
   persist as a side effect (`[sidebar]` preferences, `session.toml` autosave, shell-integration
-  scripts), and a running hyprmux live-reloads its config file, so an unisolated test lands in the
+  scripts), and a running rozi live-reloads its config file, so an unisolated test lands in the
   UI the developer is working in. Unit tests are isolated automatically - `PlatformEnv::from_process`
   resolves into a per-process scratch root under `cfg(test)`. An integration test that builds a
   `AppRoot` must call `rozi::test_support::isolate_user_dirs()` first, from whatever helper
@@ -362,7 +362,7 @@ cargo check --features terminal
 cargo clippy --features terminal
 ```
 
-  Then rerun the relevant `hyprmux` tests and lints, and publish the framework before the hyprmux
+  Then rerun the relevant `rozi` tests and lints, and publish the framework before the rozi
   change that needs it can go green in CI.
 
 CI (`.github/workflows/ci.yml`) runs `fmt --check`, `check --all-targets` (which compiles benches),
@@ -386,7 +386,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 
 - Do not commit secrets, local socket paths, personal config, generated logs, or terminal captures
   that may contain credentials.
-- Runtime config comes from `$ROZI_CONFIG` or `~/.config/hyprmux/hyprmux.toml`; treat user config
+- Runtime config comes from `$ROZI_CONFIG` or `~/.config/rozi/config.toml`; treat user config
   as local data, not repository state.
 - Control and session endpoints are per-user and per-run: Unix sockets on Linux/macOS, named pipes
   on Windows. Preserve the runtime-dir safety checks (Unix ownership/mode/symlink validation;
@@ -395,7 +395,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
   Windows backend - they are what stop remote reachability and name squatting respectively.
 - Windows discovery entries under the runtime directory are hints only. Never read a pipe name out
   of one; derive it. Every endpoint must still complete the authenticated protocol handshake.
-- Named session endpoints are scoped to hyprmux session names; keep name validation and
+- Named session endpoints are scoped to rozi session names; keep name validation and
   stale-endpoint handling defensive.
 - Shell integrations must emit only an executable basename, never a command line, and must never
   modify a dotfile, a `$PROFILE`, or the `AutoRun` registry key.
@@ -408,9 +408,9 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 ## Agent Guardrails
 
 - Do not edit `target/` or generated build artifacts.
-- Hyprmux is a case study for the sibling `../tui-lipan` framework, which is owned alongside this
+- Rozi is a case study for the sibling `../tui-lipan` framework, which is owned alongside this
   project. Framework changes are welcome when a missing capability is reusable framework behavior
-  rather than hyprmux-specific policy; do not work around a framework deficiency in the app solely
+  rather than rozi-specific policy; do not work around a framework deficiency in the app solely
   to avoid editing tui-lipan.
 - If editing `../tui-lipan`, inspect its git status separately and stage only intended files.
 - Do not sweep unrelated local files, `.superpowers/` reports, or `.agents/` skills into commits.
@@ -438,8 +438,8 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `[workbar]` supports built-in segments, text placeholders, and timed shell command segments; each
   segment renders as a themed badge whose color can be overridden by theme role via a segment table,
   and `[pane].workbar_powerline` toggles trailing-badge chaining.
-- `[theme].name` selects built-in, `system`, or custom themes from `~/.config/hyprmux/themes/`.
-- `[profile] default` selects a startup profile from `~/.config/hyprmux/profiles/`.
+- `[theme].name` selects built-in, `system`, or custom themes from `~/.config/rozi/themes/`.
+- `[profile] default` selects a startup profile from `~/.config/rozi/profiles/`.
 - `[session] autosave` enables local layout autosave/restore.
 - `[session] resurrect` snapshots named sessions so layout, commands, and scrollback survive a server restart.
 - `<NAME>` / `--session <NAME>` attaches or launches the canonical same-name profile; `attach
@@ -456,7 +456,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - [docs/index.md](docs/index.md) - Full documentation table of contents.
 - [docs/features.md](docs/features.md) - Single-page inventory of every feature.
 - [docs/getting-started.md](docs/getting-started.md) - Build, run, quit, and dependency notes.
-- [docs/configuration.md](docs/configuration.md) - Complete `hyprmux.toml` reference.
+- [docs/configuration.md](docs/configuration.md) - Complete `config.toml` reference.
 - [docs/keybindings.md](docs/keybindings.md) - Prefix mode, held modifier, mouse, and key table.
 - [docs/layouts-and-panes.md](docs/layouts-and-panes.md) - Layouts, focus, movement, and animation.
 - [docs/terminal.md](docs/terminal.md) - PTY, clipboard, selection, scrollback, and persistence.

@@ -1,9 +1,9 @@
 <!-- Drop the app icon at assets/logo.png (square, ~512x512 works well). -->
 <p align="center">
-  <img src="assets/logo.png" alt="hyprmux" width="140">
+  <img src="assets/logo.png" alt="rozi" width="140">
 </p>
 
-<h1 align="center">hyprmux</h1>
+<h1 align="center">rozi</h1>
 
 <p align="center">
   <b>A tiling terminal multiplexer that feels like a modern window manager.</b><br>
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Razuer/hyprmux/actions/workflows/ci.yml"><img src="https://github.com/Razuer/hyprmux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/tui-lipan/rozi/actions/workflows/ci.yml"><img src="https://github.com/tui-lipan/rozi/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/platforms-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-blue" alt="Platforms">
   <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green" alt="License">
 </p>
@@ -21,7 +21,7 @@
   workspaces, a theme change), then uncomment the block below.
 
 <p align="center">
-  <img src="assets/demo.gif" alt="hyprmux in action" width="860">
+  <img src="assets/demo.gif" alt="rozi in action" width="860">
 </p>
 -->
 
@@ -29,7 +29,7 @@
 
 ## What it is
 
-hyprmux turns one terminal window into many. Open a new pane and it takes its place next to the
+rozi turns one terminal window into many. Open a new pane and it takes its place next to the
 others automatically — no dragging, no manual sizing. Panes can float on top, go fullscreen, and
 spread across nine workspaces. Close the window and everything keeps running, ready to be picked
 up again from anywhere.
@@ -51,7 +51,7 @@ for your machine, checks it, and installs it — no shell files are touched.
 .\install.ps1     # Windows
 ```
 
-Later on, `hyprmux update` moves you to a newer version and `hyprmux update --rollback` puts the
+Later on, `rozi update` moves you to a newer version and `rozi update --rollback` puts the
 previous one back. See [Installation](docs/installation.md).
 
 Building from source needs Rust 1.88 or newer, plus a checkout of
@@ -89,13 +89,13 @@ one-at-a-time monocle. Any pane can float, go fullscreen, or be dragged and resi
 mouse, and panes glide into place rather than jumping — turn that off if you'd rather they didn't.
 
 **Nothing is lost when you close the window.** Your panes live on in the background, so leaving
-does not kill your work. `hyprmux attach dev` brings it all back — same layout, same running
+does not kill your work. `rozi attach dev` brings it all back — same layout, same running
 programs, same scrollback. Several windows can attach to one session at once, and
 `--remote myserver` reaches a session on another machine over SSH.
 
-**Change anything without restarting.** Save `hyprmux.toml` and it applies immediately — keys,
+**Change anything without restarting.** Save `config.toml` and it applies immediately — keys,
 colors, status bar, everything — with your panes untouched. It works in the other direction too:
-switch a theme or flip a setting from the command palette and hyprmux writes the change back into
+switch a theme or flip a setting from the command palette and rozi writes the change back into
 your config file, so what you tried out is what you keep. Custom theme files reload the instant
 you save them, so you can tune a color and watch it land.
 
@@ -118,16 +118,16 @@ behavior. Nothing to emulate, nothing to install underneath it.
 | Copy mode & search | Walk the scrollback with vi motions, search it, copy without the mouse |
 | Synchronized typing | Send what you type to every pane in the workspace at once |
 | Shared control | When several people attach, one drives the layout and can hand control over |
-| Scripting | `hyprmux focus`, `send-text`, `new-pane`, `capture-pane` work from any script |
+| Scripting | `rozi focus`, `send-text`, `new-pane`, `capture-pane` work from any script |
 | Hooks | Run your own commands when something happens |
 | Your own shortcuts | Bind a key to open a pane or send text, not just to rebind what exists |
 | Status bar | Built-in readouts, your own text, or a command that refreshes on a timer |
 | Placement rules | Send panes running a given command to a chosen spot automatically |
-| Vim/Neovim navigator | One set of keys for editor splits and hyprmux panes |
+| Vim/Neovim navigator | One set of keys for editor splits and rozi panes |
 
 ## Configure it
 
-Everything lives in one file — `~/.config/hyprmux/hyprmux.toml` on Linux and macOS:
+Everything lives in one file — `~/.config/rozi/config.toml` on Linux and macOS:
 
 ```toml
 [theme]
@@ -145,22 +145,22 @@ border_style = "rounded"
 ```
 
 You never have to leave the app to edit it: *Open config file* in the command palette opens it in
-your editor, in a pane, and the moment you save, hyprmux picks the changes up. A file that won't
+your editor, in a pane, and the moment you save, rozi picks the changes up. A file that won't
 parse falls back to the defaults and tells you so — fix it, save again, and you are back.
 
 The [configuration reference](docs/configuration.md) covers every option,
-[`examples/hyprmux.toml`](examples/hyprmux.toml) is the same thing as a copyable file with every
+[`examples/config.toml`](examples/config.toml) is the same thing as a copyable file with every
 setting commented out at its default, and [`examples/`](examples/) has ready-made snippets.
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [Feature overview](docs/features.md) | Everything hyprmux does, on one page |
+| [Feature overview](docs/features.md) | Everything rozi does, on one page |
 | [Getting started](docs/getting-started.md) | Requirements, building, running, quitting |
 | [Installation](docs/installation.md) | Installing, updating, rolling back |
 | [Keybindings](docs/keybindings.md) | The full key reference |
-| [Configuration](docs/configuration.md) | Every setting in `hyprmux.toml` |
+| [Configuration](docs/configuration.md) | Every setting in `config.toml` |
 | [Layouts & panes](docs/layouts-and-panes.md) | Tiling, floating, fullscreen, resizing |
 | [Sessions](docs/sessions.md) | Detaching, reattaching, and sharing sessions |
 | [Remote sessions](docs/remote.md) | Working on another machine over SSH |
@@ -169,12 +169,12 @@ setting commented out at its default, and [`examples/`](examples/) has ready-mad
 | [Sidebar](docs/sidebar.md) | The dockable side panel and its tabs |
 | [Profiles](docs/profiles.md) | Saving and relaunching layouts |
 | [Project profiles](docs/project-profiles.md) | Profile files and pane identity |
-| [Control socket](docs/control.md) | Driving hyprmux from scripts |
+| [Control socket](docs/control.md) | Driving rozi from scripts |
 | [Hooks](docs/hooks.md) | Running commands when events happen |
 | [Vim/Neovim navigator](integrations/vim-rozi-navigator/) | One set of keys for editor splits and panes |
 | [Benchmarks](docs/benchmarks.md) | Performance suites and profiling |
 
-Working on hyprmux itself? [AGENTS.md](AGENTS.md) has the architecture notes.
+Working on rozi itself? [AGENTS.md](AGENTS.md) has the architecture notes.
 
 ## Platforms
 
@@ -184,7 +184,7 @@ details are Unix-only. Everything else is the same on all three — see the
 
 ## Sponsor
 
-If hyprmux is useful to you, consider [sponsoring its development](https://github.com/sponsors/Razuer) ♥
+If rozi is useful to you, consider [sponsoring its development](https://github.com/sponsors/Razuer) ♥
 
 ## License
 

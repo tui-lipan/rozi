@@ -1,6 +1,6 @@
 # Control socket and automation
 
-When the UI starts, hyprmux binds a per-process control endpoint at `control-<pid>.sock` in its
+When the UI starts, rozi binds a per-process control endpoint at `control-<pid>.sock` in its
 runtime directory. If binding fails, the UI still starts and shows a warning; panes only receive
 `ROZI_SOCKET` when an endpoint is available.
 
@@ -8,9 +8,9 @@ runtime directory. If binding fails, the UI still starts and shows a warning; pa
 
 | | Runtime directory | Transport |
 | --- | --- | --- |
-| Linux | `$XDG_RUNTIME_DIR/hyprmux`, else a private per-uid temp directory | Unix-domain socket at that path |
+| Linux | `$XDG_RUNTIME_DIR/rozi`, else a private per-uid temp directory | Unix-domain socket at that path |
 | macOS | a private directory under `$TMPDIR` | Unix-domain socket at that path |
-| Windows | `%LOCALAPPDATA%\hyprmux\run` | Named pipe `\\.\pipe\hyprmux.<user-sid>.control-<pid>` |
+| Windows | `%LOCALAPPDATA%\rozi\run` | Named pipe `\\.\pipe\rozi.<user-sid>.control-<pid>` |
 
 On Windows the file in the runtime directory is a **discovery entry**, not the transport: it stands
 for a named pipe whose name is derived from the entry's own name and your SID. Point `--socket` and
@@ -35,27 +35,27 @@ Control commands do not mount the UI. Endpoint discovery order is `--socket PATH
 then exactly one live endpoint in the runtime directory.
 
 ```bash
-hyprmux list-panes
-hyprmux metrics
-hyprmux focus 3
-hyprmux send-text 'cargo test
+rozi list-panes
+rozi metrics
+rozi focus 3
+rozi send-text 'cargo test
 '
-hyprmux send-keys C-c
-hyprmux send-keys 'echo hi' Enter
-hyprmux send-keys -l C-c
-hyprmux send-keys -- -n hello
-hyprmux split 'claude --agent helper'
-hyprmux split 'cargo watch' --focus
-hyprmux run-action toggle-float
-hyprmux capture-pane --target 3
-hyprmux capture-pane --scrollback full
-hyprmux capture-pane --last-output
-hyprmux capture-pane --scrollback 200 --target 3
-hyprmux run-action copy-last-output
-hyprmux switch-workspace 2
-hyprmux move-to-workspace 3
-hyprmux status blocked --reason "needs approval"
-hyprmux status --clear
+rozi send-keys C-c
+rozi send-keys 'echo hi' Enter
+rozi send-keys -l C-c
+rozi send-keys -- -n hello
+rozi split 'claude --agent helper'
+rozi split 'cargo watch' --focus
+rozi run-action toggle-float
+rozi capture-pane --target 3
+rozi capture-pane --scrollback full
+rozi capture-pane --last-output
+rozi capture-pane --scrollback 200 --target 3
+rozi run-action copy-last-output
+rozi switch-workspace 2
+rozi move-to-workspace 3
+rozi status blocked --reason "needs approval"
+rozi status --clear
 ```
 
 Replies are JSON on stdout. Errors are JSON when returned by the server, or plain stderr for client
@@ -133,15 +133,15 @@ status. `list-panes` exposes this metadata as `reported_status` and `status_reas
 Session lifecycle commands are separate from the per-run control socket:
 
 ```bash
-hyprmux dev                 # attach, or launch canonical same-name profile
-hyprmux attach dev          # attach only; error unless running
-hyprmux attach dev --read-only
-hyprmux new dev             # explicitly create a fresh named session
-hyprmux new review --profile dev # create from a reusable launch recipe
-hyprmux list-sessions       # list connectable named sessions
-hyprmux kill-session dev    # stop the named session server and its PTYs
-hyprmux list-sessions --remote workbox
-hyprmux kill-session dev --remote workbox
+rozi dev                 # attach, or launch canonical same-name profile
+rozi attach dev          # attach only; error unless running
+rozi attach dev --read-only
+rozi new dev             # explicitly create a fresh named session
+rozi new review --profile dev # create from a reusable launch recipe
+rozi list-sessions       # list connectable named sessions
+rozi kill-session dev    # stop the named session server and its PTYs
+rozi list-sessions --remote workbox
+rozi kill-session dev --remote workbox
 ```
 
 `kill-session <NAME>` is the sole canonical command for stopping a named session server. There is
@@ -151,15 +151,15 @@ destroys the server's PTYs for every attached client and is not a generic proces
 `--remote` form runs the same command over SSH and never force-terminates the local SSH transport.
 
 Agents that need to control panes or session lifecycle should first read the operational contract
-printed by `hyprmux --skill`.
+printed by `rozi --skill`.
 
 An unknown positional target errors instead of silently creating a session. `attach` and `new` are
-reserved command words; use `hyprmux --session attach` or `hyprmux --session new` to target those
+reserved command words; use `rozi --session attach` or `rozi --session new` to target those
 literal names. See [Sessions](sessions.md) for profile resolution and attach/detach semantics.
 
 The per-run control socket always belongs to the **local UI process**. When you are attached with
 `--remote`, automation against that UI still uses the local `ROZI_SOCKET` / `--socket` path.
-`list-sessions --remote` and `kill-session --remote` are separate SSH helpers that talk to hyprmux
+`list-sessions --remote` and `kill-session --remote` are separate SSH helpers that talk to rozi
 on the remote host; they are not control-socket commands. See [Remote SSH sessions](remote.md).
 
 ## Wire protocol
@@ -234,10 +234,10 @@ the one on screen, so it reports a single state for all of them and cannot say w
 Such a program publishes them instead:
 
 ```bash
-hyprmux agent-slots
+rozi agent-slots
 ```
 
-The command bridges stdin and stdout to hyprmux and runs until either side closes. Write one JSON
+The command bridges stdin and stdout to rozi and runs until either side closes. Write one JSON
 object per line to publish the current list; read one per line to learn that a user clicked a row:
 
 ```json
@@ -251,9 +251,9 @@ object per line to publish the current list; read one per line to learn that a u
 
 Each slot becomes its own row in the sidebar's [Agents tab](sidebar.md), with its own elapsed time
 and its own finished pulse — so a background tab that finishes, or one that stops for a permission
-prompt, is visible without switching to it. `id` is yours and opaque to hyprmux; keep it stable, as
+prompt, is visible without switching to it. `id` is yours and opaque to rozi; keep it stable, as
 it is what ties a run to its clock across reordering and retitling. `active` marks the slot you
-currently have on screen, which is how hyprmux knows a finish on a *different* slot has not been
+currently have on screen, which is how rozi knows a finish on a *different* slot has not been
 seen. `status` takes the same values as `set-status`.
 
 `title` is what the row shows, and it outranks `reason`. Send an empty one while you have nothing
@@ -263,11 +263,11 @@ title swaps the row over immediately.
 
 Publishing replaces the whole list, and an empty list withdraws it. Closing the connection also
 withdraws it, so a publisher that exits or crashes never leaves rows behind. While a pane publishes
-slots, hyprmux stops scraping its screen entirely and takes the pane's own state from them: blocked
+slots, rozi stops scraping its screen entirely and takes the pane's own state from them: blocked
 if any slot is blocked, working if any is working, idle once all are.
 
 Activating a row focuses the pane and writes `{"activate":"<id>"}` back to you; bringing that slot
-on screen is your side of the exchange. Use `hyprmux agent-slots` rather than opening
+on screen is your side of the exchange. Use `rozi agent-slots` rather than opening
 `ROZI_SOCKET` yourself — on Windows that variable names a discovery entry whose pipe name has to
 be derived rather than read, so the bridge is what makes a publisher portable.
 

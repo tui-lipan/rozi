@@ -1,6 +1,6 @@
 # Sidebar
 
-hyprmux can reserve a resizable column on either side of the app for local navigation. The sidebar
+rozi can reserve a resizable column on either side of the app for local navigation. The sidebar
 is hidden by default and is composed from tui-lipan draggable tab bars, splitters, scrolling rows,
 and mouse regions. It does not become part of the shared layout document.
 
@@ -42,7 +42,7 @@ explicit. Set it to `false` to keep the recipe while showing one bar.
 Both tab bars share a drag group, so tabs reorder live within one bar and move between bars. The
 panel divider is also draggable. Dragging its junction with the outer divider resizes both axes at
 once; the junction ends at the sidebar gutter and does not extend onto pane borders. Tab
-order/assignment and both splitter sizes persist to `hyprmux.toml` and remain live-editable there.
+order/assignment and both splitter sizes persist to `config.toml` and remain live-editable there.
 Toggling the sidebar (`toggle-sidebar` / `b`) writes `visible` the same way. Disabling `split`
 temporarily presents the saved groups as one tab bar; it does not merge or erase
 the `panels` recipe, so enabling it again restores the previous groups.
@@ -67,10 +67,10 @@ A row names the pane, badges the current foreground program on the right, and sh
 directory beneath:
 
 ```text
-▍ hyprmux                  bash
-▍ ~/Work/Projects/hyprmux
+▍ rozi                  bash
+▍ ~/Work/Projects/rozi
   nvim src/view/sidebar/p… nvim
-  ~/Work/Projects/hyprmux
+  ~/Work/Projects/rozi
   service                  psql
   …/deploy/backend/api/service
 ```
@@ -143,11 +143,11 @@ Where there is an activity, it has the detail line to itself and the status word
 would only spend width. Where there is no activity, the status word takes the line instead, capitalized like
 the rest of the chrome (`Idle`) rather than echoing the value on the wire. A custom status such as
 `compacting` renders as a neutral `•` and keeps its word either way, having no glyph of its own to
-lean on — and keeps the publisher's own spelling, which is not hyprmux's to normalize.
+lean on — and keeps the publisher's own spelling, which is not rozi's to normalize.
 
 Agents are grouped by project: the Git repository containing the working directory the session
 server reports for the pane, falling back to the working directory itself outside a repository. An
-agent launched in `hyprmux/src` therefore belongs to `hyprmux` rather than to a project called
+agent launched in `rozi/src` therefore belongs to `rozi` rather than to a project called
 `src`. Each group is headed by the project's basename; two projects sharing a basename are
 disambiguated with one parent segment (`work/api`, `oss/api`), and a remote working directory gains
 an `@host` suffix. Group order is alphabetical and stable — never by status, so blocks do not jump
@@ -207,7 +207,7 @@ Publishing status through the control socket avoids the guesswork entirely.
 ### One row per agent in a pane
 
 A program running several agents behind one terminal can publish them through
-[`hyprmux agent-slots`](control.md#agent-slots), and each becomes its own row. The rows carry the
+[`rozi agent-slots`](control.md#agent-slots), and each becomes its own row. The rows carry the
 pane's project, directory, and branch — location belongs to the terminal, so grouping is unchanged
 — but each keeps its own status, elapsed time, and finished pulse, and they sort among every other
 row by status. A blocked tab therefore reaches the top of the list even though the tab beside it in
@@ -247,7 +247,7 @@ pulsing until you open it.
 OpenCode exposes lifecycle events that provide authoritative `working`, `idle`, and blocked states.
 Install the included plugin by linking or copying
 `integrations/opencode/rozi-agent-state.js` into `~/.config/opencode/plugins/`, then restart
-OpenCode inside hyprmux. The plugin has no package dependencies and does nothing outside hyprmux.
+OpenCode inside rozi. The plugin has no package dependencies and does nothing outside rozi.
 It uses the injected `ROZI_SOCKET` and `ROZI_PANE` values to update only its own pane.
 
 This is the recommended setup for OpenCode. A pane is one terminal but OpenCode is many sessions —
@@ -291,11 +291,11 @@ the line says *which kind* of offline, in the state it found rather than the ssh
 | `Unknown host name` | The name did not resolve. | DNS, `/etc/hosts`, or the `[remote.hosts]` alias. |
 | `SSH login rejected` | Reached `sshd`, it refused the login. | Keys, agent, or the username in the target. |
 | `Host key not trusted` | The host key is unknown or changed. | `known_hosts`. |
-| `No hyprmux on host` | Logged in, could not run `hyprmux`. | Install it there, or set `binary_path` / `ROZI_REMOTE_BINARY`. |
+| `No rozi on host` | Logged in, could not run `rozi`. | Install it there, or set `binary_path` / `ROZI_REMOTE_BINARY`. |
 | `ssh not installed here` | No `ssh` on this machine's `PATH`. | This machine, not the remote one. |
-| `Connection failed` | Anything else. | Run `hyprmux --remote <HOST>` from a shell for the raw ssh output. |
+| `Connection failed` | Anything else. | Run `rozi --remote <HOST>` from a shell for the raw ssh output. |
 
-The underlying ssh message is kept, not discarded — `hyprmux --remote <HOST>` from a shell shows it
+The underlying ssh message is kept, not discarded — `rozi --remote <HOST>` from a shell shows it
 whenever the phrase is not enough.
 
 When the client is attached with `--remote`, both tabs are served by the session server instead of
@@ -334,8 +334,8 @@ it means — an armed `✕` painted red would answer the pointer with no change 
 something you can click.
 
 ```text
-  hyprmux                     ✕      hovered
-  ~/Work/Projects/hyprmux
+  rozi                     ✕      hovered
+  ~/Work/Projects/rozi
 
   h̶y̶p̶r̶m̶u̶x̶                     ✕      armed
   Click again to confirm
@@ -360,7 +360,7 @@ equivalent — `Enter` runs the row's own action, and closing stays a pointer ge
 
 ## Confirmation Window
 
-Every destructive confirmation in hyprmux stays armed for **3 seconds**, then lapses on its own. The
+Every destructive confirmation in rozi stays armed for **3 seconds**, then lapses on its own. The
 window is the same everywhere:
 
 - the sidebar's `✕` on a pane or session row,
@@ -391,14 +391,14 @@ error rows.
 
 An `on_click` action may use `{line}` only inside `send`. The sanitized raw row replaces every
 literal `{line}` occurrence and is written directly to the PTY; it is not shell-quoted or evaluated
-by hyprmux. `run` and `popup` actions are fixed commands and configurations containing `{line}` in
+by rozi. `run` and `popup` actions are fixed commands and configurations containing `{line}` in
 either are rejected with a warning. Row clicks carry both the raw row and its output generation, so
 a click queued across a refresh cannot act on replaced output.
 
 ### Security
 
 Sidebar commands and launcher actions are trusted local configuration and execute with the user's
-account through the resolved `command_shell`; hyprmux never chooses an extra `/bin/sh` fallback for
+account through the resolved `command_shell`; rozi never chooses an extra `/bin/sh` fallback for
 polling. Command output is untrusted display data and is sanitized and bounded before storage.
 Because `{line}` can contain command syntax, use it only where literal terminal input is intended;
 the receiving program or shell still decides how that typed text is interpreted when submitted.
@@ -471,14 +471,14 @@ can be visible at once, and on the same row.
   blocked agent, success for an unseen finished one, info while working. See `[workbar.alert]` in
   [Configuration](configuration.md).
 - `focus-next-blocked-pane` is unbound by default. All six sidebar actions can be rebound under
-  `[keys]` or invoked with `hyprmux run-action <id>`.
+  `[keys]` or invoked with `rozi run-action <id>`.
 
 Visibility, active tabs, focused panel, cursors, and caches are local runtime state. A config reload
 reapplies `visible`, panel assignment, split mode, split ratio, and width, then reconciles selected
 tabs by stable ID. If a selected tab was removed, the first tab in that panel becomes active.
 Visibility toggles and active selections are not written to disk. Tab drag/reorder, split mode,
 outer resize, and panel
-resize are preferences and update `panels`, `split`, `width`, or `split_ratio` in `hyprmux.toml`.
+resize are preferences and update `panels`, `split`, `width`, or `split_ratio` in `config.toml`.
 Self-writes are ignored by the live-reload watcher, while later external edits remain authoritative.
 `toggle-sidebar` remains usable while the scratchpad is open. Closing the sidebar, changing tabs,
 attaching or detaching, and reloading config invalidate in-flight session discovery so an old result

@@ -1,6 +1,6 @@
 # Benchmarks and profiling
 
-hyprmux uses Criterion 0.8 benchmarks to measure terminal parsing, snapshot rebuilding, protocol
+rozi uses Criterion 0.8 benchmarks to measure terminal parsing, snapshot rebuilding, protocol
 framing, scrollback search, the client session-output path, server input fairness under sustainable
 continuous PTY ingress, saturation boundedness, and durable resurrection snapshots. Run timing
 benchmarks on an otherwise idle machine; CI compiles them through `cargo check --all-targets` but
@@ -77,7 +77,7 @@ tools/memory-matrix.sh --case 60 250 8 5000 images 2 reconnected \
   --output target/memory-matrix/reconnected
 ```
 The runner requires `bash`, `python3`, util-linux `script`, and Linux `smaps_rollup`. It builds
-`target/release/hyprmux`, creates private temporary `HOME` and XDG config/state/cache/runtime
+`target/release/rozi`, creates private temporary `HOME` and XDG config/state/cache/runtime
 directories per scenario, and passes every control command an explicit isolated socket. It never
 discovers or connects to the user's normal sessions.
 
@@ -188,20 +188,20 @@ dispatch and a duration only exists once the worker reports back.
 
 Microbenchmarks isolate costs; live runs expose scheduling, PTY, rendering, and broadcast behavior.
 Build or run in release mode, enlarge the terminal if relevant, and watch CPU and responsiveness
-while executing these commands inside a hyprmux pane. Stop unbounded output with `Ctrl-c`.
+while executing these commands inside a rozi pane. Stop unbounded output with `Ctrl-c`.
 
 Continuous line flood:
 
 ```bash
-yes 'hyprmux output flood 0123456789'
+yes 'rozi output flood 0123456789'
 ```
 
 Generate and print a 100 MB file:
 
 ```bash
-yes 'hyprmux 100 MB cat corpus' | head -c 100000000 > /tmp/hyprmux-100mb.txt
-cat /tmp/hyprmux-100mb.txt
-rm /tmp/hyprmux-100mb.txt
+yes 'rozi 100 MB cat corpus' | head -c 100000000 > /tmp/rozi-100mb.txt
+cat /tmp/rozi-100mb.txt
+rm /tmp/rozi-100mb.txt
 ```
 
 One million numbered lines:
@@ -231,7 +231,7 @@ cargo run --release -- stress --read-only
 In another shell, query the client-local and cached server resource sample without pausing the UI:
 
 ```bash
-ROZI_SOCKET=/path/to/control.sock target/release/hyprmux metrics | jq .
+ROZI_SOCKET=/path/to/control.sock target/release/rozi metrics | jq .
 ```
 
 The server section includes `age_ms` and `stale`; compare current bytes with high-water and capacity
@@ -244,7 +244,7 @@ stripping. Install Samply separately, build once, then record the binary directl
 
 ```bash
 cargo build --profile release-debug
-samply record ./target/release-debug/hyprmux profile
+samply record ./target/release-debug/rozi profile
 ```
 
 Generate a representative workload in the recorded session, then detach or quit to finish the
@@ -277,7 +277,7 @@ t1=$(awk '{print $14+$15}' /proc/$SRV/stat)
 awk -v a=$t0 -v b=$t1 'BEGIN{printf "%.2f%%\n", (b-a)/6}'
 ```
 
-Add panes over the control socket (`ROZI_SOCKET=… hyprmux new-pane`) and check the slope: a
+Add panes over the control socket (`ROZI_SOCKET=… rozi new-pane`) and check the slope: a
 cost that scales with pane count is per-pane polling, while a flat cost is the server's own loop.
 
 Measured at idle, server process:
@@ -310,7 +310,7 @@ and the walk is unreachable there either way — a `captured()` assertion would 
 ## Snapshot rebuilds dominate output cost
 
 The expensive part of receiving output is not rendering it — it is rebuilding the render snapshot.
-The isolated 2026-08-04 Phase 1 comparison held Hyprmux at `c07b6be` on the same Ryzen machine and
+The isolated 2026-08-04 Phase 1 comparison held Rozi at `c07b6be` on the same Ryzen machine and
 changed only tui-lipan. Detached temporary worktrees and separate `CARGO_TARGET_DIR`s kept the two
 builds independent:
 

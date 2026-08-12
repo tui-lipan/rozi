@@ -1,6 +1,6 @@
 # Reproducing a performance audit
 
-This playbook reproduces the performance and resource-efficiency audit of hyprmux. It complements
+This playbook reproduces the performance and resource-efficiency audit of rozi. It complements
 [Benchmarks and profiling](../benchmarks.md): that page explains the permanent benchmark targets,
 while this page combines them into a full audit covering CPU, memory, process resources, live
 transport behavior, and measurement limitations.
@@ -57,8 +57,8 @@ cargo build --profile release-debug
 Record file and section sizes:
 
 ```bash
-stat --printf='%n %s bytes\n' target/release/hyprmux target/debug/hyprmux
-size target/release/hyprmux
+stat --printf='%n %s bytes\n' target/release/rozi target/debug/rozi
+size target/release/rozi
 ```
 
 The release profile is the runtime baseline. A large debug binary mostly reflects debug information
@@ -273,7 +273,7 @@ awk '/^Threads:|^VmRSS:|^VmHWM:/{print}' "/proc/$PID/status"
 printf 'fds=%s\n' "$(printf '%s\n' /proc/$PID/fd/* | wc -l)"
 ```
 
-Thread count is not CPU usage. Most hyprmux transport, PTY, watcher, and command-worker threads block
+Thread count is not CPU usage. Most rozi transport, PTY, watcher, and command-worker threads block
 while idle.
 
 ## 7. Exercise live output and client fan-out
@@ -297,8 +297,8 @@ timeout 10 sh -c '
 For fan-out, attach a second release client to the same named session, preferably read-only:
 
 ```bash
-target/release/hyprmux attach perf-audit
-target/release/hyprmux attach perf-audit --read-only
+target/release/rozi attach perf-audit
+target/release/rozi attach perf-audit --read-only
 ```
 
 Sample the server and every client concurrently. CPU from an uncounted `yes`/shell loop is only a
@@ -319,7 +319,7 @@ cargo test congested_flood_has_the_same_transcript_as_the_producer
 Sample the live resource high-water marks through the running client's control endpoint:
 
 ```bash
-ROZI_SOCKET=/path/to/control.sock target/release/hyprmux metrics | jq .
+ROZI_SOCKET=/path/to/control.sock target/release/rozi metrics | jq .
 ```
 
 The JSON response contains current/high-water/capacity values for client inbound/outbound queues,
@@ -353,11 +353,11 @@ Use the symbolized optimized profile:
 ```bash
 cargo build --profile release-debug
 samply record --save-only --output target/perf-audit/profile.json.gz \
-  ./target/release-debug/hyprmux perf-audit
+  ./target/release-debug/rozi perf-audit
 ```
 
 Generate one controlled workload, then detach or quit. Summarize the relevant application thread;
-do not attribute child shell CPU to hyprmux.
+do not attribute child shell CPU to rozi.
 
 Useful profile questions:
 
@@ -383,7 +383,7 @@ When a host is available, repeat:
 - process and RSS cleanup after disconnect
 
 Watch the pipe-backed transport separately from the bounded session mailbox. A memory plateau must
-be demonstrated before declaring remote backpressure bounded. `hyprmux metrics` reports these as
+be demonstrated before declaring remote backpressure bounded. `rozi metrics` reports these as
 separate `piped_remote` and `client_inbound` resources.
 
 ## 11. Interpret results

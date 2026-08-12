@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks run shell commands when a hyprmux UI client observes an event. They are useful for desktop
+Hooks run shell commands when a rozi UI client observes an event. They are useful for desktop
 notifications, audit logs, and automation that calls back into the live UI through its control
 socket.
 
@@ -15,7 +15,7 @@ run = "notify-send 'pane exited'"
 
 [[hooks]]
 event = "session-attached"
-run = "~/.config/hyprmux/on-attach.sh"
+run = "~/.config/rozi/on-attach.sh"
 ```
 
 The former flat `[hooks]` table is no longer supported. See
@@ -61,13 +61,13 @@ Hook commands inherit the client process environment and receive these additiona
 | Variable | Value |
 | --- | --- |
 | `ROZI_EVENT` | The event id from the table above. Always set. |
-| `ROZI_SOCKET` | The current UI control endpoint path. Set only when the client successfully created a control endpoint. On Windows this is the discovery-entry path accepted by `hyprmux --socket`, not a raw named-pipe name. |
+| `ROZI_SOCKET` | The current UI control endpoint path. Set only when the client successfully created a control endpoint. On Windows this is the discovery-entry path accepted by `rozi --socket`, not a raw named-pipe name. |
 | `ROZI_REMOTE_HOST` | Set when the UI is attached via `--remote`; the resolved remote host string. Hooks still run on the **client** machine. |
 | `ROZI_<FIELD>` | One variable for each field listed for the event. Field names are uppercased; underscores are retained. |
 
 All injected values are strings. Optional event values are represented by an empty string rather
 than an omitted field. Test `ROZI_SOCKET` before calling back into the UI because control endpoint
-creation can fail without preventing hyprmux from starting.
+creation can fail without preventing rozi from starting.
 
 ## Multiple hooks and command lifecycle
 
@@ -75,7 +75,7 @@ Several `[[hooks]]` entries may use the same event. Every matching entry is laun
 order, as a separate command. Commands are asynchronous and may overlap; completion order is not
 guaranteed.
 
-Hook execution is detached: hyprmux does not wait for completion, retry failed commands, or manage
+Hook execution is detached: rozi does not wait for completion, retry failed commands, or manage
 the child after launch. Hook stdout, stderr, and exit status are discarded by the hook API; redirect
 output explicitly if it matters. A hook command cannot block the UI event loop, and a later hook
 does not wait for an earlier one.
@@ -105,7 +105,7 @@ run = "notify-send \"pane $ROZI_PANE exited with $ROZI_CODE\""
 
 [[hooks]]
 event = "pane-exited"
-run = '''printf '%s pane=%s code=%s\n' "$ROZI_EVENT" "$ROZI_PANE" "$ROZI_CODE" >> "$HOME/.local/state/hyprmux-events.log"'''
+run = '''printf '%s pane=%s code=%s\n' "$ROZI_EVENT" "$ROZI_PANE" "$ROZI_CODE" >> "$HOME/.local/state/rozi-events.log"'''
 ```
 
 Use the injected endpoint to talk back to the client that emitted the event. This POSIX-shell
@@ -116,7 +116,7 @@ example switches to workspace 1 after a pane exits:
 event = "pane-exited"
 run = '''
 if [ -n "$ROZI_SOCKET" ]; then
-    hyprmux --socket "$ROZI_SOCKET" switch-workspace 1
+    rozi --socket "$ROZI_SOCKET" switch-workspace 1
 fi
 '''
 ```

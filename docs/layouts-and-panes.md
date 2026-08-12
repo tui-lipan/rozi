@@ -1,6 +1,6 @@
 # Layouts & panes
 
-`hyprmux` arranges panes the way a Hyprland-style tiling window manager does: layout is
+`rozi` arranges panes the way a Hyprland-style tiling window manager does: layout is
 computed as explicit geometry, then every pane (tiled or floating) is placed at an animated
 target rectangle. Each workspace carries its own layout.
 
@@ -216,8 +216,8 @@ The displayed title uses this precedence:
 4. the pane's generic fallback label, normally `shell`.
 
 A custom or application title is qualified with location context: `<primary title> · <path>`. Inside
-a detected Git project, the path is compact but project-qualified (`hyprmux/src/view`); at the
-project root it is just the project name (`hyprmux`). Outside a project, it is the home-relative or
+a detected Git project, the path is compact but project-qualified (`rozi/src/view`); at the
+project root it is just the project name (`rozi`). Outside a project, it is the home-relative or
 absolute cwd.
 
 Conventional shell titles shaped like `user@host:cwd` count as working-directory metadata, not

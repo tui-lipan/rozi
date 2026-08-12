@@ -3,11 +3,11 @@
 Project profiles are reusable launch recipes. A profile is a TOML file that records workspaces,
 pane names, layout metadata, and optional launch identity for each pane.
 
-Profiles do **not** save or restore live PTY state. Restoring a profile starts fresh shells or commands in new PTYs; it does not resurrect the shell processes, scrollback, environment, or running programs from an earlier `hyprmux` process.
+Profiles do **not** save or restore live PTY state. Restoring a profile starts fresh shells or commands in new PTYs; it does not resurrect the shell processes, scrollback, environment, or running programs from an earlier `rozi` process.
 
 ## Pane identity
 
-Each pane carries an *identity* - the information `hyprmux` knows about it beyond its live
+Each pane carries an *identity* - the information `rozi` knows about it beyond its live
 shell:
 
 - **Custom title** - a name you set with the `Shift+N` keybinding (or *Rename pane* in the command
@@ -26,15 +26,15 @@ and qualified by the username only after switching away from the original accoun
 
 ## Capture and launch profiles
 
-Named profiles live in `~/.config/hyprmux/profiles/<name>.toml`. Capture the current session with
+Named profiles live in `~/.config/rozi/profiles/<name>.toml`. Capture the current session with
 the **Capture session as profile...** command in the command palette; it prompts for the profile
 name and writes that file.
 
 Open its canonical same-name session from the command line:
 
 ```bash
-hyprmux dev
-hyprmux --session dev
+rozi dev
+rozi --session dev
 ```
 
 The target attaches when `dev` is already running, otherwise launches named session `dev` from the
@@ -43,7 +43,7 @@ The profile and session remain independent; the same-name session is only the ca
 binding. Launch the recipe under another name explicitly with:
 
 ```bash
-hyprmux new review --profile dev
+rozi new review --profile dev
 ```
 
 Open **Profiles** to use the canonical flow with `Enter`, open the recipe under another name or as
@@ -73,7 +73,7 @@ set `name` (its custom name, settable at runtime with *Rename workspace* - see
 [Keybindings](keybindings.md#workspaces)) and `layout`, one of `dwindle`, `master`, `grid`,
 `columns`, `scrollable`, or `monocle`. Pane entries can use these fields:
 
-- `name`: pane title shown by `hyprmux` and restored on startup.
+- `name`: pane title shown by `rozi` and restored on startup.
 - `cwd`: directory used when launching that pane's fresh shell or command. `~` and `~/...` expand to `HOME`.
 - `command`: command line typed into the pane's interactive shell at its first prompt.
 - `keep_open`: kept for round-tripping; a command pane returns to its interactive shell on exit.
@@ -131,26 +131,26 @@ command = "cargo run"
 
 ## Session auto-save
 
-Beyond explicit profile capture, local `hyprmux` launches can **auto-save the live layout on
+Beyond explicit profile capture, local `rozi` launches can **auto-save the live layout on
 quit** and restore it on the next launch. Enable it with `[session] autosave = true` (see
 [Configuration](configuration.md#session)). It reuses the profile format and the same honesty
 caveats: it restores layout and launch intent, not live PTY state. `[profile] default` takes
 precedence over the autosaved session.
 
 For live PTY persistence across detach/reattach, use a named attached session instead. Use
-`hyprmux attach <name>` for attach-only behavior, `hyprmux <name>` for attach-or-canonical-profile
-resolution, or `hyprmux new <name>` for explicit creation (see [Sessions](sessions.md)).
+`rozi attach <name>` for attach-only behavior, `rozi <name>` for attach-or-canonical-profile
+resolution, or `rozi new <name>` for explicit creation (see [Sessions](sessions.md)).
 
 ## Saving limitations
 
 Saving preserves pane names, workspace layout, split tree/ratios, floating state, fullscreen
 state, floating geometry, Scrollable pane widths, and each pane's detected local working directory. A cwd reported by a
-remote host, such as an SSH session, is never saved as a local path; hyprmux falls back to the
+remote host, such as an SSH session, is never saved as a local path; rozi falls back to the
 pane's original local launch directory instead.
 
 When a pane is running a command at save time, saving records the detected executable basename as
 `command`. Interactive shells are filtered out, a pane idling at its prompt saves no command at
 all (the last command you ran is not replayed), and an explicit launch command is kept when
-nothing is running. hyprmux cannot reconstruct the foreground program's original arguments, so a
+nothing is running. rozi cannot reconstruct the foreground program's original arguments, so a
 detected `nvim` process is saved as `command = "nvim"`, not its full invocation. Rename panes
 explicitly when you want stable profile titles.

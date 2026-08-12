@@ -1,6 +1,6 @@
 # Performance
 
-This directory is the durable record of hyprmux performance investigations. It separates:
+This directory is the durable record of rozi performance investigations. It separates:
 
 - [the audit playbook](audit-playbook.md), which explains how to reproduce measurements;
 - [benchmark documentation](../benchmarks.md), which describes the permanent Criterion and memory
@@ -10,7 +10,7 @@ This directory is the durable record of hyprmux performance investigations. It s
 
 ## Current assessment
 
-The latest audit found no release-blocking performance problems and classified hyprmux as
+The latest audit found no release-blocking performance problems and classified rozi as
 **ready with minor improvements**. Broad-scope scrollback search now runs in bounded cooperative
 slices, epoch-gated workers resolve the workbar command lifecycle concern, and an isolated
 framework comparison confirms a roughly 38-39% snapshot-rebuild reduction. Saturation and durable

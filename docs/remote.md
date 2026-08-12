@@ -1,6 +1,6 @@
 # Remote SSH sessions (`--remote`)
 
-`--remote` attaches a **local** hyprmux client to a session server that runs on another host over
+`--remote` attaches a **local** rozi client to a session server that runs on another host over
 SSH. The remote host owns every PTY and its filesystem; your local config (theme, keybindings,
 clipboard, hooks) stays on this machine.
 
@@ -9,19 +9,19 @@ Switching to a local or another remote session retains this attachment and its S
 background; switching back restores its live screens immediately. If a retained link drops, it is
 marked offline and reconnects in place when selected again.
 
-This is the inverse of “ssh in and run hyprmux there”: the UI and config stay local, while the
+This is the inverse of “ssh in and run rozi there”: the UI and config stay local, while the
 session server stays remote.
 
 ## Quick start
 
 ```bash
-hyprmux --remote workbox                  # ephemeral session on workbox
-hyprmux --remote workbox dev              # attach/launch named session "dev"
-hyprmux --remote ssh://user@host:2222     # explicit user, host, port
-hyprmux --remote workbox attach dev       # attach-only
-hyprmux --remote workbox new review       # create-only
-hyprmux list-sessions --remote workbox
-hyprmux kill-session dev --remote workbox
+rozi --remote workbox                  # ephemeral session on workbox
+rozi --remote workbox dev              # attach/launch named session "dev"
+rozi --remote ssh://user@host:2222     # explicit user, host, port
+rozi --remote workbox attach dev       # attach-only
+rozi --remote workbox new review       # create-only
+rozi list-sessions --remote workbox
+rozi kill-session dev --remote workbox
 ```
 
 `--remote` composes with the same session surface as a local launch (`attach`, `new`, `--session`,
@@ -35,7 +35,7 @@ hyprmux kill-session dev --remote workbox
 | Windows | Linux / macOS | Supported. |
 | any | **Windows** | **Supported** — verified live against Windows 11 + OpenSSH; see below. |
 
-hyprmux itself runs on Windows, and the session server and `--remote-serve` proxy are
+rozi itself runs on Windows, and the session server and `--remote-serve` proxy are
 platform-neutral. A Windows host works as the *remote* end of `--remote`, verified end to end
 against a real Windows 11 + OpenSSH host (stock `cmd.exe` default shell): probe, install, attach,
 detach/reattach, a concurrent second client, and — the previous hard blocker — a session that
@@ -50,7 +50,7 @@ What the client does for a Windows remote:
 - **Platform detection.** `MINGW*`/`MSYS*`/`CYGWIN*` `uname -s` output is matched by family prefix,
   and the PowerShell probe reports `platform=windows` directly (`PROCESSOR_ARCHITECTURE` gives the
   machine — `AMD64` normalises to `x86_64`).
-- **`.exe`-aware install.** The Windows install writes `%USERPROFILE%\.local\bin\hyprmux.exe` (no
+- **`.exe`-aware install.** The Windows install writes `%USERPROFILE%\.local\bin\rozi.exe` (no
   `chmod`). `connect.rs` then invokes `--remote-serve` with the returned `.exe` path verbatim.
 - **Server lifetime (the former hard blocker, now solved).** Windows OpenSSH runs each session
   inside a Job Object and terminates it on disconnect; a plain `DETACHED_PROCESS` does not escape a
@@ -90,7 +90,7 @@ in-process, so it needs no external tool anywhere.
 
 ## Authentication
 
-Requires `ssh` on `PATH`. By default hyprmux passes `BatchMode=yes`, so auth must succeed without a
+Requires `ssh` on `PATH`. By default rozi passes `BatchMode=yes`, so auth must succeed without a
 prompt — typically a loaded agent or an `identity_file` under `[remote.hosts.*]`.
 
 Set `[remote] batch_mode = false` to let ssh prompt. One switch governs every remote invocation
@@ -98,16 +98,16 @@ Set `[remote] batch_mode = false` to let ssh prompt. One switch governs every re
 would give you a host that lists fine and then hangs on attach.
 
 The caveat: on the **attach** path ssh's stdin carries the session protocol, so ssh falls back to
-prompting on the controlling terminal — which is the terminal hyprmux is drawing in. Expect the
+prompting on the controlling terminal — which is the terminal rozi is drawing in. Expect the
 prompt to land on top of the UI. `batch_mode = false` is most useful for the CLI helpers, or with a
 passphrase-protected key you unlock once before attaching.
 
 ## How it works
 
-The remote side does **not** teach the session server to speak stdio. Local hyprmux runs:
+The remote side does **not** teach the session server to speak stdio. Local rozi runs:
 
 ```text
-ssh <host> -- <remote-hyprmux> --remote-serve <NAME>
+ssh <host> -- <remote-rozi> --remote-serve <NAME>
 ```
 
 That hidden `--remote-serve` process connects to the **normal** session endpoint on the remote host
@@ -142,7 +142,7 @@ Per-host `binary_path`, `identity_file`, and `ssh_args` override the defaults fo
 
 ## Bootstrap and install
 
-Before connect, hyprmux probes the remote for a compatible `hyprmux` binary (one that speaks
+Before connect, rozi probes the remote for a compatible `rozi` binary (one that speaks
 `--remote-serve` and overlaps the client's protocol range).
 
 | `[remote] install` | Interactive TTY (before the TUI starts) | Non-interactive / CI |
@@ -151,7 +151,7 @@ Before connect, hyprmux probes the remote for a compatible `hyprmux` binary (one
 | `always` | Installs without asking when missing/incompatible | Never mutates |
 | `never` | Fail if missing | Fail if missing |
 
-When the local and remote platforms match, install copies `current_exe()`. When they differ, hyprmux
+When the local and remote platforms match, install copies `current_exe()`. When they differ, rozi
 downloads the matching GitHub release asset for this version, verifies its `.sha256`, then uploads
 that binary. Override the download base with `ROZI_RELEASE_BASE_URL` for mirrors/tests.
 
@@ -161,15 +161,15 @@ identically on every client platform and can never be skipped because a tool is 
 Overrides:
 
 - `[remote.hosts.<alias>] binary_path` — use that path; skip probe/install.
-- `ROZI_REMOTE_BINARY=/path/to/hyprmux` — stream that local file onto the remote (same install
+- `ROZI_REMOTE_BINARY=/path/to/rozi` — stream that local file onto the remote (same install
   location), regardless of platform match — you are responsible for architecture fit.
 - `[remote] default_host` — used when `--remote` is passed without a host argument; also supplies
   shared `identity_file` / `ssh_args` / `binary_path` defaults for other aliases.
 
-Install writes atomically under `$HOME/.local/bin/hyprmux` on the remote and refuses to overwrite a
+Install writes atomically under `$HOME/.local/bin/rozi` on the remote and refuses to overwrite a
 non-regular file. Non-interactive runs never issue a mutating install command.
 
-If attach finds a running remote server whose protocol range does not overlap this client, hyprmux
+If attach finds a running remote server whose protocol range does not overlap this client, rozi
 kills that session once over ssh and retries attach (so a fresh `--remote-serve` can autostart a
 compatible server).
 
@@ -202,7 +202,7 @@ Notes:
   `--remote` is sent with an empty shell argv, so the remote session server picks its own platform
   default (`$SHELL` on Unix, `cmd.exe`/PowerShell on Windows) — the local `[shell]` setting and the
   client's shell-integration rc-file (a local path a different-OS server cannot run) do not travel.
-  A consequence is that hyprmux's shell integration (OSC 133 prompt markers, OSC 7 cwd reporting,
+  A consequence is that rozi's shell integration (OSC 133 prompt markers, OSC 7 cwd reporting,
   agent-status detection) is **not** injected into remote panes, so those features are limited there
   until the server grows its own shell-integration path. A remote pane still shows the directory it
   was **launched** in — the server reports the cwd it spawned the pane in — but that display does not
@@ -229,7 +229,7 @@ Notes:
 ## Security model
 
 - Transport is whatever your `ssh` config already trusts (keys, known_hosts, jump hosts via
-  `ssh_args`). hyprmux does not open a network-facing session port.
+  `ssh_args`). rozi does not open a network-facing session port.
 - Runtime endpoints on the remote host stay per-user local IPC; the proxy is just another client of
   that endpoint.
 - Install copies a binary you already run locally onto the remote home directory; set

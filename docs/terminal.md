@@ -1,13 +1,13 @@
 # Terminal features
 
-Every `hyprmux` pane is a **real terminal**: a live PTY shell rendered by a full VT emulator.
+Every `rozi` pane is a **real terminal**: a live PTY shell rendered by a full VT emulator.
 The terminal primitives come from [`tui-lipan`](../../tui-lipan)'s `terminal` feature
-(`portable-pty` + `alacritty_terminal`); `hyprmux` drives them and adds window management,
+(`portable-pty` + `alacritty_terminal`); `rozi` drives them and adds window management,
 identity, and scrollback search on top.
 
 ## A pane is a live shell
 
-`hyprmux` runs an [always-server](sessions.md) model: a background session server owns every PTY,
+`rozi` runs an [always-server](sessions.md) model: a background session server owns every PTY,
 and the UI client parses the raw PTY byte stream into its own `TerminalScreen`.
 
 - The server spawns each PTY and broadcasts its raw output as pane frames; the client feeds those
@@ -34,12 +34,12 @@ but are never used as spawn directories.
 
 In the default `[shell_integration]` `auto` mode, bash, zsh, fish, and PowerShell panes emit these
 markers without modifying dotfiles, registry keys, or `$PROFILE`. Their execution marker includes a
-hyprmux-namespaced executable basename only, never a command line — treat everything a terminal
+rozi-namespaced executable basename only, never a command line — treat everything a terminal
 tells you as untrusted, including your own shell's report of what you just typed. See
 [Configuration](configuration.md#shell_integration) for the per-shell setup and opt-out.
 
 cmd.exe is the exception: it reports its working directory and prompt boundaries but nothing about
-the command it is running, because it offers no pre-execution hook and hyprmux will not install an
+the command it is running, because it offers no pre-execution hook and rozi will not install an
 `AutoRun` registry key.
 
 ### Smart focus and cwd inheritance
@@ -59,14 +59,14 @@ A path that decodes to something not absolute — a Windows drive-relative `C:fo
 driveless `\foo`, a bare `foo` — falls through to the next tier rather than being repaired. A path
 we would have to guess at is a path we should not be handing to a new pane.
 
-**Windows has no tier 2.** Process inspection is deliberately unsupported: hyprmux never probes a
+**Windows has no tier 2.** Process inspection is deliberately unsupported: rozi never probes a
 PEB or walks a process tree. Shell integration is therefore the only source of this metadata on
 Windows, which is why the PowerShell integration is worth having and why cmd.exe panes will not do
 smart focus.
 
 An OSC 7 report carrying a *remote* host (an SSH session with the integration installed on the far
 side) is displayed but never used as a spawn directory — the path is real, but not on this machine.
-A host hyprmux cannot resolve is treated as remote, which is the safe direction to be wrong in.
+A host rozi cannot resolve is treated as remote, which is the safe direction to be wrong in.
 
 The live cwd is also what *Capture session as profile* records (see [Project profiles](project-profiles.md)).
 
@@ -126,7 +126,7 @@ selection uses the theme's selection color. Yank uses the system clipboard, reac
 SSH via OSC52 when enabled.
 
 *Copy last command output* is also available from the command palette / `copy-last-output`
-action and as `hyprmux capture-pane --last-output` for automation. Without shell
+action and as `rozi capture-pane --last-output` for automation. Without shell
 integration marks the action shows a status hint rather than an error.
 
 ## Hint mode
@@ -149,7 +149,7 @@ sequence do not create false urgency.
 ## Window / program titles
 
 Programs set their title via the OSC 0/2 escape sequence (shells often set it to `$PWD`,
-editors to the open filename). `hyprmux` reads that title and shows it in the pane's titlebar,
+editors to the open filename). `rozi` reads that title and shows it in the pane's titlebar,
 unless you've set a custom title by renaming the pane. See
 [Layouts & panes › Titlebars](layouts-and-panes.md#titlebars).
 
@@ -198,14 +198,14 @@ Press `/` (or *Search scrollback* in the palette) to search the focused pane's s
   incomplete copy-mode search hands its discovered pane matches back to copy mode immediately and
   marks that retained set as truncated.
 
-Search is **app-side**: `hyprmux` streams retained plain-text lines from `TerminalScreen` without
+Search is **app-side**: `rozi` streams retained plain-text lines from `TerminalScreen` without
 mutating the scrollback offset, then maps matching absolute lines back to viewport coordinates for
 jumping. ASCII letters match case-insensitively; non-ASCII text remains case-sensitive. This works
 regardless of the program running in the pane, because it reads rendered terminal lines rather
 than relying on an in-terminal highlight search.
 
 The scan reads a live terminal view rather than copying or locking history. When new output reaches
-any pane in the active scope, hyprmux cancels the current scan, clears its coordinates, and restarts
+any pane in the active scope, rozi cancels the current scan, clears its coordinates, and restarts
 the same query with the focused target first. This also applies after a scan has completed while
 the search remains open, so a result can never jump to text shifted by live scrollback eviction.
 
@@ -213,7 +213,7 @@ the search remains open, so a result can never jump to text shifted by live scro
 
 *Edit scrollback in $EDITOR* (palette / `edit-scrollback` action) dumps the focused pane's full
 retained scrollback to a private file under the state directory
-(`~/.local/state/hyprmux/scrollback/pane-<id>-<timestamp>.txt`, mode `0600`) and opens it in
+(`~/.local/state/rozi/scrollback/pane-<id>-<timestamp>.txt`, mode `0600`) and opens it in
 `$EDITOR` (then `$VISUAL`, then `vi`) as a tiled pane — the same pattern as opening the config
 file. Older dumps are pruned so the directory stays near 20 files.
 
@@ -259,7 +259,7 @@ Limits worth knowing:
   pane's full screen state (scrollback + primary + alt + modes + cursor + title) to a synthesized VT
   byte stream (`TerminalScreen::export_replay_bytes`) and streams it to the client, which replays it
   through the same parser it uses for live output - one code path, exact reconstruction.
-- **Named sessions persist across detach.** `hyprmux <name>` connects to a named server
+- **Named sessions persist across detach.** `rozi <name>` connects to a named server
   whose PTYs survive client detach/quit and can be reattached later.
 - **Profiles restore layout and launch intent, not live state.** Restoring a
   [project profile](project-profiles.md) starts fresh shells/commands - it does not resurrect
@@ -278,12 +278,12 @@ that is the only lossless form and the only one that replays. Two things are add
 
 - **Each run opens with a header line** naming the session, pane id and generation, pane size, and
   start time, so a file appended to across several logging runs stays self-describing.
-- **hyprmux's own `OSC 133 ; C ; rozi_exe=` parameter is stripped**, leaving the bare
+- **rozi's own `OSC 133 ; C ; rozi_exe=` parameter is stripped**, leaving the bare
   `OSC 133 ; C` marker that any shell integration writes. That parameter is how
   [shell integration](configuration.md#shell_integration) reports the foreground program to
-  hyprmux; it is not the pane's output and does not belong in a log of it. Every other escape
+  rozi; it is not the pane's output and does not belong in a log of it. Every other escape
   sequence the shell or program emitted, OSC 133 `A`/`B`/`D` included, is left alone.
 
 To strip the remaining escape sequences for a plain-text record, pipe the file through a filter such
-as `ansifilter` or `sed -e 's/\x1b\[[0-9;]*m//g'` - hyprmux writes the faithful stream and leaves
+as `ansifilter` or `sed -e 's/\x1b\[[0-9;]*m//g'` - rozi writes the faithful stream and leaves
 that choice to you.

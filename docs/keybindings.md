@@ -1,6 +1,6 @@
 # Keybindings
 
-`hyprmux` offers two equivalent control paths for window-management commands, plus normal
+`rozi` offers two equivalent control paths for window-management commands, plus normal
 typing that goes straight to the focused shell.
 
 ## The two control paths
@@ -44,9 +44,9 @@ shell and programs in your panes (readline word-editing, `Alt+Tab`, editor `Alt+
 the mirror for just one command instead, override it in `[keys]` with an explicit leader-only
 binding, e.g. `detach = "ctrl-a d"`.
 
-All exit and lifecycle commands are prefix/modifier actions like everything else. hyprmux
+All exit and lifecycle commands are prefix/modifier actions like everything else. rozi
 disables tui-lipan's built-in global `Ctrl-q` quit (`App::global_quit(None)`); bind
-`quit = "ctrl-q"` under `[keys]` if you want that shortcut back through hyprmux. Bare `F12`
+`quit = "ctrl-q"` under `[keys]` if you want that shortcut back through rozi. Bare `F12`
 is also unbound so it reaches terminal panes; DevTools uses prefix/mod+`F12` instead
 (`toggle-devtools`).
 
@@ -54,14 +54,14 @@ is also unbound so it reaches terminal panes; DevTools uses prefix/mod+`F12` ins
 
 Key handling is the same on Windows, with two things worth knowing:
 
-- **`Alt` chords reach hyprmux, `Super` (the Windows key) largely does not.** The shell intercepts
+- **`Alt` chords reach rozi, `Super` (the Windows key) largely does not.** The shell intercepts
   most `Win+<key>` combinations system-wide before any console application sees them, so the default
   `Alt` modifier is not merely the better choice on Windows — it is close to the only workable one.
   `[input] modifier = "super"` will leave several commands unreachable.
-- **`Ctrl+C` goes to your pane, not to hyprmux.** The TUI puts the console in raw mode, so `Ctrl+C`
+- **`Ctrl+C` goes to your pane, not to rozi.** The TUI puts the console in raw mode, so `Ctrl+C`
   arrives as an ordinary key event and is forwarded to the program running in the focused pane,
-  exactly as on Unix. It does not interrupt hyprmux. *Closing the console window* (or logging off)
-  is what hyprmux treats as a clean detach — see
+  exactly as on Unix. It does not interrupt rozi. *Closing the console window* (or logging off)
+  is what rozi treats as a clean detach — see
   [Sessions](sessions.md#how-a-server-starts-and-stops).
 
 ## Command reference
@@ -128,28 +128,28 @@ entered from.
 
 #### Seamless vim / neovim navigation
 
-hyprmux ships vim-aware focus actions and its own
+rozi ships vim-aware focus actions and its own
 [`vim-rozi-navigator`](../integrations/vim-rozi-navigator/) plugin. Together they make a
-single `Ctrl-h/j/k/l` cross both hyprmux panes and editor splits. The hyprmux actions are **unbound
+single `Ctrl-h/j/k/l` cross both rozi panes and editor splits. The rozi actions are **unbound
 by default**, so you opt in explicitly.
 
 | Action id | Behavior |
 | --- | --- |
-| `smart-focus-left` / `-down` / `-up` / `-right` | If the focused pane is running a split-aware program (see `[navigation] editors` in [Configuration](configuration.md#navigation)), forward the matching `Ctrl-h/j/k/l` to it; otherwise move hyprmux pane focus in that direction. |
+| `smart-focus-left` / `-down` / `-up` / `-right` | If the focused pane is running a split-aware program (see `[navigation] editors` in [Configuration](configuration.md#navigation)), forward the matching `Ctrl-h/j/k/l` to it; otherwise move rozi pane focus in that direction. |
 
 The pieces that make this work:
 
-- **hyprmux → editor:** bind the smart-focus actions to `Ctrl-h/j/k/l`. When the focused pane runs
-  vim/neovim, the key is forwarded so the editor moves its own split; otherwise hyprmux moves focus.
-- **editor → hyprmux:** when the editor is at its split edge it hands focus back by calling
-  `hyprmux run-action focus-<dir>-no-wrap` over the [control socket](control.md) (every pane already
+- **rozi → editor:** bind the smart-focus actions to `Ctrl-h/j/k/l`. When the focused pane runs
+  vim/neovim, the key is forwarded so the editor moves its own split; otherwise rozi moves focus.
+- **editor → rozi:** when the editor is at its split edge it hands focus back by calling
+  `rozi run-action focus-<dir>-no-wrap` over the [control socket](control.md) (every pane already
   has `ROZI`/`ROZI_SOCKET`/`ROZI_PANE` in its environment). The plugin can opt back into
   wrapping with `g:rozi_navigator_wrap = 1`.
 
 Detection uses the pane's foreground process (Linux `/proc`), so it is accurate regardless of
 shell/process depth and works for any program you list in `[navigation] editors`, not just vim.
 
-Wire the hyprmux side in `[keys]`:
+Wire the rozi side in `[keys]`:
 
 ```toml
 [keys]
@@ -163,13 +163,13 @@ Then install the bundled editor plugin. With lazy.nvim:
 
 ```lua
 {
-  dir = "/path/to/hyprmux/integrations/vim-rozi-navigator",
+  dir = "/path/to/rozi/integrations/vim-rozi-navigator",
   name = "vim-rozi-navigator",
 }
 ```
 
 The plugin provides `:RoziNavigateLeft/Down/Up/Right/Previous`, normal and terminal-mode
-mappings, optional save-on-switch behavior, and no-op fallback outside hyprmux. See its
+mappings, optional save-on-switch behavior, and no-op fallback outside rozi. See its
 [README](../integrations/vim-rozi-navigator/README.md) for Vim package installation and custom
 mappings.
 
@@ -220,7 +220,7 @@ name. Names are saved with profiles and session autosave.
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Quit client / Detach | `q` / `d` | Leave the client. Both actions run the same behavior; the separate `detach` action id remains valid for `[keys] detach` and `hyprmux run-action detach`, including the tmux-style `d` default. Named sessions are detached and their servers keep running; a temporary session you never touched is closed silently. A temporary session you *worked in* raises **Keep this session?**: type a name and `Enter` to keep it running, press `Enter` on an empty name (twice — the prompt says what the second press closes) to close it, or `Esc` to stay. Disable the second press via `[confirm] quit_ephemeral = false`. |
+| Quit client / Detach | `q` / `d` | Leave the client. Both actions run the same behavior; the separate `detach` action id remains valid for `[keys] detach` and `rozi run-action detach`, including the tmux-style `d` default. Named sessions are detached and their servers keep running; a temporary session you never touched is closed silently. A temporary session you *worked in* raises **Keep this session?**: type a name and `Enter` to keep it running, press `Enter` on an empty name (twice — the prompt says what the second press closes) to close it, or `Esc` to stay. Disable the second press via `[confirm] quit_ephemeral = false`. |
 | Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Rarely used and destructive, so it ships unbound - reach it via the command palette or bind `kill-workspace` under `[keys]`. |
 | Kill session | *(palette only)* | Shut down the attached session completely. Does not quit and does not auto-attach elsewhere: opens the session picker when another choice remains, otherwise the sessionless launcher. Ephemeral sessions are removed, not recreated. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].kill_session` controls whether it needs a second trigger. |
 | Restart session | *(palette / picker `Ctrl+E`)* | Shut down the selected (or attached) session's server and immediately recreate it as the active session with fresh panes. Distinct from *Kill session*. Palette selection runs directly; picker requires a second `Ctrl+E`. `[confirm].kill_session` also gates the palette second trigger when bound. |
@@ -251,7 +251,7 @@ second confirmation.
 | Previous sidebar tab (`sidebar-prev-tab`) | `page-up` | Cycle backward through configured tabs while the sidebar is visible. |
 | Focus next blocked pane (`focus-next-blocked-pane`) | *(no default)* | Scan panes across all workspaces in deterministic order and focus the next reported or screen-detected blocked pane; wraps after the current focus and skips closing/exited/special panes. |
 
-All six actions are available from the command palette and `hyprmux run-action`, and all are
+All six actions are available from the command palette and `rozi run-action`, and all are
 rebindable under `[keys]`.
 
 Once the sidebar has the keyboard, `↑`/`↓` move the cursor (skipping section headers), `Enter`
@@ -265,14 +265,14 @@ The sidebar is deliberately excluded from the Tab focus ring and from click-to-f
 reaching the focused pane's program and clicking a row never steals the keyboard from a running
 command. See [Sidebar](sidebar.md).
 
-> All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
+> All commands above can be rebound from `config.toml`. See the `[keys]` section in
 > [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.
 
 Beyond rebinding, `[keys]` can also define brand new key-triggered commands that open a
 program in a new pane or send text to the focused pane's PTY - see [User-defined command
 keybindings](configuration.md#user-defined-command-keybindings). They show up in the help
 overlay (under "Custom") and command palette with a generated label, but are config-only: they
-have no stable id, so they can't be rebound elsewhere or invoked via `hyprmux run-action`.
+have no stable id, so they can't be rebound elsewhere or invoked via `rozi run-action`.
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
 keyboard - capture session as profile, replace session with profile, change appearance, promote to master, plus discoverable extras (rename pane, search,

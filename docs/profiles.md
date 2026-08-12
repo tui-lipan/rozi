@@ -3,7 +3,7 @@
 Named profiles are reusable launch recipes stored as TOML files in:
 
 ```
-~/.config/hyprmux/profiles/<name>.toml
+~/.config/rozi/profiles/<name>.toml
 ```
 
 Each version-1 profile records workspaces, pane titles, layout metadata, and optional launch
@@ -11,7 +11,7 @@ identity (`cwd`, `command`, `keep_open`, floating geometry). Profiles do **not**
 state. Launching from one starts fresh shells or commands.
 
 A profile and a session are independent objects. The same-name session is only the profile's
-canonical default binding: opening profile `dev` uses session `dev`, while `hyprmux new review
+canonical default binding: opening profile `dev` uses session `dev`, while `rozi new review
 --profile dev` launches the same recipe as an independent session named `review`. A session created
 from a profile may record that recipe as `created_from_profile`, but it does not remain linked to
 the file and later profile edits do not alter the running session. Existing version-1 profile files
@@ -32,7 +32,7 @@ Each pane entry supports:
 | `rect` | Floating geometry `{ x, y, w, h }`. |
 
 Workspace entries may also include `synchronized = true` to restore pane synchronization for that
-workspace. Omit `tree` in a workspace to let hyprmux auto-build a dwindle tree from pane order.
+workspace. Omit `tree` in a workspace to let rozi auto-build a dwindle tree from pane order.
 
 ## Example: lazygit + nvim
 
@@ -64,24 +64,24 @@ A commented copy lives at [`examples/profiles/dev.toml`](../examples/profiles/de
 Use the profile's canonical same-name session:
 
 ```bash
-hyprmux dev
-hyprmux --session dev
+rozi dev
+rozi --session dev
 ```
 
 These spellings attach to running session `dev`; if it is not running, they launch it from
-`profiles/dev.toml`. If neither the session nor profile exists, hyprmux reports an error and tells
+`profiles/dev.toml`. If neither the session nor profile exists, rozi reports an error and tells
 you to create the session explicitly. An unknown target never silently creates an empty session.
 
 To create an independent session, optionally from any recipe, use:
 
 ```bash
-hyprmux new review
-hyprmux new review --profile dev
+rozi new review
+rozi new review --profile dev
 ```
 
-`attach` and `new` are reserved CLI command words. Use `hyprmux --session attach` or
-`hyprmux --session new` when a session or canonical profile binding actually has one of those
-names. A bare `hyprmux` opens the session picker (or starts an ephemeral scratch session when there
+`attach` and `new` are reserved CLI command words. Use `rozi --session attach` or
+`rozi --session new` when a session or canonical profile binding actually has one of those
+names. A bare `rozi` opens the session picker (or starts an ephemeral scratch session when there
 is nothing to pick) unless `[session] startup = "last"` is configured. In ephemeral mode,
 `[profile] default` remains the first launch seed, followed by session autosave.
 
@@ -96,13 +96,13 @@ Or use the in-app **Profiles** command (command palette): highlight a profile an
 `Ctrl+f` to toggle it as the startup default.
 
 The default seeds **every session opened without a recipe**, not just the launch that started
-hyprmux: the initial session, each new temporary session, and each named session created without a
+rozi: the initial session, each new temporary session, and each named session created without a
 profile. Paths that already name a recipe are unaffected — attaching to an existing session, a
-canonical `hyprmux <name>` target, `new <name> --profile <recipe>`, and the picker's **Open as** all
+canonical `rozi <name>` target, `new <name> --profile <recipe>`, and the picker's **Open as** all
 keep using theirs. Sessions seeded this way record the default as their creating profile, so the
 capture prompt offers its name back.
 
-If a configured default profile is missing or fails to parse, hyprmux shows a startup warning and
+If a configured default profile is missing or fails to parse, rozi shows a startup warning and
 falls through to the next bare-launch source (or a fresh layout); sessions created later fall back
 to a single shell rather than failing to open. An explicit canonical target with a missing or
 invalid profile reports an error instead.
@@ -120,8 +120,8 @@ invalid profile reports an error instead.
 Capturing from a temporary session names that session after the profile on the same **Enter**, so
 the running session and its recipe end up sharing one identity:
 
-- while the session lives, `hyprmux <name>` reattaches to it,
-- once it is gone, `hyprmux <name>` rebuilds a new one from the profile.
+- while the session lives, `rozi <name>` reattaches to it,
+- once it is gone, `rozi <name>` rebuilds a new one from the profile.
 
 A session that is *already* named keeps its name — capturing `dev-full` out of session `dev` leaves
 `dev` called `dev`. To capture a temporary session without keeping it, capture it and kill the
@@ -140,7 +140,7 @@ Open **Profiles** from the command palette, then:
 | **Ctrl+o** | **Open as**: launch the highlighted recipe under a new session name, or leave the name empty for a fresh ephemeral session. A name must not already be running. |
 | **Ctrl+n** | Capture the current session as a new profile. |
 | **Ctrl+r** | Replace the current session with the highlighted profile. Press twice to close all panes and running processes and launch the recipe; the session name and attached clients are kept. |
-| **Ctrl+f** | Toggle the highlighted profile as `[profile] default` in `hyprmux.toml`; pressing it on the current default clears the setting. |
+| **Ctrl+f** | Toggle the highlighted profile as `[profile] default` in `config.toml`; pressing it on the current default clears the setting. |
 | **Ctrl+d** | Delete the highlighted profile file. Press **Ctrl+d** again on the same row to confirm. |
 
 The status beside a profile refers only to its canonical same-name session: **attached** or

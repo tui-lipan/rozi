@@ -1,17 +1,17 @@
 # Sessions
 
-`hyprmux` uses an **always-server** model (like `tmux`/`zellij`). A background session server
+`rozi` uses an **always-server** model (like `tmux`/`zellij`). A background session server
 owns every PTY; the UI client always attaches to a session and parses the raw PTY byte stream into
 its own terminal screens. There is no in-process ("local") PTY mode.
 
-- **Bare launch** (`hyprmux`) attaches to a per-process
+- **Bare launch** (`rozi`) attaches to a per-process
   **ephemeral** session named `eph-<pid>`, autostarting its server. Ephemeral sessions are
   disposable: leaving closes an untouched one and asks whether to keep one that contains work. The
   `eph-<pid>` name is an implementation detail - the workbar shows no session badge for it, and the
   picker lists it as `ephemeral`.
-- **Named target** (`hyprmux dev` or `hyprmux --session dev`) attaches to a running persistent
+- **Named target** (`rozi dev` or `rozi --session dev`) attaches to a running persistent
   session, or launches its canonical same-name profile. It errors when neither exists; empty
-  sessions are created explicitly with `hyprmux new <name>`.
+  sessions are created explicitly with `rozi new <name>`.
 
 Because the server owns PTYs from startup, naming a session is a **rename** in place (no pane
 movement): the running shells and their scrollback are untouched. See
@@ -21,7 +21,7 @@ movement): the running shells and their scrollback are untouched. See
 
 | | Ephemeral | Named (`dev`) |
 |---|---|---|
-| Created by | bare `hyprmux` launch | profile launch, explicit `new`, or *Rename session* |
+| Created by | bare `rozi` launch | profile launch, explicit `new`, or *Rename session* |
 | Leaving (`prefix q` / `prefix d`), untouched | server shuts down | n/a |
 | Leaving, after you worked in it | prompts: name it to keep, or close it | server keeps running |
 | Switch to another session | retained if used, discarded if untouched | retained in this client |
@@ -33,42 +33,42 @@ movement): the running shells and their scrollback are untouched. See
 
 ## Named sessions
 
-Session endpoints live under hyprmux's runtime directory as `session-<name>.sock` (on Windows, that
-entry stands for the named pipe `\\.\pipe\hyprmux.<user-sid>.session-<name>` — see
+Session endpoints live under rozi's runtime directory as `session-<name>.sock` (on Windows, that
+entry stands for the named pipe `\\.\pipe\rozi.<user-sid>.session-<name>` — see
 [Control](control.md#endpoints-per-platform)). Names are sanitized when constructing the endpoint.
 
 ```bash
-hyprmux dev                     # attach "dev", or launch canonical profile "dev"
-hyprmux --session dev           # equivalent target spelling
-hyprmux attach dev              # attach only; error unless "dev" is running
-hyprmux attach dev --read-only  # attach as a viewer without input authority
-hyprmux new dev                 # create a fresh empty session; error if running
-hyprmux new review --profile dev # create "review" from profile "dev"
-hyprmux --session dev --server  # run the server process directly
-hyprmux list-sessions           # list connectable sessions with pane/layout status
-hyprmux kill-session dev        # attach-handshake then request a clean Shutdown
-hyprmux --remote workbox dev    # same attach/launch surface on a remote host over SSH
-hyprmux list-sessions --remote workbox
-hyprmux kill-session dev --remote workbox
+rozi dev                     # attach "dev", or launch canonical profile "dev"
+rozi --session dev           # equivalent target spelling
+rozi attach dev              # attach only; error unless "dev" is running
+rozi attach dev --read-only  # attach as a viewer without input authority
+rozi new dev                 # create a fresh empty session; error if running
+rozi new review --profile dev # create "review" from profile "dev"
+rozi --session dev --server  # run the server process directly
+rozi list-sessions           # list connectable sessions with pane/layout status
+rozi kill-session dev        # attach-handshake then request a clean Shutdown
+rozi --remote workbox dev    # same attach/launch surface on a remote host over SSH
+rozi list-sessions --remote workbox
+rozi kill-session dev --remote workbox
 ```
 
 For SSH attach, bootstrap/install, protocol negotiation, and the local-vs-remote feature split, see
 [Remote SSH sessions](remote.md).
 
 The positional target performs exactly three steps: attach if that session is running; otherwise
-launch the canonical same-name profile; otherwise report an error suggesting `hyprmux new <name>`.
-It never silently creates an unknown target. `hyprmux attach <name> [--read-only]` is attach-only,
-and `hyprmux new <name> [--profile <recipe>]` is create-only. `attach` and `new` are reserved command
+launch the canonical same-name profile; otherwise report an error suggesting `rozi new <name>`.
+It never silently creates an unknown target. `rozi attach <name> [--read-only]` is attach-only,
+and `rozi new <name> [--profile <recipe>]` is create-only. `attach` and `new` are reserved command
 words; use the `--session` spelling to target a session or canonical profile binding literally named
 `attach` or `new`.
 
 Sessions and profiles are independent. A profile is a reusable launch recipe, and its same-name
 session is only its default canonical binding. A newly seeded session optionally records
 `created_from_profile`; this is origin metadata, not a live link or the session's identity.
-Explicit `new` means fresh creation: if an old resurrection snapshot exists for that name, hyprmux
+Explicit `new` means fresh creation: if an old resurrection snapshot exists for that name, rozi
 removes it before starting the new server rather than restoring it.
 
-`kill-session` only talks to hyprmux's session endpoint and sends the protocol `Shutdown` message;
+`kill-session` only talks to rozi's session endpoint and sends the protocol `Shutdown` message;
 it does not kill arbitrary processes or remove unrelated files. Any authenticated writable client
 may make that explicit destructive request, so it also works while another client holds layout
 control; read-only clients cannot stop the server.
@@ -83,7 +83,7 @@ Stopping one is **always** the authenticated protocol `Shutdown` message first. 
 mechanism on every platform; it is what `kill-session`, the picker's kill action, and a clean quit
 of an ephemeral session all send, and it is what lets the server snapshot, close its PTYs, and
 retire its endpoint on the way out. Only when that fails — an unresponsive server, or one too old
-to even complete the handshake — does hyprmux escalate to forced termination: `SIGTERM` and then
+to even complete the handshake — does rozi escalate to forced termination: `SIGTERM` and then
 `SIGKILL` on Unix, `TerminateProcess` on Windows.
 
 A signal or console event asking the *server* to stop (`SIGTERM`/`SIGHUP`, or a Windows console
@@ -95,7 +95,7 @@ Closing the terminal your *client* is running in (`SIGHUP`, or a Windows console
 treated as a **detach**, not a crash: the layout is mirrored to disk and a named session's server is
 left running for you to reattach to.
 
-After a clean client exit, hyprmux leaves a compact reattach command in terminal scrollback for the
+After a clean client exit, rozi leaves a compact reattach command in terminal scrollback for the
 named session that was on screen. Remote sessions include their remote target. Ephemeral and
 sessionless exits print nothing because there is no durable named session to reattach to. A remote
 hint is also omitted when its target would require shell-specific quoting, rather than leaving an
@@ -148,7 +148,7 @@ the background, so keeping several sessions open costs nobody else anything: ano
 attaching to a session you have merely parked gets control of it normally instead of joining as your
 follower. Returning to a parked session takes the lease back if nobody else claimed it meanwhile.
 
-The one session switching does **not** retain is an ephemeral one that hyprmux created for you and
+The one session switching does **not** retain is an ephemeral one that rozi created for you and
 you never used — the startup scratch session, typically. Nothing was done in it, so it is shut down
 rather than left running behind the session you actually wanted. An ephemeral you typed in or
 reshaped is real work and is parked like anything else.
@@ -194,7 +194,7 @@ its historical creation origin.
 
 By default (`[session] startup = "picker"`, also reachable with `--pick`) a bare launch asks which
 session to attach to. **Opening the picker attaches nothing** - no session is created until you
-choose one, so launching hyprmux never leaves a stray session behind.
+choose one, so launching rozi never leaves a stray session behind.
 
 The picker is shown only when there is something to pick: a running named session, a resurrection
 snapshot, or a remote host with cached sessions. With nothing to choose from, the launch falls
@@ -283,9 +283,9 @@ broadcasts it (see [Shared live layouts](#shared-live-layouts)).
       what that press closes (*"Enter again closes this temporary session and quits"*). Set
       `[confirm] quit_ephemeral = false` to close on the first press.
     - `Esc` → nothing is torn down and you return to the session.
-- Leaving over the **control socket** (`hyprmux run-action quit`) never prompts and never closes a
+- Leaving over the **control socket** (`rozi run-action quit`) never prompts and never closes a
   session you worked in — there is nobody to answer, and automation must not be what destroys work.
-- If the server disconnects unexpectedly while attached, hyprmux marks panes errored and attempts a
+- If the server disconnects unexpectedly while attached, rozi marks panes errored and attempts a
   reconnect. Ephemeral sessions autostart a replacement server; a dead named session surfaces as an
   error rather than a silent empty resurrection.
 
@@ -441,7 +441,7 @@ fresh launch can restore it after the server is gone.
 
 Named sessions are periodically snapshotted when `[session] resurrect = true` (the default), and
 also immediately when their last client detaches after a change. Snapshots live under
-`$XDG_STATE_HOME/hyprmux/sessions/<name>/` (or `~/.local/state/hyprmux/sessions/<name>/`) and use
+`$XDG_STATE_HOME/rozi/sessions/<name>/` (or `~/.local/state/rozi/sessions/<name>/`) and use
 versioned JSON metadata plus per-pane terminal replay files. The metadata includes the optional
 `created_from_profile` origin. Writes replace the complete snapshot
 atomically with private directory (`0700`) and file (`0600`) permissions.
@@ -460,8 +460,8 @@ restarts.
 `kill-session` and a clean in-protocol session shutdown mean **forget**: they remove the snapshot as
 well as stopping the server. A crash, `SIGKILL`, or ordinary detach preserves it for resurrection.
 
-Profiles are reusable launch recipes. `hyprmux dev` attaches to `dev` when running, otherwise loads
-`~/.config/hyprmux/profiles/dev.toml` into a fresh canonical session named `dev`; use `hyprmux new
+Profiles are reusable launch recipes. `rozi dev` attaches to `dev` when running, otherwise loads
+`~/.config/rozi/profiles/dev.toml` into a fresh canonical session named `dev`; use `rozi new
 review --profile dev` to create an independently named session from the same recipe. Session
 resurrection, local autosave, and `[session] startup = "last"` retain their existing precedence and
 lifecycle behavior. See [profiles.md](profiles.md).
@@ -475,6 +475,6 @@ Known limitation: `list-sessions` reports connectable session sockets only; stal
 are skipped so the command does not hang.
 
 Client and server negotiate a session wire protocol version in a supported range (this build speaks
-protocol 20 only). After upgrading hyprmux, restart existing named session servers before attaching
+protocol 20 only). After upgrading rozi, restart existing named session servers before attaching
 when the new client's minimum is higher than the old server's maximum — otherwise attach fails with
 a message naming both sides. See [Remote SSH sessions](remote.md#protocol-negotiation).

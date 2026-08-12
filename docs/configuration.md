@@ -1,27 +1,27 @@
 # Configuration
 
-`hyprmux` reads a single TOML config file at startup. All keys are optional; anything you
+`rozi` reads a single TOML config file at startup. All keys are optional; anything you
 omit keeps its default. A read or parse failure does **not** crash the app - it loads
 defaults and reports the problem as a startup toast. Unknown keys are parse failures, so a
 misspelled setting is reported rather than silently ignored; the message lists the keys the
 table accepts.
 
-[`examples/hyprmux.toml`](../examples/hyprmux.toml) is the copyable version of this page: every
+[`examples/config.toml`](../examples/config.toml) is the copyable version of this page: every
 setting, commented out at its default value, so the file as shipped behaves exactly like having
 no config at all.
 
 ## Config file location
 
-`hyprmux` resolves the config path in this order:
+`rozi` resolves the config path in this order:
 
 1. `$ROZI_CONFIG` (a full path; `~` and `~/...` expand to `$HOME`).
-2. `$XDG_CONFIG_HOME/hyprmux/hyprmux.toml`, else `~/.config/hyprmux/hyprmux.toml` — on Windows,
-   `%APPDATA%\hyprmux\hyprmux.toml`.
+2. `$XDG_CONFIG_HOME/rozi/config.toml`, else `~/.config/rozi/config.toml` — on Windows,
+   `%APPDATA%\rozi\config.toml`.
 
 On startup a toast reports any warning raised while reading or parsing the file. A config that
 loads cleanly is silent - the settings taking effect is the confirmation.
 
-### Where hyprmux keeps its files
+### Where rozi keeps its files
 
 Every path below is the *base* directory; profiles, themes, session snapshots, and pane logs live
 under it. macOS follows the XDG convention rather than `~/Library`, matching tmux, neovim, and
@@ -30,24 +30,24 @@ working directory, which would make the config directory move every time you `cd
 
 | | Linux/macOS | Windows |
 | --- | --- | --- |
-| Config (`hyprmux.toml`, `themes/`, `profiles/`) | `$XDG_CONFIG_HOME/hyprmux`, else `~/.config/hyprmux` | `%APPDATA%\hyprmux` |
-| State (session autosave, resurrection snapshots, pane logs) | `$XDG_STATE_HOME/hyprmux`, else `~/.local/state/hyprmux` | `%LOCALAPPDATA%\hyprmux` |
-| Cache (generated shell-integration scripts) | `$XDG_CACHE_HOME/hyprmux`, else `~/.cache/hyprmux` | `%LOCALAPPDATA%\hyprmux\cache` |
-| Runtime (control and session endpoints) | `$XDG_RUNTIME_DIR/hyprmux`, else a private per-uid temp directory | `%LOCALAPPDATA%\hyprmux\run` |
+| Config (`config.toml`, `themes/`, `profiles/`) | `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi` | `%APPDATA%\rozi` |
+| State (session autosave, resurrection snapshots, pane logs) | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi` |
+| Cache (generated shell-integration scripts) | `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
+| Runtime (control and session endpoints) | `$XDG_RUNTIME_DIR/rozi`, else a private per-uid temp directory | `%LOCALAPPDATA%\rozi\run` |
 
 ### Live reload and editing
 
-hyprmux watches the config file and applies every save live - config fields, `[keys]`
+rozi watches the config file and applies every save live - config fields, `[keys]`
 bindings/user commands, theme (including switching which file the theme watcher follows), and
 workbar segments - without touching running panes, workspaces, or the active session. A parse
 failure reloads to defaults and reports it as a toast, same as at startup; fix the file and
-save again. Changes hyprmux persists itself (theme selection, appearance toggles, the default
+save again. Changes rozi persists itself (theme selection, appearance toggles, the default
 profile) are already applied and don't trigger a reload.
 
 The **Open config file** command-palette entry (`open-config`) opens the file in `$EDITOR`
 (falling back to `$VISUAL`, then `vi`) in a new pane. From the sessionless launcher it starts an
 ephemeral session first so the editor has a live PTY. It is an ordinary action, so it also
-works as `hyprmux run-action open-config` over the control socket (see `docs/control.md`).
+works as `rozi run-action open-config` over the control socket (see `docs/control.md`).
 
 ## Full example
 
@@ -55,7 +55,7 @@ works as `hyprmux run-action open-config` over the control socket (see `docs/con
 # Shell and working directory for new panes
 shell = "/bin/zsh"          # default: $SHELL chosen by the system
 # shell = ["pwsh.exe", "-NoLogo"]  # argument-preserving array form; first element is the program
-cwd = "~/code"              # default: the directory hyprmux was launched from
+cwd = "~/code"              # default: the directory rozi was launched from
 scrollback = 10000          # default: 5000 lines per pane
 
 # Deterministic shell used to run one-off command lines: pane/popup commands, hooks, workbar
@@ -126,10 +126,10 @@ alert_pulse_ms = 1600        # shared border/tab breathe period (minimum effecti
 open_delay_ms = 36           # delay before a spawned pane fades in (default: 36)
 
 [theme]
-name = "tokyo-night"        # built-in preset, `system`, or a file in ~/.config/hyprmux/themes/
+name = "tokyo-night"        # built-in preset, `system`, or a file in ~/.config/rozi/themes/
 
 [profile]
-default = "dev"              # named profile in ~/.config/hyprmux/profiles/
+default = "dev"              # named profile in ~/.config/rozi/profiles/
 
 [clipboard]
 enable_osc52 = true          # allow programs to set the system clipboard via OSC52 (default: true)
@@ -174,7 +174,7 @@ resurrect = true             # snapshot named sessions for restart after server 
 startup = "picker"           # "picker" (default), "ephemeral", or "last"
 allow_takeover = true        # writable followers take layout control immediately (default: true;
                              # false makes a request wait for the controller to grant it)
-# path = "~/.local/state/hyprmux/session.toml"  # default location if omitted
+# path = "~/.local/state/rozi/session.toml"  # default location if omitted
 
 [scratchpad]
 command = "btop"             # default: the normal shell
@@ -233,7 +233,7 @@ stale on-disk config after the client-side config hot-reloads.
 
 ## `[shell_integration]`
 
-With `mode = "auto"` (the default), hyprmux injects its shell integration into supported
+With `mode = "auto"` (the default), rozi injects its shell integration into supported
 **interactive** shell panes only. It never changes dotfiles, registry settings, or the
 noninteractive `command_shell` runner. The integration emits OSC 7 current-directory updates and
 OSC 133 prompt/command lifecycle markers; it sends only the executable basename for smart focus,
@@ -245,24 +245,24 @@ never a full command line.
 | zsh | Temporary `ZDOTDIR` shim | Everything. Chains the original `ZDOTDIR` (or `$HOME`) `.zshenv`/`.zshrc`, then the integration. |
 | fish | Temporary `XDG_DATA_DIRS` vendor `conf.d` entry | Everything. Composes with Fish event hooks; prompt frameworks loaded later can replace its final prompt marker. |
 | PowerShell | `-NoExit -Command . <script>` | Everything. Runs *after* your `$PROFILE`, so your prompt (oh-my-posh, Starship, a hand-rolled `prompt` function) and PSReadLine configuration are wrapped, not replaced. A pane whose `shell` already carries `-Command`/`-File` is left alone — that is a "run this and exit" launch, not an interactive session. |
-| cmd.exe | `PROMPT` environment variable | Working directory and prompt boundaries only. cmd has no pre-execution hook, and hyprmux will not touch the `AutoRun` registry key, so there is no way to report the running command or its exit status. Install [Clink](https://chrisant996.github.io/clink/) if you want the rest. |
+| cmd.exe | `PROMPT` environment variable | Working directory and prompt boundaries only. cmd has no pre-execution hook, and rozi will not touch the `AutoRun` registry key, so there is no way to report the running command or its exit status. Install [Clink](https://chrisant996.github.io/clink/) if you want the rest. |
 
-Set `mode = "off"` if your shell already emits suitable OSC metadata or if you want hyprmux to
+Set `mode = "off"` if your shell already emits suitable OSC metadata or if you want rozi to
 leave shell startup completely unchanged.
 
-### PowerShell sessions hyprmux did not launch
+### PowerShell sessions rozi did not launch
 
-The `-NoExit -Command` injection above only applies to panes hyprmux starts. For a PowerShell
+The `-NoExit -Command` injection above only applies to panes rozi starts. For a PowerShell
 reached some other way — nested inside a pane, or launched through a `command =` pane — add one
 line to your `$PROFILE` instead:
 
 ```powershell
-. "$env:LOCALAPPDATA\hyprmux\cache\shell-integration\hyprmux.ps1"
+. "$env:LOCALAPPDATA\rozi\cache\shell-integration\rozi.ps1"
 ```
 
-(On Linux/macOS the script lives under `~/.cache/hyprmux/shell-integration/`.) The script is
+(On Linux/macOS the script lives under `~/.cache/rozi/shell-integration/`.) The script is
 idempotent, so having both the `$PROFILE` line and the automatic injection is harmless. The
-equivalent for cmd.exe is `hyprmux.cmd` in the same directory, which just sets `PROMPT`.
+equivalent for cmd.exe is `rozi.cmd` in the same directory, which just sets `PROMPT`.
 
 ## `[input]`
 
@@ -324,7 +324,7 @@ workspace-tab breathing. It needs both `animations.enabled` and `focus_chrome`; 
 floored at 400 ms. No pulse timer runs until an eligible alert is visible.
 Blocked and finished alerts are visible state, so they do not create success toasts.
 | `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). Integrated half-block caps replace the frame corners; round and arrow caps sit immediately inside them. `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
-| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace and sidebar tabs. The appearance cycle writes this back to config. |
+| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `rozi` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace and sidebar tabs. The appearance cycle writes this back to config. |
 | `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps, `▏` for round and padded badges). When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The appearance toggle writes this back to config. |
 | `toast_opacity` | `0.8` | How opaque a toast's background is over the pane content it covers, in `[0.0, 1.0]`. The default reads as tinted glass: the theme's `surface.panel` blended per cell with whatever is behind, so content underneath stays visible instead of being replaced. `1.0` paints the panel solid. Below `1.0` the text contrast depends on what the toast covers, and themes vary a lot in how much headroom their panel/text pair has — measured over white, yellow, red, and dark panes across the 30 bundled themes, the worst case falls under the 4.5:1 readability floor on 17 of them at `0.8`, 7 at `0.9`, and 2 at `1.0` (those last 2 sit at their own theme's ceiling either way). Raise it if your theme's toasts read poorly. Values outside `[0.0, 1.0]` warn and are ignored. |
 | `workbar_tab_style` | `padded` | End-cap style for workspace and sidebar tabs. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The appearance cycle writes this back to config. |
@@ -416,10 +416,10 @@ milliseconds.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `name` | `lipan` | The active theme: a built-in preset id, `system` (host-derived colors), or the stem of a file in `~/.config/hyprmux/themes/`. A custom file shadows a built-in of the same name. |
+| `name` | `lipan` | The active theme: a built-in preset id, `system` (host-derived colors), or the stem of a file in `~/.config/rozi/themes/`. A custom file shadows a built-in of the same name. |
 
 Custom themes are **hot-reloaded** on change while active. If the name matches nothing, or a
-custom file fails to load, `hyprmux` falls back to `lipan` and reports a warning. See
+custom file fails to load, `rozi` falls back to `lipan` and reports a warning. See
 [Themes](themes.md) for the preset list and how terminal ANSI colors are derived from the
 active theme.
 
@@ -441,7 +441,7 @@ See [Terminal features](terminal.md) for clipboard and selection behavior.
 
 ## `[notifications]`
 
-Desktop notifications are disabled by default. When enabled, hyprmux sends natural pane-exit
+Desktop notifications are disabled by default. When enabled, rozi sends natural pane-exit
 notifications (not user-initiated pane closes) and selected pane-status notifications via
 `notify-send` if it is available. Status notifications run only on the current session controller
 and are suppressed while that pane is attended, avoiding duplicate or distracting notices. A pane is
@@ -459,7 +459,7 @@ Failures are ignored and never block the UI.
 
 ## `[sounds]`
 
-Built-in WAV cues are extracted into hyprmux's cache and played best-effort. `player`, when set,
+Built-in WAV cues are extracted into rozi's cache and played best-effort. `player`, when set,
 receives the cue path as its final argument. The Alerts panel persists its toggle rows; do-not-disturb
 is in-memory for this client lifetime and mutes desktop and sound cues only. BEL and pane-status
 cues use the attended rule; non-zero exit cues play regardless of pane attendance.
@@ -475,13 +475,13 @@ cues use the attended rule; non-zero exit cues play regardless of pane attendanc
 ## `[navigation]`
 
 Controls the vim-aware `smart-focus-left` / `-down` / `-up` / `-right` actions, which power
-seamless `Ctrl-h/j/k/l` navigation across both hyprmux panes and editor splits (see
+seamless `Ctrl-h/j/k/l` navigation across both rozi panes and editor splits (see
 [Seamless vim / neovim navigation](keybindings.md#seamless-vim--neovim-navigation) for the full
 wiring). These actions are unbound by default.
 
-When a smart-focus action runs, hyprmux checks the focused pane's **foreground process name**. If
+When a smart-focus action runs, rozi checks the focused pane's **foreground process name**. If
 it matches one of the `editors`, the matching `Ctrl-h/j/k/l` is forwarded to that program so it can
-move its own split; otherwise hyprmux moves pane focus in that direction.
+move its own split; otherwise rozi moves pane focus in that direction.
 
 | Key | Default | Notes |
 | --- | --- | --- |
@@ -495,7 +495,7 @@ simply moves pane focus.
 
 ## In-app toasts
 
-Distinct from the desktop notifications above: these are the transient messages hyprmux draws
+Distinct from the desktop notifications above: these are the transient messages rozi draws
 inside its own window. There is no verbosity setting, because it aims not to need one. A toast
 appears only when something happened that you cannot already see:
 
@@ -503,7 +503,7 @@ appears only when something happened that you cannot already see:
   losing layout control, and locking input all show in the workbar badges (`󰛤 name`,
   `CTRL`/`FOLLOW`/`READ ONLY`, `SYNC`). Deleting a profile or killing a session from a list removes
   the row you acted on. Applying a profile rebuilds the panes.
-- **Lossless normalization is silent.** If hyprmux can safely make a config value usable without
+- **Lossless normalization is silent.** If rozi can safely make a config value usable without
   dropping data, the resulting visible state is the feedback; it does not produce a warning toast.
 - **Off-screen results are toasted.** Where a profile was written, what log file a pane is recording
   to, what a copy put on the clipboard, what a detach left running, and every failure.
@@ -551,11 +551,11 @@ See [sessions.md](sessions.md#switching-sessions-in-app-the-picker).
 
 ## `[session]`
 
-Optional **local** session auto-save: persist the live layout when a local `hyprmux` client exits
+Optional **local** session auto-save: persist the live layout when a local `rozi` client exits
 and restore it on the next local launch. Like profiles, this restores *layout and launch intent*,
 not live PTY state.
 
-This is separate from named sessions (`hyprmux <name>`), which run PTYs in a
+This is separate from named sessions (`rozi <name>`), which run PTYs in a
 background session server and can be detached/reattached with live terminal state intact.
 
 | Key | Default | Notes |
@@ -563,7 +563,7 @@ background session server and can be detached/reattached with live terminal stat
 | `autosave` | `false` | Write the layout on quit and restore it on startup. |
 | `resurrect` | `true` | Snapshot named sessions so their layout, commands, and scrollback can be restored after the server exits. |
 | `startup` | `"picker"` | `"picker"` opens the session picker without attaching anything; `"ephemeral"` starts a scratch session straight away; `"last"` reopens the exact last named session, falling back to the picker with that name highlighted. |
-| `path` | `$XDG_STATE_HOME/hyprmux/session.toml` | Session file location (falls back to `~/.local/state/...`). |
+| `path` | `$XDG_STATE_HOME/rozi/session.toml` | Session file location (falls back to `~/.local/state/...`). |
 | `allow_takeover` | `true` | Let any writable, active follower take the layout-control lease immediately with `request-control`. Set `false` to make a request wait for the controller to grant or decline it. The session server reads this when it starts; use `toggle-control-takeover` to change a running session. Read-only and parked clients can never take control. |
 
 An explicit target takes precedence over startup configuration. `startup = "last"` takes precedence
@@ -585,14 +585,14 @@ nothing; it moves the lease and the canonical PTY size.
 
 Set `allow_takeover = false` for a session shared with another *person*, where a silent takeover
 would reflow their panes mid-thought; `request-control` then waits to be granted or declined. For a
-person who should only watch, `hyprmux attach <name> --read-only` is stronger than either setting:
+person who should only watch, `rozi attach <name> --read-only` is stronger than either setting:
 a read-only client can never take or be granted control. The current controller can change the
 running session's policy with `toggle-control-takeover`; that runtime change does not rewrite the
 config file. See [Shared live layouts](sessions.md#shared-live-layouts).
 
 ## `[remote]`
 
-SSH attach for session servers on another host (`hyprmux --remote <alias-or-url>`). The client and
+SSH attach for session servers on another host (`rozi --remote <alias-or-url>`). The client and
 config stay local; PTYs run on the remote. See [Remote SSH sessions](remote.md).
 
 | Key | Default | Notes |
@@ -601,7 +601,7 @@ config stay local; PTYs run on the remote. See [Remote SSH sessions](remote.md).
 | `connection_timeout_secs` | `15` | Passed to ssh as `ConnectTimeout`. |
 | `server_alive_interval_secs` | `15` | ssh `ServerAliveInterval` for the proxy connection. |
 | `server_alive_count_max` | `3` | ssh `ServerAliveCountMax`. |
-| `install` | `"prompt"` | `"prompt"`, `"always"`, or `"never"`. Interactive TTYs may copy a compatible binary to `~/.local/bin/hyprmux` on the remote when missing; non-interactive runs never mutate the remote. |
+| `install` | `"prompt"` | `"prompt"`, `"always"`, or `"never"`. Interactive TTYs may copy a compatible binary to `~/.local/bin/rozi` on the remote when missing; non-interactive runs never mutate the remote. |
 | `batch_mode` | `true` | Pass ssh `BatchMode=yes`, refusing every interactive prompt. Set `false` to allow password/passphrase prompts — see the caveat in [Remote SSH sessions](remote.md#authentication). |
 
 ### `[remote.hosts.<alias>]`
@@ -615,7 +615,7 @@ Optional per-alias overrides. The alias matches a bare `--remote <alias>` argume
 | `port` | ssh default | Remote SSH port. |
 | `identity_file` | _none_ | Path to an identity file (`~` expands). |
 | `ssh_args` | `[]` | Extra arguments inserted into the ssh command line. |
-| `binary_path` | _none_ | Absolute path to hyprmux on the remote; skips probe/install. |
+| `binary_path` | _none_ | Absolute path to rozi on the remote; skips probe/install. |
 
 ```toml
 [remote]
@@ -627,7 +627,7 @@ connection_timeout_secs = 15
 user = "raz"
 port = 22
 identity_file = "~/.ssh/id_ed25519"
-# binary_path = "/usr/local/bin/hyprmux"
+# binary_path = "/usr/local/bin/rozi"
 ssh_args = ["-o", "ProxyJump=bastion"]
 ```
 
@@ -789,7 +789,7 @@ constructed from command output.
 
 ## `[workbar]`
 
-Customize the workbar. By default the `hyprmux` badge and workspace tabs are on the left, while the
+Customize the workbar. By default the `rozi` badge and workspace tabs are on the left, while the
 remote `location` and named `session` badges are on the right. Every configured segment renders as
 a colored badge; each kind has a curated default color that you can override by theme role (see
 below). The `PREFIX`/`RESIZE`/`COPY`/`HINT`/`SIDEBAR`/`SYNC`/`DND` mode chips render only while `show_workbar` is
@@ -914,9 +914,9 @@ Because a bare key always expands through the `[input]` scheme, a built-in actio
 bound to a plain unmodified key - by design, since such a binding would steal ordinary typing
 from the focused terminal. User-defined commands (below) still accept any literal trigger.
 
-hyprmux disables tui-lipan's built-in global `Ctrl-q` (`App::global_quit(None)`) so it never
-conflicts with app routing. Use hyprmux `[keys]` actions (`detach`, `quit`, …) instead; for
-example `quit = "ctrl-q"` restores a direct quit shortcut through hyprmux routing.
+rozi disables tui-lipan's built-in global `Ctrl-q` (`App::global_quit(None)`) so it never
+conflicts with app routing. Use rozi `[keys]` actions (`detach`, `quit`, …) instead; for
+example `quit = "ctrl-q"` restores a direct quit shortcut through rozi routing.
 
 The help overlay (`?`) shows real active bindings and
 `not set` for bindable commands with no active key.
@@ -949,7 +949,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `toggle-highlight-focused-background`, `toggle-highlight-focused-border`,
 `toggle-highlight-focused-titlebar`, `cycle-border-mode`, `cycle-border-style`, `cycle-alert-border`, `cycle-workbar-alert`, `cycle-title-style`,
 `cycle-workbar-badge-style`, `cycle-workbar-tab-style`, `cycle-workbar-style`,
-`toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
+`toggle-pane-synchronization`, `open-config`. These same ids also work with `rozi run-action <id>` over the control socket
 (see `docs/control.md`).
 
 `paste` (default `v` or direct `Ctrl+V`) reads the system clipboard and sends it to the focused
@@ -993,7 +993,7 @@ alt-t = { run = "btop" }
 - Each command shows up in the help overlay (under "Custom") and the command palette with a
   generated label (`Run: lazygit`, `Send: ls -la\n`), so its trigger stays discoverable even
   though it has no stable action id. It still can't be rebound elsewhere or invoked via
-`hyprmux run-action` - only the trigger you configured runs it.
+`rozi run-action` - only the trigger you configured runs it.
 
 ## `[[hooks]]`
 
@@ -1036,14 +1036,14 @@ moment you type, not three seconds after you enabled it.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `dir` | `$XDG_STATE_HOME/hyprmux/logs` (else `~/.local/state/hyprmux/logs`) | Where session log directories are created. |
+| `dir` | `$XDG_STATE_HOME/rozi/logs` (else `~/.local/state/rozi/logs`) | Where session log directories are created. |
 | `max_bytes` | `67108864` (64 MiB) | Size ceiling for one pane log file. `0` disables the cap. |
 
 Session directories use mode `0700` and log files use mode `0600`.
 
 ```toml
 [logging]
-dir = "~/.local/state/hyprmux/logs"
+dir = "~/.local/state/rozi/logs"
 max_bytes = 67108864
 ```
 

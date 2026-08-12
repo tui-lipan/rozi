@@ -25,7 +25,7 @@ Each pane entry supports:
 | --- | --- |
 | `name` | Pane title shown in the titlebar. |
 | `cwd` | Local working directory when the pane launches. `~` expands to `$HOME`; remote SSH paths are not captured as local paths. |
-| `command` | Typed into the pane's interactive shell at its first prompt when the pane opens, so aliases, shell functions, and rc-file `PATH` entries resolve exactly as if you ran it yourself. Saving keeps an explicit launch command, or captures the executable of a command that is still running. |
+| `command` | Typed into the pane's interactive shell at its first prompt, so aliases and rc-file `PATH` resolve as if you ran it yourself. |
 | `keep_open` | Kept for round-tripping; a restored command pane always returns to its interactive shell when the command exits. |
 | `floating` | Start as a floating pane instead of tiled. |
 | `fullscreen` | Start fullscreen. |
@@ -33,6 +33,8 @@ Each pane entry supports:
 
 Workspace entries may also include `synchronized = true` to restore pane synchronization for that
 workspace. Omit `tree` in a workspace to let rozi auto-build a dwindle tree from pane order.
+Saving a `command` keeps an explicit launch command, or captures the executable of a still-running
+command.
 
 ## Example: lazygit + nvim
 
@@ -81,8 +83,8 @@ rozi new review --profile dev
 
 `attach` and `new` are reserved CLI command words. Use `rozi --session attach` or
 `rozi --session new` when a session or canonical profile binding actually has one of those
-names. A bare `rozi` opens the session picker (or starts an ephemeral scratch session when there
-is nothing to pick) unless `[session] startup` says otherwise. In ephemeral mode,
+names. A bare `rozi` opens the session picker unless `[session] startup` says otherwise. In
+ephemeral mode,
 `[profile] default` remains the first launch seed, followed by session autosave.
 
 To make one profile *the* thing a bare launch opens, without typing its name:
@@ -130,9 +132,11 @@ invalid profile reports an error instead.
 
 | Command | Action |
 | --- | --- |
-| **Capture session as profile...** | Prompts for a session-compatible name and writes `profiles/<name>.toml`. The creating profile is preferred as the initial name, then the session name; overwriting requires a second **Enter**. From a temporary session, **Enter** also names that session after the profile — see below. |
+| **Capture session as profile...** | Prompts for a name and writes `profiles/<name>.toml`. Overwriting requires a second **Enter**. From a temporary session, **Enter** also names that session after the profile — see below. |
 | **Profiles** | Lists saved profiles with in-picker actions (see below). |
 | **Replace session with profile...** | Destructively replaces every pane in the current session from a profile without changing the session name or disconnecting its clients. |
+
+The capture prompt prefers the creating profile as the initial name, then the session name.
 
 ### Capturing a temporary session
 
@@ -159,13 +163,14 @@ Open **Profiles** from the command palette, then:
 | **Ctrl+o** | **Open as**: launch the highlighted recipe under a new session name, or leave the name empty for a fresh ephemeral session. A name must not already be running. |
 | **Ctrl+n** | Capture the current session as a new profile. |
 | **Ctrl+r** | Replace the current session with the highlighted profile. Press twice to close all panes and running processes and launch the recipe; the session name and attached clients are kept. |
-| **Ctrl+f** | Toggle the highlighted profile as `[profile] default` in `config.toml`; pressing it on the current default clears the setting. Clearing it while `[session] startup` is `"profile"` also puts the startup mode back to `"picker"`, since that mode would otherwise point at nothing, and one toast reports it. |
+| **Ctrl+f** | Toggle the highlighted profile as `[profile] default`. Pressing it on the current default clears the setting. Clearing it while `[session] startup` is `"profile"` also puts startup back to `"picker"`. |
 | **Ctrl+d** | Delete the highlighted profile file. Press **Ctrl+d** again on the same row to confirm. |
 
 The status beside a profile refers only to its canonical same-name session: **attached** or
 **running**. It does not count independent sessions created from that profile under
 other names. Profiles marked **default** match your current `[profile] default` setting. Deleting
-the default profile clears that config entry when the file is removed.
+the default profile clears that config entry when the file is removed. A toast reports when
+clearing the default also resets `[session] startup` from `"profile"` to `"picker"`.
 The footer hints follow the selected row, showing **attach** or **launch** as appropriate; the
 **default** hint remains a toggle.
 

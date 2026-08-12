@@ -872,7 +872,7 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
             &config,
         )?
     } else {
-        session::discovery::discover_sessions()?
+        session::discovery::discover_sessions_with_snapshots()?
     };
     match format {
         ListFormat::Json => {
@@ -901,6 +901,12 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
                         clients,
                         if has_layout { "yes" } else { "no" }
                     ),
+                    session::discovery::DiscoveredSessionStatus::Restorable => {
+                        println!(
+                            "{}\trestorable\tpanes=?\tclients=0\tlayout=?{host}",
+                            session.name
+                        )
+                    }
                     session::discovery::DiscoveredSessionStatus::Busy => {
                         println!("{}\tbusy\tpanes=?\tclients=?\tlayout=?{host}", session.name)
                     }

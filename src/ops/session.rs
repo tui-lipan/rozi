@@ -172,19 +172,27 @@ pub(crate) fn apply_discovered_sessions(
     push_attached_session_rows(ctx, &mut rows);
     sort_session_rows(&mut rows);
     if let Some(picker) = ctx.state.session_picker.as_mut() {
+        let selected_identity = picker
+            .entries
+            .get(picker.selected)
+            .map(|entry| (entry.name.clone(), entry.remote_target.clone()));
+        let old_selected = picker.selected;
+        let entries_changed = picker.entries != rows;
         picker.entries = rows;
-        picker.selected = picker.selected.min(picker.entries.len().saturating_sub(1));
-    }
-    let armed_out_of_range = ctx.state.session_picker.as_ref().is_some_and(|picker| {
-        picker
-            .pending_kill
-            .is_some_and(|index| index >= picker.entries.len())
-            || picker
-                .pending_restart
-                .is_some_and(|index| index >= picker.entries.len())
-    });
-    if armed_out_of_range {
-        clear_pending_session_arms(ctx);
+        picker.selected = selected_identity
+            .and_then(|(name, target)| {
+                picker
+                    .entries
+                    .iter()
+                    .position(|entry| entry.name == name && entry.remote_target == target)
+            })
+            .unwrap_or_else(|| old_selected.min(picker.entries.len().saturating_sub(1)));
+        // A destructive confirmation belongs to the exact list the user armed it on. A refresh
+        // may insert, remove, or reorder rows, so never let a numeric index carry across a change.
+        if entries_changed {
+            picker.pending_kill = None;
+            picker.pending_restart = None;
+        }
     }
     Update::with_command(session_watch_command(
         epoch,
@@ -313,7 +321,9 @@ fn cached_sessions_for_target(
             ephemeral: entry.ephemeral,
             panes: match &entry.status {
                 crate::session::discovery::DiscoveredSessionStatus::Running { panes, .. } => *panes,
-                _ => 0,
+                crate::session::discovery::DiscoveredSessionStatus::Restorable
+                | crate::session::discovery::DiscoveredSessionStatus::Busy
+                | crate::session::discovery::DiscoveredSessionStatus::Unknown => 0,
             },
         })
         .collect()
@@ -1497,9 +1507,14 @@ pub(crate) fn activate_discovered_session(
         );
         return Update::full();
     }
-    // A session shown in the picker is already running, so don't autostart a replacement if it
-    // died between discovery and attach.
-    attach_session_by_name(ctx, entry.name, entry.host, entry.remote_target, false)
+    // Live rows must not silently recreate a server that died after discovery. A snapshot-only row
+    // is deliberately different: selecting it starts the named server so resurrection can restore
+    // the session.
+    let autostart = matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Restorable
+    );
+    attach_session_by_name(ctx, entry.name, entry.host, entry.remote_target, autostart)
 }
 
 /// The launcher's one offer: start this client's ephemeral session now. Reached by `Enter` on the
@@ -2131,6 +2146,12 @@ pub(crate) fn restart_discovered_session(
     ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
+    if matches!(
+        &entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Restorable
+    ) {
+        return activate_discovered_session(ctx, entry);
+    }
     let is_current = ctx.state.current().session_attached
         && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
         && ctx.state.current().remote_target == entry.remote_target;
@@ -2386,6 +2407,12 @@ fn shutdown_discovered_session(
         return crate::session::remote::kill_remote_session(target, &entry.name, remote_config)
             .map_err(std::io::Error::other);
     }
+    if matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Restorable
+    ) {
+        return crate::session::server::delete_snapshot(&entry.name);
+    }
     shutdown_session(&entry.name)
 }
 
@@ -2438,6 +2465,43 @@ mod tests {
         let mut empty = Vec::new();
         merge_current_session_row(&mut empty, session_row("dev", Some("winvm")));
         assert_eq!(empty.len(), 1);
+    }
+
+    #[test]
+    fn picker_refresh_preserves_identity_and_clears_destructive_arms() {
+        use crate::AppRoot;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(AppRoot::default());
+                let mut picker = SessionPickerState::new(vec![
+                    session_row("alpha", None),
+                    session_row("zulu", None),
+                ]);
+                picker.selected = 1;
+                picker.pending_kill = Some(1);
+                backend.state_mut().session_picker = Some(picker);
+                backend.state_mut().show_session_picker = true;
+                let epoch = backend.state().session_picker_epoch;
+
+                backend
+                    .update_level(crate::Msg::SessionsDiscovered {
+                        epoch,
+                        rows: vec![session_row("beta", None), session_row("zulu", None)],
+                        host_status: Vec::new(),
+                    })
+                    .expect("apply picker refresh");
+
+                let picker = backend.state().session_picker.as_ref().expect("picker");
+                assert_eq!(picker.entries[picker.selected].name, "zulu");
+                assert!(picker.pending_kill.is_none());
+                assert!(picker.pending_restart.is_none());
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
     }
 
     #[test]
@@ -3572,6 +3636,39 @@ mod tests {
                         .as_ref()
                         .is_some_and(|pending| pending.name == "dev")
                 );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
+    fn activating_restorable_session_autostarts_its_server() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::AppRoot;
+                use crate::Msg;
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(AppRoot::default());
+                let mut row = session_row("saved", None);
+                row.status = crate::session::discovery::DiscoveredSessionStatus::Restorable;
+                backend.state_mut().session_picker = Some(SessionPickerState::new(vec![row]));
+                backend.state_mut().show_session_picker = true;
+
+                backend
+                    .update_level(Msg::SessionPickerActivate(0))
+                    .expect("start snapshot restore");
+
+                let pending = backend
+                    .state()
+                    .current()
+                    .pending_session_attach
+                    .as_ref()
+                    .expect("snapshot attach");
+                assert_eq!(pending.name, "saved");
+                assert!(pending.autostart);
             })
             .expect("spawn test thread")
             .join()

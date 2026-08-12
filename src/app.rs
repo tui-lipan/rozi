@@ -6,7 +6,7 @@ use tui_lipan::prelude::*;
 use crate::Msg;
 use crate::anim::GeometryAnimation;
 use crate::config::Config;
-use crate::session::bootstrap::{SessionStart, attach_session_client, has_session_candidates};
+use crate::session::bootstrap::{SessionStart, attach_session_client};
 use crate::state::{Pane, PaneId, State, ThemePreset};
 use crate::{
     anim, cli, commands, config, control, events, key_routing, ops, platform, profiles, state,
@@ -29,8 +29,8 @@ pub struct AppRoot {
     remote: Option<crate::session::remote::RemoteTarget>,
     /// Whether a bare launch should open the session picker instead of attaching (`--pick`, the
     /// default `[session] startup = "picker"`, or a `last` whose session is gone). Only honored
-    /// when there is no target/`--session` and there is something to pick at startup; opening it
-    /// attaches nothing, so the client starts sessionless.
+    /// when there is no target/`--session`; opening it attaches nothing, so the client starts
+    /// sessionless even when the list is empty.
     want_startup_picker: bool,
     /// Session name the startup picker should land on, from a `last` that could not reopen.
     startup_picker_highlight: Option<String>,
@@ -188,8 +188,7 @@ impl Component for AppRoot {
         let theme_tick = ctx.state.theme_watcher.is_some();
         let workbar_tick = ctx.state.config.workbar.has_clock();
 
-        let start = if self.want_startup_picker && self.remote.is_none() && has_session_candidates()
-        {
+        let start = if self.want_startup_picker && self.remote.is_none() {
             // Nothing is attached behind the startup picker, so the panes `create_state` prepared
             // have no session to live in yet. Park them as the launcher seed: choosing a session
             // discards them, while starting a shell gets exactly the layout this launch intended.
@@ -239,9 +238,9 @@ impl Component for AppRoot {
                     parked_epoch: None,
                 });
             ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
-            // A bare launch with nothing to pick lands on an ephemeral nobody asked for by name.
-            // Mark it so switching away discards it instead of leaving it running behind the
-            // session the user actually wanted.
+            // A bare launch that deliberately bypasses the picker lands on an ephemeral nobody
+            // asked for by name. Mark it so switching away discards it instead of leaving it
+            // running behind the session the user actually wanted.
             ctx.state.current_mut().auto_created = self.attach_session.is_none();
             ctx.state.current_mut().remote_host =
                 self.remote.as_ref().map(|target| target.display_label());
@@ -1095,8 +1094,8 @@ fn session_openable_by_name(name: &str) -> bool {
 
 /// `[session] startup = "profile"`: the session named after `[profile] default`. Returns the warning
 /// to report when there is nothing to open under that name; the launch then takes the ordinary
-/// bare-launch path (picker, or ephemeral with nothing to pick) rather than attaching some other
-/// session. No picker highlight: an unresolvable name has no row to land on.
+/// bare-launch picker rather than attaching some other session. No picker highlight: an
+/// unresolvable name has no row to land on.
 ///
 /// Nothing is written back. Settings withholds this mode until a default profile exists and clears it
 /// when one goes away, so reaching the first case means the config was hand-written or synced in,
@@ -1133,6 +1132,25 @@ fn select_last_session_target(last: String, reopenable: bool) -> LastSessionTarg
 mod tests {
     use super::*;
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
+
+    #[test]
+    fn requested_startup_picker_opens_even_without_candidates() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut root = AppRoot::default();
+                root.want_startup_picker = true;
+
+                let backend = TestBackend::new(root);
+
+                assert!(backend.state().show_session_picker);
+                assert!(backend.state().is_launcher());
+                assert!(backend.state().current().pending_session_attach.is_none());
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
 
     #[test]
     fn profile_picker_hints_reflow_without_splitting_pills() {

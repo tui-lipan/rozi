@@ -578,6 +578,7 @@ fn session_description(
             }
             ItemDescription::new().right(label)
         }
+        DiscoveredSessionStatus::Restorable => ItemDescription::new().right("restorable"),
         DiscoveredSessionStatus::Busy => ItemDescription::new().right("busy"),
         DiscoveredSessionStatus::Unknown => ItemDescription::new().right("unavailable"),
     }

@@ -167,7 +167,7 @@ Sessions are server-backed and survive client detach.
 
 | Kind | Created by | Lifetime |
 | --- | --- | --- |
-| Ephemeral | a launch that settles on no named session: `startup = "ephemeral"`, nothing to pick, or a shell started from the launcher | `eph-<pid>`; shut down on a clean quit, which asks first when it holds work |
+| Ephemeral | `startup = "ephemeral"`, or a shell started from the picker/launcher | `eph-<pid>`; shut down on a clean quit, which asks first when it holds work |
 | Named | `rozi new <name>`, `rozi <name>`, `startup = "last"` / `"profile"`, picker `Ctrl+N`, or renaming a live session | Survives detach; explicit shutdown |
 | Temporary | `new-temporary-session` action | In-session scratch session |
 
@@ -180,8 +180,9 @@ use `rozi new <name>` for that. `rozi attach <name>` is attach-only.
 **Actions** — attach, detach (`prefix d`), rename (`prefix Shift+S`), kill, and **restart** (shut the server down and
 immediately recreate it while staying attached).
 
-**Session picker** — a fuzzy modal listing local sessions, attached sessions, configured remote
-hosts, and cached remote sessions, with `ctrl+t` to reach a scratch ephemeral shell.
+**Session picker** — a fuzzy modal listing local sessions, restorable resurrection snapshots,
+attached sessions, configured remote hosts, and cached remote sessions, with `ctrl+t` to reach a
+scratch ephemeral shell.
 
 **Startup policy** — `[session] startup` decides what a bare launch does: `picker` (default, attaches
 nothing until you choose), `ephemeral`, `last` (the most recent named session), or `profile` (the

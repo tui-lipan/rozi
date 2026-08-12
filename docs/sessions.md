@@ -196,9 +196,9 @@ By default (`[session] startup = "picker"`, also reachable with `--pick`) a bare
 session to attach to. **Opening the picker attaches nothing** - no session is created until you
 choose one, so launching rozi never leaves a stray session behind.
 
-The picker is shown only when there is something to pick: a running named session, a resurrection
-snapshot, or a remote host with cached sessions. With nothing to choose from, the launch falls
-through to an ephemeral session, which is the only thing it could have offered anyway.
+The picker opens even when its list is empty. An empty picker still provides useful startup choices:
+`Enter` starts an ephemeral shell and `Ctrl+N` creates a named session. Resurrection snapshots are
+listed as `restorable`; selecting one starts its named server and restores the saved session.
 
 Dismissing the picker with `Esc` leaves the client in the **launcher**: attached to nothing, with a
 panel saying how to start a shell, reopen the picker, or detach. A client with no session is a
@@ -219,7 +219,7 @@ spelling. **Settings → Sessions → Startup mode** cycles the four without edi
 
 | Mode | A bare `rozi` |
 | --- | --- |
-| `picker` (default) | Opens the picker when there is something to pick, attaching nothing until you choose. Falls through to an ephemeral session when there is not. |
+| `picker` (default) | Always opens the picker, attaching nothing until you choose. |
 | `ephemeral` | Starts the disposable `eph-<pid>` session immediately. |
 | `last` | Reopens the exact most recently attached named session. |
 | `profile` | Opens the session named after `[profile] default`. |

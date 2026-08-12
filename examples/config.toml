@@ -199,7 +199,7 @@
 #autosave = false
 # Snapshot named sessions so layout, commands, and scrollback survive a server restart.
 #resurrect = true
-# "picker" opens the session picker when there is something to pick, "ephemeral" starts a
+# "picker" always opens the session picker, "ephemeral" starts a
 # scratch session immediately, "last" reopens the last named session, "profile" opens the
 # session named after the [profile] default.
 #startup = "picker"

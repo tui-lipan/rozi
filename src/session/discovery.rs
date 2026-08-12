@@ -15,6 +15,8 @@ pub enum DiscoveredSessionStatus {
         has_layout: bool,
         created_from_profile: Option<String>,
     },
+    /// No server is running, but a resurrection snapshot can seed one under this name.
+    Restorable,
     Busy,
     Unknown,
 }
@@ -59,6 +61,18 @@ pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
     discover_sessions_excluding(None)
 }
 
+/// Discover every live local session plus any named session that can be resurrected from disk.
+/// Live rows win when a server and its latest snapshot coexist.
+pub(crate) fn discover_sessions_with_snapshots() -> std::io::Result<Vec<DiscoveredSession>> {
+    let mut rows = discover_sessions()?;
+    push_restorable_sessions(
+        &mut rows,
+        None,
+        crate::session::server::list_snapshot_names_by_recency(),
+    );
+    Ok(rows)
+}
+
 /// Probe one named session without scanning or mutating unrelated discovery entries.
 pub fn discover_session(name: &str) -> std::io::Result<Option<DiscoveredSession>> {
     let endpoint = crate::session::server::session_endpoint(name)?;
@@ -98,7 +112,31 @@ pub(crate) fn discover_selectable_sessions(
 ) -> std::io::Result<Vec<DiscoveredSession>> {
     let mut rows = discover_sessions_excluding(current_name)?;
     rows.retain(|entry| !entry.ephemeral);
+    push_restorable_sessions(
+        &mut rows,
+        current_name,
+        crate::session::server::list_snapshot_names_by_recency(),
+    );
     Ok(rows)
+}
+
+fn push_restorable_sessions(
+    rows: &mut Vec<DiscoveredSession>,
+    current_name: Option<&str>,
+    snapshots: impl IntoIterator<Item = String>,
+) {
+    for name in snapshots {
+        if current_name == Some(name.as_str()) || rows.iter().any(|row| row.name == name) {
+            continue;
+        }
+        rows.push(DiscoveredSession {
+            name,
+            status: DiscoveredSessionStatus::Restorable,
+            ephemeral: false,
+            host: None,
+            remote_target: None,
+        });
+    }
 }
 
 /// Probes one session endpoint. Returns `None` for a stale endpoint whose server is gone
@@ -309,6 +347,7 @@ pub fn parse_remote_list_json(
                     has_layout: row.layout.unwrap_or(false),
                     created_from_profile: row.created_from_profile,
                 },
+                "restorable" => DiscoveredSessionStatus::Restorable,
                 "busy" => DiscoveredSessionStatus::Busy,
                 _ => DiscoveredSessionStatus::Unknown,
             };
@@ -349,6 +388,9 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                     if let Some(profile) = created_from_profile {
                         obj["created_from_profile"] = serde_json::json!(profile);
                     }
+                }
+                DiscoveredSessionStatus::Restorable => {
+                    obj["status"] = serde_json::json!("restorable")
                 }
                 DiscoveredSessionStatus::Busy => obj["status"] = serde_json::json!("busy"),
                 DiscoveredSessionStatus::Unknown => obj["status"] = serde_json::json!("unknown"),
@@ -467,19 +509,49 @@ mod tests {
     }
 
     #[test]
-    fn list_json_round_trips_through_parser() {
-        let rows = vec![DiscoveredSession {
-            name: "dev".into(),
+    fn restorable_snapshots_fill_picker_gaps_without_shadowing_live_sessions() {
+        let mut rows = vec![DiscoveredSession {
+            name: "live".into(),
             ephemeral: false,
-            host: Some("workbox".into()),
+            host: None,
             remote_target: None,
-            status: DiscoveredSessionStatus::Running {
-                panes: 2,
-                clients: 1,
-                has_layout: true,
-                created_from_profile: Some("work".into()),
-            },
+            status: DiscoveredSessionStatus::Busy,
         }];
+
+        push_restorable_sessions(
+            &mut rows,
+            Some("current"),
+            ["live", "current", "saved"].map(str::to_string),
+        );
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].name, "saved");
+        assert_eq!(rows[1].status, DiscoveredSessionStatus::Restorable);
+    }
+
+    #[test]
+    fn list_json_round_trips_through_parser() {
+        let rows = vec![
+            DiscoveredSession {
+                name: "dev".into(),
+                ephemeral: false,
+                host: Some("workbox".into()),
+                remote_target: None,
+                status: DiscoveredSessionStatus::Running {
+                    panes: 2,
+                    clients: 1,
+                    has_layout: true,
+                    created_from_profile: Some("work".into()),
+                },
+            },
+            DiscoveredSession {
+                name: "saved".into(),
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+                status: DiscoveredSessionStatus::Restorable,
+            },
+        ];
         let json = sessions_to_json(&rows).unwrap();
         let parsed = parse_remote_list_json(json.as_bytes(), Some("workbox".into())).unwrap();
         assert_eq!(parsed[0].name, "dev");
@@ -488,5 +560,6 @@ mod tests {
             parsed[0].status,
             DiscoveredSessionStatus::Running { panes: 2, .. }
         ));
+        assert_eq!(parsed[1].status, DiscoveredSessionStatus::Restorable);
     }
 }

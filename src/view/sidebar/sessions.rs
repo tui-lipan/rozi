@@ -19,6 +19,7 @@ fn session_detail(entry: &DiscoveredSession) -> String {
             }
             detail
         }
+        DiscoveredSessionStatus::Restorable => "restorable".to_string(),
         DiscoveredSessionStatus::Busy => "busy".to_string(),
         DiscoveredSessionStatus::Unknown => "incompatible or unavailable".to_string(),
     }

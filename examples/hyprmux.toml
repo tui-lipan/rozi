@@ -144,7 +144,9 @@
 # only on the session controller and stay silent while the pane is attended (its host window and
 # pane are both focused).
 #enabled = false
-#pane_exit = true
+# A clean natural exit cannot be attendance-gated - the pane is gone - so announcing it would
+# report what you just watched happen. A non-zero code is worth the interruption.
+#pane_exit = false
 #pane_exit_error = true
 #pane_blocked = true
 #pane_done = false

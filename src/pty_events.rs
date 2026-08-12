@@ -940,12 +940,14 @@ mod tests {
     fn pane_exit_notification_splits_clean_and_error_codes() {
         let mut config = crate::config::HyprmuxConfig::default();
         config.notifications.enabled = true;
-        assert!(should_notify_pane_exit(&config, 0));
-        assert!(should_notify_pane_exit(&config, 1));
-        config.notifications.pane_exit = false;
+        // Enabling notifications is not on its own a reason to announce a clean exit.
         assert!(!should_notify_pane_exit(&config, 0));
         assert!(should_notify_pane_exit(&config, 1));
+        config.notifications.pane_exit = true;
+        assert!(should_notify_pane_exit(&config, 0));
+        assert!(should_notify_pane_exit(&config, 1));
         config.notifications.pane_exit_error = false;
+        assert!(should_notify_pane_exit(&config, 0));
         assert!(!should_notify_pane_exit(&config, 1));
     }
 

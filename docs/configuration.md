@@ -451,7 +451,7 @@ Failures are ignored and never block the UI.
 | Key | Default | Notes |
 | --- | --- | --- |
 | `enabled` | `false` | Master switch for desktop notifications. |
-| `pane_exit` | `true` | Notify when a pane exits naturally with code `0`. |
+| `pane_exit` | `false` | Notify when a pane exits naturally with code `0`. Off by default: unlike the status notifications, this edge cannot be attendance-gated — the pane is gone — so it would announce a clean exit the user just watched happen. |
 | `pane_exit_error` | `true` | Notify when a naturally exiting pane returns a non-zero code. `pane_exit` now covers clean exits only. |
 | `pane_blocked` | `true` | Notify when an unattended pane effectively becomes blocked, including detected-only agents. |
 | `pane_done` | `false` | Notify on the unseen working→quiescent finished edge. Reported-only transitions without a detected agent do not arm this existing edge. |

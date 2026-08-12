@@ -416,7 +416,10 @@ impl Default for HyprmuxNotificationsConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            pane_exit: true,
+            // A clean natural exit is the one pane-exit edge that is not attendance-gated: the
+            // pane is gone, so there is no pane left to attend. Announcing it tells the user what
+            // they just watched happen, which is the same thing the toast policy forbids.
+            pane_exit: false,
             pane_exit_error: true,
             bell: true,
             pane_blocked: true,

@@ -1,0 +1,20 @@
+{
+  "name": "rozi-docs",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Landing page and documentation site for rozi (rozi.tui-lipan.dev).",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue-jsx": "^5.1.6",
+    "vitepress": "^1.5",
+    "vue": "^3.5"
+  }
+}

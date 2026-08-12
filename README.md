@@ -11,6 +11,10 @@
 </p>
 
 <p align="center">
+  <a href="https://rozi.tui-lipan.dev"><b>rozi.tui-lipan.dev</b></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/tui-lipan/rozi/actions/workflows/ci.yml"><img src="https://github.com/tui-lipan/rozi/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/platforms-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-blue" alt="Platforms">
   <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green" alt="License">
@@ -153,6 +157,9 @@ The [configuration reference](docs/configuration.md) covers every option,
 setting commented out at its default, and [`examples/`](examples/) has ready-made snippets.
 
 ## Documentation
+
+Everything below is also published at [rozi.tui-lipan.dev](https://rozi.tui-lipan.dev),
+with search.
 
 | | |
 | --- | --- |

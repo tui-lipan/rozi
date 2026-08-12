@@ -1,0 +1,156 @@
+import { defineConfig } from "vitepress";
+import { fileURLToPath } from "node:url";
+import vueJsx from "@vitejs/plugin-vue-jsx";
+import { repoLinksPlugin } from "./repoLinks";
+
+const srcDir = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+
+export default defineConfig({
+  title: "rozi",
+  description:
+    "A tiling terminal multiplexer that feels like a modern window manager - self-arranging panes, persistent sessions, and live config reload on Linux, macOS, and Windows.",
+  cleanUrls: true,
+  lastUpdated: true,
+  appearance: "force-dark",
+
+  head: [
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+    [
+      "link",
+      { rel: "icon", type: "image/png", sizes: "96x96", href: "/favicon-96x96.png" },
+    ],
+    ["link", { rel: "icon", href: "/favicon.ico" }],
+    [
+      "link",
+      { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" },
+    ],
+    ["link", { rel: "manifest", href: "/site.webmanifest" }],
+    ["meta", { name: "theme-color", content: "#06070f" }],
+    ["meta", { property: "og:type", content: "website" }],
+    ["meta", { property: "og:url", content: "https://rozi.tui-lipan.dev" }],
+    [
+      "meta",
+      { property: "og:image", content: "https://rozi.tui-lipan.dev/og-image.png" },
+    ],
+    ["meta", { name: "twitter:card", content: "summary_large_image" }],
+    [
+      "meta",
+      {
+        property: "og:title",
+        content: "rozi - a tiling terminal multiplexer",
+      },
+    ],
+    [
+      "meta",
+      {
+        property: "og:description",
+        content:
+          "Split your terminal into panes, arrange them automatically, and pick up where you left off.",
+      },
+    ],
+    ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
+    [
+      "link",
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
+    ],
+    [
+      "link",
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap",
+      },
+    ],
+  ],
+
+  markdown: { theme: { light: "night-owl", dark: "night-owl" } },
+
+  // `performance/README.md` keeps its name so GitHub renders it when browsing
+  // that folder; the site serves it as the directory's index page.
+  rewrites: { "performance/README.md": "performance/index.md" },
+
+  // The landing composition is ported from a React piece and is far more
+  // legible as JSX than as a template full of `:style` bindings.
+  vite: { plugins: [vueJsx(), repoLinksPlugin(srcDir)] },
+
+  themeConfig: {
+    logo: "/logo.svg",
+    outline: [2, 3],
+    nav: [
+      { text: "tui-lipan", link: "https://tui-lipan.dev" },
+      { text: "Framework docs", link: "https://docs.tui-lipan.dev" },
+    ],
+    sidebar: [
+      { text: "Home", link: "/" },
+      {
+        text: "Getting Started",
+        collapsed: false,
+        items: [
+          { text: "Getting Started", link: "/getting-started" },
+          { text: "Installation & Releases", link: "/installation" },
+          { text: "Feature Overview", link: "/features" },
+        ],
+      },
+      {
+        text: "Using rozi",
+        collapsed: false,
+        items: [
+          { text: "Keybindings", link: "/keybindings" },
+          { text: "Layouts & Panes", link: "/layouts-and-panes" },
+          { text: "Terminal Features", link: "/terminal" },
+          { text: "Sidebar", link: "/sidebar" },
+          { text: "Themes", link: "/themes" },
+        ],
+      },
+      {
+        text: "Configuration",
+        collapsed: false,
+        items: [
+          { text: "Configuration Reference", link: "/configuration" },
+          { text: "Named Profiles", link: "/profiles" },
+          { text: "Project Profiles", link: "/project-profiles" },
+        ],
+      },
+      {
+        text: "Sessions",
+        collapsed: false,
+        items: [
+          { text: "Sessions", link: "/sessions" },
+          { text: "Remote SSH Sessions", link: "/remote" },
+        ],
+      },
+      {
+        text: "Automation",
+        collapsed: false,
+        items: [
+          { text: "Control Socket", link: "/control" },
+          { text: "Hooks", link: "/hooks" },
+          { text: "Agent Skill", link: "/agent-skill" },
+        ],
+      },
+      {
+        text: "Performance",
+        collapsed: true,
+        items: [
+          { text: "Benchmarks & Profiling", link: "/benchmarks" },
+          { text: "Performance Records", link: "/performance/" },
+          { text: "Audit Playbook", link: "/performance/audit-playbook" },
+          { text: "Audit - 2026-08-04", link: "/performance/audits/2026-08-04" },
+          { text: "Audit - 2026-08-03", link: "/performance/audits/2026-08-03" },
+        ],
+      },
+    ],
+    editLink: {
+      pattern: "https://github.com/tui-lipan/rozi/edit/master/docs/:path",
+      text: "Edit this page on GitHub",
+    },
+    search: {
+      provider: "local",
+      options: {
+        translations: {
+          button: { buttonText: "Search...", buttonAriaLabel: "Search" },
+        },
+      },
+    },
+    footer: { message: "MIT OR Apache-2.0", copyright: "© Adam Mikołajczyk" },
+  },
+});

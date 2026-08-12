@@ -1,0 +1,80 @@
+# rozi.tui-lipan.dev
+
+The `docs/` folder is both the repository's documentation and the source for
+<https://rozi.tui-lipan.dev>. Every `.md` file beside this one is a page on the
+site; there is no separate copy to keep in sync.
+
+The site is a sibling of [docs.tui-lipan.dev](https://docs.tui-lipan.dev) and
+shares its VitePress theme structure. Only the palette differs — see the header
+comment in `theme/style.css`.
+
+## Develop
+
+```bash
+cd docs
+npm install
+npm run docs:dev
+```
+
+Requires Node.js 22+.
+
+## Build
+
+```bash
+npm run docs:build     # output: docs/.vitepress/dist
+npm run docs:preview
+```
+
+The build fails on dead links. That check is worth keeping: it is what catches a
+page renamed out from under a cross-reference.
+
+## Layout
+
+| Path | What it is |
+|------|------------|
+| `config.ts` | Site metadata, sidebar, search, `performance/README.md` → `/performance/` rewrite |
+| `repoLinks.ts` | Rewrites links that leave `docs/` into GitHub URLs (see below) |
+| `theme/style.css` | Doc-page theme; palette derived from the app icon |
+| `theme/landing.css` | Landing page and tiling demo |
+| `theme/Layout.vue` | Sends `/` to the landing, everything else to the default doc layout |
+| `theme/Landing.vue` | The landing page, including its own topbar |
+| `theme/TilingDemo.vue` | The scripted layout replay in the hero |
+| `../public/` | Favicons, `og-image.png`, `CNAME`, web manifest |
+
+### Links that leave `docs/`
+
+Pages link to repository files that are not part of the site — `../AGENTS.md`,
+`../examples/config.toml`, `../integrations/…`. Those work on GitHub and in an
+editor but would be dead links once only `docs/` is published, so
+`repoLinks.ts` rewrites them to `github.com/tui-lipan/rozi` URLs before
+VitePress parses the markdown. Links to a directory with no index page, such as
+`performance/audits/`, get the same treatment — that is a request for a file
+listing, which only GitHub can answer.
+
+Write links the way GitHub wants them. The site adapts.
+
+### The landing page and `index.md`
+
+`docs/index.md` is left as a plain documentation table of contents so GitHub
+renders it when browsing the folder. The landing page renders it verbatim as its
+closing section through `<Content />`, so the site and the repository cannot
+drift apart.
+
+## Deploy (Cloudflare Pages)
+
+| Setting | Value |
+|---------|-------|
+| Production branch | `master` |
+| Build command | `npm run docs:build` |
+| Build output directory | `.vitepress/dist` |
+| Root directory | `docs` |
+| Node version | 22 |
+| Custom domain | `rozi.tui-lipan.dev` |
+
+`public/CNAME` carries the same domain for GitHub Pages, if the site ever moves
+there.
+
+## Updating the version chip
+
+The `v0.2.0` chip appears in `theme/NavTitleMeta.vue` (doc pages) and
+`theme/Landing.vue` (landing). Both should match `Cargo.toml`.

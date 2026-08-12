@@ -1,0 +1,22 @@
+{
+  "name": "rozi",
+  "short_name": "rozi",
+  "description": "A tiling terminal multiplexer that feels like a modern window manager.",
+  "icons": [
+    {
+      "src": "/web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#06070f",
+  "background_color": "#06070f",
+  "display": "standalone"
+}

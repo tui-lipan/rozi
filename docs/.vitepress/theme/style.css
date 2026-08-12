@@ -1,0 +1,1196 @@
+/* ─────────────────────────────────────────────────────────────────────
+   rozi site theme - a sibling of the tui-lipan docs theme.
+
+   Structure, sizing, and every component override are shared with
+   docs.tui-lipan.dev so the two sites read as one family. The palette is
+   rozi's own: the surface ramp is built from the app icon's #0B0D1C, and the
+   brand hue is the icon gradient, #FD4A80 rose into #982BF2 violet.
+   Mirror structural changes manually from:
+   https://github.com/tui-lipan/tui-lipan/blob/main/docs/.vitepress/theme/style.css
+
+   Landing-page styles live beside this file in landing.css.
+   ───────────────────────────────────────────────────────────────────── */
+
+:root {
+    /* Surface ramp ── derived from the app icon's #0B0D1C plate */
+    --vp-c-bg: #06070f;
+    --vp-c-bg-alt: #0b0d1c; /* sidebar / nav surface - the icon plate itself */
+    --vp-c-bg-soft: #14162a; /* hover */
+    --vp-c-bg-elv: #1b1e36; /* active */
+    --vp-c-gutter: #06070f;
+
+    /* Borders */
+    --vp-c-divider: #23263f;
+    --vp-c-border: #343858;
+
+    /* Text */
+    --vp-c-text-1: #ccd0e6;
+    --vp-c-text-2: #8e93b4;
+    --vp-c-text-3: #5c6185;
+
+    /* Brand ── the icon gradient: rose into violet */
+    --vp-c-brand-1: #fd4a80;
+    --vp-c-brand-2: #982bf2;
+    --vp-c-brand-3: #982bf2;
+    --vp-c-brand-soft: rgba(253, 74, 128, 0.12);
+
+    /* The icon gradient itself, for wordmarks and rules. */
+    --rozi-gradient: linear-gradient(160deg, #fd4a80 0%, #982bf2 100%);
+
+    /* Semantic blocks */
+    --vp-c-tip-1: #fd4a80;
+    --vp-c-tip-2: #982bf2;
+    --vp-c-tip-3: #982bf2;
+    --vp-c-tip-soft: rgba(253, 74, 128, 0.06);
+    --vp-c-warning-1: #f0a830;
+    --vp-c-warning-2: #c08020;
+    --vp-c-warning-3: #c08020;
+    --vp-c-warning-soft: rgba(240, 168, 48, 0.05);
+    --vp-c-danger-1: #ff5f57;
+    --vp-c-danger-2: #cc3d36;
+    --vp-c-danger-3: #cc3d36;
+    --vp-c-danger-soft: rgba(255, 95, 87, 0.08);
+
+    /* Code */
+    --vp-code-color: #ccd0e6;
+    --vp-code-bg: #06070f;
+    --vp-code-block-bg: #04050c;
+    --vp-code-block-divider-color: #23263f;
+    --vp-code-line-highlight-color: rgba(253, 74, 128, 0.1);
+    --vp-code-copy-code-bg: #0b0d1c;
+    --vp-code-copy-code-hover-bg: #14162a;
+    --vp-code-copy-code-active-text: #ccd0e6;
+    --vp-code-tab-bg: #0b0d1c;
+    --vp-code-tab-active-bar-color: #fd4a80;
+    --vp-code-tab-active-text-color: #fd4a80;
+    --vp-code-tab-text-color: #8e93b4;
+
+    /* Measure for body copy. ~80 characters at 14px JetBrains Mono. */
+    --rozi-prose: 680px;
+
+    /* Layout sizing - exact landing values */
+    --vp-nav-height: 48px;
+    --vp-layout-top-height: 0px;
+    --vp-sidebar-width: 268px;
+    --vp-z-index-nav: 100;
+
+    /* Font */
+    --vp-font-family-base:
+        "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    --vp-font-family-mono:
+        "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ── Global - 14px base, matches landing --font-size ─────────────────── */
+html {
+    font-size: 14px;
+}
+html,
+body {
+    font-family: var(--vp-font-family-base);
+    background: var(--vp-c-bg);
+    color: var(--vp-c-text-1);
+    line-height: 1.6;
+}
+
+/* ── Selection ───────────────────────────────────────────────────────── */
+::selection {
+    background: rgba(253, 74, 128, 0.25);
+    color: #fd4a80;
+}
+
+/* ── Scrollbars (thin, accent on hover) ──────────────────────────────── */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: var(--vp-c-bg);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--vp-c-border);
+    border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--vp-c-brand-2);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   NAVBAR - match landing topbar
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Force navbar to landing's exact 48px - overrides VitePress default 64px.
+   The bottom-edge horizontal line is rendered by the inner `.divider-line`
+   element below - not via border-bottom (which would be hidden by the sidebar
+   in the sidebar column at default z-index). */
+.VPNav,
+.VPNavBar {
+    height: 48px !important;
+    background: var(--vp-c-bg-alt) !important;
+    border-bottom: none !important;
+    z-index: 70 !important;
+}
+.VPNavBar > .wrapper {
+    padding: 0 16px 0 24px !important;
+}
+.VPNavBar > .wrapper,
+.VPNavBar > .wrapper > .container,
+.VPNavBar .content,
+.VPNavBar .content-body {
+    height: 48px !important;
+}
+.VPNavBar.has-sidebar .content {
+    background: var(--vp-c-bg-alt) !important;
+}
+.VPNavBar.has-sidebar .content-body {
+    background: var(--vp-c-bg-alt) !important;
+}
+.VPNavBar .title {
+    height: 48px !important;
+    line-height: 48px;
+    color: var(--vp-c-brand-1);
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.02em;
+    border-bottom: none !important;
+}
+/* Site name color + small bordered version chip after it (landing .version).
+   Unlike the tui-lipan docs, rozi has an app icon - show it, sized to the
+   48px bar rather than VitePress's default 24px. */
+.VPNavBarTitle .title .VPImage {
+    width: 22px !important;
+    height: 22px !important;
+    margin-right: -2px;
+}
+.VPNavBarTitle .title {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 10px;
+    color: var(--vp-c-brand-1) !important;
+    text-decoration: none !important;
+    white-space: nowrap;
+}
+.NavTitleVersion {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--vp-c-text-3);
+    border: 1px solid var(--vp-c-border);
+    margin-left: 2px;
+    padding: 3px 6px;
+    border-radius: 2px;
+    letter-spacing: 0;
+    line-height: 1.35;
+}
+.NavTitleLabel {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--vp-c-text-3);
+    letter-spacing: -0.02em;
+    line-height: 1;
+}
+
+/* Hide appearance toggle entirely - site is dark-only on purpose */
+.VPNavBarAppearance,
+.VPNavScreenAppearance,
+.VPSwitchAppearance {
+    display: none !important;
+}
+
+/* Hide the dividers VitePress inserts around the (now-empty) appearance slot -
+   they render as a short underlined gap to the right of the nav menu.
+   NOTE: `.VPNavBar .divider` is the bottom-edge separator and is intentionally
+   kept visible; only the inner `::before` chip-dividers between menu groups
+   are suppressed here. */
+.VPNavBarExtra .divider,
+.VPNavBar .menu + .translations::before,
+.VPNavBar .menu + .appearance::before,
+.VPNavBar .menu + .social-links::before,
+.VPNavBar .translations + .appearance::before,
+.VPNavBar .appearance + .social-links::before {
+    display: none !important;
+}
+/* Bottom-edge line: full width, single color, no inset for the sidebar column. */
+.VPNavBar .divider {
+    display: block !important;
+    width: 100% !important;
+    padding: 0 !important;
+}
+.VPNavBar .divider-line {
+    display: block !important;
+    width: 100% !important;
+    height: 1px !important;
+    background-color: var(--vp-c-divider) !important;
+}
+
+/* At ≥1440px, VitePress pads `.content` with `(100vw - layout-max-width)/2 + 32px`
+   on each side to align with the centered content column - on a wide monitor
+   that's hundreds of pixels of empty space to the right of the GitHub button.
+   Likewise for the title slot. Pin both to fixed paddings instead. */
+@media (min-width: 1440px) {
+    .VPNavBar.has-sidebar .content {
+        padding-left: var(--vp-sidebar-width) !important;
+        padding-right: 0 !important;
+    }
+    .VPNavBar.has-sidebar .title {
+        padding: 0 24px 0 8px !important;
+        width: var(--vp-sidebar-width) !important;
+    }
+}
+/* Nav menu links - match landing #topbar .nav-links a (5px 10px, 12px, 3px radius) */
+.VPNavBarMenu {
+    align-items: center !important;
+    gap: 2px !important;
+}
+
+@media (min-width: 768px) {
+    .VPNavBar .content-body {
+        justify-content: flex-end !important;
+    }
+
+    .VPNavBar .menu {
+        order: 1;
+    }
+
+    .VPNavBar .search {
+        order: 2;
+        flex: 0 0 auto !important;
+        padding-left: 0 !important;
+        margin-left: 2px;
+    }
+
+    .VPNavBar .NavGitHubLink {
+        order: 3;
+        margin-left: 2px;
+    }
+
+    .VPNavBar.has-sidebar .title {
+        padding: 0 24px 0 8px !important;
+    }
+}
+
+@media (min-width: 960px) {
+    .VPNavBar.has-sidebar .content {
+        padding-left: var(--vp-sidebar-width) !important;
+        padding-right: 0 !important;
+    }
+}
+.VPNavBarMenuLink {
+    display: inline-flex !important;
+    align-items: center !important;
+    height: auto !important;
+    line-height: 1.4 !important;
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    color: var(--vp-c-text-2) !important;
+    padding: 5px 10px !important;
+    border-radius: 3px !important;
+    border: 1px solid transparent;
+    transition:
+        color 0.15s,
+        background 0.15s,
+        border-color 0.15s;
+}
+.VPNavBarMenuLink:hover {
+    color: var(--vp-c-text-1) !important;
+    background: var(--vp-c-bg-soft);
+}
+.VPNavBarMenuLink.active {
+    color: var(--vp-c-brand-1) !important;
+}
+
+/* Search button - match landing search-box sizing and spacing */
+.VPNavBarSearch {
+    display: flex;
+    align-items: center;
+}
+
+.DocSearch-Button {
+    background: var(--vp-c-bg) !important;
+    border: 1px solid var(--vp-c-divider) !important;
+    border-radius: 3px !important;
+    box-sizing: border-box !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 5px 10px !important;
+    margin: 0 !important;
+    width: 250px !important;
+    min-width: 250px !important;
+    max-width: 250px !important;
+    font-family: var(--vp-font-family-base) !important;
+    font-size: 12px !important;
+    color: var(--vp-c-text-3) !important;
+    transition: border-color 0.15s !important;
+}
+.DocSearch-Button:hover {
+    border-color: var(--vp-c-brand-2) !important;
+    background: var(--vp-c-bg) !important;
+    color: var(--vp-c-text-1) !important;
+    box-shadow: none !important;
+}
+.DocSearch-Button-Container {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 2px !important;
+}
+/* Push kbd hint to the right edge of the search button (landing layout). */
+.DocSearch-Button .DocSearch-Button-Keys {
+    margin-left: auto !important;
+}
+.DocSearch-Button .DocSearch-Button-Placeholder {
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    color: var(--vp-c-text-3) !important;
+}
+/* Replace the SVG icon with the same ⌕ glyph landing uses, sized to match. */
+.DocSearch-Button .DocSearch-Search-Icon {
+    width: auto !important;
+    height: auto !important;
+    margin-right: 8px !important;
+    color: var(--vp-c-text-3) !important;
+    background: none !important;
+    -webkit-mask: none !important;
+    mask: none !important;
+    font-size: 12px !important;
+    line-height: 1 !important;
+    top: 0 !important;
+}
+.DocSearch-Button .DocSearch-Search-Icon::before {
+    content: "⌕";
+    font-family: var(--vp-font-family-base);
+    font-size: 12px;
+    color: var(--vp-c-text-3);
+    line-height: 1;
+}
+.DocSearch-Button .DocSearch-Search-Icon {
+    color: var(--vp-c-text-3) !important;
+}
+/* Render the shortcut hint as one unified pill (Ctrl K) instead of a key-per-box.
+   `.DocSearch-Button-Keys` becomes the bordered container; individual keys are
+   plain text inside it. */
+.DocSearch-Button-Keys {
+    font-family: var(--vp-font-family-base) !important;
+    color: var(--vp-c-text-3) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 3px !important;
+    border: 1px solid var(--vp-c-border) !important;
+    border-radius: 2px !important;
+    padding: 4px 4px !important;
+    min-width: 0 !important;
+    white-space: nowrap !important;
+    line-height: 1 !important;
+}
+.DocSearch-Button-Key {
+    font-family: var(--vp-font-family-base) !important;
+    color: var(--vp-c-text-3) !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    height: auto !important;
+    font-size: 10.5px !important;
+    font-weight: 400 !important;
+    line-height: 1 !important;
+    top: 0 !important;
+    transition: none !important;
+}
+/* The first kbd is empty; VitePress renders Ctrl / ⌘ via ::after at 12px.
+   Bring it down to 10px and clear its own padding so it aligns with the K. */
+.DocSearch-Button-Key:first-child {
+    font-size: 0 !important;
+}
+.DocSearch-Button-Key:first-child::after {
+    font-size: 10.5px !important;
+    font-weight: 400 !important;
+    color: var(--vp-c-text-3) !important;
+    letter-spacing: normal !important;
+    line-height: 1 !important;
+}
+.DocSearch-Button-Key + .DocSearch-Button-Key {
+    border: none !important;
+    padding: 0 !important;
+}
+
+.NavGitHubLink {
+    display: inline-flex;
+    align-items: center;
+    height: auto;
+    padding: 5px 10px;
+    color: var(--vp-c-text-3);
+    font-size: 12px;
+    text-decoration: none;
+    border: 1px solid var(--vp-c-divider);
+    border-radius: 3px;
+    transition:
+        color 0.15s,
+        border-color 0.15s;
+}
+
+.NavGitHubLink:hover {
+    color: var(--vp-c-text-1);
+    border-color: var(--vp-c-border);
+}
+
+/* Social link (GitHub) - match landing github-link */
+.VPSocialLink {
+    color: var(--vp-c-text-3) !important;
+    border: 1px solid var(--vp-c-divider);
+    border-radius: 3px;
+    padding: 5px 10px;
+    transition:
+        color 0.15s,
+        border-color 0.15s;
+}
+.VPNavBar .content-body {
+    gap: 8px;
+    min-width: 0;
+}
+.VPSocialLink:hover {
+    color: var(--vp-c-text-1) !important;
+    border-color: var(--vp-c-border);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   SIDEBAR - match landing #sidebar
+   ─────────────────────────────────────────────────────────────────────── */
+
+.VPSidebar {
+    background: var(--vp-c-bg-alt) !important;
+    border-right: 1px solid var(--vp-c-divider);
+    /* 48px reserves space for the navbar (top:0 fixed); 16px breathing room for first item. */
+    padding: 64px 0 16px !important;
+}
+/* The full-width topbar/sidebar boundary line is provided by the navbar's
+   `border-bottom` (see .VPNavBar above). VitePress gives the sidebar a higher
+   z-index than the navbar, which would normally cover that border in the sidebar
+   column - bump the navbar above the sidebar so its bottom border paints clean
+   across the full viewport, matching landing. */
+/* Inset 1px divider between top-level groups, matching landing .sidebar-divider
+   (margin: 10px 16px). VitePress wraps each top-level entry in its own `.group`
+   and puts the divider on `.group + .group { border-top }`, which spans the
+   group's full width. Drop that border and re-render the line as an inset
+   pseudo-element. */
+.VPSidebar .group + .group {
+    border-top: none !important;
+    padding-top: 0 !important;
+    position: relative;
+}
+.VPSidebar .group + .group::before {
+    content: "";
+    display: block;
+    height: 1px;
+    background: var(--vp-c-divider);
+    margin: 10px 16px;
+}
+
+/* VitePress widens the sidebar at ≥1440px so its right edge aligns with the
+   centered content column - that leaves a huge empty band on the left at wide
+   viewports. Pin it to the configured width regardless of screen size. */
+@media (min-width: 1440px) {
+    .VPSidebar {
+        padding-left: 0 !important;
+        width: var(--vp-sidebar-width) !important;
+    }
+}
+
+/* VitePress wraps each top-level group in `.group` with
+   `width: calc(var(--vp-sidebar-width) - 64px)` at ≥960px - that's why hover/active
+   highlights stop ~64px short of the sidebar's right edge. Force full width. */
+.VPSidebar .group {
+    width: 100% !important;
+    padding-top: 0 !important;
+}
+/* Tighten the gap between groups - landing has 4px section spacing plus the
+   inset divider, not VitePress's default 24px padding-bottom. */
+.VPSidebarItem.level-0 {
+    padding-bottom: 4px !important;
+}
+.VPSidebarItem.collapsed.level-0 {
+    padding-bottom: 0 !important;
+}
+
+/* Top-level one-off links (e.g. Introduction) should match landing top items. */
+.VPSidebarItem.level-0.is-link > .item > .link {
+    display: block !important;
+    padding: 5px 16px !important;
+    border-left: 2px solid transparent !important;
+    color: var(--vp-c-text-2) !important;
+    background: transparent !important;
+    transition:
+        color 0.1s,
+        background 0.1s !important;
+}
+.VPSidebarItem.level-0.is-link > .item > .link:hover {
+    color: var(--vp-c-text-1) !important;
+    background: var(--vp-c-bg-soft) !important;
+}
+.VPSidebarItem.level-0.is-link.is-active > .item > .link {
+    color: var(--vp-c-brand-1) !important;
+    border-left-color: var(--vp-c-brand-1) !important;
+}
+.VPSidebarItem.level-0.is-link > .item > .link > .text {
+    padding: 0 !important;
+    font-size: 13px !important;
+    font-weight: 400 !important;
+    line-height: 1.5 !important;
+    color: inherit !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+}
+
+/* Top-level accordion headers (Getting Started, Core Concepts...) */
+.VPSidebarItem.level-0.collapsible > .item {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 5px 16px !important;
+}
+.VPSidebarItem.level-0.collapsible > .item > .text {
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+    color: var(--vp-c-text-3) !important;
+    padding: 0 !important;
+    line-height: 1.4 !important;
+}
+.VPSidebarItem.level-0.collapsible > .item:hover > .text {
+    color: var(--vp-c-text-2) !important;
+}
+
+.VPSidebarItem.level-0 > .item > .indicator {
+    display: none !important;
+}
+
+.VPSidebarItem.level-0.collapsible > .item > .caret {
+    order: -1;
+    justify-content: flex-start !important;
+    margin: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    color: var(--vp-c-text-3) !important;
+}
+
+.VPSidebarItem.level-0.collapsible > .item:hover > .caret {
+    color: var(--vp-c-text-2) !important;
+}
+
+.VPSidebarItem.level-0.collapsible > .item > .caret .caret-icon {
+    font-size: 9px !important;
+    transform: rotate(90deg) !important;
+    transition: transform 0.15s !important;
+}
+
+.VPSidebarItem.level-0.collapsible.collapsed > .item > .caret .caret-icon {
+    transform: rotate(0deg) !important;
+}
+
+/* Sidebar item links - 13px, deep left indent, accent on active */
+.VPSidebarItem .link,
+.VPSidebarItem.level-1 .link {
+    font-size: 13px !important;
+    color: var(--vp-c-text-2) !important;
+    padding: 4px 16px 4px 28px !important;
+    border-left: 2px solid transparent !important;
+    transition:
+        color 0.1s,
+        background 0.1s;
+    min-width: 0;
+}
+/* The text node owns the line-height; VitePress defaults to 24px which inflates
+   each row. Match landing's compact ~21px height. */
+.VPSidebarItem.level-1 .item > .link > .text,
+.VPSidebarItem.level-2 .item > .link > .text {
+    font-size: 13px !important;
+    font-weight: 400 !important;
+    line-height: 1.6 !important;
+    padding: 0 !important;
+}
+/* The text node is `<p class="text">` inside `.link` - apply ellipsis there.
+   Without this, long widget names ("Layout & Containers", "Overlays & Navigation")
+   wrap onto two lines. */
+.VPSidebarItem.level-1 .item > .link > .text,
+.VPSidebarItem.level-2 .item > .link > .text {
+    display: block !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    min-width: 0 !important;
+}
+.VPSidebarItem .link:hover {
+    color: var(--vp-c-text-1) !important;
+    background: var(--vp-c-bg-soft) !important;
+}
+.VPSidebarItem.level-1 .items,
+.VPSidebarItem.level-2 .items,
+.VPSidebarItem.level-3 .items,
+.VPSidebarItem.level-4 .items,
+.VPSidebarItem.level-5 .items {
+    border-left: none !important;
+    padding-left: 0 !important;
+}
+.VPSidebarItem.is-active > .item > .link,
+.VPSidebarItem.is-active > .link {
+    color: var(--vp-c-brand-1) !important;
+    background: rgba(253, 74, 128, 0.06) !important;
+    border-left-color: var(--vp-c-brand-1) !important;
+}
+.VPSidebarItem.is-active > .item > .link > .text {
+    color: var(--vp-c-brand-1) !important;
+}
+
+/* Hide caret rotation glitches on collapsed groups */
+.VPSidebarItem.collapsible > .item > .caret {
+    color: var(--vp-c-text-3);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   DOC CONTENT - match landing .doc-page
+   ─────────────────────────────────────────────────────────────────────── */
+
+.VPDoc {
+    padding: 0 !important;
+}
+.VPDoc > .container,
+.VPDoc > .container > .content {
+    padding-top: 32px !important;
+}
+.VPDoc .content-container {
+    max-width: 860px !important;
+}
+
+/* Measure. Body copy is capped at --rozi-prose (~80 characters at 14px
+   JetBrains Mono, which advances 0.6em); headings, tables, code blocks, and
+   images keep the full column. Headings are short enough that a wide box costs
+   nothing, and it keeps the h2 rule flush with the tables underneath it -
+   constraining the heading too would stop that line short of the data. */
+.vp-doc > div > p,
+.vp-doc > div > ul,
+.vp-doc > div > ol,
+.vp-doc > div > blockquote,
+.vp-doc > div > .custom-block {
+    max-width: var(--rozi-prose);
+}
+
+/* Headings - a ~1.22 step per level. The previous scale ran 13/14/17, which
+   left h3 a bold recolour of body text and h4 identical to it. */
+.vp-doc h1 {
+    font-size: 31px !important;
+    font-weight: 800 !important;
+    color: var(--vp-c-text-1) !important;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+    margin: 0 0 12px !important;
+}
+.vp-doc h2 {
+    font-size: 23px !important;
+    font-weight: 700 !important;
+    color: var(--vp-c-text-1) !important;
+    margin: 40px 0 16px !important;
+    padding-top: 36px !important;
+    border-top: 1px solid var(--vp-c-divider) !important;
+    letter-spacing: -0.015em;
+    line-height: 1.3;
+}
+.vp-doc h2 > .header-anchor {
+    border-top: none;
+}
+/* More space above than below, so an h3 binds to the text it introduces
+   instead of floating between two blocks. */
+.vp-doc h3 {
+    font-size: 19px !important;
+    font-weight: 700 !important;
+    color: var(--vp-c-brand-1) !important;
+    margin: 34px 0 10px !important;
+    padding-top: 0 !important;
+    border-top: none !important;
+    line-height: 1.35;
+}
+.vp-doc h4 {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    color: var(--vp-c-text-1) !important;
+    margin: 26px 0 8px !important;
+    line-height: 1.4;
+}
+
+/* Paragraphs and lists. The gap between paragraphs must exceed the line
+   height or consecutive paragraphs read as one block. */
+.vp-doc p,
+.vp-doc summary {
+    font-size: 14px;
+    color: var(--vp-c-text-2);
+    line-height: 1.75;
+    margin-bottom: 24px;
+}
+.vp-doc ul,
+.vp-doc ol {
+    padding-left: 22px;
+    margin-bottom: 24px;
+}
+.vp-doc li {
+    font-size: 14px;
+    color: var(--vp-c-text-2);
+    line-height: 1.7;
+    margin-bottom: 8px;
+}
+.vp-doc li > ul,
+.vp-doc li > ol {
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+.vp-doc blockquote {
+    border-left: 3px solid var(--vp-c-divider);
+    padding: 10px 16px;
+    margin-bottom: 24px;
+    color: var(--vp-c-text-2);
+    background: transparent;
+    font-size: 14px;
+}
+.vp-doc blockquote p {
+    margin: 0;
+}
+
+/* Links */
+.vp-doc a {
+    color: var(--vp-c-brand-1);
+    text-decoration: none;
+    font-weight: inherit;
+}
+.vp-doc a:hover {
+    text-decoration: underline;
+}
+.vp-doc a.header-anchor {
+    color: var(--vp-c-text-3);
+}
+
+/* Inline code - accent on bg, border-bright box.
+   These pages are dense with inline code, so it takes the violet end of the
+   gradient rather than --vp-c-brand-1; a whole page of rose pills reads as
+   alarm. Links and h3 keep the rose so the two stay distinguishable. */
+.vp-doc :not(pre) > code {
+    background: var(--vp-c-bg);
+    border: 1px solid var(--vp-c-border);
+    border-radius: 2px;
+    padding: 1px 5px;
+    font-size: 13px;
+    color: #b98cf5;
+    font-family: var(--vp-font-family-mono);
+    font-weight: inherit;
+}
+
+/* A heading written as `## \`[theme]\`` is still a heading. Without this the
+   rule above wins - the size lives on the <code> child, not the <h2> box - and
+   renders 23 of configuration.md's section headings at pill size, smaller than
+   body text and indistinguishable from a passing mention of the same key.
+   Must stay after the rule it overrides: the two have equal specificity. */
+.vp-doc :is(h1, h2, h3, h4, h5, h6) > code {
+    font-size: inherit;
+    font-weight: inherit;
+    color: inherit;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+}
+
+/* Horizontal rules */
+.vp-doc hr {
+    border: none;
+    border-top: 1px solid var(--vp-c-divider);
+    margin: 24px 0;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   CODE BLOCKS - match landing .code-block
+   ─────────────────────────────────────────────────────────────────────── */
+
+.vp-doc div[class*="language-"] {
+    background: var(--vp-code-block-bg) !important;
+    border: 1px solid var(--vp-c-border);
+    border-radius: 3px;
+    margin: 24px 0;
+}
+.vp-doc div[class*="language-"] pre {
+    padding: 16px !important;
+    font-size: 13.5px !important;
+    line-height: 1.6 !important;
+}
+.vp-doc div[class*="language-"] code {
+    font-family: var(--vp-font-family-mono);
+    font-size: 13.5px !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    color: inherit !important;
+}
+/* Lang label (top-right) */
+.vp-doc div[class*="language-"]::before {
+    font-size: 11px !important;
+    color: var(--vp-c-text-3) !important;
+    font-family: var(--vp-font-family-mono) !important;
+    top: 8px !important;
+    right: 12px !important;
+}
+/* Copy button - smaller than VitePress default, kept in the top-right corner. */
+.vp-doc div[class*="language-"] > button.copy {
+    top: 8px !important;
+    right: 8px !important;
+    width: 32px !important;
+    height: 32px !important;
+    border: 1px solid var(--vp-c-divider) !important;
+    background-color: var(--vp-c-bg-alt) !important;
+    background-size: 16px !important;
+    border-radius: 3px !important;
+    transform: none !important;
+}
+.vp-doc div[class*="language-"] > button.copy:hover {
+    border-color: var(--vp-c-brand-2) !important;
+    background-color: var(--vp-c-bg-soft) !important;
+}
+.vp-doc div[class*="language-"] > button.copy.copied,
+.vp-doc div[class*="language-"] > button.copy:hover.copied {
+    border-radius: 0 3px 3px 0 !important;
+}
+.vp-doc div[class*="language-"] > button.copy.copied::before,
+.vp-doc div[class*="language-"] > button.copy:hover.copied::before {
+    min-height: 32px !important;
+    border-radius: 3px 0 0 3px !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   CALLOUTS / CUSTOM BLOCKS - match landing .callout
+   ─────────────────────────────────────────────────────────────────────── */
+
+.vp-doc .custom-block {
+    border: none;
+    border-left: 3px solid var(--vp-c-tip-1);
+    background: var(--vp-c-tip-soft);
+    border-radius: 0 3px 3px 0;
+    padding: 12px 16px;
+    margin: 24px 0;
+    font-size: 13.5px;
+    color: var(--vp-c-text-2);
+}
+.vp-doc .custom-block p {
+    font-size: 13.5px;
+    margin: 0;
+    color: var(--vp-c-text-2);
+}
+.vp-doc .custom-block .custom-block-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--vp-c-brand-1);
+    margin-bottom: 4px;
+}
+.vp-doc .custom-block.tip {
+    border-left-color: var(--vp-c-tip-1);
+    background: var(--vp-c-tip-soft);
+}
+.vp-doc .custom-block.tip .custom-block-title {
+    color: var(--vp-c-brand-1);
+}
+
+.vp-doc .custom-block.warning {
+    border-left-color: var(--vp-c-warning-1);
+    background: var(--vp-c-warning-soft);
+}
+.vp-doc .custom-block.warning .custom-block-title {
+    color: var(--vp-c-warning-1);
+}
+
+.vp-doc .custom-block.danger {
+    border-left-color: var(--vp-c-danger-1);
+    background: var(--vp-c-danger-soft);
+}
+.vp-doc .custom-block.danger .custom-block-title {
+    color: var(--vp-c-danger-1);
+}
+
+.vp-doc .custom-block.info,
+.vp-doc .custom-block.note {
+    border-left-color: var(--vp-c-text-3);
+    background: var(--vp-c-bg-soft);
+}
+.vp-doc .custom-block.info .custom-block-title,
+.vp-doc .custom-block.note .custom-block-title {
+    color: var(--vp-c-text-2);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   TABLES - match landing .doc-table
+   ─────────────────────────────────────────────────────────────────────── */
+
+.vp-doc table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 24px 0;
+    display: table;
+}
+.vp-doc th {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--vp-c-border);
+    color: var(--vp-c-text-2);
+    font-weight: 600;
+    background: transparent;
+}
+.vp-doc td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--vp-c-divider);
+    color: var(--vp-c-text-2);
+    background: transparent;
+}
+.vp-doc tr:hover td {
+    background: var(--vp-c-bg-soft);
+}
+.vp-doc table code {
+    font-size: 12px;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   OUTLINE (right rail) - subtle
+   ─────────────────────────────────────────────────────────────────────── */
+
+.VPDocOutline,
+.VPDocAside {
+    font-size: 12px;
+}
+.VPDocOutlineItem {
+    font-size: 12px !important;
+}
+.VPDocOutlineItem.active {
+    color: var(--vp-c-brand-1) !important;
+}
+.outline-marker {
+    background: var(--vp-c-brand-1) !important;
+}
+/* Let long entries wrap instead of truncating. VitePress pins outline links to
+   a single 28px line and ellipsises the overflow, which loses the end of most
+   h3 titles now that `outline: [2, 3]` indents them into a narrower column
+   ("Where rozi keeps it…", "PowerShell sessions…"). The active-item marker is
+   positioned from measured rects, so variable heights are fine. */
+.VPDocAsideOutline .outline-link {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    height: auto !important;
+    line-height: 1.5 !important;
+    padding: 3px 0 !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   FOOTER - match landing
+   ─────────────────────────────────────────────────────────────────────── */
+
+.VPFooter {
+    background: var(--vp-c-bg-alt);
+    border-top: 1px solid var(--vp-c-divider);
+}
+.VPDocFooter {
+    margin-top: 56px !important;
+    padding-top: 20px !important;
+    border-top: 1px solid var(--vp-c-divider) !important;
+    background: transparent !important;
+}
+.VPDocFooter .edit-info {
+    padding-bottom: 18px !important;
+}
+.VPDocFooter .edit-link-button {
+    color: var(--vp-c-brand-1);
+    font-size: 12px;
+    line-height: 1.4 !important;
+    padding: 5px 0 !important;
+    text-decoration: none !important;
+}
+.VPDocFooter .edit-link-button:hover {
+    color: var(--vp-c-text-1) !important;
+    text-decoration: none !important;
+}
+.VPDocFooter .prev-next {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+    border-top: none !important;
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+}
+@media (min-width: 640px) {
+    .VPDocFooter .prev-next {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 12px !important;
+    }
+}
+.VPDocFooter .pager {
+    min-width: 0 !important;
+    margin: 0 !important;
+}
+.VPDocFooter .pager-link {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    border: 1px solid var(--vp-c-divider) !important;
+    border-radius: 3px !important;
+    padding: 12px 16px !important;
+    background: var(--vp-c-bg-alt) !important;
+    text-decoration: none !important;
+    transition:
+        border-color 0.15s,
+        background 0.15s;
+}
+.VPDocFooter .pager-link:hover {
+    border-color: var(--vp-c-brand-2) !important;
+    background: var(--vp-c-bg-soft) !important;
+    text-decoration: none !important;
+}
+.VPDocFooter .pager-link.next {
+    margin-left: 0 !important;
+    text-align: right !important;
+}
+.VPDocFooter .pager .desc {
+    display: block;
+    color: var(--vp-c-text-3) !important;
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+    margin-bottom: 3px !important;
+}
+.VPDocFooter .pager .title {
+    display: block;
+    color: var(--vp-c-text-1) !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    font-weight: 500 !important;
+    transition: color 0.15s;
+}
+.VPDocFooter .pager-link:hover .title {
+    color: var(--vp-c-brand-1) !important;
+}
+.VPLastUpdated {
+    font-size: 11px;
+    color: var(--vp-c-text-3);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   LOCAL SEARCH MODAL - match landing palette
+   ─────────────────────────────────────────────────────────────────────── */
+
+.VPLocalSearchBox {
+    --vp-local-search-bg: var(--vp-c-bg-alt);
+    background: rgba(6, 7, 15, 0.9) !important;
+}
+.VPLocalSearchBox .shell {
+    background: var(--vp-c-bg-alt) !important;
+    border: 1px solid var(--vp-c-border) !important;
+    border-radius: 4px !important;
+}
+.VPLocalSearchBox input {
+    font-family: var(--vp-font-family-base) !important;
+    font-size: 13px !important;
+    color: var(--vp-c-text-1) !important;
+    background: var(--vp-c-bg) !important;
+}
+.VPLocalSearchBox .result.selected {
+    border-color: var(--vp-c-brand-1) !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   SCANLINES - opt-in via <body class="scanlines">. OFF by default.
+   ─────────────────────────────────────────────────────────────────────── */
+
+body.scanlines::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 3px,
+        rgba(0, 0, 0, 0.04) 3px,
+        rgba(0, 0, 0, 0.04) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   MOBILE
+   ─────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+    .VPNavBar > .wrapper {
+        padding: 0 12px !important;
+    }
+    .VPNavBar .content-body {
+        gap: 6px;
+    }
+    .VPNavBar .search {
+        flex: 0 0 auto !important;
+        padding-left: 0 !important;
+        margin-left: 0 !important;
+    }
+    .DocSearch-Button {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 32px !important;
+        min-width: 32px !important;
+        max-width: 32px !important;
+        height: 32px !important;
+        padding: 0 !important;
+    }
+    .DocSearch-Button-Container {
+        gap: 0 !important;
+    }
+    .DocSearch-Button .DocSearch-Search-Icon {
+        margin-right: 0 !important;
+    }
+    .DocSearch-Button .DocSearch-Button-Placeholder,
+    .DocSearch-Button .DocSearch-Button-Keys {
+        display: none !important;
+    }
+    .NavGitHubLink {
+        display: none !important;
+    }
+    .VPDoc .content-container {
+        padding: 24px 20px 60px !important;
+    }
+    .vp-doc h1 {
+        font-size: 26px !important;
+    }
+    .vp-doc h2 {
+        font-size: 20px !important;
+        margin-top: 32px !important;
+        padding-top: 28px !important;
+    }
+    .vp-doc h3 {
+        font-size: 17px !important;
+        margin-top: 28px !important;
+    }
+    .vp-doc h4 {
+        font-size: 15px !important;
+    }
+
+    /* Keep the mobile hamburger aligned with the navbar's right padding. */
+    .VPNavBarHamburger {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        width: 32px !important;
+        height: 48px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    .VPNavBarHamburger .container {
+        width: 16px !important;
+        height: 14px !important;
+    }
+}

@@ -12,7 +12,11 @@ server-backed named sessions for detach/reattach workflows.
 - `.github/` - GitHub metadata such as funding configuration.
 - `.superpowers/` - Historical planning and execution notes; do not treat as live product docs.
 - `benches/` - Criterion benchmarks and deterministic generated terminal/protocol corpora.
-- `docs/` - User-facing documentation and internal design notes.
+- `docs/` - User-facing documentation and internal design notes. This folder is also the
+  VitePress source for `rozi.tui-lipan.dev`: every `.md` here is a page on the site, and
+  `docs/.vitepress/` holds the config, theme, and landing page. Adding a doc page means adding it
+  to the sidebar in `docs/.vitepress/config.ts`. Links that leave `docs/` are rewritten to GitHub
+  URLs at build time, so keep writing them the way GitHub wants. See `docs/.vitepress/README.md`.
 - `examples/` - Example profiles and runnable/user-copyable configuration snippets.
 - `src/` - Rust application source, grouped by runtime, layout, panes, input, and features.
 - `tests/` - Integration and smoke tests outside the main binary crate.

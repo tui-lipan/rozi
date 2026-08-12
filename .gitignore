@@ -11,6 +11,12 @@
 # CI and a standalone clone must resolve tui-lipan from crates.io at the version Cargo.toml pins.
 /.cargo/
 
+# Documentation site (docs/ doubles as the VitePress source for rozi.tui-lipan.dev)
+/docs/node_modules/
+/docs/.vitepress/dist/
+/docs/.vitepress/cache/
+/docs/.vitepress/.temp/
+
 # Editor / OS noise
 *.swp
 .DS_Store

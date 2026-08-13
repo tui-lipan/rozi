@@ -1441,13 +1441,14 @@ fn shutdown_accepts_writable_followers_and_rejects_read_only_or_unattached_clien
 
 #[test]
 fn local_named_shutdown_waits_for_the_real_server_to_retire() {
+    // A pid and a counter, not 19 digits of nanoseconds: this name goes into a Unix socket path,
+    // and macOS caps those at 104 bytes against Linux's 108. The long form fit on one platform and
+    // not the other.
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let name = format!(
-        "shutdown-happy-{}-{}",
+        "sd-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let (listener, endpoint) = bind_session_socket(&name).expect("bind session endpoint");
     let thread_endpoint = endpoint.clone();

@@ -1,0 +1,9 @@
+# Check every text file out with LF on all three platforms.
+#
+# This is not a style preference. `docs/agent-skill.md` is `include_str!`d into the binary and
+# printed verbatim by `rozi --skill`, so a CRLF checkout on Windows would ship a different contract
+# document than Linux and macOS do - and any agent parsing it would see stray carriage returns.
+# The same reasoning covers the config and profile fixtures the tests read back byte for byte.
+#
+# Nothing here needs CRLF: there are no .bat or .cmd files, and PowerShell is content with LF.
+* text=auto eol=lf

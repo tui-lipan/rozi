@@ -173,19 +173,23 @@ The generated manifest is the canonical JSON shape
 manifests after signature checks. `targets` is keyed by the target triple. Each value contains
 `archive`, `archive_sha256`, `archive_size`, `payload`, and the Windows-only `launcher`.
 
-The Cargo manifest uses sibling path dependencies `../tui-lipan` and `../relswap`. The release
-workflow checks those siblings out explicitly so it preserves local build semantics; it does not
-claim that this repository has been switched to crates.io versions of either.
+Both `tui-lipan` and `relswap` come from crates.io, so `Cargo.lock` pins the exact engine each
+signed release was built and signed with, and the release workflow builds from a single checkout.
 
 ## Maintainer key generation and signing
 
-Signing and metadata live in the sibling [`relswap`](https://github.com/tui-lipan/relswap) crate.
-Build its optional `release-tool` binary:
+Signing and metadata live in [`relswap`](https://github.com/tui-lipan/relswap). Install its optional
+`release-tool` binary once:
+
+```bash
+cargo install relswap --features release-tool
+```
+
+Then generate the key pair:
 
 ```bash
 mkdir -p "$HOME/.config/rozi/release-keys"
-cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
-  keygen \
+relswap keygen \
   --id release-2026-a \
   --private-key "$HOME/.config/rozi/release-keys/release-2026-a.private.b64" \
   --public-key /tmp/rozi-release-keys.json
@@ -203,17 +207,14 @@ production default key or test key. `rotate` is an alias of `keygen` for issuing
 After build/package jobs have produced final archives, generate and sign metadata:
 
 ```bash
-cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
-  manifest --name rozi --version 0.1.0 --artifacts-dir dist --output dist/rozi-release.json
+relswap manifest --name rozi --version 0.1.0 --artifacts-dir dist --output dist/rozi-release.json
 
 ROZI_RELEASE_PRIVATE_KEY="$(tr -d '\n' < "$HOME/.config/rozi/release-keys/release-2026-a.private.b64")" \
-cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
-  sign --name rozi --manifest dist/rozi-release.json \
+relswap sign --name rozi --manifest dist/rozi-release.json \
        --output dist/rozi-release.signatures.json \
        --key-id release-2026-a
 
-cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
-  verify --name rozi --manifest dist/rozi-release.json \
+relswap verify --name rozi --manifest dist/rozi-release.json \
          --signatures dist/rozi-release.signatures.json \
          --keys release-keys.json --artifacts-dir dist
 ```

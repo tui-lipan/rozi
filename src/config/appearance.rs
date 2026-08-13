@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::anim::WindowAnimationConfig;
+use crate::anim::{PaneAnimationStyle, WindowAnimationConfig};
 
 use super::file::{AnimationFileConfig, PaddingSpec};
 
@@ -56,7 +56,19 @@ pub(super) fn resolve_pane_padding(
     }
 }
 
-pub(super) fn apply_animations(target: &mut WindowAnimationConfig, raw: AnimationFileConfig) {
+pub(super) fn apply_animations(
+    target: &mut WindowAnimationConfig,
+    raw: AnimationFileConfig,
+    warnings: &mut Vec<String>,
+) {
+    if let Some(pane_style) = raw.pane_style.as_deref() {
+        match PaneAnimationStyle::parse(pane_style) {
+            Some(style) => target.pane_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown animations.pane_style \"{pane_style}\" (expected one of: scale, slide)"
+            )),
+        }
+    }
     if let Some(value) = raw.enabled {
         target.enabled = value;
     }
@@ -165,7 +177,33 @@ mod tests {
         let raw: AnimationFileConfig =
             toml::from_str("alert_pulse_ms = 2400").expect("config parses");
         let mut animations = WindowAnimationConfig::default();
-        apply_animations(&mut animations, raw);
+        let mut warnings = Vec::new();
+        apply_animations(&mut animations, raw, &mut warnings);
         assert_eq!(animations.alert_pulse_duration, Duration::from_millis(2400));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn animations_apply_pane_style_and_warn_on_an_unknown_one() {
+        let raw: AnimationFileConfig =
+            toml::from_str("pane_style = \"slide\"").expect("config parses");
+        let mut animations = WindowAnimationConfig::default();
+        let mut warnings = Vec::new();
+        apply_animations(&mut animations, raw, &mut warnings);
+        assert_eq!(animations.pane_style, PaneAnimationStyle::Slide);
+        assert!(warnings.is_empty());
+
+        let raw: AnimationFileConfig =
+            toml::from_str("pane_style = \"springy\"").expect("config parses");
+        let mut animations = WindowAnimationConfig::default();
+        apply_animations(&mut animations, raw, &mut warnings);
+        // An unknown token leaves the default rather than silently disabling pane animation.
+        assert_eq!(animations.pane_style, PaneAnimationStyle::Scale);
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].contains("scale, slide"),
+            "the warning should list the accepted values: {}",
+            warnings[0]
+        );
     }
 }

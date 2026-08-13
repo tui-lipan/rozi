@@ -255,3 +255,9 @@ resize, or when the terminal viewport changes, the affected pane's transition be
 instant. This avoids issuing a `pty.resize` (SIGWINCH) on every animation frame, which would
 make the shell reflow continuously. See the [`[animations]`](configuration.md#animations)
 config section to tune or disable individual transitions.
+
+Panes open and close in one of two shapes, set by
+[`pane_style`](configuration.md#pane-openclose-style): `scale` grows the pane from its own centre
+with a fade, while `slide` brings it in from the edge it was split off — clipped to its tile, so it
+emerges from behind the seam — and springs the tile that gave up the space into its new size. A slide
+carries the pane at its final size throughout, so it never re-lays out the grid mid-animation.

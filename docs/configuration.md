@@ -374,14 +374,48 @@ milliseconds.
 | `tile_float` | `true` | Tiling ⇄ floating geometry animation. |
 | `axis_change` | `true` | Split-axis flip animation. |
 | `focus_chrome` | `true` | Border/titlebar color transitions when focus moves. |
+| `pane_style` | `"scale"` | Shape of the pane open/close animation: `scale` or `slide`. See below. |
 | `geometry_ms` | `220` | Base geometry transition duration; scratchpad slide uses two-thirds of this. |
-| `close_ms` | `120` | Close transition duration. |
+| `close_ms` | `120` | Close transition duration. Ignored by `pane_style = "slide"`, which uses `geometry_ms`. |
 | `focus_chrome_ms` | `160` | Focus-chrome transition duration. |
 | `alert_pulse_ms` | `1600` | Shared breathe period for `alert_border = "pulse"` and inactive workspace-tab breathing. Half-period is floored at 400 ms. |
 | `open_delay_ms` | `36` | Delay before a spawned pane begins fading in. |
 
 Pulse needs both `enabled` and `focus_chrome`. No pulse timer runs until an eligible alert is
 visible.
+
+### Pane open/close style
+
+`pane_style` picks what an arriving or leaving pane does. Both styles honour `spawn` and `close`, so
+either can still be turned off one direction at a time.
+
+`"scale"` (the default) scales the pane toward the centre of its own rectangle with a fade riding on
+top, and the surrounding tiles glide into their new sizes.
+
+`"slide"` instead slides the pane in from the edge it was split off — right for a side-by-side split,
+below for a stacked one — clipped to its destination tile, so it emerges from behind the seam rather
+than flying across its neighbour. There is no fade: the clip is what reveals it. The pane keeps its
+final size for the whole slide, so the terminal grid never reflows part-way. The **springy** part is
+the tile that gave up the space: it overshoots its new size slightly and settles, rather than gliding.
+A closing pane slides back out toward the same edge it arrived from.
+
+Only tiled panes slide. A floating pane has no tile edge to emerge from and no neighbour to take
+space from, so it keeps the scale whatever `pane_style` says; the same goes for popups. Panes that
+never went through a split — the first pane in a workspace, a restored layout, a session you attach
+to — slide up from the bottom, matching the scratchpad.
+
+**The spring scales with the pane, the timing does not.** The overshoot is a fraction of the distance
+the tile travels, so a fixed amplitude throws a big tile proportionally further — a pane halving from
+240 columns would spring 24 of them. The amplitude is sized from the tile instead, so the nudge stays
+about three cells whether the tile is 30 columns or 240. Arrival runs for `geometry_ms` at every size:
+stretching it to match the distance covered makes a large pane crawl, which reads worse than the extra
+speed ever did.
+
+A closing pane leaves toward the same edge it arrived from, and the tile taking its place expands in
+that direction by that distance — so both run for `geometry_ms` and their shared edge is a single
+moving boundary, which is what makes the pane read as *pushed* out rather than dragged behind. That is
+also why `close_ms` does not apply to a slide: it is tuned for the scale, where the close is a short
+pop the fade rides on, and a slide has a whole tile to cross in step with its replacement.
 
 > **Size changes are snapped, not animated.** During an active move/resize or a viewport
 > change, transitions become instant for the affected pane. This is deliberate: animating a

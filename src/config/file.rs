@@ -440,6 +440,7 @@ pub(super) struct AnimationFileConfig {
     pub(super) tile_float: Option<bool>,
     pub(super) axis_change: Option<bool>,
     pub(super) focus_chrome: Option<bool>,
+    pub(super) pane_style: Option<String>,
     pub(super) geometry_ms: Option<u64>,
     pub(super) close_ms: Option<u64>,
     pub(super) focus_chrome_ms: Option<u64>,
@@ -535,7 +536,7 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
         &mut warnings,
     );
     config.input = input;
-    apply_animations(&mut config.animations, parsed.animations);
+    apply_animations(&mut config.animations, parsed.animations, &mut warnings);
 
     if let Some(name) = non_empty(parsed.theme.name) {
         config.theme.name = name;

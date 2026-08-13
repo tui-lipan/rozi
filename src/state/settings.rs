@@ -28,6 +28,7 @@ pub enum SettingsAction {
     ToggleHighlightFocusedTitlebar,
     CycleBorderMode,
     CycleBorderStyle,
+    CyclePaneAnimation,
     ToggleBellUrgency,
     CycleAlertBorder,
     CycleWorkbarAlert,
@@ -84,6 +85,7 @@ impl SettingsAction {
             Self::ToggleHighlightFocusedTitlebar,
             Self::CycleBorderMode,
             Self::CycleBorderStyle,
+            Self::CyclePaneAnimation,
             // Alerts
             Self::ToggleBellUrgency,
             Self::CycleAlertBorder,
@@ -138,6 +140,7 @@ impl SettingsAction {
                 Some("Unsupported in this mode")
             }
             Self::CycleWhichKeyDelay if !config.input.which_key => Some("Needs which-key panel"),
+            Self::CyclePaneAnimation if !config.animations.enabled => Some("Needs animations"),
             Self::ToggleWorkbarPosition
             | Self::ToggleWorkbarGap
             | Self::CycleWorkbarStyle

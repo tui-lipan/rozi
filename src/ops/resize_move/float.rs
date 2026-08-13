@@ -975,8 +975,10 @@ mod tests {
                 let state = backend.state();
                 let resized = &state.current().workspaces[0].panes[3];
                 let sibling = &state.current().workspaces[0].panes[0];
-                let resized_cfg = AppRoot::geometry_transition_for_pane(state, resized, false);
-                let sibling_cfg = AppRoot::geometry_transition_for_pane(state, sibling, false);
+                let resized_cfg =
+                    AppRoot::geometry_transition_for_pane(state, resized, false, None);
+                let sibling_cfg =
+                    AppRoot::geometry_transition_for_pane(state, sibling, false, None);
                 assert_eq!(
                     resized_cfg.duration,
                     std::time::Duration::ZERO,
@@ -1106,7 +1108,7 @@ mod tests {
                 after.x
             );
             let sibling = &backend.state().current().workspaces[0].panes[0];
-            let cfg = AppRoot::geometry_transition_for_pane(backend.state(), sibling, false);
+            let cfg = AppRoot::geometry_transition_for_pane(backend.state(), sibling, false, None);
             assert_eq!(
                 cfg.duration,
                 backend.state().config.animations.geometry_duration

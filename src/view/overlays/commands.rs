@@ -217,6 +217,14 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
         ToggleAnimations => {
             alias_list(&["animation effects", "motion effects", "transitions"])
         }
+        CyclePaneAnimation => alias_list(&[
+            "pane open animation",
+            "pane close animation",
+            "spawn animation",
+            "slide panes",
+            "scale panes",
+            "springy panes",
+        ]),
         ToggleHighlightFocusedBackground => alias_list(&[
             "focused pane background",
             "active pane background",

@@ -187,6 +187,7 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                     "Focused titlebar",
                     "Border mode",
                     "Border style",
+                    "Open/close animation",
                 ][..],
                 "Alerts",
             ),

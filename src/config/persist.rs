@@ -138,6 +138,19 @@ pub fn persist_animation_flag(key: &str, value: bool) -> std::result::Result<Pat
     Ok(path)
 }
 
+pub fn persist_animation_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_value_in_section(&text, "animations", key, &format!("\"{value}\""));
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
 pub fn persist_notification_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
     persist_bool("notifications", key, value)
 }

@@ -140,7 +140,7 @@ pub(crate) fn spawn_pane_in_scratch(
         palette,
     };
     ctx.state.scratch.panes.push(pane);
-    place_spawned_pane(
+    let tiled_placement = place_spawned_pane(
         &mut ctx.state.scratch,
         id,
         previous_focused,
@@ -149,6 +149,16 @@ pub(crate) fn spawn_pane_in_scratch(
         tile_gap,
         split_width_multiplier,
     );
+    let slide_edge = tiled_placement.slide_edge(ctx.state.scratch.layout_kind);
+    if let Some(pane) = ctx
+        .state
+        .scratch
+        .panes
+        .iter_mut()
+        .find(|pane| pane.id == id)
+    {
+        pane.slide_edge = slide_edge;
+    }
     ctx.state.scratch.focused_pane = Some(id);
     // A workspace spawn routes focus through `apply_spawn_focus`, which also parks the Scrollable
     // viewport on the new pane. Without the same here the anchor stays on whatever was focused
@@ -329,7 +339,7 @@ pub(crate) fn spawn_pane_in_workspace(
         }
     }
     workspace.panes.push(pane);
-    place_spawned_pane(
+    let tiled_placement = place_spawned_pane(
         workspace,
         id,
         previous_focused,
@@ -338,6 +348,10 @@ pub(crate) fn spawn_pane_in_workspace(
         tile_gap,
         split_width_multiplier,
     );
+    let slide_edge = tiled_placement.slide_edge(workspace.layout_kind);
+    if let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) {
+        pane.slide_edge = slide_edge;
+    }
     if placement.float.is_some() {
         remove_tiled_window(workspace, id);
     }

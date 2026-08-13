@@ -1,5 +1,6 @@
 use tui_lipan::prelude::FloatRect;
 
+use crate::anim::SlideEdge;
 use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
 use crate::state::{LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
 use crate::tiling::{
@@ -356,10 +357,43 @@ pub fn insert_tiled_pane_around_target(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpawnPlacement {
-    /// Split off the focused tile (the given pane).
-    Split(PaneId),
+    /// Split off the focused tile along `axis`. The new pane always takes the second slot, so a
+    /// horizontal split puts it to the right of `target` and a vertical one below.
+    Split { target: PaneId, axis: SplitAxis },
     /// Appended to the tree (first tiled pane, or no valid split target).
     Appended,
+}
+
+impl SpawnPlacement {
+    /// The tile edge a pane placed this way slides in from under
+    /// [`PaneAnimationStyle::Slide`](crate::anim::PaneAnimationStyle::Slide).
+    ///
+    /// A split reads its own axis. Order-driven layouts have no split to read, so the edge follows
+    /// where the layout grows as panes are appended.
+    pub fn slide_edge(self, layout_kind: LayoutKind) -> SlideEdge {
+        match self {
+            Self::Split {
+                axis: SplitAxis::Horizontal,
+                ..
+            } => SlideEdge::Right,
+            Self::Split {
+                axis: SplitAxis::Vertical,
+                ..
+            } => SlideEdge::Bottom,
+            Self::Appended => match layout_kind {
+                // Master keeps its master tile on one side and appends to the stack beside it.
+                LayoutKind::Master | LayoutKind::Columns | LayoutKind::Scrollable => {
+                    SlideEdge::Right
+                }
+                // Grid fills row-major, so appending extends it downward. Monocle stacks panes on
+                // top of each other with no neighbour at all, and Dwindle only lands here for the
+                // first pane in a workspace; both take the scratchpad's default.
+                LayoutKind::Grid | LayoutKind::Rows | LayoutKind::Monocle | LayoutKind::Dwindle => {
+                    SlideEdge::Bottom
+                }
+            },
+        }
+    }
 }
 
 /// Insert `id` by splitting the focused pane - Hyprland's dwindle behavior: a new pane
@@ -397,7 +431,7 @@ pub fn place_spawned_pane(
             let axis = spawn_split_for_rect(rect, split_width_multiplier).0;
             let moving_first = false;
             if insert_tiled_pane_around_target(workspace, id, target, axis, moving_first) {
-                return SpawnPlacement::Split(target);
+                return SpawnPlacement::Split { target, axis };
             }
         }
     }
@@ -443,6 +477,85 @@ mod tests {
 
         // The new pane always takes the second (right/bottom) slot - fixed, not cursor.
         assert!(!spawn_split_for_rect(wide, 2.3).1);
+    }
+
+    #[test]
+    fn a_dwindle_split_slides_the_new_pane_in_from_the_slot_it_took() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 120.0,
+            h: 40.0,
+        };
+        let mut workspace = Workspace::new(0);
+        workspace.panes.push(Pane::new(1, 100, bounds));
+        place_spawned_pane(
+            &mut workspace,
+            1,
+            None,
+            bounds,
+            0.0,
+            crate::state::TileGap::DEFAULT,
+            crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+        );
+        workspace.focused_pane = Some(1);
+
+        workspace.panes.push(Pane::new(2, 100, bounds));
+        let placement = place_spawned_pane(
+            &mut workspace,
+            2,
+            Some(1),
+            bounds,
+            0.0,
+            crate::state::TileGap::DEFAULT,
+            crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+        );
+        // 120x40 splits side by side, and the new pane takes the right slot, so it arrives from the
+        // right rather than from wherever the layout happens to grow.
+        assert!(matches!(
+            placement,
+            SpawnPlacement::Split {
+                target: 1,
+                axis: SplitAxis::Horizontal
+            }
+        ));
+        assert_eq!(
+            placement.slide_edge(workspace.layout_kind),
+            SlideEdge::Right
+        );
+
+        let stacked = SpawnPlacement::Split {
+            target: 1,
+            axis: SplitAxis::Vertical,
+        };
+        assert_eq!(stacked.slide_edge(LayoutKind::Dwindle), SlideEdge::Bottom);
+    }
+
+    #[test]
+    fn an_appended_pane_slides_in_from_wherever_its_layout_grows() {
+        for kind in [
+            LayoutKind::Master,
+            LayoutKind::Columns,
+            LayoutKind::Scrollable,
+        ] {
+            assert_eq!(
+                SpawnPlacement::Appended.slide_edge(kind),
+                SlideEdge::Right,
+                "{kind:?} appends beside the existing tiles"
+            );
+        }
+        for kind in [
+            LayoutKind::Grid,
+            LayoutKind::Rows,
+            LayoutKind::Monocle,
+            LayoutKind::Dwindle,
+        ] {
+            assert_eq!(
+                SpawnPlacement::Appended.slide_edge(kind),
+                SlideEdge::Bottom,
+                "{kind:?} appends below the existing tiles"
+            );
+        }
     }
 
     #[test]

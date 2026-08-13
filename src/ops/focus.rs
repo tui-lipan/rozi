@@ -2640,7 +2640,8 @@ mod tests {
                 );
                 assert_right_edge_aligned(backend.state(), 3);
                 let sibling = &backend.state().current().workspaces[0].panes[0];
-                let cfg = AppRoot::geometry_transition_for_pane(backend.state(), sibling, false);
+                let cfg =
+                    AppRoot::geometry_transition_for_pane(backend.state(), sibling, false, None);
                 assert!(cfg.duration > std::time::Duration::ZERO);
             })
             .expect("spawn")

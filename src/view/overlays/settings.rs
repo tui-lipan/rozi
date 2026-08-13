@@ -88,6 +88,11 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                 ),
                 ("Border mode", pane.border_mode.label().to_string(), CycleBorderMode),
                 ("Border style", pane.border_style.label().to_string(), CycleBorderStyle),
+                (
+                    "Open/close animation",
+                    ctx.state.config.animations.pane_style.label().to_string(),
+                    CyclePaneAnimation,
+                ),
             ],
         ),
         settings_group(

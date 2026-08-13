@@ -241,6 +241,17 @@ fn settings_activate_dir(
         ToggleAnimations => {
             execute_action(ctx, Action::ToggleAnimations);
         }
+        CyclePaneAnimation => {
+            let value = if reverse {
+                ctx.state.config.animations.pane_style.prev()
+            } else {
+                ctx.state.config.animations.pane_style.next()
+            };
+            ctx.state.config.animations.pane_style = value;
+            if let Err(err) = crate::config::persist_animation_string("pane_style", value.id()) {
+                preference_error(ctx, err);
+            }
+        }
         ToggleWhichKey => {
             ctx.state.config.input.which_key = !ctx.state.config.input.which_key;
             persisted = Some(("input", "which_key", ctx.state.config.input.which_key));

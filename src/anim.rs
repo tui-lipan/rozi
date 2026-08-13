@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use tui_lipan::prelude::{Easing, TransitionConfig};
+use tui_lipan::prelude::{Easing, FloatRect, TransitionConfig};
 
 pub const GEOMETRY_MS: u64 = 220;
 pub const CLOSE_MS: u64 = 120;
@@ -37,6 +37,158 @@ pub enum GeometryAnimation {
     AxisChange,
 }
 
+/// What shape a pane's open and close animation takes. Orthogonal to [`GeometryAnimation`], which
+/// says *why* geometry is moving; this says how the arriving or leaving pane itself is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaneAnimationStyle {
+    /// Scale toward the centre of the pane's own rectangle, with a fade riding on top.
+    #[default]
+    Scale,
+    /// Slide in from the edge the pane was split off, clipped to its tile, while the tile that gave
+    /// up the space springs into its new size.
+    ///
+    /// Only tiled panes slide. A floating pane has no tile edge to emerge from and no neighbour to
+    /// take space from, so it keeps [`Scale`](Self::Scale).
+    Slide,
+}
+
+impl PaneAnimationStyle {
+    /// Cycle order for the Settings row.
+    pub fn all() -> &'static [Self] {
+        &[Self::Scale, Self::Slide]
+    }
+
+    /// Config token and persisted value.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Scale => "scale",
+            Self::Slide => "slide",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Scale => "Scale",
+            Self::Slide => "Slide",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "scale" => Some(Self::Scale),
+            "slide" => Some(Self::Slide),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Scale => Self::Slide,
+            Self::Slide => Self::Scale,
+        }
+    }
+
+    /// Two styles, so stepping backwards lands on the same neighbour as stepping forwards. Kept as
+    /// its own method so the Settings row's Left/Right wiring does not have to care.
+    pub fn prev(self) -> Self {
+        self.next()
+    }
+}
+
+/// The tile edge a sliding pane enters from and leaves toward.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SlideEdge {
+    Left,
+    Right,
+    Top,
+    /// Also the fallback for panes that never went through a split - the first pane in a workspace,
+    /// a restored layout, a follower reconciling a shared layout - matching the scratchpad, which
+    /// deploys upward from the bottom of the screen.
+    #[default]
+    Bottom,
+}
+
+/// Whether this pane's open and close animation is the clipped slide rather than the centre scale.
+///
+/// A floating pane never slides: it has no tile edge to emerge from and no neighbour to take space
+/// from, so it keeps the scale whatever the style says.
+///
+/// Deliberately independent of whether animation is *enabled*. The wrapper that clips a sliding pane
+/// stays mounted for the pane's whole life, so a pane is never remounted - and its terminal never
+/// re-laid out - at the moment it finishes arriving. With animation off the slide simply snaps
+/// straight to deployed.
+pub fn pane_slides(animations: WindowAnimationConfig, pane: &crate::state::Pane) -> bool {
+    animations.pane_style == PaneAnimationStyle::Slide && !pane.floating
+}
+
+/// Rigid offset for a pane part-way through its slide, in canvas cells.
+///
+/// `progress` is `0.0` for fully outside its tile and `1.0` for fully deployed. The pane travels
+/// exactly its own extent along the slide axis, so at `0.0` it sits flush outside the edge it
+/// entered from and the clip to its tile leaves nothing of it on screen. Applied *after* the pane's
+/// own geometry transition, like the scratchpad slide: the pane keeps its final size the whole way,
+/// which is what stops the terminal grid reflowing on every frame of the animation.
+pub fn slide_offset(rect: FloatRect, edge: SlideEdge, progress: f32) -> (f32, f32) {
+    let remaining = 1.0 - progress.clamp(0.0, 1.0);
+    match edge {
+        SlideEdge::Left => (-rect.w * remaining, 0.0),
+        SlideEdge::Right => (rect.w * remaining, 0.0),
+        SlideEdge::Top => (0.0, -rect.h * remaining),
+        SlideEdge::Bottom => (0.0, rect.h * remaining),
+    }
+}
+
+/// How much wider a terminal cell is than it is tall, near enough. Lets the two axes of a tile be
+/// compared: 10 rows covers about as much screen as 20 columns.
+const CELL_ASPECT: f32 = 2.0;
+
+/// How long a pane's slide runs, arriving or leaving.
+///
+/// `geometry_ms` in both directions, for two separate reasons.
+///
+/// Not scaled by the distance covered: a slide crosses the pane's own extent, so a big pane does
+/// travel faster than a small one at the same duration - but stretching the duration to compensate
+/// makes a large pane crawl, which reads far worse than the extra speed ever did.
+///
+/// And not slower on the way out, however tempting an unhurried exit sounds. A closing pane leaves
+/// toward its own slide edge, and the tile taking its place expands in that same direction by that
+/// same distance - so at a shared duration the two edges are one moving boundary and the pane reads as
+/// *pushed* out. Any extra time on the exit uncouples them, and a pane trailing behind the tile that
+/// displaced it looks dragged rather than shoved.
+pub fn slide_duration(animations: WindowAnimationConfig) -> Duration {
+    animations.geometry_duration
+}
+
+/// A single characteristic extent for a tile, in column units, averaging its two axes.
+///
+/// The spring amplitude needs a rough size for the tile, not an exact travel distance: which axis a
+/// tile is resizing along is not knowable from the tile alone, and being out by a factor of under two
+/// only moves the nudge inside the range that looks right anyway.
+pub fn spring_extent(rect: FloatRect) -> f32 {
+    (rect.w + rect.h * CELL_ASPECT) / 2.0
+}
+
+/// Peak spring overshoot for a tile making room, in thousandths of the distance it travels.
+///
+/// The framework curve's overshoot is a fraction of the distance travelled, so a *fixed* amplitude
+/// throws a big tile proportionally further - a pane halving from 240 columns overshot 24 of them, and
+/// whipped through that throw in the same tail of the animation a small tile uses for three. Sizing
+/// the request by the tile keeps the nudge at `SPRING_OVERSHOOT_CELLS` whatever the tile's size, which
+/// is what makes it read as a settle rather than a throw.
+fn spring_overshoot_permille(extent: f32) -> u16 {
+    /// Three columns: what the unscaled curve happened to produce on a ~30x20 tile, which is the size
+    /// the spring was tuned by eye against.
+    const SPRING_OVERSHOOT_CELLS: f32 = 3.0;
+    /// Never exceed the standard curve, however tiny the tile.
+    const MAX_PERMILLE: f32 = 100.0;
+
+    if extent <= 1.0 {
+        return 0;
+    }
+    let permille = 1000.0 * SPRING_OVERSHOOT_CELLS / extent;
+    permille.clamp(0.0, MAX_PERMILLE).round() as u16
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct WindowAnimationConfig {
     pub enabled: bool,
@@ -46,6 +198,7 @@ pub struct WindowAnimationConfig {
     pub tile_float: bool,
     pub axis_change: bool,
     pub focus_chrome: bool,
+    pub pane_style: PaneAnimationStyle,
     pub geometry_duration: Duration,
     pub close_duration: Duration,
     pub focus_chrome_duration: Duration,
@@ -63,6 +216,7 @@ impl Default for WindowAnimationConfig {
             tile_float: true,
             axis_change: true,
             focus_chrome: true,
+            pane_style: PaneAnimationStyle::Scale,
             geometry_duration: Duration::from_millis(GEOMETRY_MS),
             close_duration: Duration::from_millis(CLOSE_MS),
             focus_chrome_duration: Duration::from_millis(FOCUS_CHROME_MS),
@@ -103,6 +257,36 @@ pub fn close_geometry_transition(duration: Duration) -> TransitionConfig {
     }
 }
 
+/// Slide progress for an opening or closing pane.
+///
+/// Ease-out with no overshoot, deliberately. A sliding pane is clipped to its destination tile, so
+/// carrying it past its resting place would not read as a bounce - it would open a gap at the edge
+/// it entered from, for as long as the overshoot lasted. The spring belongs on the tile making room
+/// instead; see [`spring_geometry_transition`].
+pub fn slide_transition(duration: Duration) -> TransitionConfig {
+    TransitionConfig {
+        duration,
+        easing: Easing::EaseOutQuad,
+    }
+}
+
+/// Geometry for a tile making room for an arriving pane, or closing the gap a leaving one left.
+///
+/// `EaseOutBack` overshoots once and settles, so the tile that gave up the space springs into its new
+/// size rather than gliding into it. The amplitude is sized from `distance` - the extent the tile
+/// itself covers - so the nudge stays a couple of cells whether the tile is 30 columns or 200; see
+/// [`spring_overshoot_permille`].
+///
+/// Reserved for the panes *around* the one animating, and only under [`PaneAnimationStyle::Slide`].
+pub fn spring_geometry_transition(duration: Duration, distance: f32) -> TransitionConfig {
+    TransitionConfig {
+        duration,
+        easing: Easing::EaseOutBack {
+            overshoot_permille: spring_overshoot_permille(distance),
+        },
+    }
+}
+
 pub fn instant_transition() -> TransitionConfig {
     TransitionConfig {
         duration: Duration::ZERO,
@@ -129,11 +313,17 @@ pub fn activation_delay(animations: WindowAnimationConfig) -> Duration {
 /// How long a closing pane stays described before `Msg::PruneClosed` drops it. The margin
 /// covers the frame the animation finishes on.
 pub fn retained_pane_timeout(animations: WindowAnimationConfig) -> Duration {
-    if animations.enabled && animations.close {
-        animations.close_duration + Duration::from_millis(20)
-    } else {
-        Duration::ZERO
+    if !animations.enabled || !animations.close {
+        return Duration::ZERO;
     }
+    let motion = match animations.pane_style {
+        // A short pop the fade rides on.
+        PaneAnimationStyle::Scale => animations.close_duration,
+        // A whole tile to cross, which `close_ms` is far too short for - it would prune the pane
+        // part-way out.
+        PaneAnimationStyle::Slide => slide_duration(animations),
+    };
+    motion + Duration::from_millis(20)
 }
 
 pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
@@ -143,6 +333,8 @@ pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::AppRoot;
+    use crate::state::Pane;
 
     #[test]
     fn scratch_transition_duration_is_two_thirds_of_geometry_duration() {
@@ -172,6 +364,155 @@ mod tests {
             }),
             Duration::ZERO
         );
+    }
+
+    #[test]
+    fn a_slide_leaves_in_step_with_the_tile_that_displaces_it() {
+        let scale = WindowAnimationConfig {
+            close_duration: Duration::from_millis(120),
+            geometry_duration: Duration::from_millis(200),
+            ..WindowAnimationConfig::default()
+        };
+        assert_eq!(
+            retained_pane_timeout(scale),
+            Duration::from_millis(140),
+            "the scale close is a short pop the fade rides on"
+        );
+
+        let slide = WindowAnimationConfig {
+            pane_style: PaneAnimationStyle::Slide,
+            ..scale
+        };
+        // The closing pane and the tile expanding into its place both run at `geometry_duration`, so
+        // their shared edge is one moving boundary and the pane reads as pushed out rather than
+        // dragged behind. A departing pane on its own clock is what broke that.
+        let leaving = slide_duration(slide);
+        assert_eq!(leaving, slide.geometry_duration);
+        let state = spawning_state(PaneAnimationStyle::Slide, GeometryAnimation::Close);
+        let tile_making_room = AppRoot::geometry_transition_for_pane(
+            &state,
+            // The settled survivor, not the pane on its way out.
+            &state.current().workspaces[0].panes[0],
+            false,
+            Some(FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 30.0,
+                h: 20.0,
+            }),
+        );
+        assert_eq!(
+            tile_making_room.duration, leaving,
+            "the pusher and the pushed have to share a duration"
+        );
+
+        assert!(
+            retained_pane_timeout(slide) > leaving,
+            "the pane must stay described past the end of its slide"
+        );
+        assert_eq!(retained_pane_timeout(slide), Duration::from_millis(220));
+        assert_eq!(
+            retained_pane_timeout(WindowAnimationConfig {
+                close: false,
+                ..slide
+            }),
+            Duration::ZERO
+        );
+    }
+
+    /// A state with one settled tiled pane, mid spawn or close, for asserting transition policy.
+    fn spawning_state(
+        style: PaneAnimationStyle,
+        animation: GeometryAnimation,
+    ) -> crate::state::State {
+        let mut state =
+            crate::state::State::new(crate::config::Config::default(), Default::default());
+        state.config.animations.pane_style = style;
+        state.config.animations.geometry_duration = Duration::from_millis(200);
+        state.animation = animation;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        pane.opening = false;
+        workspace.panes.push(pane);
+        state
+    }
+
+    #[test]
+    fn the_spring_nudge_stays_a_couple_of_cells_at_any_tile_size() {
+        // The whole point of sizing the amplitude: overshoot in *cells* has to stay put as the tile
+        // grows, or a big split throws its neighbour a tenth of the screen and back.
+        let mut previous_cells = f32::MAX;
+        for width in [20.0_f32, 40.0, 80.0, 160.0, 320.0] {
+            let rect = FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: width,
+                h: width / 2.0,
+            };
+            let extent = spring_extent(rect);
+            let permille = spring_overshoot_permille(extent);
+            let cells = extent * f32::from(permille) / 1000.0;
+            assert!(
+                (1.0..=3.5).contains(&cells),
+                "a {width}-column tile should nudge by about three cells, got {cells}"
+            );
+            // Amplitude only ever shrinks as the tile grows.
+            assert!(permille as f32 <= previous_cells);
+            previous_cells = permille as f32;
+        }
+
+        // A tile too small to nudge inside gets no spring rather than a violent one.
+        assert_eq!(spring_overshoot_permille(0.0), 0);
+        assert!(spring_overshoot_permille(4.0) <= 100);
+    }
+
+    #[test]
+    fn slide_offset_starts_flush_outside_its_edge_and_ends_deployed() {
+        let rect = FloatRect {
+            x: 10.0,
+            y: 4.0,
+            w: 40.0,
+            h: 12.0,
+        };
+
+        for edge in [
+            SlideEdge::Left,
+            SlideEdge::Right,
+            SlideEdge::Top,
+            SlideEdge::Bottom,
+        ] {
+            assert_eq!(slide_offset(rect, edge, 1.0), (0.0, 0.0));
+        }
+
+        // At rest-minus-everything the pane is exactly its own extent away, so the clip to its tile
+        // leaves nothing of it visible.
+        assert_eq!(slide_offset(rect, SlideEdge::Right, 0.0), (40.0, 0.0));
+        assert_eq!(slide_offset(rect, SlideEdge::Left, 0.0), (-40.0, 0.0));
+        assert_eq!(slide_offset(rect, SlideEdge::Bottom, 0.0), (0.0, 12.0));
+        assert_eq!(slide_offset(rect, SlideEdge::Top, 0.0), (0.0, -12.0));
+
+        assert_eq!(slide_offset(rect, SlideEdge::Bottom, 0.25), (0.0, 9.0));
+
+        // A curve that overshoots past 1.0 must not carry the pane back out of its tile on the far
+        // side; the offset floors at its resting value.
+        assert_eq!(slide_offset(rect, SlideEdge::Right, 1.4), (0.0, 0.0));
+    }
+
+    #[test]
+    fn pane_animation_style_round_trips_its_config_token() {
+        for style in PaneAnimationStyle::all().iter().copied() {
+            assert_eq!(PaneAnimationStyle::parse(style.id()), Some(style));
+            // Two styles, so either direction is the other one.
+            assert_eq!(style.next(), style.prev());
+            assert_eq!(style.next().next(), style);
+        }
+        assert_eq!(
+            PaneAnimationStyle::parse("  SLIDE "),
+            Some(PaneAnimationStyle::Slide)
+        );
+        assert_eq!(PaneAnimationStyle::parse("springy"), None);
+        assert_eq!(PaneAnimationStyle::default(), PaneAnimationStyle::Scale);
     }
 
     #[test]

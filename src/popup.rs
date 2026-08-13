@@ -176,7 +176,7 @@ pub(crate) fn placement(app: &AppRoot, ctx: &Context<AppRoot>) -> Option<(FloatR
     let rect = ctx.transition(
         format!("rozi-pane-rect-{}", pane.id),
         target,
-        app.transition_config_for(ctx, pane, false),
+        app.transition_config_for(ctx, pane, false, target),
     );
     Some((
         rect,

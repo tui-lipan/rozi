@@ -393,16 +393,21 @@ impl AppRoot {
         ctx: &Context<Self>,
         pane: &Pane,
         viewport_changed: bool,
+        target_rect: FloatRect,
     ) -> TransitionConfig {
-        Self::geometry_transition_for_pane(&ctx.state, pane, viewport_changed)
+        Self::geometry_transition_for_pane(&ctx.state, pane, viewport_changed, Some(target_rect))
     }
 
     /// Geometry transition policy for a pane. Extracted so tests can assert Scrollable resize
     /// instant-vs-AxisChange behavior without constructing a live [`Context`].
+    ///
+    /// `target_rect` sizes the Slide spring's amplitude and is only known to the view; without it the
+    /// spring degrades to the plain geometry curve rather than guessing an amplitude.
     pub(crate) fn geometry_transition_for_pane(
         state: &State,
         pane: &Pane,
         viewport_changed: bool,
+        target_rect: Option<FloatRect>,
     ) -> TransitionConfig {
         if !state.is_controller()
             || viewport_changed
@@ -434,13 +439,60 @@ impl AppRoot {
             return anim::instant_transition();
         }
 
+        // An arriving or leaving pane that slides does not animate its rectangle at all: it is placed
+        // at its destination and a rigid offset carries it in from the edge, so it keeps its final
+        // size the whole way. Animating the rect too would fight the offset for the same motion.
+        if (pane.opening || pane.closing) && anim::pane_slides(animations, pane) {
+            return anim::instant_transition();
+        }
+
         // The close scale has to finish inside the close animation's own window. Running it at
         // `geometry_duration` (which is longer) means the pane is pruned part-way through, so the
         // slow start of the easing is all that is ever seen.
         if pane.closing {
             return anim::close_geometry_transition(animations.close_duration);
         }
+
+        // Under Slide, the tiles *around* an arriving or leaving pane are where the spring lives:
+        // this is the tile that gave up the space, or the one taking it back.
+        if animations.pane_style == anim::PaneAnimationStyle::Slide
+            && matches!(
+                state.animation,
+                GeometryAnimation::Spawn | GeometryAnimation::Close
+            )
+            && let Some(rect) = target_rect
+        {
+            return anim::spring_geometry_transition(
+                animations.geometry_duration,
+                anim::spring_extent(rect),
+            );
+        }
         anim::geometry_transition(animations.geometry_duration)
+    }
+
+    /// Slide progress for an opening or closing pane: `0.0` fully outside its tile, `1.0` deployed.
+    ///
+    /// Mirrors [`window_opacity_config`](Self::window_opacity_config)'s mechanism - the target flips
+    /// when `opening` clears or `closing` is set, and the transition carries the pane the rest of the
+    /// way. A pane that never slides reads a constant `1.0`, so the key stays alive and a config
+    /// change mid-life does not make it jump.
+    pub(crate) fn slide_progress(&self, ctx: &Context<Self>, pane: &Pane, key: String) -> f32 {
+        let animations = ctx.state.config.animations;
+        if !anim::pane_slides(animations, pane) {
+            return 1.0;
+        }
+        let (target, enabled) = if pane.closing {
+            (0.0, animations.close)
+        } else {
+            (if pane.opening { 0.0 } else { 1.0 }, animations.spawn)
+        };
+        // Disabled means no motion, not a pane parked outside its own tile: snap to deployed rather
+        // than letting an instant transition land the target of 0.0 and hide it.
+        if !animations.enabled || !enabled {
+            return 1.0;
+        }
+        let duration = anim::slide_duration(animations);
+        ctx.transition(key, target, anim::slide_transition(duration))
     }
 
     pub(crate) fn window_opacity_config(
@@ -450,6 +502,11 @@ impl AppRoot {
     ) -> TransitionConfig {
         let animations = ctx.state.config.animations;
         if !animations.enabled {
+            return anim::instant_transition();
+        }
+        // A slide is not faded: it is clipped to its tile, so it genuinely emerges. A fade on top
+        // would make the leading edge ghostly instead of solid.
+        if anim::pane_slides(animations, pane) {
             return anim::instant_transition();
         }
         if pane.closing {
@@ -2439,5 +2496,127 @@ mod tests {
         assert!(!chrome_color_animates(Color::Black));
         assert!(!chrome_color_animates(Color::Indexed(14)));
         assert!(chrome_color_animates(Color::Rgb(0, 255, 255)));
+    }
+
+    /// Under Slide the spring belongs to the tiles *making room*, never to the pane travelling into
+    /// place: an arriving pane is clipped to its tile, so carrying it past its destination would open
+    /// a gap at the edge it entered from rather than read as a bounce.
+    #[test]
+    fn slide_springs_the_neighbours_and_leaves_the_travelling_pane_alone() {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.config.animations.pane_style = anim::PaneAnimationStyle::Slide;
+        state.animation = GeometryAnimation::Spawn;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        for id in [1, 2] {
+            let mut pane = Pane::new(id, 100, FloatRect::default());
+            pane.opening = id == 2;
+            workspace.panes.push(pane);
+        }
+
+        let tile = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 30.0,
+            h: 20.0,
+        };
+        let settled = &state.current().workspaces[0].panes[0];
+        let arriving = &state.current().workspaces[0].panes[1];
+
+        let neighbour = AppRoot::geometry_transition_for_pane(&state, settled, false, Some(tile));
+        assert!(
+            matches!(
+                neighbour.easing,
+                Easing::EaseOutBack { overshoot_permille } if overshoot_permille > 0
+            ),
+            "the tile making room springs, got {:?}",
+            neighbour.easing
+        );
+        assert_eq!(
+            neighbour.duration,
+            state.config.animations.geometry_duration
+        );
+
+        // A bigger tile asks for a proportionally *smaller* amplitude, which is what keeps the nudge
+        // a couple of cells instead of a tenth of the pane.
+        let wide = FloatRect { w: 300.0, ..tile };
+        let wide_neighbour =
+            AppRoot::geometry_transition_for_pane(&state, settled, false, Some(wide));
+        let amplitude = |config: TransitionConfig| match config.easing {
+            Easing::EaseOutBack { overshoot_permille } => overshoot_permille,
+            other => panic!("expected a spring, got {other:?}"),
+        };
+        assert!(amplitude(wide_neighbour) < amplitude(neighbour));
+
+        // Without a rect there is no amplitude to size, so the spring degrades rather than guessing.
+        let unsized_neighbour = AppRoot::geometry_transition_for_pane(&state, settled, false, None);
+        assert_eq!(unsized_neighbour.easing, Easing::EaseInOutCubic);
+
+        // The travelling pane's rectangle does not animate at all - `slide_offset` moves it.
+        let travelling = AppRoot::geometry_transition_for_pane(&state, arriving, false, Some(tile));
+        assert_eq!(travelling.duration, Duration::ZERO);
+
+        // Scale is untouched: neighbours keep the plain geometry curve.
+        state.config.animations.pane_style = anim::PaneAnimationStyle::Scale;
+        let settled = &state.current().workspaces[0].panes[0];
+        let scale_neighbour =
+            AppRoot::geometry_transition_for_pane(&state, settled, false, Some(tile));
+        assert_eq!(scale_neighbour.easing, Easing::EaseInOutCubic);
+    }
+
+    /// The spring is scoped to spawn and close. A fullscreen toggle or an axis flip under Slide is
+    /// still an ordinary geometry move, and springing those would make the whole layout wobble
+    /// whenever anything changed shape.
+    #[test]
+    fn slide_does_not_spring_unrelated_geometry_animations() {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.config.animations.pane_style = anim::PaneAnimationStyle::Slide;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        pane.opening = false;
+        workspace.panes.push(pane);
+
+        for animation in [
+            GeometryAnimation::Fullscreen,
+            GeometryAnimation::TileFloat,
+            GeometryAnimation::AxisChange,
+        ] {
+            state.animation = animation;
+            let pane = &state.current().workspaces[0].panes[0];
+            let config = AppRoot::geometry_transition_for_pane(
+                &state,
+                pane,
+                false,
+                Some(FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 30.0,
+                    h: 20.0,
+                }),
+            );
+            assert_eq!(
+                config.easing,
+                Easing::EaseInOutCubic,
+                "{animation:?} is not a spawn or close"
+            );
+        }
+    }
+
+    /// A floating pane has no tile edge to emerge from and no neighbour to take space from, so it
+    /// keeps the scale whatever the style says - and therefore keeps its fade.
+    #[test]
+    fn floating_panes_never_slide() {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.config.animations.pane_style = anim::PaneAnimationStyle::Slide;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        pane.opening = true;
+        pane.floating = true;
+        workspace.panes.push(pane);
+
+        let pane = &state.current().workspaces[0].panes[0];
+        assert!(!anim::pane_slides(state.config.animations, pane));
     }
 }

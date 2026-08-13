@@ -1140,7 +1140,10 @@ pub(crate) fn pane_element(
         .bubble_mouse_down(true)
         .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)));
 
-    let opacity = if pane.closing || pane.opening {
+    // A sliding pane stays fully opaque; its clip, not its alpha, is what reveals it.
+    let opacity = if (pane.closing || pane.opening)
+        && !crate::anim::pane_slides(ctx.state.config.animations, pane)
+    {
         0.0
     } else {
         1.0

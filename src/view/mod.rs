@@ -97,6 +97,25 @@ impl WorkspaceLayer<'_> {
         }
     }
 
+    /// Slide progress for a pane arriving in or leaving this layer.
+    fn pane_slide_key(&self, id: PaneId) -> String {
+        if self.scratch {
+            format!("rozi-scratch-pane-slide-{id}")
+        } else {
+            format!("rozi-pane-slide-{id}")
+        }
+    }
+
+    /// The clip window a sliding pane is drawn inside. Keyed so the wrapper - and therefore the
+    /// terminal subtree under it - survives every frame of the slide.
+    fn pane_clip_key(&self, id: PaneId) -> String {
+        if self.scratch {
+            format!("rozi-scratch-pane-clip-{id}")
+        } else {
+            format!("rozi-pane-clip-{id}")
+        }
+    }
+
     fn badge(&self) -> Option<&'static str> {
         self.scratch.then_some("S")
     }
@@ -175,7 +194,16 @@ pub(crate) fn render_workspace_panes(
             .state
             .moving_pane
             .filter(|session| session.id == pane.id && moving_here(pane.id));
-        let canvas_target_rect = if pane.closing {
+        // A sliding pane is laid out at its real destination for the whole animation and carried in
+        // by `slide_offset` below, so only the scale style rewrites the target here. A pane that
+        // merely *would* slide is not sliding now - it still has to follow a drag.
+        let slides = crate::anim::pane_slides(ctx.state.config.animations, pane);
+        // Read every frame the pane is drawn, so the transition key stays alive for the whole slide.
+        let slide_progress = app.slide_progress(ctx, pane, layer.pane_slide_key(pane.id));
+        let sliding_now = slides && (pane.opening || pane.closing);
+        let canvas_target_rect = if sliding_now {
+            base_rect
+        } else if pane.closing {
             // The reverse of the spawn animation: shrink toward the centre of the rectangle the
             // pane held when it was closed, which `close_pane_inner` froze into `floating_rect`
             // before dropping it from the tiling layout.
@@ -194,7 +222,7 @@ pub(crate) fn render_workspace_panes(
         } else {
             canvas_rect_to_root(canvas_target_rect, top_offset)
         };
-        let config = app.transition_config_for(ctx, pane, layer.viewport_changed);
+        let config = app.transition_config_for(ctx, pane, layer.viewport_changed, target_rect);
         let animated_rect = ctx.transition(layer.pane_rect_key(pane.id), target_rect, config);
 
         let render_rect = slide(animated_rect);
@@ -215,7 +243,11 @@ pub(crate) fn render_workspace_panes(
         // A tile only joins the merged border layer once its rect has settled: while its
         // geometry animates it sweeps across settled panes, and Exact-merging every transient
         // overlap would smear junction glyphs along the way.
-        let settled = rect_settled(animated_rect, target_rect);
+        // A sliding pane's rectangle never moves, so `rect_settled` calls it settled from the first
+        // frame while it is in fact still travelling into place behind its clip. Merged seams and
+        // seam titles have to wait for it to arrive, or a pane still off-screen would contribute
+        // junction glyphs and park a title over its empty tile.
+        let settled = rect_settled(animated_rect, target_rect) && slide_progress >= 1.0;
         // Dividers always use target layout placements, including panes mid-open or mid-reflow.
         // Animating tiles still paint above the seams, so glyphs only show in emerging gaps
         // instead of vanishing for the whole spawn/close geometry animation.
@@ -288,6 +320,33 @@ pub(crate) fn render_workspace_panes(
             kind,
             merge,
         );
+        // Everything below places the pane at `render_rect`, so the clip window takes that rect and
+        // the pane moves *inside* it. A `Canvas` clips its descendants to its own allocation, which
+        // is what makes the pane emerge from behind the seam instead of flying across its neighbour.
+        // Mounted for the pane's whole life, not just while it moves, so arriving never remounts the
+        // terminal underneath it.
+        let element: Element = if slides {
+            let (offset_x, offset_y) =
+                crate::anim::slide_offset(render_rect, pane.slide_edge, slide_progress);
+            Canvas::new()
+                // While the pane is only part-way in, the rest of the clip window is empty. Let a
+                // click there fall through to the layer beneath instead of being swallowed by a
+                // wrapper that exists purely to clip.
+                .passthrough(true)
+                .child_at(
+                    FloatRect {
+                        x: offset_x,
+                        y: offset_y,
+                        w: render_rect.w,
+                        h: render_rect.h,
+                    }
+                    .to_rect(),
+                    element,
+                )
+                .key(layer.pane_clip_key(pane.id))
+        } else {
+            element
+        };
         if title_on_seam && let Some(seam) = seam_title_element(app, ctx, pane, focused_pane) {
             seam_titles.push((
                 FloatRect {

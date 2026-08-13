@@ -4,7 +4,7 @@
 
 mod actions;
 mod agent_detection;
-mod anim;
+pub mod anim;
 pub mod app;
 pub mod cli;
 mod commands;

@@ -1153,14 +1153,16 @@ speaks_remote=1
 
     #[test]
     fn select_rejects_disjoint_protocol_range() {
-        let report = parse_probe_output(
+        // One past our ceiling: disjoint whatever this build's version happens to be.
+        let beyond = crate::session::protocol::PROTOCOL_VERSION + 1;
+        let report = parse_probe_output(&format!(
             "\
 candidate=/skew
 speaks_remote=1
-protocol_min=1
-protocol_max=1
-",
-        );
+protocol_min={beyond}
+protocol_max={beyond}
+"
+        ));
         assert!(matches!(
             select_compatible(&report),
             ProbeResult::Missing { .. }

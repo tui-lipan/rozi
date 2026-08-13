@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use rozi::config::{RemoteConfig, RemoteHostConfig, RemoteInstallPolicy};
 use rozi::session::client::SessionClient;
-use rozi::session::protocol::{FILE_TREE_PROTOCOL, ServerMessage};
+use rozi::session::protocol::{PROTOCOL_VERSION, ServerMessage};
 use rozi::session::remote::{connect_remote, parse_remote_target};
 
 use common::unique_session_name;
@@ -98,7 +98,7 @@ fn attaches_to_a_real_session_over_ssh_to_localhost() {
         "proxy must report that it started the server for a brand-new session"
     );
     assert!(
-        preamble.protocol_max >= FILE_TREE_PROTOCOL,
+        preamble.protocol_max == PROTOCOL_VERSION,
         "remote is this same binary, so it must advertise our protocol range"
     );
     assert_eq!(preamble.rozi_version, env!("CARGO_PKG_VERSION"));
@@ -121,8 +121,8 @@ fn attaches_to_a_real_session_over_ssh_to_localhost() {
         } => {
             assert_eq!(name, &session);
             assert!(
-                *effective_protocol >= FILE_TREE_PROTOCOL,
-                "same-build negotiation must reach the current version"
+                *effective_protocol == PROTOCOL_VERSION,
+                "same-build negotiation must reach this build's version"
             );
         }
         other => {

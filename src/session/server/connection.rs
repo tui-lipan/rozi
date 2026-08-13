@@ -433,14 +433,7 @@ impl SessionServer {
             }
             ClientMessage::RequestControl => self.handle_request_control(client_id),
             ClientMessage::SetControlTakeover { allowed } => {
-                if self
-                    .clients
-                    .iter()
-                    .find(|client| client.id == client_id)
-                    .is_none_or(|client| {
-                        client.effective_protocol < protocol::CONTROL_TAKEOVER_PROTOCOL
-                    })
-                {
+                if !self.clients.iter().any(|client| client.id == client_id) {
                     return Vec::new();
                 }
                 self.handle_set_control_takeover(client_id, allowed)
@@ -493,14 +486,8 @@ impl SessionServer {
                 )]
             }
             ClientMessage::RequestRuntimeMetrics => {
-                let supported = self
-                    .clients
-                    .iter()
-                    .find(|client| client.id == client_id)
-                    .is_some_and(|client| {
-                        client.effective_protocol >= protocol::RUNTIME_METRICS_PROTOCOL
-                    });
-                if supported {
+                let known = self.clients.iter().any(|client| client.id == client_id);
+                if known {
                     vec![(
                         Target::Client(client_id),
                         ServerMessage::RuntimeMetrics {

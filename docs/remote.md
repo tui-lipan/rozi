@@ -180,12 +180,9 @@ Client and server advertise a max and min protocol version on attach/query. They
 minimum. Within a supported range, wire changes are additive (`#[serde(default)]`); breaking changes
 bump `MIN_SUPPORTED_PROTOCOL`.
 
-This build speaks protocol **22** only (`MIN_SUPPORTED_PROTOCOL` is also 22). The protocol gained
-an explicit local/shared namespace on every pane-targeted operation and event, plus layout kinds
-older peers cannot deserialize, so pre-22 servers and clients are rejected rather than shimmed.
-Within 22, messages introduced earlier in the lineage remain available (13 file-tree browsing, 14
-parked, 15 control-takeover policy, 16 evict client, 18 runtime metrics, 21 owner-scoped
-client-local panes). Restart existing session servers after upgrading.
+This build speaks protocol **1** only (`MIN_SUPPORTED_PROTOCOL` is also 1). Both peers come from
+the same tree, so any mismatch is rejected at the handshake rather than shimmed. Restart existing
+session servers after upgrading.
 
 ## Local vs remote feature split
 

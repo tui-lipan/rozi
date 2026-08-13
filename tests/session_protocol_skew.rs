@@ -1,7 +1,9 @@
-//! Protocol 22 is a clean break: this build speaks 22 only.
+//! This build speaks exactly one wire version, so any peer advertising a range that does not
+//! contain it must fail negotiation rather than half-attach.
 //!
-//! Older peers that still advertise a pre-22 range must fail negotiation. This drives a real
-//! [`SessionClient`] against a scripted server pinned below the floor and asserts attach rejects.
+//! The scripted server is pinned one above the ceiling. Below the floor is unavailable now that
+//! the floor is 1, and above tests the same property: ranges that do not overlap are rejected.
+//! Pinning relative to [`PROTOCOL_VERSION`] also keeps this honest across future bumps.
 
 use std::io::pipe;
 use std::sync::mpsc;
@@ -14,25 +16,25 @@ use rozi::session::protocol::{
     negotiate_protocol,
 };
 
-const PINNED_SERVER_PROTOCOL: u32 = 18;
+const PINNED_SERVER_PROTOCOL: u32 = PROTOCOL_VERSION + 1;
 
 const _: () = assert!(
     MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION,
-    "this build is intentionally protocol-22-only"
+    "this build intentionally speaks one version"
 );
 const _: () = assert!(
-    PINNED_SERVER_PROTOCOL < MIN_SUPPORTED_PROTOCOL,
-    "the pinned server must be below this build's floor"
+    PINNED_SERVER_PROTOCOL > PROTOCOL_VERSION,
+    "the pinned server must sit outside this build's range"
 );
 
 #[test]
-fn pre_19_server_cannot_negotiate_with_this_build() {
+fn a_server_outside_this_builds_range_cannot_negotiate() {
     assert!(
         negotiate_protocol(
             PROTOCOL_VERSION,
             MIN_SUPPORTED_PROTOCOL,
             PINNED_SERVER_PROTOCOL,
-            12,
+            PINNED_SERVER_PROTOCOL,
         )
         .is_err()
     );
@@ -79,7 +81,10 @@ fn pre_19_server_cannot_negotiate_with_this_build() {
     ));
     let (tx, _rx) = mpsc::channel();
     let attach = SessionClient::from_stream_attached(client_conn, session, tx, false);
-    assert!(attach.is_err(), "attach must fail against a pre-21 peer");
+    assert!(
+        attach.is_err(),
+        "attach must fail against a peer outside the range"
+    );
 
     server.join().expect("server thread");
 }

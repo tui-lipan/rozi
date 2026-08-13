@@ -1066,9 +1066,6 @@ pub(super) fn tree_entry_request(ctx: &mut Context<AppRoot>, path: String) -> Up
     let Some(client) = ctx.state.current().session_client.as_ref() else {
         return Update::none();
     };
-    if !client.supports_file_tree() {
-        return Update::none();
-    }
     // Always fetch dotfiles: `show_hidden` is per-tab, and the widget filters provided entries by
     // it anyway, so one listing serves every tab and toggling the option needs no refetch.
     client.list_directory(path.clone(), true);
@@ -1244,9 +1241,6 @@ fn refresh_remote_tree(ctx: &mut Context<AppRoot>) {
     let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };
-    if !client.supports_file_tree() {
-        return;
-    }
     ctx.state.sidebar.tree_server_token = token;
     client.list_changes(root);
     let known: Vec<String> = ctx

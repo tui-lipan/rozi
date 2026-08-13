@@ -19,19 +19,6 @@ pub(super) fn tree_tab(
     let Some(root) = root_for(ctx, config.root) else {
         return super::placeholder(ctx, empty_reason(ctx, config.root));
     };
-    // A remote server older than the file-tree messages will never answer a listing request, so say
-    // so rather than leaving the widget on loading rows forever.
-    if ctx.state.current().remote_host.is_some()
-        && ctx
-            .state
-            .current()
-            .session_client
-            .as_ref()
-            .is_some_and(|client| !client.supports_file_tree())
-    {
-        return super::placeholder(ctx, "Remote rozi is too old to browse files");
-    }
-
     let changed_only = view == SidebarTreeView::Changes;
     let tab_id = crate::config::SidebarTabId::new(view.id());
     let toggle_tab_id = tab_id.clone();

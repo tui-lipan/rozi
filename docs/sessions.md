@@ -384,7 +384,7 @@ A UI crash (e.g. `kill -9`) leaves the ephemeral server running with its panes i
 reattach to it (shown as `ephemeral`) from the picker and recover the scrollback.
 
 The scratch workspace is client-local. Its panes use ordinary allocated IDs on that client's
-current session server. Protocol 22 scopes those IDs in an explicit local namespace on every
+current session server. The protocol scopes those IDs in an explicit local namespace on every
 pane-targeted frame, so they may collide with a shared pane's numeric id without mixing input,
 resize, or output. The server routes PTY events only to that owner, permits the owner to operate
 them after losing layout control, and kills them when the client disconnects. Their layout is never
@@ -510,11 +510,11 @@ started once. The attach handshake has a timeout so an unresponsive socket does 
 Known limitation: `list-sessions` reports connectable session sockets only; stale or foreign sockets
 are skipped so the command does not hang.
 
-Client and server negotiate a session wire protocol version in a supported range (this build speaks
-protocol 22 only). Protocol 22 carries an explicit local/shared namespace on every pane-targeted
+Client and server negotiate a session wire protocol version in a supported range; this build speaks
+protocol 1 only. The wire carries an explicit local/shared namespace on every pane-targeted
 operation, input frame, and server event, so an owner-local pane and a shared pane can share a
-numeric id without stealing input, resize, or output. Protocol 21 added owner-scoped client-local
-panes for scratch workspaces and popups; these panes are never attached, broadcast, or resurrected
-and are killed when their owner disconnects. After upgrading rozi, restart existing named session
-servers before attaching when the new client's minimum is higher than the old server's maximum —
-otherwise attach fails with a message naming both sides. See [Remote SSH sessions](remote.md#protocol-negotiation).
+numeric id without stealing input, resize, or output. Owner-scoped client-local panes back scratch
+workspaces and popups; they are never attached, broadcast, or resurrected, and are killed when
+their owner disconnects. After upgrading rozi, restart existing named session servers before
+attaching — otherwise attach fails with a message naming both sides.
+See [Remote SSH sessions](remote.md#protocol-negotiation).

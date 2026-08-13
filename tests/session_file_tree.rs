@@ -7,7 +7,7 @@
 mod common;
 
 use rozi::session::protocol::{
-    ClientMessage, FILE_TREE_PROTOCOL, Frame, ServerMessage, WireChangeState,
+    ClientMessage, Frame, PROTOCOL_VERSION, ServerMessage, WireChangeState,
 };
 use rozi::session::server::ServerSettings;
 
@@ -59,8 +59,8 @@ fn server_lists_its_own_filesystem_for_the_file_tree() {
         unreachable!()
     };
     assert!(
-        effective_protocol >= FILE_TREE_PROTOCOL,
-        "same-build attach must negotiate a file-tree capable version"
+        effective_protocol == PROTOCOL_VERSION,
+        "same-build attach must negotiate this build's version"
     );
 
     let root_path = root.to_string_lossy().into_owned();

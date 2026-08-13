@@ -987,16 +987,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
             shared.clients.len() > 1 && !shared.read_only && shared.is_controller()
         }),
         Action::ToggleControlTakeover => shared.is_some_and(|shared| {
-            !shared.read_only
-                && shared.is_controller()
-                && state
-                    .current()
-                    .session_client
-                    .as_ref()
-                    .is_some_and(|client| {
-                        client.effective_protocol()
-                            >= crate::session::protocol::CONTROL_TAKEOVER_PROTOCOL
-                    })
+            !shared.read_only && shared.is_controller() && state.current().session_client.is_some()
         }),
         Action::RequestControl => shared.is_some_and(|shared| {
             shared.clients.len() > 1 && !shared.read_only && !shared.is_controller()

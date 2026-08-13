@@ -232,7 +232,7 @@ impl SessionClient {
                 Some(&heartbeat_outbound),
                 Some(&reader_metrics),
                 Some(&reader_metrics_request_pending),
-                effective_protocol >= protocol::RUNTIME_METRICS_PROTOCOL,
+                true,
             );
             reader_outbound.close();
         });
@@ -263,9 +263,7 @@ impl SessionClient {
     }
 
     pub fn request_runtime_metrics(&self) {
-        if self.effective_protocol >= protocol::RUNTIME_METRICS_PROTOCOL {
-            try_enqueue_runtime_metrics_request(&self.outbound, &self.metrics_request_pending);
-        }
+        try_enqueue_runtime_metrics_request(&self.outbound, &self.metrics_request_pending);
     }
 
     pub fn runtime_stats(&self) -> ClientRuntimeStats {
@@ -295,37 +293,20 @@ impl SessionClient {
         }
     }
 
-    /// Whether this server can serve the sidebar file tree's filesystem queries.
-    pub fn supports_file_tree(&self) -> bool {
-        self.effective_protocol >= crate::session::protocol::FILE_TREE_PROTOCOL
-    }
-
     /// Tell the server whether this client is parked — attached with its screens kept live, but not
     /// displaying the session. A parked client gives up the layout-control lease, so keeping a
     /// session open in the background never makes it look occupied to the next client to attach.
-    ///
-    /// No-op against a pre-14 server, which has no notion of parking: it keeps treating every
-    /// attached client as an occupant, which is the behavior that build already had.
     pub fn set_parked(&self, parked: bool) {
-        if self.effective_protocol < crate::session::protocol::PARKED_PROTOCOL {
-            return;
-        }
         self.send_control(ClientMessage::SetParked { parked });
     }
 
-    /// Ask the server to list one directory on its own host. No-op against an older server.
+    /// Ask the server to list one directory on its own host.
     pub fn list_directory(&self, path: String, show_hidden: bool) {
-        if !self.supports_file_tree() {
-            return;
-        }
         self.send_control(ClientMessage::ListDirectory { path, show_hidden });
     }
 
     /// Ask the server to scan a repository on its own host for changed paths.
     pub fn list_changes(&self, root: String) {
-        if !self.supports_file_tree() {
-            return;
-        }
         self.send_control(ClientMessage::ListChanges { root });
     }
 
@@ -456,9 +437,6 @@ impl SessionClient {
         self.send_control(ClientMessage::RequestControl);
     }
     pub fn set_control_takeover(&self, allowed: bool) {
-        if self.effective_protocol < crate::session::protocol::CONTROL_TAKEOVER_PROTOCOL {
-            return;
-        }
         self.send_control(ClientMessage::SetControlTakeover { allowed });
     }
     pub fn grant_control(&self, to: ClientId) {
@@ -467,13 +445,8 @@ impl SessionClient {
     pub fn decline_control(&self, to: ClientId) {
         self.send_control(ClientMessage::DeclineControl { to });
     }
-    /// Controller-only: remove another client from the session. Silently does nothing against a
-    /// server too old to understand the message, which is why the UI gates the affordance on the
-    /// same version rather than letting a key press vanish.
+    /// Controller-only: remove another client from the session.
     pub fn evict_client(&self, target: ClientId) {
-        if self.effective_protocol < crate::session::protocol::EVICT_CLIENT_PROTOCOL {
-            return;
-        }
         self.send_control(ClientMessage::EvictClient { target });
     }
     pub fn set_input_lock(&self, locked: bool) {

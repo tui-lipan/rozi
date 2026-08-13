@@ -653,15 +653,7 @@ pub(crate) fn evict_client(ctx: &mut Context<AppRoot>, index: usize) -> Update {
 /// enough to understand the message.
 pub(crate) fn can_evict(state: &crate::state::State) -> bool {
     state.current().shared.as_ref().is_some_and(|shared| {
-        !shared.read_only
-            && shared.is_controller()
-            && state
-                .current()
-                .session_client
-                .as_ref()
-                .is_some_and(|client| {
-                    client.effective_protocol() >= crate::session::protocol::EVICT_CLIENT_PROTOCOL
-                })
+        !shared.read_only && shared.is_controller() && state.current().session_client.is_some()
     })
 }
 
@@ -770,19 +762,7 @@ pub(crate) fn toggle_control_takeover(ctx: &mut Context<AppRoot>) -> Update {
     let Some(()) = require_writable(ctx) else {
         return Update::full();
     };
-    if ctx
-        .state
-        .current()
-        .session_client
-        .as_ref()
-        .is_none_or(|client| {
-            client.effective_protocol() < crate::session::protocol::CONTROL_TAKEOVER_PROTOCOL
-        })
-    {
-        crate::pty_events::notify_info(
-            ctx,
-            "This session server does not support control takeover",
-        );
+    if ctx.state.current().session_client.is_none() {
         return Update::full();
     }
     let allowed = !ctx

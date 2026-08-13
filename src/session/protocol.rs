@@ -10,11 +10,9 @@
 //! sides' supported ranges. The negotiated value is echoed as `effective_protocol` on
 //! [`ServerMessage::Attached`] / [`ServerMessage::SessionInfo`].
 //!
-//! Within a supported range, wire changes must be additive with `serde` defaults so older peers can
-//! ignore new fields. Anything that breaks that contract must bump [`MIN_SUPPORTED_PROTOCOL`].
-//!
-//! Servers at protocol 11 and earlier still enforce exact equality, so a newer client cannot
-//! negotiate down against them — restart the remote/local server after upgrading.
+//! The two bounds are equal, so a peer either speaks this exact version or is turned away. The
+//! negotiation machinery stays regardless: the day a range is worth supporting is the day it has to
+//! already be on the wire.
 
 use std::io::{Read, Write};
 
@@ -27,47 +25,13 @@ use crate::state::PaneId;
 
 /// Maximum wire protocol version this build speaks.
 ///
-/// 22 is a clean break: every pane-targeted operation, input frame, and server event carries an
-/// explicit local/shared namespace. Protocol 21 identified locality only on spawn, so a later
-/// shared pane with the same numeric id could steal input, resize, or output from an owner-local
-/// pane. Older peers cannot address those namespaces, so this build speaks 22 only.
-///
-/// 21 added owner-scoped client-local panes: PTYs that are never attached, broadcast, or persisted.
-///
-/// 20 was a clean break: SharedLayout gained the `rows` layout kind.
-///
-/// 19 is a clean break: SharedLayout gains `columns` and `scrollable` layout kinds. Older peers
-/// cannot deserialize those enum variants, so this build speaks protocol 19 only.
-///
-/// 18 adds protocol-gated runtime resource metric requests and samples.
-///
-/// 16 adds [`ClientMessage::EvictClient`], the controller's way to remove another client.
-///
-/// 15 adds the server-owned control-takeover policy.
-///
-/// 14 adds [`ClientMessage::SetParked`] and the `parked` flag on [`ClientInfo`], which separate a
-/// client merely holding a session open in the background from one actually using it.
-///
-/// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
-/// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
-pub const PROTOCOL_VERSION: u32 = 22;
+/// Every peer is built from this same tree, so there is one version and no skew to straddle. Bump
+/// this for any wire change, additive or not; a mismatched peer is rejected at the handshake rather
+/// than shimmed. Per-message capability gates are not worth keeping while that holds — a gate below
+/// the floor is a branch that cannot be taken.
+pub const PROTOCOL_VERSION: u32 = 1;
 /// Oldest wire protocol version this build can still speak.
-///
-/// Protocol 22 is required: pane-targeted frames now carry an explicit local/shared namespace, so
-/// this build rejects older peers rather than shimming wire aliases.
-pub const MIN_SUPPORTED_PROTOCOL: u32 = 22;
-/// First version carrying the file-tree browsing messages. A client must not send them below this.
-pub const FILE_TREE_PROTOCOL: u32 = 13;
-/// First version carrying [`ClientMessage::SetParked`]. Against an older server the message is not
-/// sent: that server keeps the pre-14 behavior where any attached client counts as an occupant.
-pub const PARKED_PROTOCOL: u32 = 14;
-/// First version that lets a controller change the control-takeover policy at runtime.
-pub const CONTROL_TAKEOVER_PROTOCOL: u32 = 15;
-/// First version carrying [`ClientMessage::EvictClient`]. An older server would ignore the unknown
-/// variant, so the client neither sends it nor offers the affordance below this version.
-pub const EVICT_CLIENT_PROTOCOL: u32 = 16;
-/// First version carrying runtime resource metric requests and samples.
-pub const RUNTIME_METRICS_PROTOCOL: u32 = 18;
+pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;
 /// `code` on the [`ServerMessage::Error`] a client receives just before the server closes it for
 /// being evicted. Distinguishes a removal from a dropped connection, which the client would
 /// otherwise answer by reconnecting straight back into the session it was removed from.
@@ -584,7 +548,7 @@ pub enum ClientMessage {
     DeclineControl {
         to: ClientId,
     },
-    /// Controller-only: remove `target` from the session (protocol 16+). The server sends the
+    /// Controller-only: remove `target` from the session. The server sends the
     /// target an [`ServerMessage::Error`] carrying [`EVICTED_ERROR_CODE`] and then closes its
     /// connection; the session itself and every other client keep running.
     EvictClient {
@@ -600,23 +564,22 @@ pub enum ClientMessage {
     Rename {
         name: String,
     },
-    /// List one directory **on the server's host** for the sidebar file tree (protocol 13+).
+    /// List one directory **on the server's host** for the sidebar file tree.
     ///
-    /// Answered by [`ServerMessage::DirectoryListing`]. Only sent when the negotiated version is at
-    /// least [`FILE_TREE_PROTOCOL`], so an older server never sees an unknown variant.
+    /// Answered by [`ServerMessage::DirectoryListing`].
     ListDirectory {
         path: String,
         /// Include dotfiles. Mirrors `[sidebar] tree.show_hidden` on the client.
         show_hidden: bool,
     },
-    /// Scan a repository **on the server's host** for changed paths (protocol 13+).
+    /// Scan a repository **on the server's host** for changed paths.
     ///
     /// Answered by [`ServerMessage::ChangeListing`]. Backs the file tree's `Changes` projection,
     /// which cannot use local git discovery when the files live on another machine.
     ListChanges {
         root: String,
     },
-    /// Ask for an immediate server-owned resource sample (protocol 18+).
+    /// Ask for an immediate server-owned resource sample.
     RequestRuntimeMetrics,
     Detach,
     Shutdown,
@@ -1369,23 +1332,32 @@ mod tests {
     }
 
     #[test]
-    fn file_tree_and_runtime_metrics_remain_in_the_supported_range() {
-        const { assert!(FILE_TREE_PROTOCOL <= PROTOCOL_VERSION) };
-        const { assert!(RUNTIME_METRICS_PROTOCOL <= PROTOCOL_VERSION) };
+    fn only_the_exact_version_negotiates() {
         const { assert!(MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION) };
 
-        assert!(
-            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 19, 12).is_err(),
-            "protocol-22-only peers reject older ranges"
-        );
         assert_eq!(
-            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 22, 22)
-                .expect("same-version peers negotiate"),
-            22
+            negotiate_protocol(
+                PROTOCOL_VERSION,
+                MIN_SUPPORTED_PROTOCOL,
+                PROTOCOL_VERSION,
+                MIN_SUPPORTED_PROTOCOL,
+            )
+            .expect("same-version peers negotiate"),
+            PROTOCOL_VERSION
         );
         assert!(
-            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 21, 21).is_err(),
-            "protocol-22-only peers reject protocol 21"
+            negotiate_protocol(
+                PROTOCOL_VERSION,
+                MIN_SUPPORTED_PROTOCOL,
+                PROTOCOL_VERSION + 1,
+                PROTOCOL_VERSION + 1,
+            )
+            .is_err(),
+            "a newer-only peer is rejected"
+        );
+        assert!(
+            negotiate_protocol(PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 1, 1, 1).is_err(),
+            "an older-only peer is rejected"
         );
 
         let request = ClientMessage::RequestRuntimeMetrics;
@@ -1611,8 +1583,8 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":22,
-                "min_protocol_version":22,
+                "protocol_version":PROTOCOL_VERSION,
+                "min_protocol_version":MIN_SUPPORTED_PROTOCOL,
                 "label":"alice",
                 "read_only":true
             })
@@ -1639,8 +1611,8 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":22,
-                "min_protocol_version":22
+                "protocol_version":PROTOCOL_VERSION,
+                "min_protocol_version":MIN_SUPPORTED_PROTOCOL
             })
         );
     }
@@ -1725,7 +1697,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":22,
+                "effective_protocol":PROTOCOL_VERSION,
                 "created_from_profile":"work"
             })
         );

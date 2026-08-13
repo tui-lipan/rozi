@@ -421,6 +421,20 @@ mod tests {
     }
 
     #[test]
+    fn shell_integrations_recover_stale_tui_modes_before_the_next_prompt() {
+        for (name, script) in [
+            ("bash", BASH_SCRIPT),
+            ("zsh", ZSH_SCRIPT),
+            ("fish", FISH_SCRIPT),
+            ("PowerShell", POWERSHELL_SCRIPT),
+        ] {
+            for reset in ["[?1049l", "[?1003l", "[?1006l", "[?1004l", "[?2004l"] {
+                assert!(script.contains(reset), "{name} does not emit {reset}");
+            }
+        }
+    }
+
+    #[test]
     fn off_mode_never_touches_argv_or_env() {
         let shell = ShellCommand::new("bash");
         let (shell, extra_env) = inject(

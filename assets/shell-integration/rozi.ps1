@@ -84,6 +84,14 @@ function Global:Prompt() {
     if ($Global:__roziRanCommand) {
         $code = if ($succeeded) { 0 } elseif ($null -ne $lastExit) { $lastExit } else { 1 }
         __rozi_emit "]133;D;$code"
+        # A crashed foreground TUI can leave its alternate screen and input modes active. Restore
+        # shell-safe modes before the prompt; PSReadLine can then enable what it actually uses.
+        Write-Host -NoNewline ($Global:__roziEsc + '[?1049l' +
+            $Global:__roziEsc + '[?1000l' + $Global:__roziEsc + '[?1002l' +
+            $Global:__roziEsc + '[?1003l' + $Global:__roziEsc + '[?1004l' +
+            $Global:__roziEsc + '[?1005l' + $Global:__roziEsc + '[?1006l' +
+            $Global:__roziEsc + '[?2004l' + $Global:__roziEsc + '[?1l' +
+            $Global:__roziEsc + '>')
         $Global:__roziRanCommand = $false
     }
     __rozi_cwd

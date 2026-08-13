@@ -2153,6 +2153,78 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
 }
 
 #[test]
+fn keep_open_recovers_terminal_modes_before_starting_the_shell() {
+    let mut server = SessionServer::new_named("dev");
+    let (_client, _stream) = attach_client(&mut server);
+
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        command: Some(
+            "printf 'primary marker\\n\\033[?1049h\\033[?1003h\\033[?1006h\\033[?1004h\\033[?2004h\\033[?1h\\033=stale app'; exit 3"
+                .to_string(),
+        ),
+        cwd: None,
+        title: None,
+        cols: 40,
+        rows: 10,
+        keep_open: true,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        while let Some(event) = server.events.try_pop() {
+            if let Some(outbound) = server.handle_event(event) {
+                server.broadcast_outbound(&outbound);
+            }
+        }
+        if server
+            .panes
+            .get(&1)
+            .is_some_and(|pane| pane.command_completed)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let pane = server.panes.get_mut(&1).expect("pane still exists");
+    assert!(
+        pane.command_completed,
+        "the keep-open replacement never ran"
+    );
+    let snapshot = pane.screen_without_change().render_snapshot();
+    assert!(
+        snapshot.text.contains("primary marker"),
+        "primary screen was not restored:\n{}",
+        snapshot.text
+    );
+    assert!(
+        snapshot.text.contains("command exited with status 3"),
+        "replacement banner was not drawn on the primary screen:\n{}",
+        snapshot.text
+    );
+    assert!(
+        !snapshot.text.contains("stale app"),
+        "alternate-screen content remained visible:\n{}",
+        snapshot.text
+    );
+    assert_eq!(snapshot.mouse_mode, tui_lipan::MouseModeState::default());
+    assert!(!snapshot.key_modes.app_cursor);
+    assert!(!snapshot.key_modes.bracketed_paste);
+}
+
+#[test]
 fn keep_open_popup_retains_output_without_starting_a_shell() {
     let mut server = SessionServer::new_named("dev");
     let (_client, _stream) = attach_client(&mut server);

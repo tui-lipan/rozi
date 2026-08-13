@@ -50,20 +50,21 @@ function __rozi_urlencode_path
     printf '%s' $output
 end
 
-function __rozi_osc7 --on-event fish_prompt
+function __rozi_osc7
     set -l host (hostname 2>/dev/null; or echo "")
     printf '\e]7;file://%s%s\e\\' (__rozi_urlencode $host) (__rozi_urlencode_path $PWD)
 end
 
-function __rozi_osc133_a --on-event fish_prompt
-    printf '\e]133;A\e\\'
-end
-
-function __rozi_osc133_d --on-event fish_prompt
+function __rozi_prompt --on-event fish_prompt
+    set -l command_status $status
     if set -q __rozi_have_last_command
-        printf '\e]133;D;%d\e\\' $status
+        # Recover from a foreground TUI that exited without restoring the terminal before drawing
+        # the prompt. Fish can re-enable any modes its line editor needs afterwards.
+        printf '\e]133;D;%d\e\\\e[?1049l\e[?1000l\e[?1002l\e[?1003l\e[?1004l\e[?1005l\e[?1006l\e[?2004l\e[?1l\e>' $command_status
         set -e __rozi_have_last_command
     end
+    __rozi_osc7
+    printf '\e]133;A\e\\'
 end
 
 function __rozi_osc133_c --on-event fish_preexec

@@ -1,5 +1,10 @@
 use super::pane_log::LogHeader;
 use super::*;
+
+/// Return a terminal to shell-safe input state without clearing its primary screen or scrollback.
+/// Shell integrations emit the same bytes after a foreground command completes; this copy covers
+/// command-runner PTYs that exit and are replaced by an interactive shell.
+const SHELL_MODE_RECOVERY: &[u8] = b"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b>";
 use std::fs::OpenOptions;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -440,7 +445,9 @@ impl SessionServer {
     ) -> Option<ServerOutbound> {
         // Dim, bracketed, and prefixed so it cannot be mistaken for output of the command itself.
         let banner = format!("\r\n\x1b[2m[rozi] command exited with status {code}\x1b[0m\r\n");
-        let bytes = banner.into_bytes();
+        let mut bytes = Vec::with_capacity(SHELL_MODE_RECOVERY.len() + banner.len());
+        bytes.extend_from_slice(SHELL_MODE_RECOVERY);
+        bytes.extend_from_slice(banner.as_bytes());
 
         let pane = self.pane_mut(owner, id)?;
         pane.screen_mut().process_bytes(&bytes);

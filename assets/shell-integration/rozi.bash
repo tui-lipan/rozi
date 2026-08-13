@@ -63,7 +63,9 @@ __rozi_osc133_c() {
 }
 
 __rozi_osc133_d() {
-    printf '\e]133;D;%d\e\\' "$1"
+    # A foreground TUI that crashes may leave its alternate screen and input modes active. Restore
+    # shell-safe modes before the prompt is drawn; readline can then enable what it actually uses.
+    printf '\e]133;D;%d\e\\\e[?1049l\e[?1000l\e[?1002l\e[?1003l\e[?1004l\e[?1005l\e[?1006l\e[?2004l\e[?1l\e>' "$1"
 }
 
 # `PROMPT_COMMAND` (precmd-equivalent): report the previous command's exit status (if one ran),

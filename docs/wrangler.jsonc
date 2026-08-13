@@ -1,0 +1,16 @@
+{
+  // Committed on purpose. Without a config, `wrangler deploy` falls into its framework
+  // auto-detection flow and writes an `assets.directory` of "docs/.vitepress/dist" - a path
+  // relative to the repository root. Cloudflare's root directory is already `docs`, so that
+  // resolves to `docs/docs/.vitepress/dist` and the deploy fails on a path that never existed.
+  //
+  // Every path here is relative to this file's directory, which is also the build's working
+  // directory. Auto-detection also re-ran the VitePress build a second time; with this file
+  // Cloudflare builds once and Wrangler only uploads the result.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rozi-website",
+  "compatibility_date": "2026-08-13",
+  "assets": {
+    "directory": ".vitepress/dist"
+  }
+}

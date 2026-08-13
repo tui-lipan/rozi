@@ -125,16 +125,29 @@ renders it when browsing the folder. The landing page renders it verbatim as its
 closing section through `<Content />`, so the site and the repository cannot
 drift apart.
 
-## Deploy (Cloudflare Pages)
+## Deploy (Cloudflare Workers Builds)
 
 | Setting | Value |
 |---------|-------|
 | Production branch | `master` |
-| Build command | `npm run docs:build` |
-| Build output directory | `.vitepress/dist` |
 | Root directory | `docs` |
+| Build command | `npm run docs:build` |
+| Deploy command | `npx wrangler deploy` |
 | Node version | 22 |
 | Custom domain | `rozi.tui-lipan.dev` |
+
+**Leave the root directory as `docs`.** It is where both commands run and where
+`wrangler.jsonc` lives, which is what Cloudflare recommends for this layout.
+
+`docs/wrangler.jsonc` is committed deliberately. Without it, `wrangler deploy`
+runs its framework auto-detection, which writes an `assets.directory` of
+`docs/.vitepress/dist` — a path relative to the *repository* root. With the root
+directory already set to `docs`, that resolves to `docs/docs/.vitepress/dist`
+and the deploy fails on a path that never existed. Auto-detection also ran the
+VitePress build a second time. Every path in that file is relative to `docs/`.
+
+Wrangler is a devDependency so the deploy uses a pinned version rather than
+whatever `npx` fetches that day; Workers Builds prefers the declared one.
 
 `public/CNAME` carries the same domain for GitHub Pages, if the site ever moves
 there.

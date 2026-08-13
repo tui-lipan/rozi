@@ -10,11 +10,13 @@
   "scripts": {
     "docs:dev": "vitepress dev",
     "docs:build": "vitepress build",
-    "docs:preview": "vitepress preview"
+    "docs:preview": "vitepress preview",
+    "deploy": "wrangler deploy"
   },
   "devDependencies": {
     "@vitejs/plugin-vue-jsx": "^5.1.6",
     "vitepress": "^1.5",
-    "vue": "^3.5"
+    "vue": "^3.5",
+    "wrangler": "^4.122.0"
   }
 }

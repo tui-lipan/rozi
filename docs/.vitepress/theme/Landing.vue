@@ -2,6 +2,7 @@
 import { Content, useData, withBase } from "vitepress";
 import { onMounted, ref } from "vue";
 import RoziStage from "./composition/RoziStage.vue";
+import InstallTabs from "./InstallTabs.vue";
 import RoziIntro from "./RoziIntro.vue";
 import { HERO_CUES, HERO_SCENES } from "./composition/scenes";
 
@@ -18,20 +19,6 @@ const { theme } = useData();
 
 const GITHUB = "https://github.com/tui-lipan/rozi";
 const SPONSOR = "https://github.com/sponsors/Razuer";
-
-const INSTALL = "git clone https://github.com/tui-lipan/rozi\ncd rozi && ./install.sh";
-
-const copied = ref(false);
-
-async function copyInstall() {
-  try {
-    await navigator.clipboard.writeText(INSTALL);
-    copied.value = true;
-    setTimeout(() => (copied.value = false), 1600);
-  } catch {
-    // Clipboard permission denied - the text is on screen and selectable.
-  }
-}
 
 const facts = [
   "7 layouts",
@@ -183,17 +170,7 @@ border_style = "rounded"`;
             where you left off. Native on Linux, macOS, and Windows.
           </p>
 
-          <div class="lp-install">
-            <pre><code>{{ INSTALL }}</code></pre>
-            <button
-              type="button"
-              class="lp-copy"
-              :class="{ done: copied }"
-              @click="copyInstall"
-            >
-              {{ copied ? "copied" : "copy" }}
-            </button>
-          </div>
+          <InstallTabs />
 
           <div class="lp-cta">
             <a class="lp-btn primary" :href="withBase('/getting-started')"

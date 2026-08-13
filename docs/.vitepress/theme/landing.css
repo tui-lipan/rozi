@@ -229,7 +229,6 @@ html.rozi-intro-pending .lp {
 }
 
 .lp-install {
-    position: relative;
     max-width: 600px;
     text-align: left;
     margin: 28px auto 0;
@@ -237,17 +236,66 @@ html.rozi-intro-pending .lp {
     border: 1px solid var(--vp-c-border);
     border-radius: 3px;
 }
-.lp-install pre {
+.lp-install-tabs {
+    display: flex;
+    /* The row scrolls rather than wrapping, so the box keeps one tab bar at
+       every width instead of growing a second row on a narrow phone. */
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--vp-c-divider);
+}
+.lp-install-tabs::-webkit-scrollbar {
+    display: none;
+}
+.lp-install-tab {
+    flex: none;
+    padding: 11px 14px 9px;
+    font-family: var(--vp-font-family-mono);
+    font-size: 12px;
+    color: var(--vp-c-text-3);
+    background: none;
+    border: none;
+    /* Reserved on every tab so activating one does not shift the row by 2px. */
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition:
+        color 0.15s,
+        border-color 0.15s;
+}
+.lp-install-tab:hover {
+    color: var(--vp-c-text-2);
+}
+.lp-install-tab.active {
+    color: var(--vp-c-text-1);
+    border-bottom-color: var(--vp-c-brand-1);
+}
+.lp-install-body {
+    position: relative;
+}
+.lp-install-body pre {
     margin: 0;
     padding: 14px 64px 14px 16px;
     overflow-x: auto;
 }
-.lp-install code {
+.lp-install-body code {
+    /* Two lines' worth, because the source tab needs two and the box must not
+       change height as the reader moves between tabs. */
+    display: block;
+    min-height: calc(2 * 1.7em);
+}
+.lp-install-body code {
     font-family: var(--vp-font-family-mono);
     font-size: 12.5px;
     line-height: 1.7;
     color: var(--vp-c-text-1);
     white-space: pre;
+}
+.lp-install-note {
+    margin: 0;
+    padding: 0 16px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--vp-c-text-3);
 }
 .lp-copy {
     position: absolute;
@@ -650,10 +698,18 @@ html.rozi-intro-pending .lp {
     }
     /* Keep the clone URL on one line inside the copy button's reserved gutter
        rather than scrolling underneath it. */
-    .lp-install pre {
+    .lp-install-body pre {
         padding: 12px 56px 12px 14px;
     }
-    .lp-install code {
+    .lp-install-body code {
+        font-size: 11px;
+    }
+    .lp-install-tab {
+        padding: 10px 11px 8px;
+        font-size: 11px;
+    }
+    .lp-install-note {
+        padding: 0 14px 10px;
         font-size: 11px;
     }
     .lp-section {

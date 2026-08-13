@@ -38,9 +38,10 @@ page renamed out from under a cross-reference.
 | `theme/landing.css` | Landing page chrome |
 | `theme/Layout.vue` | Sends `/` to the landing, everything else to the default doc layout |
 | `theme/Landing.vue` | The landing page, including its own topbar |
+| `theme/InstallTabs.vue` | The hero's tabbed install box — see below |
 | `theme/RoziIntro.vue` | First-visit intro overlay |
 | `theme/composition/` | The animated rozi window — see below |
-| `../public/` | Favicons, `og-image.png`, `CNAME`, web manifest |
+| `../public/` | Favicons, `og-image.png`, `CNAME`, web manifest, plus the two generated installer copies |
 
 ### The composition
 
@@ -158,3 +159,26 @@ Nothing to update. `config.ts` reads the version out of `../../Cargo.toml` at
 build time and passes it through `themeConfig.roziVersion`; the chips in
 `theme/NavTitleMeta.vue` and `theme/Landing.vue` render that. Bumping the crate
 is the only step.
+
+## The install box
+
+`theme/InstallTabs.vue` holds every channel the landing page advertises, one
+entry per tab. `command` is exactly what the copy button puts on the clipboard,
+so nothing that a shell must not receive belongs in it; `note` is the one line
+under the command. Both are load-bearing for the box's height: the code area
+reserves two lines and each note is written to fit one, which is what stops the
+box resizing as a reader moves between tabs. Keep new entries within that.
+
+## The hosted installers
+
+`curl -fsSL https://rozi.tui-lipan.dev/install | bash` is advertised on the
+landing page and in the README, so the site has to serve the script. `config.ts`
+copies the repository's `install.sh` to `public/install` and `install.ps1` to
+`public/install.ps1` when it loads, which covers `docs:dev` as well as
+`docs:build`. Both copies are gitignored — the root scripts are the source, and
+nothing needs syncing by hand. The Unix one loses its extension so the
+advertised URL stays short.
+
+Cloudflare's build checks out the whole repository and only sets its root
+directory to `docs`, so `../install.sh` resolves there the same as it does
+locally.

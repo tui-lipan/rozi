@@ -79,6 +79,21 @@ ownership before an update reuses it. `install.json` records the active and prev
 
 ## Bootstrap installation
 
+Both helpers are served from the documentation site at `https://rozi.tui-lipan.dev/install` and
+`https://rozi.tui-lipan.dev/install.ps1`. Those two URLs are byte-for-byte copies of `install.sh`
+and `install.ps1` at the root of the repository, published by the site build, so piping one to a
+shell and running a clone's own copy do the same thing:
+
+```bash
+curl -fsSL https://rozi.tui-lipan.dev/install | bash
+```
+
+```powershell
+irm https://rozi.tui-lipan.dev/install.ps1 | iex
+```
+
+Piping accepts no arguments. Use a downloaded copy for `--version` and `-AddToPath`.
+
 Unix:
 
 ```bash

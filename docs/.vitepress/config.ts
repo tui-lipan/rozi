@@ -1,6 +1,6 @@
 import { defineConfig } from "vitepress";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { copyFileSync, readFileSync } from "node:fs";
 import vueJsx from "@vitejs/plugin-vue-jsx";
 import { repoLinksPlugin } from "./repoLinks";
 
@@ -22,6 +22,30 @@ const ROZI_VERSION = (() => {
   const found = /^version\s*=\s*"([^"]+)"/m.exec(manifest);
   if (!found) throw new Error("no version in Cargo.toml");
   return found[1];
+})();
+
+/**
+ * The one-liner installers advertised on the landing page are served from this
+ * site, so `curl -fsSL https://rozi.tui-lipan.dev/install | bash` fetches the
+ * very script that lives at the repository root. Copying rather than
+ * symlinking keeps the checked-in tree the single source: `docs/public/install`
+ * and `docs/public/install.ps1` are generated and gitignored. This runs at
+ * config load, which covers `docs:dev` (the public directory is served live)
+ * as well as `docs:build`.
+ */
+(() => {
+  const root = new URL("../../", import.meta.url);
+  const publicDir = new URL("../public/", import.meta.url);
+  // The Unix helper is served extensionless so the advertised URL stays short.
+  for (const [from, to] of [
+    ["install.sh", "install"],
+    ["install.ps1", "install.ps1"],
+  ]) {
+    copyFileSync(
+      fileURLToPath(new URL(from, root)),
+      fileURLToPath(new URL(to, publicDir)),
+    );
+  }
 })();
 
 export default defineConfig({

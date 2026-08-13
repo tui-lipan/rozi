@@ -44,23 +44,30 @@ It runs natively on Linux, macOS, and Windows, borrows its layout and keyboard f
 
 ## Install
 
-Grab the repository, then run the bootstrap script for your system. It fetches the release built
-for your machine, checks it, and installs it — no shell files are touched.
+The bootstrap script fetches the release built for your machine, checks it, and installs it — no
+shell files are touched. Both scripts are served from the site and live at the root of this
+repository, so a clone can run them directly instead.
 
 ```bash
-./install.sh      # Linux and macOS
+curl -fsSL https://rozi.tui-lipan.dev/install | bash      # Linux and macOS
 ```
 
 ```powershell
-.\install.ps1     # Windows
+irm https://rozi.tui-lipan.dev/install.ps1 | iex          # Windows
+```
+
+Or build it yourself:
+
+```bash
+cargo install rozi
 ```
 
 Later on, `rozi update` moves you to a newer version and `rozi update --rollback` puts the
 previous one back. See [Installation](docs/installation.md).
 
-Building from source needs Rust 1.88 or newer, plus a checkout of
-[`tui-lipan`](https://crates.io/crates/tui-lipan) next to this one — see
-[Getting started](docs/getting-started.md).
+Building from source needs Rust 1.90 or newer and nothing else;
+[`tui-lipan`](https://crates.io/crates/tui-lipan) comes from crates.io like any other dependency —
+see [Getting started](docs/getting-started.md).
 
 ```bash
 cargo run

@@ -24,3 +24,8 @@
 # Local implementation planning notes
 /docs/superpowers/plans/
 .slim/deepwork/
+
+# Installer copies served by the docs site; generated from the root scripts by
+# docs/.vitepress/config.ts.
+/docs/public/install
+/docs/public/install.ps1

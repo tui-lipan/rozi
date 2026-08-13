@@ -7,6 +7,22 @@ edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 description = "Hyprland-style tiling terminal multiplexer built on tui-lipan"
+repository = "https://github.com/tui-lipan/rozi"
+homepage = "https://rozi.tui-lipan.dev"
+# The crate is mostly a binary, so docs.rs has little to show; point readers at
+# the handwritten documentation instead.
+documentation = "https://rozi.tui-lipan.dev"
+readme = "README.md"
+keywords = ["terminal", "multiplexer", "tui", "tiling", "pty"]
+categories = ["command-line-utilities", "development-tools"]
+# `docs/` doubles as the VitePress source for the website. The pages themselves
+# are worth shipping; its build system is not.
+exclude = [
+  "/docs/.vitepress/",
+  "/docs/package.json",
+  "/docs/package-lock.json",
+  "/docs/wrangler.jsonc",
+]
 
 [dependencies]
 tui-lipan = { version = "0.2.0", features = [

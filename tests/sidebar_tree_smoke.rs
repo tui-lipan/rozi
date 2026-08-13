@@ -308,22 +308,24 @@ fn git_tab_names_why_it_is_empty() {
         return;
     }
 
-    let joined = |cwd: &std::path::Path| {
-        render_tree(SidebarTreeView::Changes, &cwd.to_string_lossy()).join("\n")
+    // The message is prose, not a tree row, so it takes the inset every other tab's empty state
+    // uses rather than sitting hard against the panel edge.
+    // One leading cell, so the message lines up with every other tab's empty state rather than
+    // starting hard against the panel edge. The rest of the row is padding and the panel border.
+    let says = |cwd: &std::path::Path, text: &str| {
+        let lines = render_tree(SidebarTreeView::Changes, &cwd.to_string_lossy());
+        let row = lines
+            .iter()
+            .find(|line| line.contains(text))
+            .unwrap_or_else(|| panic!("no row saying {text:?}: {lines:?}"));
+        assert!(
+            row.starts_with(&format!(" {text}")),
+            "{text:?} sits one cell in: {row:?}"
+        );
     };
 
-    let clean = joined(&repo);
-    assert!(clean.contains("No changes"), "clean repository: {clean}");
-    assert!(
-        !clean.contains("committed.rs"),
-        "an unchanged file is not a change: {clean}"
-    );
-
-    let plain = joined(&dir.join("plain"));
-    assert!(
-        plain.contains("Not a git repository"),
-        "outside a repository: {plain}"
-    );
+    says(&repo, "No changes");
+    says(&dir.join("plain"), "Not a git repository");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

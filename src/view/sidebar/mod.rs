@@ -469,9 +469,13 @@ pub(super) fn row_highlight(theme: &Theme) -> Style {
     Style::new().bg(theme.surface.element.elevate_by(super::HOVER_LIFT))
 }
 
+/// Where an empty tab's message sits. One cell in, so a sentence never starts hard against the
+/// panel edge — shared with the file tree, whose own placeholder is rendered by the widget.
+pub(super) const PLACEHOLDER_PADDING: (u16, u16, u16, u16) = (0, 0, 0, 1);
+
 pub(super) fn placeholder(ctx: &Context<AppRoot>, text: &str) -> Element {
     VStack::new()
-        .padding((0, 0, 0, 1))
+        .padding(PLACEHOLDER_PADDING)
         .child(Text::new(text.to_string()).style(super::fg_only(&ctx.state.theme.muted)))
         .into()
 }

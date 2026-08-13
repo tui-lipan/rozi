@@ -102,6 +102,9 @@ pub(super) fn tree_tab(
             "Directory is empty"
         })
         .empty_text_style(super::super::fg_only(&theme.muted))
+        // The tree's rows are flush with the panel, but this is a message, not a row: it lines up
+        // with every other tab's empty state instead — the same inset `placeholder` uses.
+        .empty_text_padding(super::PLACEHOLDER_PADDING)
         .item_hover_style(super::row_highlight(theme))
         .selection_style(selection)
         // With the keyboard elsewhere the cursor leaves no mark: a click here is a one-shot action,

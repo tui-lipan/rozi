@@ -452,7 +452,7 @@ See [Named profiles](profiles.md) and [Project profiles & pane identity](project
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `enable_osc52` | `true` | Allow programs running in a pane to set the system clipboard via the OSC52 escape sequence. |
+| `enable_osc52` | `true` | Allow programs running in a pane to set the system clipboard via the OSC52 escape sequence. Requires restart after changing. |
 
 See [Terminal features](terminal.md) for clipboard and selection behavior.
 

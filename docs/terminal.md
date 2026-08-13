@@ -94,7 +94,8 @@ The mouse scroll wheel over a pane scrolls its terminal scrollback.
   into history. Ctrl+C copies the full absolute range, including lines that scrolled out of view.
 - **OSC52 clipboard** - programs running in a pane can set the system clipboard via the OSC52
   escape sequence. This is enabled by default and can be turned off with
-  `[clipboard].enable_osc52 = false` in the [config](configuration.md#clipboard). Under
+  `[clipboard].enable_osc52 = false` in the [config](configuration.md#clipboard); changing it
+  requires restarting rozi. Under
   [`--remote`](remote.md), OSC52 still targets the **local** client clipboard.
 - **Paste** (`v`, `Ctrl+V`, or *Paste from clipboard* in the palette) reads the system clipboard
   and sends it to the focused pane's PTY, wrapped in bracketed-paste markers so shells/editors that

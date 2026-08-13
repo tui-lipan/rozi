@@ -90,7 +90,10 @@ pub(crate) fn config_file_changed(ctx: &mut Context<AppRoot>) -> Update {
 /// would produce, without losing running panes/workspaces/session state.
 pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     let loaded = crate::config::load_config();
-    let new_config = loaded.config;
+    let mut new_config = loaded.config;
+    // The framework clipboard service is configured when the runtime starts. Keep the state-side
+    // gate aligned with it until restart so child OSC 52 and rozi-originated copies cannot disagree.
+    new_config.clipboard.enable_osc52 = ctx.state.config.clipboard.enable_osc52;
 
     let system_theme = ctx.state.system_theme.clone();
     let resolved = crate::config::resolve_theme(&new_config.theme.name, system_theme.as_ref());

@@ -82,6 +82,11 @@ pub enum OutputFrame {
     Rebuild,
 }
 
+pub struct ProcessedOutput {
+    pub frame: OutputFrame,
+    pub clipboard_events: Vec<TerminalClipboardEvent>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalSearchMatch {
     pub offset: usize,
@@ -270,10 +275,11 @@ impl TerminalPane {
 
     /// Feed raw PTY bytes broadcast by the server into the client-side parser. Query responses
     /// (DA/DSR/OSC) are discarded here: the server's own screen already answered them.
-    pub fn process_server_output(&mut self, bytes: &[u8]) -> OutputFrame {
+    pub fn process_server_output(&mut self, bytes: &[u8]) -> ProcessedOutput {
         let mut screen = self.screen.borrow_mut();
         screen.process_bytes(bytes);
         let _ = screen.drain_responses();
+        let clipboard_events = screen.drain_clipboard_events();
         // Runtime metadata comes from the server. Keep the screen's bounded semantic marks, but do
         // not retain a second, unbounded client-side copy of every OSC 7/133 event.
         let _ = screen.drain_semantic_events();
@@ -291,10 +297,14 @@ impl TerminalPane {
             self.title != title || !matches!(self.status, ManagedTerminalStatus::Ready);
         self.title = title;
         self.status = ManagedTerminalStatus::Ready;
-        if chrome_changed {
+        let frame = if chrome_changed {
             OutputFrame::Rebuild
         } else {
             OutputFrame::Repaint
+        };
+        ProcessedOutput {
+            frame,
+            clipboard_events,
         }
     }
 
@@ -829,6 +839,21 @@ mod tests {
 
         assert!(pane.screen.borrow_mut().drain_semantic_events().is_empty());
         assert!(!pane.semantic_marks().is_empty());
+    }
+
+    #[test]
+    fn client_returns_child_osc52_store_requests() {
+        let mut pane = TerminalPane::new(100);
+
+        let output = pane.process_server_output(b"\x1b]52;c;aGVsbG8=\x07");
+
+        assert_eq!(
+            output.clipboard_events,
+            vec![TerminalClipboardEvent {
+                target: TerminalClipboardTarget::Clipboard,
+                text: "hello".to_string(),
+            }]
+        );
     }
 
     #[test]

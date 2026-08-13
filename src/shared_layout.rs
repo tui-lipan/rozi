@@ -262,6 +262,7 @@ pub(crate) fn apply_shared_layout(
     let mut max_pane_id = ctx.state.current().next_pane_id;
     let mut max_generation = ctx.state.current().next_pty_generation;
     let scrollback = ctx.state.config.scrollback;
+    let mut orphan_clipboard_events = Vec::new();
 
     // Rebuild each workspace from the incoming order, reusing pooled panes (survivors + moves) and
     // creating brand-new ones as needed.
@@ -303,7 +304,11 @@ pub(crate) fn apply_shared_layout(
                     }
                     // Output can race an authoritative removal and re-addition. The shared-session
                     // buffer is drained only for this newly described live pane.
-                    drain_orphan_output(ctx_shared_mut(ctx), &mut existing, shared_pane);
+                    orphan_clipboard_events.extend(drain_orphan_output(
+                        ctx_shared_mut(ctx),
+                        &mut existing,
+                        shared_pane,
+                    ));
                     existing
                 }
                 None => {
@@ -316,7 +321,11 @@ pub(crate) fn apply_shared_layout(
                     pane.opening = false;
                     pane.terminal_active = true;
                     pane.terminal.status = ManagedTerminalStatus::Ready;
-                    drain_orphan_output(ctx_shared_mut(ctx), &mut pane, shared_pane);
+                    orphan_clipboard_events.extend(drain_orphan_output(
+                        ctx_shared_mut(ctx),
+                        &mut pane,
+                        shared_pane,
+                    ));
                     pane
                 }
             };
@@ -427,6 +436,16 @@ pub(crate) fn apply_shared_layout(
         shared.canonical_canvas = Some((canvas_cols, canvas_rows));
         shared.last_committed_layout = Some(layout.clone());
     }
+    if ctx.state.config.clipboard.enable_osc52 {
+        for event in orphan_clipboard_events {
+            if matches!(
+                event.target,
+                tui_lipan::prelude::TerminalClipboardTarget::Clipboard
+            ) {
+                ctx.clipboard().relay_osc52(&event.text);
+            }
+        }
+    }
     if !pruned.is_empty() {
         ctx.state.animation = crate::anim::GeometryAnimation::Close;
         return Update::with_command(crate::pane_lifecycle::prune_closed_batch_command(
@@ -452,13 +471,14 @@ fn drain_orphan_output(
     shared: Option<&mut crate::state::SharedSessionState>,
     pane: &mut crate::state::Pane,
     shared_pane: &SharedPane,
-) {
+) -> Vec<tui_lipan::prelude::TerminalClipboardEvent> {
     let Some(shared) = shared else {
-        return;
+        return Vec::new();
     };
     if let Some(bytes) = shared.take_orphan_output(shared_pane.pane_id, shared_pane.generation) {
-        pane.terminal.process_server_output(&bytes);
+        return pane.terminal.process_server_output(&bytes).clipboard_events;
     }
+    Vec::new()
 }
 
 fn apply_shared_pane_fields(

@@ -628,14 +628,14 @@ pub(super) fn output(
     // rather than one per output chunk.
     let mut indicator_raised = false;
     let mut chrome_changed = false;
+    let mut clipboard_events = Vec::new();
     let mut bell_fired = false;
     let mut bell_alert_raised = false;
     let matched = match find_pane_in_namespace_mut(&mut ctx.state, pane_id, local) {
         Some(pane) if pane.pty_generation == generation => {
-            chrome_changed |= matches!(
-                pane.terminal.process_server_output(&bytes),
-                crate::pane::OutputFrame::Rebuild
-            );
+            let output = pane.terminal.process_server_output(&bytes);
+            chrome_changed |= matches!(output.frame, crate::pane::OutputFrame::Rebuild);
+            clipboard_events = output.clipboard_events;
             let bell = pane.terminal.take_bell();
             bell_fired = bell;
             pane.activity.last_activity = Some(std::time::Instant::now());
@@ -661,6 +661,16 @@ pub(super) fn output(
             shared.buffer_orphan_output(pane_id, generation, &bytes);
         }
         return Update::none();
+    }
+    if ctx.state.config.clipboard.enable_osc52 {
+        for event in clipboard_events {
+            if matches!(
+                event.target,
+                tui_lipan::prelude::TerminalClipboardTarget::Clipboard
+            ) {
+                ctx.clipboard().relay_osc52(&event.text);
+            }
+        }
     }
     if bell_fired {
         crate::events::emit(

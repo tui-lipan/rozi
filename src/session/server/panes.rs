@@ -127,6 +127,7 @@ impl SessionServer {
         if let Some(seed) = seed {
             screen.process_bytes(seed);
             screen.drain_responses();
+            screen.drain_clipboard_events();
         }
         let mut config = pty_config(
             request.command.as_deref(),
@@ -266,6 +267,9 @@ impl SessionServer {
                         // borrow of `self.panes`, and a disjoint field assignment is what the
                         // borrow checker accepts here.
                         let semantic_events = pane.screen_without_change().drain_semantic_events();
+                        // Clipboard policy belongs to each attached client. The server parser exists
+                        // for replay/runtime metadata, so never retain or apply its duplicate events.
+                        pane.screen_without_change().drain_clipboard_events();
                         let responses = pane.screen_without_change().drain_responses();
                         if let Some(pty) = &pane.pty {
                             for response in responses {

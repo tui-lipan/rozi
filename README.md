@@ -1,4 +1,3 @@
-<!-- Drop the app icon at assets/logo.png (square, ~512x512 works well). -->
 <p align="center">
   <img src="assets/logo.png" alt="rozi" width="140">
 </p>
@@ -20,14 +19,9 @@
   <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green" alt="License">
 </p>
 
-<!--
-  Drop a short screen recording at assets/demo.gif (10-20s: splitting panes, switching
-  workspaces, a theme change), then uncomment the block below.
-
 <p align="center">
-  <img src="assets/demo.gif" alt="rozi in action" width="860">
+  <img src="assets/demo.gif" alt="A rozi session opening a pane, splitting it, filling both with work, then resizing, swapping, floating and fullscreening panes" width="860">
 </p>
--->
 
 ---
 

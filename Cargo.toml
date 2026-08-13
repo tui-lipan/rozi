@@ -18,6 +18,8 @@ categories = ["command-line-utilities", "development-tools"]
 # `docs/` doubles as the VitePress source for the website. The pages themselves
 # are worth shipping; its build system is not.
 exclude = [
+  # 4 MB of README decoration; crates.io renders it from the repository.
+  "/assets/demo.gif",
   "/docs/.vitepress/",
   "/docs/package.json",
   "/docs/package-lock.json",

@@ -97,7 +97,7 @@ pub(super) fn tree_tab(
             FileTreeSuffixPriority::Label
         })
         .empty_text(if changed_only {
-            "No changes"
+            changes_empty_text(ctx)
         } else {
             "Directory is empty"
         })
@@ -177,6 +177,25 @@ pub(super) fn tree_tab(
     }
 
     tree.key(tree_key(panel, view, &root))
+}
+
+/// What the Changes tab says when it is showing nothing. A repo-less directory is worth naming —
+/// "No changes" there reads as a clean tree rather than as nothing to be clean about — and a remote
+/// scan still in flight has no answer yet, so it must not claim one.
+fn changes_empty_text(ctx: &Context<AppRoot>) -> &'static str {
+    let sidebar = &ctx.state.sidebar;
+    if ctx.state.current().remote_host.is_some() {
+        // Cleared on every root change, so `Some` means the server has answered for this root.
+        return if sidebar.tree_changes_root.is_some() {
+            "No changes"
+        } else {
+            "Loading changes…"
+        };
+    }
+    if sidebar.tree_repo.is_none() {
+        return "Not a git repository";
+    }
+    "No changes"
 }
 
 /// The directories this tab had expanded when its tree was last on screen. Absolute paths, so the

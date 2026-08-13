@@ -275,6 +275,59 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
         .expect("scrollbar smoke completes");
 }
 
+/// With nothing changed the Git tab says so, rather than showing a root row heading an empty list.
+/// Outside a repository it says that instead: "No changes" there would read as a clean tree rather
+/// than as nothing to be clean about.
+#[test]
+fn git_tab_names_why_it_is_empty() {
+    let dir = std::env::temp_dir().join(format!("rozi-tree-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("plain")).expect("plain dir");
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(&repo).expect("repo dir");
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+    };
+    let clean_repo = (|| {
+        git(&["init", "-q"])?;
+        git(&["config", "user.email", "test@example.invalid"])?;
+        git(&["config", "user.name", "Test"])?;
+        std::fs::write(repo.join("committed.rs"), "fn main() {}\n").ok()?;
+        git(&["add", "."])?;
+        git(&["commit", "-qm", "init"])
+    })()
+    .is_some();
+    if !clean_repo {
+        eprintln!("skipping: git is unavailable");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
+    let joined = |cwd: &std::path::Path| {
+        render_tree(SidebarTreeView::Changes, &cwd.to_string_lossy()).join("\n")
+    };
+
+    let clean = joined(&repo);
+    assert!(clean.contains("No changes"), "clean repository: {clean}");
+    assert!(
+        !clean.contains("committed.rs"),
+        "an unchanged file is not a change: {clean}"
+    );
+
+    let plain = joined(&dir.join("plain"));
+    assert!(
+        plain.contains("Not a git repository"),
+        "outside a repository: {plain}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Expansion belongs to the tab, not to the widget instance. The tree keys on its root, so a pane
 /// in another directory tears it down and rebuilds it from nothing; without the tab remembering
 /// what was open, coming back would land on a collapsed tree every time.

@@ -315,6 +315,11 @@ focused pane's command finishes rather than on a timer, so a build, commit, or c
 tab immediately while reading it costs nothing. Change markers are text rather than Nerd Font
 glyphs, and icons are off by default, so neither tab assumes a patched font.
 
+With nothing to show, **Git** says which nothing it is: `No changes` in a clean repository,
+`Not a git repository` when the pane's directory has no `.git` above it, and `Loading changes…`
+while a [`--remote`](remote.md) session is still scanning. All three replace the tree rather than
+heading an empty list with the repository path.
+
 Each tab remembers which directories you expanded. The tree itself is rebuilt whenever its root
 changes — focusing a pane in another directory, switching tabs, hiding the sidebar — and the tab
 seeds the new one with what was open, so moving between panes and back returns to the shape you left

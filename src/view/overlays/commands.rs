@@ -143,6 +143,7 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
         ]),
         "toggle-do-not-disturb" => alias_list(&["dnd", "mute", "quiet"]),
         "new-temporary-session" => alias_list(&["ephemeral"]),
+        "spawn-float" => alias_list(&["floating pane", "float spawn", "spawn floating"]),
         "collaborators" => alias_list(&[
             "clients",
             "roster",

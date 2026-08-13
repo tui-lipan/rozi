@@ -81,6 +81,7 @@ Key handling is the same on Windows, with two things worth knowing:
 | Command | Keys |
 | --- | --- |
 | New shell pane | `Enter` or `c` |
+| New floating pane at cursor | `Shift+Enter` (action id `spawn-float`) |
 | Close focused pane | `w` or `x` (press twice if `[confirm] close_pane` is enabled) |
 | Toggle floating / tiling | `t` |
 | Toggle fullscreen | `f` |

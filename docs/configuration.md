@@ -964,7 +964,7 @@ The parser is tui-lipan's `KeyBinding` parser. A bare `+` works as a chord step 
 key (also accept the name `plus`), but `+` inside a mixed step is still a modifier separator
 (`ctrl+c`).
 
-Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
+Action ids: `spawn`, `spawn-float`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `focus-down-no-wrap`, `focus-up-no-wrap`, `focus-right-no-wrap`,
 `move-left/down/up/right`, `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,

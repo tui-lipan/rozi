@@ -99,7 +99,7 @@ See [Layouts & panes](layouts-and-panes.md).
 
 Every pane is a real PTY.
 
-**Lifecycle** — spawn, close, respawn an exited pane, and kill a whole workspace. Exit status is
+**Lifecycle** — spawn, spawn already-floating at the cursor (`spawn-float`), close, respawn an exited pane, and kill a whole workspace. Exit status is
 surfaced rather than silently closing.
 
 **Placement** — toggle any pane to **floating** or **fullscreen**. Floats are moved and resized

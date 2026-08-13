@@ -11,7 +11,7 @@ use crate::ops::focus::{
     request_pane_focus, scrollable_close_neighbor,
 };
 use crate::ops::theme::pane_frame_background;
-use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
+use crate::state::{Pane, PaneId, PaneIdentity, PaneTitlebarMode, ScrollableRevealEdge, State};
 use crate::tiling::remove_tiled_window;
 use crate::{AppRoot, Msg};
 
@@ -90,6 +90,58 @@ pub(crate) fn spawn_pane(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.current().active_workspace,
         previous_focused,
         identity,
+    )
+    .1
+}
+
+/// Spawn a new pane already floating, with its top-left at the focused pane's terminal cursor.
+///
+/// Falls back to a centered float when there is no focused pane or its cursor cannot be mapped
+/// onto the canvas (no layout yet). Scratchpad-visible spawns float inside the dropdown.
+pub(crate) fn spawn_floating_pane_at_cursor(ctx: &mut Context<AppRoot>) -> Update {
+    let origin = focused_cursor_canvas_origin(&ctx.state);
+    let identity = PaneIdentity {
+        cwd: focused_spawn_cwd(&ctx.state),
+        ..PaneIdentity::default()
+    };
+    let float = SpawnFloat {
+        width: DEFAULT_FLOAT_FRACTION,
+        height: DEFAULT_FLOAT_FRACTION,
+        origin,
+    };
+    if ctx.state.scratch_visible {
+        let previous_focused = ctx.state.scratch.focused_pane;
+        let previous_anchor = ctx.state.scratch.scrollable_anchor;
+        let (id, update) = spawn_pane_in_scratch(ctx, previous_focused, identity);
+        let bounds = crate::scratchpad::deployed_rect(&ctx.state, ctx.viewport());
+        if let Some(pane) = ctx
+            .state
+            .scratch
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == id)
+        {
+            pane.floating = true;
+            pane.floating_rect = float.rect(bounds);
+        }
+        remove_tiled_window(&mut ctx.state.scratch, id);
+        if ctx.state.scratch.scrollable_anchor == Some(id) {
+            ctx.state.scratch.scrollable_anchor = previous_anchor;
+        }
+        return update;
+    }
+    let previous_focused =
+        ctx.state.current().workspaces[ctx.state.current().active_workspace].focused_pane;
+    spawn_pane_in_workspace(
+        ctx,
+        ctx.state.current().active_workspace,
+        previous_focused,
+        identity,
+        SpawnPlacement {
+            float: Some(float),
+            fullscreen: false,
+            focus: true,
+        },
     )
     .1
 }
@@ -183,10 +235,30 @@ pub(crate) fn spawn_pane_in_scratch(
     (id, update)
 }
 
+/// Fraction of the pane canvas used when spawning a floating pane at the cursor.
+const DEFAULT_FLOAT_FRACTION: f32 = 0.42;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SpawnFloat {
     pub width: f32,
     pub height: f32,
+    /// Canvas-space top-left. `None` centers in the workspace bounds.
+    pub origin: Option<(f32, f32)>,
+}
+
+impl SpawnFloat {
+    fn rect(self, bounds: FloatRect) -> FloatRect {
+        let w = bounds.w * self.width;
+        let h = bounds.h * self.height;
+        let (x, y) = match self.origin {
+            Some((x, y)) => (x, y),
+            None => (
+                bounds.x + (bounds.w - w) / 2.0,
+                bounds.y + (bounds.h - h) / 2.0,
+            ),
+        };
+        clamp_float_rect(FloatRect { x, y, w, h }, bounds)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -204,6 +276,49 @@ impl Default for SpawnPlacement {
             focus: true,
         }
     }
+}
+
+/// Canvas-space top-left of the focused pane's terminal cursor, or `None` when it cannot be
+/// mapped (no focus, or the pane has no layout rect yet).
+fn focused_cursor_canvas_origin(state: &State) -> Option<(f32, f32)> {
+    let id = state.focused_pane()?;
+    let workspace = state.active_workspace_ref();
+    let pane = workspace
+        .panes
+        .iter()
+        .find(|pane| pane.id == id && !pane.closing)?;
+    let rect = reference_pane_rect(state, workspace, id, None)?;
+    let (row, col) = pane.terminal.cursor_position();
+    let (origin_x, origin_y) =
+        pane_terminal_origin(rect, pane, &state.config.pane, state.scratch_visible);
+    Some((origin_x + col as f32, origin_y + row as f32))
+}
+
+/// Top-left of a pane's terminal grid inside `rect`, accounting for titlebar, frame, and padding.
+fn pane_terminal_origin(
+    rect: FloatRect,
+    pane: &Pane,
+    config: &crate::config::PaneConfig,
+    in_scratch: bool,
+) -> (f32, f32) {
+    let (pad_top, _, _, pad_left) = config.padding;
+    let special = pane.floating || in_scratch;
+    let frame = config.border_mode.draws_frames() || (special && config.keep_special_borders);
+    let border = if frame { 1.0 } else { 0.0 };
+    let bar = if config.show_titles && config.titlebar.takes_outer_row() {
+        1.0
+    } else {
+        0.0
+    };
+    let inset = if config.show_titles && config.titlebar == PaneTitlebarMode::Inset {
+        1.0
+    } else {
+        0.0
+    };
+    (
+        rect.x + border + f32::from(pad_left),
+        rect.y + bar + border + inset + f32::from(pad_top),
+    )
 }
 
 pub(crate) fn spawn_interactive_pane(
@@ -295,17 +410,7 @@ pub(crate) fn spawn_pane_in_workspace(
     pane.fullscreen = placement.fullscreen || takes_over_fullscreen;
     if let Some(float) = placement.float {
         pane.floating = true;
-        let w = bounds.w * float.width;
-        let h = bounds.h * float.height;
-        pane.floating_rect = clamp_float_rect(
-            FloatRect {
-                x: bounds.x + (bounds.w - w) / 2.0,
-                y: bounds.y + (bounds.h - h) / 2.0,
-                w,
-                h,
-            },
-            bounds,
-        );
+        pane.floating_rect = float.rect(bounds);
     }
     let palette = TerminalColorPalette::from_theme(
         &ctx.state.theme,
@@ -2062,6 +2167,7 @@ mod tests {
                 float: Some(SpawnFloat {
                     width: 0.7,
                     height: 0.8,
+                    origin: None,
                 }),
                 fullscreen: true,
                 focus: false,
@@ -2179,6 +2285,103 @@ mod tests {
             .expect("spawn scratch anchor test thread")
             .join()
             .expect("scratch anchor test thread panicked");
+    }
+
+    #[test]
+    fn pane_terminal_origin_accounts_for_bar_title_and_frame() {
+        let config = crate::config::Config::default().pane;
+        let pane = Pane::new(1, 100, FloatRect::default());
+        let rect = FloatRect {
+            x: 10.0,
+            y: 4.0,
+            w: 40.0,
+            h: 12.0,
+        };
+        let (x, y) = pane_terminal_origin(rect, &pane, &config, false);
+        assert_eq!(x, 11.0, "left border");
+        assert_eq!(y, 6.0, "title bar plus top border");
+    }
+
+    #[test]
+    fn spawn_float_rect_uses_origin_then_clamps() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 20.0,
+        };
+        let rect = SpawnFloat {
+            width: 0.42,
+            height: 0.42,
+            origin: Some((10.0, 5.0)),
+        }
+        .rect(bounds);
+        assert!((rect.x - 10.0).abs() < f32::EPSILON);
+        assert!((rect.y - 5.0).abs() < f32::EPSILON);
+        assert!((rect.w - 42.0).abs() < 0.01);
+        assert!((rect.h - 8.4).abs() < 0.01);
+    }
+
+    #[test]
+    fn spawn_float_opens_a_floating_pane_at_the_focused_cursor() {
+        in_stack(|| {
+            use crate::AppRoot;
+            use tui_lipan::TestBackend;
+            use tui_lipan::prelude::Rect;
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            backend.render();
+            {
+                let pane = backend.state_mut().current_mut().workspaces[0]
+                    .panes
+                    .iter_mut()
+                    .find(|pane| pane.id == 1)
+                    .expect("initial pane");
+                pane.opening = false;
+                pane.terminal_active = true;
+                pane.terminal.process_server_output(b"\x1b[6;12H");
+            }
+
+            let expected = focused_cursor_canvas_origin(backend.state()).expect("cursor origin");
+            assert_eq!(
+                backend.state().current().workspaces[0].panes[0]
+                    .terminal
+                    .cursor_position(),
+                (5, 11),
+                "CUP 6;12 is 0-based (5, 11)"
+            );
+
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::SpawnFloat))
+                .expect("spawn floating pane");
+
+            let spawned_id = backend.state().focused_pane().expect("spawn takes focus");
+            assert_ne!(spawned_id, 1);
+            let spawned = backend.state().current().workspaces[0]
+                .panes
+                .iter()
+                .find(|pane| pane.id == spawned_id)
+                .expect("spawned pane");
+            assert!(spawned.floating, "the new pane must be floating");
+            assert!(
+                !backend.state().current().workspaces[0]
+                    .tiled_ids()
+                    .contains(&spawned_id),
+                "a cursor-spawned float is not in the tile tree"
+            );
+            assert!(
+                (spawned.floating_rect.x - expected.0).abs() < 0.51
+                    && (spawned.floating_rect.y - expected.1).abs() < 0.51,
+                "top-left should sit on the cursor, got {:?} want {expected:?}",
+                (spawned.floating_rect.x, spawned.floating_rect.y)
+            );
+        });
     }
 }
 

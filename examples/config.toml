@@ -374,6 +374,7 @@
 #search = "scheme:ctrl-f"
 #save-profile = ["ctrl-a z", "alt-z"]
 #spawn = { add = "super-enter" }
+#spawn-float = "alt-shift-n"
 #scratchpad = []
 # A trigger mapped to a table defines a new command instead of rebinding one. The trigger
 # is a literal binding, so a leader chord spells out the real prefix key ("ctrl-a g", not

@@ -3,6 +3,8 @@ use crate::state::Direction;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
     Spawn,
+    /// Spawn a new pane already floating, with its top-left at the focused pane's cursor.
+    SpawnFloat,
     RespawnPane,
     TogglePaneLogging,
     Close,
@@ -107,6 +109,7 @@ pub enum Action {
 
 const BINDABLE_ACTIONS: &[Action] = &[
     Action::Spawn,
+    Action::SpawnFloat,
     Action::RespawnPane,
     Action::TogglePaneLogging,
     Action::Close,
@@ -213,6 +216,7 @@ impl Action {
         use Direction::{Down, Left, Right, Up};
         Some(match self {
             Action::Spawn => "spawn",
+            Action::SpawnFloat => "spawn-float",
             Action::RespawnPane => "respawn-pane",
             Action::TogglePaneLogging => "toggle-pane-logging",
             Action::Close => "close",

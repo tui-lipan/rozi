@@ -16,7 +16,7 @@ use crate::ops::resize_move::{
 };
 use crate::ops::search::open_search;
 use crate::ops::theme::{apply_terminal_palette_to_state, open_theme_picker};
-use crate::pane_lifecycle::{find_pane, spawn_pane};
+use crate::pane_lifecycle::{find_pane, spawn_floating_pane_at_cursor, spawn_pane};
 use crate::state::{
     Direction, Mode, PaneIdentity, ToastChannel, cap_style_id, next_badge_cap_style, next_cap_style,
 };
@@ -264,6 +264,7 @@ fn persist_workbar_alert_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, 
 pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) -> bool {
     match action {
         Action::Spawn
+        | Action::SpawnFloat
         | Action::RespawnPane
         | Action::Close
         | Action::Move(_)
@@ -366,10 +367,13 @@ fn execute_action_inner(
         // In the launcher (or any no-client resting state) there is no session to spawn into, and
         // queueing the spawn against a client that will never arrive would look like a hang. Asking
         // for a shell there is the explicit "start a new session" the launcher advertises.
-        Action::Spawn if crate::ops::session::needs_session_for_pty(&ctx.state) => {
+        Action::Spawn | Action::SpawnFloat
+            if crate::ops::session::needs_session_for_pty(&ctx.state) =>
+        {
             crate::ops::session::start_launcher_shell(ctx)
         }
         Action::Spawn => spawn_pane(ctx),
+        Action::SpawnFloat => spawn_floating_pane_at_cursor(ctx),
         Action::RespawnPane => crate::pane_lifecycle::respawn_focused_pane(ctx),
         Action::TogglePaneLogging => toggle_pane_logging(ctx),
         Action::Close => {
@@ -724,6 +728,7 @@ mod tests {
         // Structural / geometry actions are gated for followers.
         for action in [
             Action::Spawn,
+            Action::SpawnFloat,
             Action::Close,
             Action::Move(Direction::Left),
             Action::ToggleFloat,
@@ -799,6 +804,7 @@ mod tests {
         assert!(!is_blocked_by_scratchpad(&state, Action::ToggleSidebar));
         for action in [
             Action::Spawn,
+            Action::SpawnFloat,
             Action::Close,
             Action::Focus(Direction::Left),
             Action::Move(Direction::Right),

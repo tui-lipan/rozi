@@ -53,6 +53,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::SpawnFloat,
+        label: "New floating pane",
+        category: "Panes",
+        default_keys: &["shift-enter"],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::Close,
         label: "Close pane",
         category: "Panes",
@@ -1750,9 +1757,9 @@ mod tests {
         assert_eq!(
             &panes[..3],
             &[
+                Action::SpawnFloat,
                 Action::RenamePane,
                 Action::TogglePaneSynchronization,
-                Action::TogglePaneLogging,
             ]
         );
         assert_eq!(actions("Workspace")[0], Action::RenameWorkspace);

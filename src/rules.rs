@@ -11,6 +11,7 @@ pub(crate) fn placement_for_command(
     let float = rule.float.then(|| SpawnFloat {
         width: rule.width.unwrap_or(0.6),
         height: rule.height.unwrap_or(0.6),
+        origin: None,
     });
     (
         rule.workspace,

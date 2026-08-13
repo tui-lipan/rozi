@@ -69,6 +69,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
 
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     first.write_control(&ClientMessage::SpawnPane {
+        local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
         command: Some(format!("echo {}", String::from_utf8_lossy(OUTPUT_MARKER))),
@@ -103,6 +104,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
                 pane_id,
                 generation,
                 bytes,
+                ..
             } if *pane_id == PANE_ID && *generation == PANE_GENERATION => {
                 live_output.extend_from_slice(bytes);
             }
@@ -182,6 +184,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
             pane_id,
             generation,
             bytes,
+            ..
         } = frame
             && *pane_id == PANE_ID
             && *generation == PANE_GENERATION

@@ -44,7 +44,7 @@ fn can_open(kind: HintKind, custom: &[crate::config::HintConfig]) -> bool {
 }
 
 pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(target) = ctx.state.current().focused_pane else {
+    let Some(target) = ctx.state.focused_pane() else {
         return Update::full();
     };
     let Some(pane) = find_pane(&ctx.state, target) else {

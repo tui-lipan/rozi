@@ -15,7 +15,7 @@ use super::tiling::{
 };
 
 pub(crate) fn resize_focused_in_direction(ctx: &mut Context<AppRoot>, direction: Direction) {
-    let Some(focused) = ctx.state.current().focused_pane else {
+    let Some(focused) = ctx.state.focused_pane() else {
         return;
     };
     if active_pane_is_fullscreen(&ctx.state, focused) {
@@ -25,14 +25,31 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<AppRoot>, direction:
     if resize_focused_float(ctx, direction) {
         return;
     }
-    let workspace_index = ctx.state.current().active_workspace;
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
-    let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
+    // The dropdown's top edge is the scratch workspace's outer border, so a pane sitting against
+    // it has no split to push against vertically - it moves the whole dropdown instead, which is
+    // the keyboard counterpart of dragging that edge.
+    if ctx.state.scratch_visible
+        && matches!(direction, Direction::Up | Direction::Down)
+        && crate::scratchpad::pane_touches_top_edge(&ctx.state, focused)
+    {
+        let step = crate::scratchpad::height_step_rows(&ctx.state, ctx.viewport());
+        let rows = if direction == Direction::Up {
+            step
+        } else {
+            -step
+        };
+        if crate::scratchpad::resize_by_rows(ctx, rows) {
+            ctx.state.animation = GeometryAnimation::None;
+        }
+        return;
+    }
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let tile_bounds = workspace_tile_bounds(bounds, ctx.state.layout_top_gap());
     let tile_gap = ctx.state.tile_gap();
-    let layout_kind = ctx.state.current().workspaces[workspace_index].layout_kind;
-    if !ctx.state.current().workspaces[workspace_index]
+    let layout_kind = ctx.state.active_workspace_ref().layout_kind;
+    if !ctx
+        .state
+        .active_workspace_ref()
         .active_tiled_ids_by_pane_order()
         .contains(&focused)
     {
@@ -40,7 +57,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<AppRoot>, direction:
     }
 
     if layout_kind == LayoutKind::Master {
-        let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+        let workspace = ctx.state.active_workspace_mut();
         let axis = crate::ops::focus::split_axis_for_direction(direction);
         if axis != state::SplitAxis::Horizontal {
             return;
@@ -67,7 +84,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<AppRoot>, direction:
             Direction::Up | Direction::Down => return,
         };
         let resized = resize_scrollable_width_by_pixels(
-            &mut ctx.state.current_mut().workspaces[workspace_index],
+            ctx.state.active_workspace_mut(),
             focused,
             pixels,
             available,
@@ -82,7 +99,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<AppRoot>, direction:
         return;
     }
 
-    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+    let workspace = ctx.state.active_workspace_mut();
     ensure_tile_tree(workspace);
     let Some(tree) = workspace.tile_tree.as_ref() else {
         return;
@@ -122,6 +139,102 @@ mod tests {
     use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
     use tui_lipan::core::event::{KeyCode, KeyEvent, KeyMods};
+
+    /// A backend whose *scratch* workspace holds two panes split along `axis`, pane 1 focused and
+    /// the dropdown deployed. The attachment workspace is left alone so a stray edit shows up.
+    fn scratch_backend(axis: SplitAxis) -> TestBackend<AppRoot> {
+        use crate::state::Pane;
+        use crate::tiling::DwindleTree;
+        use tui_lipan::prelude::FloatRect;
+
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(crate::ops::resize_move::test_util::TEST_VIEWPORT);
+        {
+            let state = backend.state_mut();
+            for id in 1..=2 {
+                state
+                    .scratch
+                    .panes
+                    .push(Pane::new(id, 100, FloatRect::default()));
+            }
+            state.scratch.tile_tree = Some(DwindleTree::Split {
+                axis,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(1)),
+                second: Box::new(DwindleTree::Leaf(2)),
+            });
+            state.scratch.focused_pane = Some(1);
+            state.scratch_visible = true;
+        }
+        backend.render();
+        backend
+    }
+
+    /// Resize mode edits whichever workspace is on top. The scratchpad is one, so its splits move
+    /// and the hidden attachment workspace stays exactly as it was.
+    #[test]
+    fn resize_mode_moves_the_scratch_workspace_split() {
+        in_test_stack(|| {
+            let mut backend = scratch_backend(SplitAxis::Horizontal);
+            let before = crate::ops::resize_move::test_util::root_ratio(&backend.state().scratch);
+            let workspace_tree = backend.state().current().workspaces[0].tile_tree.clone();
+
+            backend
+                .dispatch(Msg::RunAction(Action::EnterResizeMode))
+                .expect("enter resize mode");
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('l'),
+                    mods: KeyMods::NONE,
+                })
+                .expect("resize key");
+
+            let after = crate::ops::resize_move::test_util::root_ratio(&backend.state().scratch);
+            assert!(after > before, "{after} should exceed {before}");
+            assert_eq!(
+                backend.state().current().workspaces[0].tile_tree,
+                workspace_tree,
+                "the hidden workspace must not move"
+            );
+        });
+    }
+
+    /// A pane against the dropdown's top border has no split above it, so the vertical resize keys
+    /// move the dropdown's own edge instead - the keyboard counterpart of dragging that edge.
+    #[test]
+    fn resize_mode_on_the_top_pane_moves_the_dropdown_edge() {
+        in_test_stack(|| {
+            let mut backend = scratch_backend(SplitAxis::Vertical);
+            let ratio = crate::ops::resize_move::test_util::root_ratio(&backend.state().scratch);
+            let start = crate::scratchpad::scratch_height_fraction(backend.state());
+
+            backend
+                .dispatch(Msg::RunAction(Action::EnterResizeMode))
+                .expect("enter resize mode");
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('k'),
+                    mods: KeyMods::NONE,
+                })
+                .expect("resize key");
+
+            let grown = crate::scratchpad::scratch_height_fraction(backend.state());
+            assert!(grown > start, "{grown} should exceed {start}");
+            assert_eq!(
+                crate::ops::resize_move::test_util::root_ratio(&backend.state().scratch),
+                ratio,
+                "the inner split belongs to the pane below, not to the dropdown edge"
+            );
+
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('j'),
+                    mods: KeyMods::NONE,
+                })
+                .expect("resize key");
+            assert!(crate::scratchpad::scratch_height_fraction(backend.state()) < grown);
+        });
+    }
 
     /// Every press of a resize-mode key must move the divider the same number of cells.
     ///

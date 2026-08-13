@@ -24,7 +24,7 @@ use crate::state::{
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
 /// shells/editors that opt in treat it as one paste instead of simulated keystrokes.
 fn paste_from_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return Update::full();
     };
     let text = match ctx.clipboard().read() {
@@ -47,7 +47,7 @@ fn paste_from_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 fn toggle_pane_logging(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return Update::none();
     };
     let Some(pane) = crate::pane_lifecycle::find_pane(&ctx.state, id) else {
@@ -56,7 +56,12 @@ fn toggle_pane_logging(ctx: &mut Context<AppRoot>) -> Update {
     let generation = pane.pty_generation;
     let enabled = !pane.logging;
     if let Some(client) = &ctx.state.current().session_client {
-        client.set_pane_logging(id, generation, enabled);
+        client.set_pane_logging(
+            id,
+            generation,
+            crate::pane_lifecycle::pane_is_local(&ctx.state, id),
+            enabled,
+        );
     }
     Update::none()
 }
@@ -114,6 +119,14 @@ pub(crate) fn execute_user_command_action_with_env(
                 env,
                 ..PaneIdentity::default()
             };
+            if ctx.state.scratch_visible {
+                return crate::pane_lifecycle::spawn_pane_in_scratch(
+                    ctx,
+                    ctx.state.scratch.focused_pane,
+                    identity,
+                )
+                .1;
+            }
             crate::pane_lifecycle::spawn_interactive_pane(
                 ctx,
                 ctx.state.current().active_workspace,
@@ -123,7 +136,7 @@ pub(crate) fn execute_user_command_action_with_env(
             .1
         }
         UserCommandAction::Send(text) => {
-            let Some(id) = ctx.state.current().focused_pane else {
+            let Some(id) = ctx.state.focused_pane() else {
                 return Update::full();
             };
             if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, text.as_bytes().to_vec())
@@ -155,7 +168,7 @@ pub(crate) fn execute_user_command_action_with_env(
 /// back at its split edge via the control socket (`rozi run-action focus-<dir>`), which yields
 /// the seamless "one keymap crosses both" behavior.
 fn smart_focus(ctx: &mut Context<AppRoot>, direction: Direction) -> Update {
-    if let Some(id) = ctx.state.current().focused_pane
+    if let Some(id) = ctx.state.focused_pane()
         && focused_pane_forwards_navigation(&ctx.state, id)
     {
         return crate::pty_events::forward_key_to_pane(ctx, id, navigation_key(direction));
@@ -270,24 +283,42 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         | Action::KillWorkspace
         | Action::OpenConfigFile
         | Action::EditScrollback => true,
-        // Showing can create the server-owned scratch PTY; hiding is a local overlay change.
-        Action::ToggleScratchpad => !state.scratch_visible,
-        // A user `Run` command spawns a pane (structural); `Send` only writes to the PTY (local).
+        // Scratch and popup PTYs are protocol-level client-local panes, not shared layout.
+        Action::ToggleScratchpad => false,
+        // A user `Run` command spawns a shared pane; popup/send remain client-local.
         Action::RunUserCommand(index) => matches!(
             state.config.user_commands.get(index).map(|cmd| &cmd.action),
-            Some(UserCommandAction::Run { .. } | UserCommandAction::Popup { .. })
+            Some(UserCommandAction::Run { .. })
         ),
         _ => false,
     }
 }
 
-/// The scratchpad is a focused modal terminal: workspace and application actions must not run
-/// behind it. Its own toggle remains available so the same shortcut can dismiss it.
+/// Scratch panes support ordinary pane-local actions. Attachment workspace/session/profile
+/// operations remain blocked so the local dropdown cannot mutate the hidden shared workspace.
 pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Action) -> bool {
     state.scratch_visible
-        && !matches!(
+        && matches!(
             action,
-            Action::ToggleScratchpad | Action::ToggleSidebar | Action::ToggleDevtools
+            Action::SwitchWorkspace(_)
+                | Action::MoveToWorkspace(_)
+                | Action::RelocateWorkspace(_)
+                | Action::RenameWorkspace
+                | Action::KillWorkspace
+                | Action::SaveProfile
+                | Action::OpenProfilePicker
+                | Action::ApplyProfile
+                | Action::OpenSessionPicker
+                | Action::OpenCollaborators
+                | Action::RenameSession
+                | Action::NewTemporarySession
+                | Action::RequestControl
+                | Action::GrantControl
+                | Action::ToggleControlTakeover
+                | Action::ToggleInputLock
+                | Action::KillSession
+                | Action::RestartSession
+                | Action::TogglePaneSynchronization
         )
 }
 
@@ -320,7 +351,7 @@ fn execute_action_inner(
     // Followers may not mutate the shared layout: intercept before dispatch and nudge toward
     // taking control. Focus, workspace switching, copy/search/palette, and terminal input are all
     // local and fall through.
-    if is_layout_mutating(&ctx.state, action) {
+    if is_layout_mutating(&ctx.state, action) && !ctx.state.scratch_visible {
         if crate::ops::session::nudge_if_follower(ctx) {
             return Update::full();
         }
@@ -699,7 +730,6 @@ mod tests {
             Action::EnterResizeMode,
             Action::MoveToWorkspace(1),
             Action::KillWorkspace,
-            Action::ToggleScratchpad,
         ] {
             assert!(
                 is_layout_mutating(&state, action),
@@ -712,6 +742,7 @@ mod tests {
             Action::SwitchWorkspace(1),
             Action::EnterCopyMode,
             Action::KillSession,
+            Action::ToggleScratchpad,
             Action::TogglePalette,
             Action::Detach,
             Action::KillSession,
@@ -745,19 +776,19 @@ mod tests {
     }
 
     #[test]
-    fn scratchpad_allows_its_toggle_and_sidebar_toggle() {
+    fn scratchpad_allows_pane_actions_and_blocks_attachment_actions() {
         let mut state =
             crate::state::State::new(crate::config::Config::default(), Theme::default());
         state.scratch_visible = true;
 
         for action in [
-            Action::Spawn,
-            Action::Close,
-            Action::Focus(Direction::Left),
             Action::SwitchWorkspace(1),
-            Action::TogglePalette,
-            Action::RunUserCommand(0),
-            Action::Quit,
+            Action::MoveToWorkspace(1),
+            Action::RenameWorkspace,
+            Action::KillWorkspace,
+            Action::SaveProfile,
+            Action::OpenSessionPicker,
+            Action::KillSession,
         ] {
             assert!(
                 is_blocked_by_scratchpad(&state, action),
@@ -766,14 +797,31 @@ mod tests {
         }
         assert!(!is_blocked_by_scratchpad(&state, Action::ToggleScratchpad));
         assert!(!is_blocked_by_scratchpad(&state, Action::ToggleSidebar));
-        assert!(is_blocked_by_scratchpad(&state, Action::SidebarNextTab));
+        for action in [
+            Action::Spawn,
+            Action::Close,
+            Action::Focus(Direction::Left),
+            Action::Move(Direction::Right),
+            Action::ToggleFloat,
+            Action::ToggleFullscreen,
+            Action::RenamePane,
+            Action::EnterCopyMode,
+            Action::OpenSearch,
+            Action::Paste,
+            Action::TogglePalette,
+            Action::Quit,
+        ] {
+            assert!(
+                !is_blocked_by_scratchpad(&state, action),
+                "{action:?} should target scratch or remain globally available"
+            );
+        }
         assert!(!is_layout_mutating(&state, Action::ToggleScratchpad));
         assert!(!is_layout_mutating(&state, Action::ToggleSidebar));
     }
 
     #[test]
-    fn scratchpad_blocks_spawn_without_changing_focus() {
-        use crate::Msg;
+    fn visible_scratch_workspace_is_the_active_pane_target() {
         use tui_lipan::TestBackend;
 
         std::thread::Builder::new()
@@ -781,18 +829,15 @@ mod tests {
             .spawn(|| {
                 let mut backend = TestBackend::new(AppRoot::default());
                 backend.state_mut().scratch_visible = true;
-                let before_panes = backend.state().current().workspaces[0].panes.len();
-                let before_focus = backend.state().current().focused_pane;
-
                 backend
-                    .dispatch(Msg::RunAction(Action::Spawn))
-                    .expect("dispatch blocked spawn");
-
-                assert_eq!(
-                    backend.state().current().workspaces[0].panes.len(),
-                    before_panes
-                );
-                assert_eq!(backend.state().current().focused_pane, before_focus);
+                    .state_mut()
+                    .scratch
+                    .panes
+                    .push(crate::state::Pane::new(42, 100, FloatRect::default()));
+                backend.state_mut().scratch.focused_pane = Some(42);
+                assert_eq!(backend.state().focused_pane(), Some(42));
+                assert_eq!(backend.state().active_workspace_ref().panes[0].id, 42);
+                assert_eq!(backend.state().current().focused_pane, Some(1));
             })
             .expect("spawn scratchpad action test thread")
             .join()

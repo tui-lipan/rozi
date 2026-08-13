@@ -207,6 +207,7 @@ fn message_overhead(c: &mut Criterion) {
                 let _ = backend.dispatch(rozi::Msg::SessionOutput {
                     epoch,
                     pane_id,
+                    local: false,
                     generation,
                     bytes: chunk.clone(),
                 });

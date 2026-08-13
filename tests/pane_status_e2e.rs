@@ -22,6 +22,7 @@ fn pane_status_broadcasts_and_survives_detach_reattach() {
     let (mut controller, _) = attach_client(server.endpoint(), server.session(), "controller");
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     controller.write_control(&ClientMessage::SpawnPane {
+        local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
         command: None,
@@ -52,6 +53,7 @@ fn pane_status_broadcasts_and_survives_detach_reattach() {
     let (mut follower, _) = attach_client(server.endpoint(), server.session(), "follower");
     follower.write_control(&ClientMessage::SetPaneStatus {
         pane_id: PANE_ID,
+        local: false,
         generation: PANE_GENERATION,
         status: Some("blocked".to_string()),
         reason: Some("needs approval".to_string()),
@@ -63,6 +65,7 @@ fn pane_status_broadcasts_and_survives_detach_reattach() {
                 frame,
                 Frame::Control(ServerMessage::PaneRuntimeChanged {
                     pane_id: PANE_ID,
+            local: false,
                     generation: PANE_GENERATION,
                     state,
                 }) if state.status.as_ref().is_some_and(|status| {

@@ -7,8 +7,7 @@ use crate::state::{LayoutKind, LayoutPickerState, Mode};
 
 /// The active workspace's current layout, and its index in [`LayoutKind::all`].
 fn current_layout(ctx: &Context<AppRoot>) -> (usize, LayoutKind) {
-    let workspace_index = ctx.state.current().active_workspace;
-    let current = ctx.state.current().workspaces[workspace_index].layout_kind;
+    let current = ctx.state.active_workspace_ref().layout_kind;
     let index = LayoutKind::all()
         .iter()
         .position(|kind| *kind == current)
@@ -19,7 +18,7 @@ fn current_layout(ctx: &Context<AppRoot>) -> (usize, LayoutKind) {
 /// Apply a layout for live preview. Only the client that may actually reshape the layout previews:
 /// a follower cannot, and would only see its highlight flicker as server pushes overwrite it.
 fn preview_layout(ctx: &mut Context<AppRoot>, kind: LayoutKind) {
-    if ctx.state.is_controller() {
+    if ctx.state.scratch_visible || ctx.state.is_controller() {
         set_layout(ctx, kind, false);
     }
 }
@@ -75,12 +74,14 @@ pub(crate) fn select_layout(ctx: &mut Context<AppRoot>, index: usize) -> Update 
     ctx.state.commands_dirty = true;
     // A follower cannot reshape the shared layout: nudge it to take control and leave the layout
     // untouched, exactly as the cycle command does through `is_layout_mutating`.
-    if crate::ops::session::nudge_if_follower(ctx) {
+    if !ctx.state.scratch_visible && crate::ops::session::nudge_if_follower(ctx) {
         request_current_pane_focus(ctx);
         return Update::full();
     }
     // Reshaping a session by hand engages it, the same treatment the cycle command gets.
-    ctx.state.current_mut().engaged = true;
+    if !ctx.state.scratch_visible {
+        ctx.state.current_mut().engaged = true;
+    }
     set_layout(ctx, kind, false);
     request_current_pane_focus(ctx);
     Update::full()

@@ -332,44 +332,52 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::SessionOutput {
             epoch,
             pane_id,
+            local,
             generation,
             bytes,
-        } => session::output(ctx, epoch, pane_id, generation, bytes),
+        } => session::output(ctx, epoch, pane_id, local, generation, bytes),
         Msg::SessionResized {
             epoch,
             pane_id,
+            local,
             generation,
             cols,
             rows,
-        } => session::resized(ctx, epoch, pane_id, generation, cols, rows),
+        } => session::resized(ctx, epoch, pane_id, local, generation, cols, rows),
         Msg::SessionExited {
             epoch,
             pane_id,
+            local,
             generation,
             code,
-        } => session::exited(ctx, epoch, pane_id, generation, code),
+        } => session::exited(ctx, epoch, pane_id, local, generation, code),
         Msg::SessionPaneLoggingChanged {
             epoch,
             pane_id,
+            local,
             generation,
             enabled,
             path,
             error,
-        } => session::pane_logging_changed(ctx, epoch, pane_id, generation, enabled, path, error),
+        } => session::pane_logging_changed(
+            ctx, epoch, pane_id, local, generation, enabled, path, error,
+        ),
         Msg::SessionPaneRuntimeChanged {
             epoch,
             pane_id,
+            local,
             generation,
             state,
-        } => session::pane_runtime_changed(ctx, epoch, pane_id, generation, state),
+        } => session::pane_runtime_changed(ctx, epoch, pane_id, local, generation, state),
         Msg::SessionSpawnResult {
             epoch,
             pane_id,
+            local,
             generation,
             pid,
             ok,
             error,
-        } => session::spawn_result(ctx, epoch, pane_id, generation, pid, ok, error),
+        } => session::spawn_result(ctx, epoch, pane_id, local, generation, pid, ok, error),
         Msg::ReplayInputDeadline {
             epoch,
             pane_id,
@@ -378,8 +386,9 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::SpawnReplyDeadline {
             epoch,
             pane_id,
+            local,
             generation,
-        } => session::spawn_reply_deadline(ctx, epoch, pane_id, generation),
+        } => session::spawn_reply_deadline(ctx, epoch, pane_id, local, generation),
         Msg::SessionError { epoch, message } => session::error(ctx, epoch, message),
         Msg::SessionEvicted { epoch, message } => session::evicted(ctx, epoch, message),
         Msg::SessionRenamed {
@@ -441,13 +450,16 @@ fn runtime_metrics_update(epoch: u64, current_epoch: u64, devtools_visible: bool
 /// and pane are both focused. This keeps unseen output, BEL, and finished-run attention on one rule
 /// across clicks, keyboard focus, workspace switches, and layout reconciliation.
 fn acknowledge_attended_pane(ctx: &mut Context<AppRoot>) {
-    let Some(focused) = ctx.state.current().focused_pane else {
+    let Some(focused) = ctx.state.focused_pane() else {
         return;
     };
     crate::ops::focus::acknowledge_pane_if_attended(&mut ctx.state, focused);
 }
 
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<AppRoot>) {
+    if ctx.state.scratch_visible {
+        return;
+    }
     if !ctx.state.current().session_attached || !ctx.state.is_controller() {
         return;
     }

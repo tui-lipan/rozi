@@ -199,6 +199,7 @@ impl FairnessFixture {
         for pane_id in 1..=pane_count {
             client.spawn_pane(
                 pane_id,
+                false,
                 GENERATION,
                 None,
                 None,
@@ -219,7 +220,7 @@ impl FairnessFixture {
         }
         let ingress_started = Instant::now();
         for pane_id in 1..=pane_count {
-            client.send_input(pane_id, GENERATION, b"GO\n".to_vec());
+            client.send_input(pane_id, GENERATION, false, b"GO\n".to_vec());
         }
 
         Self {
@@ -393,6 +394,7 @@ impl SnapshotFixture {
             let pane_id = pane_index as u32 + 1;
             client.spawn_pane(
                 pane_id,
+                false,
                 GENERATION,
                 None,
                 None,
@@ -439,6 +441,7 @@ impl SnapshotFixture {
         client.send_input(
             SNAPSHOT_PANE_ID,
             GENERATION,
+            false,
             format!("{sequence:016x}\n").into_bytes(),
         );
         let expected_attempts = self.last_attempts.saturating_add(1);
@@ -620,6 +623,7 @@ fn spawn_drain(
                         pane_id,
                         generation: GENERATION,
                         bytes,
+                        ..
                     } => {
                         let tail = tails.entry(pane_id).or_default();
                         tail.extend_from_slice(&bytes);
@@ -762,6 +766,7 @@ fn server_fairness(c: &mut Criterion) {
                     .send_input(
                         PANE_ID,
                         GENERATION,
+                        false,
                         black_box(format!("{key}\n").into_bytes()),
                     );
                 fixture.wait_for_ack(&key);

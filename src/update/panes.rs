@@ -204,7 +204,7 @@ pub(super) fn activate_pane(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    let focused = ctx.state.current().focused_pane == Some(id)
+    let focused = ctx.state.focused_pane() == Some(id)
         || (id == crate::state::POPUP_PANE_ID && ctx.state.popup.is_some());
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if pane.pty_generation != generation {
@@ -247,7 +247,7 @@ pub(super) fn pane_key(ctx: &mut Context<AppRoot>, id: PaneId, key: KeyEvent) ->
 }
 
 pub(super) fn forward_prefix(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Update {
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return Update::none();
     };
     crate::pty_events::forward_key_to_pane(ctx, id, key)
@@ -324,7 +324,7 @@ fn visible_pane_alert_can_pulse(state: &State) -> bool {
     if !crate::view::has_pane_alert(state) {
         return false;
     }
-    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let workspace = state.active_workspace_ref();
     let focused = workspace.focused_pane.or(state.current().focused_pane);
     workspace.panes.iter().any(|pane| {
         crate::view::pane_alert(pane, focused == Some(pane.id), &state.config.pane).is_some_and(
@@ -368,8 +368,8 @@ fn inactive_tab_marker_can_pulse(state: &State) -> bool {
 }
 
 fn logical_focus_pending_activation(state: &State) -> Option<PaneId> {
-    let id = state.current().focused_pane?;
-    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let id = state.focused_pane()?;
+    let workspace = state.active_workspace_ref();
     workspace
         .panes
         .iter()

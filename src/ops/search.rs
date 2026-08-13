@@ -19,7 +19,7 @@ fn invalidate_search_scan(state: &mut State) -> u64 {
 }
 
 pub(crate) fn open_search(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(target) = ctx.state.current().focused_pane else {
+    let Some(target) = ctx.state.focused_pane() else {
         return Update::full();
     };
     invalidate_search_scan(&mut ctx.state);
@@ -39,7 +39,7 @@ pub(crate) fn open_search_from_copy_mode(ctx: &mut Context<AppRoot>) -> Update {
         .copy_mode
         .as_ref()
         .map(|copy| copy.target)
-        .or(ctx.state.current().focused_pane)
+        .or(ctx.state.focused_pane())
     else {
         return Update::full();
     };
@@ -77,12 +77,16 @@ fn panes_in_scope(state: &State, target: PaneId, scope: SearchScope) -> Vec<Pane
     match scope {
         SearchScope::FocusedPane => {}
         SearchScope::Workspace => {
-            let workspace = state
-                .current()
-                .workspaces
-                .iter()
-                .find(|workspace| workspace.panes.iter().any(|pane| pane.id == target))
-                .unwrap_or_else(|| &state.current().workspaces[state.current().active_workspace]);
+            let workspace = if state.scratch.panes.iter().any(|pane| pane.id == target) {
+                &state.scratch
+            } else {
+                state
+                    .current()
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.panes.iter().any(|pane| pane.id == target))
+                    .unwrap_or_else(|| state.current().active_workspace_ref())
+            };
             for pane in &workspace.panes {
                 push(pane.id);
             }

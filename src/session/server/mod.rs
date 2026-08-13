@@ -65,6 +65,9 @@ const SEED_CHUNK: usize = 256 * 1024;
 
 pub struct SessionServer {
     panes: HashMap<PaneId, ServerPane>,
+    /// Owner-scoped transient panes (scratch workspaces and popups). Kept out of attach seeds,
+    /// layout/resurrection state, and every other client's address space.
+    local_panes: HashMap<(ClientId, PaneId), ServerPane>,
     next_generation: u64,
     layout: Option<SharedLayout>,
     layout_rev: u64,
@@ -341,26 +344,27 @@ impl ClientConn {
 
 #[derive(Debug)]
 enum ServerEvent {
-    Pty(PaneId, u64, TerminalPtyEvent),
+    Pty(Option<ClientId>, PaneId, u64, TerminalPtyEvent),
 }
 
 impl ServerEvent {
     fn payload_bytes(&self) -> usize {
         match self {
-            Self::Pty(_, _, TerminalPtyEvent::Output(bytes)) => bytes.len(),
-            Self::Pty(_, _, TerminalPtyEvent::Exited(_) | TerminalPtyEvent::Error(_)) => 0,
+            Self::Pty(_, _, _, TerminalPtyEvent::Output(bytes)) => bytes.len(),
+            Self::Pty(_, _, _, TerminalPtyEvent::Exited(_) | TerminalPtyEvent::Error(_)) => 0,
         }
     }
 
     fn coalesce_output(&mut self, next: &Self) -> bool {
         let (
-            Self::Pty(id, generation, TerminalPtyEvent::Output(bytes)),
-            Self::Pty(next_id, next_generation, TerminalPtyEvent::Output(next_bytes)),
+            Self::Pty(owner, id, generation, TerminalPtyEvent::Output(bytes)),
+            Self::Pty(next_owner, next_id, next_generation, TerminalPtyEvent::Output(next_bytes)),
         ) = (self, next)
         else {
             return false;
         };
-        if id != next_id
+        if owner != next_owner
+            || id != next_id
             || generation != next_generation
             || bytes.len().saturating_add(next_bytes.len()) > MAX_COALESCED_PANE_BYTES
         {
@@ -380,6 +384,7 @@ enum ServerOutbound {
     Control(Box<ServerMessage>),
     PaneOutput {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         bytes: Vec<u8>,
     },
@@ -416,6 +421,7 @@ impl SessionServer {
         let events = Arc::new(ByteQueue::new(MAX_PTY_INGRESS_BYTES));
         Self {
             panes: HashMap::new(),
+            local_panes: HashMap::new(),
             next_generation: 1,
             layout: None,
             layout_rev: 0,
@@ -530,6 +536,11 @@ impl SessionServer {
                 let _ = pty.kill();
             }
         }
+        for pane in self.local_panes.values() {
+            if let Some(pty) = &pane.pty {
+                let _ = pty.kill();
+            }
+        }
         self.discard_ephemeral_logs();
         // Retire the discovery entry while this server still owns the listener/pipe instances. A
         // replacement can then claim the name without a later post-loop unlink being able to remove
@@ -597,15 +608,25 @@ fn encode_control(message: &ServerMessage) -> Option<Arc<[u8]>> {
         .map(|()| Arc::from(buf))
 }
 
-fn encode_pane_output(pane_id: PaneId, generation: u64, bytes: &[u8]) -> Option<Arc<[u8]>> {
+fn encode_pane_output(
+    pane_id: PaneId,
+    generation: u64,
+    local: bool,
+    bytes: &[u8],
+) -> Option<Arc<[u8]>> {
     let mut buf = Vec::new();
-    protocol::write_pane_output_frame(&mut buf, pane_id, generation, bytes)
+    protocol::write_pane_output_frame(&mut buf, pane_id, generation, local, bytes)
         .ok()
         .map(|()| Arc::from(buf))
 }
 
+fn wire_local(owner: Option<ClientId>) -> bool {
+    owner.is_some()
+}
+
 struct SpawnRequest {
     pane_id: PaneId,
+    owner: Option<ClientId>,
     generation: u64,
     command: Option<String>,
     cwd: Option<String>,

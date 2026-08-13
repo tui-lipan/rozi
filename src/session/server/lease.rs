@@ -363,6 +363,18 @@ impl SessionServer {
             return;
         };
         let removed = self.clients.remove(index);
+        let local_ids: Vec<_> = self
+            .local_panes
+            .keys()
+            .filter_map(|(owner, pane_id)| (*owner == id).then_some(*pane_id))
+            .collect();
+        for pane_id in local_ids {
+            if let Some(pane) = self.local_panes.remove(&(id, pane_id))
+                && let Some(pty) = pane.pty
+            {
+                let _ = pty.kill();
+            }
+        }
         if !removed.attached {
             return;
         }
@@ -527,14 +539,38 @@ impl SessionServer {
             ServerOutbound::Control(message) => encode_control(message),
             ServerOutbound::PaneOutput {
                 pane_id,
+                local,
                 generation,
                 bytes,
-            } => encode_pane_output(*pane_id, *generation, bytes),
+            } => encode_pane_output(*pane_id, *generation, *local, bytes),
         };
         let Some(bytes) = bytes else {
             return;
         };
         self.push_to_attached(bytes);
+    }
+
+    pub(super) fn enqueue_outbound(&mut self, id: ClientId, outbound: &ServerOutbound) {
+        let bytes = match outbound {
+            ServerOutbound::Control(message) => encode_control(message),
+            ServerOutbound::PaneOutput {
+                pane_id,
+                local,
+                generation,
+                bytes,
+                ..
+            } => encode_pane_output(*pane_id, *generation, *local, bytes),
+        };
+        let Some(bytes) = bytes else { return };
+        let max_backlog = self.max_backlog;
+        let accepted = self
+            .client_mut(id)
+            .filter(|client| client.attached)
+            .is_some_and(|client| client.try_push(bytes, max_backlog));
+        if !accepted {
+            self.remove_client(id);
+        }
+        self.note_outbox_high_water();
     }
 
     /// Queue the initial replay seed for a freshly attached client: the exported screen of every
@@ -557,7 +593,7 @@ impl SessionServer {
                 .screen_without_change()
                 .export_replay_bytes();
             for chunk in bytes.chunks(SEED_CHUNK) {
-                let Some(frame) = encode_pane_output(pane_id, generation, chunk) else {
+                let Some(frame) = encode_pane_output(pane_id, generation, false, chunk) else {
                     continue;
                 };
                 let max_backlog = self.max_backlog;

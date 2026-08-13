@@ -351,6 +351,7 @@ pub enum Msg {
     SessionSpawnResult {
         epoch: u64,
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         pid: Option<u32>,
         ok: bool,
@@ -370,17 +371,20 @@ pub enum Msg {
     SpawnReplyDeadline {
         epoch: u64,
         pane_id: PaneId,
+        local: bool,
         generation: u64,
     },
     SessionOutput {
         epoch: u64,
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         bytes: Vec<u8>,
     },
     SessionResized {
         epoch: u64,
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         cols: u16,
         rows: u16,
@@ -388,12 +392,14 @@ pub enum Msg {
     SessionExited {
         epoch: u64,
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         code: i32,
     },
     SessionPaneLoggingChanged {
         epoch: u64,
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         enabled: bool,
         path: Option<String>,
@@ -402,6 +408,7 @@ pub enum Msg {
     SessionPaneRuntimeChanged {
         epoch: u64,
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         state: crate::session::protocol::PaneRuntimeState,
     },

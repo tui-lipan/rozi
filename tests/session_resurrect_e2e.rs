@@ -78,6 +78,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     });
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     client.write_control(&ClientMessage::SpawnPane {
+        local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
         command: None,

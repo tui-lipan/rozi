@@ -11,7 +11,7 @@ use crate::state::PaneIdentity;
 /// Dump the focused pane's full scrollback to a private file and open it in `$EDITOR` as a tiled
 /// pane (same pattern as [`crate::ops::config::open_config_file`]).
 pub(crate) fn edit_scrollback(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return Update::none();
     };
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {

@@ -8,11 +8,13 @@ mod tiling;
 /// Proportional, so a step feels the same fraction of a big split as of a small one, but committed
 /// in whole cells: a pane's PTY is sized in cells, so a fractional step would land on the same cell
 /// for some presses and skip one on others, which is what makes a run of presses look uneven.
-fn keyboard_step_cells(available: f32) -> f32 {
+pub(crate) fn keyboard_step_cells(available: f32) -> f32 {
     (crate::state::RATIO_STEP * available).round().max(1.0)
 }
 
-pub(crate) use float::{begin_move, begin_resize, end_move, move_pane, resize_pane};
+pub(crate) use float::{
+    begin_move, begin_resize, end_move, finish_pointer_layout_interaction, move_pane, resize_pane,
+};
 pub(crate) use keyboard::resize_focused_in_direction;
 pub(crate) use split_drag::{
     begin_resize_split_drag, begin_resize_split_junction_drag, resize_split_by_drag,

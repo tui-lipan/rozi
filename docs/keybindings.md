@@ -390,15 +390,34 @@ is on.
 
 ## Scratchpad
 
-Press `` ` `` (backtick) to toggle a **dropdown scratchpad**: a single always-running terminal
-that slides in over the current workspace and out again with one key. Its shell and scrollback
-stay alive while hidden, and it follows you across workspace switches. It is not part of any
-workspace and is not saved in profiles. Configure its command / cwd / height under
+Press `` ` `` (backtick) to toggle a **dropdown scratch workspace**. It slides in over the current
+workspace and out again with one key. Its panes, PTYs, layouts, and scrollback stay alive while
+hidden, and it follows you across workspace switches. It is not part of any attachment workspace,
+shared layout, or profile. Configure its initial command / cwd / height under
 `[scratchpad]` in [Configuration](configuration.md).
 
-While the scratchpad is open, application actions are suspended so they cannot change the
-workspace or steal focus behind it. Press the scratchpad binding again to dismiss it. The local
-`toggle-sidebar` action remains available because it changes only the surrounding app shell.
+While open, ordinary pane actions target scratch panes: create/close, focus, move/swap, layout,
+resize, float/fullscreen, rename, copy/search/paste, and terminal input. Workspace switching,
+moving/renaming/killing workspaces, and session/profile actions remain unavailable because they
+apply only to attachment workspaces. Pane synchronization is also unavailable in scratch because
+owner-local panes are intentionally never broadcast. Closing or exiting the final scratch pane hides and empties
+the dropdown; the next toggle starts the configured initial command and cwd again.
+
+Mouse gestures work exactly as they do in a workspace: drag a split boundary to adjust its ratio,
+`modifier`-drag a pane to move it, `modifier`-right-drag to resize it. Clicking anywhere inside the
+dropdown stays in it; clicking the dimmed workspace above it dismisses it.
+
+The dropdown's own height is the one extra control, and every way to reach it is the same gesture
+you would use on a split that happened to be there. Its top edge is the scratch workspace's outer
+border, so a pane sitting against it has no split above it:
+
+| Gesture | Effect |
+| --- | --- |
+| Drag the dropdown's top chrome row | Resize its height |
+| `modifier` / `prefix` + right-drag an upper corner of a top-edge pane | Resize its height; the horizontal half still resizes the pane |
+| Resize mode `k` / `j` on a top-edge pane | Grow / shrink its height |
+
+Panes further down keep their ordinary split resize on every one of those.
 
 ## Mouse
 

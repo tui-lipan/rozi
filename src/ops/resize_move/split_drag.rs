@@ -47,15 +47,17 @@ pub(crate) fn begin_resize_split_junction_drag(
 }
 
 fn begin_split_drag(ctx: &mut Context<AppRoot>, kind: SplitDragKind, x: u16, y: u16) -> Update {
-    if crate::ops::session::nudge_if_follower(ctx) {
+    // The scratchpad is client-local, so a follower edits its splits freely; only the shared
+    // workspace needs the lease.
+    if !ctx.state.scratch_visible && crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
-    let workspace_index = ctx.state.current().active_workspace;
-    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+    let target = ctx.state.layout_target();
+    let workspace = ctx.state.workspace_for_mut(target);
     ensure_tile_tree(workspace);
     ctx.state.split_drag = Some(SplitDragSession {
         kind,
-        workspace: workspace_index,
+        workspace: target,
         start_x: x,
         start_y: y,
         start_tile_tree: workspace.tile_tree.clone(),
@@ -82,14 +84,12 @@ fn resolve_split_drag(
     // Followers are nudged once at drag start; do not re-nudge (via `begin_split_drag`) on every
     // subsequent drag event, which would stack a toast per pointer move. A follower never has a
     // session, so the resize bails regardless.
-    if !ctx.state.is_controller() {
+    if !ctx.state.scratch_visible && !ctx.state.is_controller() {
         return None;
     }
-    let workspace_index = ctx.state.current().active_workspace;
+    let target = ctx.state.layout_target();
     let matches = ctx.state.split_drag.as_ref().is_some_and(|session| {
-        session.workspace == workspace_index
-            && session.start_x == from_x
-            && session.start_y == from_y
+        session.workspace == target && session.start_x == from_x && session.start_y == from_y
     });
     if !matches {
         begin_split_drag(ctx, requested, from_x, from_y);
@@ -99,7 +99,7 @@ fn resolve_split_drag(
     let kind = session.kind.clone();
     let start_tile_tree = session.start_tile_tree.clone();
     let start_split_ratios = session.start_split_ratios.clone();
-    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+    let workspace = ctx.state.workspace_for_mut(target);
     workspace.tile_tree = start_tile_tree;
     workspace.split_ratios = start_split_ratios;
     Some(kind)
@@ -150,7 +150,7 @@ fn apply_split_drag(
             horizontal_panes,
             vertical_panes,
         } => {
-            let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
+            let workspace = ctx.state.active_workspace_ref();
             let horizontal_panes = distinct_split_representatives(
                 workspace,
                 &horizontal_panes,
@@ -187,13 +187,10 @@ fn apply_resize_split_pixels(
         state::SplitAxis::Vertical
     };
 
-    let workspace_index = ctx.state.current().active_workspace;
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
-    let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let tile_bounds = workspace_tile_bounds(bounds, ctx.state.layout_top_gap());
     let tile_gap = ctx.state.tile_gap();
-    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+    let workspace = ctx.state.active_workspace_mut();
     if !workspace
         .active_tiled_ids_by_pane_order()
         .contains(&pane_id)
@@ -321,6 +318,58 @@ mod tests {
         assert_eq!(root_ratio(&workspace_for_delta(60.0)), 0.8);
         assert_eq!(root_ratio(&workspace_for_delta(50.0)), 0.8);
         assert_eq!(root_ratio(&workspace_for_delta(20.0)), 0.7);
+    }
+
+    /// A split boundary inside the dropdown is dragged by the same strips and the same session as
+    /// one in the workspace - it just measures against the dropdown's box.
+    #[test]
+    fn a_split_drag_inside_the_dropdown_resizes_the_scratch_workspace() {
+        in_test_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            {
+                let state = backend.state_mut();
+                for id in 1..=2 {
+                    state
+                        .scratch
+                        .panes
+                        .push(Pane::new(id, 100, FloatRect::default()));
+                }
+                state.scratch.tile_tree = Some(DwindleTree::Split {
+                    axis: SplitAxis::Horizontal,
+                    ratio: 0.5,
+                    first: Box::new(DwindleTree::Leaf(1)),
+                    second: Box::new(DwindleTree::Leaf(2)),
+                });
+                state.scratch.focused_pane = Some(1);
+                state.scratch_visible = true;
+            }
+            backend.render();
+            let workspace_tree = backend.state().current().workspaces[0].tile_tree.clone();
+
+            backend
+                .dispatch(Msg::BeginResizeSplit(1, true, 50, 25))
+                .expect("begin split drag");
+            backend
+                .dispatch(Msg::ResizeSplit(1, true, 50, 25, 60, 25))
+                .expect("drag split");
+
+            let available = {
+                let state = backend.state();
+                workspace_tile_bounds(state.layout_bounds(TEST_VIEWPORT), state.layout_top_gap()).w
+                    - TileGap::DEFAULT.horizontal
+            };
+            let ratio = root_ratio(&backend.state().scratch);
+            assert_eq!(
+                divider_cell(ratio, available),
+                divider_cell(0.5, available) + 10.0
+            );
+            assert_eq!(
+                backend.state().current().workspaces[0].tile_tree,
+                workspace_tree,
+                "the hidden workspace must not move"
+            );
+        });
     }
 
     /// The junction targets are fixed when the drag starts, and each successive event re-applies

@@ -49,12 +49,10 @@ fn float_keyboard_delta(direction: Direction, bounds: FloatRect) -> (f32, f32) {
 /// `super::tiling::reorder_focused_in_direction` can fall through to the tiled reorder when it was
 /// not.
 pub(super) fn move_focused_float(ctx: &mut Context<AppRoot>, direction: Direction) -> bool {
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return false;
     };
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
     let (dx, dy) = float_keyboard_delta(direction, bounds);
     let Some(pane) = active_pane_mut(&mut ctx.state, id) else {
         return false;
@@ -84,12 +82,10 @@ pub(super) fn move_focused_float(ctx: &mut Context<AppRoot>, direction: Directio
 /// its top-left corner - dragging the top-left instead would walk the pane across the workspace as
 /// it resized. Returns whether the focus was floating at all.
 pub(super) fn resize_focused_float(ctx: &mut Context<AppRoot>, direction: Direction) -> bool {
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return false;
     };
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
     let (dx, dy) = float_keyboard_delta(direction, bounds);
     let Some(pane) = active_pane_mut(&mut ctx.state, id) else {
         return false;
@@ -131,7 +127,9 @@ pub(crate) fn begin_move(
     if !modified {
         return Update::none();
     }
-    if crate::ops::session::nudge_if_follower(ctx) {
+    // The scratchpad is client-local, so a follower moves and resizes its panes freely; only the
+    // shared workspace needs the lease.
+    if !ctx.state.scratch_visible && crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
     focus_pane(&mut ctx.state, id);
@@ -179,9 +177,7 @@ pub(crate) fn move_pane(
     if !modified {
         return Update::none();
     }
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
     let mut persisted_floating_rect = None;
     if let Some(session) = ctx
         .state
@@ -231,7 +227,7 @@ pub(crate) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -
 
 /// Finish any pointer-driven layout edit before an action changes pane/layout mode. Mouse drag-end
 /// events arriving afterward become harmless because their session has already been cleared.
-pub(super) fn finish_pointer_layout_interaction(ctx: &mut Context<AppRoot>) {
+pub(crate) fn finish_pointer_layout_interaction(ctx: &mut Context<AppRoot>) {
     if let Some(session) = ctx.state.moving_pane {
         focus_pane(&mut ctx.state, session.id);
         request_pane_focus(ctx, session.id);
@@ -254,22 +250,24 @@ pub(crate) fn begin_resize(
     if !modified {
         return Update::none();
     }
-    if crate::ops::session::nudge_if_follower(ctx) {
+    // The scratchpad is client-local, so a follower moves and resizes its panes freely; only the
+    // shared workspace needs the lease.
+    if !ctx.state.scratch_visible && crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
-    let workspace = ctx.state.current().active_workspace;
+    let workspace = ctx.state.layout_target();
     let scrollable_layout =
-        ctx.state.current().workspaces[workspace].layout_kind == LayoutKind::Scrollable;
+        ctx.state.workspace_for(workspace).layout_kind == LayoutKind::Scrollable;
     // Clear first; focus_pane re-arms AxisChange only when Scrollable focus/anchor actually moves.
     ctx.state.animation = GeometryAnimation::None;
     focus_pane(&mut ctx.state, id);
     request_pane_focus(ctx, id);
-    ensure_tile_tree(&mut ctx.state.current_mut().workspaces[workspace]);
+    ensure_tile_tree(ctx.state.workspace_for_mut(workspace));
     let start_floating_rect = active_pane_mut(&mut ctx.state, id)
         .filter(|pane| pane.floating)
         .map(|pane| pane.floating_rect);
     let start_scrollable_width = {
-        let ws = &ctx.state.current().workspaces[workspace];
+        let ws = ctx.state.workspace_for(workspace);
         (scrollable_layout && start_floating_rect.is_none())
             .then(|| {
                 ws.panes
@@ -279,18 +277,25 @@ pub(crate) fn begin_resize(
             })
             .flatten()
     };
+    // Grabbing an upper corner of a pane against the dropdown's top edge grabs the dropdown's own
+    // border: there is no split above it to move, so the drag's vertical component resizes the
+    // scratchpad instead. Recorded once here so every event applies its delta from this origin.
+    let start_scratch_height = (ctx.state.scratch_visible
+        && start_floating_rect.is_none()
+        && matches!(corner, ResizeCorner::UpperLeft | ResizeCorner::UpperRight)
+        && crate::scratchpad::pane_touches_top_edge(&ctx.state, id))
+    .then(|| crate::scratchpad::scratch_height_fraction(&ctx.state));
     ctx.state.resizing_pane = Some(ResizeSession {
         id,
         corner,
         workspace,
         start_x: x,
         start_y: y,
-        start_tile_tree: ctx.state.current().workspaces[workspace].tile_tree.clone(),
-        start_split_ratios: ctx.state.current().workspaces[workspace]
-            .split_ratios
-            .clone(),
+        start_tile_tree: ctx.state.workspace_for(workspace).tile_tree.clone(),
+        start_split_ratios: ctx.state.workspace_for(workspace).split_ratios.clone(),
         start_floating_rect,
         start_scrollable_width,
+        start_scratch_height,
     });
     Update::full()
 }
@@ -318,18 +323,19 @@ pub(crate) fn resize_pane(
         return Update::none();
     };
     let corner = session.corner;
-    let ws_index = session.workspace;
+    let target = session.workspace;
     let start_tile_tree = session.start_tile_tree.clone();
     let start_split_ratios = session.start_split_ratios.clone();
     let start_floating_rect = session.start_floating_rect;
     let start_scrollable_width = session.start_scrollable_width;
+    let start_scratch_height = session.start_scratch_height;
     let scrollable_resize = start_scrollable_width.is_some();
     if !scrollable_resize {
         // Scrollable mouse resize retains an AxisChange armed by begin_resize so strip siblings
         // can animate; other layouts keep snapping during the drag.
         ctx.state.animation = GeometryAnimation::None;
     }
-    let workspace = &mut ctx.state.current_mut().workspaces[ws_index];
+    let workspace = ctx.state.workspace_for_mut(target);
     workspace.tile_tree = start_tile_tree;
     workspace.split_ratios = start_split_ratios;
     if let Some(rect) = start_floating_rect
@@ -338,7 +344,9 @@ pub(crate) fn resize_pane(
         pane.floating_rect = rect;
     }
     if let Some(width) = start_scrollable_width
-        && let Some(pane) = ctx.state.current_mut().workspaces[ws_index]
+        && let Some(pane) = ctx
+            .state
+            .workspace_for_mut(target)
             .panes
             .iter_mut()
             .find(|pane| pane.id == id)
@@ -350,6 +358,15 @@ pub(crate) fn resize_pane(
     let dx = i32::from(current.0) - i32::from(from.0);
     let dy = i32::from(current.1) - i32::from(from.1);
     let viewport = ctx.viewport();
+    // Dragging the grabbed top edge up (negative dy) grows the bottom-anchored dropdown. The
+    // vertical delta is spent here, so `resize_pane_state` only applies the horizontal one and
+    // does not also hunt for a vertical split that the outer border has no room for.
+    let dy = if let Some(start) = start_scratch_height {
+        crate::scratchpad::set_height_from(&mut ctx.state, start, -dy as f32, viewport);
+        0
+    } else {
+        dy
+    };
     resize_pane_state(&mut ctx.state, id, corner, dx, dy, viewport);
     Update::full()
 }
@@ -363,7 +380,7 @@ fn resize_pane_state(
     viewport: Rect,
 ) {
     focus_pane(state, id);
-    let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
+    let bounds = state.layout_bounds(viewport);
     let Some(pane) = active_pane_mut(state, id) else {
         return;
     };
@@ -387,15 +404,14 @@ fn resize_pane_state(
         ResizeCorner::LowerLeft | ResizeCorner::LowerRight => dy,
     };
 
-    let layout_kind = state.current().workspaces[state.current().active_workspace].layout_kind;
+    let layout_kind = state.active_workspace_ref().layout_kind;
     if layout_kind == LayoutKind::Master {
-        let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
-        let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
+        let tile_bounds = workspace_tile_bounds(bounds, state.layout_top_gap());
         let focused_rect = {
             let placements = workspace_target_rects(
-                &state.current().workspaces[state.current().active_workspace],
+                state.active_workspace_ref(),
                 bounds,
-                state.workspace_top_gap(),
+                state.layout_top_gap(),
                 state.tile_gap(),
             );
             placement_for(&placements, id)
@@ -417,8 +433,7 @@ fn resize_pane_state(
     }
     if layout_kind == LayoutKind::Scrollable {
         // Horizontal delta only; vertical is ignored. Corner convention matches dwindle/master.
-        let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
-        let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
+        let tile_bounds = workspace_tile_bounds(bounds, state.layout_top_gap());
         let resized = resize_scrollable_width_by_pixels(
             state.active_workspace_mut(),
             id,
@@ -436,12 +451,9 @@ fn resize_pane_state(
         return;
     }
 
-    let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
+    let tile_bounds = workspace_tile_bounds(bounds, state.layout_top_gap());
     ensure_tile_tree(state.active_workspace_mut());
-    let Some(tree) = layout::effective_tile_tree(
-        &state.current().workspaces[state.current().active_workspace],
-        None,
-    ) else {
+    let Some(tree) = layout::effective_tile_tree(state.active_workspace_ref(), None) else {
         return;
     };
 
@@ -495,8 +507,8 @@ fn split_edge_for_corner(axis: state::SplitAxis, corner: ResizeCorner) -> SplitE
 
 fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: Rect) {
     state.animation = GeometryAnimation::TileFloat;
-    let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
-    let top_gap = state.workspace_top_gap();
+    let bounds = state.layout_bounds(viewport);
+    let top_gap = state.layout_top_gap();
     let tile_gap = state.tile_gap();
     let drop_point = canvas_local_point_from_mouse(
         x,
@@ -506,7 +518,7 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
         state.content_top_offset(),
     );
     let target = {
-        let workspace = &state.current().workspaces[state.current().active_workspace];
+        let workspace = state.active_workspace_ref();
         let placements =
             workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap, tile_gap);
         let tiled_ids: Vec<PaneId> = workspace
@@ -1162,6 +1174,151 @@ mod tests {
                 GeometryAnimation::None,
                 "drag must not re-arm once the Scrollable anchor is unchanged"
             );
+        });
+    }
+    /// A tiled pane dragged inside the dropdown follows the pointer as a live preview, clamped to
+    /// the dropdown rather than to the whole canvas - the same gesture as in a workspace, measured
+    /// against the box the scratch workspace actually occupies.
+    #[test]
+    fn dragging_a_scratch_pane_previews_inside_the_dropdown() {
+        in_test_stack(|| {
+            let viewport = Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            };
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(viewport);
+            {
+                let state = backend.state_mut();
+                let mut pane = Pane::new(1, 100, FloatRect::default());
+                pane.opening = false;
+                state.scratch.panes.push(pane);
+                crate::tiling::append_tiled_window(&mut state.scratch, 1);
+                state.scratch.focused_pane = Some(1);
+                state.scratch_visible = true;
+            }
+            backend.render();
+            let dropdown = crate::scratchpad::deployed_rect(backend.state(), viewport);
+            let start = FloatRect {
+                x: dropdown.x,
+                y: dropdown.y,
+                w: 20.0,
+                h: 5.0,
+            };
+
+            backend
+                .dispatch(Msg::BeginMove(1, start, 0, 0, 20, 5, true))
+                .expect("begin move");
+            backend
+                .dispatch(Msg::MovePane(1, 6, -20, true))
+                .expect("drag");
+
+            let session = backend.state().moving_pane.expect("drag session");
+            assert_eq!(session.drag_rect.x, start.x + 6.0, "tracks the pointer");
+            assert!(
+                session.drag_rect.y >= dropdown.y - 0.5,
+                "a drag toward the workspace stops at the dropdown's top edge: {:?} vs {dropdown:?}",
+                session.drag_rect
+            );
+        });
+    }
+    /// A right-drag grabbing an upper corner of a top-edge scratch pane moves the dropdown's own
+    /// border - there is no split above it - while the horizontal half still resizes the pane.
+    #[test]
+    fn right_dragging_a_top_edge_scratch_pane_resizes_the_dropdown() {
+        in_test_stack(|| {
+            let viewport = Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            };
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(viewport);
+            {
+                let state = backend.state_mut();
+                for id in 1..=2 {
+                    let mut pane = Pane::new(id, 100, FloatRect::default());
+                    pane.opening = false;
+                    state.scratch.panes.push(pane);
+                }
+                // Stacked, so only pane 1 sits against the dropdown's top edge.
+                state.scratch.tile_tree = Some(crate::tiling::DwindleTree::Split {
+                    axis: SplitAxis::Vertical,
+                    ratio: 0.5,
+                    first: Box::new(crate::tiling::DwindleTree::Leaf(1)),
+                    second: Box::new(crate::tiling::DwindleTree::Leaf(2)),
+                });
+                state.scratch.focused_pane = Some(1);
+                state.scratch_visible = true;
+            }
+            backend.render();
+            let start = crate::scratchpad::scratch_height_fraction(backend.state());
+            let tree = backend.state().scratch.tile_tree.clone();
+
+            backend
+                .dispatch(Msg::BeginResize(1, ResizeCorner::UpperLeft, 10, 20, true))
+                .expect("begin resize");
+            backend
+                .dispatch(Msg::ResizePane(
+                    1,
+                    ResizeCorner::UpperLeft,
+                    10,
+                    20,
+                    10,
+                    16,
+                    true,
+                ))
+                .expect("drag up");
+            let grown = crate::scratchpad::scratch_height_fraction(backend.state());
+            assert!(
+                grown > start,
+                "dragging up grows the dropdown: {grown} vs {start}"
+            );
+            assert_eq!(
+                backend.state().scratch.tile_tree,
+                tree,
+                "the inner split belongs to the pane below, not to the dropdown edge"
+            );
+
+            // Absolute from the drag origin, so reversing past the start shrinks it again.
+            backend
+                .dispatch(Msg::ResizePane(
+                    1,
+                    ResizeCorner::UpperLeft,
+                    10,
+                    20,
+                    10,
+                    24,
+                    true,
+                ))
+                .expect("drag back down");
+            assert!(crate::scratchpad::scratch_height_fraction(backend.state()) < start);
+
+            // The lower pane has a split above it, so its right-drag stays an ordinary resize.
+            backend.state_mut().scratch.focused_pane = Some(2);
+            let height = crate::scratchpad::scratch_height_fraction(backend.state());
+            backend
+                .dispatch(Msg::BeginResize(2, ResizeCorner::UpperLeft, 10, 25, true))
+                .expect("begin resize");
+            backend
+                .dispatch(Msg::ResizePane(
+                    2,
+                    ResizeCorner::UpperLeft,
+                    10,
+                    25,
+                    10,
+                    22,
+                    true,
+                ))
+                .expect("drag");
+            assert_eq!(
+                crate::scratchpad::scratch_height_fraction(backend.state()),
+                height
+            );
+            assert_ne!(backend.state().scratch.tile_tree, tree, "the split moved");
         });
     }
 }

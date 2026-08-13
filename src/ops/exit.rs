@@ -194,7 +194,7 @@ pub(crate) fn close_focused_pane_with_confirmation(
     ctx: &mut Context<AppRoot>,
     confirmations_enabled: bool,
 ) -> Update {
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return Update::full();
     };
     let needs_confirm = confirmations_enabled

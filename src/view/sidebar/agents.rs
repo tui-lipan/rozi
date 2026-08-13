@@ -187,8 +187,7 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                 .iter()
                 .enumerate()
                 .filter(|(_, pane)| {
-                    pane.id != crate::state::SCRATCH_PANE_ID
-                        && pane.id != crate::state::POPUP_PANE_ID
+                    pane.id != crate::state::POPUP_PANE_ID
                         && !pane.closing
                         && pane.terminal.detected_agent.is_some()
                 })

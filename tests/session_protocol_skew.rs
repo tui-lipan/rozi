@@ -1,6 +1,6 @@
-//! Protocol 19 is a clean break: this build speaks 19 only.
+//! Protocol 22 is a clean break: this build speaks 22 only.
 //!
-//! Older peers that still advertise a pre-19 range must fail negotiation. This drives a real
+//! Older peers that still advertise a pre-22 range must fail negotiation. This drives a real
 //! [`SessionClient`] against a scripted server pinned below the floor and asserts attach rejects.
 
 use std::io::pipe;
@@ -18,7 +18,7 @@ const PINNED_SERVER_PROTOCOL: u32 = 18;
 
 const _: () = assert!(
     MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION,
-    "this build is intentionally protocol-19-only"
+    "this build is intentionally protocol-22-only"
 );
 const _: () = assert!(
     PINNED_SERVER_PROTOCOL < MIN_SUPPORTED_PROTOCOL,
@@ -79,7 +79,7 @@ fn pre_19_server_cannot_negotiate_with_this_build() {
     ));
     let (tx, _rx) = mpsc::channel();
     let attach = SessionClient::from_stream_attached(client_conn, session, tx, false);
-    assert!(attach.is_err(), "attach must fail against a pre-19 peer");
+    assert!(attach.is_err(), "attach must fail against a pre-21 peer");
 
     server.join().expect("server thread");
 }

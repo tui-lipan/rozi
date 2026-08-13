@@ -6,8 +6,9 @@ use crate::anim::{self, GeometryAnimation};
 use crate::geometry::{clamp_float_rect, default_floating_rect};
 use crate::layout::place_spawned_pane;
 use crate::ops::focus::{
-    choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, focus_pane,
-    reference_pane_rect, request_current_pane_focus, scrollable_close_neighbor,
+    choose_fallback_focus, choose_fallback_focus_near, first_visible_pane,
+    focus_near_pane_in_workspace, focus_pane, reference_pane_rect, request_current_pane_focus,
+    request_pane_focus, scrollable_close_neighbor,
 };
 use crate::ops::theme::pane_frame_background;
 use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
@@ -29,7 +30,7 @@ pub(crate) fn focused_local_cwd_ref(state: &State) -> Option<&str> {
     if state.current().remote_host.is_some() {
         return None;
     }
-    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let workspace = state.active_workspace_ref();
     workspace
         .focused_pane
         .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
@@ -45,7 +46,7 @@ pub(crate) fn focused_server_cwd_ref(state: &State) -> Option<&str> {
     if state.current().remote_host.is_none() {
         return focused_local_cwd_ref(state);
     }
-    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let workspace = state.active_workspace_ref();
     workspace
         .focused_pane
         .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
@@ -55,7 +56,7 @@ pub(crate) fn focused_server_cwd_ref(state: &State) -> Option<&str> {
 /// Cwd to send with a server spawn request. Under `--remote`, inherits the server-relative path.
 pub(crate) fn focused_spawn_cwd(state: &State) -> Option<String> {
     if state.current().remote_host.is_some() {
-        let workspace = &state.current().workspaces[state.current().active_workspace];
+        let workspace = state.active_workspace_ref();
         return workspace
             .focused_pane
             .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
@@ -69,6 +70,14 @@ pub(crate) fn focused_spawn_cwd(state: &State) -> Option<String> {
 }
 
 pub(crate) fn spawn_pane(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.scratch_visible {
+        let previous_focused = ctx.state.scratch.focused_pane;
+        let identity = PaneIdentity {
+            cwd: focused_spawn_cwd(&ctx.state),
+            ..PaneIdentity::default()
+        };
+        return spawn_pane_in_scratch(ctx, previous_focused, identity).1;
+    }
     let previous_focused =
         ctx.state.current().workspaces[ctx.state.current().active_workspace].focused_pane;
     let identity = PaneIdentity {
@@ -83,6 +92,85 @@ pub(crate) fn spawn_pane(ctx: &mut Context<AppRoot>) -> Update {
         identity,
     )
     .1
+}
+
+pub(crate) fn spawn_pane_in_scratch(
+    ctx: &mut Context<AppRoot>,
+    previous_focused: Option<PaneId>,
+    identity: PaneIdentity,
+) -> (PaneId, Update) {
+    let initial_pane = ctx.state.scratch.panes.is_empty();
+    let tile_gap = ctx.state.tile_gap();
+    let split_width_multiplier = ctx.state.config.layout.split_width_multiplier;
+    let rect = crate::scratchpad::deployed_rect(&ctx.state, ctx.viewport());
+    let id = ctx.state.current().next_pane_id;
+    ctx.state.current_mut().next_pane_id = id.saturating_add(1);
+    let generation = ctx.state.current().next_pty_generation;
+    ctx.state.current_mut().next_pty_generation = generation.saturating_add(1);
+    let mut pane = Pane::new(id, ctx.state.config.scrollback, rect);
+    pane.pty_generation = generation;
+    pane.identity = identity;
+    pane.terminal.bind_server_backend(id, generation);
+    let palette = TerminalColorPalette::from_theme(
+        &ctx.state.theme,
+        pane_frame_background(
+            &ctx.state.theme,
+            true,
+            ctx.state.config.pane.highlight_focused_background,
+        ),
+    );
+    pane.terminal.set_palette(palette);
+    // The initial pane rides the dropdown slide, preserving the original scratch animation.
+    // Additional panes use the ordinary pane open transition inside the deployed workspace.
+    pane.opening = !initial_pane;
+    pane.terminal_active = initial_pane;
+    let env = pane_env(
+        ctx.state.control_socket_path.as_deref(),
+        &pane,
+        ctx.state.current().remote_host.is_some(),
+    );
+    let request = PaneSpawnRequest {
+        pane_id: id,
+        local: true,
+        generation,
+        identity: pane.identity.clone(),
+        cols: pane.terminal.cols,
+        rows: pane.terminal.rows,
+        env,
+        palette,
+    };
+    ctx.state.scratch.panes.push(pane);
+    place_spawned_pane(
+        &mut ctx.state.scratch,
+        id,
+        previous_focused,
+        rect,
+        0.0,
+        tile_gap,
+        split_width_multiplier,
+    );
+    ctx.state.scratch.focused_pane = Some(id);
+    // A workspace spawn routes focus through `apply_spawn_focus`, which also parks the Scrollable
+    // viewport on the new pane. Without the same here the anchor stays on whatever was focused
+    // first, so switching the dropdown to Scrollable later reveals that pane instead of this one.
+    if ctx.state.scratch.tiled_ids().contains(&id) {
+        set_scrollable_anchor_for_spawned(&mut ctx.state.scratch, id);
+    }
+    ctx.state.animation = GeometryAnimation::Spawn;
+    request_pane_spawn(&mut ctx.state, request);
+    request_pane_focus(ctx, id);
+    let update = if initial_pane {
+        Update::full()
+    } else {
+        Update::with_command(open_timers_command(
+            ctx.state.runtime_epoch,
+            id,
+            generation,
+            anim::open_delay(ctx.state.config.animations),
+            anim::activation_delay(ctx.state.config.animations),
+        ))
+    };
+    (id, update)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -262,6 +350,7 @@ pub(crate) fn spawn_pane_in_workspace(
         &mut ctx.state,
         PaneSpawnRequest {
             pane_id: id,
+            local: false,
             generation,
             identity,
             cols,
@@ -389,7 +478,7 @@ fn set_scrollable_anchor_for_spawned(ws: &mut crate::state::Workspace, id: PaneI
 }
 
 pub(crate) fn respawn_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return Update::none();
     };
     if !find_pane(&ctx.state, id)
@@ -425,10 +514,12 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
             pane.terminal.rows,
         )
     };
+    let local = crate::scratchpad::contains(&ctx.state, id);
     request_pane_spawn(
         &mut ctx.state,
         PaneSpawnRequest {
             pane_id: id,
+            local,
             generation,
             identity,
             cols,
@@ -449,6 +540,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
 /// path passed a literal `false` for `keep_open` while its identity asked to hold the pane open.
 pub(crate) struct PaneSpawnRequest {
     pub pane_id: PaneId,
+    pub local: bool,
     pub generation: u64,
     pub identity: PaneIdentity,
     pub cols: u16,
@@ -462,6 +554,7 @@ pub(crate) struct PaneSpawnRequest {
 pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     let PaneSpawnRequest {
         pane_id,
+        local,
         generation,
         identity,
         cols,
@@ -506,6 +599,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     if let Some(client) = state.current().session_client.clone() {
         client.spawn_pane(
             pane_id,
+            local,
             generation,
             command,
             cwd,
@@ -524,6 +618,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
             .pending_spawns
             .push(crate::state::PendingPaneSpawn {
                 pane_id,
+                local,
                 generation,
                 command,
                 cwd,
@@ -570,25 +665,47 @@ fn resolved_launch_argv(
 /// retention (`Animated::auto_exit`) cannot do this, because it freezes the already reconciled
 /// subtree and only clips it.
 pub(crate) fn close_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
+    let scratch = crate::scratchpad::contains(&ctx.state, id);
     match close_pane_inner(ctx, id, true) {
         Some(generation) => Update::with_command(prune_closed_command(
             ctx.state.runtime_epoch,
             id,
             generation,
-            anim::retained_pane_timeout(ctx.state.config.animations),
+            if scratch && ctx.state.scratch.panes.iter().all(|pane| pane.closing) {
+                anim::retained_pane_timeout(ctx.state.config.animations).max(
+                    anim::scratch_transition_duration(
+                        ctx.state.config.animations.geometry_duration,
+                    ),
+                )
+            } else {
+                anim::retained_pane_timeout(ctx.state.config.animations)
+            },
         )),
         None => Update::full(),
     }
 }
 
 /// Start the close animation for a pane whose server-side process has already exited.
-pub(crate) fn remove_pane_after_exit(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
-    match close_pane_inner(ctx, id, false) {
+pub(crate) fn remove_pane_after_exit(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    local: bool,
+) -> Update {
+    let scratch = local && crate::scratchpad::contains(&ctx.state, id);
+    match close_pane_inner_with_focus(ctx, id, false, true, Some(local)) {
         Some(generation) => Update::with_command(prune_closed_command(
             ctx.state.runtime_epoch,
             id,
             generation,
-            anim::retained_pane_timeout(ctx.state.config.animations),
+            if scratch && ctx.state.scratch.panes.iter().all(|pane| pane.closing) {
+                anim::retained_pane_timeout(ctx.state.config.animations).max(
+                    anim::scratch_transition_duration(
+                        ctx.state.config.animations.geometry_duration,
+                    ),
+                )
+            } else {
+                anim::retained_pane_timeout(ctx.state.config.animations)
+            },
         )),
         None => Update::full(),
     }
@@ -603,7 +720,7 @@ pub(crate) fn close_pane_inner(
     id: PaneId,
     kill_server_pane: bool,
 ) -> Option<u64> {
-    close_pane_inner_with_focus(ctx, id, kill_server_pane, true)
+    close_pane_inner_with_focus(ctx, id, kill_server_pane, true, None)
 }
 
 /// Mark and kill one pane for a batch teardown without resolving focus. The caller must resolve
@@ -614,7 +731,7 @@ pub(crate) fn close_pane_inner_without_focus(
     id: PaneId,
     kill_server_pane: bool,
 ) -> Option<u64> {
-    close_pane_inner_with_focus(ctx, id, kill_server_pane, false)
+    close_pane_inner_with_focus(ctx, id, kill_server_pane, false, None)
 }
 
 fn close_pane_inner_with_focus(
@@ -622,7 +739,60 @@ fn close_pane_inner_with_focus(
     id: PaneId,
     kill_server_pane: bool,
     resolve_focus: bool,
+    namespace: Option<bool>,
 ) -> Option<u64> {
+    let in_scratch = crate::scratchpad::contains(&ctx.state, id);
+    if namespace != Some(false) && in_scratch {
+        let bounds = crate::scratchpad::deployed_rect(&ctx.state, ctx.viewport());
+        let placements = crate::layout::workspace_target_rects(
+            &ctx.state.scratch,
+            bounds,
+            0.0,
+            ctx.state.tile_gap(),
+        );
+        let client = ctx.state.current().session_client.clone();
+        let was_focused = ctx.state.scratch.focused_pane == Some(id);
+        let scrollable_neighbor = (ctx.state.scratch.layout_kind
+            == crate::state::LayoutKind::Scrollable)
+            .then(|| scrollable_close_neighbor(&ctx.state.scratch, id))
+            .flatten();
+        let pane = ctx
+            .state
+            .scratch
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == id && !pane.closing)?;
+        let generation = pane.pty_generation;
+        if kill_server_pane && let Some(client) = client {
+            client.kill(id, generation, true);
+        }
+        pane.floating_rect = crate::layout::placement_for(&placements, id).unwrap_or(bounds);
+        pane.opening = false;
+        pane.closing = true;
+        pane.terminal.kill();
+        remove_tiled_window(&mut ctx.state.scratch, id);
+        // Same focus resolution as a workspace: hand the keyboard to the pane nearest the one that
+        // just left, not to whichever is first in the list. The frozen `floating_rect` above is the
+        // reference rect, so `choose_fallback_focus_near` needs no extra geometry.
+        if was_focused {
+            match scrollable_neighbor {
+                Some(target) => focus_pane(&mut ctx.state, target),
+                None => choose_fallback_focus_near(&mut ctx.state, Some(id), None),
+            }
+        }
+        // `focus_pane` may arm Scrollable's AxisChange while it syncs the viewport; the close
+        // transition owns this frame.
+        ctx.state.animation = GeometryAnimation::Close;
+        if ctx.state.scratch.focused_pane.is_none() {
+            crate::scratchpad::after_pane_removed(ctx);
+        } else if resolve_focus {
+            request_current_pane_focus(ctx);
+        }
+        return Some(generation);
+    }
+    if namespace == Some(true) {
+        return None;
+    }
     // Capture this before `closing` removes the pane from `tiled_ids()`: a Scrollable strip's
     // lifecycle/storage order is not its visual neighbor order after a move or swap. Batch callers
     // deliberately skip both focus and anchor resolution until the whole teardown is marked.
@@ -669,13 +839,16 @@ fn close_pane_inner_with_focus(
     };
 
     let client = ctx.state.current().session_client.clone();
+    let wire_local = namespace.unwrap_or_else(|| pane_is_local(&ctx.state, id));
     let mut generation = None;
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id)
-        && !pane.closing
+    if let Some(pane) = match namespace {
+        Some(false) => find_pane_in_namespace_mut(&mut ctx.state, id, false),
+        _ => find_pane_mut(&mut ctx.state, id),
+    } && !pane.closing
     {
         generation = Some(pane.pty_generation);
         if kill_server_pane && let Some(client) = client {
-            client.kill(id, pane.pty_generation);
+            client.kill(id, pane.pty_generation, wire_local);
         }
         pane.floating_rect =
             crate::layout::placement_for(&placements, id).unwrap_or(pane.floating_rect);
@@ -727,8 +900,16 @@ pub(crate) fn prune_closed_pane(
     }
     if ctx.state.popup.as_ref().is_some_and(|pane| pane.id == id) {
         ctx.state.popup = None;
-    } else if ctx.state.scratch.as_ref().is_some_and(|pane| pane.id == id) {
-        ctx.state.scratch = None;
+    } else if let Some(index) = ctx
+        .state
+        .scratch
+        .panes
+        .iter()
+        .position(|pane| pane.id == id)
+    {
+        ctx.state.scratch.panes.remove(index);
+        remove_tiled_window(&mut ctx.state.scratch, id);
+        crate::scratchpad::after_pane_removed(ctx);
     } else {
         let timeout = crate::anim::retained_pane_timeout(ctx.state.config.animations);
         // Take the pane out first so its terminal screen can be retired: a same-generation
@@ -782,8 +963,8 @@ pub(crate) fn find_pane(state: &State, id: PaneId) -> Option<&Pane> {
     if let Some(pane) = state.popup.as_ref().filter(|pane| pane.id == id) {
         return Some(pane);
     }
-    // The scratchpad lives outside the workspace lists; route its events here too.
-    if let Some(pane) = state.scratch.as_ref().filter(|pane| pane.id == id) {
+    // The scratch workspace lives outside attachment workspaces; route its events here too.
+    if let Some(pane) = state.scratch.panes.iter().find(|pane| pane.id == id) {
         return Some(pane);
     }
     state
@@ -798,9 +979,50 @@ pub(crate) fn find_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane> 
     if state.popup.as_ref().is_some_and(|pane| pane.id == id) {
         return state.popup.as_mut();
     }
-    // The scratchpad lives outside the workspace lists; route its events here too.
-    if state.scratch.as_ref().is_some_and(|pane| pane.id == id) {
-        return state.scratch.as_mut();
+    if let Some(index) = state.scratch.panes.iter().position(|pane| pane.id == id) {
+        return state.scratch.panes.get_mut(index);
+    }
+    state
+        .current_mut()
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.panes.iter_mut())
+        .find(|pane| pane.id == id)
+}
+
+/// Whether `id` currently lives in the client-local namespace (popup or scratch).
+pub(crate) fn pane_is_local(state: &State, id: PaneId) -> bool {
+    state.popup.as_ref().is_some_and(|pane| pane.id == id) || crate::scratchpad::contains(state, id)
+}
+
+/// Resolve a pane in the namespace named on the wire. Local events never search attachment
+/// workspaces, and shared events never search scratch/popup, even when numeric ids collide.
+pub(crate) fn find_pane_in_namespace(state: &State, id: PaneId, local: bool) -> Option<&Pane> {
+    if local {
+        if let Some(pane) = state.popup.as_ref().filter(|pane| pane.id == id) {
+            return Some(pane);
+        }
+        return state.scratch.panes.iter().find(|pane| pane.id == id);
+    }
+    state
+        .current()
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .find(|pane| pane.id == id)
+}
+
+pub(crate) fn find_pane_in_namespace_mut(
+    state: &mut State,
+    id: PaneId,
+    local: bool,
+) -> Option<&mut Pane> {
+    if local {
+        if state.popup.as_ref().is_some_and(|pane| pane.id == id) {
+            return state.popup.as_mut();
+        }
+        let index = state.scratch.panes.iter().position(|pane| pane.id == id)?;
+        return state.scratch.panes.get_mut(index);
     }
     state
         .current_mut()
@@ -1010,6 +1232,7 @@ mod tests {
     fn spawn_request(pane_id: PaneId, generation: u64, identity: PaneIdentity) -> PaneSpawnRequest {
         PaneSpawnRequest {
             pane_id,
+            local: false,
             generation,
             identity,
             cols: 80,
@@ -1890,6 +2113,59 @@ mod tests {
         assert!(remote.iter().any(|(k, _)| k == "ROZI"));
         assert!(remote.iter().any(|(k, _)| k == "ROZI_PANE"));
     }
+
+    /// A spawn parks the Scrollable viewport on the new pane. The scratch spawn skipped that, so
+    /// the anchor stayed on whatever was focused first - and switching the dropdown to Scrollable
+    /// later revealed that stale pane, leaving the actually-focused one off screen.
+    #[test]
+    fn spawning_into_the_scratchpad_parks_the_scrollable_anchor_on_the_new_pane() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::AppRoot;
+                use crate::state::Pane;
+                use tui_lipan::TestBackend;
+                use tui_lipan::prelude::{FloatRect, Rect};
+
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let mut pane = Pane::new(1, 100, FloatRect::default());
+                    pane.opening = false;
+                    state.scratch.panes.push(pane);
+                    crate::tiling::append_tiled_window(&mut state.scratch, 1);
+                    state.scratch.focused_pane = Some(1);
+                    state.scratch.scrollable_anchor = Some(1);
+                    state.scratch_visible = true;
+                }
+                backend.render();
+
+                backend
+                    .dispatch(crate::Msg::RunAction(crate::input::Action::Spawn))
+                    .expect("spawn into the scratchpad");
+
+                let spawned = backend
+                    .state()
+                    .scratch
+                    .focused_pane
+                    .expect("the spawn takes focus");
+                assert_ne!(spawned, 1, "a second pane was created");
+                assert_eq!(
+                    backend.state().scratch.scrollable_anchor,
+                    Some(spawned),
+                    "the strip must be parked on the pane that now has focus"
+                );
+            })
+            .expect("spawn scratch anchor test thread")
+            .join()
+            .expect("scratch anchor test thread panicked");
+    }
 }
 
 #[cfg(test)]
@@ -1994,6 +2270,7 @@ mod close_animation {
                 .dispatch(crate::Msg::SessionExited {
                     epoch,
                     pane_id: 1,
+                    local: false,
                     generation,
                     code: 1,
                 })
@@ -2046,6 +2323,7 @@ mod close_animation {
                 .dispatch(crate::Msg::SessionExited {
                     epoch,
                     pane_id: 1,
+                    local: false,
                     generation,
                     code: 3,
                 })
@@ -2059,6 +2337,41 @@ mod close_animation {
             assert!(
                 text.contains("[exited 3]"),
                 "a held pane must say why it is inert: {text}"
+            );
+        });
+    }
+
+    #[test]
+    fn find_pane_in_namespace_does_not_cross_local_and_shared_ids() {
+        in_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            let rect = tui_lipan::prelude::FloatRect::default();
+            let mut shared = crate::state::Pane::new(7, 100, rect);
+            shared.title = "shared".into();
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(shared);
+            let mut local = crate::state::Pane::new(7, 100, rect);
+            local.title = "local".into();
+            backend.state_mut().scratch.panes.push(local);
+            backend.state_mut().scratch_visible = true;
+
+            assert_eq!(
+                super::find_pane_in_namespace(backend.state(), 7, false)
+                    .unwrap()
+                    .title,
+                "shared"
+            );
+            assert_eq!(
+                super::find_pane_in_namespace(backend.state(), 7, true)
+                    .unwrap()
+                    .title,
+                "local"
+            );
+            assert_eq!(
+                super::find_pane(backend.state(), 7).unwrap().title,
+                "local",
+                "stacking lookup still prefers scratch; session events must not use it"
             );
         });
     }

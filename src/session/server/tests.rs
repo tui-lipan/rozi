@@ -222,32 +222,33 @@ fn runtime_metrics_request_serves_protocol_19_peers() {
             responses.as_slice(),
             [(_, ServerMessage::Error { code, .. })] if code == "protocol-mismatch"
         ),
-        "pre-19 peers are rejected"
+        "older peers are rejected"
     );
 }
 
 #[test]
 fn pty_ingress_coalesces_only_adjacent_output_for_the_same_pane() {
     let queue = ByteQueue::new(64);
-    let first = ServerEvent::Pty(1, 2, TerminalPtyEvent::Output(Arc::from(&b"abc"[..])));
+    let first = ServerEvent::Pty(None, 1, 2, TerminalPtyEvent::Output(Arc::from(&b"abc"[..])));
     queue
         .try_push_with(first, 3, ServerEvent::coalesce_output)
         .unwrap();
-    let second = ServerEvent::Pty(1, 2, TerminalPtyEvent::Output(Arc::from(&b"def"[..])));
+    let second = ServerEvent::Pty(None, 1, 2, TerminalPtyEvent::Output(Arc::from(&b"def"[..])));
     queue
         .try_push_with(second, 3, ServerEvent::coalesce_output)
         .unwrap();
     queue
-        .try_push(ServerEvent::Pty(1, 2, TerminalPtyEvent::Exited(0)), 0)
+        .try_push(ServerEvent::Pty(None, 1, 2, TerminalPtyEvent::Exited(0)), 0)
         .unwrap();
 
-    let ServerEvent::Pty(_, _, TerminalPtyEvent::Output(bytes)) = queue.try_pop().unwrap() else {
+    let ServerEvent::Pty(None, _, _, TerminalPtyEvent::Output(bytes)) = queue.try_pop().unwrap()
+    else {
         panic!("expected output")
     };
     assert_eq!(&*bytes, b"abcdef");
     assert!(matches!(
         queue.try_pop(),
-        Some(ServerEvent::Pty(1, 2, TerminalPtyEvent::Exited(0)))
+        Some(ServerEvent::Pty(None, 1, 2, TerminalPtyEvent::Exited(0)))
     ));
 }
 
@@ -314,6 +315,7 @@ fn controller_kill_reclaims_server_pane_state() {
         client,
         ClientMessage::Kill {
             pane_id: 7,
+            local: false,
             generation: 3,
         },
     );
@@ -395,6 +397,7 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
         first,
         ClientMessage::SpawnPane {
             pane_id: 1,
+            local: false,
             generation: 1,
             command: None,
             cwd: None,
@@ -835,6 +838,7 @@ fn spawn_from_follower_is_rejected() {
         follower,
         ClientMessage::SpawnPane {
             pane_id: 1,
+            local: false,
             generation: 1,
             command: None,
             cwd: None,
@@ -856,6 +860,366 @@ fn spawn_from_follower_is_rejected() {
             if error == "not controller"
     ));
     assert!(server.panes.is_empty());
+}
+
+fn local_spawn(pane_id: PaneId, generation: u64) -> ClientMessage {
+    ClientMessage::SpawnPane {
+        pane_id,
+        local: true,
+        generation,
+        command: Some("true".to_string()),
+        cwd: None,
+        cols: 20,
+        rows: 5,
+        keep_open: false,
+        env: Vec::new(),
+        title: None,
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell_width: 0,
+        cell_height: 0,
+    }
+}
+
+#[test]
+fn client_local_panes_are_owner_scoped_and_survive_control_transfer() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _s1) = attach_client(&mut server);
+    let (second, _s2) = attach_client(&mut server);
+
+    for owner in [first, second] {
+        let response = server.handle_message(owner, local_spawn(7, owner));
+        assert!(matches!(
+            response.as_slice(),
+            [(Target::Sender, ServerMessage::SpawnResult { ok: true, .. })]
+        ));
+    }
+    assert!(server.panes.is_empty());
+    assert!(server.local_panes.contains_key(&(first, 7)));
+    assert!(server.local_panes.contains_key(&(second, 7)));
+
+    server.handle_message(first, ClientMessage::GrantControl { to: second });
+    assert_eq!(server.controller, Some(second));
+    server.handle_message(
+        first,
+        ClientMessage::Resize {
+            pane_id: 7,
+            local: true,
+            generation: first,
+            cols: 33,
+            rows: 11,
+            cell_width: 0,
+            cell_height: 0,
+        },
+    );
+    assert_eq!(server.local_panes[&(first, 7)].cols, 33);
+    assert_eq!(server.local_panes[&(second, 7)].cols, 20);
+}
+
+#[test]
+fn client_local_panes_are_not_seeded_and_disconnect_kills_the_ownership_entry() {
+    let mut server = SessionServer::new_named("dev");
+    let (owner, _s1) = attach_client(&mut server);
+    let (other, _s2) = attach_client(&mut server);
+    server.handle_message(owner, local_spawn(7, 1));
+    assert!(
+        server.origin_seed_client.is_none(),
+        "a local spawn must not seed shared-session origin"
+    );
+
+    server.enqueue_attach_seeds(other);
+    assert!(
+        server.panes.is_empty(),
+        "local pane never joins attach state"
+    );
+    server.remove_client(owner);
+    assert!(
+        !server
+            .local_panes
+            .keys()
+            .any(|(client, _)| *client == owner)
+    );
+}
+
+fn colliding_spawn(pane_id: PaneId, local: bool, generation: u64, command: &str) -> ClientMessage {
+    ClientMessage::SpawnPane {
+        pane_id,
+        local,
+        generation,
+        command: Some(command.to_string()),
+        cwd: None,
+        cols: 40,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        title: None,
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell_width: 0,
+        cell_height: 0,
+    }
+}
+
+fn drain_pty_events(server: &mut SessionServer) {
+    while let Some(event) = server.events.try_pop() {
+        if let Some(outbound) = server.handle_event(event) {
+            server.broadcast_outbound(&outbound);
+        }
+    }
+}
+
+fn wait_until(server: &mut SessionServer, predicate: impl Fn(&mut SessionServer) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        drain_pty_events(server);
+        if predicate(server) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("timed out waiting for colliding-pane condition");
+}
+
+fn pane_text(server: &mut SessionServer, owner: Option<ClientId>, pane_id: PaneId) -> String {
+    server
+        .pane_mut(owner, pane_id)
+        .map(|pane| pane.screen_without_change().snapshot().to_string())
+        .unwrap_or_default()
+}
+
+fn decode_outbox_pane_bytes(client: &ClientConn) -> Vec<(PaneId, bool, u64, Vec<u8>)> {
+    client
+        .outbox
+        .iter()
+        .filter_map(|bytes| {
+            let mut decoder = crate::session::protocol::FrameDecoder::default();
+            decoder.read_from_status(&mut &bytes[..]).ok()?;
+            match decoder.next_frame::<ServerMessage>().ok()? {
+                Some(Frame::PaneBytes {
+                    pane_id,
+                    local,
+                    generation,
+                    bytes,
+                }) => Some((pane_id, local, generation, bytes)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn resize_message(
+    pane_id: PaneId,
+    local: bool,
+    generation: u64,
+    cols: u16,
+    rows: u16,
+) -> ClientMessage {
+    ClientMessage::Resize {
+        pane_id,
+        local,
+        generation,
+        cols,
+        rows,
+        cell_width: 0,
+        cell_height: 0,
+    }
+}
+
+/// A shared pane and an owner-local pane share numeric id 7. Wire `local` must select exactly one.
+#[test]
+fn colliding_local_and_shared_pane_ids_are_addressed_independently() {
+    let mut server = SessionServer::new_named("dev");
+    let (owner, _s1) = attach_client(&mut server);
+    let (other, _s2) = attach_client(&mut server);
+    const PANE: PaneId = 7;
+    const GENERATION: u64 = 1;
+
+    server
+        .local_panes
+        .insert((owner, PANE), test_pane(GENERATION));
+    server.panes.insert(PANE, test_pane(GENERATION));
+
+    server.handle_message(owner, resize_message(PANE, false, GENERATION, 41, 12));
+    server.handle_message(owner, resize_message(PANE, true, GENERATION, 33, 9));
+    assert_eq!(server.panes[&PANE].cols, 41);
+    assert_eq!(server.panes[&PANE].rows, 12);
+    assert_eq!(server.local_panes[&(owner, PANE)].cols, 33);
+    assert_eq!(server.local_panes[&(owner, PANE)].rows, 9);
+
+    server.handle_message(owner, ClientMessage::GrantControl { to: other });
+    assert_eq!(server.controller, Some(other));
+    server.handle_message(owner, resize_message(PANE, false, GENERATION, 50, 15));
+    server.handle_message(owner, resize_message(PANE, true, GENERATION, 28, 8));
+    assert_eq!(
+        server.panes[&PANE].cols, 41,
+        "a follower must not resize the shared pane"
+    );
+    assert_eq!(
+        server.local_panes[&(owner, PANE)].cols,
+        28,
+        "the owner still resizes its local pane after losing control"
+    );
+
+    for client in &mut server.clients {
+        client.outbox.clear();
+        client.outbox_bytes = 0;
+    }
+    assert!(
+        server
+            .handle_event(ServerEvent::Pty(
+                None,
+                PANE,
+                GENERATION,
+                TerminalPtyEvent::Output(b"shared-out".to_vec().into()),
+            ))
+            .is_none()
+    );
+    assert!(
+        server
+            .handle_event(ServerEvent::Pty(
+                Some(owner),
+                PANE,
+                GENERATION,
+                TerminalPtyEvent::Output(b"local-out".to_vec().into()),
+            ))
+            .is_none()
+    );
+
+    let owner_frames = decode_outbox_pane_bytes(server.client_mut(owner).unwrap());
+    let other_frames = decode_outbox_pane_bytes(server.client_mut(other).unwrap());
+    assert!(owner_frames.iter().any(|(id, local, generation, bytes)| {
+        *id == PANE && !*local && *generation == GENERATION && bytes == b"shared-out"
+    }));
+    assert!(owner_frames.iter().any(|(id, local, generation, bytes)| {
+        *id == PANE && *local && *generation == GENERATION && bytes == b"local-out"
+    }));
+    assert!(other_frames.iter().any(|(id, local, generation, bytes)| {
+        *id == PANE && !*local && *generation == GENERATION && bytes == b"shared-out"
+    }));
+    assert!(
+        other_frames
+            .iter()
+            .all(|(id, local, _, bytes)| !(*id == PANE && *local && bytes == b"local-out")),
+        "local output must not reach a non-owner"
+    );
+    assert!(pane_text(&mut server, None, PANE).contains("shared-out"));
+    assert!(pane_text(&mut server, Some(owner), PANE).contains("local-out"));
+    assert!(!pane_text(&mut server, None, PANE).contains("local-out"));
+    assert!(!pane_text(&mut server, Some(owner), PANE).contains("shared-out"));
+
+    server.handle_message(
+        other,
+        ClientMessage::Kill {
+            pane_id: PANE,
+            local: true,
+            generation: GENERATION,
+        },
+    );
+    assert!(
+        server.local_panes.contains_key(&(owner, PANE)),
+        "another client cannot kill this owner's local pane"
+    );
+    server.handle_message(
+        owner,
+        ClientMessage::Kill {
+            pane_id: PANE,
+            local: false,
+            generation: GENERATION,
+        },
+    );
+    assert!(
+        server.panes.contains_key(&PANE),
+        "a follower cannot kill the shared pane"
+    );
+    server.handle_message(
+        owner,
+        ClientMessage::Kill {
+            pane_id: PANE,
+            local: true,
+            generation: GENERATION,
+        },
+    );
+    assert!(!server.local_panes.contains_key(&(owner, PANE)));
+    assert!(server.panes.contains_key(&PANE));
+
+    server
+        .local_panes
+        .insert((owner, PANE), test_pane(GENERATION));
+    server.remove_client(owner);
+    assert!(!server.local_panes.contains_key(&(owner, PANE)));
+    assert!(
+        server.panes.contains_key(&PANE),
+        "owner disconnect must not remove the shared pane with the same id"
+    );
+}
+
+#[test]
+fn colliding_local_and_shared_pane_input_is_namespaced() {
+    let mut server = SessionServer::new_named("dev");
+    let (owner, _s1) = attach_client(&mut server);
+    const PANE: PaneId = 7;
+    const GENERATION: u64 = 1;
+
+    for local in [true, false] {
+        let spawned = server.handle_message(
+            owner,
+            colliding_spawn(PANE, local, GENERATION, "printf 'READY\\n'; cat"),
+        );
+        assert!(
+            matches!(
+                spawned.as_slice(),
+                [(Target::Sender, ServerMessage::SpawnResult { ok: true, .. })]
+            ),
+            "spawn local={local} failed: {spawned:?}"
+        );
+        assert!(
+            server
+                .pane(local.then_some(owner), PANE)
+                .is_some_and(|pane| pane.pty.is_some()),
+            "spawn local={local} did not retain a PTY"
+        );
+    }
+    assert_eq!(server.origin_seed_client, Some(owner));
+
+    wait_until(&mut server, |server| {
+        pane_text(server, None, PANE).contains("READY")
+            && pane_text(server, Some(owner), PANE).contains("READY")
+    });
+
+    server.process_client_frame(
+        owner,
+        Frame::PaneBytes {
+            pane_id: PANE,
+            local: false,
+            generation: GENERATION,
+            bytes: b"FROM-SHARED\n".to_vec(),
+        },
+    );
+    server.process_client_frame(
+        owner,
+        Frame::PaneBytes {
+            pane_id: PANE,
+            local: true,
+            generation: GENERATION,
+            bytes: b"FROM-LOCAL\n".to_vec(),
+        },
+    );
+    wait_until(&mut server, |server| {
+        pane_text(server, None, PANE).contains("FROM-SHARED")
+            && pane_text(server, Some(owner), PANE).contains("FROM-LOCAL")
+    });
+    let shared_text = pane_text(&mut server, None, PANE);
+    let local_text = pane_text(&mut server, Some(owner), PANE);
+    assert!(
+        !shared_text.contains("FROM-LOCAL"),
+        "shared pane received local input; screen was:\n{shared_text}"
+    );
+    assert!(
+        !local_text.contains("FROM-SHARED"),
+        "local pane received shared input; screen was:\n{local_text}"
+    );
 }
 
 #[test]
@@ -885,6 +1249,7 @@ fn writable_follower_sets_sanitized_status_and_broadcasts() {
         follower,
         ClientMessage::SetPaneStatus {
             pane_id: 1,
+            local: false,
             generation: 2,
             status: Some(raw_status),
             reason: Some("\u{1b}]0;hidden\u{7} needs\u{0} approval\n".into()),
@@ -915,6 +1280,7 @@ fn pane_status_rejects_invalid_clients_and_panes() {
 
     let request = |pane_id, generation| ClientMessage::SetPaneStatus {
         pane_id,
+        local: false,
         generation,
         status: Some("working".into()),
         reason: None,
@@ -941,6 +1307,7 @@ fn pane_status_no_op_reason_change_and_clear_have_single_sequences() {
     server.panes.insert(1, status_test_pane(2, None));
     let set = |reason: Option<&str>| ClientMessage::SetPaneStatus {
         pane_id: 1,
+        local: false,
         generation: 2,
         status: Some("blocked".into()),
         reason: reason.map(str::to_string),
@@ -966,6 +1333,7 @@ fn pane_status_no_op_reason_change_and_clear_have_single_sequences() {
         client,
         ClientMessage::SetPaneStatus {
             pane_id: 1,
+            local: false,
             generation: 2,
             status: None,
             reason: Some("discarded".into()),
@@ -980,6 +1348,7 @@ fn pane_status_no_op_reason_change_and_clear_have_single_sequences() {
                 client,
                 ClientMessage::SetPaneStatus {
                     pane_id: 1,
+                    local: false,
                     generation: 2,
                     status: Some("\n\u{1b}[31m".into()),
                     reason: Some("ignored".into()),
@@ -997,6 +1366,7 @@ fn pane_status_run_start_survives_block_and_reattach() {
 
     let set = |status: &str| ClientMessage::SetPaneStatus {
         pane_id: 1,
+        local: false,
         generation: 2,
         status: Some(status.into()),
         reason: None,
@@ -1168,6 +1538,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
         controller,
         ClientMessage::Resize {
             pane_id: 1,
+            local: false,
             generation: 2,
             cols: 80,
             rows: 24,
@@ -1182,6 +1553,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             Target::Broadcast,
             ServerMessage::Resized {
                 pane_id: 1,
+                local: false,
                 generation: 2,
                 cols: 80,
                 rows: 24,
@@ -1210,6 +1582,7 @@ fn resize_adopts_the_controllers_cell_size() {
         controller,
         ClientMessage::Resize {
             pane_id: 1,
+            local: false,
             generation: 2,
             cols: 80,
             rows: 24,
@@ -1231,6 +1604,7 @@ fn resize_adopts_the_controllers_cell_size() {
         controller,
         ClientMessage::Resize {
             pane_id: 1,
+            local: false,
             generation: 2,
             cols: 100,
             rows: 30,
@@ -1272,6 +1646,7 @@ fn duplicate_spawn_is_rejected() {
         },
     );
     let result = server.spawn_pane(SpawnRequest {
+        owner: None,
         pane_id: 1,
         generation: 3,
         command: None,
@@ -1323,6 +1698,7 @@ fn exited_pane_can_be_respawned() {
     );
 
     let result = server.spawn_pane(SpawnRequest {
+        owner: None,
         pane_id: 1,
         generation: 3,
         command: Some("true".into()),
@@ -1433,7 +1809,7 @@ fn pane_logging_writes_raw_bytes_under_a_header_and_is_reported_on_attach() {
     );
     server.panes.insert(1, test_pane(2));
 
-    let changed = server.set_pane_logging(1, 2, true);
+    let changed = server.set_pane_logging(None, 1, 2, true);
     let path = match changed {
         ServerMessage::PaneLoggingChanged {
             enabled: true,
@@ -1444,6 +1820,7 @@ fn pane_logging_writes_raw_bytes_under_a_header_and_is_reported_on_attach() {
     };
     assert!(server.pane_meta()[0].logging);
     server.handle_event(ServerEvent::Pty(
+        None,
         1,
         2,
         TerminalPtyEvent::Output(b"raw\x1b[31m\n".to_vec().into()),
@@ -1458,8 +1835,9 @@ fn pane_logging_writes_raw_bytes_under_a_header_and_is_reported_on_attach() {
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
     );
-    server.set_pane_logging(1, 2, false);
+    server.set_pane_logging(None, 1, 2, false);
     server.handle_event(ServerEvent::Pty(
+        None,
         1,
         2,
         TerminalPtyEvent::Output(b"later".to_vec().into()),
@@ -1485,13 +1863,14 @@ fn pane_logging_strips_rozi_own_shell_integration_marker() {
     );
     server.panes.insert(1, test_pane(2));
 
-    let path = match server.set_pane_logging(1, 2, true) {
+    let path = match server.set_pane_logging(None, 1, 2, true) {
         ServerMessage::PaneLoggingChanged {
             path: Some(path), ..
         } => PathBuf::from(path),
         other => panic!("unexpected response: {other:?}"),
     };
     server.handle_event(ServerEvent::Pty(
+        None,
         1,
         2,
         TerminalPtyEvent::Output(
@@ -1522,7 +1901,7 @@ fn ephemeral_session_logs_are_discarded_at_shutdown_and_named_ones_are_kept() {
             },
         );
         server.panes.insert(1, test_pane(2));
-        server.set_pane_logging(1, 2, true);
+        server.set_pane_logging(None, 1, 2, true);
         let dir = root.join(session);
         assert!(dir.is_dir(), "{session}: log directory should exist");
 
@@ -1567,6 +1946,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
     assert!(
         server
             .handle_event(ServerEvent::Pty(
+                None,
                 1,
                 2,
                 TerminalPtyEvent::Output(bytes.clone().into()),
@@ -1690,6 +2070,7 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
     let (_client, _stream) = attach_client(&mut server);
 
     let result = server.spawn_pane(SpawnRequest {
+        owner: None,
         pane_id: 1,
         generation: 1,
         command: Some("printf 'hello from the command\\n'; exit 3".to_string()),
@@ -1777,6 +2158,7 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
     let pane_id = crate::state::POPUP_PANE_ID;
 
     let result = server.spawn_pane(SpawnRequest {
+        owner: None,
         pane_id,
         generation: 1,
         command: Some("printf 'popup result\\n'; exit 3".to_string()),

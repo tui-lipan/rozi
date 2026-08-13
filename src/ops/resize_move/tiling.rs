@@ -22,16 +22,14 @@ use super::float::{
 
 pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
     finish_pointer_layout_interaction(ctx);
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return;
     };
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
-    let top_gap = ctx.state.workspace_top_gap();
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let top_gap = ctx.state.layout_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let current_rect = {
-        let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
+        let workspace = ctx.state.active_workspace_ref();
         placement_for(
             &workspace_target_rects(workspace, bounds, top_gap, tile_gap),
             id,
@@ -75,16 +73,14 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
 
 pub(crate) fn toggle_fullscreen(ctx: &mut Context<AppRoot>) -> Update {
     finish_pointer_layout_interaction(ctx);
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return Update::full();
     };
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
-    let top_gap = ctx.state.workspace_top_gap();
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let top_gap = ctx.state.layout_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let placements = {
-        let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
+        let workspace = ctx.state.active_workspace_ref();
         workspace_target_rects(workspace, bounds, top_gap, tile_gap)
     };
 
@@ -105,7 +101,7 @@ pub(crate) fn toggle_fullscreen(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn toggle_focused_split_axis(state: &mut State) {
-    let Some(focused) = state.current().focused_pane else {
+    let Some(focused) = state.focused_pane() else {
         return;
     };
     let workspace = state.active_workspace_mut();
@@ -138,16 +134,14 @@ pub(crate) fn toggle_focused_split_axis(state: &mut State) {
 /// The axis is whichever way that innermost split runs, which is what separates this from resize
 /// mode: there the direction key picks the axis and the pane may push against an outer split.
 pub(crate) fn adjust_focused_split_ratio(ctx: &mut Context<AppRoot>, grow: bool) {
-    let Some(focused) = ctx.state.current().focused_pane else {
+    let Some(focused) = ctx.state.focused_pane() else {
         return;
     };
     if active_pane_is_fullscreen(&ctx.state, focused) {
         return;
     }
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
-    let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let tile_bounds = workspace_tile_bounds(bounds, ctx.state.layout_top_gap());
     let tile_gap = ctx.state.tile_gap();
     let layout_kind = ctx.state.active_workspace_ref().layout_kind;
 
@@ -207,10 +201,7 @@ fn signed_step(grow: bool, available: f32) -> f32 {
 /// [`ToastChannel::LayoutMode`], so cycling several steps replaces one message instead of stacking
 /// a name per press.
 pub(crate) fn toggle_layout(ctx: &mut Context<AppRoot>, show_toast: bool) {
-    let workspace_index = ctx.state.current().active_workspace;
-    let next = ctx.state.current().workspaces[workspace_index]
-        .layout_kind
-        .toggled();
+    let next = ctx.state.active_workspace_ref().layout_kind.toggled();
     set_layout(ctx, next, show_toast);
 }
 
@@ -222,9 +213,8 @@ pub(crate) fn set_layout(
     show_toast: bool,
 ) {
     finish_pointer_layout_interaction(ctx);
-    let workspace_index = ctx.state.current().active_workspace;
     let layout_label = {
-        let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+        let workspace = ctx.state.active_workspace_mut();
         workspace.layout_kind = kind;
         workspace.last_move_swap = None;
         workspace.last_directional_focus = None;
@@ -307,13 +297,10 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
     if super::float::move_focused_float(ctx, direction) {
         return;
     }
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
-    let top_gap = ctx.state.workspace_top_gap();
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let top_gap = ctx.state.layout_top_gap();
     let tile_gap = ctx.state.tile_gap();
-    let workspace_index = ctx.state.current().active_workspace;
-    let Some(focused) = ctx.state.current().focused_pane else {
+    let Some(focused) = ctx.state.focused_pane() else {
         return;
     };
     if active_pane_is_fullscreen(&ctx.state, focused) {
@@ -321,7 +308,7 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
     }
 
     let moved = {
-        let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+        let workspace = ctx.state.active_workspace_mut();
         let tiled_ids = workspace.active_tiled_ids_by_pane_order();
         if !tiled_ids.contains(&focused) {
             return;
@@ -348,7 +335,7 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
         moved
     };
     if moved {
-        ctx.state.current_mut().focused_pane = Some(focused);
+        ctx.state.set_focused_pane(Some(focused));
         sync_scrollable_reveal(&mut ctx.state, focused, false);
         ctx.state.animation = GeometryAnimation::AxisChange;
     }
@@ -360,13 +347,10 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
     if super::float::move_focused_float(ctx, direction) {
         return;
     }
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
-    let top_gap = ctx.state.workspace_top_gap();
+    let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let top_gap = ctx.state.layout_top_gap();
     let tile_gap = ctx.state.tile_gap();
-    let workspace_index = ctx.state.current().active_workspace;
-    let Some(focused) = ctx.state.current().focused_pane else {
+    let Some(focused) = ctx.state.focused_pane() else {
         return;
     };
     if active_pane_is_fullscreen(&ctx.state, focused) {
@@ -374,7 +358,7 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
     }
 
     let swapped = {
-        let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+        let workspace = ctx.state.active_workspace_mut();
         let ok = swap_tiled_neighbor_in_direction(
             workspace, bounds, top_gap, tile_gap, focused, direction,
         );
@@ -384,7 +368,7 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
         ok
     };
     if swapped {
-        ctx.state.current_mut().focused_pane = Some(focused);
+        ctx.state.set_focused_pane(Some(focused));
         sync_scrollable_reveal(&mut ctx.state, focused, false);
         ctx.state.animation = GeometryAnimation::AxisChange;
     }

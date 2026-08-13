@@ -72,15 +72,16 @@ impl SessionServer {
         retain_on_failure: bool,
     ) -> ServerMessage {
         let id = request.pane_id;
+        let owner = request.owner;
         // A live pane with this id already exists; refuse. An *exited* pane is replaced in place
         // so keep-open respawn (client re-sends `SpawnPane` with a fresh generation) works.
         if self
-            .panes
-            .get(&id)
+            .pane(owner, id)
             .is_some_and(|pane| pane.exited.is_none())
         {
             return ServerMessage::SpawnResult {
                 pane_id: id,
+                local: wire_local(owner),
                 generation: request.generation,
                 pid: None,
                 ok: false,
@@ -89,18 +90,20 @@ impl SessionServer {
         }
         // A replaced pane's log handle dies with it; tell every client so no stale
         // `[log]` badge survives a respawn.
-        if let Some(old) = self.panes.remove(&id)
+        if let Some(old) = self.remove_owned_pane(owner, id)
             && old.log.is_some()
         {
-            self.broadcast_outbound(&ServerOutbound::control(
-                ServerMessage::PaneLoggingChanged {
+            self.send_outbound(
+                owner,
+                &ServerOutbound::control(ServerMessage::PaneLoggingChanged {
                     pane_id: id,
+                    local: wire_local(owner),
                     generation: old.generation,
                     enabled: false,
                     path: None,
                     error: None,
-                },
-            ));
+                }),
+            );
         }
         let cols = if request.cols == 0 {
             DEFAULT_COLS
@@ -141,14 +144,15 @@ impl SessionServer {
         }
         let events = Arc::clone(&self.events);
         match TerminalPty::spawn(config, move |event| {
-            let event = ServerEvent::Pty(id, generation, event);
+            let event = ServerEvent::Pty(owner, id, generation, event);
             let bytes = event.payload_bytes();
             let _ = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
         }) {
             Ok(pty) => {
                 let pid = pty.pid();
                 screen.resize(rows.max(1), cols.max(1));
-                self.panes.insert(
+                self.insert_owned_pane(
+                    owner,
                     id,
                     ServerPane {
                         generation,
@@ -174,10 +178,13 @@ impl SessionServer {
                         initial_cursor_report_primed: cfg!(windows),
                     },
                 );
-                self.mark_dirty();
-                self.sync_pane_runtime(id, generation);
+                if owner.is_none() {
+                    self.mark_dirty();
+                }
+                self.sync_pane_runtime(owner, id, generation);
                 ServerMessage::SpawnResult {
                     pane_id: id,
+                    local: wire_local(owner),
                     generation,
                     pid,
                     ok: true,
@@ -186,7 +193,8 @@ impl SessionServer {
             }
             Err(err) => {
                 if retain_on_failure {
-                    self.panes.insert(
+                    self.insert_owned_pane(
+                        owner,
                         id,
                         ServerPane {
                             generation,
@@ -215,6 +223,7 @@ impl SessionServer {
                 }
                 ServerMessage::SpawnResult {
                     pane_id: id,
+                    local: wire_local(owner),
                     generation,
                     pid: None,
                     ok: false,
@@ -224,8 +233,14 @@ impl SessionServer {
         }
     }
 
-    pub(super) fn handle_pane_input(&mut self, pane_id: PaneId, generation: u64, bytes: &[u8]) {
-        if let Some(pane) = self.live_pane_mut(pane_id, generation)
+    pub(super) fn handle_pane_input(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        bytes: &[u8],
+    ) {
+        if let Some(pane) = self.live_pane_mut(owner, pane_id, generation)
             && let Some(pty) = &pane.pty
         {
             let _ = pty.write(bytes);
@@ -234,8 +249,8 @@ impl SessionServer {
 
     pub(super) fn handle_event(&mut self, event: ServerEvent) -> Option<ServerOutbound> {
         match event {
-            ServerEvent::Pty(id, generation, event) => {
-                let pane = self.panes.get_mut(&id)?;
+            ServerEvent::Pty(owner, id, generation, event) => {
+                let pane = self.pane_mut(owner, id)?;
                 if pane.generation != generation {
                     return None;
                 }
@@ -250,7 +265,6 @@ impl SessionServer {
                         // Bumped directly rather than through `mark_dirty`: `pane` holds a mutable
                         // borrow of `self.panes`, and a disjoint field assignment is what the
                         // borrow checker accepts here.
-                        self.dirty_generation = self.dirty_generation.saturating_add(1);
                         let semantic_events = pane.screen_without_change().drain_semantic_events();
                         let responses = pane.screen_without_change().drain_responses();
                         if let Some(pty) = &pane.pty {
@@ -264,25 +278,31 @@ impl SessionServer {
                                 let _ = pty.write(&response);
                             }
                         }
+                        if owner.is_none() {
+                            self.dirty_generation = self.dirty_generation.saturating_add(1);
+                        }
                         let output = ServerOutbound::PaneOutput {
                             pane_id: id,
+                            local: wire_local(owner),
                             generation,
                             bytes: bytes.to_vec(),
                         };
-                        self.broadcast_outbound(&output);
+                        self.send_outbound(owner, &output);
                         if let Some(error) = logging_error {
-                            self.broadcast_outbound(&ServerOutbound::control(
-                                ServerMessage::PaneLoggingChanged {
+                            self.send_outbound(
+                                owner,
+                                &ServerOutbound::control(ServerMessage::PaneLoggingChanged {
                                     pane_id: id,
+                                    local: wire_local(owner),
                                     generation,
                                     enabled: false,
                                     path: None,
                                     error: Some(error),
-                                },
-                            ));
+                                }),
+                            );
                         }
                         if !semantic_events.is_empty() {
-                            self.sync_pane_runtime(id, generation);
+                            self.sync_pane_runtime(owner, id, generation);
                         }
                         None
                     }
@@ -296,28 +316,50 @@ impl SessionServer {
                         let keep_open =
                             pane.keep_open && pane.command.is_some() && !pane.command_completed;
                         if keep_open {
-                            if id == crate::state::POPUP_PANE_ID {
-                                return self.retain_completed_popup(id, generation, code);
+                            let outbound = if id == crate::state::POPUP_PANE_ID {
+                                self.retain_completed_popup(owner, id, generation, code)
+                            } else {
+                                self.replace_with_keep_open_shell(owner, id, generation, code)
+                            };
+                            if let (Some(owner), Some(outbound)) = (owner, outbound.as_ref()) {
+                                self.enqueue_outbound(owner, outbound);
+                                return None;
                             }
-                            return self.replace_with_keep_open_shell(id, generation, code);
+                            return outbound;
                         }
                         pane.exited = Some(code);
-                        self.mark_dirty();
-                        self.sync_pane_runtime(id, generation);
-                        Some(ServerOutbound::control(ServerMessage::Exited {
+                        if owner.is_none() {
+                            self.mark_dirty();
+                        }
+                        self.sync_pane_runtime(owner, id, generation);
+                        let outbound = ServerOutbound::control(ServerMessage::Exited {
                             pane_id: id,
+                            local: wire_local(owner),
                             generation,
                             code,
-                        }))
+                        });
+                        if let Some(owner) = owner {
+                            self.enqueue_outbound(owner, &outbound);
+                            None
+                        } else {
+                            Some(outbound)
+                        }
                     }
                     TerminalPtyEvent::Error(message) => {
-                        Some(ServerOutbound::control(ServerMessage::SpawnResult {
+                        let outbound = ServerOutbound::control(ServerMessage::SpawnResult {
                             pane_id: id,
+                            local: wire_local(owner),
                             generation,
                             pid: None,
                             ok: false,
                             error: Some(message.to_string()),
-                        }))
+                        });
+                        if let Some(owner) = owner {
+                            self.enqueue_outbound(owner, &outbound);
+                            None
+                        } else {
+                            Some(outbound)
+                        }
                     }
                 }
             }
@@ -328,6 +370,7 @@ impl SessionServer {
     /// result into an interactive shell.
     fn retain_completed_popup(
         &mut self,
+        owner: Option<ClientId>,
         id: PaneId,
         generation: u64,
         code: i32,
@@ -339,22 +382,29 @@ impl SessionServer {
         };
         let banner = format!("\r\n\x1b[2m[{outcome}]  Enter/Esc/Space: close\x1b[0m\r\n");
         let bytes = banner.into_bytes();
-        let pane = self.panes.get_mut(&id)?;
+        let pane = self.pane_mut(owner, id)?;
         pane.screen_mut().process_bytes(&bytes);
         if let Some(log) = pane.log.as_mut() {
             let _ = log.write(&bytes);
         }
         pane.exited = Some(code);
 
-        self.mark_dirty();
-        self.sync_pane_runtime(id, generation);
-        self.broadcast_outbound(&ServerOutbound::PaneOutput {
-            pane_id: id,
-            generation,
-            bytes,
-        });
+        if owner.is_none() {
+            self.mark_dirty();
+        }
+        self.sync_pane_runtime(owner, id, generation);
+        self.send_outbound(
+            owner,
+            &ServerOutbound::PaneOutput {
+                pane_id: id,
+                local: wire_local(owner),
+                generation,
+                bytes,
+            },
+        );
         Some(ServerOutbound::control(ServerMessage::Exited {
             pane_id: id,
+            local: wire_local(owner),
             generation,
             code,
         }))
@@ -379,6 +429,7 @@ impl SessionServer {
     /// status - the same outcome as a pane that was never `keep_open`.
     fn replace_with_keep_open_shell(
         &mut self,
+        owner: Option<ClientId>,
         id: PaneId,
         generation: u64,
         code: i32,
@@ -387,7 +438,7 @@ impl SessionServer {
         let banner = format!("\r\n\x1b[2m[rozi] command exited with status {code}\x1b[0m\r\n");
         let bytes = banner.into_bytes();
 
-        let pane = self.panes.get_mut(&id)?;
+        let pane = self.pane_mut(owner, id)?;
         pane.screen_mut().process_bytes(&bytes);
         if let Some(log) = pane.log.as_mut() {
             let _ = log.write(&bytes);
@@ -406,12 +457,12 @@ impl SessionServer {
         }
         let events = Arc::clone(&self.events);
         let spawned = TerminalPty::spawn(config, move |event| {
-            let event = ServerEvent::Pty(id, generation, event);
+            let event = ServerEvent::Pty(owner, id, generation, event);
             let bytes = event.payload_bytes();
             let _ = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
         });
 
-        let pane = self.panes.get_mut(&id)?;
+        let pane = self.pane_mut(owner, id)?;
         match spawned {
             Ok(pty) => {
                 pane.initial_cursor_report_primed = cfg!(windows);
@@ -430,31 +481,87 @@ impl SessionServer {
         }
         let died = pane.exited;
 
-        self.mark_dirty();
-        self.sync_pane_runtime(id, generation);
+        if owner.is_none() {
+            self.mark_dirty();
+        }
+        self.sync_pane_runtime(owner, id, generation);
         if died.is_some() {
-            self.broadcast_outbound(&ServerOutbound::PaneOutput {
-                pane_id: id,
-                generation,
-                bytes,
-            });
+            self.send_outbound(
+                owner,
+                &ServerOutbound::PaneOutput {
+                    pane_id: id,
+                    local: wire_local(owner),
+                    generation,
+                    bytes,
+                },
+            );
             return Some(ServerOutbound::control(ServerMessage::Exited {
                 pane_id: id,
+                local: wire_local(owner),
                 generation,
                 code,
             }));
         }
         Some(ServerOutbound::PaneOutput {
             pane_id: id,
+            local: wire_local(owner),
             generation,
             bytes,
         })
     }
 
-    pub(super) fn live_pane_mut(&mut self, id: PaneId, generation: u64) -> Option<&mut ServerPane> {
-        self.panes
-            .get_mut(&id)
+    pub(super) fn live_pane_mut(
+        &mut self,
+        owner: Option<ClientId>,
+        id: PaneId,
+        generation: u64,
+    ) -> Option<&mut ServerPane> {
+        self.pane_mut(owner, id)
             .filter(|pane| pane.generation == generation && pane.exited.is_none())
+    }
+
+    pub(super) fn pane_mut(
+        &mut self,
+        owner: Option<ClientId>,
+        id: PaneId,
+    ) -> Option<&mut ServerPane> {
+        match owner {
+            Some(owner) => self.local_panes.get_mut(&(owner, id)),
+            None => self.panes.get_mut(&id),
+        }
+    }
+
+    pub(super) fn pane(&self, owner: Option<ClientId>, id: PaneId) -> Option<&ServerPane> {
+        match owner {
+            Some(owner) => self.local_panes.get(&(owner, id)),
+            None => self.panes.get(&id),
+        }
+    }
+
+    fn remove_owned_pane(&mut self, owner: Option<ClientId>, id: PaneId) -> Option<ServerPane> {
+        match owner {
+            Some(owner) => self.local_panes.remove(&(owner, id)),
+            None => self.panes.remove(&id),
+        }
+    }
+
+    fn insert_owned_pane(&mut self, owner: Option<ClientId>, id: PaneId, pane: ServerPane) {
+        match owner {
+            Some(owner) => {
+                self.local_panes.insert((owner, id), pane);
+            }
+            None => {
+                self.panes.insert(id, pane);
+            }
+        }
+    }
+
+    pub(super) fn send_outbound(&mut self, owner: Option<ClientId>, outbound: &ServerOutbound) {
+        if let Some(owner) = owner {
+            self.enqueue_outbound(owner, outbound);
+        } else {
+            self.broadcast_outbound(outbound);
+        }
     }
 
     pub(super) fn pane_meta(&self) -> Vec<PaneMeta> {
@@ -475,25 +582,23 @@ impl SessionServer {
             .collect()
     }
 
-    pub(super) fn apply_palette(&mut self, id: PaneId, generation: u64, palette: WirePalette) {
-        if let Some(pane) = self.live_pane_mut(id, generation) {
-            pane.screen_mut().set_palette(palette.into());
-        }
-    }
-
     pub(super) fn set_pane_logging(
         &mut self,
+        owner: Option<ClientId>,
         id: PaneId,
         generation: u64,
         enabled: bool,
     ) -> ServerMessage {
+        let local = wire_local(owner);
+        let session_name = self.session_name.clone();
+        let settings = self.settings.clone();
         let Some(pane) = self
-            .panes
-            .get_mut(&id)
+            .pane_mut(owner, id)
             .filter(|pane| pane.generation == generation)
         else {
             return ServerMessage::PaneLoggingChanged {
                 pane_id: id,
+                local,
                 generation,
                 enabled: false,
                 path: None,
@@ -504,6 +609,7 @@ impl SessionServer {
             pane.log = None;
             return ServerMessage::PaneLoggingChanged {
                 pane_id: id,
+                local,
                 generation,
                 enabled: false,
                 path: None,
@@ -512,14 +618,14 @@ impl SessionServer {
         }
         let (cols, rows) = (pane.cols, pane.rows);
         let header = LogHeader {
-            session: &self.session_name,
+            session: &session_name,
             pane_id: id,
             generation,
             cols,
             rows,
         };
-        let limit = self.settings.log_max_bytes;
-        let result = session_log_dir(&self.settings, &self.session_name)
+        let limit = settings.log_max_bytes;
+        let result = session_log_dir(&settings, &session_name)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "state directory unavailable"))
             .and_then(|(root, dir)| {
                 crate::platform::fs_security::ensure_private_dir(&root)?;
@@ -538,6 +644,7 @@ impl SessionServer {
                 pane.log = Some(log);
                 ServerMessage::PaneLoggingChanged {
                     pane_id: id,
+                    local,
                     generation,
                     enabled: true,
                     path: Some(path),
@@ -546,6 +653,7 @@ impl SessionServer {
             }
             Err(error) => ServerMessage::PaneLoggingChanged {
                 pane_id: id,
+                local,
                 generation,
                 enabled: false,
                 path: None,

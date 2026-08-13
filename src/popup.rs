@@ -80,7 +80,7 @@ pub(crate) fn open(
     );
     let identity = pane.identity.clone();
     let (cols, rows) = (pane.terminal.cols, pane.terminal.rows);
-    ctx.state.popup_return_focus = ctx.state.current().focused_pane;
+    ctx.state.popup_return_focus = ctx.state.focused_pane();
     ctx.state.popup = Some(pane);
     ctx.state.animation = GeometryAnimation::Spawn;
     let open_delay = crate::anim::open_delay(ctx.state.config.animations);
@@ -89,6 +89,7 @@ pub(crate) fn open(
         &mut ctx.state,
         PaneSpawnRequest {
             pane_id: POPUP_PANE_ID,
+            local: true,
             generation,
             identity,
             cols,
@@ -113,7 +114,7 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     };
     let generation = pane.pty_generation;
     if let Some(client) = client {
-        client.kill(POPUP_PANE_ID, generation);
+        client.kill(POPUP_PANE_ID, generation, true);
     }
     pane.opening = false;
     // Stay described so the popup scales out the way it scaled in; `prune_closed_pane` drops it.
@@ -150,7 +151,7 @@ pub(crate) fn kill_if_open(ctx: &mut Context<AppRoot>) {
     if let Some(pane) = ctx.state.popup.take() {
         ctx.state.popup_return_focus = None;
         if let Some(client) = ctx.state.current().session_client.clone() {
-            client.kill(POPUP_PANE_ID, pane.pty_generation);
+            client.kill(POPUP_PANE_ID, pane.pty_generation, true);
         }
     }
 }
@@ -255,5 +256,15 @@ mod tests {
             )
             .w <= 95.0
         );
+    }
+
+    #[test]
+    fn popup_return_focus_uses_visible_scratch_focus() {
+        let mut state =
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
+        state.scratch_visible = true;
+        state.scratch.focused_pane = Some(42);
+        state.current_mut().focused_pane = Some(1);
+        assert_eq!(state.focused_pane(), Some(42));
     }
 }

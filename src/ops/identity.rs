@@ -16,7 +16,7 @@ pub(crate) fn rename_pane_in_workspaces(workspaces: &mut [Workspace], id: PaneId
 }
 
 pub(crate) fn open_rename_pane(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(target) = ctx.state.current().focused_pane else {
+    let Some(target) = ctx.state.focused_pane() else {
         return Update::full();
     };
     let initial = find_pane_mut(&mut ctx.state, target)
@@ -42,7 +42,11 @@ pub(crate) fn apply_rename_pane(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     };
 
-    rename_pane_in_workspaces(&mut ctx.state.current_mut().workspaces, target, &title);
+    if crate::scratchpad::contains(&ctx.state, target) {
+        rename_pane_in_workspaces(std::slice::from_mut(&mut ctx.state.scratch), target, &title);
+    } else {
+        rename_pane_in_workspaces(&mut ctx.state.current_mut().workspaces, target, &title);
+    }
     ctx.state.rename = None;
     ctx.state.commands_dirty = true;
     Update::full()

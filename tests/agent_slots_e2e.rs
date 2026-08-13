@@ -31,6 +31,7 @@ fn slot(id: &str, status: &str, active: bool) -> AgentSlot {
 fn spawn_pane(controller: &mut common::TestConnection) {
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     controller.write_control(&ClientMessage::SpawnPane {
+        local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
         command: None,
@@ -88,6 +89,7 @@ fn published_slots_broadcast_and_keep_a_run_clock_per_slot() {
     let (mut follower, _) = attach_client(server.endpoint(), server.session(), "follower");
     controller.write_control(&ClientMessage::ReportPaneSlots {
         pane_id: PANE_ID,
+        local: false,
         generation: PANE_GENERATION,
         slots: vec![slot("a", "working", true), slot("b", "idle", false)],
     });
@@ -110,6 +112,7 @@ fn published_slots_broadcast_and_keep_a_run_clock_per_slot() {
     // Reordering and retitling must not restart a run: identity is the publisher's id.
     controller.write_control(&ClientMessage::ReportPaneSlots {
         pane_id: PANE_ID,
+        local: false,
         generation: PANE_GENERATION,
         slots: vec![
             slot("b", "working", false),
@@ -144,6 +147,7 @@ fn published_slots_broadcast_and_keep_a_run_clock_per_slot() {
     // A blocked slot keeps its run: blocking and resuming are one run, as for a whole pane.
     controller.write_control(&ClientMessage::ReportPaneSlots {
         pane_id: PANE_ID,
+        local: false,
         generation: PANE_GENERATION,
         slots: vec![slot("a", "blocked", true)],
     });
@@ -157,6 +161,7 @@ fn published_slots_broadcast_and_keep_a_run_clock_per_slot() {
     // Withdrawing hands the pane back to screen detection.
     controller.write_control(&ClientMessage::ReportPaneSlots {
         pane_id: PANE_ID,
+        local: false,
         generation: PANE_GENERATION,
         slots: Vec::new(),
     });
@@ -176,6 +181,7 @@ fn published_slots_survive_detach_and_reattach() {
 
     controller.write_control(&ClientMessage::ReportPaneSlots {
         pane_id: PANE_ID,
+        local: false,
         generation: PANE_GENERATION,
         slots: vec![slot("only", "working", true)],
     });

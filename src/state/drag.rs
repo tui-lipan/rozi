@@ -2,7 +2,7 @@ use tui_lipan::prelude::FloatRect;
 
 use crate::tiling::DwindleTree;
 
-use super::{Direction, PaneId};
+use super::{Direction, LayoutTarget, PaneId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResizeCorner {
@@ -16,7 +16,7 @@ pub enum ResizeCorner {
 pub struct ResizeSession {
     pub id: PaneId,
     pub corner: ResizeCorner,
-    pub workspace: usize,
+    pub workspace: LayoutTarget,
     pub start_x: u16,
     pub start_y: u16,
     pub start_tile_tree: Option<DwindleTree>,
@@ -24,6 +24,11 @@ pub struct ResizeSession {
     pub start_floating_rect: Option<FloatRect>,
     /// Snapshot of the pane's Scrollable width fraction at drag start (absolute deltas).
     pub start_scrollable_width: Option<f32>,
+    /// Snapshot of the scratchpad height fraction, set only when the grabbed corner is an upper
+    /// one on a pane against the dropdown's top edge. That edge is the scratch workspace's outer
+    /// border, so the drag's vertical component moves the whole dropdown instead of a split that
+    /// does not exist; the horizontal component still resizes the pane.
+    pub start_scratch_height: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,7 +47,7 @@ pub struct MoveSession {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SplitDragSession {
     pub kind: SplitDragKind,
-    pub workspace: usize,
+    pub workspace: LayoutTarget,
     pub start_x: u16,
     pub start_y: u16,
     pub start_tile_tree: Option<DwindleTree>,

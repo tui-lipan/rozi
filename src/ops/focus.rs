@@ -22,7 +22,8 @@ pub(crate) fn split_axis_for_direction(direction: Direction) -> crate::state::Sp
 }
 
 pub(crate) fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
-    state.current().workspaces[state.current().active_workspace]
+    state
+        .active_workspace_ref()
         .panes
         .iter()
         .any(|pane| pane.id == id && !pane.closing && pane.fullscreen)
@@ -31,7 +32,7 @@ pub(crate) fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
 /// Record host-window focus and acknowledge the one pane the user can now see.
 pub(crate) fn window_focus_changed(ctx: &mut Context<AppRoot>, focused: bool) -> Update {
     ctx.state.window_focused = focused;
-    let pane_id = ctx.state.current().focused_pane;
+    let pane_id = ctx.state.focused_pane();
     let changed =
         focused && pane_id.is_some_and(|id| acknowledge_pane_if_attended(&mut ctx.state, id));
     if changed {
@@ -85,8 +86,7 @@ pub(crate) fn acknowledge_pane_if_attended(state: &mut State, pane_id: PaneId) -
 /// this is the same lock for focus. Toggling fullscreen off unlocks it.
 pub(crate) fn focus_locked_by_fullscreen(state: &State) -> bool {
     state
-        .current()
-        .focused_pane
+        .focused_pane()
         .is_some_and(|id| active_pane_is_fullscreen(state, id))
 }
 
@@ -122,11 +122,7 @@ pub(crate) fn next_blocked_pane(state: &State) -> Option<PaneId> {
         .workspaces
         .iter()
         .flat_map(|workspace| workspace.panes.iter())
-        .filter(|pane| {
-            !pane.closing
-                && pane.id != crate::state::SCRATCH_PANE_ID
-                && pane.id != crate::state::POPUP_PANE_ID
-        })
+        .filter(|pane| !pane.closing && pane.id != crate::state::POPUP_PANE_ID)
         .collect::<Vec<_>>();
     if panes.is_empty() {
         return None;
@@ -170,14 +166,10 @@ fn focus_in_direction_with_wrap(
     if monocle_order_focus_applies(state) {
         return focus_in_monocle_order(state, direction, wrap);
     }
-    let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
-    let workspace = &state.current().workspaces[state.current().active_workspace];
-    let placements = workspace_target_rects(
-        workspace,
-        bounds,
-        state.workspace_top_gap(),
-        state.tile_gap(),
-    );
+    let bounds = state.layout_bounds(viewport);
+    let workspace = state.active_workspace_ref();
+    let placements =
+        workspace_target_rects(workspace, bounds, state.layout_top_gap(), state.tile_gap());
     let candidates: Vec<_> = workspace
         .panes
         .iter()
@@ -189,11 +181,15 @@ fn focus_in_direction_with_wrap(
         .collect();
 
     if candidates.is_empty() {
-        state.current_mut().focused_pane = None;
+        if state.scratch_visible {
+            state.scratch.focused_pane = None;
+        } else {
+            state.current_mut().focused_pane = None;
+        }
         return None;
     }
 
-    let focused = state.current().focused_pane.unwrap_or(candidates[0].id);
+    let focused = state.focused_pane().unwrap_or(candidates[0].id);
     let Some(current) = candidates.iter().find(|candidate| candidate.id == focused) else {
         let id = candidates[0].id;
         focus_pane(state, id);
@@ -276,11 +272,11 @@ fn strip_layout_cross_axis(kind: LayoutKind, direction: Direction) -> bool {
 /// whichever pane sorts first. A floating focus keeps the geometric path, since floating panes
 /// still have rects of their own to move out of.
 fn monocle_order_focus_applies(state: &State) -> bool {
-    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let workspace = state.active_workspace_ref();
     if workspace.layout_kind != LayoutKind::Monocle {
         return false;
     }
-    match state.current().focused_pane {
+    match state.focused_pane() {
         Some(focused) => workspace
             .panes
             .iter()
@@ -549,13 +545,12 @@ pub(crate) fn cycle_focus_in_tiled_order(state: &mut State, forward: bool) -> Op
 /// Step focus one pane along `tiled_ids()` order. Without `wrap`, a step past either end is a
 /// no-op instead of jumping to the opposite end.
 fn step_focus_in_tiled_order(state: &mut State, forward: bool, wrap: bool) -> Option<PaneId> {
-    let ids = state.current().workspaces[state.current().active_workspace].tiled_ids();
+    let ids = state.active_workspace_ref().tiled_ids();
     if ids.is_empty() {
         return None;
     }
     let next = match state
-        .current()
-        .focused_pane
+        .focused_pane()
         .and_then(|id| ids.iter().position(|c| *c == id))
     {
         Some(index) if forward => match index + 1 {
@@ -579,7 +574,7 @@ fn step_focus_in_tiled_order(state: &mut State, forward: bool, wrap: bool) -> Op
 /// with whatever pane is there. No-op for a floating/fullscreen focus, when the focused pane
 /// is not tiled, or when it is already the master. Returns `true` when a swap happened.
 pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
-    let Some(focused) = state.current().focused_pane else {
+    let Some(focused) = state.focused_pane() else {
         return false;
     };
     if active_pane_is_fullscreen(state, focused) {
@@ -605,7 +600,11 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
     if !swapped {
         return false;
     }
-    state.current_mut().focused_pane = Some(focused);
+    if state.scratch_visible {
+        state.scratch.focused_pane = Some(focused);
+    } else {
+        state.current_mut().focused_pane = Some(focused);
+    }
     state.active_workspace_mut().focused_pane = Some(focused);
     state.active_workspace_mut().last_move_swap = None;
     state.active_workspace_mut().last_directional_focus = None;
@@ -615,6 +614,9 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
 }
 
 pub(crate) fn switch_workspace(state: &mut State, index: usize) {
+    if state.scratch_visible {
+        return;
+    }
     if index >= state.current().workspaces.len() {
         return;
     }
@@ -843,10 +845,12 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update
     if ctx.state.sidebar.focused || ctx.state.mode != crate::state::Mode::Normal {
         return Update::none();
     }
-    if ctx.state.current().focused_pane == Some(id) {
+    if ctx.state.focused_pane() == Some(id) {
         return Update::none();
     }
-    let focusable = ctx.state.current().workspaces[ctx.state.current().active_workspace]
+    let focusable = ctx
+        .state
+        .active_workspace_ref()
         .panes
         .iter()
         .any(|pane| pane.id == id && !pane.closing);
@@ -859,21 +863,18 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update
 }
 
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
-    let previous = state.current().focused_pane;
-    let scrollable = state.current().workspaces[state.current().active_workspace].layout_kind
-        == LayoutKind::Scrollable;
+    let previous = state.focused_pane();
+    let scrollable = state.active_workspace_ref().layout_kind == LayoutKind::Scrollable;
     // Capture before mutation so same-workspace Scrollable focus-scroll can detect a real
     // anchor/viewport change (and overwrite stale None left by resize) without re-arming on
     // reaffirm or when the target is already fully visible.
     let prior_scrollable_anchor = scrollable
         .then(|| {
-            let ws = &state.current().workspaces[state.current().active_workspace];
+            let ws = state.active_workspace_ref();
             scrollable_viewport_anchor(ws, &ws.tiled_ids())
         })
         .flatten();
-    let prior_reveal_edge = scrollable.then(|| {
-        state.current().workspaces[state.current().active_workspace].scrollable_reveal_edge
-    });
+    let prior_reveal_edge = scrollable.then(|| state.active_workspace_ref().scrollable_reveal_edge);
     let reveal_decision = scrollable
         .then(|| classify_scrollable_reveal(state, id, prior_scrollable_anchor))
         .flatten();
@@ -891,7 +892,11 @@ pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
         .find(|pane| pane.id == id && !pane.closing)
     {
         anchored_tiled = !pane.floating;
-        state.current_mut().focused_pane = Some(id);
+        if state.scratch_visible {
+            state.scratch.focused_pane = Some(id);
+        } else {
+            state.current_mut().focused_pane = Some(id);
+        }
         state.active_workspace_mut().focused_pane = Some(id);
     }
     acknowledge_pane_if_attended(state, id);
@@ -909,7 +914,7 @@ pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
             state.active_workspace_mut().scrollable_anchor = Some(id);
         }
     }
-    if previous != state.current().focused_pane && state.current().focused_pane == Some(id) {
+    if previous != state.focused_pane() && state.focused_pane() == Some(id) {
         crate::events::emit(
             state,
             crate::events::Event::new(
@@ -923,7 +928,7 @@ pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
 /// Sync Scrollable local viewport for an already-focused tiled pane (move / reconcile).
 /// When `arm_axis_change` is false, animation is left alone for the caller to set.
 pub(crate) fn sync_scrollable_reveal(state: &mut State, id: PaneId, arm_axis_change: bool) {
-    let ws = &state.current().workspaces[state.current().active_workspace];
+    let ws = state.active_workspace_ref();
     if ws.layout_kind != LayoutKind::Scrollable {
         return;
     }
@@ -971,7 +976,7 @@ fn apply_scrollable_reveal_decision(
                 .active_workspace_mut()
                 .set_scrollable_viewport(Some(id), edge);
             if arm_axis_change {
-                let ws = &state.current().workspaces[state.current().active_workspace];
+                let ws = state.active_workspace_ref();
                 let new_anchor = scrollable_viewport_anchor(ws, &ws.tiled_ids());
                 let edge_changed = prior_reveal_edge.is_some_and(|prior| prior != edge);
                 if new_anchor != prior_scrollable_anchor || edge_changed {
@@ -1002,7 +1007,7 @@ fn classify_scrollable_reveal(
     target: PaneId,
     prior_anchor: Option<PaneId>,
 ) -> Option<ScrollableRevealDecision> {
-    let ws = &state.current().workspaces[state.current().active_workspace];
+    let ws = state.active_workspace_ref();
     if ws.layout_kind != LayoutKind::Scrollable {
         return None;
     }
@@ -1024,9 +1029,19 @@ fn classify_scrollable_reveal(
     };
 
     // Same allocation path as `view::render`: canonical/letterbox layout + local visible clamp.
-    let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
-    let local = state.canvas_bounds_from_terminal_viewport(viewport);
-    let top_gap = state.workspace_top_gap();
+    // The scratchpad has no canonical/local split - it is never letterboxed to a controller - so
+    // both are the dropdown's own box. Measuring it against the whole canvas instead would place
+    // the pane somewhere it is not, and every focus would read as "clipped" and scroll.
+    let (letterbox, local) = if state.scratch_visible {
+        let dropdown = state.layout_bounds(viewport);
+        (dropdown, dropdown)
+    } else {
+        (
+            crate::view::follower_letterbox_bounds(state, viewport),
+            state.canvas_bounds_from_terminal_viewport(viewport),
+        )
+    };
+    let top_gap = state.layout_top_gap();
     let tile_gap = state.tile_gap();
     let placements =
         workspace_target_rects_with_visible_bounds(ws, letterbox, local, top_gap, tile_gap);
@@ -1081,45 +1096,60 @@ fn clear_focused_activity(state: &mut State) {
 }
 
 pub(crate) fn choose_fallback_focus(state: &mut State) {
-    choose_fallback_focus_near(state, state.current().focused_pane, None);
+    choose_fallback_focus_near(state, state.focused_pane(), None);
 }
 
+/// Re-resolve focus after the focused pane became unfocusable, landing on the pane nearest
+/// `reference_id` rather than on whichever happens to be first in the list.
+///
+/// Reads the *active* workspace, so the scratchpad resolves through the same geometry as any
+/// other. `reference_rect` is optional because a closing pane's frozen `floating_rect` already
+/// records where it sat.
 pub(crate) fn choose_fallback_focus_near(
     state: &mut State,
     reference_id: Option<PaneId>,
     reference_rect: Option<FloatRect>,
 ) {
-    let workspace_index = state.current().active_workspace;
-    let workspace = &state.current().workspaces[workspace_index];
-
-    if let Some(focused) = state.current().focused_pane
-        && workspace
-            .panes
-            .iter()
-            .any(|pane| pane.id == focused && !pane.closing)
-    {
-        state.current_mut().workspaces[workspace_index].focused_pane = Some(focused);
-        return;
+    // Resolved under one immutable borrow, applied after it ends: the write targets differ per
+    // branch, and the scratchpad aliases `focused_pane()` onto the workspace's own field.
+    enum Fallback {
+        MirrorToWorkspace(PaneId),
+        MirrorToState(PaneId),
+        Both(Option<PaneId>),
     }
+    let fallback = {
+        let workspace = state.active_workspace_ref();
+        let live = |id: PaneId| {
+            workspace
+                .panes
+                .iter()
+                .any(|pane| pane.id == id && !pane.closing)
+        };
+        if let Some(focused) = state.focused_pane().filter(|id| live(*id)) {
+            Fallback::MirrorToWorkspace(focused)
+        } else if let Some(focused) = workspace.focused_pane.filter(|id| live(*id)) {
+            Fallback::MirrorToState(focused)
+        } else {
+            Fallback::Both(
+                reference_id
+                    .and_then(|reference_id| {
+                        focus_near_pane_in_workspace(state, workspace, reference_id, reference_rect)
+                    })
+                    .or_else(|| first_visible_pane(workspace)),
+            )
+        }
+    };
 
-    if let Some(focused) = workspace.focused_pane
-        && workspace
-            .panes
-            .iter()
-            .any(|pane| pane.id == focused && !pane.closing)
-    {
-        state.current_mut().focused_pane = Some(focused);
-        return;
+    match fallback {
+        Fallback::MirrorToWorkspace(focused) => {
+            state.active_workspace_mut().focused_pane = Some(focused);
+        }
+        Fallback::MirrorToState(focused) => state.set_focused_pane(Some(focused)),
+        Fallback::Both(focus) => {
+            state.active_workspace_mut().focused_pane = focus;
+            state.set_focused_pane(focus);
+        }
     }
-
-    let focus = reference_id
-        .and_then(|reference_id| {
-            focus_near_pane_in_workspace(state, workspace, reference_id, reference_rect)
-        })
-        .or_else(|| first_visible_pane(workspace));
-
-    state.current_mut().workspaces[workspace_index].focused_pane = focus;
-    state.current_mut().focused_pane = focus;
 }
 
 pub(crate) fn first_visible_pane(workspace: &Workspace) -> Option<PaneId> {
@@ -1144,18 +1174,27 @@ pub(crate) fn focus_near_pane_in_workspace(
     closest_pane_to_rect(reference, &candidates)
 }
 
+/// The box `workspace` tiles inside, as a `(bounds, top_gap)` pair. Helpers here are handed a
+/// workspace rather than reading the active one, so the scratchpad is recognized by identity: it
+/// lays out in the dropdown rect, every other workspace in the whole canvas.
+fn workspace_layout_box(state: &State, workspace: &Workspace, viewport: Rect) -> (FloatRect, f32) {
+    if std::ptr::eq(workspace, &state.scratch) {
+        (crate::scratchpad::deployed_rect(state, viewport), 0.0)
+    } else {
+        (
+            state.canvas_bounds_from_terminal_viewport(viewport),
+            state.workspace_top_gap(),
+        )
+    }
+}
+
 pub(crate) fn visible_pane_placements(
     state: &State,
     workspace: &Workspace,
 ) -> Vec<(PaneId, FloatRect)> {
     if let Some(viewport) = state.last_viewport.get() {
-        let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
-        let placements = workspace_target_rects(
-            workspace,
-            bounds,
-            state.workspace_top_gap(),
-            state.tile_gap(),
-        );
+        let (bounds, top_gap) = workspace_layout_box(state, workspace, viewport);
+        let placements = workspace_target_rects(workspace, bounds, top_gap, state.tile_gap());
         return workspace
             .panes
             .iter()
@@ -1182,13 +1221,8 @@ pub(crate) fn reference_pane_rect(
         return Some(rect);
     }
     if let Some(viewport) = state.last_viewport.get() {
-        let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
-        let placements = workspace_target_rects(
-            workspace,
-            bounds,
-            state.workspace_top_gap(),
-            state.tile_gap(),
-        );
+        let (bounds, top_gap) = workspace_layout_box(state, workspace, viewport);
+        let placements = workspace_target_rects(workspace, bounds, top_gap, state.tile_gap());
         if let Some(rect) = placement_for(&placements, id) {
             return Some(rect);
         }
@@ -1217,7 +1251,7 @@ pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {
 }
 
 pub(crate) fn request_current_pane_focus(ctx: &mut Context<AppRoot>) {
-    if let Some(id) = ctx.state.current().focused_pane {
+    if let Some(id) = ctx.state.focused_pane() {
         request_pane_focus(ctx, id);
     }
 }
@@ -2608,6 +2642,76 @@ mod tests {
                 let sibling = &backend.state().current().workspaces[0].panes[0];
                 let cfg = AppRoot::geometry_transition_for_pane(backend.state(), sibling, false);
                 assert!(cfg.duration > std::time::Duration::ZERO);
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+    }
+
+    /// Scrollable reveal has to read the workspace that is actually on top and measure it against
+    /// the box it occupies. Reading the hidden attachment workspace instead made every scratch
+    /// focus fall through to the no-decision path, which anchors the target to the left edge - so
+    /// the strip scrolled on every focus even when the target was already fully visible.
+    #[test]
+    fn scrollable_focus_in_the_scratchpad_preserves_a_fully_visible_target() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::{AppRoot, Msg};
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    state.scratch.layout_kind = LayoutKind::Scrollable;
+                    for id in [1, 2, 3, 4] {
+                        let mut pane = Pane::new(id, 100, FloatRect::default());
+                        pane.opening = false;
+                        state.scratch.panes.push(pane);
+                        append_tiled_window(&mut state.scratch, id);
+                    }
+                    state.scratch_visible = true;
+                    focus_pane(state, 1);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+
+                let placement_x = |state: &State, id: PaneId| {
+                    let viewport = state.last_viewport.get().expect("viewport");
+                    let bounds = state.layout_bounds(viewport);
+                    let placements = workspace_target_rects_with_visible_bounds(
+                        &state.scratch,
+                        bounds,
+                        bounds,
+                        state.layout_top_gap(),
+                        state.tile_gap(),
+                    );
+                    placement_for(&placements, id).expect("placement").x
+                };
+
+                let before = placement_x(backend.state(), 1);
+                backend.dispatch(Msg::FocusPane(2)).expect("focus visible");
+                assert_eq!(backend.state().scratch.focused_pane, Some(2));
+                assert_eq!(
+                    backend.state().scratch.scrollable_anchor,
+                    Some(1),
+                    "a fully visible target keeps the strip where it is"
+                );
+                assert!(
+                    (placement_x(backend.state(), 1) - before).abs() < 1e-5,
+                    "fully visible focus must not shift placements"
+                );
+
+                // A target off the right edge still scrolls, exactly as in a workspace.
+                backend.dispatch(Msg::FocusPane(4)).expect("focus clipped");
+                assert_eq!(backend.state().scratch.scrollable_anchor, Some(4));
+                assert!((placement_x(backend.state(), 1) - before).abs() > 0.5);
             })
             .expect("spawn")
             .join()

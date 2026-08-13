@@ -65,6 +65,7 @@ fn populate_history(endpoint: &rozi::platform::ipc::IpcEndpoint, session: &str) 
     let (mut client, _) = attach_client(endpoint, session, "producer");
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     client.write_control(&ClientMessage::SpawnPane {
+        local: false,
         pane_id: PANE_ID,
         generation: GENERATION,
         command: Some(format!(
@@ -112,6 +113,7 @@ fn attach_replay(
     read_until(&mut client, |frame| {
         if let Frame::PaneBytes {
             pane_id: PANE_ID,
+            local: false,
             generation: GENERATION,
             bytes,
         } = frame

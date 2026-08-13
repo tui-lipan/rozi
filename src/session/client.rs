@@ -64,6 +64,7 @@ pub(crate) enum ClientOutbound {
     Control(ClientMessage),
     PaneInput {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         bytes: Vec<u8>,
     },
@@ -198,9 +199,16 @@ impl SessionClient {
                     }
                     ClientOutbound::PaneInput {
                         pane_id,
+                        local,
                         generation,
                         bytes,
-                    } => protocol::write_pane_input_frame(&mut stream, pane_id, generation, &bytes),
+                    } => protocol::write_pane_input_frame(
+                        &mut stream,
+                        pane_id,
+                        generation,
+                        local,
+                        &bytes,
+                    ),
                 };
                 if result.is_err() {
                     if let Some(inbound) = &writer_inbound {
@@ -325,6 +333,7 @@ impl SessionClient {
     pub fn spawn_pane(
         &self,
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         command: Option<String>,
         cwd: Option<String>,
@@ -339,6 +348,7 @@ impl SessionClient {
     ) {
         self.send_control(ClientMessage::SpawnPane {
             pane_id,
+            local,
             generation,
             command,
             cwd,
@@ -355,16 +365,18 @@ impl SessionClient {
         });
     }
 
-    pub fn send_input(&self, pane_id: PaneId, generation: u64, bytes: Vec<u8>) {
+    pub fn send_input(&self, pane_id: PaneId, generation: u64, local: bool, bytes: Vec<u8>) {
         self.send(ClientOutbound::PaneInput {
             pane_id,
+            local,
             generation,
             bytes,
         });
     }
-    pub fn resize(&self, pane_id: PaneId, generation: u64, cols: u16, rows: u16) {
+    pub fn resize(&self, pane_id: PaneId, generation: u64, local: bool, cols: u16, rows: u16) {
         self.send_control(ClientMessage::Resize {
             pane_id,
+            local,
             generation,
             cols,
             rows,
@@ -372,22 +384,31 @@ impl SessionClient {
             cell_height: self.cell.height,
         });
     }
-    pub fn kill(&self, pane_id: PaneId, generation: u64) {
+    pub fn kill(&self, pane_id: PaneId, generation: u64, local: bool) {
         self.send_control(ClientMessage::Kill {
             pane_id,
+            local,
             generation,
         });
     }
-    pub fn set_palette(&self, pane_id: PaneId, generation: u64, palette: TerminalColorPalette) {
+    pub fn set_palette(
+        &self,
+        pane_id: PaneId,
+        generation: u64,
+        local: bool,
+        palette: TerminalColorPalette,
+    ) {
         self.send_control(ClientMessage::SetPalette {
             pane_id,
+            local,
             generation,
             palette: WirePalette::from(palette),
         });
     }
-    pub fn set_pane_logging(&self, pane_id: PaneId, generation: u64, enabled: bool) {
+    pub fn set_pane_logging(&self, pane_id: PaneId, generation: u64, local: bool, enabled: bool) {
         self.send_control(ClientMessage::SetPaneLogging {
             pane_id,
+            local,
             generation,
             enabled,
         });
@@ -396,11 +417,13 @@ impl SessionClient {
         &self,
         pane_id: PaneId,
         generation: u64,
+        local: bool,
         status: Option<String>,
         reason: Option<String>,
     ) {
         self.send_control(ClientMessage::SetPaneStatus {
             pane_id,
+            local,
             generation,
             status,
             reason,
@@ -412,10 +435,12 @@ impl SessionClient {
         &self,
         pane_id: PaneId,
         generation: u64,
+        local: bool,
         slots: Vec<crate::session::protocol::AgentSlot>,
     ) {
         self.send_control(ClientMessage::ReportPaneSlots {
             pane_id,
+            local,
             generation,
             slots,
         });
@@ -624,7 +649,7 @@ impl InboundMailbox {
 
 fn inbound_frame_bytes(frame: &Frame<ServerMessage>) -> usize {
     match frame {
-        Frame::PaneBytes { bytes, .. } => bytes.len().saturating_add(17),
+        Frame::PaneBytes { bytes, .. } => bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD),
         Frame::Control(message) => serde_json::to_vec(message)
             .map(|bytes| bytes.len().saturating_add(5))
             .unwrap_or(5),
@@ -638,11 +663,13 @@ fn coalesce_inbound(back: &mut InboundEvent, next: &InboundEvent) -> bool {
     let (
         Frame::PaneBytes {
             pane_id,
+            local,
             generation,
             bytes,
         },
         Frame::PaneBytes {
             pane_id: next_pane,
+            local: next_local,
             generation: next_generation,
             bytes: next_bytes,
         },
@@ -651,6 +678,7 @@ fn coalesce_inbound(back: &mut InboundEvent, next: &InboundEvent) -> bool {
         return false;
     };
     if pane_id != next_pane
+        || local != next_local
         || generation != next_generation
         || bytes.len().saturating_add(next_bytes.len()) > MAX_COALESCED_PANE_BYTES
     {
@@ -666,7 +694,9 @@ impl ClientOutbound {
             Self::Control(message) => serde_json::to_vec(message)
                 .map(|bytes| bytes.len().saturating_add(5))
                 .unwrap_or(5),
-            Self::PaneInput { bytes, .. } => bytes.len().saturating_add(17),
+            Self::PaneInput { bytes, .. } => {
+                bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD)
+            }
         }
     }
 }
@@ -812,7 +842,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             protocol::write_frame(&mut server_stream, &ServerMessage::Ping { seq: 11 })
                 .expect("write control frame");
-            protocol::write_pane_output_frame(&mut server_stream, 3, 5, b"ready\n")
+            protocol::write_pane_output_frame(&mut server_stream, 3, 5, false, b"ready\n")
                 .expect("write pane frame");
         });
 
@@ -837,6 +867,7 @@ mod tests {
                 .expect("pane frame"),
             Frame::PaneBytes {
                 pane_id: 3,
+                local: false,
                 generation: 5,
                 bytes: b"ready\n".to_vec(),
             }
@@ -886,6 +917,7 @@ mod tests {
         client.set_pane_status(
             3,
             5,
+            false,
             Some("blocked".to_string()),
             Some("needs approval".to_string()),
         );
@@ -893,6 +925,7 @@ mod tests {
             outbound.try_recv().unwrap(),
             ClientOutbound::Control(ClientMessage::SetPaneStatus {
                 pane_id: 3,
+                local: false,
                 generation: 5,
                 status: Some("blocked".to_string()),
                 reason: Some("needs approval".to_string()),
@@ -917,7 +950,12 @@ mod tests {
             cell: tui_lipan::TerminalCellSize::default(),
         };
 
-        client.send_input(1, 1, vec![b'x'; capacity - 17]);
+        client.send_input(
+            1,
+            1,
+            false,
+            vec![b'x'; capacity - protocol::PANE_FRAME_OVERHEAD],
+        );
         assert_eq!(outbound.stats().bytes, capacity);
         let stats = client.runtime_stats().outbound;
         assert_eq!(stats.bytes.current_bytes, capacity as u64);
@@ -925,7 +963,7 @@ mod tests {
         assert_eq!(stats.bytes.capacity_bytes, capacity as u64);
         assert_eq!(stats.queued_items, 1);
         assert!(!client.transport_failed.load(Ordering::Acquire));
-        client.send_input(1, 1, vec![b'y']);
+        client.send_input(1, 1, false, vec![b'y']);
         assert!(client.transport_failed.load(Ordering::Acquire));
         assert!(outbound.stats().closed);
         assert_eq!(outbound.stats().high_water_bytes, capacity);
@@ -951,11 +989,13 @@ mod tests {
     fn inbound_coalescing_preserves_transcript_and_control_boundaries() {
         let mut output = InboundEvent::Frame(Box::new(Frame::PaneBytes {
             pane_id: 1,
+            local: false,
             generation: 2,
             bytes: b"alpha".to_vec(),
         }));
         let continuation = InboundEvent::Frame(Box::new(Frame::PaneBytes {
             pane_id: 1,
+            local: false,
             generation: 2,
             bytes: b"beta".to_vec(),
         }));
@@ -964,10 +1004,20 @@ mod tests {
             output,
             InboundEvent::Frame(Box::new(Frame::PaneBytes {
                 pane_id: 1,
+                local: false,
                 generation: 2,
                 bytes: b"alphabeta".to_vec(),
             }))
         );
+        assert!(!coalesce_inbound(
+            &mut output,
+            &InboundEvent::Frame(Box::new(Frame::PaneBytes {
+                pane_id: 1,
+                local: true,
+                generation: 2,
+                bytes: b"gamma".to_vec(),
+            }))
+        ));
         assert!(!coalesce_inbound(
             &mut output,
             &InboundEvent::Frame(Box::new(Frame::Control(ServerMessage::Ping { seq: 1 })))

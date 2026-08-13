@@ -462,11 +462,13 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
     match frame {
         Frame::PaneBytes {
             pane_id,
+            local,
             generation,
             bytes,
         } => Msg::SessionOutput {
             epoch,
             pane_id,
+            local,
             generation,
             bytes,
         },
@@ -575,28 +577,33 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             },
             ServerMessage::Resized {
                 pane_id,
+                local,
                 generation,
                 cols,
                 rows,
             } => Msg::SessionResized {
                 epoch,
                 pane_id,
+                local,
                 generation,
                 cols,
                 rows,
             },
             ServerMessage::Exited {
                 pane_id,
+                local,
                 generation,
                 code,
             } => Msg::SessionExited {
                 epoch,
                 pane_id,
+                local,
                 generation,
                 code,
             },
             ServerMessage::SpawnResult {
                 pane_id,
+                local,
                 generation,
                 pid,
                 ok,
@@ -604,6 +611,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             } => Msg::SessionSpawnResult {
                 epoch,
                 pane_id,
+                local,
                 generation,
                 pid,
                 ok,
@@ -621,6 +629,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             ServerMessage::Renamed { session } => Msg::SessionRenamed { epoch, session },
             ServerMessage::PaneLoggingChanged {
                 pane_id,
+                local,
                 generation,
                 enabled,
                 path,
@@ -628,6 +637,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             } => Msg::SessionPaneLoggingChanged {
                 epoch,
                 pane_id,
+                local,
                 generation,
                 enabled,
                 path,
@@ -635,11 +645,13 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             },
             ServerMessage::PaneRuntimeChanged {
                 pane_id,
+                local,
                 generation,
                 state,
             } => Msg::SessionPaneRuntimeChanged {
                 epoch,
                 pane_id,
+                local,
                 generation,
                 state,
             },

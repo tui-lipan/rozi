@@ -56,11 +56,18 @@ impl SessionServer {
         match frame {
             Frame::PaneBytes {
                 pane_id,
+                local,
                 generation,
                 bytes,
             } => {
-                if self.client_may_input(id) {
-                    self.handle_pane_input(pane_id, generation, &bytes);
+                let owner = local.then_some(id);
+                let may_operate = if local {
+                    self.client_attached(id) && !self.client_read_only(id)
+                } else {
+                    self.client_may_input(id)
+                };
+                if may_operate {
+                    self.handle_pane_input(owner, pane_id, generation, &bytes);
                 }
             }
             Frame::Control(message) => {
@@ -152,6 +159,7 @@ impl SessionServer {
             } => self.handle_query(session, protocol_version, min_protocol_version),
             ClientMessage::SetPaneLogging {
                 pane_id,
+                local,
                 generation,
                 enabled,
             } => {
@@ -163,6 +171,7 @@ impl SessionServer {
                         Target::Sender,
                         ServerMessage::PaneLoggingChanged {
                             pane_id,
+                            local,
                             generation,
                             enabled: false,
                             path: None,
@@ -170,42 +179,57 @@ impl SessionServer {
                         },
                     )]
                 } else {
-                    let message = self.set_pane_logging(pane_id, generation, enabled);
-                    vec![(Target::Broadcast, message)]
+                    let owner = local.then_some(client_id);
+                    let message = self.set_pane_logging(owner, pane_id, generation, enabled);
+                    vec![(owner.map_or(Target::Broadcast, Target::Client), message)]
                 }
             }
             ClientMessage::SetPaneStatus {
                 pane_id,
+                local,
                 generation,
                 status,
                 reason,
-            } => match self.set_pane_status(client_id, pane_id, generation, status, reason) {
-                Ok(Some(state)) => vec![(
-                    Target::Broadcast,
-                    ServerMessage::PaneRuntimeChanged {
-                        pane_id,
-                        generation,
-                        state,
-                    },
-                )],
-                Ok(None) => Vec::new(),
-                Err((code, message)) => vec![(
-                    Target::Sender,
-                    ServerMessage::Error {
-                        code: code.to_string(),
-                        message,
-                    },
-                )],
-            },
+            } => {
+                match self.set_pane_status(client_id, pane_id, generation, local, status, reason) {
+                    Ok(Some(state)) => vec![(
+                        if local {
+                            Target::Client(client_id)
+                        } else {
+                            Target::Broadcast
+                        },
+                        ServerMessage::PaneRuntimeChanged {
+                            pane_id,
+                            local,
+                            generation,
+                            state,
+                        },
+                    )],
+                    Ok(None) => Vec::new(),
+                    Err((code, message)) => vec![(
+                        Target::Sender,
+                        ServerMessage::Error {
+                            code: code.to_string(),
+                            message,
+                        },
+                    )],
+                }
+            }
             ClientMessage::ReportPaneSlots {
                 pane_id,
+                local,
                 generation,
                 slots,
-            } => match self.report_pane_slots(client_id, pane_id, generation, slots) {
+            } => match self.report_pane_slots(client_id, pane_id, generation, local, slots) {
                 Ok(Some(state)) => vec![(
-                    Target::Broadcast,
+                    if local {
+                        Target::Client(client_id)
+                    } else {
+                        Target::Broadcast
+                    },
                     ServerMessage::PaneRuntimeChanged {
                         pane_id,
+                        local,
                         generation,
                         state,
                     },
@@ -221,6 +245,7 @@ impl SessionServer {
             },
             ClientMessage::SpawnPane {
                 pane_id,
+                local,
                 generation,
                 command,
                 cwd,
@@ -235,11 +260,25 @@ impl SessionServer {
                 cell_width,
                 cell_height,
             } => {
-                if !self.is_controller(client_id) {
+                if local && self.client_read_only(client_id) {
                     return vec![(
                         Target::Sender,
                         ServerMessage::SpawnResult {
                             pane_id,
+                            local,
+                            generation,
+                            pid: None,
+                            ok: false,
+                            error: Some("read-only client".to_string()),
+                        },
+                    )];
+                }
+                if !local && !self.is_controller(client_id) {
+                    return vec![(
+                        Target::Sender,
+                        ServerMessage::SpawnResult {
+                            pane_id,
+                            local,
                             generation,
                             pid: None,
                             ok: false,
@@ -247,12 +286,14 @@ impl SessionServer {
                         },
                     )];
                 }
-                let initial_seed = self.created_from_profile.is_none()
+                let initial_seed = !local
+                    && self.created_from_profile.is_none()
                     && self.origin_seed_client.is_none()
                     && self.panes.is_empty()
                     && self.layout.is_none();
                 let message = self.spawn_pane(SpawnRequest {
                     pane_id,
+                    owner: local.then_some(client_id),
                     generation,
                     command,
                     cwd,
@@ -273,16 +314,18 @@ impl SessionServer {
             }
             ClientMessage::Resize {
                 pane_id,
+                local,
                 generation,
                 cols,
                 rows,
                 cell_width,
                 cell_height,
             } => {
-                if !self.is_controller(client_id) {
+                let owner = local.then_some(client_id);
+                if owner.is_none() && !self.is_controller(client_id) {
                     return Vec::new();
                 }
-                if let Some(pane) = self.live_pane_mut(pane_id, generation) {
+                if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
                     pane.cols = cols.max(1);
                     pane.rows = rows.max(1);
                     let (rows, cols) = (pane.rows, pane.cols);
@@ -299,9 +342,10 @@ impl SessionServer {
                     }
                     // Broadcast so every client's parser reshapes at the same byte position.
                     return vec![(
-                        Target::Broadcast,
+                        owner.map_or(Target::Broadcast, Target::Client),
                         ServerMessage::Resized {
                             pane_id,
+                            local,
                             generation,
                             cols: pane.cols,
                             rows: pane.rows,
@@ -312,46 +356,58 @@ impl SessionServer {
             }
             ClientMessage::Kill {
                 pane_id,
+                local,
                 generation,
             } => {
-                if !self.is_controller(client_id) {
+                let owner = local.then_some(client_id);
+                if owner.is_none() && !self.is_controller(client_id) {
                     return Vec::new();
                 }
                 if self
-                    .panes
-                    .get(&pane_id)
+                    .pane(owner, pane_id)
                     .is_some_and(|pane| pane.generation == generation)
-                    && let Some(pane) = self.panes.remove(&pane_id)
+                    && let Some(pane) = match owner {
+                        Some(owner) => self.local_panes.remove(&(owner, pane_id)),
+                        None => self.panes.remove(&pane_id),
+                    }
                 {
                     if let Some(pty) = &pane.pty {
                         let _ = pty.kill();
                     }
-                    self.mark_dirty();
+                    if owner.is_none() {
+                        self.mark_dirty();
+                    }
                 }
                 Vec::new()
             }
             ClientMessage::SetPalette {
                 pane_id,
+                local,
                 generation,
                 palette,
             } => {
-                if !self.is_controller(client_id) {
+                let owner = local.then_some(client_id);
+                if owner.is_none() && !self.is_controller(client_id) {
                     return Vec::new();
                 }
-                self.apply_palette(pane_id, generation, palette);
+                if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
+                    pane.screen_mut().set_palette(palette.into());
+                }
                 Vec::new()
             }
             ClientMessage::ConfigurePane {
                 pane_id,
+                local,
                 generation,
                 palette,
                 title,
                 cwd,
             } => {
-                if !self.is_controller(client_id) {
+                let owner = local.then_some(client_id);
+                if owner.is_none() && !self.is_controller(client_id) {
                     return Vec::new();
                 }
-                if let Some(pane) = self.live_pane_mut(pane_id, generation) {
+                if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
                     if let Some(title) = title {
                         pane.title = Some(title);
                     }

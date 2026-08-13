@@ -368,9 +368,10 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
     let Some(client) = ctx.state.current().session_client.clone() else {
         return Update::full();
     };
-    if let Some(scratch) = ctx.state.scratch.take() {
-        client.kill(scratch.id, scratch.pty_generation);
+    for scratch in &ctx.state.scratch.panes {
+        client.kill(scratch.id, scratch.pty_generation, true);
     }
+    ctx.state.scratch = crate::state::Workspace::new(0);
     ctx.state.scratch_visible = false;
     ctx.state.current_mut().pending_spawns.clear();
     // Replay inputs queued for panes of the layout being replaced must never reach their
@@ -384,7 +385,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
         .flat_map(|workspace| workspace.panes.iter())
         .filter(|pane| !pane.closing)
     {
-        client.kill(pane.id, pane.pty_generation);
+        client.kill(pane.id, pane.pty_generation, false);
     }
     let first_pane_id = ctx.state.current().next_pane_id;
     crate::profiles::replace_layout_from_profile(&mut ctx.state, profile, first_pane_id);

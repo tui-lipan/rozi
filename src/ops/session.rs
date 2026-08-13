@@ -1008,7 +1008,7 @@ pub(crate) fn apply_pending_background_closes(ctx: &mut Context<AppRoot>) {
             .find_pane_mut(pane_id)
             .is_some_and(|pane| pane.pty_generation == generation)
         {
-            crate::pane_lifecycle::remove_pane_after_exit(ctx, pane_id);
+            crate::pane_lifecycle::remove_pane_after_exit(ctx, pane_id, false);
         }
     }
 }

@@ -167,7 +167,7 @@ fn handle_resize_mode_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (bool, U
 }
 
 fn framework_focused_pane(ctx: &Context<AppRoot>) -> Option<PaneId> {
-    let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
+    let workspace = ctx.state.active_workspace_ref();
     workspace
         .panes
         .iter()
@@ -177,8 +177,8 @@ fn framework_focused_pane(ctx: &Context<AppRoot>) -> Option<PaneId> {
 }
 
 pub(crate) fn sync_focus_from_framework(ctx: &mut Context<AppRoot>) {
-    let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
-    if let Some(id) = ctx.state.current().focused_pane
+    let workspace = ctx.state.active_workspace_ref();
+    if let Some(id) = ctx.state.focused_pane()
         && workspace
             .panes
             .iter()

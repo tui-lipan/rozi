@@ -8,7 +8,7 @@ use crate::state::{CopyModeState, Mode};
 /// Enter copy mode on the focused pane: seed tui-lipan's navigator at the live cursor position
 /// with no selection, and park scrollback at its current offset. Closes any open overlay first.
 pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(target) = ctx.state.current().focused_pane else {
+    let Some(target) = ctx.state.focused_pane() else {
         return Update::full();
     };
     let Some(pane) = find_pane_mut(&mut ctx.state, target) else {

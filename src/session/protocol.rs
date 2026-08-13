@@ -27,8 +27,14 @@ use crate::state::PaneId;
 
 /// Maximum wire protocol version this build speaks.
 ///
-/// 20 is a clean break: SharedLayout gains the `rows` layout kind. Older peers cannot deserialize
-/// that enum variant, so this build speaks protocol 20 only.
+/// 22 is a clean break: every pane-targeted operation, input frame, and server event carries an
+/// explicit local/shared namespace. Protocol 21 identified locality only on spawn, so a later
+/// shared pane with the same numeric id could steal input, resize, or output from an owner-local
+/// pane. Older peers cannot address those namespaces, so this build speaks 22 only.
+///
+/// 21 added owner-scoped client-local panes: PTYs that are never attached, broadcast, or persisted.
+///
+/// 20 was a clean break: SharedLayout gained the `rows` layout kind.
 ///
 /// 19 is a clean break: SharedLayout gains `columns` and `scrollable` layout kinds. Older peers
 /// cannot deserialize those enum variants, so this build speaks protocol 19 only.
@@ -44,12 +50,12 @@ use crate::state::PaneId;
 ///
 /// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
 /// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
-pub const PROTOCOL_VERSION: u32 = 20;
+pub const PROTOCOL_VERSION: u32 = 22;
 /// Oldest wire protocol version this build can still speak.
 ///
-/// Protocol 20 is required: SharedLayout layout-kind variants are not backwards-compatible, so this
-/// build rejects older peers rather than shimming wire aliases.
-pub const MIN_SUPPORTED_PROTOCOL: u32 = 20;
+/// Protocol 22 is required: pane-targeted frames now carry an explicit local/shared namespace, so
+/// this build rejects older peers rather than shimming wire aliases.
+pub const MIN_SUPPORTED_PROTOCOL: u32 = 22;
 /// First version carrying the file-tree browsing messages. A client must not send them below this.
 pub const FILE_TREE_PROTOCOL: u32 = 13;
 /// First version carrying [`ClientMessage::SetParked`]. Against an older server the message is not
@@ -69,6 +75,10 @@ pub const EVICTED_ERROR_CODE: &str = "evicted";
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
+/// On-wire size of a pane byte frame besides the payload: 4-byte length, 1-byte kind, 13-byte
+/// header (`pane_id` + `generation` + locality).
+pub const PANE_FRAME_OVERHEAD: usize = 18;
+const PANE_FRAME_HEADER_LEN: usize = 13;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
 const FRAME_KIND_PANE_INPUT: u8 = 3;
@@ -454,6 +464,9 @@ pub enum ClientMessage {
     },
     SpawnPane {
         pane_id: PaneId,
+        /// Owner-scoped transient pane. Local panes may reuse another client's pane id, are
+        /// operable by their owner without the layout lease, and die with that client.
+        local: bool,
         generation: u64,
         command: Option<String>,
         cwd: Option<String>,
@@ -486,6 +499,8 @@ pub enum ClientMessage {
     },
     Resize {
         pane_id: PaneId,
+        /// Address the owner-local namespace when true; the shared session namespace when false.
+        local: bool,
         generation: u64,
         cols: u16,
         rows: u16,
@@ -499,15 +514,18 @@ pub enum ClientMessage {
     },
     Kill {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
     },
     SetPalette {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         palette: WirePalette,
     },
     ConfigurePane {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         palette: Option<WirePalette>,
         title: Option<String>,
@@ -515,11 +533,13 @@ pub enum ClientMessage {
     },
     SetPaneLogging {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         enabled: bool,
     },
     SetPaneStatus {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         status: Option<String>,
         reason: Option<String>,
@@ -528,6 +548,7 @@ pub enum ClientMessage {
     /// back to screen detection.
     ReportPaneSlots {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         slots: Vec<AgentSlot>,
     },
@@ -696,17 +717,20 @@ pub enum ServerMessage {
     },
     Resized {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         cols: u16,
         rows: u16,
     },
     Exited {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         code: i32,
     },
     SpawnResult {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         pid: Option<u32>,
         ok: bool,
@@ -714,6 +738,7 @@ pub enum ServerMessage {
     },
     PaneLoggingChanged {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         enabled: bool,
         path: Option<String>,
@@ -725,6 +750,7 @@ pub enum ServerMessage {
     /// raced a respawn; `state.sequence` guards against out-of-order delivery.
     PaneRuntimeChanged {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         state: PaneRuntimeState,
     },
@@ -791,6 +817,7 @@ pub enum Frame<C> {
     Control(C),
     PaneBytes {
         pane_id: PaneId,
+        local: bool,
         generation: u64,
         bytes: Vec<u8>,
     },
@@ -900,18 +927,34 @@ pub fn write_pane_output_frame<W: Write>(
     writer: &mut W,
     pane_id: PaneId,
     generation: u64,
+    local: bool,
     bytes: &[u8],
 ) -> std::io::Result<()> {
-    write_pane_frame(writer, FRAME_KIND_PANE_OUTPUT, pane_id, generation, bytes)
+    write_pane_frame(
+        writer,
+        FRAME_KIND_PANE_OUTPUT,
+        pane_id,
+        generation,
+        local,
+        bytes,
+    )
 }
 
 pub fn write_pane_input_frame<W: Write>(
     writer: &mut W,
     pane_id: PaneId,
     generation: u64,
+    local: bool,
     bytes: &[u8],
 ) -> std::io::Result<()> {
-    write_pane_frame(writer, FRAME_KIND_PANE_INPUT, pane_id, generation, bytes)
+    write_pane_frame(
+        writer,
+        FRAME_KIND_PANE_INPUT,
+        pane_id,
+        generation,
+        local,
+        bytes,
+    )
 }
 
 fn write_pane_frame<W: Write>(
@@ -919,11 +962,13 @@ fn write_pane_frame<W: Write>(
     kind: u8,
     pane_id: PaneId,
     generation: u64,
+    local: bool,
     bytes: &[u8],
 ) -> std::io::Result<()> {
-    let mut body = Vec::with_capacity(12 + bytes.len());
+    let mut body = Vec::with_capacity(PANE_FRAME_HEADER_LEN + bytes.len());
     body.extend_from_slice(&pane_id.to_be_bytes());
     body.extend_from_slice(&generation.to_be_bytes());
+    body.push(u8::from(local));
     body.extend_from_slice(bytes);
     write_frame_body(writer, kind, &body)
 }
@@ -1076,7 +1121,7 @@ fn decode_frame<T: for<'de> Deserialize<'de>>(body: &[u8]) -> std::io::Result<Fr
 }
 
 fn decode_pane_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
-    if payload.len() < 12 {
+    if payload.len() < PANE_FRAME_HEADER_LEN {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "pane byte frame missing header",
@@ -1084,10 +1129,21 @@ fn decode_pane_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
     }
     let pane_id = u32::from_be_bytes(payload[..4].try_into().expect("slice length"));
     let generation = u64::from_be_bytes(payload[4..12].try_into().expect("slice length"));
+    let local = match payload[12] {
+        0 => false,
+        1 => true,
+        other => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("pane byte frame has invalid locality {other}"),
+            ));
+        }
+    };
     Ok(Frame::PaneBytes {
         pane_id,
+        local,
         generation,
-        bytes: payload[12..].to_vec(),
+        bytes: payload[PANE_FRAME_HEADER_LEN..].to_vec(),
     })
 }
 
@@ -1320,12 +1376,16 @@ mod tests {
 
         assert!(
             negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 19, 12).is_err(),
-            "protocol-20-only peers reject pre-20 ranges"
+            "protocol-22-only peers reject older ranges"
         );
         assert_eq!(
-            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 20, 20)
+            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 22, 22)
                 .expect("same-version peers negotiate"),
-            20
+            22
+        );
+        assert!(
+            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 21, 21).is_err(),
+            "protocol-22-only peers reject protocol 21"
         );
 
         let request = ClientMessage::RequestRuntimeMetrics;
@@ -1354,6 +1414,7 @@ mod tests {
     fn pane_status_message_round_trips() {
         let msg = ClientMessage::SetPaneStatus {
             pane_id: 7,
+            local: false,
             generation: 9,
             status: Some("blocked".into()),
             reason: Some("needs approval".into()),
@@ -1366,6 +1427,7 @@ mod tests {
             serde_json::json!({
                 "type": "set-pane-status",
                 "pane_id": 7,
+                "local": false,
                 "generation": 9,
                 "status": "blocked",
                 "reason": "needs approval"
@@ -1377,6 +1439,7 @@ mod tests {
     fn pane_slots_message_round_trips() {
         let msg = ClientMessage::ReportPaneSlots {
             pane_id: 3,
+            local: false,
             generation: 2,
             slots: vec![
                 AgentSlot {
@@ -1488,6 +1551,7 @@ mod tests {
     fn oversized_write_frame_is_rejected() {
         let msg = ClientMessage::SpawnPane {
             pane_id: 1,
+            local: false,
             generation: 1,
             command: Some("x".repeat(MAX_FRAME_SIZE)),
             cwd: None,
@@ -1547,8 +1611,8 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":20,
-                "min_protocol_version":20,
+                "protocol_version":22,
+                "min_protocol_version":22,
                 "label":"alice",
                 "read_only":true
             })
@@ -1575,8 +1639,8 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":20,
-                "min_protocol_version":20
+                "protocol_version":22,
+                "min_protocol_version":22
             })
         );
     }
@@ -1661,7 +1725,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":20,
+                "effective_protocol":22,
                 "created_from_profile":"work"
             })
         );
@@ -1670,16 +1734,28 @@ mod tests {
     #[test]
     fn binary_pane_frame_has_golden_shape() {
         let mut buf = Vec::new();
-        write_pane_output_frame(&mut buf, 7, 9, b"abc").unwrap();
+        write_pane_output_frame(&mut buf, 7, 9, false, b"abc").unwrap();
 
         let mut expected = Vec::new();
-        expected.extend_from_slice(&16_u32.to_be_bytes());
+        expected.extend_from_slice(&17_u32.to_be_bytes());
         expected.push(FRAME_KIND_PANE_OUTPUT);
         expected.extend_from_slice(&7_u32.to_be_bytes());
         expected.extend_from_slice(&9_u64.to_be_bytes());
+        expected.push(0);
         expected.extend_from_slice(b"abc");
 
         assert_eq!(buf, expected);
+
+        let mut local = Vec::new();
+        write_pane_input_frame(&mut local, 7, 9, true, b"abc").unwrap();
+        let mut expected_local = Vec::new();
+        expected_local.extend_from_slice(&17_u32.to_be_bytes());
+        expected_local.push(FRAME_KIND_PANE_INPUT);
+        expected_local.extend_from_slice(&7_u32.to_be_bytes());
+        expected_local.extend_from_slice(&9_u64.to_be_bytes());
+        expected_local.push(1);
+        expected_local.extend_from_slice(b"abc");
+        assert_eq!(local, expected_local);
     }
 
     #[test]
@@ -1693,7 +1769,7 @@ mod tests {
         };
         let mut encoded = Vec::new();
         write_frame(&mut encoded, &attach).unwrap();
-        write_pane_input_frame(&mut encoded, 7, 9, b"abc").unwrap();
+        write_pane_input_frame(&mut encoded, 7, 9, false, b"abc").unwrap();
 
         let mut decoder = FrameDecoder::default();
         assert!(matches!(
@@ -1708,6 +1784,7 @@ mod tests {
             decoder.next_frame::<ClientMessage>().unwrap(),
             Some(Frame::PaneBytes {
                 pane_id: 7,
+                local: false,
                 generation: 9,
                 bytes: b"abc".to_vec(),
             })
@@ -1724,6 +1801,7 @@ mod tests {
         };
         let value = serde_json::to_value(ClientMessage::SpawnPane {
             pane_id: 7,
+            local: false,
             generation: 9,
             command: Some("bash".into()),
             cwd: Some("/repo".into()),
@@ -1741,7 +1819,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"spawn-pane","pane_id":7,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap(),"shell":["/bin/zsh"],"command_shell":["/bin/sh","-c"],"cell_width":9,"cell_height":18})
+            serde_json::json!({"type":"spawn-pane","pane_id":7,"local":false,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap(),"shell":["/bin/zsh"],"command_shell":["/bin/sh","-c"],"cell_width":9,"cell_height":18})
         );
     }
 
@@ -1750,12 +1828,13 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ServerMessage::Resized {
                 pane_id: 1,
+                local: false,
                 generation: 2,
                 cols: 80,
                 rows: 24,
             })
             .unwrap(),
-            serde_json::json!({"type":"resized","pane_id":1,"generation":2,"cols":80,"rows":24})
+            serde_json::json!({"type":"resized","pane_id":1,"local":false,"generation":2,"cols":80,"rows":24})
         );
         assert_eq!(
             serde_json::to_value(ServerMessage::Error {

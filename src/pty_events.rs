@@ -285,6 +285,7 @@ fn forward_key_to_targets(ctx: &mut Context<AppRoot>, targets: &[PaneId], key: K
     let client = ctx.state.current().session_client.clone();
     ctx.state.current_mut().engaged = true;
     for id in targets {
+        let local = crate::pane_lifecycle::pane_is_local(&ctx.state, *id);
         let Some(pane) = find_pane_mut(&mut ctx.state, *id) else {
             continue;
         };
@@ -293,6 +294,7 @@ fn forward_key_to_targets(ctx: &mut Context<AppRoot>, targets: &[PaneId], key: K
                 &client,
                 *id,
                 pane.pty_generation,
+                local,
                 key,
                 pane.terminal.snapshot().key_modes,
             )
@@ -325,6 +327,7 @@ pub(crate) fn send_pane_bytes(
     }
     let client = ctx.state.current().session_client.clone();
     ctx.state.current_mut().engaged = true;
+    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
         return Ok(());
     };
@@ -332,12 +335,15 @@ pub(crate) fn send_pane_bytes(
         pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
         return Err("session disconnected".to_string());
     };
-    client.send_input(id, pane.pty_generation, bytes);
+    client.send_input(id, pane.pty_generation, local, bytes);
     Ok(())
 }
 
 pub(crate) fn synchronized_key_targets(state: &crate::state::State, source: PaneId) -> Vec<PaneId> {
-    let workspace = &state.current().workspaces[state.current().active_workspace];
+    if crate::scratchpad::contains(state, source) {
+        return vec![source];
+    }
+    let workspace = state.current().active_workspace_ref();
     if !workspace.synchronized {
         return vec![source];
     }
@@ -459,9 +465,10 @@ pub(crate) fn handle_pane_input(
     if matches!(input.kind, TerminalInputKind::Paste) {
         ctx.state.current_mut().engaged = true;
     }
+    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
-            client.send_input(id, pane.pty_generation, input.bytes.to_vec());
+            client.send_input(id, pane.pty_generation, local, input.bytes.to_vec());
             if matches!(input.kind, TerminalInputKind::Paste) && pane.terminal.set_scrollback(0) {
                 return Update::full();
             }
@@ -479,9 +486,9 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     // for a full-screen TUI. The framework has already moved its *own* focus for clicks, drags and
     // scrolls (but deliberately not for plain motion), so reconciling from it restores
     // click-to-focus without reintroducing hover-to-focus against the user's config.
-    let before = ctx.state.current().focused_pane;
+    let before = ctx.state.focused_pane();
     crate::key_routing::sync_focus_from_framework(ctx);
-    let focus_moved = ctx.state.current().focused_pane != before;
+    let focus_moved = ctx.state.focused_pane() != before;
     // Forwarded activity also means the pointer is over this pane, so re-apply the hover policy.
     let hover = crate::ops::focus::hover_focus_pane(ctx, id);
     let focus_update = if focus_moved { Update::full() } else { hover };
@@ -495,9 +502,10 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     }
 
     let client = ctx.state.current().session_client.clone();
+    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
-            client.send_input(id, pane.pty_generation, bytes);
+            client.send_input(id, pane.pty_generation, local, bytes);
         } else {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             return Update::full();
@@ -516,9 +524,11 @@ pub(crate) fn handle_pane_resize(
     cols: u16,
     rows: u16,
 ) -> Update {
-    // Followers never drive PTY size: they letterbox to the controller's canonical canvas and their
-    // screens reshape only via the server's broadcast `Resized`. Suppress their local resize here.
-    if !ctx.state.is_controller() {
+    // Followers never drive shared PTY size: they letterbox to the controller's canonical canvas
+    // and their screens reshape only via the server's broadcast `Resized`. Owner-local panes
+    // (scratch/popup) do not affect canonical shared sizing, so their owner may resize them.
+    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    if !ctx.state.is_controller() && !local {
         return Update::none();
     }
     // The pane rect updates immediately, but the client-side screen only reshapes on the server's
@@ -540,7 +550,7 @@ pub(crate) fn handle_pane_resize(
     if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared
             .pending_resizes
-            .insert(id, (cols.max(1), rows.max(1)));
+            .insert((local, id), (cols.max(1), rows.max(1)));
         if shared.resize_flush_scheduled {
             return Update::none();
         }
@@ -548,7 +558,7 @@ pub(crate) fn handle_pane_resize(
         return Update::with_command(schedule_pane_resize_flush(epoch));
     }
     if let Some(client) = client {
-        client.resize(id, generation, cols.max(1), rows.max(1));
+        client.resize(id, generation, local, cols.max(1), rows.max(1));
     }
     Update::none()
 }
@@ -579,16 +589,18 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
         }
         return;
     };
-    let pending: Vec<(PaneId, (u16, u16))> = match ctx.state.current_mut().shared.as_mut() {
+    let pending: Vec<((bool, PaneId), (u16, u16))> = match ctx.state.current_mut().shared.as_mut() {
         Some(shared) => {
             shared.resize_flush_scheduled = false;
             shared.pending_resizes.drain().collect()
         }
         None => return,
     };
-    for (id, (cols, rows)) in pending {
-        if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-            client.resize(id, pane.pty_generation, cols.max(1), rows.max(1));
+    for ((local, id), (cols, rows)) in pending {
+        if let Some(pane) =
+            crate::pane_lifecycle::find_pane_in_namespace_mut(&mut ctx.state, id, local)
+        {
+            client.resize(id, pane.pty_generation, local, cols.max(1), rows.max(1));
         }
     }
 }
@@ -610,12 +622,13 @@ pub(crate) fn send_key_to_session_client(
     client: &crate::session::client::SessionClient,
     pane_id: PaneId,
     generation: u64,
+    local: bool,
     key: KeyEvent,
     modes: TerminalKeyModes,
 ) -> std::result::Result<(), String> {
     let bytes = terminal_key_event_bytes(key, modes)
         .ok_or_else(|| "key is not representable for session forwarding yet".to_string())?;
-    client.send_input(pane_id, generation, bytes);
+    client.send_input(pane_id, generation, local, bytes);
     Ok(())
 }
 
@@ -673,6 +686,7 @@ mod tests {
             &client,
             7,
             9,
+            false,
             key(KeyCode::F(5), KeyMods::ALT),
             TerminalKeyModes::default(),
         )
@@ -681,6 +695,7 @@ mod tests {
             &client,
             7,
             9,
+            false,
             key(KeyCode::Char('c'), KeyMods::CTRL),
             TerminalKeyModes::default(),
         )
@@ -690,6 +705,7 @@ mod tests {
             rx.recv().expect("first message"),
             crate::session::client::ClientOutbound::PaneInput {
                 pane_id: 7,
+                local: false,
                 generation: 9,
                 bytes: b"\x1b\x1b[15~".to_vec(),
             }
@@ -698,6 +714,7 @@ mod tests {
             rx.recv().expect("second message"),
             crate::session::client::ClientOutbound::PaneInput {
                 pane_id: 7,
+                local: false,
                 generation: 9,
                 bytes: vec![3],
             }
@@ -811,6 +828,7 @@ mod tests {
                     inputs,
                     vec![ClientOutbound::PaneInput {
                         pane_id: 1,
+                        local: false,
                         generation: 0,
                         bytes: vec![1],
                     }]
@@ -1096,7 +1114,7 @@ mod tests {
                         .as_ref()
                         .expect("controller has shared state")
                         .pending_resizes
-                        .get(&1),
+                        .get(&(false, 1)),
                     Some(&(50, 20)),
                     "both resizes coalesce into the latest pending size"
                 );
@@ -1152,7 +1170,7 @@ mod tests {
                         .as_ref()
                         .expect("controller has shared state")
                         .pending_resizes
-                        .get(&1),
+                        .get(&(false, 1)),
                     Some(&(50, 20)),
                     "a flush with no client keeps the size for the next one"
                 );
@@ -1186,9 +1204,10 @@ mod tests {
         state.current_mut().workspaces[0]
             .panes
             .push(Pane::new(4, 100, rect()));
-        state.scratch = Some(Pane::new(crate::state::SCRATCH_PANE_ID, 100, rect()));
+        state.scratch.panes.push(Pane::new(5, 100, rect()));
 
         assert_eq!(synchronized_key_targets(&state, 1), vec![1, 2, 4]);
         assert_eq!(synchronized_key_targets(&state, 3), vec![3]);
+        assert_eq!(synchronized_key_targets(&state, 5), vec![5]);
     }
 }

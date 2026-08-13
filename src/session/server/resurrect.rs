@@ -530,6 +530,7 @@ impl SessionServer {
                 .unwrap_or_default();
             let result = self.spawn_pane_inner(
                 SpawnRequest {
+                    owner: None,
                     pane_id: saved.pane_id,
                     generation,
                     command: saved.command,

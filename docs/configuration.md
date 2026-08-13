@@ -628,17 +628,21 @@ ssh_args = ["-o", "ProxyJump=bastion"]
 
 ## `[scratchpad]`
 
-The dropdown scratchpad (toggle: `` ` ``). The shell stays alive while hidden.
+The dropdown scratch workspace (toggle: `` ` ``). Its panes and PTYs stay alive while hidden.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `command` | the normal shell | Program to run in the scratchpad (e.g. `btop`). |
-| `cwd` | the configured `cwd` | Working directory for the scratchpad shell. |
+| `command` | the normal shell | Program for the first pane of an empty scratch workspace (e.g. `btop`). |
+| `cwd` | the configured `cwd` | Working directory for that initial pane. |
 | `height` | `0.4` | Fraction of the viewport height it opens at; clamped to `0.1`–`0.9`. |
 
 Drag the scratchpad's top edge (its title/top-border row) up or down to resize it while it is
-open. The dragged height overrides `height` for the rest of the session; it resets to `height` on
-restart.
+open; a pane against that edge also resizes it by right-drag or in resize mode, since the edge is
+the workspace border and has no split to move. See [Keybindings](keybindings.md#scratchpad). The
+adjusted height overrides `height` for the rest of the session; it resets to `height` on restart.
+
+Additional panes use ordinary pane allocation and layout actions, but the scratch workspace is
+client-local: it is never saved to profiles or `SharedLayout` and is discarded on a session switch.
 
 ## `[sidebar]`
 

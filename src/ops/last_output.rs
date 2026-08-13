@@ -10,7 +10,7 @@ use crate::pane_lifecycle::find_pane_mut;
 /// A viewport selection flash would be misleading when the output has scrolled into
 /// history (or spans more than the live grid), so this path uses a toast instead.
 pub(crate) fn copy_last_output(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(id) = ctx.state.current().focused_pane else {
+    let Some(id) = ctx.state.focused_pane() else {
         return Update::none();
     };
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {

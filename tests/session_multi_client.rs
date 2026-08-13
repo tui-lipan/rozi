@@ -154,6 +154,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
     let controller_id = attached_client_id(&attached);
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     controller.write_control(&ClientMessage::SpawnPane {
+        local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
         command: None,

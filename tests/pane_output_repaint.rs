@@ -55,6 +55,7 @@ fn output(bytes: &str) -> rozi::Msg {
     rozi::Msg::SessionOutput {
         epoch: 0,
         pane_id: PANE,
+        local: false,
         generation: 0,
         bytes: bytes.as_bytes().to_vec(),
     }

@@ -43,6 +43,7 @@ impl SessionServer {
         client_id: ClientId,
         pane_id: PaneId,
         generation: u64,
+        local: bool,
         status: Option<String>,
         reason: Option<String>,
     ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
@@ -53,7 +54,8 @@ impl SessionServer {
             return Err(("read-only", "read-only client".to_string()));
         }
 
-        let Some(pane) = self.panes.get_mut(&pane_id) else {
+        let owner = local.then_some(client_id);
+        let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
         };
         if pane.generation != generation {
@@ -128,6 +130,7 @@ impl SessionServer {
         client_id: ClientId,
         pane_id: PaneId,
         generation: u64,
+        local: bool,
         slots: Vec<protocol::AgentSlot>,
     ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
         if !self.client_attached(client_id) {
@@ -136,7 +139,8 @@ impl SessionServer {
         if self.client_read_only(client_id) {
             return Err(("read-only", "read-only client".to_string()));
         }
-        let Some(pane) = self.panes.get_mut(&pane_id) else {
+        let owner = local.then_some(client_id);
+        let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
         };
         if pane.generation != generation {
@@ -181,7 +185,7 @@ impl SessionServer {
         // walked the whole host separately, so idle cost scaled with pane count.
         let mut scan = LazyProcessScan::default();
         for (id, generation) in panes {
-            self.sync_pane_runtime_inner(id, generation, true, &mut scan);
+            self.sync_pane_runtime_inner(None, id, generation, true, &mut scan);
         }
     }
 
@@ -189,18 +193,30 @@ impl SessionServer {
     /// [`ServerMessage::PaneRuntimeChanged`] if it changed. `generation` must match the pane's
     /// current generation - a stale caller (e.g. a queued event racing a respawn) is a silent
     /// no-op, matching every other per-pane event handler in this module.
-    pub(super) fn sync_pane_runtime(&mut self, pane_id: PaneId, generation: u64) {
-        self.sync_pane_runtime_inner(pane_id, generation, false, &mut LazyProcessScan::default());
+    pub(super) fn sync_pane_runtime(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+    ) {
+        self.sync_pane_runtime_inner(
+            owner,
+            pane_id,
+            generation,
+            false,
+            &mut LazyProcessScan::default(),
+        );
     }
 
     fn sync_pane_runtime_inner(
         &mut self,
+        owner: Option<ClientId>,
         pane_id: PaneId,
         generation: u64,
         detect_agent: bool,
         scan: &mut LazyProcessScan,
     ) {
-        let Some(pane) = self.panes.get_mut(&pane_id) else {
+        let Some(pane) = self.pane_mut(owner, pane_id) else {
             return;
         };
         if pane.generation != generation {
@@ -212,11 +228,17 @@ impl SessionServer {
             return;
         }
         pane.runtime = next.clone();
-        self.broadcast_control(&ServerMessage::PaneRuntimeChanged {
+        let message = ServerMessage::PaneRuntimeChanged {
             pane_id,
+            local: wire_local(owner),
             generation,
             state: next,
-        });
+        };
+        if let Some(owner) = owner {
+            self.enqueue(owner, Target::Client(owner), message);
+        } else {
+            self.broadcast_control(&message);
+        }
     }
 }
 

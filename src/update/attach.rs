@@ -234,6 +234,7 @@ pub(crate) fn spawn_state_panes_on_session(
             };
             client.spawn_pane(
                 pane.id,
+                false,
                 generation,
                 command,
                 pane.identity.cwd.clone(),
@@ -268,6 +269,7 @@ pub(super) fn flush_pending_spawns(ctx: &mut Context<AppRoot>) {
     for spawn in std::mem::take(&mut ctx.state.current_mut().pending_spawns) {
         client.spawn_pane(
             spawn.pane_id,
+            spawn.local,
             spawn.generation,
             spawn.command,
             spawn.cwd,

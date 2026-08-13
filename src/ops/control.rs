@@ -135,13 +135,14 @@ pub(crate) fn handle_control_request(
         ControlCommand::PaneLogging { target, enabled } => {
             let id = target
                 .or(envelope.request.source_pane)
-                .or(ctx.state.current().focused_pane);
+                .or(ctx.state.focused_pane());
             match id.and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id)) {
                 Some(pane) => {
                     if let Some(client) = &ctx.state.current().session_client {
                         client.set_pane_logging(
                             pane.id,
                             pane.pty_generation,
+                            crate::pane_lifecycle::pane_is_local(&ctx.state, pane.id),
                             enabled.unwrap_or(!pane.logging),
                         );
                     }
@@ -158,7 +159,7 @@ pub(crate) fn handle_control_request(
             ctx,
             target
                 .or(envelope.request.source_pane)
-                .or(ctx.state.current().focused_pane),
+                .or(ctx.state.focused_pane()),
             status,
             reason,
         ),
@@ -201,7 +202,7 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
             });
         }
     }
-    if let Some(pane) = ctx.state.scratch.as_ref().filter(|pane| !pane.closing) {
+    for pane in ctx.state.scratch.panes.iter().filter(|pane| !pane.closing) {
         panes.push(PaneInfo {
             id: pane.id,
             title: pane.display_title(None),
@@ -238,6 +239,7 @@ fn set_status(
         return ControlResponse::error(format!("pane {id} not found"));
     };
     let generation = pane.pty_generation;
+    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     if !ctx.state.current().session_attached {
         return ControlResponse::error(format!("pane {id} session is not attached"));
     }
@@ -253,11 +255,22 @@ fn set_status(
     let Some(client) = ctx.state.current().session_client.clone() else {
         return ControlResponse::error(format!("pane {id} session is not connected"));
     };
-    client.set_pane_status(id, generation, status, reason);
+    client.set_pane_status(id, generation, local, status, reason);
     ControlResponse::empty()
 }
 
 fn focus_target(ctx: &mut Context<AppRoot>, target: PaneId) -> ControlResponse {
+    if crate::scratchpad::contains(&ctx.state, target) {
+        if !ctx.state.scratch_visible {
+            return ControlResponse::error("scratchpad is hidden");
+        }
+        crate::ops::focus::focus_pane(&mut ctx.state, target);
+        crate::ops::focus::request_pane_focus(ctx, target);
+        return ControlResponse::empty();
+    }
+    if ctx.state.scratch_visible {
+        return ControlResponse::error("scratchpad is open");
+    }
     if !focus_pane_anywhere(ctx, target) {
         return ControlResponse::error(format!("pane {target} not found"));
     }
@@ -268,6 +281,7 @@ fn focus_target(ctx: &mut Context<AppRoot>, target: PaneId) -> ControlResponse {
 struct InputTarget {
     id: PaneId,
     generation: u64,
+    local: bool,
     modes: TerminalKeyModes,
     /// The PTY accepts input now. When false the spawn is still in flight and bytes are queued as
     /// type-ahead instead.
@@ -287,10 +301,11 @@ fn control_input_target(
     if let Some(reason) = ctx.state.pane_input_block_reason() {
         return Err(ControlResponse::error(reason));
     }
-    let Some(id) = target.or(ctx.state.current().focused_pane) else {
+    let Some(id) = target.or(ctx.state.focused_pane()) else {
         return Err(ControlResponse::error("no target pane and no focused pane"));
     };
     let client = ctx.state.current().session_client.clone();
+    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
         return Err(ControlResponse::error(format!("pane {id} not found")));
     };
@@ -308,6 +323,7 @@ fn control_input_target(
     Ok(InputTarget {
         id,
         generation: pane.pty_generation,
+        local,
         modes: pane.terminal.snapshot().key_modes,
         starting: !ready,
         client,
@@ -320,13 +336,13 @@ fn deliver_control_input(ctx: &mut Context<AppRoot>, target: &InputTarget, bytes
     if target.starting {
         ctx.state
             .pending_control_input
-            .entry((target.id, target.generation))
+            .entry((target.local, target.id, target.generation))
             .or_default()
             .extend(bytes);
         return;
     }
     if let Some(client) = target.client.as_ref() {
-        client.send_input(target.id, target.generation, bytes);
+        client.send_input(target.id, target.generation, target.local, bytes);
     }
 }
 
@@ -388,7 +404,10 @@ fn run_action(
         )));
         return Update::full();
     };
-    if crate::actions::is_layout_mutating(&ctx.state, action) && !ctx.state.is_controller() {
+    if crate::actions::is_layout_mutating(&ctx.state, action)
+        && !ctx.state.scratch_visible
+        && !ctx.state.is_controller()
+    {
         let _ = reply.send(ControlResponse::error("not controller"));
         return Update::full();
     }
@@ -414,7 +433,7 @@ fn capture_pane(
     target: Option<PaneId>,
     scrollback: Option<CaptureScrollback>,
 ) -> ControlResponse {
-    let Some(id) = target.or(ctx.state.current().focused_pane) else {
+    let Some(id) = target.or(ctx.state.focused_pane()) else {
         return ControlResponse::error("no target pane and no focused pane");
     };
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
@@ -441,6 +460,9 @@ fn capture_pane(
 }
 
 fn switch_workspace_command(ctx: &mut Context<AppRoot>, index: usize) -> ControlResponse {
+    if ctx.state.scratch_visible {
+        return ControlResponse::error("scratchpad is open");
+    }
     let Some(response) = validate_workspace_index(index) else {
         switch_workspace(&mut ctx.state, index - 1);
         request_current_pane_focus(ctx);
@@ -450,6 +472,9 @@ fn switch_workspace_command(ctx: &mut Context<AppRoot>, index: usize) -> Control
 }
 
 fn move_to_workspace_command(ctx: &mut Context<AppRoot>, index: usize) -> ControlResponse {
+    if ctx.state.scratch_visible {
+        return ControlResponse::error("scratchpad is open");
+    }
     if !ctx.state.is_controller() {
         return ControlResponse::error("not controller");
     }
@@ -484,7 +509,14 @@ fn new_pane(
     focus: bool,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
-    if !ctx.state.is_controller() {
+    let scratch_source = source.is_some_and(|id| crate::scratchpad::contains(&ctx.state, id));
+    if ctx.state.scratch_visible && source.is_some() && !scratch_source {
+        let _ = reply.send(ControlResponse::error(
+            "source pane is hidden behind scratchpad",
+        ));
+        return Update::full();
+    }
+    if !scratch_source && !ctx.state.is_controller() {
         let _ = reply.send(ControlResponse::error("not controller"));
         return Update::full();
     }
@@ -500,6 +532,24 @@ fn new_pane(
         },
     ) {
         ctx.state.pending_control_reply = Some(reply);
+        return update;
+    }
+    if scratch_source || (ctx.state.scratch_visible && source.is_none()) {
+        let mut identity = PaneIdentity {
+            command,
+            cwd,
+            keep_open,
+            ..PaneIdentity::default()
+        };
+        if let Some(title) = title {
+            identity.set_custom_title(title);
+        }
+        let previous = source.or(ctx.state.scratch.focused_pane);
+        let (id, update) = crate::pane_lifecycle::spawn_pane_in_scratch(ctx, previous, identity);
+        if !focus && let Some(previous) = previous {
+            crate::ops::focus::focus_pane(&mut ctx.state, previous);
+        }
+        hold_spawn_reply(ctx, id, reply);
         return update;
     }
     let source_workspace = match workspace_for_source(&ctx.state, source) {
@@ -537,8 +587,9 @@ pub(crate) fn hold_spawn_reply(
     id: PaneId,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) {
-    let generation =
-        crate::pane_lifecycle::find_pane(&ctx.state, id).map(|pane| pane.pty_generation);
+    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let generation = crate::pane_lifecycle::find_pane_in_namespace(&ctx.state, id, local)
+        .map(|pane| pane.pty_generation);
     let (Some(generation), Some(link)) = (generation, ctx.state.command_link.clone()) else {
         let _ = reply.send(ControlResponse::ok(NewPaneAccepted {
             id,
@@ -550,12 +601,13 @@ pub(crate) fn hold_spawn_reply(
     let epoch = ctx.state.runtime_epoch;
     ctx.state
         .pending_spawn_replies
-        .insert((epoch, id, generation), reply);
+        .insert((epoch, local, id, generation), reply);
     link.send_after(
         SPAWN_READY_DEADLINE,
         crate::Msg::SpawnReplyDeadline {
             epoch,
             pane_id: id,
+            local,
             generation,
         },
     );
@@ -567,13 +619,14 @@ pub(crate) fn resolve_spawn_reply(
     state: &mut crate::state::State,
     epoch: u64,
     pane_id: PaneId,
+    local: bool,
     generation: u64,
     ready: bool,
     error: Option<&str>,
 ) {
     let Some(reply) = state
         .pending_spawn_replies
-        .remove(&(epoch, pane_id, generation))
+        .remove(&(epoch, local, pane_id, generation))
     else {
         return;
     };
@@ -733,14 +786,15 @@ mod tests {
                     .expect("dispatch writable status request");
                 assert!(response.recv().unwrap().ok);
                 assert!(outbound.try_iter().any(|message| matches!(
-                    message,
-                    ClientOutbound::Control(ClientMessage::SetPaneStatus {
-                        pane_id: 1,
-                        generation: 9,
-                        status: Some(status),
-                        reason: Some(reason),
-                    }) if status == "blocked" && reason == "waiting"
-                )));
+                        message,
+                        ClientOutbound::Control(ClientMessage::SetPaneStatus {
+                            pane_id: 1,
+                local: false,
+                            generation: 9,
+                            status: Some(status),
+                            reason: Some(reason),
+                        }) if status == "blocked" && reason == "waiting"
+                    )));
 
                 backend
                     .state_mut()
@@ -861,6 +915,7 @@ mod tests {
                     .dispatch(crate::Msg::SessionSpawnResult {
                         epoch,
                         pane_id: spawned.0,
+                        local: false,
                         generation: spawned.1,
                         pid: Some(4242),
                         ok: true,
@@ -931,6 +986,7 @@ mod tests {
                     .dispatch(crate::Msg::SessionSpawnResult {
                         epoch,
                         pane_id: spawned.0,
+                        local: false,
                         generation: spawned.1,
                         pid: None,
                         ok: false,
@@ -984,6 +1040,7 @@ mod tests {
                     .dispatch(crate::Msg::SessionSpawnResult {
                         epoch,
                         pane_id: 1,
+                        local: false,
                         generation: 4,
                         pid: Some(11),
                         ok: true,
@@ -997,6 +1054,7 @@ mod tests {
                         pane_id: 1,
                         generation: 4,
                         ref bytes,
+                        ..
                     } if bytes == b"cargo test\n"
                 )));
             })

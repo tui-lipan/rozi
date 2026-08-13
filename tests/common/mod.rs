@@ -124,7 +124,17 @@ impl TestConnection {
     }
 
     pub(crate) fn write_pane_input(&mut self, pane_id: u32, generation: u64, bytes: &[u8]) {
-        write_pane_input_frame(&mut self.stream, pane_id, generation, bytes)
+        self.write_pane_input_ns(pane_id, generation, false, bytes)
+    }
+
+    pub(crate) fn write_pane_input_ns(
+        &mut self,
+        pane_id: u32,
+        generation: u64,
+        local: bool,
+        bytes: &[u8],
+    ) {
+        write_pane_input_frame(&mut self.stream, pane_id, generation, local, bytes)
             .expect("write pane input frame");
         self.stream.flush().expect("flush pane input frame");
     }

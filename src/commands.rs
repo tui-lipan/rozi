@@ -26,7 +26,7 @@ use crate::config::Config;
 use crate::input::Action;
 use crate::state::{
     Direction::{Down, Left, Right, Up},
-    Mode, Pane, SCRATCH_PANE_ID, State, cap_style_label,
+    Mode, Pane, State, cap_style_label,
 };
 use crate::{AppRoot, Msg};
 
@@ -728,12 +728,12 @@ const WORKSPACE_DIGITS: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"
 const WORKSPACE_SHIFT_SYMBOLS: [&str; 9] = ["!", "@", "#", "$", "%", "^", "&", "*", "("];
 
 /// Whether app command chords should currently match at all: only in `Mode::Normal` with no
-/// modal overlay or scratchpad focused. Disabling every command's shortcuts here (rather than
+/// modal overlay focused. Scratch is a real pane workspace and keeps pane commands active.
 /// special-casing each handler) means a leading `Ctrl+A` never even becomes a pending chord while,
 /// say, a rename prompt's `Input` wants that key for select-all, and `Resize`/`Copy` mode's own
 /// plain keys are never shadowed by a chord.
 pub(crate) fn commands_active(state: &State) -> bool {
-    commands_active_without_scratchpad(state) && !state.scratch_visible
+    commands_active_without_scratchpad(state)
 }
 
 fn commands_active_without_scratchpad(state: &State) -> bool {
@@ -781,9 +781,6 @@ pub(crate) fn sync(ctx: &Context<AppRoot>) {
     let config = &state.config;
     let active = commands_active(state);
     let exit_active = exit_commands_active(state);
-    let scratchpad_toggle_active =
-        state.scratch_visible && commands_active_without_scratchpad(state);
-
     for command in BUILTIN_COMMANDS {
         let id = command
             .action
@@ -794,11 +791,7 @@ pub(crate) fn sync(ctx: &Context<AppRoot>) {
         let label = resolved_label(command.action, command.label, state);
         let action = command.action;
         let enabled = command_available(action, state)
-            && if matches!(action, Action::ToggleScratchpad | Action::ToggleSidebar)
-                && state.scratch_visible
-            {
-                scratchpad_toggle_active
-            } else if is_exit_command(action) {
+            && if is_exit_command(action) {
                 exit_active
             } else {
                 active
@@ -960,14 +953,16 @@ pub(crate) fn is_palette_eligible(id: &str) -> bool {
 }
 
 pub(crate) fn command_available(action: Action, state: &State) -> bool {
+    if crate::actions::is_blocked_by_scratchpad(state, action) {
+        return false;
+    }
     let shared = state.current().shared.as_ref();
     match action {
-        Action::RespawnPane => state.current().focused_pane.is_some_and(|focused| {
+        Action::RespawnPane => state.focused_pane().is_some_and(|focused| {
             state
-                .current()
-                .workspaces
+                .active_workspace_ref()
+                .panes
                 .iter()
-                .flat_map(|workspace| &workspace.panes)
                 .find(|pane| pane.id == focused)
                 .is_some_and(|pane| {
                     matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_))
@@ -1131,9 +1126,7 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
         return text;
     }
     if action == Action::ToggleLayout {
-        let layout = state.current().workspaces[state.current().active_workspace]
-            .layout_kind
-            .label();
+        let layout = state.active_workspace_ref().layout_kind.label();
         return format!("Switch layout (current: {layout})");
     }
     if action == Action::RenameSession {
@@ -1165,7 +1158,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             enable_disable_label("fullscreen", enabled)
         }
         Action::TogglePaneSynchronization => {
-            let enabled = state.current().workspaces[state.current().active_workspace].synchronized;
+            let enabled = state.active_workspace_ref().synchronized;
             enable_disable_label("pane synchronization", enabled)
         }
         Action::ToggleTitles => enable_disable_label("titlebar", state.config.pane.show_titles),
@@ -1314,11 +1307,8 @@ fn enable_disable_label(feature: &str, enabled: bool) -> String {
 }
 
 fn focused_pane(state: &State) -> Option<&Pane> {
-    let id = state.current().focused_pane?;
-    if id == SCRATCH_PANE_ID {
-        return state.scratch.as_ref();
-    }
-    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let id = state.focused_pane()?;
+    let workspace = state.active_workspace_ref();
     workspace
         .panes
         .iter()

@@ -38,7 +38,12 @@ pub(crate) fn slots_reported(
         return Update::none();
     };
     if let Some(client) = ctx.state.current().session_client.as_ref() {
-        client.report_pane_slots(pane_id, generation, slots);
+        client.report_pane_slots(
+            pane_id,
+            generation,
+            crate::pane_lifecycle::pane_is_local(&ctx.state, pane_id),
+            slots,
+        );
     }
     Update::none()
 }
@@ -122,6 +127,7 @@ mod tests {
                 message,
                 ClientOutbound::Control(ClientMessage::ReportPaneSlots {
                     pane_id: 1,
+            local: false,
                     generation: 4,
                     slots,
                 }) if slots.len() == 1 && slots[0].id == "a"

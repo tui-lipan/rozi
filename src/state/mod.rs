@@ -42,9 +42,15 @@ pub use workspace::*;
 
 pub type PaneId = u32;
 
-/// Reserved id for the scratchpad pane. Workspace panes start at 1 (see `State::new`), so 0
-/// can never collide with an allocated `next_pane_id`.
-pub const SCRATCH_PANE_ID: PaneId = 0;
+/// Which workspace a layout edit applies to. The scratchpad is a client-local workspace laid out
+/// in the dropdown rect rather than an entry in the attachment's workspace list, so it cannot be
+/// named by index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutTarget {
+    Scratch,
+    Workspace(usize),
+}
+
 pub const POPUP_PANE_ID: PaneId = u32::MAX;
 pub const WORKBAR_HEIGHT: u16 = 1;
 pub const TILE_GAP: f32 = 1.0;
@@ -153,7 +159,9 @@ pub struct State {
     pub copy_feedback_target: Option<(AttachmentId, PaneId)>,
     pub copy_feedback_epoch: u64,
     pub hint_mode: Option<HintModeState>,
-    pub scratch: Option<Pane>,
+    /// Client-local workspace rendered in the dropdown. It is deliberately outside every
+    /// attachment, so profiles and shared-layout commits cannot serialize it.
+    pub scratch: Workspace,
     pub scratch_visible: bool,
     /// Focus to restore when the scratchpad is hidden again.
     pub scratch_return_focus: Option<PaneId>,
@@ -194,18 +202,20 @@ pub struct State {
     /// `new-pane` / `popup` can answer with the real pane id after the session is up.
     pub pending_control_reply: Option<std::sync::mpsc::Sender<crate::control::ControlResponse>>,
     /// Control-socket `new-pane` replies held until the pane's PTY actually reports ready, so the
-    /// answer states readiness instead of mere acceptance. Keyed by `(epoch, pane id, generation)`:
-    /// the single [`Self::pending_control_reply`] slot cannot hold two concurrent spawns, and the
-    /// epoch keeps a parked attachment's spawn from colliding with a fresh one that restarts pane
-    /// ids and generations from the same counters. Entries are resolved by the spawn result or by
-    /// [`crate::Msg::SpawnReplyDeadline`], whichever lands first.
+    /// answer states readiness instead of mere acceptance. Keyed by
+    /// `(epoch, local, pane id, generation)` so a client-local pane and a shared pane that share a
+    /// numeric id cannot steal each other's reply. The epoch keeps a parked attachment's spawn from
+    /// colliding with a fresh one that restarts pane ids and generations from the same counters.
+    /// Entries are resolved by the spawn result or by [`crate::Msg::SpawnReplyDeadline`], whichever
+    /// lands first.
     pub pending_spawn_replies:
-        HashMap<(u64, PaneId, u64), std::sync::mpsc::Sender<crate::control::ControlResponse>>,
+        HashMap<(u64, bool, PaneId, u64), std::sync::mpsc::Sender<crate::control::ControlResponse>>,
     /// Control-socket input (`send-text` / `send-keys`) accepted for a pane whose PTY is still
-    /// starting, flushed as type-ahead once it is ready. Keyed by `(pane id, generation)`, matching
-    /// [`crate::state::Attachment::pending_replay_inputs`], which it always flushes behind so a
-    /// restored pane runs its own command first.
-    pub pending_control_input: HashMap<(PaneId, u64), Vec<u8>>,
+    /// starting, flushed as type-ahead once it is ready. Keyed by `(local, pane id, generation)` so
+    /// a client-local pane and a shared pane that share a numeric id cannot steal each other's
+    /// queued input. Matches [`crate::state::Attachment::pending_replay_inputs`] for the shared
+    /// namespace, which it always flushes behind so a restored pane runs its own command first.
+    pub pending_control_input: HashMap<(bool, PaneId, u64), Vec<u8>>,
     /// Known remote hosts for the unified Sessions view: configured aliases, recent ad-hoc targets,
     /// and hosts a live attachment targets. Seeded when the Sessions view opens; carries the
     /// per-host expand/collapse and error state that must survive the recurring session sweep.
@@ -326,7 +336,7 @@ impl State {
             copy_feedback_target: None,
             copy_feedback_epoch: 0,
             hint_mode: None,
-            scratch: None,
+            scratch: Workspace::new(0),
             scratch_visible: false,
             scratch_return_focus: None,
             scratch_height: None,
@@ -363,7 +373,7 @@ impl State {
 
     /// Whether this client is currently attending `pane_id` in its active attachment.
     pub fn is_pane_attended(&self, pane_id: PaneId) -> bool {
-        self.window_focused && self.current().focused_pane == Some(pane_id)
+        self.window_focused && self.focused_pane() == Some(pane_id)
     }
 
     /// The current session's name, but only while it is a *local* session.
@@ -539,8 +549,8 @@ impl State {
 
     /// Whether a pane's contents reach the screen on the next frame.
     ///
-    /// `view::render` only builds panes from the active workspace, plus the scratchpad and popup
-    /// (which live outside the workspace lists). Output for anything else — a build running on
+    /// `view::render` only builds panes from the active workspace, plus the scratch workspace and
+    /// popup (which live outside the attachment workspace lists). Output for anything else — a build running on
     /// another workspace — changes state that nothing currently draws, so the frame it would cost
     /// is pure waste. Skipping the frame never loses content: the snapshot is still updated in
     /// place, and whatever makes the pane visible (workspace switch, scratchpad toggle) renders
@@ -549,7 +559,7 @@ impl State {
     /// Deliberately conservative — the scratchpad counts as rendered even while hidden, because it
     /// animates in and out and a stale frame there is worse than a redundant one.
     pub fn pane_is_rendered(&self, id: PaneId) -> bool {
-        if self.scratch.as_ref().is_some_and(|pane| pane.id == id)
+        if self.scratch.panes.iter().any(|pane| pane.id == id)
             || self.popup.as_ref().is_some_and(|pane| pane.id == id)
         {
             return true;
@@ -564,12 +574,86 @@ impl State {
     /// The active workspace of the current attachment. Single-borrow accessors so callers avoid the
     /// `workspaces[active_workspace]` double index.
     pub fn active_workspace_ref(&self) -> &Workspace {
-        self.current().active_workspace_ref()
+        if self.scratch_visible {
+            &self.scratch
+        } else {
+            self.current().active_workspace_ref()
+        }
     }
 
     /// Mutable [active workspace](Self::active_workspace_ref).
     pub fn active_workspace_mut(&mut self) -> &mut Workspace {
-        self.current_mut().active_workspace_mut()
+        if self.scratch_visible {
+            &mut self.scratch
+        } else {
+            self.current_mut().active_workspace_mut()
+        }
+    }
+
+    pub fn focused_pane(&self) -> Option<PaneId> {
+        if self.scratch_visible {
+            self.scratch.focused_pane
+        } else {
+            self.current().focused_pane
+        }
+    }
+
+    /// Record the focused pane in whichever workspace is currently active.
+    pub fn set_focused_pane(&mut self, id: Option<PaneId>) {
+        if self.scratch_visible {
+            self.scratch.focused_pane = id;
+        } else {
+            self.current_mut().focused_pane = id;
+        }
+    }
+
+    /// Which workspace layout edits apply to right now. A pointer gesture records this at its
+    /// start so a mid-gesture scratchpad toggle cannot redirect it onto the other workspace.
+    pub fn layout_target(&self) -> LayoutTarget {
+        if self.scratch_visible {
+            LayoutTarget::Scratch
+        } else {
+            LayoutTarget::Workspace(self.current().active_workspace)
+        }
+    }
+
+    pub fn workspace_for(&self, target: LayoutTarget) -> &Workspace {
+        match target {
+            LayoutTarget::Scratch => &self.scratch,
+            LayoutTarget::Workspace(index) => &self.current().workspaces[index],
+        }
+    }
+
+    pub fn workspace_for_mut(&mut self, target: LayoutTarget) -> &mut Workspace {
+        match target {
+            LayoutTarget::Scratch => &mut self.scratch,
+            LayoutTarget::Workspace(index) => &mut self.current_mut().workspaces[index],
+        }
+    }
+
+    /// Canvas-space rect the active workspace tiles inside: the scratchpad's deployed dropdown rect
+    /// while it is up, otherwise the whole pane canvas. Every layout computation - placement,
+    /// split resize, float clamping, drop targeting - reads its extent from here, which is what
+    /// makes the scratchpad an ordinary workspace laid out in a smaller box.
+    ///
+    /// The *deployed* rect deliberately, not the sliding one: layout math must not follow the
+    /// slide, or a drag started mid-animation would compute against a rect that is still moving.
+    pub fn layout_bounds(&self, viewport: Rect) -> FloatRect {
+        if self.scratch_visible {
+            crate::scratchpad::deployed_rect(self, viewport)
+        } else {
+            self.canvas_bounds_from_terminal_viewport(viewport)
+        }
+    }
+
+    /// Workbar inset for [`Self::layout_bounds`]. Zero for the scratchpad: its rect already sits
+    /// inside the tile area, so insetting again would double the gap.
+    pub fn layout_top_gap(&self) -> f32 {
+        if self.scratch_visible {
+            0.0
+        } else {
+            self.workspace_top_gap()
+        }
     }
 
     /// Whether this client may mutate the shared layout: always true when purely local (no shared
@@ -584,7 +668,15 @@ impl State {
     }
 
     pub fn pane_input_block_reason(&self) -> Option<&'static str> {
-        self.current().pane_input_block_reason()
+        if self.scratch_visible {
+            self.current()
+                .shared
+                .as_ref()
+                .filter(|shared| shared.read_only)
+                .map(|_| "Attached read-only")
+        } else {
+            self.current().pane_input_block_reason()
+        }
     }
 
     /// The canonical pane canvas the controller publishes, if this client is a follower that
@@ -765,12 +857,29 @@ mod render_visibility_tests {
             w: 80.0,
             h: 24.0,
         };
-        state.scratch = Some(Pane::new(7, 100, rect));
+        state.scratch.panes.push(Pane::new(7, 100, rect));
         state.popup = Some(Pane::new(8, 100, rect));
         // Both animate in and out, so they count as rendered even while hidden: a stale frame
         // there is worse than a redundant one.
         assert!(state.pane_is_rendered(7));
         assert!(state.pane_is_rendered(8));
+    }
+
+    #[test]
+    fn visible_scratch_workspace_does_not_replace_attachment_workspace_state() {
+        let mut state = state_with_two_workspaces();
+        state
+            .scratch
+            .panes
+            .push(Pane::new(7, 100, FloatRect::default()));
+        state.scratch.focused_pane = Some(7);
+        state.scratch_visible = true;
+
+        assert_eq!(state.active_workspace_ref().focused_pane, Some(7));
+        assert_eq!(state.focused_pane(), Some(7));
+        assert_eq!(state.current().active_workspace, 0);
+        assert_eq!(state.current().focused_pane, Some(1));
+        assert_eq!(state.current().workspaces[0].panes[0].id, 1);
     }
 
     #[test]

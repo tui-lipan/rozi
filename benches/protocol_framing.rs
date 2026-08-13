@@ -14,8 +14,8 @@ fn protocol_framing(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &payload, |b, payload| {
             b.iter(|| {
-                let mut encoded = Vec::with_capacity(payload.len() + 17);
-                write_pane_output_frame(&mut encoded, 41, 9, black_box(payload)).unwrap();
+                let mut encoded = Vec::with_capacity(payload.len() + 18);
+                write_pane_output_frame(&mut encoded, 41, 9, false, black_box(payload)).unwrap();
                 let frame: Frame<ServerMessage> = decode_one(Cursor::new(encoded));
                 black_box(frame)
             });

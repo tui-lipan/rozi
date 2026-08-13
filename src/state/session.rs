@@ -207,8 +207,8 @@ pub struct SharedSessionState {
     /// Pane output that arrived before the pane's `LayoutCommitted` created it locally, keyed by
     /// `(pane_id, generation)`; drained into the pane once the reconciler adds it.
     orphan_output: OrphanOutputStore,
-    /// Latest pending resize per pane while the controller debounces resize storms.
-    pub pending_resizes: HashMap<PaneId, (u16, u16)>,
+    /// Latest pending resize per `(local, pane)` while the controller debounces resize storms.
+    pub pending_resizes: HashMap<(bool, PaneId), (u16, u16)>,
     /// Whether a trailing-edge `Msg::FlushPaneResizes` is already in flight, so a burst of resizes
     /// schedules only one flush timer.
     pub resize_flush_scheduled: bool,
@@ -275,6 +275,7 @@ impl SharedSessionState {
 #[derive(Clone, Debug)]
 pub struct PendingPaneSpawn {
     pub pane_id: PaneId,
+    pub local: bool,
     pub generation: u64,
     pub command: Option<String>,
     pub cwd: Option<String>,

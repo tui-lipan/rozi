@@ -6,7 +6,9 @@ use super::attach::{
 };
 use crate::AppRoot;
 use crate::anim::GeometryAnimation;
-use crate::pane_lifecycle::{find_pane, find_pane_mut, remove_pane_after_exit};
+use crate::pane_lifecycle::{
+    find_pane_in_namespace, find_pane_in_namespace_mut, remove_pane_after_exit,
+};
 use crate::pty_events::{maybe_notify_pane_exit, maybe_notify_pane_status};
 use crate::session::client::SessionClient;
 use crate::session::protocol::{ClientInfo, ControllerChangeReason, PaneMeta, PaneRuntimeState};
@@ -600,10 +602,16 @@ pub(super) fn output(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
+    local: bool,
     generation: u64,
     bytes: Vec<u8>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        // Local panes are current-view overlays; they are torn down on session switch and never
+        // live in a parked attachment.
+        if local {
+            return Update::none();
+        }
         // A retained background attachment: keep its screens live so switching back is instant, but
         // never draw them (nothing background is on screen).
         if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
@@ -622,7 +630,7 @@ pub(super) fn output(
     let mut chrome_changed = false;
     let mut bell_fired = false;
     let mut bell_alert_raised = false;
-    let matched = match find_pane_mut(&mut ctx.state, pane_id) {
+    let matched = match find_pane_in_namespace_mut(&mut ctx.state, pane_id, local) {
         Some(pane) if pane.pty_generation == generation => {
             chrome_changed |= matches!(
                 pane.terminal.process_server_output(&bytes),
@@ -648,7 +656,8 @@ pub(super) fn output(
         // Output arrived before the layout commit that introduces this pane (or its new generation).
         // Buffer it so the reconciler can replay it when the pane appears; dropping it would leave
         // a follower's fresh pane blank until the next redraw. Nothing draws it yet, so no frame.
-        if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
+        // Local output never joins that shared-layout race: the owner created the pane itself.
+        if !local && let Some(shared) = ctx.state.current_mut().shared.as_mut() {
             shared.buffer_orphan_output(pane_id, generation, &bytes);
         }
         return Update::none();
@@ -702,11 +711,15 @@ pub(super) fn resized(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
+    local: bool,
     generation: u64,
     cols: u16,
     rows: u16,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if local {
+            return Update::none();
+        }
         // Keep a retained background attachment's screen at the server's size for an instant, correct
         // switch-back.
         if let Some(pane) = ctx
@@ -720,7 +733,7 @@ pub(super) fn resized(
         }
         return Update::none();
     }
-    if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
+    if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
         && pane.pty_generation == generation
         && pane.terminal.apply_server_resize(cols, rows)
         && ctx.state.pane_is_rendered(pane_id)
@@ -734,10 +747,14 @@ pub(super) fn exited(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
+    local: bool,
     generation: u64,
     code: i32,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if local {
+            return Update::none();
+        }
         let hold_on_exit = ctx.state.config.pane.hold_on_exit;
         if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
             let should_defer = attachment
@@ -745,7 +762,7 @@ pub(super) fn exited(
                 .filter(|pane| pane.pty_generation == generation)
                 .map(|pane| {
                     pane.terminal.status = ManagedTerminalStatus::Exited(code);
-                    !should_hold_on_exit(hold_on_exit, pane_id, pane.closing)
+                    !should_hold_on_exit(hold_on_exit, pane.closing)
                 })
                 .unwrap_or(false);
             if should_defer
@@ -761,7 +778,7 @@ pub(super) fn exited(
         return Update::none();
     }
     let hold_on_exit = ctx.state.config.pane.hold_on_exit;
-    let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) else {
+    let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local) else {
         // A pane closed by the app has already been removed; its later server exit frame is stale.
         return Update::none();
     };
@@ -770,7 +787,7 @@ pub(super) fn exited(
     }
     pane.terminal.status = ManagedTerminalStatus::Exited(code);
     let already_closing = pane.closing;
-    let should_close = !should_hold_on_exit(hold_on_exit, pane_id, already_closing);
+    let should_close = local || !should_hold_on_exit(hold_on_exit, already_closing);
     crate::events::emit(
         &ctx.state,
         crate::events::Event::new(
@@ -792,12 +809,13 @@ pub(super) fn exited(
         return Update::full();
     }
     // The scratchpad is a local overlay (never in the shared layout), so every client that owns it
-    // closes it directly.
-    if pane_id == crate::state::POPUP_PANE_ID {
+    // closes it directly. Shared exits never consult overlay membership: a colliding numeric id
+    // must not close the owner's scratch or popup.
+    if local && pane_id == crate::state::POPUP_PANE_ID {
         return crate::popup::handle_exit(ctx);
     }
-    if crate::scratchpad::is_scratch(pane_id) {
-        return crate::scratchpad::handle_scratch_exit(ctx);
+    if local && crate::scratchpad::contains(&ctx.state, pane_id) {
+        return remove_pane_after_exit(ctx, pane_id, true);
     }
     // Closing a tiled/floating pane is a structural layout change: only the controller acts on the
     // exit and commits the new layout; followers close it when that commit arrives.
@@ -817,7 +835,7 @@ pub(super) fn exited(
     if code != 0 {
         crate::pty_events::notify_info(ctx, format!("Pane {pane_id} exited ({code})"));
     }
-    remove_pane_after_exit(ctx, pane_id)
+    remove_pane_after_exit(ctx, pane_id, false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -825,6 +843,7 @@ pub(super) fn pane_logging_changed(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
+    local: bool,
     generation: u64,
     enabled: bool,
     path: Option<String>,
@@ -833,7 +852,7 @@ pub(super) fn pane_logging_changed(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
+    if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
         && pane.pty_generation == generation
     {
         pane.logging = enabled;
@@ -920,10 +939,14 @@ pub(super) fn pane_runtime_changed(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
+    local: bool,
     generation: u64,
     state: PaneRuntimeState,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if local {
+            return Update::none();
+        }
         let at_prompt = matches!(
             state.command_phase,
             crate::session::protocol::PaneCommandPhase::Prompt
@@ -973,7 +996,7 @@ pub(super) fn pane_runtime_changed(
     let mut title = None;
     let mut reported_status = None;
     let mut finished_slots = Vec::new();
-    if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
+    if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
         && pane.pty_generation == generation
         && state.sequence > pane.terminal.runtime_sequence
     {
@@ -1059,7 +1082,7 @@ pub(super) fn pane_runtime_changed(
     if !finished_slots.is_empty()
         && let Some(title) = title.clone()
     {
-        let background = find_pane(&ctx.state, pane_id).is_some_and(|pane| {
+        let background = find_pane_in_namespace(&ctx.state, pane_id, local).is_some_and(|pane| {
             finished_slots.iter().any(|id| {
                 pane.terminal
                     .slots
@@ -1169,11 +1192,14 @@ pub(super) fn spawn_reply_deadline(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
+    local: bool,
     generation: u64,
 ) -> Update {
     let ready = if epoch == ctx.state.runtime_epoch {
-        find_pane(&ctx.state, pane_id)
+        find_pane_in_namespace(&ctx.state, pane_id, local)
             .is_some_and(|pane| pane.pty_generation == generation && pane.terminal.is_ready())
+    } else if local {
+        false
     } else {
         ctx.state
             .background
@@ -1185,6 +1211,7 @@ pub(super) fn spawn_reply_deadline(
         &mut ctx.state,
         epoch,
         pane_id,
+        local,
         generation,
         ready,
         None,
@@ -1195,19 +1222,26 @@ pub(super) fn spawn_reply_deadline(
 /// Write the type-ahead a control `send-text` / `send-keys` accepted while this pane's PTY was
 /// still starting (see [`crate::state::State::pending_control_input`]). Always runs behind
 /// [`flush_replay_input`] so a restored pane's own command reaches the shell first.
-fn flush_pending_control_input(ctx: &mut Context<AppRoot>, pane_id: PaneId, generation: u64) {
+fn flush_pending_control_input(
+    ctx: &mut Context<AppRoot>,
+    pane_id: PaneId,
+    generation: u64,
+    local: bool,
+) {
     let Some(bytes) = ctx
         .state
         .pending_control_input
-        .remove(&(pane_id, generation))
+        .remove(&(local, pane_id, generation))
     else {
         return;
     };
-    if find_pane(&ctx.state, pane_id).is_none_or(|pane| pane.pty_generation != generation) {
+    if find_pane_in_namespace(&ctx.state, pane_id, local)
+        .is_none_or(|pane| pane.pty_generation != generation)
+    {
         return;
     }
     if let Some(client) = ctx.state.current().session_client.clone() {
-        client.send_input(pane_id, generation, bytes);
+        client.send_input(pane_id, generation, local, bytes);
     }
 }
 
@@ -1225,14 +1259,15 @@ fn flush_replay_input(ctx: &mut Context<AppRoot>, pane_id: PaneId, generation: u
     else {
         return;
     };
-    if find_pane(&ctx.state, pane_id).is_some_and(|pane| pane.pty_generation == generation)
+    if find_pane_in_namespace(&ctx.state, pane_id, false)
+        .is_some_and(|pane| pane.pty_generation == generation)
         && let Some(client) = ctx.state.current().session_client.clone()
     {
         let mut bytes = input.into_bytes();
         bytes.push(b'\r');
-        client.send_input(pane_id, generation, bytes);
+        client.send_input(pane_id, generation, false, bytes);
     }
-    flush_pending_control_input(ctx, pane_id, generation);
+    flush_pending_control_input(ctx, pane_id, generation, false);
 }
 
 fn flush_attachment_replay_input(
@@ -1255,7 +1290,7 @@ fn flush_attachment_replay_input(
     if let Some(client) = attachment.session_client.as_ref() {
         let mut bytes = input.into_bytes();
         bytes.push(b'\r');
-        client.send_input(pane_id, generation, bytes);
+        client.send_input(pane_id, generation, false, bytes);
     }
 }
 
@@ -1264,12 +1299,16 @@ pub(super) fn spawn_result(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
+    local: bool,
     generation: u64,
     pid: Option<u32>,
     ok: bool,
     error: Option<String>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if local {
+            return Update::none();
+        }
         let Some(attachment) = ctx.state.background.get_mut(&epoch) else {
             return Update::none();
         };
@@ -1308,6 +1347,7 @@ pub(super) fn spawn_result(
             &mut ctx.state,
             epoch,
             pane_id,
+            local,
             generation,
             ok,
             error.as_deref(),
@@ -1321,7 +1361,7 @@ pub(super) fn spawn_result(
     let mut should_close = false;
     let mut toast_error = None;
     let mut spawned_live = false;
-    if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) {
+    if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local) {
         if pane.pty_generation != generation {
             return Update::none();
         }
@@ -1343,7 +1383,7 @@ pub(super) fn spawn_result(
             toast_error = Some(message);
             // Only the controller structurally removes the failed pane; followers wait for the
             // resulting layout commit.
-            should_close = is_controller;
+            should_close = local || is_controller;
         }
     } else if let Some(error) = error {
         toast_error = Some(error);
@@ -1375,6 +1415,7 @@ pub(super) fn spawn_result(
         &mut ctx.state,
         epoch,
         pane_id,
+        local,
         generation,
         spawned_live,
         toast_error.as_deref(),
@@ -1384,11 +1425,11 @@ pub(super) fn spawn_result(
     // spawn drops it: nothing will ever read those bytes.
     if replay_deadline.is_none() {
         if spawned_live {
-            flush_pending_control_input(ctx, pane_id, generation);
+            flush_pending_control_input(ctx, pane_id, generation, local);
         } else {
             ctx.state
                 .pending_control_input
-                .remove(&(pane_id, generation));
+                .remove(&(local, pane_id, generation));
         }
     }
     ctx.state.commands_dirty = true;
@@ -1396,7 +1437,14 @@ pub(super) fn spawn_result(
         crate::pty_events::notify_error(ctx, "Spawn failed", error);
     }
     if should_close {
-        remove_pane_after_exit(ctx, pane_id)
+        // The popup lives outside every workspace, so the generic teardown cannot reach it: with a
+        // local namespace and no scratch membership it falls through and marks nothing, leaving a
+        // dead pane on screen. `exited` intercepts popups the same way. `close` rather than
+        // `handle_exit` - a spawn that never started has nothing for `keep_open` to keep.
+        if local && pane_id == crate::state::POPUP_PANE_ID {
+            return crate::popup::close(ctx);
+        }
+        remove_pane_after_exit(ctx, pane_id, local)
     } else if let Some(command) = replay_deadline {
         Update::with_command(command)
     } else {
@@ -1477,8 +1525,8 @@ pub(super) fn renamed(ctx: &mut Context<AppRoot>, epoch: u64, session: String) -
 
 /// A pane the user already closed is expected to exit, so `hold_on_exit` must not keep its shell
 /// around and the exit must not be surfaced.
-fn should_hold_on_exit(hold_on_exit: bool, pane_id: PaneId, closing: bool) -> bool {
-    hold_on_exit && !crate::scratchpad::is_scratch(pane_id) && !closing
+fn should_hold_on_exit(hold_on_exit: bool, closing: bool) -> bool {
+    hold_on_exit && !closing
 }
 
 fn controller_change_reason_id(reason: ControllerChangeReason) -> &'static str {
@@ -1622,6 +1670,7 @@ mod tests {
                     .update_level(Msg::SessionOutput {
                         epoch,
                         pane_id: target,
+                        local: false,
                         generation,
                         bytes: b"live needle\r\n".to_vec(),
                     })
@@ -1723,6 +1772,7 @@ mod tests {
                     .update_level(Msg::SessionOutput {
                         epoch,
                         pane_id: target,
+                        local: false,
                         generation,
                         bytes: b"post-completion\r\n".to_vec(),
                     })
@@ -1765,6 +1815,7 @@ mod tests {
                     .update_level(Msg::SessionOutput {
                         epoch,
                         pane_id,
+                        local: false,
                         generation,
                         bytes: vec![7],
                     })
@@ -1775,6 +1826,7 @@ mod tests {
                     .update_level(Msg::SessionOutput {
                         epoch,
                         pane_id,
+                        local: false,
                         generation,
                         bytes: vec![7],
                     })
@@ -1817,6 +1869,7 @@ mod tests {
                     .dispatch(Msg::SessionOutput {
                         epoch,
                         pane_id,
+                        local: false,
                         generation,
                         bytes: vec![7],
                     })
@@ -1874,6 +1927,7 @@ mod tests {
                     .dispatch(Msg::SessionPaneRuntimeChanged {
                         epoch,
                         pane_id,
+                        local: false,
                         generation,
                         state: PaneRuntimeState {
                             sequence: 1,
@@ -2133,16 +2187,11 @@ mod tests {
     }
 
     #[test]
-    fn hold_on_exit_excludes_disabled_and_scratch_panes() {
-        assert!(should_hold_on_exit(true, 1, false));
-        assert!(!should_hold_on_exit(false, 1, false));
-        assert!(!should_hold_on_exit(
-            true,
-            crate::state::SCRATCH_PANE_ID,
-            false
-        ));
+    fn hold_on_exit_excludes_disabled_and_closing_panes() {
+        assert!(should_hold_on_exit(true, false));
+        assert!(!should_hold_on_exit(false, false));
         assert!(
-            !should_hold_on_exit(true, 1, true),
+            !should_hold_on_exit(true, true),
             "a pane the user closed must not hold, or its own close would keep it alive"
         );
     }
@@ -2168,6 +2217,7 @@ mod tests {
                     .dispatch(Msg::SessionExited {
                         epoch: 9,
                         pane_id: 4,
+                        local: false,
                         generation: 7,
                         code: 0,
                     })
@@ -2250,6 +2300,7 @@ mod tests {
                     .dispatch(Msg::SessionPaneRuntimeChanged {
                         epoch,
                         pane_id: 1,
+                        local: false,
                         generation: 7,
                         state: runtime.clone(),
                     })
@@ -2274,6 +2325,7 @@ mod tests {
                     .dispatch(Msg::SessionPaneRuntimeChanged {
                         epoch,
                         pane_id: 1,
+                        local: false,
                         generation: 7,
                         state: runtime,
                     })
@@ -2284,6 +2336,7 @@ mod tests {
                     .dispatch(Msg::SessionPaneRuntimeChanged {
                         epoch,
                         pane_id: 1,
+                        local: false,
                         generation: 7,
                         state: PaneRuntimeState {
                             status: None,
@@ -2331,6 +2384,7 @@ mod tests {
                     .dispatch(Msg::SessionPaneRuntimeChanged {
                         epoch: 4,
                         pane_id: 1,
+                        local: false,
                         generation: 7,
                         state: PaneRuntimeState {
                             cwd: Some("/remote/project".to_string()),
@@ -2715,5 +2769,210 @@ mod tests {
             .expect("spawn test thread")
             .join()
             .expect("test thread panicked");
+    }
+
+    fn colliding_namespace_backend() -> TestBackend<crate::AppRoot> {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let rect = tui_lipan::prelude::FloatRect::default();
+        let mut shared = crate::state::Pane::new(7, 100, rect);
+        shared.pty_generation = 1;
+        shared.terminal.bind_session(7, 1);
+        backend.state_mut().current_mut().workspaces[0]
+            .panes
+            .push(shared);
+        let mut local = crate::state::Pane::new(7, 100, rect);
+        local.pty_generation = 1;
+        local.terminal.bind_session(7, 1);
+        backend.state_mut().scratch.panes.push(local);
+        backend.state_mut().scratch.focused_pane = Some(7);
+        backend.state_mut().scratch_visible = true;
+        backend
+    }
+
+    fn namespace_text(backend: &TestBackend<crate::AppRoot>, local: bool) -> String {
+        crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, local)
+            .expect("namespaced pane")
+            .terminal
+            .capture_text()
+    }
+
+    #[test]
+    fn colliding_pane_ids_route_session_events_by_namespace() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = colliding_namespace_backend();
+                let epoch = backend.state().runtime_epoch;
+
+                backend
+                    .dispatch(Msg::SessionOutput {
+                        epoch,
+                        pane_id: 7,
+                        local: false,
+                        generation: 1,
+                        bytes: b"shared-out\r\n".to_vec(),
+                    })
+                    .expect("shared output");
+                backend
+                    .dispatch(Msg::SessionOutput {
+                        epoch,
+                        pane_id: 7,
+                        local: true,
+                        generation: 1,
+                        bytes: b"local-out\r\n".to_vec(),
+                    })
+                    .expect("local output");
+                assert!(
+                    namespace_text(&backend, false).contains("shared-out"),
+                    "shared output must land on the attachment pane"
+                );
+                assert!(
+                    !namespace_text(&backend, false).contains("local-out"),
+                    "local output must not land on the attachment pane"
+                );
+                assert!(
+                    namespace_text(&backend, true).contains("local-out"),
+                    "local output must land on the scratch pane"
+                );
+                assert!(
+                    !namespace_text(&backend, true).contains("shared-out"),
+                    "shared output must not land on the scratch pane"
+                );
+
+                backend
+                    .dispatch(Msg::SessionResized {
+                        epoch,
+                        pane_id: 7,
+                        local: false,
+                        generation: 1,
+                        cols: 40,
+                        rows: 12,
+                    })
+                    .expect("shared resize");
+                backend
+                    .dispatch(Msg::SessionResized {
+                        epoch,
+                        pane_id: 7,
+                        local: true,
+                        generation: 1,
+                        cols: 20,
+                        rows: 8,
+                    })
+                    .expect("local resize");
+                assert_eq!(
+                    crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, false)
+                        .unwrap()
+                        .terminal
+                        .cols,
+                    40
+                );
+                assert_eq!(
+                    crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                        .unwrap()
+                        .terminal
+                        .rows,
+                    8
+                );
+
+                backend.state_mut().config.pane.hold_on_exit = false;
+                backend
+                    .dispatch(Msg::SessionExited {
+                        epoch,
+                        pane_id: 7,
+                        local: false,
+                        generation: 1,
+                        code: 0,
+                    })
+                    .expect("shared exit");
+                assert!(
+                    crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, false)
+                        .is_some_and(|pane| pane.closing),
+                    "shared exit must close the attachment pane"
+                );
+                assert!(
+                    crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                        .is_some_and(|pane| !pane.closing),
+                    "shared exit must not close the scratch pane"
+                );
+
+                backend
+                    .dispatch(Msg::SessionExited {
+                        epoch,
+                        pane_id: 7,
+                        local: true,
+                        generation: 1,
+                        code: 0,
+                    })
+                    .expect("local exit");
+                assert!(
+                    crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                        .is_some_and(|pane| pane.closing),
+                    "local exit must close the scratch pane"
+                );
+            })
+            .expect("spawn colliding namespace test")
+            .join()
+            .expect("colliding namespace test completes");
+    }
+
+    /// A popup lives outside every workspace, so the generic teardown cannot find it: `local` with
+    /// no scratch membership falls straight through and marks nothing. Without an explicit
+    /// interception a failed popup spawn left a dead pane on screen for the rest of the session.
+    #[test]
+    fn a_failed_popup_spawn_tears_the_popup_down() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                let generation = {
+                    let state = backend.state_mut();
+                    let mut pane = crate::state::Pane::new(
+                        crate::state::POPUP_PANE_ID,
+                        100,
+                        tui_lipan::prelude::FloatRect::default(),
+                    );
+                    pane.opening = false;
+                    // A `keep_open` popup must still go: there is no process to keep open.
+                    pane.identity.keep_open = true;
+                    let generation = pane.pty_generation;
+                    state.popup = Some(pane);
+                    generation
+                };
+                backend.render();
+
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(Msg::SessionSpawnResult {
+                        epoch,
+                        pane_id: crate::state::POPUP_PANE_ID,
+                        local: true,
+                        generation,
+                        pid: None,
+                        ok: false,
+                        error: Some("no such command".to_string()),
+                    })
+                    .expect("failed popup spawn");
+
+                assert!(
+                    backend
+                        .state()
+                        .popup
+                        .as_ref()
+                        .is_some_and(|pane| pane.closing),
+                    "the popup must be marked closing so its prune can drop it"
+                );
+
+                backend
+                    .dispatch(Msg::PruneClosed(
+                        epoch,
+                        crate::state::POPUP_PANE_ID,
+                        generation,
+                    ))
+                    .expect("prune the closed popup");
+                assert!(backend.state().popup.is_none(), "the popup must be dropped");
+            })
+            .expect("spawn popup teardown test thread")
+            .join()
+            .expect("popup teardown test thread panicked");
     }
 }

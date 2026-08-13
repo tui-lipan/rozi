@@ -268,17 +268,21 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
             let pane_changed = pane.terminal.set_palette(palette);
             changed |= pane_changed;
             if pane_changed && let Some(client) = &client {
-                client.set_palette(pane.id, pane.pty_generation, palette);
+                client.set_palette(pane.id, pane.pty_generation, false, palette);
             }
         }
     }
-    if let Some(scratch) = state.scratch.as_mut() {
-        changed |= scratch
-            .terminal
-            .set_palette(TerminalColorPalette::from_theme(
-                theme,
-                pane_frame_background(theme, true, highlight_focused_background),
-            ));
+    for scratch in &mut state.scratch.panes {
+        let focused = state.scratch.focused_pane == Some(scratch.id);
+        let palette = TerminalColorPalette::from_theme(
+            theme,
+            pane_frame_background(theme, focused, highlight_focused_background),
+        );
+        let pane_changed = scratch.terminal.set_palette(palette);
+        changed |= pane_changed;
+        if pane_changed && let Some(client) = &client {
+            client.set_palette(scratch.id, scratch.pty_generation, true, palette);
+        }
     }
     changed
 }

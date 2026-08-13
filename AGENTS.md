@@ -346,18 +346,54 @@ printf '[session]\nstartup = "ephemeral"\n' > $S/config/rozi/config.toml
 env XDG_CONFIG_HOME=$S/config XDG_STATE_HOME=$S/state XDG_CACHE_HOME=$S/cache \
     XDG_RUNTIME_DIR=$S/run ROZI_CONFIG=$S/config/rozi/config.toml \
     TUI_LIPAN_SNAPSHOT=$S/out.png TUI_LIPAN_SNAPSHOT_VIEWPORTS=80x24,120x30 \
-    TUI_LIPAN_SNAPSHOT_FRAMES=8 TUI_LIPAN_SNAPSHOT_KEYS="ctrl+a" \
+    TUI_LIPAN_SNAPSHOT_SETTLE_MS=1800 \
+    TUI_LIPAN_SNAPSHOT_SCRIPT="key:ctrl+a; key:c; sleep:250" \
     TUI_LIPAN_SNAPSHOT_ADVANCE_MS=400 ./target/debug/rozi
 ```
+
+  **`TUI_LIPAN_SNAPSHOT_SETTLE_MS` is not optional here.** Panes are PTY-backed through the session
+  server, so without a real settle the capture is written before any pane has content *and before the
+  36 ms reveal timer clears `opening`* - which renders every pane at opacity 0. The result is a
+  plausible-looking image: workbar drawn, workspace tab showing a pane count, empty canvas. Nothing
+  warns you. Budget ~1.5-2 s for the server handshake and the shell's own startup.
+
+  Three kinds of waiting, and they are not interchangeable:
+
+  | Want | Use | Why |
+  | --- | --- | --- |
+  | The app up, PTYs live, prompts drawn | `SETTLE_MS` (real) | A virtual clock cannot make a subprocess answer |
+  | An animation or reveal timer to progress | `ADVANCE_MS` or script `wait:` (virtual) | Instant and deterministic |
+  | A pane spawned *by the script* to come up | script `sleep:` (real) | `SETTLE_MS` runs before the script only |
+
+  To catch an animation mid-flight, end the script with `sleep:` (let the new pane's PTY start) then
+  `wait:` a partial duration. A trailing `ADVANCE_MS` runs last and finishes whatever is still moving,
+  so use it for the settled shot, not the mid-flight one.
 
   Keep `$S` short. The control socket is a Unix socket, so a long scratch path exceeds `SUN_LEN`
   and the session comes up without one, which shows as a `Control socket unavailable` toast across
   the capture.
 
   Run the built binary, not `cargo snap`: redirecting `XDG_*` also redirects mise's trust store and
-  the wrapper refuses to start. `TUI_LIPAN_SNAPSHOT_ADVANCE_MS` settles anything gated on elapsed
-  time - without it the frames render back to back with no wall clock and the which-key strip never
-  passes its reveal delay.
+  the wrapper refuses to start. That same redirection makes `mise ERROR ... are not trusted` appear
+  in the captured pane content - it is the capture's own sandbox talking, not a bug in what you are
+  looking at.
+
+  **Rebuild before every capture.** Any `cargo test` / `cargo build` / `cargo clippy` in between
+  replaces `./target/debug/rozi` with a binary lacking `ui-snapshot`, after which a `.png` path
+  silently receives markdown instead.
+
+  **When a capture looks wrong, get the widget tree before theorising:**
+
+```bash
+env ... TUI_LIPAN_SNAPSHOT=$S/tree.md TUI_LIPAN_SNAPSHOT_DIAGNOSTIC=1 ./target/debug/rozi
+```
+
+  A pane listed at a sensible rect (`Animated key=rozi-pane-<id>-<gen> @ (3,3) 54x13`) with nothing
+  drawn means it is present and *invisible*, not missing - so the cause is time, not geometry. The
+  dump does not report opacity, which is exactly the attribute that goes wrong here, so a healthy rect
+  is not evidence that rendering works. Confirming trick: capture with `[animations] enabled = false`
+  and `pane_style = "slide"`, which forces opacity 1 and zero offset; if the pane appears, the
+  geometry was never the problem.
 - Benchmarks are local performance evidence, not timing tests: `cargo check --all-targets` compiles
   them, while `cargo bench` runs them on a stable, idle machine. Keep corpora deterministic and
   generated; never add captured terminal output. See `docs/benchmarks.md`.

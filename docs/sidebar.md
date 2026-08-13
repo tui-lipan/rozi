@@ -315,6 +315,13 @@ focused pane's command finishes rather than on a timer, so a build, commit, or c
 tab immediately while reading it costs nothing. Change markers are text rather than Nerd Font
 glyphs, and icons are off by default, so neither tab assumes a patched font.
 
+Each tab remembers which directories you expanded. The tree itself is rebuilt whenever its root
+changes — focusing a pane in another directory, switching tabs, hiding the sidebar — and the tab
+seeds the new one with what was open, so moving between panes and back returns to the shape you left
+rather than a collapsed root. Collapsing is remembered the same way, and what was expanded *inside* a
+collapsed directory is kept, so reopening it restores the whole branch. Paths are remembered per tab
+and only for as long as the client runs; expansion is not written to disk.
+
 The tree scrolls internally and is not part of the sidebar's own scroll view. Clicking a directory
 expands or collapses it. Clicking a file runs the tab's `on_click`, which defaults to typing the
 path at the focused pane's prompt without a newline — so a click inserts the path and nothing runs

@@ -275,6 +275,145 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
         .expect("scrollbar smoke completes");
 }
 
+/// Expansion belongs to the tab, not to the widget instance. The tree keys on its root, so a pane
+/// in another directory tears it down and rebuilds it from nothing; without the tab remembering
+/// what was open, coming back would land on a collapsed tree every time.
+#[test]
+fn expanded_directories_survive_the_tree_re_rooting() {
+    let Some(repo) = Repo::new("expansion") else {
+        eprintln!("skipping: git is unavailable");
+        return;
+    };
+    std::fs::create_dir_all(repo.0.join("src/inner")).expect("nested dir");
+    std::fs::write(repo.0.join("src/inner/leaf.rs"), "// leaf\n").expect("nested file");
+    let elsewhere = repo.0.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("second root");
+
+    let cwd = repo.0.to_string_lossy().into_owned();
+    let other = elsewhere.to_string_lossy().into_owned();
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 90,
+                h: 24,
+            });
+            let pane = {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.sidebar.width = 34;
+                let tab = SidebarTab::Tree {
+                    view: SidebarTreeView::Files,
+                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+                };
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
+                state.config.sidebar.tabs = vec![tab];
+                let pane = state.current().workspaces[0].panes[0].id;
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+                pane
+            };
+            let settle = |backend: &mut TestBackend<AppRoot>| {
+                for _ in 0..40 {
+                    backend.render();
+                    let _ = backend.pump();
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
+                backend.render();
+            };
+            let rows = |backend: &TestBackend<AppRoot>| -> Vec<String> {
+                backend
+                    .capture_frame()
+                    .to_fixed_grid_lines()
+                    .iter()
+                    .map(|line| line.chars().take(34).collect())
+                    .collect()
+            };
+            settle(&mut backend);
+
+            let src_row = (3u16..16)
+                .find(|&row| rows(&backend)[row as usize].contains("src"))
+                .expect("src directory row is visible");
+            for kind in [
+                MouseKind::Down(MouseButton::Left),
+                MouseKind::Up(MouseButton::Left),
+            ] {
+                let _ = backend.send_mouse(MouseEvent {
+                    x: 5,
+                    y: src_row,
+                    kind,
+                    mods: Default::default(),
+                });
+            }
+            settle(&mut backend);
+            assert!(
+                rows(&backend).iter().any(|line| line.contains("inner")),
+                "the directory starts out expanded: {:?}",
+                rows(&backend)
+            );
+
+            // Re-root the tab the way focusing a pane in another directory does.
+            let reroot = |backend: &mut TestBackend<AppRoot>, path: &str| {
+                backend.state_mut().current_mut().workspaces[0].panes[0]
+                    .terminal
+                    .cwd = Some(path.to_string());
+                backend
+                    .dispatch(Msg::FocusPane(pane))
+                    .expect("refocus the pane");
+            };
+            reroot(&mut backend, &other);
+            settle(&mut backend);
+            assert!(
+                !rows(&backend).iter().any(|line| line.contains("inner")),
+                "the other directory has a tree of its own: {:?}",
+                rows(&backend)
+            );
+
+            reroot(&mut backend, &repo.0.to_string_lossy());
+            settle(&mut backend);
+            assert!(
+                rows(&backend).iter().any(|line| line.contains("inner")),
+                "coming back restores the expanded directory: {:?}",
+                rows(&backend)
+            );
+
+            // Collapsing is remembered too, or the memory would be a one-way ratchet.
+            let src_row = (3u16..16)
+                .find(|&row| rows(&backend)[row as usize].contains("src"))
+                .expect("src row visible again");
+            for kind in [
+                MouseKind::Down(MouseButton::Left),
+                MouseKind::Up(MouseButton::Left),
+            ] {
+                let _ = backend.send_mouse(MouseEvent {
+                    x: 5,
+                    y: src_row,
+                    kind,
+                    mods: Default::default(),
+                });
+            }
+            settle(&mut backend);
+            reroot(&mut backend, &other);
+            settle(&mut backend);
+            reroot(&mut backend, &repo.0.to_string_lossy());
+            settle(&mut backend);
+            assert!(
+                !rows(&backend).iter().any(|line| line.contains("inner")),
+                "a collapsed directory stays collapsed: {:?}",
+                rows(&backend)
+            );
+        })
+        .expect("spawn expansion smoke thread")
+        .join()
+        .expect("expansion smoke completes");
+}
+
 /// Clicking a directory row expands it (revealing its children) without running the tab's action,
 /// and the selected row is painted with the tab-active background rather than the theme default.
 /// Regression cover for the two reported bugs: a directory click used to fire `on_click`, and the

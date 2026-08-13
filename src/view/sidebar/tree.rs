@@ -34,6 +34,7 @@ pub(super) fn tree_tab(
 
     let changed_only = view == SidebarTreeView::Changes;
     let tab_id = crate::config::SidebarTabId::new(view.id());
+    let toggle_tab_id = tab_id.clone();
     let config_epoch = ctx.state.sidebar.config_epoch;
     let tree_focus_key = tree_focus_key(panel, view, &root);
     let explorer_focus_key = format!("{}-explorer", tree_key(panel, view, &root));
@@ -123,6 +124,21 @@ pub(super) fn tree_tab(
                 }),
         );
 
+    // Expansion is the app's to remember, because the widget's own cannot survive: the tab keys on
+    // its root, so every pane in another directory remounts the tree from nothing. Recording each
+    // toggle and seeding the next mount from it is what makes a re-rooted or reopened tab come back
+    // the shape it was left in. The seed is only read on mount and on a root change, so writing to
+    // it here never fights the expansion on screen.
+    tree =
+        tree.on_toggle(ctx.link().callback(move |event: FileTreeToggleEvent| {
+            Msg::SidebarTreeToggle {
+                tab_id: toggle_tab_id.clone(),
+                path: event.path.to_string(),
+                expanded: event.expanded,
+            }
+        }))
+        .initial_expanded_paths(remembered_expanded(ctx, view));
+
     if config.icons {
         tree = tree.icon_style(FileIconStyle::NerdFont);
     }
@@ -163,9 +179,21 @@ pub(super) fn tree_tab(
     tree.key(tree_key(panel, view, &root))
 }
 
+/// The directories this tab had expanded when its tree was last on screen. Absolute paths, so the
+/// widget keeps the ones under whatever root it is mounting at and ignores the rest.
+fn remembered_expanded(ctx: &Context<AppRoot>, view: SidebarTreeView) -> Vec<String> {
+    ctx.state
+        .sidebar
+        .tree_expanded
+        .get(&crate::config::SidebarTabId::new(view.id()))
+        .map(|paths| paths.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
 /// Keyed on the root so switching projects remounts the tree rather than reusing another
-/// directory's expansion and selection state. Built here rather than inline so `focus-sidebar` can
-/// aim at the same key the view is about to render.
+/// directory's selection state. Expansion is not lost with it: the tab remembers what was open and
+/// seeds the new tree with it. Built here rather than inline so `focus-sidebar` can aim at the same
+/// key the view is about to render.
 pub(super) fn tree_key(panel: usize, view: SidebarTreeView, root: &str) -> String {
     format!(
         "{}-{panel}-{}-{root}",

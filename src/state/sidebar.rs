@@ -101,6 +101,17 @@ pub struct SidebarState {
     /// actually changes, so the ancestor walk does not run on every frame or every shell prompt.
     pub tree_cwd: Option<String>,
     pub tree_repo: Option<String>,
+    /// Directories the user has expanded in each file-tree tab, so expansion survives the tree
+    /// unmounting. It remounts constantly: the tab keys on its root, so focusing a pane in another
+    /// directory, switching tabs, or hiding the sidebar all discard the widget's own expansion.
+    /// Paths are absolute, which is what lets one tab's memory carry across roots — expanding
+    /// `src/` under a repo root leaves it expanded when a pane re-roots the tab inside it.
+    ///
+    /// Per tab rather than shared: Files and Git are different projections, and collapsing a
+    /// directory that only exists in the changes view should not close it while browsing. The set
+    /// only ever grows by an explicit user expansion, and dies with the client — this is view
+    /// state, not a preference worth persisting.
+    pub tree_expanded: HashMap<SidebarTabId, std::collections::HashSet<String>>,
     /// Directory listings served by the session server, for the file tree's provided entry source
     /// under `--remote`. A directory absent here is pending: the widget shows a loading row and
     /// emits a request, which is why this is only ever appended to, never cleared per frame.
@@ -167,6 +178,7 @@ impl SidebarState {
         let ids: Vec<_> = config.tabs.iter().map(|tab| tab.id()).collect();
         self.apply_panel_layout(config, &ids);
         self.command_output.retain(|id, _| ids.contains(id));
+        self.tree_expanded.retain(|id, _| ids.contains(id));
         self.invalidate_commands();
         self.config_epoch = self.config_epoch.wrapping_add(1);
         self.invalidate_sessions();

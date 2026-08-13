@@ -117,6 +117,12 @@ pub enum Msg {
         /// Directories only expand; their activation must not run the tab's action.
         is_dir: bool,
     },
+    /// A directory was expanded or collapsed, so the tab's remembered expansion can follow it.
+    SidebarTreeToggle {
+        tab_id: crate::config::SidebarTabId,
+        path: String,
+        expanded: bool,
+    },
     SidebarCommandPoll {
         epoch: u64,
         tab_id: crate::config::SidebarTabId,

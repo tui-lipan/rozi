@@ -1021,6 +1021,27 @@ pub(super) fn tree_activate(
     })
 }
 
+/// Record a directory the user expanded or collapsed, so the tab reopens it the next time the tree
+/// mounts. The widget owns the live expansion; this only mirrors it, and is fed back as the seed.
+///
+/// A collapse forgets that directory alone. What was expanded *inside* it keeps its entry, which is
+/// what makes reopening a directory restore the shape it had rather than a single flat level.
+pub(super) fn tree_toggle(
+    ctx: &mut Context<AppRoot>,
+    tab_id: SidebarTabId,
+    path: String,
+    expanded: bool,
+) -> Update {
+    let remembered = ctx.state.sidebar.tree_expanded.entry(tab_id).or_default();
+    if expanded {
+        remembered.insert(path);
+    } else {
+        remembered.remove(&path);
+    }
+    // Nothing on screen depends on this: the tree already drew the toggle itself.
+    Update::none()
+}
+
 /// The git repository containing `cwd`, found by walking ancestors for a `.git` entry. `.git` is a
 /// file rather than a directory inside worktrees and submodules, so this tests existence, not kind.
 /// The file tree needs a directory it has no listing for. Ask the session server to read it.

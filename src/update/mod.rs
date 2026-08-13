@@ -88,6 +88,11 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             path,
             is_dir,
         } => sidebar::tree_activate(ctx, config_epoch, tab_id, path, is_dir),
+        Msg::SidebarTreeToggle {
+            tab_id,
+            path,
+            expanded,
+        } => sidebar::tree_toggle(ctx, tab_id, path, expanded),
         Msg::SidebarTreeEntryRequest { path } => sidebar::tree_entry_request(ctx, path),
         Msg::SessionDirectoryListing {
             epoch,

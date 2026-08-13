@@ -1195,8 +1195,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut root = AppRoot::default();
-                root.want_startup_picker = true;
+                let root = AppRoot {
+                    want_startup_picker: true,
+                    ..Default::default()
+                };
 
                 let backend = TestBackend::new(root);
 

@@ -411,14 +411,14 @@ git diff --check
 cargo build
 ```
 
-- `Cargo.toml` currently uses `tui-lipan = { path = "../tui-lipan/", ... }` directly. Local builds,
-  tests, and benchmarks therefore require that sibling checkout; do not add a redundant
-  `[patch.crates-io]` override.
-- The current `Cargo.lock` path-package entry has no `source` or `checksum`, which matches the
-  manifest. Before standalone CI or release builds can use crates.io, publish the required
-  framework version, replace the path dependency with a registry version requirement, and
-  regenerate `Cargo.lock` without a path override. Do not claim a planned registry version is in use
-  before that manifest change lands.
+- `Cargo.toml` depends on the published `tui-lipan = "0.2.0"`, so this repository builds, tests, and
+  releases from a standalone checkout with no sibling clone. `Cargo.lock` pins it by `source` and
+  `checksum`; keep it that way.
+- To try an unreleased framework change, add a `[patch.crates-io]` override pointing at the sibling
+  checkout **locally, without committing it**. A committed patch would make CI and a release build
+  silently disagree with the lock.
+- Publish the framework version first; a rozi change that needs it cannot go green in CI until the
+  version it requires is on crates.io. Bump the requirement here in the same change that needs it.
 
 - For framework terminal changes in `../tui-lipan`, verify both sides:
 
@@ -433,8 +433,7 @@ cargo clippy --features terminal
 CI (`.github/workflows/ci.yml`) runs `fmt --check`, `check --all-targets` (which compiles benches),
 `clippy -D warnings`, `test`, and a release build natively on `ubuntu-latest`, `macos-latest`, and
 `windows-latest`, plus `cargo audit` in a separate Linux job. The workflow checks out only this
-repository, so it requires the path dependency to be replaced by a published registry dependency
-before it can pass from a standalone checkout.
+repository, which is all it needs now that the framework comes from crates.io.
 
 Windows code cannot be run in this workspace. Type-check it before pushing - CI is the first thing
 that actually executes it:
@@ -516,9 +515,8 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
   <NAME>` is attach-only and `new <NAME> [--profile <RECIPE>]` explicitly creates a session.
 - `--remote <HOST|ssh://URL>` attaches over SSH via a remote-side `--remote-serve` stdio proxy; see
   `docs/remote.md`. `ROZI_REMOTE_BINARY` forces which local binary is installed on the remote.
-- Cargo feature flags are inherited from the current sibling-path `tui-lipan` dependency; this
-  crate uses `terminal`, `terminal-images`, `terminal-serde`, `clipboard-images`, `theme-reload`,
-  and `devtools`.
+- Cargo feature flags are inherited from the `tui-lipan` dependency; this crate uses `terminal`,
+  `terminal-images`, `terminal-serde`, `clipboard-images`, `theme-reload`, and `devtools`.
 
 ## Further Reading
 

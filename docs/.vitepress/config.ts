@@ -5,6 +5,9 @@ import { repoLinksPlugin } from "./repoLinks";
 
 const srcDir = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 
+/** What the landing page calls itself, in a tab and when shared. */
+const LANDING_TITLE = "rozi - a tiling terminal multiplexer";
+
 export default defineConfig({
   title: "rozi",
   description:
@@ -33,13 +36,7 @@ export default defineConfig({
       { property: "og:image", content: "https://rozi.tui-lipan.dev/og-image.png" },
     ],
     ["meta", { name: "twitter:card", content: "summary_large_image" }],
-    [
-      "meta",
-      {
-        property: "og:title",
-        content: "rozi - a tiling terminal multiplexer",
-      },
-    ],
+    ["meta", { property: "og:title", content: LANDING_TITLE }],
     [
       "meta",
       {
@@ -47,6 +44,28 @@ export default defineConfig({
         content:
           "Split your terminal into panes, arrange them automatically, and pick up where you left off.",
       },
+    ],
+    // Decide whether the landing intro plays before the browser paints, so the
+    // page underneath never flashes into view and back out. Vue is far too
+    // late for that - it hydrates after the server-rendered HTML is on screen.
+    // The failsafe matters: if the bundle never arrives, the class must not be
+    // allowed to leave the page hidden forever.
+    [
+      "script",
+      {},
+      `(function () {
+  try {
+    if (location.pathname.replace(/\\/$/, "") !== "") return;
+    if (location.hash) return;
+    if (sessionStorage.getItem("rozi:intro-seen")) return;
+    if (innerWidth < 900 || innerHeight < 560) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    document.documentElement.classList.add("rozi-intro-pending");
+    setTimeout(function () {
+      document.documentElement.classList.remove("rozi-intro-pending");
+    }, 4000);
+  } catch (e) {}
+})();`,
     ],
     ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
     [
@@ -63,6 +82,18 @@ export default defineConfig({
   ],
 
   markdown: { theme: { light: "night-owl", dark: "night-owl" } },
+
+  // The landing page takes its title from the <h1> of the docs index it renders
+  // as its closing section, which reads "rozi documentation | rozi". Name it
+  // for what the page is instead. This lives here rather than in `index.md`'s
+  // frontmatter because GitHub renders YAML frontmatter as a table at the top
+  // of the file, and that file is also the repository's documentation index.
+  transformPageData(pageData) {
+    if (pageData.relativePath === "index.md") {
+      pageData.title = LANDING_TITLE;
+      pageData.titleTemplate = false;
+    }
+  },
 
   // `performance/README.md` keeps its name so GitHub renders it when browsing
   // that folder; the site serves it as the directory's index page.

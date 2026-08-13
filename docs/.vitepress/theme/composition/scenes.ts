@@ -11,11 +11,26 @@
 
 import type { Cues, Scene } from "./runtime";
 
-/** The hero loop: boot, split, fill with work, and hold there. */
+/**
+ * The hero loop: boot, split, fill with work, then keep going - drag the
+ * column split, and trade the two right-hand panes. Those last two acts are
+ * the window-manager half of the pitch, so the loop is where they belong
+ * rather than the title sequence.
+ */
 export const HERO_SCENES: Scene[] = [
     { name: "Boot", dur: 2.0, nat: 2.4 },
     { name: "Split", dur: 3.0, nat: 3.2 },
-    { name: "Agents", dur: 6.4, nat: 6.4 },
+    // Ends 0.7s after the last agent line lands. Any longer and the loop
+    // visibly waits for its next move.
+    { name: "Agents", dur: 4.6, nat: 4.6 },
+    // Long enough for the split to travel out, sit for a beat, and come back.
+    { name: "Resize", dur: 2.2, nat: 2.2 },
+    { name: "Swap", dur: 2.1, nat: 2.1 },
+    { name: "Hide", dur: 1.5, nat: 1.5 },
+    { name: "Float", dur: 1.6, nat: 1.6 },
+    { name: "Drag", dur: 1.6, nat: 1.6 },
+    // In, held, and back out.
+    { name: "Full", dur: 2.6, nat: 2.6 },
 ];
 
 /**
@@ -25,6 +40,19 @@ export const HERO_SCENES: Scene[] = [
  * without the piece needing a mode flag.
  */
 export const HERO_CUES: Cues = { Tile: 9000, Mark: 9000, Name: 9000 };
+
+/**
+ * The mirror image: the intro keeps the logo resolve and parks the two layout
+ * acts, which would only delay the title it exists to deliver.
+ */
+export const CINEMATIC_CUES: Cues = {
+    Resize: 9000,
+    Swap: 9000,
+    Hide: 9000,
+    Float: 9000,
+    Drag: 9000,
+    Full: 9000,
+};
 
 /**
  * The full arc, for the first-visit intro: the same demo, then the panes fold

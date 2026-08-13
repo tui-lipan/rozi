@@ -13,12 +13,17 @@
  */
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import RoziStage from "./composition/RoziStage.vue";
-import { CINEMATIC_SCENES } from "./composition/scenes";
+import {
+    CINEMATIC_CUES,
+    CINEMATIC_SCENES,
+    CINEMATIC_SECONDS,
+} from "./composition/scenes";
 
 const emit = defineEmits<{ done: [] }>();
 
 const leaving = ref(false);
 const progress = ref(0);
+let failsafe = 0;
 
 function dismiss() {
     if (leaving.value) return;
@@ -44,14 +49,18 @@ onMounted(() => {
     document.addEventListener("keydown", onKey);
     window.addEventListener("wheel", dismiss, { passive: true });
     window.addEventListener("touchmove", dismiss, { passive: true });
-    document.body.style.overflow = "hidden";
+
+    // The stage stops its clock if motion is turned off or the window narrows
+    // mid-play, and a stopped clock never reports finishing. Nothing should be
+    // able to leave the page under a permanent overlay.
+    failsafe = window.setTimeout(dismiss, (CINEMATIC_SECONDS + 2) * 1000);
 });
 
 onBeforeUnmount(() => {
     document.removeEventListener("keydown", onKey);
     window.removeEventListener("wheel", dismiss);
     window.removeEventListener("touchmove", dismiss);
-    document.body.style.overflow = "";
+    window.clearTimeout(failsafe);
 });
 </script>
 
@@ -65,6 +74,7 @@ onBeforeUnmount(() => {
     >
         <RoziStage
             :scenes="CINEMATIC_SCENES"
+            :cue-overrides="CINEMATIC_CUES"
             fit="contain"
             :loop="false"
             :halted="leaving"
@@ -92,6 +102,10 @@ onBeforeUnmount(() => {
     transition:
         opacity 0.65s ease,
         transform 0.65s ease;
+}
+/* The stage opts out of the text cursor; here the whole surface dismisses. */
+.rintro :deep(.rstage) {
+    cursor: pointer;
 }
 .rintro.leaving {
     opacity: 0;

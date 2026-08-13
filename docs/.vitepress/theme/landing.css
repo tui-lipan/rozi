@@ -9,6 +9,25 @@
     display: flex;
     flex-direction: column;
     background: var(--vp-c-bg);
+    /* The hero composition is wider than --lp-max and reaches past it. `clip`
+       rather than `hidden` so it does not become a scroll container and break
+       `position: sticky` on the topbar. */
+    overflow-x: clip;
+    transition: opacity 0.7s ease 0.05s;
+}
+
+/* ── Intro handoff ───────────────────────────────────────────────────
+   The class is set by the pre-paint script in config.ts, before the browser
+   has drawn anything, and removed when the intro dissolves. Uncovering the
+   page and fading the overlay at once is what makes the two read as one move.
+   ───────────────────────────────────────────────────────────────────── */
+
+html.rozi-intro-pending {
+    overflow: hidden;
+}
+html.rozi-intro-pending .lp {
+    opacity: 0;
+    transition: none;
 }
 
 /* ── Topbar ──────────────────────────────────────────────────────────── */
@@ -143,12 +162,18 @@
 
 /* ── Hero ────────────────────────────────────────────────────────────── */
 
+/* Centred copy above a full-width composition. The piece is authored at
+   1920x1080 and its terminal text stops meaning anything much below 1200
+   across, so it gets the page's whole width rather than half of it. */
 .lp-hero {
-    display: grid;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-    gap: 48px;
-    align-items: center;
-    padding: 64px 0 8px;
+    max-width: 880px;
+    margin: 0 auto;
+    text-align: center;
+    padding: 72px 0 34px;
+}
+.lp-hero-stage {
+    width: min(1400px, calc(100vw - 32px));
+    margin-inline: calc(50% - min(700px, 50vw - 16px));
 }
 .lp-eyebrow {
     margin: 0 0 14px;
@@ -158,9 +183,22 @@
     text-transform: uppercase;
     color: var(--vp-c-text-3);
 }
+.lp-lockup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 26px;
+}
+.lp-mark {
+    display: block;
+    width: 120px;
+    height: 120px;
+    /* The same violet bloom the intro leaves the mark sitting in. */
+    filter: drop-shadow(0 16px 38px rgba(152, 43, 242, 0.38));
+}
 .lp-wordmark {
     margin: 0;
-    font-size: 76px;
+    font-size: 84px;
     font-weight: 800;
     line-height: 1;
     letter-spacing: -0.045em;
@@ -172,25 +210,29 @@
     color: transparent;
 }
 .lp-tagline {
-    margin: 18px 0 0;
+    margin: 18px auto 0;
     font-size: 19px;
     font-weight: 500;
     line-height: 1.45;
     letter-spacing: -0.015em;
     color: var(--vp-c-text-1);
-    max-width: 24ch;
+    /* Two lines, not three. Centred display text that stacks into short
+       ragged lines is what made the column read as thin. */
+    max-width: 40ch;
 }
 .lp-sub {
-    margin: 14px 0 0;
+    margin: 14px auto 0;
     font-size: 13px;
     line-height: 1.75;
     color: var(--vp-c-text-2);
-    max-width: 52ch;
+    max-width: 76ch;
 }
 
 .lp-install {
     position: relative;
-    margin: 28px 0 0;
+    max-width: 600px;
+    text-align: left;
+    margin: 28px auto 0;
     background: var(--vp-code-block-bg);
     border: 1px solid var(--vp-c-border);
     border-radius: 3px;
@@ -235,6 +277,7 @@
 .lp-cta {
     display: flex;
     flex-wrap: wrap;
+    justify-content: center;
     gap: 10px;
     margin-top: 22px;
 }
@@ -272,9 +315,10 @@
 .lp-facts {
     display: flex;
     flex-wrap: wrap;
+    justify-content: center;
     gap: 8px 10px;
     list-style: none;
-    margin: 44px 0 0;
+    margin: 32px 0 0;
     padding: 0;
 }
 .lp-facts li {
@@ -431,15 +475,24 @@
     padding-bottom: 72px;
 }
 .lp-docs .vp-doc h1 {
+    /* Carries a section rule here, unlike a doc page's h1, so its anchor has
+       padding to clear. Same tie as the h2 block in style.css. */
+    --h1-pad: 28px;
     font-size: 20px !important;
     font-weight: 700 !important;
     letter-spacing: -0.01em;
     color: var(--vp-c-text-1) !important;
     margin: 0 0 6px !important;
-    padding-top: 28px !important;
+    padding-top: var(--h1-pad) !important;
     border-top: 1px solid var(--vp-c-divider);
 }
+.lp-docs .vp-doc h1 > .header-anchor {
+    top: var(--h1-pad);
+}
 .lp-docs .vp-doc h2 {
+    /* No rule above the heading here, so no padding for the anchor to clear.
+       See the h2 block in style.css for why the two are tied. */
+    --h2-pad: 0px;
     font-size: 16px !important;
     font-weight: 700 !important;
     color: var(--vp-c-text-1) !important;
@@ -458,6 +511,18 @@
 }
 .lp-docs .vp-doc a:hover {
     text-decoration: underline;
+}
+/* The link colour above outranks style.css's dim anchor rule purely by load
+   order, which left the section markers louder than the headings they mark. */
+.lp-docs .vp-doc a.header-anchor {
+    color: var(--vp-c-text-3);
+}
+/* Doc pages cap prose at --rozi-prose because their column is wider than a
+   comfortable measure. This section is the full page width, where that cap
+   stops looking like a measure and starts looking like an arbitrary break
+   partway across an empty row. Here the container is the measure. */
+.lp-docs .vp-doc > div > :is(p, ul, ol, blockquote, .custom-block) {
+    max-width: none;
 }
 .lp-docs .vp-doc table {
     width: 100%;
@@ -489,7 +554,11 @@
     color: #b98cf5;
 }
 
-/* Same heading exception as the doc pages - see style.css. */
+/* Same two exceptions as the doc pages, for the same reasons - see style.css.
+   Both must stay after the inline-code rule above. */
+.lp-docs .vp-doc a code {
+    color: inherit;
+}
 .lp-docs .vp-doc :is(h1, h2, h3, h4) > code {
     font-size: inherit;
     font-weight: inherit;
@@ -526,248 +595,12 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────
-   Tiling demo
-   ───────────────────────────────────────────────────────────────────── */
-
-.tdemo {
-    width: 100%;
-}
-.tdemo-window {
-    background: var(--vp-c-bg-alt);
-    border: 1px solid var(--vp-c-border);
-    border-radius: 6px;
-    overflow: hidden;
-    box-shadow:
-        0 1px 0 rgba(255, 255, 255, 0.03) inset,
-        0 24px 60px -24px rgba(152, 43, 242, 0.35);
-}
-.tdemo-titlebar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: 28px;
-    padding: 0 10px;
-    background: var(--vp-c-bg);
-    border-bottom: 1px solid var(--vp-c-divider);
-}
-.tdemo-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--vp-c-border);
-}
-.tdemo-dot.r {
-    background: #ff5f57;
-}
-.tdemo-dot.y {
-    background: #f0a830;
-}
-.tdemo-dot.g {
-    background: #28c840;
-}
-.tdemo-session {
-    margin-left: auto;
-    font-size: 10.5px;
-    color: var(--vp-c-text-3);
-}
-
-.tdemo-canvas {
-    position: relative;
-    width: 100%;
-    aspect-ratio: 16 / 10;
-    background: var(--vp-c-bg);
-}
-
-.tdemo-pane {
-    position: absolute;
-    transition:
-        left 0.55s cubic-bezier(0.22, 1, 0.36, 1),
-        top 0.55s cubic-bezier(0.22, 1, 0.36, 1),
-        width 0.55s cubic-bezier(0.22, 1, 0.36, 1),
-        height 0.55s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.tdemo-pane-inner {
-    position: absolute;
-    inset: 4px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: var(--vp-c-bg-alt);
-    border: 1px solid var(--vp-c-divider);
-    border-radius: 4px;
-    transition:
-        border-color 0.3s,
-        box-shadow 0.3s;
-}
-.tdemo-pane.focused .tdemo-pane-inner {
-    border-color: var(--vp-c-brand-1);
-    box-shadow: 0 0 0 1px rgba(253, 74, 128, 0.25);
-}
-.tdemo-pane.floating {
-    z-index: 5;
-}
-.tdemo-pane.floating .tdemo-pane-inner {
-    box-shadow:
-        0 0 0 1px rgba(253, 74, 128, 0.3),
-        0 18px 40px -12px rgba(0, 0, 0, 0.8);
-}
-.tdemo-pane-title {
-    flex-shrink: 0;
-    padding: 3px 8px;
-    font-size: 9.5px;
-    letter-spacing: 0.02em;
-    color: var(--vp-c-text-3);
-    background: var(--vp-c-bg);
-    border-bottom: 1px solid var(--vp-c-divider);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.tdemo-pane.focused .tdemo-pane-title {
-    color: var(--vp-c-brand-1);
-}
-.tdemo-pane-body {
-    flex: 1;
-    padding: 6px 8px;
-    overflow: hidden;
-}
-.tdemo-line {
-    font-family: var(--vp-font-family-mono);
-    font-size: 10px;
-    line-height: 1.65;
-    color: var(--vp-c-text-2);
-    white-space: pre;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.tdemo-line.path {
-    color: var(--vp-c-brand-2);
-}
-.tdemo-line.cmd {
-    color: var(--vp-c-text-1);
-}
-.tdemo-line.ok {
-    color: #3ddc84;
-}
-.tdemo-line.warn {
-    color: #f0a830;
-}
-.tdemo-line.dim {
-    color: var(--vp-c-text-3);
-}
-.tdemo-line.code {
-    color: #8b9cf5;
-}
-.tdemo-line.caret::after {
-    content: "▏";
-    color: var(--vp-c-brand-1);
-    animation: tdemo-blink 1.1s steps(2, start) infinite;
-}
-@keyframes tdemo-blink {
-    to {
-        visibility: hidden;
-    }
-}
-
-.tdemo-workbar {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    height: 24px;
-    padding: 0 8px;
-    background: var(--vp-c-bg);
-    border-top: 1px solid var(--vp-c-divider);
-}
-.tdemo-ws {
-    min-width: 15px;
-    text-align: center;
-    font-size: 9.5px;
-    line-height: 15px;
-    color: var(--vp-c-text-3);
-    border-radius: 2px;
-}
-.tdemo-ws.on {
-    color: #fff;
-    background: var(--rozi-gradient);
-}
-.tdemo-spacer {
-    flex: 1;
-}
-.tdemo-badge {
-    font-size: 9.5px;
-    color: var(--vp-c-text-3);
-    border: 1px solid var(--vp-c-divider);
-    border-radius: 2px;
-    padding: 1px 6px;
-}
-
-.tdemo-caption {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 14px;
-    min-height: 24px;
-}
-.tdemo-chord {
-    display: inline-flex;
-    gap: 4px;
-    flex-shrink: 0;
-}
-.tdemo-text {
-    font-size: 12px;
-    color: var(--vp-c-text-3);
-    line-height: 1.4;
-}
-
-.tdemo-steps {
-    display: flex;
-    gap: 6px;
-    margin-top: 12px;
-}
-.tdemo-step {
-    width: 26px;
-    height: 3px;
-    padding: 0;
-    border: none;
-    border-radius: 2px;
-    background: var(--vp-c-divider);
-    cursor: pointer;
-    transition: background 0.2s;
-}
-.tdemo-step:hover {
-    background: var(--vp-c-border);
-}
-.tdemo-step.on {
-    background: var(--vp-c-brand-1);
-}
-
-/* Panes entering or leaving a step (fullscreen, floating) fade rather than
-   sliding in from an arbitrary edge. */
-.tpane-enter-active,
-.tpane-leave-active {
-    transition: opacity 0.35s ease;
-}
-.tpane-enter-from,
-.tpane-leave-to {
-    opacity: 0;
-}
-.tpane-leave-active {
-    pointer-events: none;
-}
-
-/* ─────────────────────────────────────────────────────────────────────
    Responsive
    ───────────────────────────────────────────────────────────────────── */
 
 @media (max-width: 1000px) {
     .lp-hero {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 40px;
         padding-top: 48px;
-    }
-    .lp-tagline,
-    .lp-sub {
-        max-width: none;
     }
     .lp-two {
         grid-template-columns: minmax(0, 1fr);
@@ -795,8 +628,21 @@
     .lp-wordmark {
         font-size: 56px;
     }
+    .lp-lockup {
+        gap: 16px;
+    }
+    .lp-mark {
+        width: 68px;
+        height: 68px;
+    }
     .lp-tagline {
         font-size: 17px;
+    }
+    /* Below this width the composition is a texture, not a readout. Trim the
+       band's inset so it at least uses every pixel it has. */
+    .lp-hero-stage {
+        width: calc(100vw - 20px);
+        margin-inline: calc(50% - min(50vw - 10px, 50vw));
     }
     .lp-features,
     .lp-box-grid {
@@ -813,19 +659,12 @@
     .lp-section {
         padding-top: 40px;
     }
-    .tdemo-line {
-        font-size: 9px;
-    }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .tdemo-pane,
-    .tdemo-pane-inner,
-    .tpane-enter-active,
-    .tpane-leave-active {
+    /* The composition holds a single frame of its own accord (see
+       RoziStage.vue); this is only about the page around it. */
+    .lp {
         transition: none;
-    }
-    .tdemo-line.caret::after {
-        animation: none;
     }
 }

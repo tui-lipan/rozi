@@ -689,16 +689,22 @@ body {
     margin: 0 0 12px !important;
 }
 .vp-doc h2 {
+    /* The anchor is absolutely positioned against the padding box, so it needs
+       to be pushed down by exactly the rule's padding to land beside the text
+       rather than up in the gap. VitePress hardcodes 24px to match its own
+       padding; this keeps the two tied together instead. */
+    --h2-pad: 36px;
     font-size: 23px !important;
     font-weight: 700 !important;
     color: var(--vp-c-text-1) !important;
     margin: 40px 0 16px !important;
-    padding-top: 36px !important;
+    padding-top: var(--h2-pad) !important;
     border-top: 1px solid var(--vp-c-divider) !important;
     letter-spacing: -0.015em;
     line-height: 1.3;
 }
 .vp-doc h2 > .header-anchor {
+    top: var(--h2-pad);
     border-top: none;
 }
 /* More space above than below, so an h3 binds to the text it introduces
@@ -783,6 +789,15 @@ body {
     color: #b98cf5;
     font-family: var(--vp-font-family-mono);
     font-weight: inherit;
+}
+
+/* A link whose text is inline code - [`tui-lipan`](…) - is still a link.
+   Without this the rule above wins and the link renders identically to the
+   plain `rozi` chip beside it, with nothing to say it is clickable. Keep the
+   box, take the link's colour, so hover and visited follow along too.
+   Must stay after the rule it overrides: the two have equal specificity. */
+.vp-doc a code {
+    color: inherit;
 }
 
 /* A heading written as `## \`[theme]\`` is still a heading. Without this the

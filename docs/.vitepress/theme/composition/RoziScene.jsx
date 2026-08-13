@@ -61,6 +61,20 @@ const RIGHT = { x: 967, y: 228, w: 641, h: 678 };
 const RTOP = { x: 967, y: 228, w: 641, h: 332 };
 const RBOT = { x: 967, y: 574, w: 641, h: 332 };
 
+/* After the split between the two columns is dragged right. The right column
+   stops at 514 because that is the narrowest its longest line still fits in -
+   below it the text clips mid-glyph, which reads as a broken layout rather
+   than as a terminal that got smaller. */
+const LEFT_W = { x: 560, y: 228, w: 520, h: 678 };
+const RTOP_W = { x: 1094, y: 228, w: 514, h: 332 };
+const RBOT_W = { x: 1094, y: 574, w: 514, h: 332 };
+
+/* Where the pane goes once it leaves the tiling, and where it is dragged to.
+   Both straddle the column boundary the tiled panes respect, which is what
+   says "floating" without anything having to be labelled. */
+const FLOAT_HOME = { x: 880, y: 300, w: 620, h: 420 };
+const FLOAT_SIDE = { x: 360, y: 400, w: 620, h: 420 };
+
 const lerp = (a, b, p) => a + (b - a) * p;
 const lerpRect = (a, b, p) => ({
     x: lerp(a.x, b.x, p),
@@ -527,15 +541,89 @@ function RoziScene(props) {
     const S = cues.Split;
     const G = cues.Agents;
 
-    const cam = 1 + 0.04 * clamp(T / 18.4, 0, 1);
-    const outro = MOTION.fade(1, 0, 18.0, 18.36)(T);
+
+    const R = cues.Resize;
+    const W = cues.Swap;
+    const H = cues.Hide;
+    const F = cues.Float;
+    const D = cues.Drag;
+    const U = cues.Full;
 
     const pA = MOTION.snap(0, 1, S, S + 0.6)(T);
     const pB = MOTION.snap(0, 1, S + 2.45, S + 3.05)(T);
-    const narrow = MOTION.glide(0, 1, G - 0.15, G + 0.5)(T);
-    const rectA = lerpRect(lerpRect(FULL, LEFT, pA), LEFT_N, narrow);
-    const rectB = lerpRect(RIGHT, RTOP, pB);
-    const rectC = RBOT;
+
+    /* The side panel arrives with the agents and leaves again later, and the
+       tiling gives up its width for it and takes it back. One value drives all
+       of that: the panel's own travel, the left pane's width, and how far the
+       workbar is pushed across. */
+    const panel = clamp(
+        MOTION.glide(0, 1, G - 0.15, G + 0.5)(T) -
+            MOTION.fade(0, 1, H + 0.05, H + 0.62)(T),
+        0,
+        1,
+    );
+    const narrow = panel;
+
+    /* Drag the column split right and back again, then trade the two
+       right-hand panes. Both acts move at the pace the rest of the piece does
+       - out of the gate immediately and decelerating hard - rather than easing
+       in from rest, which next to a boot sequence and a typing prompt reads as
+       a stall.
+
+       Out and back as two overlapping ramps rather than one tween, so each
+       leg gets its own fast-out easing. Neither overshoots: past the target
+       the right column is narrower than its longest line, and a backswing
+       would clip text for a few frames. rozi does not light the split while
+       it moves, so neither does this. */
+    const resize =
+        MOTION.fade(0, 1, R + 0.05, R + 0.72)(T) -
+        MOTION.fade(0, 1, R + 1.05, R + 1.78)(T);
+
+    // Two panes trading places along one axis have to pass through each other.
+    // One leads, both pinch in and push apart as they cross: an exchange
+    // rather than one pane blinking into the other.
+    const swapC = MOTION.snap(0, 1, W + 0.05, W + 0.85)(T);
+    const swapB = MOTION.snap(0, 1, W + 0.16, W + 0.96)(T);
+    const arc = (p) => Math.sin(Math.PI * clamp(p, 0, 1));
+    const scaleB = 1 - 0.1 * arc(swapB);
+    const scaleC = 1 - 0.1 * arc(swapC);
+    const nudgeB = 34 * arc(swapB);
+    const nudgeC = 34 * arc(swapC);
+    // Panes are transparent so the screen shows through them, which turns the
+    // moment they cross into two transcripts printed on top of each other.
+    // Fading the plate in for the crossing keeps each one a solid window.
+    const plate = (p) => `rgba(11, 13, 28, ${arc(p)})`;
+
+    /* The last three acts all happen to one pane: it leaves the tiling, gets
+       dragged across, and goes fullscreen and back. `reflow` is separate from
+       `floatUp` on purpose - the tiling closes the gap immediately and
+       smoothly while the pane itself pops out with a little overshoot. */
+    const reflow = MOTION.fade(0, 1, F + 0.02, F + 0.7)(T);
+    const floatUp = MOTION.snap(0, 1, F + 0.06, F + 0.78)(T);
+    const dragged = MOTION.fade(0, 1, D + 0.05, D + 0.85)(T);
+    const full =
+        MOTION.fade(0, 1, U + 0.05, U + 0.72)(T) -
+        MOTION.fade(0, 1, U + 1.5, U + 2.2)(T);
+
+    const slotTop = lerpRect(RTOP, RTOP_W, resize);
+    const slotBot = lerpRect(RBOT, RBOT_W, resize);
+
+    const rectA = lerpRect(
+        lerpRect(lerpRect(FULL, LEFT, pA), LEFT_N, narrow),
+        LEFT_W,
+        resize,
+    );
+    // With the third pane floated out, the one left behind takes the column.
+    const rectB = lerpRect(
+        lerpRect(RIGHT, lerpRect(slotTop, slotBot, swapB), pB),
+        RIGHT,
+        reflow,
+    );
+    const rectC = lerpRect(
+        lerpRect(slotBot, slotTop, swapC),
+        lerpRect(lerpRect(FLOAT_HOME, FLOAT_SIDE, dragged), FULL, clamp(full, 0, 1)),
+        floatUp,
+    );
 
     const inA = MOTION.snap(0.94, 1, 0.15, 1.0)(T);
     const opA = MOTION.fade(0, 1, 0.02, 0.4)(T);
@@ -568,12 +656,19 @@ function RoziScene(props) {
     const traceOp = (T < 1.5 ? 0 : 1) * MOTION.fade(1, 0, S + 0.15, S + 0.5)(T);
     const barDy = MOTION.snap(-26, 0, S - 0.05, S + 0.55)(T);
 
-    const sideOp = MOTION.fade(0, 1, G, G + 0.35)(T);
-    const sideDx = MOTION.glide(-240, 0, G, G + 0.55)(T);
+    const sideOp =
+        MOTION.fade(0, 1, G, G + 0.35)(T) * MOTION.fade(1, 0, H + 0.05, H + 0.5)(T);
+    const sideDx = lerp(-240, 0, panel);
     const shellOp = MOTION.fade(1, 0, G, G + 0.35)(T);
     const sessOp = MOTION.fade(0, 1, G + 0.45, G + 0.8)(T);
-    const attOn = clamp((T - (G + 2.45)) / 0.25, 0, 1);
+    /* Attending to a blocked pane is what stops it asking. Focus lands on it
+       as it floats out, so the alert stands down and the frame goes from the
+       pulsing red to the ordinary focused accent - which is what rozi does,
+       since a focused pane does not alert. */
+    const attOn =
+        clamp((T - (G + 2.45)) / 0.25, 0, 1) * MOTION.fade(1, 0, F, F + 0.4)(T);
     const attPulse = attOn * (0.5 + 0.5 * Math.sin((T - (G + 2.45)) * 5.2));
+    const cFocused = T >= F + 0.25;
 
     const tile = MOTION.glide(0, 1, cues.Tile, cues.Tile + 1.0)(T);
     const paneOut = MOTION.fade(1, 0, cues.Tile + 0.55, cues.Tile + 0.92)(T);
@@ -610,7 +705,14 @@ function RoziScene(props) {
     const deskOp = paneOut * opA;
     const agents = T >= G + 0.2;
     const cBorder =
-        attOn > 0 ? `rgba(240,85,76,${0.4 + 0.6 * attPulse})` : EDGE;
+        attOn > 0.02
+            ? `rgba(240,85,76,${0.4 + 0.6 * attPulse})`
+            : cFocused
+              ? violet
+              : EDGE;
+    // A floating window is the only thing here that casts one, and it stops
+    // once it is fullscreen and there is nothing left to cast onto.
+    const floatLift = clamp(floatUp, 0, 1) * (1 - clamp(full, 0, 1));
 
     return (
         <div
@@ -619,7 +721,6 @@ function RoziScene(props) {
                 inset: 0,
                 background: BG,
                 overflow: "hidden",
-                opacity: outro,
             })}
         >
             <div
@@ -649,14 +750,10 @@ function RoziScene(props) {
                 })}
             ></div>
 
-            <div
-                style={px({
-                    position: "absolute",
-                    inset: 0,
-                    transform: `scale(${cam})`,
-                    transformOrigin: "50% 48%",
-                })}
-            >
+            {/* The authored piece pushed in 4% across its run. On a screen made
+                almost entirely of small type that resamples every glyph every
+                frame, which reads as shimmer rather than as a camera move. */}
+            <div style={px({ position: "absolute", inset: 0 })}>
                 <div style={px({ position: "absolute", inset: 0, opacity: deskOp })}>
                     <div
                         style={px({
@@ -747,8 +844,8 @@ function RoziScene(props) {
                     {/* left pane: shell → Claude Code session */}
                     <Pane
                         rect={rectA}
-                        border={booted ? violet : EDGE}
-                        labelColor={booted ? violet : DIM}
+                        border={booted && !cFocused ? violet : EDGE}
+                        labelColor={booted && !cFocused ? violet : DIM}
                         label={
                             agents ? "✳ Claude Code · rozi" : booted ? "rozi" : "zsh"
                         }
@@ -760,7 +857,10 @@ function RoziScene(props) {
                                     bar={C.claude}
                                     ps1="&gt;"
                                     boxed={true}
-                                    caret={caret}
+                                    /* Stops when focus leaves for the pane that
+                                       floats out. Only the focused pane has a
+                                       live cursor. */
+                                    caret={caret && !cFocused}
                                     status="⏵⏵ accept edits on"
                                     right="? for shortcuts"
                                 />
@@ -925,7 +1025,14 @@ function RoziScene(props) {
                         label={agents ? "OpenCode · ~" : "~"}
                         boxStyle={{
                             opacity: opB,
-                            transform: xf(rectB, targets[1], 1, inB, 0),
+                            background: plate(swapB),
+                            transform: xf(
+                                rectB,
+                                targets[1],
+                                scaleB,
+                                inB + nudgeB,
+                                0,
+                            ),
                         }}
                         footer={
                             agents ? (
@@ -958,13 +1065,14 @@ function RoziScene(props) {
                                                 color: TEXT,
                                             })}
                                         >
+                                            {/* This pane is never the focused
+                                                one, so its cursor sits still
+                                                and dim rather than blinking. */}
                                             <span
                                                 style={px({
                                                     width: 9,
                                                     height: 18,
-                                                    background: caret
-                                                        ? TEXT
-                                                        : "transparent",
+                                                    background: DIM,
                                                     display: "inline-block",
                                                 })}
                                             ></span>
@@ -1077,15 +1185,34 @@ function RoziScene(props) {
                     <Pane
                         rect={rectC}
                         border={cBorder}
-                        labelColor={attOn > 0 ? RED : DIM}
-                        label={attOn > 0 ? "⚠ claude-code · needs you" : "~"}
+                        /* A blocked pane in rozi recolours and pulses its frame,
+                           and the titlebar label follows the frame foreground.
+                           It does not relabel itself - the pane keeps its own
+                           title, so that is all this says. */
+                        labelColor={attOn > 0.02 ? RED : cFocused ? violet : DIM}
+                        label={agents ? "✳ Claude Code · ~" : "~"}
                         boxStyle={{
                             opacity: opC,
-                            transform: xf(rectC, targets[2], 1, 0, inC),
+                            transform: xf(
+                                rectC,
+                                targets[2],
+                                scaleC,
+                                -nudgeC,
+                                inC,
+                            ),
+                            // Opaque whenever it is over another pane - crossing
+                            // during the swap, or floating above the tiling. The
+                            // alert wash it covers is 4% red; nobody misses it.
                             background:
-                                attOn > 0
-                                    ? `rgba(240,85,76,${0.04 * attPulse})`
-                                    : "transparent",
+                                Math.max(arc(swapC), clamp(floatUp, 0, 1)) > 0.01
+                                    ? `rgba(11, 13, 28, ${Math.max(
+                                          arc(swapC),
+                                          clamp(floatUp, 0, 1),
+                                      )})`
+                                    : attOn > 0
+                                      ? `rgba(240,85,76,${0.04 * attPulse})`
+                                      : "transparent",
+                            boxShadow: `0 ${26 * floatLift}px ${70 * floatLift}px rgba(0,0,0,${0.66 * floatLift})`,
                         }}
                         footer={
                             agents ? (
@@ -1224,34 +1351,44 @@ function RoziScene(props) {
                             >
                                 Opus 4.6 with high effort · ~/Work/Projects/rozi
                             </div>
-                            <div style={px({ height: 7 })}></div>
+                            {/* This pane is the shortest of the three and its
+                                approval prompt is the tallest footer, so the
+                                transcript above it retires as the prompt slides
+                                up - which is also what the real one does. */}
                             <div
                                 style={px({
-                                    display: "inline-flex",
-                                    gap: 9,
-                                    background: "rgba(255,255,255,0.05)",
-                                    padding: "2px 9px",
-                                    fontSize: 15,
-                                    color: TEXT,
-                                    whiteSpace: "nowrap",
+                                    opacity: MOTION.fade(1, 0, G + 2.1, G + 2.4)(T),
                                 })}
                             >
-                                <span style={px({ color: DIM })}>❯</span>fix the pane
-                                focus race in tree.rs
-                            </div>
-                            <div style={px({ height: 7 })}></div>
-                            <div
-                                style={px({
-                                    fontSize: 15,
-                                    color: TEXT,
-                                    whiteSpace: "nowrap",
-                                })}
-                            >
-                                <span style={px({ color: DIM })}>⏺ </span>Edit(
-                                <span style={px({ color: C.cyan })}>
-                                    src/layout/tree.rs
-                                </span>
-                                )
+                                <div style={px({ height: 7 })}></div>
+                                <div
+                                    style={px({
+                                        display: "inline-flex",
+                                        gap: 9,
+                                        background: "rgba(255,255,255,0.05)",
+                                        padding: "2px 9px",
+                                        fontSize: 15,
+                                        color: TEXT,
+                                        whiteSpace: "nowrap",
+                                    })}
+                                >
+                                    <span style={px({ color: DIM })}>❯</span>fix the pane
+                                    focus race in tree.rs
+                                </div>
+                                <div style={px({ height: 7 })}></div>
+                                <div
+                                    style={px({
+                                        fontSize: 15,
+                                        color: TEXT,
+                                        whiteSpace: "nowrap",
+                                    })}
+                                >
+                                    <span style={px({ color: DIM })}>⏺ </span>Edit(
+                                    <span style={px({ color: C.cyan })}>
+                                        src/layout/tree.rs
+                                    </span>
+                                    )
+                                </div>
                             </div>
                         </div>
                     </Pane>

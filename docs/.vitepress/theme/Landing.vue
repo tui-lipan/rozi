@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { Content, withBase } from "vitepress";
-import { ref } from "vue";
-import TilingDemo from "./TilingDemo.vue";
+import { onMounted, ref } from "vue";
+import RoziStage from "./composition/RoziStage.vue";
+import RoziIntro from "./RoziIntro.vue";
+import { HERO_CUES, HERO_SCENES } from "./composition/scenes";
+
+/* The pre-paint script in config.ts has already decided this and hidden the
+   page accordingly; reading its class back is what keeps the two in step. */
+const introPlaying = ref(false);
+onMounted(() => {
+  introPlaying.value =
+    document.documentElement.classList.contains("rozi-intro-pending");
+});
 
 const GITHUB = "https://github.com/tui-lipan/rozi";
 const SPONSOR = "https://github.com/sponsors/Razuer";
@@ -98,6 +108,12 @@ border_style = "rounded"`;
 
 <template>
   <div class="lp">
+    <!-- Outside .lp's subtree: the page is faded out while the intro runs, and
+         the overlay must not fade with it. -->
+    <Teleport to="body">
+      <RoziIntro v-if="introPlaying" @done="introPlaying = false" />
+    </Teleport>
+
     <header class="lp-top">
       <a class="lp-brand" :href="withBase('/')">
         <img :src="withBase('/logo.svg')" alt="" width="24" height="24" />
@@ -144,7 +160,18 @@ border_style = "rounded"`;
       <section class="lp-hero">
         <div class="lp-hero-copy">
           <p class="lp-eyebrow">Tiling terminal multiplexer</p>
-          <h1 class="lp-wordmark">rozi</h1>
+          <!-- Same lockup the intro lands on, so the handoff is a match rather
+               than a resemblance. -->
+          <div class="lp-lockup">
+            <img
+              class="lp-mark"
+              :src="withBase('/logo.svg')"
+              alt=""
+              width="120"
+              height="120"
+            />
+            <h1 class="lp-wordmark">rozi</h1>
+          </div>
           <p class="lp-tagline">
             A terminal multiplexer that feels like a modern window manager.
           </p>
@@ -180,10 +207,19 @@ border_style = "rounded"`;
           </div>
         </div>
 
-        <div class="lp-hero-demo">
-          <TilingDemo />
-        </div>
       </section>
+
+      <!-- Breaks out past --lp-max: the composition is authored at 1920 wide,
+           and below roughly 1200 its terminal text stops being readable. -->
+      <div class="lp-hero-stage">
+        <RoziStage
+          :scenes="HERO_SCENES"
+          :cue-overrides="HERO_CUES"
+          :halted="introPlaying"
+          ratio="1920 / 940"
+          fade-loop-edges
+        />
+      </div>
 
       <ul class="lp-facts">
         <li v-for="fact in facts" :key="fact">{{ fact }}</li>

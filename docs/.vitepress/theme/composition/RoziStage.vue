@@ -18,9 +18,14 @@ const props = withDefaults(
         loop?: boolean;
         /** `width` fills the container; `contain` also fits the height. */
         fit?: "width" | "contain";
+        /**
+         * Box shape for `fit: width`. Shorter than 16:9 crops the piece's
+         * generous top and bottom margin symmetrically, which is usually what
+         * you want when it sits in a page rather than on a screen of its own.
+         */
+        ratio?: string;
         /** Authored frame to hold when motion is off or the screen is small. */
         staticAt?: number;
-        pauseOnHover?: boolean;
         /** External pause, e.g. while the intro is on top of the hero. */
         halted?: boolean;
         /** Dip to black across the seam so a looping piece does not jump cut. */
@@ -31,8 +36,8 @@ const props = withDefaults(
         cueOverrides: () => ({}),
         loop: true,
         fit: "width",
+        ratio: "1920 / 1080",
         staticAt: 10.5,
-        pauseOnHover: false,
         halted: false,
         fadeLoopEdges: false,
         showTagline: true,
@@ -47,7 +52,6 @@ const ACCENT = ["#fd4a80", "#982bf2"];
 const host = ref<HTMLElement | null>(null);
 const scale = ref(0);
 const ready = ref(false);
-const hovering = ref(false);
 const still = ref(false);
 
 const timeline = shallowRef(deriveScenes(props.scenes, props.cueOverrides));
@@ -56,9 +60,7 @@ watch(
     () => (timeline.value = deriveScenes(props.scenes, props.cueOverrides)),
 );
 
-const paused = computed(
-    () => props.halted || still.value || (props.pauseOnHover && hovering.value),
-);
+const paused = computed(() => props.halted || still.value);
 
 const { play } = useClock(timeline, {
     loop: props.loop,
@@ -129,8 +131,7 @@ onBeforeUnmount(() => {
         ref="host"
         class="rstage"
         :class="[`fit-${fit}`, { ready }]"
-        @mouseenter="hovering = true"
-        @mouseleave="hovering = false"
+        :style="{ '--rstage-ratio': ratio }"
     >
         <div
             class="rstage-frame"
@@ -157,12 +158,37 @@ onBeforeUnmount(() => {
     overflow: hidden;
     opacity: 0;
     transition: opacity 0.4s ease;
+    /* It is a picture of a terminal, not a terminal. Dragging across it should
+       not paint a selection over half the panes. */
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
 }
 .rstage.ready {
     opacity: 1;
 }
 .rstage.fit-width {
-    aspect-ratio: 1920 / 1080;
+    aspect-ratio: var(--rstage-ratio, 1920 / 1080);
+    /* Cropping the piece shorter than 16:9 cuts straight through two things
+       that are still faintly painted out there - the dot grid, whose own
+       radial mask has not reached zero yet, and the screen's drop shadow. A
+       hard edge through either reads as a seam across the page, so the box
+       fades its own top and bottom. The stops clear the screen plate itself
+       (composition y 170 to 930 of 1080), which must stay at full strength. */
+    mask-image: linear-gradient(
+        to bottom,
+        transparent 0%,
+        #000 7.5%,
+        #000 93.5%,
+        transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        transparent 0%,
+        #000 7.5%,
+        #000 93.5%,
+        transparent 100%
+    );
 }
 .rstage.fit-contain {
     height: 100%;

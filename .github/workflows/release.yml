@@ -7,9 +7,8 @@ on:
   pull_request:
   workflow_dispatch:
 
-# tui-lipan is still a path dep, so its checkout stays explicit; this is not a crates.io fallback or
-# a claim that standalone CI can build the current manifest.  relswap comes from the registry
-# instead, so Cargo.lock pins the exact engine each signed release was built and signed with.
+# Both tui-lipan and relswap come from crates.io, so Cargo.lock pins the exact engine each signed
+# release was built and signed with.
 permissions:
   contents: read
 
@@ -18,26 +17,16 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - name: Check out rozi beside its path dependency
-        uses: actions/checkout@v4
-        with:
-          path: rozi
-      - name: Check out the sibling tui-lipan dependency
-        uses: actions/checkout@v4
-        with:
-          repository: tui-lipan/tui-lipan
-          path: tui-lipan
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.90
       # Deliberately not `--all-targets`: that also *runs* the bench binaries, so a release was
       # gated on timing-sensitive benchmarks racing a shared runner - server_fairness synchronises
       # with a helper thread on a deadline and lost that race here. Benchmarks measure, they do not
       # decide whether a build ships.
       - name: Test
-        working-directory: rozi
         run: cargo test --locked
       # Keep the compile coverage `--all-targets` was there for, without executing anything.
       - name: Check every target compiles
-        working-directory: rozi
         run: cargo check --locked --all-targets
 
   package:
@@ -69,22 +58,13 @@ jobs:
             archive: zip
 
     steps:
-      - name: Check out rozi beside its path dependency
-        uses: actions/checkout@v4
-        with:
-          path: rozi
-      - name: Check out the sibling tui-lipan dependency
-        uses: actions/checkout@v4
-        with:
-          repository: tui-lipan/tui-lipan
-          path: tui-lipan
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.90
         with:
           targets: ${{ matrix.target }}
 
       - name: Resolve package version
         id: version
-        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail
@@ -98,16 +78,13 @@ jobs:
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
       - name: Build payload
-        working-directory: rozi
         run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Build Windows launcher
         if: matrix.archive == 'zip'
-        working-directory: rozi
         run: cargo build --locked --release --target ${{ matrix.target }} --bin rozi-launcher
 
       - name: Smoke-test payload version
-        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail
@@ -118,7 +95,6 @@ jobs:
 
       - name: Package canonical archive
         id: package
-        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail
@@ -142,7 +118,6 @@ jobs:
           rm -rf "dist/${stem}"
 
       - name: Smoke-test extracted final archive
-        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail
@@ -167,7 +142,6 @@ jobs:
       # nothing here was known to work until it was traced.
       - name: Smoke-test Windows launcher-v1
         if: matrix.archive == 'zip'
-        working-directory: rozi
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -277,8 +251,8 @@ jobs:
         with:
           name: archive-${{ matrix.target }}
           path: |
-            rozi/dist/*.tar.gz
-            rozi/dist/*.zip
+            dist/*.tar.gz
+            dist/*.zip
           if-no-files-found: error
           overwrite: false
           retention-days: 14
@@ -292,7 +266,6 @@ jobs:
       # failure would only appear on a client mid-update.
       - name: Build Linux release tool
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail

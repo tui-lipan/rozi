@@ -163,11 +163,20 @@ is the only step.
 ## The install box
 
 `theme/InstallTabs.vue` holds every channel the landing page advertises, one
-entry per tab. `command` is exactly what the copy button puts on the clipboard,
-so nothing that a shell must not receive belongs in it; `note` is the one line
-under the command. Both are load-bearing for the box's height: the code area
-reserves two lines and each note is written to fit one, which is what stops the
-box resizing as a reader moves between tabs. Keep new entries within that.
+entry per tab. `command` is exactly what reaches the clipboard, so nothing a
+shell must not receive belongs in it; `note` is the line under it.
+
+**Both are one line, and that is what keeps the box a fixed height.** The
+earlier version reserved two lines of code height so the box would not resize
+when a two-line command was selected, which traded a resize for a permanently
+visible blank line - worse, because it showed on every tab instead of during a
+switch. Keeping every command and note to one line removes the need for either.
+A new channel that does not fit on one line needs a different design, not a
+taller box.
+
+The whole command strip is the copy button, so the click target is the command
+itself rather than the small label at its end. That label is a `span`; a
+`button` there would be a nested button inside the strip's own `button`.
 
 ## The hosted installers
 

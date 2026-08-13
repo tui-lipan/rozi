@@ -269,38 +269,44 @@ html.rozi-intro-pending .lp {
     color: var(--vp-c-text-1);
     border-bottom-color: var(--vp-c-brand-1);
 }
-.lp-install-body {
-    position: relative;
+
+/* The command row is itself the copy button - the whole strip is the target,
+   not just the label at its end. */
+.lp-install-cmd {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 13px 12px 13px 16px;
+    font: inherit;
+    text-align: left;
+    background: none;
+    border: none;
+    border-radius: 0;
+    cursor: pointer;
+    transition: background-color 0.15s;
 }
-.lp-install-body pre {
-    margin: 0;
-    padding: 14px 64px 14px 16px;
-    overflow-x: auto;
+.lp-install-cmd:hover {
+    background: var(--vp-c-bg-alt);
 }
-.lp-install-body code {
-    /* Two lines' worth, because the source tab needs two and the box must not
-       change height as the reader moves between tabs. */
-    display: block;
-    min-height: calc(2 * 1.7em);
-}
-.lp-install-body code {
+.lp-install-cmd code {
+    flex: 1;
+    min-width: 0;
     font-family: var(--vp-font-family-mono);
     font-size: 12.5px;
     line-height: 1.7;
     color: var(--vp-c-text-1);
-    white-space: pre;
-}
-.lp-install-note {
-    margin: 0;
-    padding: 0 16px 12px;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--vp-c-text-3);
+    /* Every command fits one line at the box's full width, so this only takes
+       effect on a narrow screen. Silently clipping the tail of a command the
+       reader is about to run is worse than letting the box grow, and hiding
+       the overflow behind a scrollbar nobody can see is worse still. Copying
+       reads the source string, not the rendered text, so a visual wrap cannot
+       corrupt what lands on the clipboard. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 .lp-copy {
-    position: absolute;
-    top: 8px;
-    right: 8px;
+    flex: none;
     padding: 4px 9px;
     font-family: var(--vp-font-family-base);
     font-size: 11px;
@@ -308,18 +314,24 @@ html.rozi-intro-pending .lp {
     background: var(--vp-c-bg-alt);
     border: 1px solid var(--vp-c-divider);
     border-radius: 3px;
-    cursor: pointer;
     transition:
         color 0.15s,
         border-color 0.15s;
 }
-.lp-copy:hover {
+.lp-install-cmd:hover .lp-copy {
     color: var(--vp-c-text-1);
     border-color: var(--vp-c-border);
 }
-.lp-copy.done {
+.lp-install-cmd.done .lp-copy {
     color: var(--vp-c-brand-1);
     border-color: var(--vp-c-brand-1);
+}
+.lp-install-note {
+    margin: 0;
+    padding: 0 16px 13px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--vp-c-text-3);
 }
 
 .lp-cta {
@@ -698,10 +710,11 @@ html.rozi-intro-pending .lp {
     }
     /* Keep the clone URL on one line inside the copy button's reserved gutter
        rather than scrolling underneath it. */
-    .lp-install-body pre {
-        padding: 12px 56px 12px 14px;
+    .lp-install-cmd {
+        padding: 11px 10px 11px 14px;
+        gap: 8px;
     }
-    .lp-install-body code {
+    .lp-install-cmd code {
         font-size: 11px;
     }
     .lp-install-tab {
@@ -709,7 +722,7 @@ html.rozi-intro-pending .lp {
         font-size: 11px;
     }
     .lp-install-note {
-        padding: 0 14px 10px;
+        padding: 0 14px 11px;
         font-size: 11px;
     }
     .lp-section {

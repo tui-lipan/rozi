@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Content, withBase } from "vitepress";
+import { Content, useData, withBase } from "vitepress";
 import { onMounted, ref } from "vue";
 import RoziStage from "./composition/RoziStage.vue";
 import RoziIntro from "./RoziIntro.vue";
@@ -12,6 +12,9 @@ onMounted(() => {
   introPlaying.value =
     document.documentElement.classList.contains("rozi-intro-pending");
 });
+
+// From Cargo.toml via config.ts - see NavTitleMeta.vue.
+const { theme } = useData();
 
 const GITHUB = "https://github.com/tui-lipan/rozi";
 const SPONSOR = "https://github.com/sponsors/Razuer";
@@ -118,7 +121,7 @@ border_style = "rounded"`;
       <a class="lp-brand" :href="withBase('/')">
         <img :src="withBase('/logo.svg')" alt="" width="24" height="24" />
         <span class="lp-brand-name">rozi</span>
-        <span class="lp-chip">v0.2.0</span>
+        <span class="lp-chip">v{{ theme.roziVersion }}</span>
       </a>
       <span class="lp-top-spacer" />
       <a class="lp-top-link" :href="withBase('/getting-started')">Docs</a>

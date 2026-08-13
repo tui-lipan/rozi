@@ -1,6 +1,6 @@
 {
   "name": "rozi-docs",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Landing page and documentation site for rozi (rozi.tui-lipan.dev).",

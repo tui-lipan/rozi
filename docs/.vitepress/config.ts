@@ -1,5 +1,6 @@
 import { defineConfig } from "vitepress";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import vueJsx from "@vitejs/plugin-vue-jsx";
 import { repoLinksPlugin } from "./repoLinks";
 
@@ -7,6 +8,21 @@ const srcDir = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 
 /** What the landing page calls itself, in a tab and when shared. */
 const LANDING_TITLE = "rozi - a tiling terminal multiplexer";
+
+/**
+ * Read from the manifest rather than written down here. The version used to be
+ * typed into three files, which is three chances for the site to advertise a
+ * release that does not exist.
+ */
+const ROZI_VERSION = (() => {
+  const manifest = readFileSync(
+    fileURLToPath(new URL("../../Cargo.toml", import.meta.url)),
+    "utf8",
+  );
+  const found = /^version\s*=\s*"([^"]+)"/m.exec(manifest);
+  if (!found) throw new Error("no version in Cargo.toml");
+  return found[1];
+})();
 
 export default defineConfig({
   title: "rozi",
@@ -105,6 +121,7 @@ export default defineConfig({
 
   themeConfig: {
     logo: "/logo.svg",
+    roziVersion: ROZI_VERSION,
     outline: [2, 3],
     nav: [
       { text: "tui-lipan", link: "https://tui-lipan.dev" },

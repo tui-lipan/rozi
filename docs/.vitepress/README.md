@@ -139,7 +139,9 @@ drift apart.
 `public/CNAME` carries the same domain for GitHub Pages, if the site ever moves
 there.
 
-## Updating the version chip
+## The version chip
 
-The `v0.2.0` chip appears in `theme/NavTitleMeta.vue` (doc pages) and
-`theme/Landing.vue` (landing). Both should match `Cargo.toml`.
+Nothing to update. `config.ts` reads the version out of `../../Cargo.toml` at
+build time and passes it through `themeConfig.roziVersion`; the chips in
+`theme/NavTitleMeta.vue` and `theme/Landing.vue` render that. Bumping the crate
+is the only step.

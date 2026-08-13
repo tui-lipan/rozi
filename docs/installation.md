@@ -86,7 +86,7 @@ Unix:
 ./install.sh
 
 # Select an exact release archive for bootstrap.
-./install.sh --version 0.2.0
+./install.sh --version 0.1.0
 ```
 
 Windows PowerShell:
@@ -96,7 +96,7 @@ Windows PowerShell:
 .\install.ps1
 
 # Select an exact release archive and opt in to the user PATH entry.
-.\install.ps1 -Version 0.2.0 -AddToPath
+.\install.ps1 -Version 0.1.0 -AddToPath
 ```
 
 The helper's optional version selects the archive used to bootstrap. It is not forwarded as an
@@ -204,7 +204,7 @@ After build/package jobs have produced final archives, generate and sign metadat
 
 ```bash
 cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
-  manifest --name rozi --version 0.2.0 --artifacts-dir dist --output dist/rozi-release.json
+  manifest --name rozi --version 0.1.0 --artifacts-dir dist --output dist/rozi-release.json
 
 ROZI_RELEASE_PRIVATE_KEY="$(tr -d '\n' < "$HOME/.config/rozi/release-keys/release-2026-a.private.b64")" \
 cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \

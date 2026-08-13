@@ -323,6 +323,9 @@
 # Fractions of the pane canvas, clamped to 0.1-1.0. Default 0.6 when floating.
 #width = 0.7
 #height = 0.7
+# Float-only. center (default), cursor (centered on the mouse pointer), top-left, top, top-right,
+# left, right, bottom-left, bottom, bottom-right.
+#position = "center"
 # 1-based target workspace; defaults to the current one.
 #workspace = 9
 # Switch to and focus the new pane. When false the target workspace remembers it as its

@@ -69,7 +69,7 @@ pane is still starting, not broken. A spawn that fails answers with a JSON error
 `split`/`new-pane` leaves focus alone. The control endpoint is an automation surface, and a pane
 spawned from a script or an agent must not move focus, and the active workspace, away from whoever
 is typing. Pass `--focus` (or `"focus": true` in JSON) to move to the new pane. This overrides the
-`focus` field of a matched `[[rules]]` entry; the rule still decides workspace, float, and
+`focus` field of a matched `[[rules]]` entry; the rule still decides workspace, float, position, and
 fullscreen.
 
 `send-text`/`send-keys` targeting a pane whose PTY is still starting are queued and written as

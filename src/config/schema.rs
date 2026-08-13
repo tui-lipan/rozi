@@ -881,10 +881,63 @@ pub struct RuleConfig {
     pub float: bool,
     pub width: Option<f32>,
     pub height: Option<f32>,
+    /// Where a floating pane is placed. Ignored unless [`Self::float`] is set.
+    pub position: FloatPosition,
     /// Zero-based workspace index.
     pub workspace: Option<usize>,
     pub focus: bool,
     pub fullscreen: bool,
+}
+
+/// Where a rule-spawned (or `spawn-float`) floating pane sits on the canvas.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FloatPosition {
+    #[default]
+    Center,
+    /// Center of the pane at the last mouse pointer. Falls back to canvas center when no pointer
+    /// has been seen this run.
+    Cursor,
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Right,
+    BottomLeft,
+    Bottom,
+    BottomRight,
+}
+
+impl FloatPosition {
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "center" => Self::Center,
+            "cursor" => Self::Cursor,
+            "top-left" => Self::TopLeft,
+            "top" => Self::Top,
+            "top-right" => Self::TopRight,
+            "left" => Self::Left,
+            "right" => Self::Right,
+            "bottom-left" => Self::BottomLeft,
+            "bottom" => Self::Bottom,
+            "bottom-right" => Self::BottomRight,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Center => "center",
+            Self::Cursor => "cursor",
+            Self::TopLeft => "top-left",
+            Self::Top => "top",
+            Self::TopRight => "top-right",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::BottomLeft => "bottom-left",
+            Self::Bottom => "bottom",
+            Self::BottomRight => "bottom-right",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

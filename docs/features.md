@@ -99,7 +99,7 @@ See [Layouts & panes](layouts-and-panes.md).
 
 Every pane is a real PTY.
 
-**Lifecycle** — spawn, spawn already-floating at the cursor (`spawn-float`), close, respawn an exited pane, and kill a whole workspace. Exit status is
+**Lifecycle** — spawn, spawn already-floating at the mouse pointer (`spawn-float`), close, respawn an exited pane, and kill a whole workspace. Exit status is
 surfaced rather than silently closing.
 
 **Placement** — toggle any pane to **floating** or **fullscreen**. Floats are moved and resized
@@ -141,7 +141,7 @@ logging starts. Logging stops automatically on a write error.
 
 **Rules** — `[[rules]]` applies first-match placement to interactive command-carrying spawns
 (including control-socket `new-pane` and `[keys] run`). A rule matches the command by substring or
-regex and can set `float`, `width`, `height`, `workspace`, `focus`, and `fullscreen`.
+regex and can set `float`, `width`, `height`, `position`, `workspace`, `focus`, and `fullscreen`.
 
 **Scratchpad** — a toggleable drop-down pane that overlays the current workspace.
 

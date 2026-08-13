@@ -11,7 +11,8 @@ pub(crate) fn placement_for_command(
     let float = rule.float.then(|| SpawnFloat {
         width: rule.width.unwrap_or(0.6),
         height: rule.height.unwrap_or(0.6),
-        origin: None,
+        position: rule.position,
+        pointer: None,
     });
     (
         rule.workspace,
@@ -39,6 +40,7 @@ mod tests {
             workspace: None,
             focus: true,
             fullscreen: false,
+            position: crate::config::FloatPosition::Center,
         }
     }
 
@@ -51,6 +53,7 @@ mod tests {
             workspace: Some(2),
             focus: false,
             fullscreen: false,
+            position: crate::config::FloatPosition::Center,
         }
     }
 
@@ -73,5 +76,16 @@ mod tests {
 
         let (workspace, _) = placement_for_command(&rules, "htop");
         assert_eq!(workspace, None);
+    }
+
+    #[test]
+    fn float_rule_carries_cursor_position() {
+        let mut rule = substring_rule("btop");
+        rule.float = true;
+        rule.position = crate::config::FloatPosition::Cursor;
+        let (_, placement) = placement_for_command(&[rule], "btop");
+        let float = placement.float.expect("float");
+        assert_eq!(float.position, crate::config::FloatPosition::Cursor);
+        assert_eq!(float.pointer, None);
     }
 }

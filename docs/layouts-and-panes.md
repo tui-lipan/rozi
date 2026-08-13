@@ -103,9 +103,10 @@ Toggle the focused pane between tiling and floating with `t`. A floating pane:
 - can be moved (`modifier`+left-drag) and resized (`modifier`+right-drag) freely with the
   mouse, including slightly off-screen (a margin keeps it grabbable).
 
-`spawn-float` (`Shift+Enter`) opens a **new** shell pane already floating, with its top-left at
-the focused pane's terminal cursor. Near an edge the rect is clamped so the pane stays on the
-canvas. Bind a different chord with `[keys] spawn-float = "..."`. A plain `spawn` still splits
+`spawn-float` (`Shift+Enter`) opens a **new** shell pane already floating, centered on the
+mouse pointer. Near an edge the rect is clamped so the pane stays on the
+canvas. With no pointer yet this run, it falls back to a centered float. Bind a different chord
+with `[keys] spawn-float = "..."`. A plain `spawn` still splits
 the focused tile.
 
 ## Fullscreen

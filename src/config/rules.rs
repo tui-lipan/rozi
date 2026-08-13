@@ -1,7 +1,7 @@
 use regex_lite::Regex;
 
 use super::file::{HintFileConfig, RuleFileConfig};
-use super::schema::{HintConfig, RuleConfig, RuleMatcher};
+use super::schema::{FloatPosition, HintConfig, RuleConfig, RuleMatcher};
 
 pub(super) fn build_rules(raw: Vec<RuleFileConfig>, warnings: &mut Vec<String>) -> Vec<RuleConfig> {
     raw.into_iter()
@@ -61,11 +61,33 @@ pub(super) fn build_rules(raw: Vec<RuleFileConfig>, warnings: &mut Vec<String>) 
                     None
                 }
             });
+            let position = match rule.position.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                None => FloatPosition::Center,
+                Some(value) => match FloatPosition::parse(value) {
+                    Some(position) => position,
+                    None => {
+                        warnings.push(format!(
+                            "Ignored rule `{label}` unknown position `{value}` (expected center, cursor, top-left, top, top-right, left, right, bottom-left, bottom, bottom-right)"
+                        ));
+                        FloatPosition::Center
+                    }
+                },
+            };
+            if position != FloatPosition::Center && !rule.float {
+                warnings.push(format!(
+                    "Ignored rule `{label}` position (only applies when float = true)"
+                ));
+            }
             Some(RuleConfig {
                 width: clamp("width", rule.width, warnings),
                 height: clamp("height", rule.height, warnings),
                 matcher,
                 float: rule.float,
+                position: if rule.float {
+                    position
+                } else {
+                    FloatPosition::Center
+                },
                 workspace,
                 focus: rule.focus,
                 fullscreen: rule.fullscreen,
@@ -139,6 +161,38 @@ mod tests {
         assert!(rules[0].fullscreen);
         assert!(warnings.iter().any(|w| w.contains("width")));
         assert!(warnings.iter().any(|w| w.contains("height")));
+    }
+
+    #[test]
+    fn rules_parse_float_position_and_warn_when_float_is_off() {
+        let parsed: RulesOnly = toml::from_str(
+            r#"
+            [[rules]]
+            match = "btop"
+            float = true
+            position = "cursor"
+            [[rules]]
+            match = "htop"
+            position = "top-right"
+            [[rules]]
+            match = "nvim"
+            float = true
+            position = "nope"
+            "#,
+        )
+        .expect("config parses");
+        let mut warnings = Vec::new();
+        let rules = build_rules(parsed.rules, &mut warnings);
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].position, FloatPosition::Cursor);
+        assert_eq!(rules[1].position, FloatPosition::Center);
+        assert_eq!(rules[2].position, FloatPosition::Center);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("position") && w.contains("float"))
+        );
+        assert!(warnings.iter().any(|w| w.contains("unknown position")));
     }
 
     #[test]

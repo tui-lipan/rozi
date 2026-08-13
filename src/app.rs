@@ -1444,7 +1444,7 @@ mod tests {
     }
 
     #[test]
-    fn command_palette_empty_query_starts_with_rename_pane() {
+    fn command_palette_empty_query_starts_with_new_floating_pane() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
@@ -1466,7 +1466,13 @@ mod tests {
                     .expect("activate first command");
 
                 assert!(!backend.state().show_palette);
-                assert!(backend.state().rename.is_some());
+                let spawned = backend.state().focused_pane().expect("spawn takes focus");
+                let pane = backend.state().current().workspaces[0]
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == spawned)
+                    .expect("spawned pane");
+                assert!(pane.floating);
             })
             .expect("spawn palette selection test thread")
             .join()
@@ -1587,7 +1593,13 @@ mod tests {
                     .expect("activate restored first command");
 
                 assert!(!backend.state().show_palette);
-                assert!(backend.state().rename.is_some());
+                let spawned = backend.state().focused_pane().expect("spawn takes focus");
+                let pane = backend.state().current().workspaces[0]
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == spawned)
+                    .expect("spawned pane");
+                assert!(pane.floating);
             })
             .expect("spawn palette query reset test thread")
             .join()

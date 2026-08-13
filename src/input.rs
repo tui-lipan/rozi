@@ -3,7 +3,7 @@ use crate::state::Direction;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
     Spawn,
-    /// Spawn a new pane already floating, with its top-left at the focused pane's cursor.
+    /// Spawn a new pane already floating, centered on the mouse pointer.
     SpawnFloat,
     RespawnPane,
     TogglePaneLogging,

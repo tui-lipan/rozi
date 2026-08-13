@@ -317,6 +317,7 @@ match = "btop"
 float = true
 width = 0.7
 height = 0.7
+position = "cursor"
 
 [[rules]]
 match_regex = "^cargo\\s"
@@ -328,8 +329,9 @@ focus = false
 | --- | --- | --- |
 | `match` | — | Non-empty command substring. Exactly one of `match` / `match_regex` is required. |
 | `match_regex` | — | Regex matched against the full command line (`regex-lite`). Invalid patterns warn-and-skip. |
-| `float` | `false` | Spawn centered as a floating pane. |
+| `float` | `false` | Spawn as a floating pane. |
 | `width`, `height` | `0.6` when floating | Fractions of the pane canvas, clamped to `0.1..=1.0`. |
+| `position` | `center` | Float-only. Where the pane sits: `center`, `cursor` (centered on the mouse pointer), `top-left`, `top`, `top-right`, `left`, `right`, `bottom-left`, `bottom`, `bottom-right`. Corners flush that corner of the pane to the canvas; sides center it on that edge. Ignored (with a load warning) unless `float = true`. |
 | `workspace` | current | 1-based target workspace (`1..=9`). |
 | `focus` | `true` | Switch to and focus the spawned pane. When false, the target workspace remembers the new pane as its own focus without stealing the current view. |
 | `fullscreen` | `false` | Spawn with fullscreen enabled. |

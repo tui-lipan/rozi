@@ -1,0 +1,800 @@
+use tui_lipan::prelude::*;
+
+use crate::AppRoot;
+use crate::ops::focus::{
+    request_current_pane_focus, request_rename_session_focus, request_session_picker_focus,
+};
+use crate::ops::session::attach::{
+    attach_session_by_name, disconnect_host, held_ephemeral_session, kill_current_session,
+    refresh_picker_after_kill, restart_current_session, start_launcher_shell,
+};
+use crate::ops::session::control_lease::require_attached;
+use crate::ops::session::discovery::{immediate_picker_rows, session_watch_command};
+use crate::session::discovery::DiscoveredSession;
+use crate::state::{NamingMode, SessionPickerState, SessionRenameState};
+
+/// Clear any armed session-picker kill and dismiss its confirmation toast. Called from every path
+/// that abandons or resolves the arming (a confirmed kill, moving off the row, editing the query,
+/// refreshing, closing, or switching sessions) so the "press again" toast never outlives the
+/// confirmation. A no-op when nothing is armed.
+pub(crate) fn clear_pending_kill(ctx: &mut Context<AppRoot>) {
+    if let Some(picker) = ctx.state.session_picker.as_mut() {
+        picker.pending_kill = None;
+        picker.pending_restart = None;
+    }
+}
+
+/// Clear the session-picker kill confirmation when navigation abandons its armed row.
+pub(crate) fn clear_pending_session_arms(ctx: &mut Context<AppRoot>) {
+    clear_pending_kill(ctx);
+}
+
+pub(crate) fn open_session_picker(ctx: &mut Context<AppRoot>) -> Update {
+    // Open instantly from local discovery and the last successful remote-host snapshots. Live
+    // remote state arrives through the recurring watcher; opening the picker does not need a
+    // duplicate eager ssh sweep.
+    let rows = immediate_picker_rows(ctx);
+    let mut picker = SessionPickerState::new(rows);
+    if let Some(current_name) = ctx.state.current().session_name.as_deref()
+        && let Some(pos) = picker
+            .entries
+            .iter()
+            .position(|entry| entry.name == current_name)
+    {
+        picker.selected = pos;
+    }
+    ctx.state.session_picker = Some(picker);
+    ctx.state.show_session_picker = true;
+    // A new opening invalidates any in-flight watcher tick from a prior opening.
+    ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
+    request_session_picker_focus(ctx);
+    Update::with_command(session_watch_command(
+        ctx.state.session_picker_epoch,
+        ctx.state.local_current_session_name().map(str::to_string),
+        ctx.state.config.remote.clone(),
+    ))
+}
+
+/// Open the session picker at startup (nothing attached yet). Sets up the picker state and returns
+/// the watcher epoch so `init` can kick off the first discovery tick. Local rows show immediately;
+/// live remote rows arrive async, so a dead configured host never stalls startup.
+///
+/// `highlight` lands the selection on a specific session — what `[session] startup = "last"` uses
+/// to point at the session it remembered but could not reopen.
+pub(crate) fn open_startup_session_picker(
+    ctx: &mut Context<AppRoot>,
+    highlight: Option<String>,
+) -> u64 {
+    let rows = immediate_picker_rows(ctx);
+    let mut picker = SessionPickerState::new(rows);
+    if let Some(highlight) = highlight
+        && let Some(index) = picker
+            .entries
+            .iter()
+            .position(|entry| entry.name == highlight)
+    {
+        picker.selected = index;
+    }
+    ctx.state.session_picker = Some(picker);
+    ctx.state.show_session_picker = true;
+    ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
+    ctx.state.commands_dirty = true;
+    request_session_picker_focus(ctx);
+    ctx.state.session_picker_epoch
+}
+
+pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
+    // Carry the typed query and the highlighted row across the rebuild. After a kill the killed row
+    // is gone, so clamping keeps the highlight on the row that slid into its place instead of
+    // snapping back to the top; it also keeps our `selected` in step with the persistent
+    // `SearchPalette` component, which does not re-resolve its keyboard selection when the entry
+    // list changes underneath it. Rebuild from fast local rows and let the async sweep refill.
+    let (query, selected) = ctx
+        .state
+        .session_picker
+        .as_ref()
+        .map(|p| (p.input.text().to_string(), p.selected))
+        .unwrap_or_default();
+    let rows = immediate_picker_rows(ctx);
+    let mut picker = SessionPickerState::new(rows);
+    picker.input.set_text(query);
+    picker.selected = selected.min(picker.entries.len().saturating_sub(1));
+    ctx.state.session_picker = Some(picker);
+    Update::with_command(session_watch_command(
+        ctx.state.session_picker_epoch,
+        ctx.state.local_current_session_name().map(str::to_string),
+        ctx.state.config.remote.clone(),
+    ))
+}
+
+pub(crate) fn activate_selected_session(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    // A kill can never be armed on the same press that resolves an open, so drop any kill arm; the
+    // open arm is handled explicitly below.
+    clear_pending_kill(ctx);
+    let Some(entry) = ctx
+        .state
+        .session_picker
+        .as_ref()
+        .and_then(|picker| picker.entries.get(index).cloned())
+    else {
+        return Update::full();
+    };
+    activate_discovered_session(ctx, entry)
+}
+
+/// Activate a discovered running session without resolving it through a mutable row index. Picker
+/// and sidebar callers keep separate ephemeral-discard confirmations.
+pub(crate) fn activate_discovered_session(
+    ctx: &mut Context<AppRoot>,
+    entry: DiscoveredSession,
+) -> Update {
+    // Discovery already probed this session; an `Unknown` status means the handshake was refused
+    // (an incompatible older server is the usual cause). Attaching would only fail after the connect
+    // retry deadline, so reject it up front, keep the picker open, and point at the fix - killing
+    // the row (Ctrl+K) still works even against a server we can't speak to.
+    if matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Unknown
+    ) {
+        crate::pty_events::notify_error(
+            ctx,
+            "Attach failed",
+            format!(
+                "`{}` runs an incompatible version\nCtrl+K removes it",
+                entry.name
+            ),
+        );
+        return Update::full();
+    }
+    // Live rows must not silently recreate a server that died after discovery. A snapshot-only row
+    // is deliberately different: selecting it starts the named server so resurrection can restore
+    // the session.
+    let autostart = matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Restorable
+    );
+    attach_session_by_name(ctx, entry.name, entry.host, entry.remote_target, autostart)
+}
+
+/// Go to this client's scratch session: the session picker's `Ctrl+T`, and its `Enter` when there
+/// is nothing on the list to activate.
+///
+/// One key covers both directions — start the ephemeral when there is none, switch to it when there
+/// already is — because from the keyboard they are the same request. Already being on it is a
+/// no-op beyond closing the picker: switching somewhere you already are is not worth a toast.
+pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
+    clear_pending_session_arms(ctx);
+    // Checked before the launcher case: the session on screen being the scratch one settles this
+    // whether or not its client is live, and re-attaching what is already attached is never right.
+    if ctx.state.is_ephemeral_session() {
+        return close_session_picker(ctx);
+    }
+    // In the launcher there is nothing to park, and the panes the launch prepared are still waiting
+    // to be handed to the session that starts.
+    if ctx.state.needs_session_for_pty() {
+        return start_launcher_shell(ctx);
+    }
+    let held = held_ephemeral_session(&ctx.state).map(|attachment| {
+        (
+            attachment.session_name.clone().unwrap_or_default(),
+            attachment.remote_host.clone(),
+            attachment.remote_target.clone(),
+        )
+    });
+    let (name, remote_host, remote_target) = held.unwrap_or_else(|| {
+        // Nothing held: create the one this client would launch. Under `--remote` the ephemeral
+        // lives on the remote host, so it takes the host-qualified name and that host's target.
+        let remote_target = ctx.state.current().remote_target.clone();
+        let name = if remote_target.is_some() {
+            crate::state::remote_ephemeral_session_name()
+        } else {
+            crate::state::ephemeral_session_name()
+        };
+        (name, ctx.state.current().remote_host.clone(), remote_target)
+    });
+    attach_session_by_name(ctx, name, remote_host, remote_target, true)
+}
+
+/// Close the session picker. With a session in the foreground this just returns focus to the
+/// current pane; dismissed with nothing attached it leaves the client in the launcher, which is a
+/// state the app is allowed to sit in. Dismissing a picker is not a request for a session, so it
+/// no longer starts an ephemeral one — the launcher says how to start one.
+pub(crate) fn close_session_picker(ctx: &mut Context<AppRoot>) -> Update {
+    clear_pending_session_arms(ctx);
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.commands_dirty = true;
+    if ctx.state.is_launcher() {
+        return Update::full();
+    }
+    request_current_pane_focus(ctx);
+    Update::full()
+}
+
+/// Reject the name currently in the session prompt, keeping the prompt open with the reason on it.
+///
+/// The rule stays inside the prompt rather than in a toast for two reasons: the prompt is modal and
+/// a toast would overlap the very field being corrected, and the message is about the text still
+/// sitting in that field, so it should disappear when the text does.
+fn reject_session_name(ctx: &mut Context<AppRoot>, reason: impl Into<String>) {
+    if let Some(rename) = ctx.state.rename_session.as_mut() {
+        rename.error = Some(reason.into());
+    }
+    request_rename_session_focus(ctx);
+}
+
+/// Whether `name` is already taken for a create-session submit: live discovery, a held attachment,
+/// or a cached remote row. Checked before the create prompt is torn down so a collision stays in
+/// the modal instead of toasting over a blank, unfocused client.
+pub(crate) fn session_name_already_running(
+    ctx: &Context<AppRoot>,
+    name: &str,
+    remote_target: Option<&crate::session::remote::RemoteTarget>,
+) -> bool {
+    if ctx
+        .state
+        .attachment_by_identity(name, remote_target)
+        .is_some()
+    {
+        return true;
+    }
+    match remote_target {
+        None => crate::session::discovery::discover_session(name)
+            .ok()
+            .flatten()
+            .is_some(),
+        Some(target) => ctx
+            .state
+            .host_session_cache
+            .get(&target.display_label())
+            .is_some_and(|sessions| sessions.iter().any(|session| session.name == name)),
+    }
+}
+
+/// Swap whatever overlays are open for a session naming/rename prompt and focus it. Shared by the
+/// create-new, rename-in-place, and detach-and-name entry points so they raise the prompt the same
+/// way.
+fn enter_session_rename(ctx: &mut Context<AppRoot>, rename: SessionRenameState) -> Update {
+    ctx.state.rename_session = Some(rename);
+    // Raised from the session picker, cancelling returns to it rather than to the pane; the
+    // branches of `apply_rename_session` that attach or detach drop the origin instead.
+    ctx.state.overlay_return = crate::ops::overlay_return::picker_origin(&ctx.state);
+    ctx.state.show_palette = false;
+    ctx.state.show_help = false;
+    ctx.state.search = None;
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.mode = crate::state::Mode::Normal;
+    request_rename_session_focus(ctx);
+    Update::full()
+}
+
+/// Raise the create-session prompt, carrying whatever was typed into the session picker. Reaching
+/// `Ctrl+N` from a query that matched nothing means "then make that one", so the name comes along
+/// rather than making the user type it a second time.
+pub(crate) fn open_create_session(ctx: &mut Context<AppRoot>) -> Update {
+    let seed = ctx
+        .state
+        .session_picker
+        .as_ref()
+        .filter(|_| ctx.state.show_session_picker)
+        .map(|picker| picker.input.text().trim().to_string())
+        .unwrap_or_default();
+    clear_pending_session_arms(ctx);
+    enter_session_rename(ctx, SessionRenameState::new_create_named(seed))
+}
+
+/// Raise the create-session prompt pre-targeted at a remote host ("New session on `<host>`"). The
+/// named session is created on that host's server when the name is submitted.
+pub(crate) fn open_create_session_on_host(
+    ctx: &mut Context<AppRoot>,
+    target: crate::session::remote::RemoteTarget,
+) -> Update {
+    clear_pending_session_arms(ctx);
+    enter_session_rename(ctx, SessionRenameState::new_create_on_host(target))
+}
+
+/// Raise the leave prompt on the way out of the client, for the `temporary` temporary sessions
+/// leaving would close. A temporary session has no reattachable name, so naming it (Enter) is the
+/// only way to keep it: the server is renamed, kept running, and the client leaves. Submitting
+/// nothing closes those sessions instead, after a second press confirms it. Cancelling (`Esc`)
+/// returns to the session with nothing torn down.
+pub(crate) fn open_leave_prompt(ctx: &mut Context<AppRoot>, temporary: usize) -> Update {
+    enter_session_rename(ctx, SessionRenameState::for_leave(temporary))
+}
+
+/// Open the prompt to rename the *current* session in place. Unlike the picker (which switches to a
+/// separate session), this keeps every live pane where it is and just changes the name the server is
+/// discoverable under. Works for both ephemeral (naming it for the first time) and already-named
+/// sessions.
+pub(crate) fn open_rename_session(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(()) = require_attached(ctx) else {
+        return Update::full();
+    };
+    let ephemeral = ctx.state.is_ephemeral_session();
+    let initial = if ephemeral {
+        String::new()
+    } else {
+        ctx.state.current().session_name.clone().unwrap_or_default()
+    };
+    let mode = if ephemeral {
+        NamingMode::NameEphemeralSession
+    } else {
+        NamingMode::RenameSession
+    };
+    enter_session_rename(ctx, SessionRenameState::new(initial, mode))
+}
+
+pub(crate) fn apply_rename_session(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(rename_state) = ctx.state.rename_session.as_ref() else {
+        return Update::none();
+    };
+    let name = rename_state.input.text().trim().to_string();
+
+    match rename_state.mode {
+        NamingMode::RenameWorkspace { index } => {
+            if let Some(workspace) = ctx.state.current_mut().workspaces.get_mut(index) {
+                workspace.name = (!name.is_empty()).then_some(name);
+            }
+            ctx.state.rename_session = None;
+            ctx.state.commands_dirty = true;
+            crate::ops::overlay_return::finish(ctx)
+        }
+        NamingMode::CreateSession | NamingMode::OpenProfileAs => {
+            let open_ephemeral = rename_state.mode == NamingMode::OpenProfileAs && name.is_empty();
+            if !open_ephemeral && !crate::session::discovery::valid_session_name(&name) {
+                reject_session_name(ctx, "Use letters, numbers, _ or -");
+                return Update::full();
+            }
+
+            // "New session on <host>": create/attach the named session on the remote host, parking
+            // the current session in the background. No ephemeral-discard confirm — switching away
+            // retains the current session rather than discarding it.
+            let host_target = ctx
+                .state
+                .rename_session
+                .as_ref()
+                .and_then(|rename| rename.host_target.clone());
+            if !open_ephemeral && session_name_already_running(ctx, &name, host_target.as_ref()) {
+                reject_session_name(ctx, format!("Session `{name}` is already running"));
+                return Update::full();
+            }
+            if let Some(target) = host_target {
+                ctx.state.rename_session = None;
+                // Attaching retires the picker this was raised from: its rows are about to be
+                // stale, so land on the new session rather than back in a list.
+                crate::ops::overlay_return::leave(ctx);
+                let alias = target.display_label();
+                return attach_session_by_name(ctx, name, Some(alias), Some(target), true);
+            }
+
+            // Creating a session no longer discards the current ephemeral one — like switching, it
+            // parks it live in the background — so there is nothing destructive to confirm; a single
+            // Enter commits.
+            let profile_seed = ctx
+                .state
+                .rename_session
+                .as_ref()
+                .and_then(|rename| rename.profile_seed.clone());
+            ctx.state.rename_session = None;
+            crate::ops::overlay_return::leave(ctx);
+            let intent = match profile_seed {
+                Some((profile, path)) => {
+                    crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path }
+                }
+                None => crate::ops::profile::OpenNamedIntent::CreateFresh,
+            };
+            if open_ephemeral {
+                let crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path } =
+                    intent
+                else {
+                    return Update::none();
+                };
+                return crate::ops::profile::load_profile_into_fresh_ephemeral(
+                    ctx,
+                    crate::config::ProfileEntry {
+                        name: profile,
+                        path,
+                    },
+                );
+            }
+            crate::ops::profile::open_named_target(ctx, name, intent)
+        }
+        NamingMode::NameEphemeralSession => {
+            let leave = rename_state.leave;
+            // At the leave prompt an empty name is not a mistake, it is the other answer: close
+            // these sessions and go. It takes a second press, and what that press closes is
+            // spelled out in the prompt itself while the finger is still over the key.
+            if name.is_empty()
+                && let Some(leave) = leave
+            {
+                let confirm = ctx.state.config.confirm.quit_ephemeral;
+                if confirm && !leave.armed {
+                    if let Some(rename) = ctx.state.rename_session.as_mut() {
+                        rename.leave = Some(crate::state::LeaveIntent {
+                            armed: true,
+                            ..leave
+                        });
+                    }
+                    request_rename_session_focus(ctx);
+                    return Update::full();
+                }
+                ctx.state.rename_session = None;
+                crate::ops::overlay_return::leave(ctx);
+                return crate::ops::exit::leave_client_now(ctx, true);
+            }
+            if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
+                reject_session_name(ctx, "Use letters, numbers, _ or -");
+                return Update::full();
+            }
+
+            // Naming must not collide with another live session.
+            if session_name_already_running(ctx, &name, ctx.state.current().remote_target.as_ref())
+                && ctx.state.current().session_name.as_deref() != Some(name.as_str())
+            {
+                reject_session_name(ctx, format!("Session `{name}` is already running"));
+                return Update::full();
+            }
+
+            ctx.state.rename_session = None;
+
+            if leave.is_some() {
+                // The client is leaving the session; there is nothing to return to.
+                crate::ops::overlay_return::leave(ctx);
+                let Some(client) = ctx.state.current().session_client.clone() else {
+                    crate::pty_events::notify_error(
+                        ctx,
+                        "Rename failed",
+                        "Session connection lost",
+                    );
+                    return Update::full();
+                };
+                crate::update::flush_layout_commit(ctx);
+                client.rename(name.clone());
+                ctx.state.current_mut().session_name = Some(name);
+                // Naming kept this one; anything still temporary gets its own prompt on the way
+                // out, so no session is closed without having been offered a name.
+                return crate::ops::exit::leave_client(ctx);
+            }
+
+            if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {
+                return crate::ops::overlay_return::finish(ctx);
+            }
+
+            if let Some(client) = ctx.state.current().session_client.clone() {
+                client.rename(name);
+            }
+            // Naming in place attaches nothing, so the picker it was raised from ("name current")
+            // is still valid - reopen it showing the new name.
+            crate::ops::overlay_return::finish(ctx)
+        }
+        NamingMode::RenameSession => {
+            if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
+                reject_session_name(ctx, "Use letters, numbers, _ or -");
+                return Update::full();
+            }
+
+            if session_name_already_running(ctx, &name, ctx.state.current().remote_target.as_ref())
+                && ctx.state.current().session_name.as_deref() != Some(name.as_str())
+            {
+                reject_session_name(ctx, format!("Session `{name}` is already running"));
+                return Update::full();
+            }
+
+            ctx.state.rename_session = None;
+
+            if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {
+                return crate::ops::overlay_return::finish(ctx);
+            }
+
+            if let Some(client) = ctx.state.current().session_client.clone() {
+                client.rename(name);
+            }
+            crate::ops::overlay_return::finish(ctx)
+        }
+        NamingMode::ConnectRemoteHost => {
+            let host = name;
+            if host.is_empty() {
+                // An empty target is a cancel by another name.
+                ctx.state.rename_session = None;
+                return crate::ops::overlay_return::finish(ctx);
+            }
+            // Validate the SSH target before tearing anything down; a bad host must not strand the
+            // current session.
+            if let Err(err) = crate::session::remote::parse_remote_target(&host) {
+                crate::pty_events::notify_error(
+                    ctx,
+                    "Invalid remote host",
+                    format!("`{host}`: {err}"),
+                );
+                request_rename_session_focus(ctx);
+                return Update::full();
+            }
+            ctx.state.rename_session = None;
+            crate::ops::overlay_return::leave(ctx);
+            crate::session::record_recent_remote(&host);
+            // Attach a fresh ephemeral session on the remote host (as `--remote <host>` does with no
+            // session named). The current session is retained in the background per the usual switch.
+            let session = crate::state::remote_ephemeral_session_name();
+            attach_session_by_name(ctx, session, Some(host), None, true)
+        }
+    }
+}
+
+pub(crate) fn open_connect_remote_host(ctx: &mut Context<AppRoot>) -> Update {
+    clear_pending_session_arms(ctx);
+    enter_session_rename(ctx, SessionRenameState::new_connect_host())
+}
+
+pub(crate) fn close_rename_session(ctx: &mut Context<AppRoot>) -> Update {
+    // Cancelling any session naming prompt - including the detach-and-name one - just returns to the
+    // session. A detach never tears panes down: quitting (with its own confirmation) is the only
+    // path that shuts an ephemeral server down.
+    ctx.state.rename_session = None;
+    ctx.state.commands_dirty = true;
+    crate::ops::overlay_return::finish(ctx)
+}
+
+pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
+        return Update::full();
+    };
+    let index = picker.selected.min(picker.entries.len().saturating_sub(1));
+    let Some(entry) = picker.entries.get(index).cloned() else {
+        return Update::full();
+    };
+    let armed = picker.pending_kill == Some(index);
+    if !armed {
+        // First press arms the kill: drop any stale arming (kill or restart), then mark this row.
+        clear_pending_session_arms(ctx);
+        if let Some(picker) = ctx.state.session_picker.as_mut() {
+            picker.pending_kill = Some(index);
+        }
+        return crate::ops::confirm::arm(ctx);
+    }
+    clear_pending_session_arms(ctx);
+    let killed = kill_discovered_session(ctx, entry);
+    // Keep the picker open with the killed row gone and selection clamped; only close when the
+    // list (and every other meaningful candidate) is empty.
+    if ctx.state.show_session_picker {
+        return refresh_picker_after_kill(ctx);
+    }
+    killed
+}
+
+pub(crate) fn restart_selected_session(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
+        return Update::full();
+    };
+    let index = picker.selected.min(picker.entries.len().saturating_sub(1));
+    let Some(entry) = picker.entries.get(index).cloned() else {
+        return Update::full();
+    };
+    let armed = picker.pending_restart == Some(index);
+    if !armed {
+        clear_pending_session_arms(ctx);
+        if let Some(picker) = ctx.state.session_picker.as_mut() {
+            picker.pending_restart = Some(index);
+        }
+        return crate::ops::confirm::arm(ctx);
+    }
+    clear_pending_session_arms(ctx);
+    restart_discovered_session(ctx, entry)
+}
+
+/// Restart a discovered session: shut its server down and immediately recreate it as the active
+/// session. Distinct from kill (sessionless landing) and from disconnect (server keeps running).
+pub(crate) fn restart_discovered_session(
+    ctx: &mut Context<AppRoot>,
+    entry: DiscoveredSession,
+) -> Update {
+    if matches!(
+        &entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Restorable
+    ) {
+        return activate_discovered_session(ctx, entry);
+    }
+    let is_current = ctx.state.current().session_attached
+        && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
+        && ctx.state.current().remote_target == entry.remote_target;
+    if is_current {
+        return restart_current_session(ctx);
+    }
+    // Drop any parked attachment before recreating so we do not keep a dead background client.
+    if let Some(id) = ctx
+        .state
+        .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
+        && let Some(attachment) = ctx.state.background.remove(&id)
+        && let Some(client) = attachment.session_client.as_ref()
+    {
+        client.detach();
+    }
+    let remote_config = ctx.state.config.remote.clone();
+    if let Err(err) = shutdown_discovered_session(&entry, &remote_config) {
+        crate::pty_events::notify_error(ctx, "Restart failed", err.to_string());
+        return Update::full();
+    }
+    if let Some(target) = entry.remote_target.as_ref() {
+        remove_cached_remote_session(ctx, &entry.name, target);
+    }
+    let display = if entry.ephemeral {
+        "ephemeral".to_string()
+    } else {
+        entry.name.clone()
+    };
+    let restart_name = if entry.ephemeral {
+        if entry.remote_target.is_some() {
+            crate::state::remote_ephemeral_session_name()
+        } else {
+            crate::state::fresh_ephemeral_session_name(ctx.state.mint_attachment_id())
+        }
+    } else {
+        entry.name.clone()
+    };
+    // Recreate and make it active immediately — never leave a silent background reconnect.
+    let update = attach_session_by_name(
+        ctx,
+        restart_name,
+        entry.host.clone(),
+        entry.remote_target.clone(),
+        true,
+    );
+    crate::pty_events::notify_info(ctx, format!("Restarted session `{display}`"));
+    update
+}
+
+/// Kill a discovered session outright: shut its server down, so its PTYs die with it.
+///
+/// Killing the session you're attached to is fine — the UI stays up and lands on the picker or
+/// launcher rather than quitting. Shared by the session picker's `Ctrl+K` and the Sessions
+/// sidebar's ✕, which mean the same thing and must not drift apart.
+pub(crate) fn kill_discovered_session(
+    ctx: &mut Context<AppRoot>,
+    entry: DiscoveredSession,
+) -> Update {
+    let display = if entry.ephemeral {
+        "ephemeral".to_string()
+    } else {
+        entry.name.clone()
+    };
+    if ctx.state.current().session_attached
+        && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
+        && ctx.state.current().remote_target == entry.remote_target
+    {
+        return kill_current_session(ctx, display);
+    }
+    let remote_config = ctx.state.config.remote.clone();
+    match shutdown_discovered_session(&entry, &remote_config) {
+        Ok(()) => {
+            // Drop any parked client attachment for the killed server so it cannot linger offline.
+            if let Some(id) = ctx
+                .state
+                .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
+                && let Some(attachment) = ctx.state.background.remove(&id)
+                && let Some(client) = attachment.session_client.as_ref()
+            {
+                client.detach();
+            }
+            // Drop the row now rather than waiting for the next sweep to notice, and bump the epoch
+            // so the sweep re-runs against the server that is gone.
+            ctx.state.sidebar.sessions.retain(|listed| {
+                listed.name != entry.name || listed.remote_target != entry.remote_target
+            });
+            ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
+            if let Some(target) = entry.remote_target.as_ref() {
+                remove_cached_remote_session(ctx, &entry.name, target);
+            }
+            // The row the user acted on vanished from the list above: that *is* the confirmation.
+            Update::full()
+        }
+        Err(err) => {
+            crate::pty_events::notify_error(ctx, "Kill failed", err.to_string());
+            Update::full()
+        }
+    }
+}
+
+pub(crate) fn remove_cached_remote_session(
+    ctx: &mut Context<AppRoot>,
+    session_name: &str,
+    target: &crate::session::remote::RemoteTarget,
+) {
+    let label = target.display_label();
+    let Some(sessions) = ctx.state.host_session_cache.get_mut(&label) else {
+        return;
+    };
+    let old_len = sessions.len();
+    sessions.retain(|session| session.name != session_name);
+    if sessions.len() != old_len {
+        crate::session::record_host_sessions(&label, sessions.clone());
+    }
+}
+
+/// Disconnect this client's attachment for the selected session, leaving its server running.
+/// Targets a session retained in the background: its client connection is dropped and the
+/// attachment is discarded, but the server (and any other clients) keep going. The current session
+/// is left alone — disconnecting it is Kill (`Ctrl+K`) or leaving the client — and a merely-running
+/// session we do not hold an attachment to has nothing to disconnect.
+pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<AppRoot>) -> Update {
+    clear_pending_session_arms(ctx);
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
+        return Update::full();
+    };
+    let index = picker.selected.min(picker.entries.len().saturating_sub(1));
+    let Some(entry) = picker.entries.get(index).cloned() else {
+        return Update::full();
+    };
+    let display = if entry.ephemeral {
+        "ephemeral".to_string()
+    } else {
+        entry.name.clone()
+    };
+    let is_current = ctx.state.current().session_attached
+        && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
+        && ctx.state.current().remote_target == entry.remote_target;
+    if is_current {
+        crate::pty_events::notify_info(
+            ctx,
+            "Kill (Ctrl+K) the current session, or leave the client",
+        );
+        return Update::full();
+    }
+    let Some(id) = ctx
+        .state
+        .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
+    else {
+        crate::pty_events::notify_info(ctx, format!("Not connected to `{display}`"));
+        return Update::full();
+    };
+    if let Some(attachment) = ctx.state.background.remove(&id)
+        && let Some(client) = attachment.session_client.as_ref()
+    {
+        client.detach();
+    }
+    crate::pty_events::notify_info(
+        ctx,
+        format!("Disconnected from `{display}` — server still running"),
+    );
+    refresh_session_picker(ctx)
+}
+
+/// Disconnect the client from a remote host: close every attachment (current and retained) to the
+/// selected row's host, leaving the remote servers running. A host-wide sibling of
+/// [`disconnect_selected_attachment`]; if the current session lives on that host the UI lands on the
+/// session picker or launcher. Non-destructive - the remote sessions can be reattached later.
+pub(crate) fn disconnect_selected_host(ctx: &mut Context<AppRoot>) -> Update {
+    clear_pending_session_arms(ctx);
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
+        return Update::full();
+    };
+    let index = picker.selected.min(picker.entries.len().saturating_sub(1));
+    let Some(entry) = picker.entries.get(index).cloned() else {
+        return Update::full();
+    };
+    let Some(target) = entry.remote_target.clone() else {
+        crate::pty_events::notify_info(ctx, "Not a remote session");
+        return Update::full();
+    };
+    disconnect_host(ctx, &target)
+}
+
+pub(crate) fn shutdown_discovered_session(
+    entry: &DiscoveredSession,
+    remote_config: &crate::config::RemoteConfig,
+) -> std::io::Result<()> {
+    if let Some(target) = &entry.remote_target {
+        return crate::session::remote::kill_remote_session(target, &entry.name, remote_config)
+            .map_err(std::io::Error::other);
+    }
+    if matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Restorable
+    ) {
+        return crate::session::server::delete_snapshot(&entry.name);
+    }
+    shutdown_session(&entry.name)
+}
+
+pub(crate) fn shutdown_session(name: &str) -> std::io::Result<()> {
+    crate::session::server::shutdown_named_session(name)
+}

@@ -3,10 +3,11 @@ use tui_lipan::prelude::FloatRect;
 use crate::anim::SlideEdge;
 use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
 use crate::state::{LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
+pub use crate::tiling::effective_tile_tree;
 use crate::tiling::{
-    DwindleTree, PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
+    PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
     allocate_monocle, allocate_rows, allocate_scrollable_with_visible, append_tiled_window,
-    build_dwindle_tree, insert_leaf_around_target, prune_tree_to_ids, ratio_at, tree_contains,
+    insert_leaf_around_target, ratio_at,
 };
 
 pub fn workspace_target_rects(
@@ -196,38 +197,6 @@ pub(crate) fn scrollable_viewport_anchor(
         return Some(focused);
     }
     tiled_ids.first().copied()
-}
-
-pub fn effective_tile_tree(
-    workspace: &Workspace,
-    exclude_tiled: Option<PaneId>,
-) -> Option<DwindleTree> {
-    let active_ids: Vec<PaneId> = workspace
-        .active_tiled_ids_by_pane_order()
-        .into_iter()
-        .filter(|id| Some(*id) != exclude_tiled)
-        .collect();
-    if active_ids.is_empty() {
-        return None;
-    }
-
-    let mut tree = workspace
-        .tile_tree
-        .clone()
-        .and_then(|tree| prune_tree_to_ids(tree, &active_ids))
-        .or_else(|| build_dwindle_tree(&active_ids, workspace.start_axis, &workspace.split_ratios));
-
-    for id in active_ids {
-        if !tree.as_ref().is_some_and(|tree| tree_contains(tree, id)) {
-            tree = Some(crate::tiling::append_tiled_leaf(
-                tree,
-                id,
-                workspace.start_axis,
-            ));
-        }
-    }
-
-    tree
 }
 
 pub fn placement_for(placements: &[PanePlacement], id: PaneId) -> Option<FloatRect> {
@@ -443,6 +412,7 @@ pub fn place_spawned_pane(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tiling::DwindleTree;
 
     #[test]
     fn spawn_split_direction_follows_focused_tile_aspect() {

@@ -277,6 +277,38 @@ pub fn insert_leaf_around_target(
     }
 }
 
+pub fn effective_tile_tree(
+    workspace: &Workspace,
+    exclude_tiled: Option<PaneId>,
+) -> Option<DwindleTree> {
+    let active_ids: Vec<PaneId> = workspace
+        .active_tiled_ids_by_pane_order()
+        .into_iter()
+        .filter(|id| Some(*id) != exclude_tiled)
+        .collect();
+    if active_ids.is_empty() {
+        return None;
+    }
+
+    let mut tree = workspace
+        .tile_tree
+        .clone()
+        .and_then(|tree| prune_tree_to_ids(tree, &active_ids))
+        .or_else(|| build_dwindle_tree(&active_ids, workspace.start_axis, &workspace.split_ratios));
+
+    for id in active_ids {
+        if !tree.as_ref().is_some_and(|tree| tree_contains(tree, id)) {
+            tree = Some(append_tiled_leaf(
+                tree,
+                id,
+                workspace.start_axis,
+            ));
+        }
+    }
+
+    tree
+}
+
 pub fn move_tiled_window_around_target(
     workspace: &mut Workspace,
     moving: PaneId,
@@ -288,7 +320,7 @@ pub fn move_tiled_window_around_target(
         return false;
     }
     if workspace.tile_tree.is_none() {
-        workspace.tile_tree = crate::layout::effective_tile_tree(workspace, None);
+        workspace.tile_tree = effective_tile_tree(workspace, None);
     }
     let Some(tree) = workspace.tile_tree.take() else {
         return false;
@@ -1125,7 +1157,7 @@ fn resize_workspace_split(
     pixels: f32,
 ) -> bool {
     if workspace.tile_tree.is_none() {
-        workspace.tile_tree = crate::layout::effective_tile_tree(workspace, None);
+        workspace.tile_tree = effective_tile_tree(workspace, None);
     }
     let Some(tree) = workspace.tile_tree.as_mut() else {
         return false;

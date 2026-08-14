@@ -167,7 +167,9 @@ fn user_run_command_in_launcher_defers_until_ephemeral_attaches() {
             let mut backend = launcher_backend();
             backend.state_mut().config.user_commands = vec![UserCommand {
                 action: UserCommandAction::run("htop"),
-                binding: KeyBinding::from_str("ctrl-a h").expect("binding"),
+                bindings: vec![KeyBinding::from_str("ctrl-a h").expect("binding")],
+                hint: "ctrl+a h".to_string(),
+                label: None,
             }];
             backend
                 .dispatch(Msg::RunAction(Action::RunUserCommand(0)))

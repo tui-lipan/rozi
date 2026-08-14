@@ -1248,13 +1248,24 @@ impl Default for SidebarConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserCommand {
     pub action: UserCommandAction,
-    pub binding: KeyBinding,
+    /// Every chord this command answers to. A bare key step expands through the input scheme the
+    /// same way a built-in action's default does, so one entry yields both the prefix chord and
+    /// the held-modifier chord; an explicitly-written chord binds only itself.
+    pub bindings: Vec<KeyBinding>,
+    /// What the palette and help overlay print for the shortcut. A scheme-expanded command shows
+    /// the bare key, matching how a built-in renders, rather than spelling out one of its forms.
+    pub hint: String,
+    /// Operator-supplied name from `[keys]`, used instead of the generated `Run: <command>`.
+    pub label: Option<String>,
 }
 
 impl UserCommand {
     /// Human-facing description for the help overlay and command palette, since these have no
     /// static label of their own the way a built-in command does.
     pub fn label(&self) -> String {
+        if let Some(label) = &self.label {
+            return label.clone();
+        }
         match &self.action {
             UserCommandAction::Run { command, .. } => {
                 format!("Run: {}", truncate_for_label(command))
@@ -1632,13 +1643,17 @@ mod tests {
     fn user_command_label_describes_run_and_send() {
         let run = UserCommand {
             action: UserCommandAction::run("lazygit".to_string()),
-            binding: KeyBinding::from_str("ctrl-a g").unwrap(),
+            bindings: vec![KeyBinding::from_str("ctrl-a g").unwrap()],
+            hint: "ctrl+a g".to_string(),
+            label: None,
         };
         assert_eq!(run.label(), "Run: lazygit");
 
         let send = UserCommand {
             action: UserCommandAction::Send("ls -la\n".to_string()),
-            binding: KeyBinding::from_str("ctrl-a g").unwrap(),
+            bindings: vec![KeyBinding::from_str("ctrl-a g").unwrap()],
+            hint: "ctrl+a g".to_string(),
+            label: None,
         };
         assert_eq!(send.label(), "Send: ls -la\\n");
     }
@@ -1647,7 +1662,9 @@ mod tests {
     fn user_command_label_truncates_long_commands() {
         let run = UserCommand {
             action: UserCommandAction::run("x".repeat(60)),
-            binding: KeyBinding::from_str("ctrl-a g").unwrap(),
+            bindings: vec![KeyBinding::from_str("ctrl-a g").unwrap()],
+            hint: "ctrl+a g".to_string(),
+            label: None,
         };
         let label = run.label();
         assert!(label.starts_with("Run: "));

@@ -901,14 +901,13 @@ fn register_workspace_command(
 fn register_user_commands(ctx: &Context<AppRoot>, config: &Config, active: bool) {
     for (index, command) in config.user_commands.iter().enumerate() {
         let id = format!("user.{index}");
-        let hint = command.binding.compact_display();
         let link = ctx.link().clone();
         ctx.register_command(
             CommandEntry::builder(id)
                 .label(command.label())
                 .category("Custom")
-                .keybinding_hint(hint)
-                .shortcut(command.binding.clone())
+                .keybinding_hint(command.hint.clone())
+                .shortcuts(KeyBindings::from_bindings(command.bindings.iter().cloned()))
                 .enabled(active)
                 .handler(Callback::new(move |_| {
                     link.send(Msg::RunAction(Action::RunUserCommand(index)))

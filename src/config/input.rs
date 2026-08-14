@@ -78,7 +78,7 @@ pub(super) fn build_key_overrides(
     let mut overrides = HashMap::new();
     for (key, spec) in keys {
         if let KeyBindingSpec::UserCommand(table) = spec {
-            bind_user_command(user_commands, &key, table, warnings);
+            bind_user_command(user_commands, &key, table, input, warnings);
             continue;
         }
 
@@ -164,19 +164,45 @@ pub(super) fn bind_user_command(
     user_commands: &mut Vec<UserCommand>,
     key: &str,
     table: UserCommandTableSpec,
+    input: &InputConfig,
     warnings: &mut Vec<String>,
 ) {
+    let label = table
+        .label
+        .as_ref()
+        .map(|label| label.trim().to_string())
+        .filter(|label| !label.is_empty());
     let Some(action) = parse_user_command_action(table, &format!("User command `{key}`"), warnings)
     else {
         return;
     };
-    let Ok(binding) = KeyBinding::from_str(key) else {
+    // A user command earns the same treatment as a rebound built-in: a bare key step expands
+    // through the input scheme, so `i = { run = … }` answers to both the prefix chord and the
+    // held modifier. Binding it literally made every user command prefix-only, which contradicts
+    // the rule that those two spellings are one keymap.
+    let (bindings, hint) = if is_bare_key_step(key) {
+        (scheme_shortcuts(input, key), key.to_string())
+    } else {
+        match KeyBinding::from_str(key) {
+            Ok(binding) => {
+                let hint = binding.compact_display();
+                (vec![binding], hint)
+            }
+            Err(_) => (Vec::new(), String::new()),
+        }
+    };
+    if bindings.is_empty() {
         warnings.push(format!(
             "Could not parse binding `{key}` for a user command; skipped"
         ));
         return;
-    };
-    user_commands.push(UserCommand { action, binding });
+    }
+    user_commands.push(UserCommand {
+        action,
+        bindings,
+        hint,
+        label,
+    });
 }
 
 pub(super) fn parse_user_command_action(
@@ -292,12 +318,74 @@ mod tests {
         assert_eq!(commands.len(), 2);
         assert!(commands.iter().any(|command| {
             command.action == UserCommandAction::run("lazygit")
-                && command.binding == KeyBinding::from_str("ctrl-a g").unwrap()
+                && command.bindings == vec![KeyBinding::from_str("ctrl-a g").unwrap()]
         }));
         assert!(commands.iter().any(|command| {
             command.action == UserCommandAction::Send("echo hi\n".into())
-                && command.binding == KeyBinding::from_str("alt-g").unwrap()
+                && command.bindings == vec![KeyBinding::from_str("alt-g").unwrap()]
         }));
+    }
+
+    /// A bare key step means the same thing for a user command as for a rebound built-in: one
+    /// entry, both spellings. Binding it literally used to make every user command prefix-only,
+    /// so `alt-i` did nothing and the palette advertised `ctrl+a i` where a built-in shows `i`.
+    #[test]
+    fn a_bare_user_command_key_binds_both_the_prefix_and_the_modifier() {
+        let mut commands = Vec::new();
+        let mut warnings = Vec::new();
+        build_key_overrides(
+            keys("[keys]\ni = { run = \"lazygit\", label = \"Git UI\" }"),
+            &InputConfig::default(),
+            &mut commands,
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let command = commands.first().expect("one user command");
+        assert!(
+            command
+                .bindings
+                .contains(&KeyBinding::from_str("ctrl-a i").unwrap()),
+            "prefix chord missing: {:?}",
+            command.bindings
+        );
+        assert!(
+            command
+                .bindings
+                .contains(&KeyBinding::from_str("alt-i").unwrap()),
+            "held-modifier chord missing: {:?}",
+            command.bindings
+        );
+        // The palette shows the bare key, the way a built-in's does.
+        assert_eq!(command.hint, "i");
+        assert_eq!(command.label(), "Git UI");
+    }
+
+    /// An explicitly-spelled chord still binds only itself - that is how someone pins a command to
+    /// the prefix alone, and it keeps its own spelling as the hint.
+    #[test]
+    fn an_explicit_user_command_chord_binds_only_itself() {
+        let mut commands = Vec::new();
+        let mut warnings = Vec::new();
+        build_key_overrides(
+            keys("[keys]\n\"ctrl-a i\" = { run = \"lazygit\" }"),
+            &InputConfig::default(),
+            &mut commands,
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let command = commands.first().expect("one user command");
+        assert_eq!(
+            command.bindings,
+            vec![KeyBinding::from_str("ctrl-a i").unwrap()]
+        );
+        assert!(
+            !command
+                .bindings
+                .contains(&KeyBinding::from_str("alt-i").unwrap())
+        );
+        assert_eq!(command.label(), "Run: lazygit");
     }
 
     /// A `run`/`popup` command pane preserves output after its command exits by default, so a build
@@ -325,7 +413,7 @@ mod tests {
             let binding = KeyBinding::from_str(trigger).unwrap();
             commands
                 .iter()
-                .find(|command| command.binding == binding)
+                .find(|command| command.bindings.contains(&binding))
                 .map(|command| command.action.clone())
                 .unwrap_or_else(|| panic!("{trigger} is bound"))
         };

@@ -994,7 +994,7 @@ defining a new command that doesn't otherwise exist as an `Action`:
 
 ```toml
 [keys]
-"ctrl-a g" = { run = "lazygit" }
+g = { run = "lazygit", label = "Git UI" }
 alt-t = { run = "btop" }
 "ctrl-a e" = { send = "ls -la\n" }
 ```
@@ -1017,14 +1017,19 @@ alt-t = { run = "btop" }
 "ctrl-a g" = { run = "lazygit", keep_open = false }
 "ctrl-a b" = { run = "cargo build" }               # holds, so build errors stay on screen
 ```
-- The map key here is the trigger itself (`ctrl-a g`, `alt-t`, ...), parsed the same way as a
-  binding value elsewhere in `[keys]` - it is *not* an action id, so it can't collide with one.
-  It is always a **literal** binding: there is no `prefix` token, so a leader chord spells out the
-  configured prefix key, and changing `[input] prefix` later does not move it.
-- Each command shows up in the help overlay (under "Custom") and the command palette with a
-  generated label (`Run: lazygit`, `Send: ls -la\n`), so its trigger stays discoverable even
-  though it has no stable action id. It still can't be rebound elsewhere or invoked via
-`rozi run-action` - only the trigger you configured runs it.
+- `label = "<text>"` names the command in the help overlay and command palette. Without it the
+  label is generated from the command (`Run: lazygit`, `Send: ls -la\n`), which truncates a
+  pipeline into something unreadable.
+- The map key here is the trigger itself (`g`, `alt-t`, `"ctrl-a e"`, ...), parsed by the same
+  rules as a binding value elsewhere in `[keys]` - it is *not* an action id, so it can't collide
+  with one. A **bare key** expands through the `[input]` scheme exactly as it does for a built-in
+  action, so `g = { run = ... }` answers to both `<prefix> g` and `<modifier>-g` and follows a
+  later `[input]` change. A **literal** chord (`"ctrl-a e"`, `alt-t`) binds only itself, which is
+  how a command is pinned to the prefix alone.
+- Each command shows up in the help overlay (under "Custom") and the command palette, so its
+  trigger stays discoverable even though it has no stable action id. A scheme-expanded command
+  shows the bare key there, the way a built-in does. It still can't be rebound elsewhere or invoked
+  via `rozi run-action` - only the trigger you configured runs it.
 
 ## `[[hooks]]`
 

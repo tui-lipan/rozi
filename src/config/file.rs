@@ -131,6 +131,9 @@ impl KeyBindingCandidates {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct UserCommandTableSpec {
+    /// Name shown in the command palette and help overlay instead of the generated
+    /// `Run: <command>`, which truncates a pipeline into something unreadable.
+    pub(super) label: Option<String>,
     pub(super) run: Option<String>,
     pub(super) send: Option<String>,
     pub(super) popup: Option<String>,
@@ -189,6 +192,9 @@ pub(super) struct SidebarLauncherEntrySpec {
 impl SidebarLauncherEntrySpec {
     pub(super) fn action(self) -> UserCommandTableSpec {
         UserCommandTableSpec {
+            // A launcher entry carries its own label in the sidebar row, so it never needs the
+            // palette-facing one.
+            label: None,
             run: self.run,
             send: self.send,
             popup: self.popup,

@@ -53,6 +53,7 @@ pub(super) fn tree_tab(
         // Text markers (`M`, `A`, `?`) rather than the widget's default Nerd Font glyphs: rozi
         // cannot assume the user's terminal font has them, and the rest of the sidebar is text.
         .git_icon_style(GitIconStyle::Text)
+        .git_status_cache(ctx.state.sidebar.tree_git_status_cache.clone())
         .git_refresh_token(ctx.state.sidebar.git_refresh_token)
         // Focusable so the selected row can be a real keyboard cursor, but never a tab stop: the
         // focus ring belongs to the panes, and the enclosing `FocusScope::Exclude` additionally

@@ -112,6 +112,10 @@ pub struct SidebarState {
     /// only ever grows by an explicit user expansion, and dies with the client — this is view
     /// state, not a preference worth persisting.
     pub tree_expanded: HashMap<SidebarTabId, std::collections::HashSet<String>>,
+    /// Successful local Git snapshots shared by keyed Files/Git tree mounts. The framework keeps
+    /// this bounded and revalidates every mount; retaining the handle here prevents indicators from
+    /// disappearing while a remounted tree's background scan runs.
+    pub tree_git_status_cache: tui_lipan::prelude::FileTreeGitStatusCache,
     /// Directory listings served by the session server, for the file tree's provided entry source
     /// under `--remote`. A directory absent here is pending: the widget shows a loading row and
     /// emits a request, which is why this is only ever appended to, never cleared per frame.

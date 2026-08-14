@@ -169,6 +169,13 @@ impl IpcConnection {
             Self::Piped(piped) => piped.peer_pid(),
         }
     }
+
+    pub fn shutdown(&self, how: std::net::Shutdown) -> io::Result<()> {
+        match self {
+            Self::Local(stream) => stream.shutdown(how),
+            Self::Piped(piped) => piped.shutdown(),
+        }
+    }
 }
 
 impl Read for IpcConnection {

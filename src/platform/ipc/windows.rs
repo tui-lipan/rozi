@@ -438,6 +438,20 @@ impl IpcConnection {
             Self::Piped(piped) => piped.peer_pid(),
         }
     }
+
+    pub fn shutdown(&self, _how: std::net::Shutdown) -> io::Result<()> {
+        match self {
+            Self::Local(local) => {
+                if local.server_end {
+                    unsafe { windows_sys::Win32::System::Pipes::DisconnectNamedPipe(local.handle.0) };
+                } else {
+                    unsafe { windows_sys::Win32::System::IO::CancelIoEx(local.handle.0, std::ptr::null_mut()) };
+                }
+                Ok(())
+            }
+            Self::Piped(piped) => piped.shutdown(),
+        }
+    }
 }
 
 impl LocalConnection {

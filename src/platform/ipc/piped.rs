@@ -246,6 +246,11 @@ impl PipedConnection {
         None
     }
 
+    pub fn shutdown(&self) -> io::Result<()> {
+        self.close_writer();
+        Ok(())
+    }
+
     /// Snapshot the bounded reader buffer's current and peak retained byte counts.
     pub fn buffer_stats(&self) -> PipedBufferStats {
         self.shared.buf.lock().expect("piped buf").stats()

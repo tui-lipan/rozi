@@ -24,8 +24,33 @@ const MAX_CLIENT_INBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CLIENT_OUTBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_COALESCED_PANE_BYTES: usize = 64 * 1024;
 
+/// Explicit transport lifecycle owner. When the final `SessionClient` handle for a session
+/// is dropped, `ClientTransport` shuts down the stream, signals termination to reader/writer
+/// worker threads, and closes the outbound queue.
+struct ClientTransport {
+    outbound: Arc<ByteQueue<ClientOutbound>>,
+    shutdown_stream: Mutex<Option<crate::platform::ipc::IpcConnection>>,
+    shutdown_signal: Arc<AtomicBool>,
+}
+
+impl Drop for ClientTransport {
+    fn drop(&mut self) {
+        self.shutdown_signal.store(true, Ordering::SeqCst);
+        self.outbound.close();
+        if let Ok(mut guard) = self.shutdown_stream.lock()
+            && let Some(stream) = guard.take()
+        {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct SessionClient {
+    /// RAII owner for the transport's connection and worker threads. Dropping the final
+    /// reference closes the queue and socket.
+    #[allow(dead_code)]
+    transport: Option<Arc<ClientTransport>>,
     outbound: Arc<ByteQueue<ClientOutbound>>,
     transport_failed: Arc<AtomicBool>,
     inbound: Option<Arc<InboundMailbox>>,
@@ -77,6 +102,7 @@ impl SessionClient {
         let (test_tx, test_rx) = mpsc::channel();
         (
             Self {
+                transport: None,
                 outbound: Arc::clone(&outbound),
                 transport_failed: Arc::new(AtomicBool::new(false)),
                 inbound: None,
@@ -188,11 +214,22 @@ impl SessionClient {
         reader.set_nonblocking(true)?;
         let effective_protocol = validate_attached(&attached)?;
         let outbound = Arc::new(ByteQueue::<ClientOutbound>::new(MAX_CLIENT_OUTBOUND_BYTES));
+        let shutdown_signal = Arc::new(AtomicBool::new(false));
+        let shutdown_stream = stream.try_clone().ok();
+        let transport = Arc::new(ClientTransport {
+            outbound: Arc::clone(&outbound),
+            shutdown_stream: Mutex::new(shutdown_stream),
+            shutdown_signal: Arc::clone(&shutdown_signal),
+        });
         let client_inbound = inbound.mailbox();
         let writer_outbound = Arc::clone(&outbound);
         let writer_inbound = client_inbound.clone();
+        let writer_shutdown_signal = Arc::clone(&shutdown_signal);
         thread::spawn(move || {
             while let Some(message) = writer_outbound.pop_blocking() {
+                if writer_shutdown_signal.load(Ordering::Relaxed) {
+                    break;
+                }
                 let result = match message {
                     ClientOutbound::Control(message) => {
                         protocol::write_frame(&mut stream, &message)
@@ -211,8 +248,10 @@ impl SessionClient {
                     ),
                 };
                 if result.is_err() {
-                    if let Some(inbound) = &writer_inbound {
-                        inbound.fail("session writer disconnected".to_string());
+                    if !writer_shutdown_signal.load(Ordering::Relaxed) {
+                        if let Some(inbound) = &writer_inbound {
+                            inbound.fail("session writer disconnected".to_string());
+                        }
                     }
                     break;
                 }
@@ -225,6 +264,7 @@ impl SessionClient {
         let reader_metrics = Arc::clone(&latest_server_metrics);
         let metrics_request_pending = Arc::new(AtomicBool::new(false));
         let reader_metrics_request_pending = Arc::clone(&metrics_request_pending);
+        let reader_shutdown_signal = Arc::clone(&shutdown_signal);
         thread::spawn(move || {
             forward_inbound(
                 &mut reader,
@@ -233,10 +273,12 @@ impl SessionClient {
                 Some(&reader_metrics),
                 Some(&reader_metrics_request_pending),
                 true,
+                Some(&reader_shutdown_signal),
             );
             reader_outbound.close();
         });
         let client = Self {
+            transport: Some(transport),
             outbound,
             transport_failed: Arc::new(AtomicBool::new(false)),
             inbound: client_inbound,
@@ -722,9 +764,13 @@ fn forward_inbound<R: std::io::Read>(
     latest_server_metrics: Option<&Arc<Mutex<Option<TimedServerRuntimeMetrics>>>>,
     metrics_request_pending: Option<&Arc<AtomicBool>>,
     request_metrics_on_heartbeat: bool,
+    shutdown_signal: Option<&Arc<AtomicBool>>,
 ) {
     let mut decoder = protocol::FrameDecoder::default();
     'read: loop {
+        if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
+            break;
+        }
         let would_block = match decoder.read_from_status(reader) {
             Ok(protocol::FrameReadStatus::Eof) => break,
             Ok(protocol::FrameReadStatus::Read(_)) => false,
@@ -732,11 +778,17 @@ fn forward_inbound<R: std::io::Read>(
             Err(_) => break,
         };
         loop {
+            if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
+                break 'read;
+            }
             match decoder.next_frame::<ServerMessage>() {
                 Ok(Some(frame)) => {
                     if let Frame::Control(ServerMessage::Ping { seq }) = &frame
                         && let Some(outbound) = outbound
                     {
+                        if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
+                            break 'read;
+                        }
                         let pong = ClientOutbound::Control(ClientMessage::Pong { seq: *seq });
                         let bytes = pong.wire_bytes();
                         if outbound.try_push(pong, bytes).is_err() {
@@ -789,6 +841,8 @@ fn try_enqueue_runtime_metrics_request(outbound: &ByteQueue<ClientOutbound>, pen
 mod tests {
     use super::*;
     #[cfg(unix)]
+    use std::io::Read;
+    #[cfg(unix)]
     use std::os::unix::net::UnixStream;
 
     fn attached_message() -> ServerMessage {
@@ -827,6 +881,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         );
         assert_eq!(
             inbound_rx
@@ -875,6 +930,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         );
 
         assert_eq!(
@@ -911,6 +967,7 @@ mod tests {
         let capacity = 64;
         let outbound = Arc::new(ByteQueue::new(capacity));
         let client = SessionClient {
+            transport: None,
             outbound: Arc::clone(&outbound),
             transport_failed: Arc::new(AtomicBool::new(false)),
             inbound: None,
@@ -1045,5 +1102,45 @@ mod tests {
         assert!(matches!(attached, ServerMessage::Attached { .. }));
         server.join().unwrap();
         endpoint.remove_stale();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn dropping_final_client_owner_shuts_down_transport() {
+        let (client_stream, mut server_stream) = UnixStream::pair().expect("socket pair");
+        let (inbound_tx, _inbound_rx) = mpsc::channel();
+        let attached = attached_message();
+
+        let server = thread::spawn(move || {
+            let msg: ClientMessage = protocol::read_frame(&mut server_stream).expect("read attach");
+            assert!(matches!(msg, ClientMessage::Attach { .. }));
+            protocol::write_frame(&mut server_stream, &attached).expect("write attached");
+
+            // Consume possible metrics request
+            let _ = protocol::read_frame::<_, ClientMessage>(&mut server_stream);
+
+            // Wait for EOF once client drops
+            let mut buf = [0u8; 16];
+            let read = server_stream.read(&mut buf);
+            assert!(matches!(read, Ok(0) | Err(_)));
+        });
+
+        let (client, _attached) = SessionClient::from_stream_attached(
+            crate::platform::ipc::IpcConnection::from_unix(client_stream),
+            "test",
+            inbound_tx,
+            false,
+        )
+        .expect("from_stream_attached");
+
+        // Clone simulating background/parked attachment
+        let parked_clone = client.clone();
+        drop(client);
+        assert!(parked_clone.transport.is_some());
+        thread::sleep(Duration::from_millis(50));
+
+        // Dropping final clone shuts down the stream
+        drop(parked_clone);
+        server.join().expect("server thread finished on eof");
     }
 }

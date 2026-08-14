@@ -266,6 +266,44 @@ mod tests {
         assert!(child.try_wait().unwrap().is_some());
     }
 
+    /// `reap_if_exited` answers `None` while the child runs, reaps it once it exits, and is
+    /// idempotent afterwards - it must never signal a group id whose pid it has already released.
+    #[test]
+    fn reap_if_exited_waits_for_the_child_then_reaps_it_once() {
+        let config = ServiceConfig {
+            name: "test-reaper".to_string(),
+            #[cfg(unix)]
+            run: "sleep 0.2".to_string(),
+            #[cfg(windows)]
+            run: "ping 127.0.0.1 -n 2".to_string(),
+            cwd: None,
+            restart: ServiceRestart::Never,
+            env: BTreeMap::new(),
+        };
+
+        let (mut child, group) = spawn_service_child(&config, None, None).expect("spawn child");
+        assert!(
+            group.reap_if_exited(&mut child).expect("peek").is_none(),
+            "a live child must not be reaped"
+        );
+
+        let status = loop {
+            if let Some(status) = group.reap_if_exited(&mut child).expect("reap") {
+                break status;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(status.success());
+
+        // Asking again after the pid is released must bail out before signalling anything: on Unix
+        // the group id is that pid, and the kernel is free to have handed it to someone else.
+        #[cfg(unix)]
+        assert!(
+            group.reap_if_exited(&mut child).is_err(),
+            "a released pid must not reach the kill"
+        );
+    }
+
     /// Walks the real ladder rather than restating the formula: a test that recomputes
     /// `(delay * 2).min(cap)` in its own body passes no matter what the restart paths do.
     #[test]

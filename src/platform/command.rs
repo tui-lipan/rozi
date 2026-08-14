@@ -109,7 +109,9 @@ where
 
     let started = std::time::Instant::now();
     let (status, timed_out) = loop {
-        if let Some(status) = child.try_wait()? {
+        // Reaping here also stops descendants deliberately backgrounded by a command whose shell
+        // already exited, and does it before the pid is released rather than after.
+        if let Some(status) = group.reap_if_exited(&mut child)? {
             break (Some(status), false);
         }
         if started.elapsed() >= timeout {
@@ -118,8 +120,6 @@ where
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     };
-    // Also stop descendants deliberately backgrounded by a command whose shell already exited.
-    group.terminate(&mut child);
     let stdout = stdout_thread.join().unwrap_or_default();
     let stderr = stderr_thread.join().unwrap_or_default();
     Ok(CommandOutput {
@@ -163,6 +163,42 @@ impl CommandGroup {
         }
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    /// Reap `child` if it has exited on its own, killing whatever it left in the group first.
+    ///
+    /// The order is the whole point. Reaping releases the pid, and on Unix the pid *is* the group
+    /// id - so signalling the group after reaping can land on a group that has since recycled that
+    /// number, killing something unrelated. Peeking with `WNOWAIT` leaves the zombie in place,
+    /// which holds the pid reserved until the survivors are dead.
+    ///
+    /// Returns `None` while the child is still running; [`Self::terminate`] stays the right call
+    /// for one that is, since it signals before any reap.
+    pub(crate) fn reap_if_exited(
+        &self,
+        child: &mut std::process::Child,
+    ) -> std::io::Result<Option<std::process::ExitStatus>> {
+        // `WNOWAIT` is a `waitid` flag; `waitpid` rejects it with `EINVAL`. Zero `si_pid` first,
+        // because a `WNOHANG` call that finds nothing leaves it untouched rather than clearing it.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let rc = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if rc == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if unsafe { info.si_pid() } == 0 {
+            return Ok(None);
+        }
+        unsafe {
+            libc::kill(-self.0, libc::SIGKILL);
+        }
+        child.wait().map(Some)
     }
 }
 
@@ -208,6 +244,24 @@ impl CommandGroup {
         }
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    /// Reap `child` if it has exited on its own, killing whatever it left in the job first.
+    ///
+    /// Windows carries no pid-reuse hazard here: the handle names the job directly, so terminating
+    /// after the child is reaped still names the same job. The method exists to give the callers
+    /// one shape across platforms - see the Unix half for what it is protecting against there.
+    pub(crate) fn reap_if_exited(
+        &self,
+        child: &mut std::process::Child,
+    ) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let Some(status) = child.try_wait()? else {
+            return Ok(None);
+        };
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
+        }
+        Ok(Some(status))
     }
 }
 

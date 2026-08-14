@@ -1,7 +1,6 @@
 use crate::config::ServiceRestart;
 use crate::ops::services::{
     INITIAL_BACKOFF, MAX_FAILURES, next_backoff, record_spawn_failure, spawn_service_child,
-    terminate_service,
 };
 use crate::state::{DormantReason, DormantService, PendingRestart, RunningService};
 use crate::{AppRoot, Msg};
@@ -16,10 +15,11 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     let command_shell = ctx.state.config.command_shell.clone();
     let control_socket = ctx.state.control_socket_path.clone();
 
-    // 1. Check all running services with try_wait()
+    // 1. Reap whatever exited since the last tick. This contains each dead service's leftover
+    //    descendants as part of reaping it, so the loop below has nothing left to terminate.
     let mut exited = Vec::new();
     for (name, running) in &mut ctx.state.services.running {
-        match running.child.try_wait() {
+        match running.group.reap_if_exited(&mut running.child) {
             Ok(Some(status)) => {
                 exited.push((name.clone(), Ok(status)));
             }
@@ -46,8 +46,10 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
             consecutive_failures = 0;
             backoff_delay = INITIAL_BACKOFF;
         }
+        // Already reaped and contained by `reap_if_exited`; terminating again would signal a group
+        // id the kernel is free to have reused.
         let config = running.config.clone();
-        terminate_service(running);
+        drop(running);
 
         let is_success = match exit_result {
             Ok(status) => status.success(),

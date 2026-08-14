@@ -291,6 +291,8 @@ pub enum Msg {
         sender: std::sync::mpsc::SyncSender<String>,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },
+    /// The picker's filter text changed; mirrored so a rebuild can restore it.
+    PickQueryChanged(String),
     /// An action chord fired in the picker; the index is into `PickState::actions`.
     PickActionKey(usize),
     /// Editing the text prompt an action raised.

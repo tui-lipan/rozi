@@ -275,6 +275,12 @@ pub struct PickState {
     pub width: u16,
     pub actions: Vec<PickAction>,
     pub prompt: Option<PickPrompt>,
+    /// The live filter text, mirrored out of the palette so a rebuild can restore it.
+    pub query: String,
+    /// What the rebuilt palette is seeded with. Updated only when the picker is about to unmount,
+    /// so it stays stable while typing - feeding the live mirror back as `initial_query` would
+    /// change that prop on every keystroke and risk re-seeding the field mid-edit.
+    pub restore_query: String,
     /// The `confirm` action awaiting its second press, with the row it was armed on. Held by row
     /// id rather than position: the caller can push a new list under an armed row, and a
     /// confirmation landing on whoever slid into that slot is the mistake arming exists to stop.

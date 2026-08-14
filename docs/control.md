@@ -297,7 +297,8 @@ Action attributes:
   the action rather than leaving a footer hint that never fires.
 - `label` (string, required): footer text.
 - `prompt` (string, optional): opens a text prompt with this title; the entered text rides back as
-  `input`. Cancelling the prompt reports nothing and returns to the list.
+  `input`. The prompt **replaces** the picker rather than stacking on it, matching every other
+  nested dialog; cancelling reports nothing and rebuilds the picker with its filter text intact.
 - `close` (bool, default `false`): whether firing it ends the picker.
 - `confirm` (bool, default `false`): require a second press, the way the session picker arms a
   kill. The armed row is struck through in the error colour with an `again to <label>` cue; moving

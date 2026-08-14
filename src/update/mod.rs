@@ -269,6 +269,7 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             sender,
             ack,
         ),
+        Msg::PickQueryChanged(query) => crate::ops::pick::query_changed(ctx, query),
         Msg::PickActionKey(index) => crate::ops::pick::invoke_action(ctx, index),
         Msg::PickPromptChanged(event) => crate::ops::pick::prompt_changed(ctx, event),
         Msg::PickPromptSubmit => crate::ops::pick::prompt_submit(ctx),

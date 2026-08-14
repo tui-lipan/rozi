@@ -714,7 +714,16 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_layout_picker {
         root = root.child(layout_picker_overlay(ctx));
     }
-    if ctx.state.show_pick {
+    // A prompt raised by an action replaces the picker rather than stacking on it, matching how
+    // every other nested dialog behaves (see `ops::overlay_return`). The picker is rebuilt from
+    // `restore_query` when the prompt goes away.
+    if ctx.state.show_pick
+        && ctx
+            .state
+            .pick
+            .as_ref()
+            .is_none_or(|pick| pick.prompt.is_none())
+    {
         root = root.child(pick_overlay(ctx));
     }
     // Above the picker, which stays mounted underneath so cancelling returns to its list.

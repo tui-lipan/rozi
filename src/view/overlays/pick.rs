@@ -6,6 +6,7 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
     let title = pick.title.clone();
     let placeholder = pick.placeholder.clone();
     let width = pick.width;
+    let restore_query = pick.restore_query.clone();
     let rows = pick.rows.clone();
     let has_groups = rows.iter().any(|r| r.group.is_some());
     let selected_index = Some(pick.selected);
@@ -70,6 +71,13 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
     let palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
         .placeholder(placeholder)
+        // Rebuilt, not un-hidden: the picker unmounts while a prompt is up, so it comes back
+        // seeded with the filter that was typed before.
+        .initial_query(restore_query)
+        .on_query_change(
+            ctx.link()
+                .callback(|query: std::sync::Arc<str>| Msg::PickQueryChanged(query.to_string())),
+        )
         .preserve_groups(has_groups)
         .initial_selected_item_index(selected_index)
         .sync_selection(true)

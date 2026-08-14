@@ -66,6 +66,8 @@ pub(crate) fn open_pick_stream(
             })
             .collect(),
         prompt: None,
+        query: String::new(),
+        restore_query: String::new(),
         pending_action: None,
         rows: Vec::new(),
         selected: 0,
@@ -134,6 +136,16 @@ pub(crate) fn cancel_pick(ctx: &mut Context<AppRoot>, reason: Option<&str>) -> U
         ctx.state.commands_dirty = true;
         request_current_pane_focus(ctx);
         return Update::full();
+    }
+    Update::none()
+}
+
+pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
+    if let Some(pick) = ctx.state.pick.as_mut() {
+        pick.query = query;
+        // A filter change moves what is under the cursor, so an armed confirmation must not
+        // survive it - the same reason moving the highlight disarms.
+        pick.pending_action = None;
     }
     Update::none()
 }
@@ -208,6 +220,8 @@ pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update 
 
     if let Some(title) = action.prompt.clone() {
         if let Some(pick) = ctx.state.pick.as_mut() {
+            // The picker unmounts while the prompt is up, so capture what to rebuild it with.
+            pick.restore_query = pick.query.clone();
             pick.prompt = Some(crate::state::PickPrompt {
                 action: index,
                 title,
@@ -725,6 +739,60 @@ mod tests {
                 "arming outlived the row it was aimed at"
             );
             assert!(rx.try_recv().is_err());
+        });
+    }
+
+    /// The prompt replaces the picker rather than stacking on it, and cancelling rebuilds the
+    /// picker seeded with the filter that was typed before.
+    #[test]
+    fn a_prompt_replaces_the_picker_and_restores_its_query() {
+        with_backend(|backend| {
+            open_with(
+                backend,
+                vec![action("create", "ctrl-n", Some("Branch name"), true)],
+                None,
+            );
+            backend
+                .dispatch(crate::Msg::PickQueryChanged("feat/".into()))
+                .expect("typed a filter");
+            backend
+                .dispatch(crate::Msg::PickActionKey(0))
+                .expect("raise the prompt");
+
+            let pick = backend.state().pick.as_ref().expect("session still open");
+            assert!(pick.prompt.is_some(), "prompt did not open");
+            assert_eq!(
+                pick.restore_query, "feat/",
+                "the filter was not captured for the rebuild"
+            );
+
+            backend
+                .dispatch(crate::Msg::PickPromptCancel)
+                .expect("dismiss the prompt");
+            let pick = backend.state().pick.as_ref().expect("picker came back");
+            assert!(pick.prompt.is_none());
+            assert_eq!(pick.restore_query, "feat/", "rebuild lost the filter");
+        });
+    }
+
+    /// Filtering moves what sits under the cursor, so it disarms for the same reason navigating
+    /// does.
+    #[test]
+    fn changing_the_filter_disarms_a_confirming_action() {
+        with_backend(|backend| {
+            open_with(backend, vec![confirming("delete", "ctrl-d")], None);
+            backend.dispatch(crate::Msg::PickActionKey(0)).expect("arm");
+            backend
+                .dispatch(crate::Msg::PickQueryChanged("oth".into()))
+                .expect("filter");
+            assert!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .is_some_and(|pick| pick.pending_action.is_none()),
+                "arming survived a filter change"
+            );
         });
     }
 

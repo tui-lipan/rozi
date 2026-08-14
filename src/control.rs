@@ -147,6 +147,12 @@ pub enum ControlCommand {
         title: Option<String>,
         #[serde(default)]
         placeholder: Option<String>,
+        /// Modal width in columns, clamped to a readable range. Omitted uses the shared default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<u16>,
+        /// Extra chords offered beside select and cancel, advertised in the footer.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        actions: Vec<crate::state::PickAction>,
     },
 }
 
@@ -321,12 +327,15 @@ fn run_publish_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane_id
 ///
 /// Note: `IpcConnection` exposes no `shutdown()`, so after writing the terminal line rozi cannot
 /// force the connection closed from this end; the reader thread reaps once the client closes.
+#[allow(clippy::too_many_arguments)]
 fn run_pick_stream(
     mut stream: IpcConnection,
     link: CommandLink<Msg>,
     id: u64,
     title: Option<String>,
     placeholder: Option<String>,
+    width: Option<u16>,
+    actions: Vec<crate::state::PickAction>,
 ) {
     let Ok(reader_stream) = stream.try_clone() else {
         return;
@@ -342,6 +351,8 @@ fn run_pick_stream(
         id,
         title,
         placeholder,
+        width,
+        actions,
         sender: reply_tx,
         ack: ack_tx,
     });
@@ -473,10 +484,24 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
         run_publish_stream(stream, link, pane_id);
         return;
     }
-    if let ControlCommand::Pick { title, placeholder } = &request.command {
+    if let ControlCommand::Pick {
+        title,
+        placeholder,
+        width,
+        actions,
+    } = &request.command
+    {
         static NEXT_PICK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT_PICK_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        run_pick_stream(stream, link, id, title.clone(), placeholder.clone());
+        run_pick_stream(
+            stream,
+            link,
+            id,
+            title.clone(),
+            placeholder.clone(),
+            *width,
+            actions.clone(),
+        );
         return;
     }
     let (tx, rx) = mpsc::channel();
@@ -696,6 +721,8 @@ mod tests {
             command: ControlCommand::Pick {
                 title: Some("Branch".into()),
                 placeholder: Some("Search branches…".into()),
+                width: None,
+                actions: Vec::new(),
             },
             source_pane: None,
         };

@@ -15,6 +15,8 @@ fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, mpsc::Receiver<String>
     let (ack_tx, _ack_rx) = mpsc::channel();
     backend
         .dispatch(rozi::Msg::PickStreamOpen {
+            width: None,
+            actions: Vec::new(),
             id: 1,
             title: Some("Select Branch".into()),
             placeholder: Some("Search branches…".into()),

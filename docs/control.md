@@ -254,6 +254,16 @@ git branch --format='{"id":"%(refname:short)","label":"%(refname:short)"}' \
   | jq -sc '{rows:.}' | rozi pick --json --title Branch
 ```
 
+In `--json` mode the **first stdin line is the request** - `title`, `placeholder`, `width`,
+`actions`, and optionally an initial `rows` - and every later line is a rows update. That is the
+only way to declare `width` and `actions`, which have no flag spelling:
+
+```bash
+{ echo '{"title":"Branch","width":72,"actions":[{"id":"delete","key":"ctrl-d","label":"delete"}],"rows":[…]}'
+  # …later lines refresh the list while the palette is open
+} | rozi pick --json
+```
+
 `--json` also prints the raw terminal line (`{"selected":"…"}`) rather than the bare id, and is the
 only mode that reports a cancellation on stdout. Both modes exit 0 on a selection, 1 on a
 cancellation, and 2 on a transport failure.
@@ -269,6 +279,41 @@ Unlike one-shot commands, `pick` opens a streaming connection:
 4. When the user selects a row or cancels (Esc), rozi writes exactly one terminal line and closes:
    - `{"selected":"<id>"}` on activation (CLI exits with status 0). If `id` is omitted in the row, `label` is returned.
    - `{"cancelled":true}` on cancellation (CLI exits with status 1).
+
+### Actions
+
+Beyond select and cancel, a caller can declare extra chords. They are advertised in the footer the
+way every built-in picker advertises its own, and reported when pressed:
+
+```json
+{"cmd":"pick","title":"Switch branch","width":72,
+ "actions":[{"id":"create","key":"ctrl-n","label":"new branch","prompt":"Branch name","close":true},
+            {"id":"delete","key":"ctrl-d","label":"delete"}]}
+```
+
+Action attributes:
+- `id` (string, required): returned as `action`.
+- `key` (string, required): the chord, spelled as in `[keys]` (`ctrl-n`). An unparseable chord drops
+  the action rather than leaving a footer hint that never fires.
+- `label` (string, required): footer text.
+- `prompt` (string, optional): opens a text prompt with this title; the entered text rides back as
+  `input`. Cancelling the prompt reports nothing and returns to the list.
+- `close` (bool, default `false`): whether firing it ends the picker.
+
+A fired action writes one line and, unless it declared `close`, **leaves the palette open** so the
+caller can answer with an updated `{"rows":[...]}` - deleting a row and re-listing is one round
+trip, not a reopen:
+
+```json
+{"action":"delete","selected":"feat/x"}
+{"action":"create","input":"feat/y","selected":"feat/x"}
+```
+
+`selected` is the row under the cursor at the time, or `null` when the list is empty, so an action
+can be about a row without the caller tracking the highlight itself.
+
+`width` sets the modal width in columns, clamped to 30-120; omitted, it uses the same 60 every
+built-in palette uses.
 
 Row attributes supported in `rows`:
 - `id` (string): identifier returned in `selected`. Falls back to `label` when omitted.

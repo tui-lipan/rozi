@@ -286,9 +286,19 @@ pub enum Msg {
         id: u64,
         title: Option<String>,
         placeholder: Option<String>,
+        width: Option<u16>,
+        actions: Vec<crate::state::PickAction>,
         sender: std::sync::mpsc::SyncSender<String>,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },
+    /// An action chord fired in the picker; the index is into `PickState::actions`.
+    PickActionKey(usize),
+    /// Editing the text prompt an action raised.
+    PickPromptChanged(tui_lipan::prelude::InputEvent),
+    /// Accepting that prompt, reporting its text to the caller.
+    PickPromptSubmit,
+    /// Dismissing it, which returns to the picker without reporting anything.
+    PickPromptCancel,
     /// A row list from an open `pick` stream.
     PickRowsReported {
         id: u64,

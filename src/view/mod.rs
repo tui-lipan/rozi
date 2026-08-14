@@ -9,8 +9,9 @@ mod workbar;
 pub use keys::{
     collaboration_key, follow_prompt_key, layout_picker_key, palette_key,
     pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key, pane_window_key,
-    pick_key, profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
-    search_input_key, session_picker_key, settings_palette_key, sidebar_body_key, theme_picker_key,
+    pick_key, pick_prompt_input_key, profile_picker_key, rename_input_key,
+    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
+    settings_palette_key, sidebar_body_key, theme_picker_key,
 };
 pub(crate) use pane::{
     PaneKind, PaneMerge, divider_title_element, has_pane_alert, pane_alert, pane_element,
@@ -33,9 +34,9 @@ use pane::pane_title_bg;
 
 use overlays::{
     collaboration_overlay, follow_prompt_overlay, help_overlay, layout_picker_overlay,
-    palette_overlay, pane_padding_overlay, pick_overlay, profile_picker_overlay, rename_overlay,
-    rename_session_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
-    settings_overlay, theme_picker_overlay,
+    palette_overlay, pane_padding_overlay, pick_overlay, pick_prompt_overlay,
+    profile_picker_overlay, rename_overlay, rename_session_overlay, save_profile_overlay,
+    search_overlay, session_picker_overlay, settings_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
@@ -714,6 +715,15 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.show_pick {
         root = root.child(pick_overlay(ctx));
+    }
+    // Above the picker, which stays mounted underneath so cancelling returns to its list.
+    if ctx
+        .state
+        .pick
+        .as_ref()
+        .is_some_and(|pick| pick.prompt.is_some())
+    {
+        root = root.child(pick_prompt_overlay(ctx));
     }
     if ctx.state.search.is_some() {
         root = root.child(search_overlay(ctx));

@@ -1307,6 +1307,12 @@ pub(crate) fn request_pick_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::pick_key());
 }
 
+/// Focus the text prompt an action raised over the picker. The picker stays mounted underneath,
+/// so focus has to move explicitly rather than being inherited.
+pub(crate) fn request_pick_prompt_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::pick_prompt_input_key());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,6 +5,7 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
 
     let title = pick.title.clone();
     let placeholder = pick.placeholder.clone();
+    let width = pick.width;
     let rows = pick.rows.clone();
     let has_groups = rows.iter().any(|r| r.group.is_some());
     let selected_index = Some(pick.selected);
@@ -91,5 +92,77 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
             Msg::PickActivate(event.item.value)
         }));
 
-    action_palette(ctx, &title, pick_key(), Msg::ClosePick, palette, 60)
+    let palette = palette.input_key_interceptor(pick_key_interceptor(ctx));
+
+    let body = VStack::new()
+        .height(Length::Auto)
+        .child(palette)
+        .child(pick_hints(ctx));
+
+    action_palette(ctx, &title, pick_key(), Msg::ClosePick, body, width)
+}
+
+/// Footer chords: select, whatever the caller declared, and cancel. Built the same way every other
+/// picker builds its own, so a caller-driven one is not visibly a second-class citizen.
+fn pick_hints(ctx: &Context<AppRoot>) -> Element {
+    let theme = &ctx.state.theme;
+    let mut row = hint_row().child(hint_pill(theme, "select", "enter"));
+    if let Some(pick) = ctx.state.pick.as_ref() {
+        for action in &pick.actions {
+            row = row.child(hint_pill(
+                theme,
+                &action.label,
+                &KeyBinding::from_str(&action.key)
+                    .map(|binding| binding.compact_display())
+                    .unwrap_or_else(|_| action.key.clone()),
+            ));
+        }
+    }
+    row.child(hint_pill(theme, "cancel", "esc")).into()
+}
+
+/// Match a declared action chord against the key the palette's input did not consume.
+fn pick_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
+    let actions: Vec<(usize, KeyBinding)> = ctx
+        .state
+        .pick
+        .as_ref()
+        .map(|pick| {
+            pick.actions
+                .iter()
+                .enumerate()
+                .filter_map(|(index, action)| {
+                    KeyBinding::from_str(&action.key)
+                        .ok()
+                        .map(|binding| (index, binding))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    ctx.link().key_handler(move |key| {
+        actions
+            .iter()
+            .find(|(_, binding)| binding.matches_sequence(&[key]))
+            .map(|(index, _)| Msg::PickActionKey(*index))
+    })
+}
+
+/// The text prompt an action raised. Rendered above the picker, which stays mounted underneath so
+/// cancelling returns to the list with its query and highlight intact.
+pub(crate) fn pick_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
+    let Some(prompt) = ctx.state.pick.as_ref().and_then(|pick| pick.prompt.as_ref()) else {
+        return Text::new("").into();
+    };
+    prompt_overlay(
+        ctx,
+        &prompt.title,
+        "",
+        &prompt.input,
+        pick_prompt_input_key(),
+        Msg::PickPromptChanged,
+        Msg::PickPromptCancel,
+        Msg::PickPromptSubmit,
+        &[("submit", "enter")],
+        None,
+    )
 }

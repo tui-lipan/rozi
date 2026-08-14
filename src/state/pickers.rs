@@ -231,10 +231,45 @@ pub struct PickRow {
     pub priority: Option<i32>,
 }
 
+/// One extra key the caller offers alongside select and cancel.
+///
+/// Actions are what turn a picker from a menu into a working surface: delete the branch under the
+/// cursor and push a fresh list, or open a prompt and create one. They are declared up front so the
+/// footer can advertise them the way every built-in picker advertises its own chords.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PickAction {
+    /// Returned to the caller as `action`.
+    pub id: String,
+    /// Chord that fires it, in the same spelling `[keys]` uses (`ctrl-n`).
+    pub key: String,
+    /// Footer text, e.g. `new branch`.
+    pub label: String,
+    /// When set, the key opens a text prompt with this title and the entered text rides back as
+    /// `input`. Cancelling the prompt returns to the picker without reporting anything.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// Whether firing it ends the picker. Default `false`: the caller usually wants to push an
+    /// updated row set and keep going.
+    #[serde(default)]
+    pub close: bool,
+}
+
+/// An open prompt raised by a [`PickAction`], holding the picker underneath it.
+pub struct PickPrompt {
+    /// Index into [`PickState::actions`].
+    pub action: usize,
+    pub title: String,
+    pub input: TextInput,
+}
+
 pub struct PickState {
     pub id: u64,
     pub title: String,
     pub placeholder: String,
+    /// Caller-chosen modal width in columns, clamped on the way in.
+    pub width: u16,
+    pub actions: Vec<PickAction>,
+    pub prompt: Option<PickPrompt>,
     pub rows: Vec<PickRow>,
     pub selected: usize,
     pub reply: std::sync::mpsc::SyncSender<String>,

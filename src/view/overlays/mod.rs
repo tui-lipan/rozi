@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use tui_lipan::Justify::SpaceBetween;
@@ -14,9 +15,9 @@ use crate::{AppRoot, Msg};
 
 use super::keys::{
     collaboration_key, help_scroll_key, layout_picker_key, palette_key,
-    pane_padding_horizontal_key, pane_padding_vertical_key, pick_key, profile_picker_key,
-    rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
-    session_picker_key, settings_palette_key, theme_picker_key,
+    pane_padding_horizontal_key, pane_padding_vertical_key, pick_key, pick_prompt_input_key,
+    profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
+    search_input_key, session_picker_key, settings_palette_key, theme_picker_key,
 };
 use super::{
     action_palette_frame, action_palette_modal, action_palette_modal_with_width, fg_only,

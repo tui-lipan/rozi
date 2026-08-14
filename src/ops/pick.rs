@@ -1,18 +1,44 @@
+use std::str::FromStr;
+
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::control::ControlResponse;
-use crate::ops::focus::{request_current_pane_focus, request_pick_focus};
+use crate::ops::focus::{
+    request_current_pane_focus, request_pick_focus, request_pick_prompt_focus,
+};
 use crate::state::{Mode, PickRow, PickState};
+
+/// Narrowest and widest a caller may make the modal.
+///
+/// The floor keeps a label plus its right-aligned badge legible; the ceiling stops one picker
+/// spanning a wide monitor when every built-in overlay sits near 60.
+const PICK_MIN_WIDTH: u16 = 30;
+const PICK_MAX_WIDTH: u16 = 120;
+const PICK_DEFAULT_WIDTH: u16 = 60;
+
+/// Everything a `pick` request carries, kept together so the message arm stays readable.
+pub(crate) struct PickOpen {
+    pub id: u64,
+    pub title: Option<String>,
+    pub placeholder: Option<String>,
+    pub width: Option<u16>,
+    pub actions: Vec<crate::state::PickAction>,
+}
 
 pub(crate) fn open_pick_stream(
     ctx: &mut Context<AppRoot>,
-    id: u64,
-    title: Option<String>,
-    placeholder: Option<String>,
+    open: PickOpen,
     sender: std::sync::mpsc::SyncSender<String>,
     ack: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
+    let PickOpen {
+        id,
+        title,
+        placeholder,
+        width,
+        actions,
+    } = open;
     if ctx.state.show_pick {
         let _ = ack.send(ControlResponse::error("a picker is already open"));
         return Update::none();
@@ -27,6 +53,19 @@ pub(crate) fn open_pick_stream(
         id,
         title: title.unwrap_or_else(|| "Pick".to_string()),
         placeholder: placeholder.unwrap_or_else(|| "Search…".to_string()),
+        width: width
+            .unwrap_or(PICK_DEFAULT_WIDTH)
+            .clamp(PICK_MIN_WIDTH, PICK_MAX_WIDTH),
+        // An action whose key does not parse would be a footer hint that never fires, so drop it
+        // here rather than advertising a chord the interceptor can never match.
+        actions: actions
+            .into_iter()
+            .filter(|action| {
+                !action.id.is_empty()
+                    && tui_lipan::prelude::KeyBinding::from_str(&action.key).is_ok()
+            })
+            .collect(),
+        prompt: None,
         rows: Vec::new(),
         selected: 0,
         reply: sender,
@@ -115,6 +154,115 @@ pub(crate) fn pick_activate(ctx: &mut Context<AppRoot>, index: usize) -> Update 
     Update::full()
 }
 
+/// Fire an action chord.
+///
+/// A plain action reports and leaves the palette up, so the caller can answer with a fresh row set:
+/// deleting a branch and re-listing is one round trip, not a reopen. One carrying a `prompt` raises
+/// the text modal first and reports on submit.
+pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    let Some(pick) = ctx.state.pick.as_ref() else {
+        return Update::none();
+    };
+    let Some(action) = pick.actions.get(index).cloned() else {
+        return Update::none();
+    };
+
+    if let Some(title) = action.prompt.clone() {
+        if let Some(pick) = ctx.state.pick.as_mut() {
+            pick.prompt = Some(crate::state::PickPrompt {
+                action: index,
+                title,
+                input: tui_lipan::prelude::TextInput::new(""),
+            });
+        }
+        ctx.state.commands_dirty = true;
+        request_pick_prompt_focus(ctx);
+        return Update::full();
+    }
+
+    report_action(ctx, index, None)
+}
+
+pub(crate) fn prompt_changed(
+    ctx: &mut Context<AppRoot>,
+    event: tui_lipan::prelude::InputEvent,
+) -> Update {
+    if let Some(prompt) = ctx
+        .state
+        .pick
+        .as_mut()
+        .and_then(|pick| pick.prompt.as_mut())
+    {
+        prompt.input.apply(&event);
+    }
+    Update::full()
+}
+
+pub(crate) fn prompt_submit(ctx: &mut Context<AppRoot>) -> Update {
+    let Some((index, text)) = ctx
+        .state
+        .pick
+        .as_mut()
+        .and_then(|pick| pick.prompt.take())
+        .map(|prompt| (prompt.action, prompt.input.text().to_string()))
+    else {
+        return Update::none();
+    };
+    report_action(ctx, index, Some(text))
+}
+
+/// Dismiss the prompt and go back to the picker underneath, reporting nothing: an abandoned prompt
+/// is not a decision, and a caller that saw an action fire would have to undo it.
+pub(crate) fn prompt_cancel(ctx: &mut Context<AppRoot>) -> Update {
+    if let Some(pick) = ctx.state.pick.as_mut() {
+        pick.prompt = None;
+    }
+    ctx.state.commands_dirty = true;
+    request_pick_focus(ctx);
+    Update::full()
+}
+
+/// Write one action line, and close the picker when the action asked to be terminal.
+fn report_action(ctx: &mut Context<AppRoot>, index: usize, input: Option<String>) -> Update {
+    let Some(pick) = ctx.state.pick.as_ref() else {
+        return Update::none();
+    };
+    let Some(action) = pick.actions.get(index).cloned() else {
+        return Update::none();
+    };
+    // The row under the cursor rides along, so an action can be about a row without the caller
+    // tracking the highlight itself.
+    let selected = pick
+        .rows
+        .get(pick.selected)
+        .map(|row| row.id.clone().unwrap_or_else(|| row.label.clone()));
+
+    let mut payload = serde_json::json!({ "action": action.id });
+    if let Some(map) = payload.as_object_mut() {
+        map.insert(
+            "selected".to_string(),
+            match selected {
+                Some(id) => serde_json::Value::String(id),
+                None => serde_json::Value::Null,
+            },
+        );
+        if let Some(text) = input {
+            map.insert("input".to_string(), serde_json::Value::String(text));
+        }
+    }
+    let _ = pick.reply.try_send(format!("{payload}\n"));
+
+    if action.close {
+        ctx.state.pick = None;
+        ctx.state.show_pick = false;
+        ctx.state.commands_dirty = true;
+        request_current_pane_focus(ctx);
+    } else {
+        request_pick_focus(ctx);
+    }
+    Update::full()
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
@@ -142,6 +290,8 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
                     id: 1,
+                    width: None,
+                    actions: Vec::new(),
                     title: Some("Branches".into()),
                     placeholder: None,
                     sender: tx,
@@ -180,6 +330,8 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
                     id: 1,
+                    width: None,
+                    actions: Vec::new(),
                     title: None,
                     placeholder: None,
                     sender: tx,
@@ -220,6 +372,8 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
                     id: 1,
+                    width: None,
+                    actions: Vec::new(),
                     title: None,
                     placeholder: None,
                     sender: tx,
@@ -245,6 +399,8 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
                     id: 1,
+                    width: None,
+                    actions: Vec::new(),
                     title: None,
                     placeholder: None,
                     sender: tx1,
@@ -258,6 +414,8 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
                     id: 2,
+                    width: None,
+                    actions: Vec::new(),
                     title: None,
                     placeholder: None,
                     sender: tx2,
@@ -280,6 +438,8 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
                     id: 1,
+                    width: None,
+                    actions: Vec::new(),
                     title: None,
                     placeholder: None,
                     sender: tx,
@@ -292,6 +452,174 @@ mod tests {
         });
     }
 
+    fn action(id: &str, key: &str, prompt: Option<&str>, close: bool) -> crate::state::PickAction {
+        crate::state::PickAction {
+            id: id.to_string(),
+            key: key.to_string(),
+            label: id.to_string(),
+            prompt: prompt.map(str::to_string),
+            close,
+        }
+    }
+
+    fn open_with(
+        backend: &mut TestBackend<crate::AppRoot>,
+        actions: Vec<crate::state::PickAction>,
+        width: Option<u16>,
+    ) -> mpsc::Receiver<String> {
+        let (tx, rx) = mpsc::sync_channel(4);
+        let (ack_tx, _ack_rx) = mpsc::channel();
+        backend
+            .dispatch(crate::Msg::PickStreamOpen {
+                id: 1,
+                title: None,
+                placeholder: None,
+                width,
+                actions,
+                sender: tx,
+                ack: ack_tx,
+            })
+            .expect("dispatch open");
+        backend
+            .dispatch(crate::Msg::PickRowsReported {
+                id: 1,
+                rows: vec![PickRow {
+                    id: Some("feat/x".into()),
+                    label: "feat/x".into(),
+                    description: None,
+                    group: None,
+                    disabled: None,
+                    active: false,
+                    priority: None,
+                }],
+            })
+            .expect("dispatch rows");
+        rx
+    }
+
+    /// A plain action reports and leaves the palette up, so the caller can answer with a fresh row
+    /// set instead of reopening the whole picker.
+    #[test]
+    fn a_plain_action_reports_the_row_and_keeps_the_picker_open() {
+        with_backend(|backend| {
+            let rx = open_with(backend, vec![action("delete", "ctrl-d", None, false)], None);
+            backend
+                .dispatch(crate::Msg::PickActionKey(0))
+                .expect("dispatch action");
+
+            let line = rx.try_recv().expect("action written");
+            assert_eq!(line.trim(), r#"{"action":"delete","selected":"feat/x"}"#);
+            assert!(backend.state().show_pick, "picker closed on a plain action");
+        });
+    }
+
+    /// `close: true` makes an action terminal, the same as a selection.
+    #[test]
+    fn a_closing_action_ends_the_picker() {
+        with_backend(|backend| {
+            let rx = open_with(backend, vec![action("edit", "ctrl-e", None, true)], None);
+            backend
+                .dispatch(crate::Msg::PickActionKey(0))
+                .expect("dispatch action");
+
+            assert!(rx.try_recv().is_ok());
+            assert!(!backend.state().show_pick);
+        });
+    }
+
+    /// A prompt action reports nothing until the text is submitted, and carries it as `input`.
+    #[test]
+    fn a_prompt_action_reports_only_once_its_text_is_submitted() {
+        with_backend(|backend| {
+            let rx = open_with(
+                backend,
+                vec![action("create", "ctrl-n", Some("Branch name"), true)],
+                None,
+            );
+            backend
+                .dispatch(crate::Msg::PickActionKey(0))
+                .expect("dispatch action");
+            assert!(
+                rx.try_recv().is_err(),
+                "reported before the prompt was answered"
+            );
+            assert!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .is_some_and(|pick| pick.prompt.is_some()),
+                "prompt did not open"
+            );
+
+            if let Some(prompt) = backend
+                .state_mut()
+                .pick
+                .as_mut()
+                .and_then(|pick| pick.prompt.as_mut())
+            {
+                prompt.input.set_text("feat/y".to_string());
+            }
+            backend
+                .dispatch(crate::Msg::PickPromptSubmit)
+                .expect("dispatch submit");
+
+            let line = rx.try_recv().expect("action written");
+            assert_eq!(
+                line.trim(),
+                r#"{"action":"create","input":"feat/y","selected":"feat/x"}"#
+            );
+        });
+    }
+
+    /// Abandoning the prompt is not a decision: nothing is reported and the list comes back.
+    #[test]
+    fn cancelling_a_prompt_reports_nothing_and_returns_to_the_picker() {
+        with_backend(|backend| {
+            let rx = open_with(
+                backend,
+                vec![action("create", "ctrl-n", Some("Branch name"), true)],
+                None,
+            );
+            backend
+                .dispatch(crate::Msg::PickActionKey(0))
+                .expect("dispatch action");
+            backend
+                .dispatch(crate::Msg::PickPromptCancel)
+                .expect("dispatch cancel");
+
+            assert!(rx.try_recv().is_err(), "a cancelled prompt reported");
+            assert!(backend.state().show_pick, "picker did not come back");
+            assert!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .is_some_and(|pick| pick.prompt.is_none())
+            );
+        });
+    }
+
+    /// Width is clamped, and an action whose chord cannot parse is dropped rather than becoming a
+    /// footer hint that never fires.
+    #[test]
+    fn width_is_clamped_and_unparseable_actions_are_dropped() {
+        with_backend(|backend| {
+            open_with(
+                backend,
+                vec![
+                    action("good", "ctrl-d", None, false),
+                    action("bad", "not-a-key", None, false),
+                ],
+                Some(9999),
+            );
+            let pick = backend.state().pick.as_ref().expect("picker open");
+            assert_eq!(pick.width, super::PICK_MAX_WIDTH);
+            assert_eq!(pick.actions.len(), 1);
+            assert_eq!(pick.actions[0].id, "good");
+        });
+    }
+
     #[test]
     fn disabled_row_is_inert_on_activate() {
         with_backend(|backend| {
@@ -300,6 +628,8 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
                     id: 1,
+                    width: None,
+                    actions: Vec::new(),
                     title: None,
                     placeholder: None,
                     sender: tx,

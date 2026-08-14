@@ -805,10 +805,44 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
             std::process::exit(2);
         }
     };
+    // In `--json` mode the first stdin line *is* the picker request, which is the only way to
+    // declare `width` and `actions` - they have no flag spelling, and a mini-language inside one
+    // would be worse than the object the caller is already writing. Its `rows`, if present, become
+    // the initial set. Plain mode is a dumb list and needs none of it.
+    let mut first_line = String::new();
+    let mut opening_rows = None;
+    let (title, placeholder, width, actions) = if command.json {
+        std::io::stdin().lock().read_line(&mut first_line)?;
+        let spec: serde_json::Value =
+            serde_json::from_str(first_line.trim()).unwrap_or(serde_json::Value::Null);
+        if spec.get("rows").is_some() {
+            opening_rows = Some(serde_json::json!({ "rows": spec["rows"].clone() }));
+        }
+        (
+            spec.get("title")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or(command.title),
+            spec.get("placeholder")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or(command.placeholder),
+            spec.get("width").and_then(|v| v.as_u64()).map(|v| v as u16),
+            spec.get("actions")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default(),
+        )
+    } else {
+        (command.title, command.placeholder, None, Vec::new())
+    };
+
     let request = control::ControlRequest {
         command: control::ControlCommand::Pick {
-            title: command.title,
-            placeholder: command.placeholder,
+            title,
+            placeholder,
+            width,
+            actions,
         },
         source_pane: None,
     };
@@ -854,6 +888,9 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
     });
 
     if command.json {
+        if let Some(rows) = opening_rows {
+            let _ = writeln!(stream, "{rows}");
+        }
         for line in std::io::stdin().lock().lines() {
             let Ok(line) = line else { break };
             if writeln!(stream, "{line}").is_err() {

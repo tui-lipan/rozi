@@ -1,8 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
-use tui_lipan::prelude::TerminalColorPalette;
-
 use crate::config::UserCommandAction;
 
 use super::PaneId;
@@ -272,22 +270,7 @@ impl SharedSessionState {
 }
 
 /// A pane spawn deferred until a session client is available (see [`super::State::pending_spawns`]).
-#[derive(Clone, Debug)]
-pub struct PendingPaneSpawn {
-    pub pane_id: PaneId,
-    pub local: bool,
-    pub generation: u64,
-    pub command: Option<String>,
-    pub cwd: Option<String>,
-    pub cols: u16,
-    pub rows: u16,
-    pub keep_open: bool,
-    pub env: Vec<(String, String)>,
-    pub title: Option<String>,
-    pub palette: TerminalColorPalette,
-    pub shell: Vec<String>,
-    pub command_shell: Vec<String>,
-}
+pub type PendingPaneSpawn = crate::session::client::SpawnPaneRequest;
 
 /// The prefix that marks an auto-named ephemeral session. Ephemeral servers shut down on a clean
 /// quit but survive a UI crash for reattach; user-typed names may not use this prefix.

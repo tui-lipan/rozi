@@ -4,7 +4,7 @@ mod bench_support;
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput};
 use rozi::platform::ipc::EndpointRegistry;
 use rozi::runtime_metrics::ServerRuntimeMetrics;
-use rozi::session::client::SessionClient;
+use rozi::session::client::{SessionClient, SpawnPaneRequest};
 use rozi::session::protocol::{Frame, ServerMessage};
 use rozi::session::server::{ServerSettings, SessionServer};
 use std::collections::HashMap;
@@ -197,25 +197,25 @@ impl FairnessFixture {
 
         let helper = executable.to_string_lossy().into_owned();
         for pane_id in 1..=pane_count {
-            client.spawn_pane(
+            client.spawn_pane(SpawnPaneRequest {
                 pane_id,
-                false,
-                GENERATION,
-                None,
-                None,
-                250,
-                60,
-                false,
-                Vec::new(),
-                Some(format!("server-fairness-{pane_id}")),
-                TerminalColorPalette::default(),
-                vec![
+                local: false,
+                generation: GENERATION,
+                command: None,
+                cwd: None,
+                cols: 250,
+                rows: 60,
+                keep_open: false,
+                env: Vec::new(),
+                title: Some(format!("server-fairness-{pane_id}")),
+                palette: TerminalColorPalette::default(),
+                shell: vec![
                     helper.clone(),
                     HELPER_ARG.to_string(),
                     pace_millis.to_string(),
                 ],
-                Vec::new(),
-            );
+                command_shell: Vec::new(),
+            });
             wait_for_fairness_pane(&events, pane_id);
         }
         let ingress_started = Instant::now();
@@ -392,26 +392,26 @@ impl SnapshotFixture {
 
         for pane_index in 0..pane_count {
             let pane_id = pane_index as u32 + 1;
-            client.spawn_pane(
+            client.spawn_pane(SpawnPaneRequest {
                 pane_id,
-                false,
-                GENERATION,
-                None,
-                None,
-                bench_support::SNAPSHOT_COLS,
-                bench_support::SNAPSHOT_ROWS,
-                false,
-                Vec::new(),
-                Some(format!("snapshot-{pane_id:02}")),
-                TerminalColorPalette::default(),
-                vec![
+                local: false,
+                generation: GENERATION,
+                command: None,
+                cwd: None,
+                cols: bench_support::SNAPSHOT_COLS,
+                rows: bench_support::SNAPSHOT_ROWS,
+                keep_open: false,
+                env: Vec::new(),
+                title: Some(format!("snapshot-{pane_id:02}")),
+                palette: TerminalColorPalette::default(),
+                shell: vec![
                     executable.clone(),
                     SNAPSHOT_HELPER_ARG.to_string(),
                     pane_id.to_string(),
                     history_rows.to_string(),
                 ],
-                Vec::new(),
-            );
+                command_shell: Vec::new(),
+            });
             wait_for_snapshot_pane(&events, pane_id);
         }
 

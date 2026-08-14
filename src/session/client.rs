@@ -77,6 +77,24 @@ pub struct ClientRuntimeStats {
     pub server: Option<CachedServerRuntimeMetrics>,
 }
 
+/// A structured request to spawn a pane on the session server.
+#[derive(Clone, Debug)]
+pub struct SpawnPaneRequest {
+    pub pane_id: PaneId,
+    pub local: bool,
+    pub generation: u64,
+    pub command: Option<String>,
+    pub cwd: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+    pub keep_open: bool,
+    pub env: Vec<(String, String)>,
+    pub title: Option<String>,
+    pub palette: TerminalColorPalette,
+    pub shell: Vec<String>,
+    pub command_shell: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 // `ClientMessage::SpawnPane` (with its `shell`/`command_shell` argv, cross-platform plan Phase 4)
 // makes `Control` noticeably larger than `PaneInput`. Every outbound message already goes through
@@ -352,37 +370,21 @@ impl SessionClient {
         self.send_control(ClientMessage::ListChanges { root });
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_pane(
-        &self,
-        pane_id: PaneId,
-        local: bool,
-        generation: u64,
-        command: Option<String>,
-        cwd: Option<String>,
-        cols: u16,
-        rows: u16,
-        keep_open: bool,
-        env: Vec<(String, String)>,
-        title: Option<String>,
-        palette: TerminalColorPalette,
-        shell: Vec<String>,
-        command_shell: Vec<String>,
-    ) {
+    pub fn spawn_pane(&self, request: SpawnPaneRequest) {
         self.send_control(ClientMessage::SpawnPane {
-            pane_id,
-            local,
-            generation,
-            command,
-            cwd,
-            cols,
-            rows,
-            keep_open,
-            env,
-            title,
-            palette: WirePalette::from(palette),
-            shell,
-            command_shell,
+            pane_id: request.pane_id,
+            local: request.local,
+            generation: request.generation,
+            command: request.command,
+            cwd: request.cwd,
+            cols: request.cols,
+            rows: request.rows,
+            keep_open: request.keep_open,
+            env: request.env,
+            title: request.title,
+            palette: WirePalette::from(request.palette),
+            shell: request.shell,
+            command_shell: request.command_shell,
             cell_width: self.cell.width,
             cell_height: self.cell.height,
         });

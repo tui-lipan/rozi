@@ -23,6 +23,33 @@ pub(super) fn reset_state_for_shared_seed(state: &mut State) {
     state.current_mut().next_pty_generation = 1;
 }
 
+fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protocol::PaneMeta) {
+    pane.opening = false;
+    pane.terminal_active = true;
+    pane.pty_generation = meta.generation;
+    pane.terminal.cols = meta.cols.max(1);
+    pane.terminal.rows = meta.rows.max(1);
+    pane.terminal
+        .bind_server_backend(meta.pane_id, meta.generation);
+    pane.terminal.title = meta.title.as_deref().filter(|t| !t.trim().is_empty()).map(String::from);
+    pane.terminal.original_user = meta.original_user.clone();
+    pane.terminal.cwd = meta.runtime.cwd.clone();
+    pane.terminal.cwd_host = meta.runtime.cwd_host.clone();
+    pane.terminal.display_path = meta.runtime.display_path.clone();
+    pane.terminal.project_root = meta.runtime.project_root.clone();
+    pane.terminal.git_branch = meta.runtime.git_branch.clone();
+    pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
+    pane.terminal.reported_status = meta.runtime.status.clone();
+    pane.terminal.detected_agent = meta.runtime.detected_agent.clone();
+    pane.terminal.work_started_at = meta.runtime.work_started_at;
+    pane.terminal.command_phase = meta.runtime.command_phase;
+    pane.terminal.last_exit_status = meta.runtime.last_exit_status;
+    pane.terminal.runtime_sequence = meta.runtime.sequence;
+    pane.terminal.child_pid = meta.pid;
+    pane.logging = meta.logging;
+    pane.terminal.status = ManagedTerminalStatus::Ready;
+}
+
 /// After the reconciler has created panes from the shared layout, bind each one's server backend at
 /// the authoritative size and stamp its live metadata (title, cwd, pid) from the attach frame, so
 /// replay seed frames land on a correctly sized screen.
@@ -32,30 +59,7 @@ pub(super) fn bind_attached_pane_backends(
 ) {
     for meta in panes {
         if let Some(pane) = find_pane_mut(&mut ctx.state, meta.pane_id) {
-            pane.opening = false;
-            pane.terminal_active = true;
-            pane.pty_generation = meta.generation;
-            pane.terminal.cols = meta.cols.max(1);
-            pane.terminal.rows = meta.rows.max(1);
-            pane.terminal
-                .bind_server_backend(meta.pane_id, meta.generation);
-            pane.terminal.title = meta.title.filter(|title| !title.trim().is_empty());
-            pane.terminal.original_user = meta.original_user;
-            pane.terminal.cwd = meta.runtime.cwd.clone();
-            pane.terminal.cwd_host = meta.runtime.cwd_host.clone();
-            pane.terminal.display_path = meta.runtime.display_path.clone();
-            pane.terminal.project_root = meta.runtime.project_root.clone();
-            pane.terminal.git_branch = meta.runtime.git_branch.clone();
-            pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
-            pane.terminal.reported_status = meta.runtime.status.clone();
-            pane.terminal.detected_agent = meta.runtime.detected_agent.clone();
-            pane.terminal.work_started_at = meta.runtime.work_started_at;
-            pane.terminal.command_phase = meta.runtime.command_phase;
-            pane.terminal.last_exit_status = meta.runtime.last_exit_status;
-            pane.terminal.runtime_sequence = meta.runtime.sequence;
-            pane.terminal.child_pid = meta.pid;
-            pane.logging = meta.logging;
-            pane.terminal.status = ManagedTerminalStatus::Ready;
+            apply_pane_meta(pane, &meta);
         }
         // The popup slot's reserved id (u32::MAX) must never feed the allocator: bumping past it
         // would pin next_pane_id at MAX and collide every later spawn with the popup slot.
@@ -103,30 +107,7 @@ pub(super) fn apply_attached_panes(
             append_tiled_window(&mut ctx.state.current_mut().workspaces[0], attached.pane_id);
         }
         if let Some(pane) = find_pane_mut(&mut ctx.state, attached.pane_id) {
-            pane.opening = false;
-            pane.terminal_active = true;
-            pane.pty_generation = attached.generation;
-            pane.terminal.cols = attached.cols.max(1);
-            pane.terminal.rows = attached.rows.max(1);
-            pane.terminal
-                .bind_server_backend(attached.pane_id, attached.generation);
-            pane.terminal.title = attached.title.filter(|title| !title.trim().is_empty());
-            pane.terminal.original_user = attached.original_user;
-            pane.terminal.cwd = attached.runtime.cwd.clone();
-            pane.terminal.cwd_host = attached.runtime.cwd_host.clone();
-            pane.terminal.display_path = attached.runtime.display_path.clone();
-            pane.terminal.project_root = attached.runtime.project_root.clone();
-            pane.terminal.git_branch = attached.runtime.git_branch.clone();
-            pane.terminal.foreground_program = attached.runtime.foreground_program.clone();
-            pane.terminal.reported_status = attached.runtime.status.clone();
-            pane.terminal.detected_agent = attached.runtime.detected_agent.clone();
-            pane.terminal.work_started_at = attached.runtime.work_started_at;
-            pane.terminal.command_phase = attached.runtime.command_phase;
-            pane.terminal.last_exit_status = attached.runtime.last_exit_status;
-            pane.terminal.runtime_sequence = attached.runtime.sequence;
-            pane.terminal.child_pid = attached.pid;
-            pane.logging = attached.logging;
-            pane.terminal.status = ManagedTerminalStatus::Ready;
+            apply_pane_meta(pane, &attached);
         }
         if attached.pane_id != crate::state::POPUP_PANE_ID {
             let next = ctx
@@ -232,21 +213,21 @@ pub(crate) fn spawn_state_panes_on_session(
             } else {
                 pane.identity.command.clone()
             };
-            client.spawn_pane(
-                pane.id,
-                false,
+            client.spawn_pane(crate::session::client::SpawnPaneRequest {
+                pane_id: pane.id,
+                local: false,
                 generation,
                 command,
-                pane.identity.cwd.clone(),
-                pane.terminal.cols,
-                pane.terminal.rows,
-                pane.identity.keep_open,
+                cwd: pane.identity.cwd.clone(),
+                cols: pane.terminal.cols,
+                rows: pane.terminal.rows,
+                keep_open: pane.identity.keep_open,
                 env,
-                pane.identity.custom_title.clone(),
-                pane.terminal.last_palette.unwrap_or(fallback_palette),
-                shell.clone(),
-                command_shell.clone(),
-            );
+                title: pane.identity.custom_title.clone(),
+                palette: pane.terminal.last_palette.unwrap_or(fallback_palette),
+                shell: shell.clone(),
+                command_shell: command_shell.clone(),
+            });
             targets.push((pane.id, generation));
         }
     }
@@ -267,20 +248,6 @@ pub(super) fn flush_pending_spawns(ctx: &mut Context<AppRoot>) {
         return;
     };
     for spawn in std::mem::take(&mut ctx.state.current_mut().pending_spawns) {
-        client.spawn_pane(
-            spawn.pane_id,
-            spawn.local,
-            spawn.generation,
-            spawn.command,
-            spawn.cwd,
-            spawn.cols,
-            spawn.rows,
-            spawn.keep_open,
-            spawn.env,
-            spawn.title,
-            spawn.palette,
-            spawn.shell,
-            spawn.command_shell,
-        );
+        client.spawn_pane(spawn);
     }
 }

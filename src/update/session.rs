@@ -945,6 +945,49 @@ fn update_agent_status_edge(
     }
 }
 
+struct AppliedPaneRuntime {
+    finished_rows: Vec<String>,
+    edges: AgentEdges,
+    previous_status: Option<crate::session::protocol::PaneStatus>,
+    current_status: Option<crate::session::protocol::PaneStatus>,
+}
+
+fn apply_pane_runtime_state(
+    pane: &mut crate::state::Pane,
+    state: PaneRuntimeState,
+) -> AppliedPaneRuntime {
+    let previous_status = pane.terminal.reported_status.clone();
+    let previous_agent_status = pane.terminal.agent_status();
+    // Sampled before the incoming runtime state overwrites the status it dates.
+    let previous_age = pane.terminal.status_age();
+    let previous_blocked = pane.terminal.is_blocked();
+    pane.terminal.runtime_sequence = state.sequence;
+    pane.terminal.cwd = state.cwd;
+    pane.terminal.cwd_host = state.cwd_host;
+    pane.terminal.display_path = state.display_path;
+    pane.terminal.project_root = state.project_root;
+    pane.terminal.git_branch = state.git_branch;
+    pane.terminal.foreground_program = state.foreground_program;
+    pane.terminal.command_phase = state.command_phase;
+    pane.terminal.last_exit_status = state.last_exit_status;
+    pane.terminal.reported_status = state.status;
+    pane.terminal.detected_agent = state.detected_agent;
+    pane.terminal.work_started_at = state.work_started_at;
+    let finished_rows = pane.terminal.apply_rows(state.rows);
+    let edges = update_agent_status_edge(
+        &mut pane.terminal,
+        previous_agent_status.as_deref(),
+        previous_age,
+        previous_blocked,
+    );
+    AppliedPaneRuntime {
+        finished_rows,
+        edges,
+        previous_status,
+        current_status: pane.terminal.reported_status.clone(),
+    }
+}
+
 pub(super) fn pane_runtime_changed(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
@@ -967,28 +1010,7 @@ pub(super) fn pane_runtime_changed(
                 && pane.pty_generation == generation
                 && state.sequence > pane.terminal.runtime_sequence
             {
-                let previous_agent_status = pane.terminal.agent_status();
-                let previous_age = pane.terminal.status_age();
-                let previous_blocked = pane.terminal.is_blocked();
-                pane.terminal.runtime_sequence = state.sequence;
-                pane.terminal.cwd = state.cwd;
-                pane.terminal.cwd_host = state.cwd_host;
-                pane.terminal.display_path = state.display_path;
-                pane.terminal.project_root = state.project_root;
-                pane.terminal.git_branch = state.git_branch;
-                pane.terminal.foreground_program = state.foreground_program;
-                pane.terminal.command_phase = state.command_phase;
-                pane.terminal.last_exit_status = state.last_exit_status;
-                pane.terminal.reported_status = state.status;
-                pane.terminal.detected_agent = state.detected_agent;
-                pane.terminal.work_started_at = state.work_started_at;
-                let _ = pane.terminal.apply_rows(state.rows);
-                let _ = update_agent_status_edge(
-                    &mut pane.terminal,
-                    previous_agent_status.as_deref(),
-                    previous_age,
-                    previous_blocked,
-                );
+                apply_pane_runtime_state(pane, state);
             }
             if at_prompt {
                 flush_attachment_replay_input(attachment, pane_id, generation);
@@ -1010,36 +1032,15 @@ pub(super) fn pane_runtime_changed(
         && pane.pty_generation == generation
         && state.sequence > pane.terminal.runtime_sequence
     {
-        let previous = pane.terminal.reported_status.clone();
-        let previous_agent_status = pane.terminal.agent_status();
-        // Sampled before the incoming runtime state overwrites the status it dates.
-        let previous_age = pane.terminal.status_age();
-        let previous_blocked = pane.terminal.is_blocked();
-        pane.terminal.runtime_sequence = state.sequence;
-        pane.terminal.cwd = state.cwd;
-        pane.terminal.cwd_host = state.cwd_host;
-        pane.terminal.display_path = state.display_path;
-        pane.terminal.project_root = state.project_root;
-        pane.terminal.git_branch = state.git_branch;
-        pane.terminal.foreground_program = state.foreground_program;
-        pane.terminal.command_phase = state.command_phase;
-        pane.terminal.last_exit_status = state.last_exit_status;
-        pane.terminal.reported_status = state.status;
-        reported_status = pane.terminal.reported_status.clone();
-        pane.terminal.detected_agent = state.detected_agent;
-        pane.terminal.work_started_at = state.work_started_at;
-        finished_rows = pane.terminal.apply_rows(state.rows);
-        edges = Some(update_agent_status_edge(
-            &mut pane.terminal,
-            previous_agent_status.as_deref(),
-            previous_age,
-            previous_blocked,
-        ));
         title = Some(pane.display_title(None));
-        if previous != pane.terminal.reported_status {
+        let applied = apply_pane_runtime_state(pane, state);
+        reported_status = applied.current_status.clone();
+        finished_rows = applied.finished_rows;
+        edges = Some(applied.edges);
+        if applied.previous_status != applied.current_status {
             transition = Some((
-                previous,
-                pane.terminal.reported_status.clone(),
+                applied.previous_status,
+                applied.current_status,
                 title.clone().expect("matched pane has a title"),
             ));
         }

@@ -710,41 +710,25 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     // Shell-integration env (`ZDOTDIR`, `XDG_DATA_DIRS`, ...) comes first so any caller-supplied
     // override for the same key (rare, but a pane/profile could set one deliberately) wins.
     let env = extra_env.into_iter().chain(env).collect::<Vec<_>>();
+    let request = crate::session::client::SpawnPaneRequest {
+        pane_id,
+        local,
+        generation,
+        command,
+        cwd,
+        cols,
+        rows,
+        keep_open,
+        env,
+        title,
+        palette,
+        shell,
+        command_shell,
+    };
     if let Some(client) = state.current().session_client.clone() {
-        client.spawn_pane(
-            pane_id,
-            local,
-            generation,
-            command,
-            cwd,
-            cols,
-            rows,
-            keep_open,
-            env,
-            title,
-            palette,
-            shell,
-            command_shell,
-        );
+        client.spawn_pane(request);
     } else {
-        state
-            .current_mut()
-            .pending_spawns
-            .push(crate::state::PendingPaneSpawn {
-                pane_id,
-                local,
-                generation,
-                command,
-                cwd,
-                cols,
-                rows,
-                keep_open,
-                env,
-                title,
-                palette,
-                shell,
-                command_shell,
-            });
+        state.current_mut().pending_spawns.push(request);
     }
 }
 

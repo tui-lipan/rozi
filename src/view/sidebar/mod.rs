@@ -5,8 +5,6 @@ mod sessions;
 mod tree;
 mod user_tabs;
 
-pub(crate) use row::RowTarget;
-
 use tui_lipan::prelude::*;
 
 use crate::config::SidebarTab;

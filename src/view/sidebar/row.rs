@@ -1,45 +1,8 @@
 use tui_lipan::prelude::*;
 
-use crate::config::SidebarTabId;
-use crate::state::PaneId;
 use crate::{AppRoot, Msg};
 
-/// What activating a row does. Rows are built as a pure function of `State`, so the update side can
-/// rebuild the same list and resolve an index back to one of these — which is what lets Enter and a
-/// click share a single code path instead of two callbacks that can drift.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RowTarget {
-    /// Headers, spacers, and error rows: present in the list, never selected or activated.
-    Inert,
-    Pane(PaneId),
-    /// One agent or activity inside a pane that publishes several. Focuses the pane and asks its
-    /// program to bring that row on screen, since focusing alone would only ever reveal the row it
-    /// already draws.
-    PublishedRow {
-        pane_id: PaneId,
-        row_id: String,
-    },
-    Session(Box<crate::session::discovery::DiscoveredSession>),
-    /// "Click to connect" under an offline host in the Sessions tab: connect (probe) that host.
-    HostConnect(crate::session::remote::RemoteTarget),
-    /// "Click to disconnect" under an online host: disconnect it (a confirming second click).
-    HostDisconnect(crate::session::remote::RemoteTarget),
-    /// A "New session" action row. `None` creates locally; `Some(host)` creates on that host.
-    NewSession(Option<crate::session::remote::RemoteTarget>),
-    /// The "Connect a host…" action row, opening the remote-host connect prompt.
-    ConnectHost,
-    Launcher {
-        config_epoch: u64,
-        tab_id: SidebarTabId,
-        entry_index: usize,
-    },
-    CommandRow {
-        config_epoch: u64,
-        tab_id: SidebarTabId,
-        output_epoch: u64,
-        line: String,
-    },
-}
+pub(crate) use crate::state::RowTarget;
 
 /// What a row renders as. Items are kept unbuilt so the list can hand each one its selection state
 /// at build time; headers carry their own glyphs and are finished elements already.

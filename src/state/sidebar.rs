@@ -17,6 +17,43 @@ pub struct SidebarCommandOutput {
     pub rows: Vec<SidebarCommandRow>,
 }
 
+/// What activating a row does. Rows are built as a pure function of `State`, so the update side can
+/// rebuild the same list and resolve an index back to one of these — which is what lets Enter and a
+/// click share a single code path instead of two callbacks that can drift.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowTarget {
+    /// Headers, spacers, and error rows: present in the list, never selected or activated.
+    Inert,
+    Pane(crate::state::PaneId),
+    /// One agent or activity inside a pane that publishes several. Focuses the pane and asks its
+    /// program to bring that row on screen, since focusing alone would only ever reveal the row it
+    /// already draws.
+    PublishedRow {
+        pane_id: crate::state::PaneId,
+        row_id: String,
+    },
+    Session(Box<crate::session::discovery::DiscoveredSession>),
+    /// "Click to connect" under an offline host in the Sessions tab: connect (probe) that host.
+    HostConnect(crate::session::remote::RemoteTarget),
+    /// "Click to disconnect" under an online host: disconnect it (a confirming second click).
+    HostDisconnect(crate::session::remote::RemoteTarget),
+    /// A "New session" action row. `None` creates locally; `Some(host)` creates on that host.
+    NewSession(Option<crate::session::remote::RemoteTarget>),
+    /// The "Connect a host…" action row, opening the remote-host connect prompt.
+    ConnectHost,
+    Launcher {
+        config_epoch: u64,
+        tab_id: SidebarTabId,
+        entry_index: usize,
+    },
+    CommandRow {
+        config_epoch: u64,
+        tab_id: SidebarTabId,
+        output_epoch: u64,
+        line: String,
+    },
+}
+
 /// What a row's ✕ destroys. Held by identity rather than by row index or by the discovered entry
 /// itself: rows are rebuilt from scratch on every session sweep and pane change, so an armed
 /// confirmation has to survive its row moving, and a `DiscoveredSession` carries live client counts
@@ -30,6 +67,19 @@ pub enum SidebarClose {
         name: String,
         remote_target: Option<crate::session::remote::RemoteTarget>,
     },
+}
+
+/// A lightweight semantic projection of a sidebar item without framework Element trees.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidebarItemProjection {
+    pub target: RowTarget,
+    pub close: Option<SidebarClose>,
+}
+
+impl SidebarItemProjection {
+    pub fn selectable(&self) -> bool {
+        !matches!(self.target, RowTarget::Inert)
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -213,3 +213,29 @@ impl LayoutPickerState {
         Self { selected, original }
     }
 }
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct PickRow {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub disabled: Option<String>,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub priority: Option<i32>,
+}
+
+pub struct PickState {
+    pub id: u64,
+    pub title: String,
+    pub placeholder: String,
+    pub rows: Vec<PickRow>,
+    pub selected: usize,
+    pub reply: std::sync::mpsc::SyncSender<String>,
+}

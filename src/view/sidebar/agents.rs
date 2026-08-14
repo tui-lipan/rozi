@@ -111,7 +111,7 @@ fn activity_text(pane: &crate::pane::TerminalPane, kind_label: &str) -> Option<S
     Some(title.to_string())
 }
 
-/// What a published slot is doing, for its detail line.
+/// What a published row is doing, for its detail line.
 ///
 /// The title wins here, unlike everywhere else, because it is the only thing that says *which* of a
 /// pane's agents this row is: the name column now reads `OpenCode #2` for every one of them. A
@@ -120,12 +120,12 @@ fn activity_text(pane: &crate::pane::TerminalPane, kind_label: &str) -> Option<S
 /// nothing is lost by yielding to the title once one exists.
 ///
 /// A title that only repeats the agent's own name says nothing the row does not already.
-fn slot_activity(slot: &crate::session::protocol::AgentSlot, kind_label: &str) -> Option<String> {
-    let title = strip_agent_title_prefix(strip_title_decoration(&slot.title), kind_label);
+fn row_activity(row: &crate::session::protocol::PublishedRow, kind_label: &str) -> Option<String> {
+    let title = strip_agent_title_prefix(strip_title_decoration(&row.title), kind_label);
     if !title.is_empty() && !title.eq_ignore_ascii_case(kind_label) {
         return Some(title.to_string());
     }
-    slot.reason
+    row.reason
         .as_deref()
         .map(str::trim)
         .filter(|reason| !reason.is_empty())
@@ -189,14 +189,10 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                 .filter(|(_, pane)| {
                     pane.id != crate::state::POPUP_PANE_ID
                         && !pane.closing
-                        && pane.terminal.detected_agent.is_some()
+                        && (!pane.terminal.published_rows.is_empty()
+                            || pane.terminal.detected_agent.is_some())
                 })
                 .flat_map(move |(pane_index, pane)| {
-                    let detected = pane
-                        .terminal
-                        .detected_agent
-                        .as_ref()
-                        .expect("agent filter and row construction agree");
                     let cwd = pane
                         .terminal
                         .cwd
@@ -213,67 +209,125 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                             .and_then(|(root, cwd)| {
                                 crate::platform::paths::project_relative_path(root, cwd)
                             });
-                    // Location is a property of the pane, so every slot inherits it and grouping is
-                    // untouched by the expansion below.
-                    let row = AgentRow {
-                        pane_id: pane.id,
-                        workspace_index,
-                        pane_index,
-                        title: detected.kind.label().to_string(),
-                        // Always `Some`: `agent_status` returns `None` only when there is no
-                        // detected agent, and the filter above already established one.
-                        status: pane.terminal.agent_status(),
-                        activity: activity_text(&pane.terminal, detected.kind.label()),
-                        age: pane.terminal.status_age(),
-                        run: pane.terminal.last_run,
-                        cwd_host: cwd
-                            .is_some()
-                            .then(|| pane.terminal.cwd_host.clone())
-                            .flatten(),
-                        cwd,
-                        branch: project_root
-                            .is_some()
-                            .then(|| pane.terminal.git_branch.clone())
-                            .flatten(),
-                        project_root,
-                        subpath,
-                        finished_unseen: pane.terminal.finished_unseen,
-                        slot: None,
-                    };
-                    if pane.terminal.slots.is_empty() {
-                        return vec![row];
+
+                    if let Some(detected) = pane.terminal.detected_agent.as_ref() {
+                        let row = AgentRow {
+                            pane_id: pane.id,
+                            workspace_index,
+                            pane_index,
+                            title: detected.kind.label().to_string(),
+                            // Always `Some`: `agent_status` returns `None` only when there is no
+                            // detected agent, and the filter above already established one.
+                            status: pane.terminal.agent_status(),
+                            activity: activity_text(&pane.terminal, detected.kind.label()),
+                            age: pane.terminal.status_age(),
+                            run: pane.terminal.last_run,
+                            cwd_host: cwd
+                                .is_some()
+                                .then(|| pane.terminal.cwd_host.clone())
+                                .flatten(),
+                            cwd: cwd.clone(),
+                            branch: project_root
+                                .is_some()
+                                .then(|| pane.terminal.git_branch.clone())
+                                .flatten(),
+                            project_root: project_root.clone(),
+                            subpath: subpath.clone(),
+                            finished_unseen: pane.terminal.finished_unseen,
+                            slot: None,
+                        };
+                        if pane.terminal.published_rows.is_empty() {
+                            return vec![row];
+                        }
+                        pane.terminal
+                            .published_rows
+                            .iter()
+                            .enumerate()
+                            .map(|(index, published_row)| {
+                                let ui = pane.terminal.published_row_ui.get(&published_row.id);
+                                AgentRow {
+                                    // The name column answers "what is this", and for every other row
+                                    // that is the agent. Slots keep it and add their position, so a
+                                    // pane's rows are distinguishable at a glance and still read as
+                                    // the same program; the slot's own title is what it is *doing*,
+                                    // which belongs on the detail line with every other activity.
+                                    title: format!(
+                                        "{} #{}",
+                                        detected.kind.label(),
+                                        index.saturating_add(1)
+                                    ),
+                                    status: Some(published_row.status.clone()),
+                                    activity: row_activity(published_row, detected.kind.label()),
+                                    age: pane.terminal.row_age(published_row),
+                                    run: ui.and_then(|ui| ui.last_run),
+                                    finished_unseen: ui.is_some_and(|ui| ui.finished_unseen),
+                                    slot: Some(SlotRef {
+                                        id: published_row.id.clone(),
+                                        index,
+                                        active: published_row.active,
+                                    }),
+                                    ..row.clone()
+                                }
+                            })
+                            .collect()
+                    } else {
+                        // No detected agent, but rows were published.
+                        let base_row = AgentRow {
+                            pane_id: pane.id,
+                            workspace_index,
+                            pane_index,
+                            title: pane.display_title(pane.terminal.title()),
+                            status: None,
+                            activity: None,
+                            age: None,
+                            run: None,
+                            cwd_host: cwd
+                                .is_some()
+                                .then(|| pane.terminal.cwd_host.clone())
+                                .flatten(),
+                            cwd: cwd.clone(),
+                            branch: project_root
+                                .is_some()
+                                .then(|| pane.terminal.git_branch.clone())
+                                .flatten(),
+                            project_root: project_root.clone(),
+                            subpath: subpath.clone(),
+                            finished_unseen: false,
+                            slot: None,
+                        };
+                        pane.terminal
+                            .published_rows
+                            .iter()
+                            .enumerate()
+                            .map(|(index, published_row)| {
+                                let ui = pane.terminal.published_row_ui.get(&published_row.id);
+                                let title = if !published_row.title.trim().is_empty() {
+                                    published_row.title.clone()
+                                } else {
+                                    pane.display_title(pane.terminal.title())
+                                };
+                                AgentRow {
+                                    title,
+                                    status: Some(published_row.status.clone()),
+                                    activity: published_row
+                                        .reason
+                                        .as_deref()
+                                        .map(str::trim)
+                                        .filter(|r| !r.is_empty())
+                                        .map(str::to_string),
+                                    age: pane.terminal.row_age(published_row),
+                                    run: ui.and_then(|ui| ui.last_run),
+                                    finished_unseen: ui.is_some_and(|ui| ui.finished_unseen),
+                                    slot: Some(SlotRef {
+                                        id: published_row.id.clone(),
+                                        index,
+                                        active: published_row.active,
+                                    }),
+                                    ..base_row.clone()
+                                }
+                            })
+                            .collect()
                     }
-                    pane.terminal
-                        .slots
-                        .iter()
-                        .enumerate()
-                        .map(|(index, slot)| {
-                            let ui = pane.terminal.slot_ui.get(&slot.id);
-                            AgentRow {
-                                // The name column answers "what is this", and for every other row
-                                // that is the agent. Slots keep it and add their position, so a
-                                // pane's rows are distinguishable at a glance and still read as
-                                // the same program; the slot's own title is what it is *doing*,
-                                // which belongs on the detail line with every other activity.
-                                title: format!(
-                                    "{} #{}",
-                                    detected.kind.label(),
-                                    index.saturating_add(1)
-                                ),
-                                status: Some(slot.status.clone()),
-                                activity: slot_activity(slot, detected.kind.label()),
-                                age: pane.terminal.slot_age(slot),
-                                run: ui.and_then(|ui| ui.last_run),
-                                finished_unseen: ui.is_some_and(|ui| ui.finished_unseen),
-                                slot: Some(SlotRef {
-                                    id: slot.id.clone(),
-                                    index,
-                                    active: slot.active,
-                                }),
-                                ..row.clone()
-                            }
-                        })
-                        .collect()
                 })
         })
         .collect::<Vec<_>>();
@@ -539,9 +593,9 @@ pub(super) fn agents_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
         }
         for row in group.rows {
             let target = match &row.slot {
-                Some(slot) => RowTarget::PaneSlot {
+                Some(slot) => RowTarget::PublishedRow {
                     pane_id: row.pane_id,
-                    slot_id: slot.id.clone(),
+                    row_id: slot.id.clone(),
                 },
                 None => RowTarget::Pane(row.pane_id),
             };
@@ -802,8 +856,8 @@ mod tests {
         );
     }
 
-    fn slot(id: &str, status: &str, active: bool) -> crate::session::protocol::AgentSlot {
-        crate::session::protocol::AgentSlot {
+    fn row(id: &str, status: &str, active: bool) -> crate::session::protocol::PublishedRow {
+        crate::session::protocol::PublishedRow {
             id: id.to_string(),
             title: format!("tab {id}"),
             status: status.to_string(),
@@ -813,9 +867,9 @@ mod tests {
         }
     }
 
-    /// The path every agent that publishes nothing takes must be untouched by slot expansion.
+    /// The path every agent that publishes nothing takes must be untouched by row expansion.
     #[test]
-    fn a_pane_without_slots_still_produces_exactly_one_row() {
+    fn a_pane_without_published_rows_still_produces_exactly_one_row() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes = vec![pane(1, Some("working"), false)];
 
@@ -826,13 +880,13 @@ mod tests {
     }
 
     #[test]
-    fn a_pane_with_slots_becomes_one_row_per_slot_in_tab_order() {
+    fn a_pane_with_published_rows_becomes_one_row_per_item_in_tab_order() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
-        publisher.terminal.slots = vec![
-            slot("a", "working", false),
-            slot("b", "working", true),
-            slot("c", "working", false),
+        publisher.terminal.published_rows = vec![
+            row("a", "working", false),
+            row("b", "working", true),
+            row("c", "working", false),
         ];
         state.current_mut().workspaces[0].panes = vec![publisher];
 
@@ -846,23 +900,60 @@ mod tests {
         );
         assert!(rows.iter().all(|row| row.pane_id == 1));
         // The name column stays the agent, numbered so one pane's rows are distinguishable; the
-        // slot's own title is what it is doing, and moves to the detail line.
+        // row's own title is what it is doing, and moves to the detail line.
         assert_eq!(rows[1].title, "Claude Code #2");
         assert_eq!(rows[1].activity.as_deref(), Some("tab b"));
     }
 
-    /// The name column reads `Claude Code #1` for every slot in a pane, so the title is the only
+    #[test]
+    fn a_pane_without_detected_agent_renders_published_rows() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let mut publisher = pane(1, None, false);
+        publisher.terminal.detected_agent = None;
+        publisher.terminal.published_rows = vec![
+            crate::session::protocol::PublishedRow {
+                id: "build".into(),
+                title: "Cargo Watch".into(),
+                status: "working".into(),
+                reason: Some("compiling crates".into()),
+                active: true,
+                work_started_at: None,
+            },
+            crate::session::protocol::PublishedRow {
+                id: "test".into(),
+                title: String::new(),
+                status: "blocked".into(),
+                reason: Some("assertion failed".into()),
+                active: false,
+                work_started_at: None,
+            },
+        ];
+        state.current_mut().workspaces[0].panes = vec![publisher];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 2);
+        // "blocked" sorts before "working"
+        assert_eq!(rows[0].title, "shell");
+        assert_eq!(rows[0].status.as_deref(), Some("blocked"));
+        assert_eq!(rows[0].activity.as_deref(), Some("assertion failed"));
+
+        assert_eq!(rows[1].title, "Cargo Watch");
+        assert_eq!(rows[1].status.as_deref(), Some("working"));
+        assert_eq!(rows[1].activity.as_deref(), Some("compiling crates"));
+    }
+
+    /// The name column reads `Claude Code #1` for every row in a pane, so the title is the only
     /// thing saying which one this is. A reason cannot be allowed to hide it: a session is often
     /// blocked on its first question before anything has titled it, and the row would then be
     /// stuck reading "answer required" for the rest of the run.
     #[test]
-    fn a_titled_slot_shows_its_title_even_while_blocked() {
+    fn a_titled_row_shows_its_title_even_while_blocked() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
-        publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
+        publisher.terminal.published_rows = vec![crate::session::protocol::PublishedRow {
             title: "audit the widget layer".into(),
             reason: Some("permission required".into()),
-            ..slot("a", "blocked", true)
+            ..row("a", "blocked", true)
         }];
         state.current_mut().workspaces[0].panes = vec![publisher];
 
@@ -873,13 +964,13 @@ mod tests {
 
     /// Until a title exists the reason is all the row has to say.
     #[test]
-    fn an_untitled_slot_falls_back_to_its_reason() {
+    fn an_untitled_row_falls_back_to_its_reason() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
-        publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
+        publisher.terminal.published_rows = vec![crate::session::protocol::PublishedRow {
             title: String::new(),
             reason: Some("answer required".into()),
-            ..slot("a", "blocked", true)
+            ..row("a", "blocked", true)
         }];
         state.current_mut().workspaces[0].panes = vec![publisher];
 
@@ -889,14 +980,14 @@ mod tests {
         );
     }
 
-    /// A slot titled after the agent itself would repeat the name column beside it.
+    /// A row titled after the agent itself would repeat the name column beside it.
     #[test]
-    fn a_slot_titled_after_its_agent_shows_no_activity() {
+    fn a_row_titled_after_its_agent_shows_no_activity() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
-        publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
+        publisher.terminal.published_rows = vec![crate::session::protocol::PublishedRow {
             title: "Claude Code".into(),
-            ..slot("a", "idle", true)
+            ..row("a", "idle", true)
         }];
         state.current_mut().workspaces[0].panes = vec![publisher];
 
@@ -928,13 +1019,13 @@ mod tests {
     /// The point of the feature: a blocked tab has to reach the top of the list even though the
     /// pane it lives in is the same pane as its working siblings.
     #[test]
-    fn slot_rows_sort_by_status_across_their_own_pane() {
+    fn published_rows_sort_by_status_across_their_own_pane() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
-        publisher.terminal.slots = vec![
-            slot("idle-tab", "idle", false),
-            slot("working-tab", "working", true),
-            slot("blocked-tab", "blocked", false),
+        publisher.terminal.published_rows = vec![
+            row("idle-tab", "idle", false),
+            row("working-tab", "working", true),
+            row("blocked-tab", "blocked", false),
         ];
         state.current_mut().workspaces[0].panes = vec![publisher];
 
@@ -950,14 +1041,15 @@ mod tests {
     /// A background tab's finish is not acknowledged by looking at the pane, because looking at
     /// the pane only ever showed the tab the publisher had on screen.
     #[test]
-    fn attending_a_pane_clears_only_the_slot_on_screen() {
+    fn attending_a_pane_clears_only_the_row_on_screen() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
-        publisher.terminal.slots = vec![slot("shown", "idle", true), slot("hidden", "idle", false)];
+        publisher.terminal.published_rows =
+            vec![row("shown", "idle", true), row("hidden", "idle", false)];
         for id in ["shown", "hidden"] {
-            publisher.terminal.slot_ui.insert(
+            publisher.terminal.published_row_ui.insert(
                 id.to_string(),
-                crate::pane::SlotUiState {
+                crate::pane::PublishedRowUiState {
                     finished_unseen: true,
                     last_run: None,
                 },
@@ -985,10 +1077,11 @@ mod tests {
 
     /// Location belongs to the pane, so expanding it into several rows must not split its group.
     #[test]
-    fn slot_rows_inherit_their_panes_project_grouping() {
+    fn published_rows_inherit_their_panes_project_grouping() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane_in_project(1, None, "/work/api/src", "/work/api", Some("main"));
-        publisher.terminal.slots = vec![slot("a", "working", true), slot("b", "idle", false)];
+        publisher.terminal.published_rows =
+            vec![row("a", "working", true), row("b", "idle", false)];
         state.current_mut().workspaces[0].panes = vec![publisher];
 
         let groups = agent_groups(&state);

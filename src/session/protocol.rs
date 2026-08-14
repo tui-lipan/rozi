@@ -233,9 +233,9 @@ fn detected_agent_status(detected: &DetectedAgent) -> &'static str {
     }
 }
 
-/// One logical agent inside a pane that publishes several.
+/// One logical agent or activity inside a pane that publishes several.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentSlot {
+pub struct PublishedRow {
     /// Publisher-chosen identity, opaque to rozi and stable across updates.
     ///
     /// Never a position: tabs are reordered and closed, and an index-keyed run clock would hand
@@ -246,28 +246,28 @@ pub struct AgentSlot {
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// The slot the publisher is currently displaying; at most one is true.
+    /// The row the publisher is currently displaying; at most one is true.
     ///
-    /// This is what lets a finish on a *background* slot raise an alert even while the pane is
-    /// focused - looking at the pane only ever acknowledges the slot on screen.
+    /// This is what lets a finish on a *background* row raise an alert even while the pane is
+    /// focused - looking at the pane only ever acknowledges the row on screen.
     #[serde(default)]
     pub active: bool,
-    /// Server-owned run start, mirroring [`PaneRuntimeState::work_started_at`] per slot. Whatever
+    /// Server-owned run start, mirroring [`PaneRuntimeState::work_started_at`] per row. Whatever
     /// a publisher sends here is overwritten.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_started_at: Option<u64>,
 }
 
-/// The single state a pane shows for a set of published slots.
+/// The single state a pane shows for a set of published rows.
 ///
 /// Severity order rather than recency: pane chrome answers "is anything in here demanding
-/// attention", so one blocked slot outranks any number of working ones, and any working slot
+/// attention", so one blocked row outranks any number of working ones, and any working row
 /// outranks the ones that have finished. Returns `None` for an empty set, which is a pane that
 /// publishes nothing rather than a pane whose agents are all idle.
-pub fn aggregate_slot_state(slots: &[AgentSlot]) -> Option<DetectedAgentState> {
+pub fn aggregate_row_state(rows: &[PublishedRow]) -> Option<DetectedAgentState> {
     let mut state = None;
-    for slot in slots {
-        let value = slot.status.trim();
+    for row in rows {
+        let value = row.status.trim();
         if value.eq_ignore_ascii_case(pane_status::BLOCKED) {
             return Some(DetectedAgentState::Blocked);
         }
@@ -361,7 +361,7 @@ pub struct PaneRuntimeState {
     /// block/resume transition and after detach/reattach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_started_at: Option<u64>,
-    /// Logical agents the pane's own program published for itself, empty for every pane that
+    /// Logical agents or activities this pane's program published for itself; empty for a pane that
     /// publishes nothing - which is nearly all of them, and the path that stays unchanged.
     ///
     /// A pane is one PTY but need not be one agent. A client with its own tab bar runs several
@@ -369,7 +369,7 @@ pub struct PaneRuntimeState {
     /// sees a single state for several runs and cannot tell which of them it belongs to. A program
     /// that knows all of them reports them here instead, and the server stops scraping that pane.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub slots: Vec<AgentSlot>,
+    pub rows: Vec<PublishedRow>,
     /// Monotonic per-pane counter, bumped only when some other field in this struct actually
     /// changed. [`ServerMessage::PaneRuntimeChanged`] carries this so a client that received
     /// updates out of order (should not happen on a single ordered connection, but is cheap
@@ -508,13 +508,13 @@ pub enum ClientMessage {
         status: Option<String>,
         reason: Option<String>,
     },
-    /// Replace the pane's published agent slots. An empty list withdraws them, and the pane falls
+    /// Replace the pane's published rows. An empty list withdraws them, and the pane falls
     /// back to screen detection.
-    ReportPaneSlots {
+    ReportPaneRows {
         pane_id: PaneId,
         local: bool,
         generation: u64,
-        slots: Vec<AgentSlot>,
+        rows: Vec<PublishedRow>,
     },
     /// Commit a new shared layout. Accepted only from the controller and only when `base_rev`
     /// equals the server's current revision; otherwise the server replies [`ServerMessage::LayoutRejected`].
@@ -1408,13 +1408,13 @@ mod tests {
     }
 
     #[test]
-    fn pane_slots_message_round_trips() {
-        let msg = ClientMessage::ReportPaneSlots {
+    fn pane_rows_message_round_trips() {
+        let msg = ClientMessage::ReportPaneRows {
             pane_id: 3,
             local: false,
             generation: 2,
-            slots: vec![
-                AgentSlot {
+            rows: vec![
+                PublishedRow {
                     id: "ses_abc".into(),
                     title: "audit the widget layer".into(),
                     status: "working".into(),
@@ -1422,7 +1422,7 @@ mod tests {
                     active: true,
                     work_started_at: Some(120),
                 },
-                AgentSlot {
+                PublishedRow {
                     id: "ses_def".into(),
                     title: "fix the flaky test".into(),
                     status: "blocked".into(),
@@ -1439,14 +1439,14 @@ mod tests {
 
     /// The overwhelming majority of panes publish nothing, and must not pay for the field.
     #[test]
-    fn a_pane_without_slots_does_not_serialize_the_key() {
+    fn a_pane_without_rows_does_not_serialize_the_key() {
         let json = serde_json::to_string(&PaneRuntimeState::default()).unwrap();
-        assert!(!json.contains("slots"), "{json}");
+        assert!(!json.contains("rows"), "{json}");
     }
 
     #[test]
-    fn slot_aggregation_is_by_severity_not_recency() {
-        let slot = |status: &str| AgentSlot {
+    fn row_aggregation_is_by_severity_not_recency() {
+        let row = |status: &str| PublishedRow {
             id: status.into(),
             title: status.into(),
             status: status.into(),
@@ -1454,23 +1454,23 @@ mod tests {
             active: false,
             work_started_at: None,
         };
-        assert_eq!(aggregate_slot_state(&[]), None);
+        assert_eq!(aggregate_row_state(&[]), None);
         assert_eq!(
-            aggregate_slot_state(&[slot("idle"), slot("done")]),
+            aggregate_row_state(&[row("idle"), row("done")]),
             Some(DetectedAgentState::Idle)
         );
         assert_eq!(
-            aggregate_slot_state(&[slot("idle"), slot("working")]),
+            aggregate_row_state(&[row("idle"), row("working")]),
             Some(DetectedAgentState::Working),
             "one running session keeps the pane working"
         );
         assert_eq!(
-            aggregate_slot_state(&[slot("working"), slot("blocked")]),
+            aggregate_row_state(&[row("working"), row("blocked")]),
             Some(DetectedAgentState::Blocked),
             "a prompt outranks work happening beside it"
         );
         assert_eq!(
-            aggregate_slot_state(&[slot("idle"), slot("compacting")]),
+            aggregate_row_state(&[row("idle"), row("compacting")]),
             Some(DetectedAgentState::Working),
             "a custom status is an active run, matching status_is_quiescent"
         );

@@ -84,6 +84,7 @@ pub(crate) fn leave_client(ctx: &mut Context<AppRoot>) -> Update {
 /// running does. Every path out of the client ends here.
 pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool) -> Update {
     clear_pending(ctx);
+    crate::ops::pick::cancel_pick(ctx, Some("detached"));
     crate::popup::kill_if_open(ctx);
     let shutdown_current = shutdown_on_exit(ctx.state.current(), close_temporary);
     mark_session_detached(ctx, None);
@@ -95,6 +96,7 @@ pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool
         }
     }
     crate::ops::session::release_background_for_exit(ctx, close_temporary);
+    crate::ops::services::terminate_all(&mut ctx.state);
     // A session whose server goes down with us leaves no other copy of its layout, so mirror it to
     // disk regardless of `[session] autosave`; anything still running is its own record.
     if shutdown_current {
@@ -166,11 +168,13 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<AppRoot>, session: Option<
 /// right outcome for a session nobody can reattach to by name anyway.
 pub(crate) fn detach_on_hangup(ctx: &mut Context<AppRoot>) -> Update {
     crate::update::flush_layout_commit(ctx);
+    crate::ops::pick::cancel_pick(ctx, Some("detached"));
     mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
         client.detach();
     }
     crate::ops::session::release_background_for_exit(ctx, false);
+    crate::ops::services::terminate_all(&mut ctx.state);
     profiles::persist_session_on_detach(&ctx.state);
     ctx.quit();
     Update::none()

@@ -120,10 +120,10 @@ pub enum ControlCommand {
         #[serde(default)]
         keep_open: Option<bool>,
     },
-    /// Publish the logical agents running inside the calling pane, and receive activations for
-    /// them. Unlike every other command this connection stays open in both directions; closing it
-    /// withdraws the pane's slots. Reached through `rozi agent-slots`.
-    AgentSlots,
+    /// Publish the logical agents or activities running inside the calling pane, and receive
+    /// activations for them. Unlike every other command this connection stays open in both
+    /// directions; closing it withdraws the pane's rows. Reached through `rozi publish`.
+    Publish,
     Subscribe {
         #[serde(default)]
         events: Vec<String>,
@@ -141,6 +141,12 @@ pub enum ControlCommand {
         status: Option<String>,
         #[serde(default)]
         reason: Option<String>,
+    },
+    Pick {
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        placeholder: Option<String>,
     },
 }
 
@@ -251,14 +257,14 @@ pub fn run_listener(listener: IpcListener, link: CommandLink<Msg>, event_hub: Ev
 ///
 /// Activations are user clicks, so this is generous relative to how fast anyone can produce them;
 /// a publisher that has stopped reading is wedged rather than busy.
-const AGENT_SLOT_ACTIVATION_BACKLOG: usize = 32;
+const PUBLISH_ACTIVATION_BACKLOG: usize = 32;
 
-/// Serve one pane's `agent-slots` stream until its publisher goes away.
+/// Serve one pane's `publish` stream until its publisher goes away.
 ///
-/// The only bidirectional command: after the acknowledgement, the publisher writes one slot list
+/// The only bidirectional command: after the acknowledgement, the publisher writes one row list
 /// per line and rozi writes one activation per line back. Both directions run for the life of
 /// the connection, so a writer thread carries activations while this thread reads.
-fn run_agent_slot_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane_id: PaneId) {
+fn run_publish_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane_id: PaneId) {
     let Ok(reader_stream) = stream.try_clone() else {
         return;
     };
@@ -273,8 +279,8 @@ fn run_agent_slot_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane
     // A publisher is silent between state changes, and those can be minutes apart.
     let _ = stream.set_read_timeout(None);
 
-    let (tx, rx) = mpsc::sync_channel::<String>(AGENT_SLOT_ACTIVATION_BACKLOG);
-    link.send(Msg::AgentSlotStreamOpen {
+    let (tx, rx) = mpsc::sync_channel::<String>(PUBLISH_ACTIVATION_BACKLOG);
+    link.send(Msg::PublishStreamOpen {
         pane_id,
         sender: tx,
     });
@@ -293,25 +299,102 @@ fn run_agent_slot_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane
         }
         // A malformed line is the publisher's bug, not a reason to drop its rows; skip it and keep
         // the stream open so the next good list still lands.
-        if let Ok(report) = serde_json::from_str::<AgentSlotReport>(&line) {
-            link.send(Msg::AgentSlotsReported {
+        if let Ok(report) = serde_json::from_str::<PublishReport>(&line) {
+            link.send(Msg::PublishedRowsReported {
                 pane_id,
-                slots: report.slots,
+                rows: report.rows,
             });
         }
     }
 
-    // Reaching here means EOF or a read error: the publisher is gone, so its slots go with it.
-    link.send(Msg::AgentSlotStreamClosed { pane_id });
+    // Reaching here means EOF or a read error: the publisher is gone, so its rows go with it.
+    link.send(Msg::PublishStreamClosed { pane_id });
     drop(stream);
     let _ = writer.join();
 }
 
-/// One line written by an `agent-slots` publisher.
+/// Serve one `pick` stream until the user makes a choice, cancels, or the caller disconnects.
+///
+/// After acknowledging the request on the UI thread, the caller may write row updates, each
+/// replacing the previous set. When the picker closes, rozi writes exactly one terminal JSON line
+/// (`{"selected":"..."}` or `{"cancelled":true}`).
+///
+/// Note: `IpcConnection` exposes no `shutdown()`, so after writing the terminal line rozi cannot
+/// force the connection closed from this end; the reader thread reaps once the client closes.
+fn run_pick_stream(
+    mut stream: IpcConnection,
+    link: CommandLink<Msg>,
+    id: u64,
+    title: Option<String>,
+    placeholder: Option<String>,
+) {
+    let Ok(reader_stream) = stream.try_clone() else {
+        return;
+    };
+    let Ok(mut writer_stream) = stream.try_clone() else {
+        return;
+    };
+
+    let (ack_tx, ack_rx) = mpsc::channel();
+    let (reply_tx, reply_rx) = mpsc::sync_channel::<String>(1);
+
+    link.send(Msg::PickStreamOpen {
+        id,
+        title,
+        placeholder,
+        sender: reply_tx,
+        ack: ack_tx,
+    });
+
+    let ack_response = match ack_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(res) => res,
+        Err(_) => ControlResponse::error("pick request timed out"),
+    };
+
+    let _ = writeln!(stream, "{}", serde_json::to_string(&ack_response).unwrap());
+
+    if !ack_response.ok {
+        return;
+    }
+
+    let _ = stream.set_read_timeout(None);
+
+    let writer = std::thread::spawn(move || {
+        if let Ok(line) = reply_rx.recv() {
+            let _ = writer_stream.write_all(line.as_bytes());
+        }
+    });
+
+    for line in BufReader::new(reader_stream).lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(report) = serde_json::from_str::<PickReport>(&line) {
+            link.send(Msg::PickRowsReported {
+                id,
+                rows: report.rows,
+            });
+        }
+    }
+
+    link.send(Msg::PickStreamClosed { id });
+    drop(stream);
+    let _ = writer.join();
+}
+
+/// One line written by a `publish` publisher.
 #[derive(Debug, serde::Deserialize)]
-struct AgentSlotReport {
+struct PublishReport {
     #[serde(default)]
-    slots: Vec<crate::session::protocol::AgentSlot>,
+    rows: Vec<crate::session::protocol::PublishedRow>,
+}
+
+/// One line written by a `pick` publisher.
+#[derive(Debug, serde::Deserialize)]
+struct PickReport {
+    #[serde(default)]
+    rows: Vec<crate::state::PickRow>,
 }
 
 fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hub: EventHub) {
@@ -381,13 +464,19 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             }
         }
     }
-    if let ControlCommand::AgentSlots = &request.command {
+    if let ControlCommand::Publish = &request.command {
         let Some(pane_id) = request.source_pane else {
-            let response = ControlResponse::error("agent-slots requires a source pane");
+            let response = ControlResponse::error("publish requires a source pane");
             let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
             return;
         };
-        run_agent_slot_stream(stream, link, pane_id);
+        run_publish_stream(stream, link, pane_id);
+        return;
+    }
+    if let ControlCommand::Pick { title, placeholder } = &request.command {
+        static NEXT_PICK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT_PICK_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_pick_stream(stream, link, id, title.clone(), placeholder.clone());
         return;
     }
     let (tx, rx) = mpsc::channel();
@@ -599,6 +688,24 @@ mod tests {
                 reason: None,
             }
         );
+    }
+
+    #[test]
+    fn pick_command_round_trips_through_json() {
+        let request = ControlRequest {
+            command: ControlCommand::Pick {
+                title: Some("Branch".into()),
+                placeholder: Some("Search branches…".into()),
+            },
+            source_pane: None,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            json,
+            r#"{"cmd":"pick","title":"Branch","placeholder":"Search branches…","source_pane":null}"#
+        );
+        let round_tripped: ControlRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, request);
     }
 
     #[test]

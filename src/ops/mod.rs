@@ -1,4 +1,3 @@
-pub(crate) mod agent_slots;
 pub(crate) mod config;
 pub(crate) mod confirm;
 pub(crate) mod control;
@@ -8,10 +7,13 @@ pub(crate) mod identity;
 pub(crate) mod last_output;
 pub(crate) mod layout_picker;
 pub(crate) mod overlay_return;
+pub(crate) mod pick;
 pub(crate) mod profile;
+pub(crate) mod published_rows;
 pub(crate) mod resize_move;
 pub(crate) mod scrollback;
 pub(crate) mod search;
+pub(crate) mod services;
 pub(crate) mod session;
 pub(crate) mod sound;
 pub(crate) mod theme;

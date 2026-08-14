@@ -10,7 +10,7 @@ position = "left"
 split = true
 split_ratio = 0.62
 tabs = [
-  "agents",
+  "activity",
   "panes",
   "sessions",
   { name = "files", label = "", show_hidden = true, explorer = true },
@@ -28,6 +28,6 @@ tabs = [
   },
 ]
 panels = [
-  ["agents", "panes", "files", "git"],
+  ["activity", "panes", "files", "git"],
   ["sessions", "dev", "branches"],
 ]

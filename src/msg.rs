@@ -262,19 +262,46 @@ pub enum Msg {
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
     ControlRequest(control::ControlEnvelope),
-    /// A pane's program opened an `agent-slots` stream. The sender carries activations back to it.
-    AgentSlotStreamOpen {
+    /// A pane's program opened a `publish` stream. The sender carries activations back to it.
+    PublishStreamOpen {
         pane_id: crate::state::PaneId,
         sender: std::sync::mpsc::SyncSender<String>,
     },
-    /// One slot list from an open stream, replacing whatever that pane published before.
-    AgentSlotsReported {
+    /// One row list from an open stream, replacing whatever that pane published before.
+    PublishedRowsReported {
         pane_id: crate::state::PaneId,
-        slots: Vec<crate::session::protocol::AgentSlot>,
+        rows: Vec<crate::session::protocol::PublishedRow>,
     },
-    /// An `agent-slots` stream ended, withdrawing the pane's slots.
-    AgentSlotStreamClosed {
+    /// A `publish` stream ended, withdrawing the pane's rows.
+    PublishStreamClosed {
         pane_id: crate::state::PaneId,
+    },
+    /// An external program opened a `pick` stream.
+    PickStreamOpen {
+        id: u64,
+        title: Option<String>,
+        placeholder: Option<String>,
+        sender: std::sync::mpsc::SyncSender<String>,
+        ack: std::sync::mpsc::Sender<control::ControlResponse>,
+    },
+    /// A row list from an open `pick` stream.
+    PickRowsReported {
+        id: u64,
+        rows: Vec<crate::state::PickRow>,
+    },
+    /// A `pick` stream closed.
+    PickStreamClosed {
+        id: u64,
+    },
+    ClosePick,
+    PickSelect(usize),
+    PickActivate(usize),
+    ServicesTick {
+        epoch: u64,
+    },
+    ServiceRestartDue {
+        epoch: u64,
+        name: String,
     },
     SessionConnected {
         epoch: u64,

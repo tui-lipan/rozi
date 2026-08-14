@@ -858,7 +858,7 @@ pub(super) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
     match rows.swap_remove(index).target {
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
-        RowTarget::PaneSlot { pane_id, slot_id } => activate_pane_slot(ctx, pane_id, slot_id),
+        RowTarget::PublishedRow { pane_id, row_id } => activate_published_row(ctx, pane_id, row_id),
         RowTarget::Session(entry) => activate_session(ctx, *entry),
         RowTarget::HostConnect(target) => connect_host(ctx, target),
         RowTarget::HostDisconnect(target) => disconnect_host(ctx, target, armed_disconnect),
@@ -1564,24 +1564,24 @@ pub(super) fn focus_pane(ctx: &mut Context<AppRoot>, id: crate::state::PaneId) -
     }
 }
 
-/// Focus a slot's pane and ask its program to bring that slot on screen.
+/// Focus a row's pane and ask its program to bring that row on screen.
 ///
 /// The request travels back over the connection the publisher opened; a program that has since
 /// stopped listening still gets its pane focused, which is the part rozi can do alone.
-fn activate_pane_slot(
+fn activate_published_row(
     ctx: &mut Context<AppRoot>,
     pane_id: crate::state::PaneId,
-    slot_id: String,
+    row_id: String,
 ) -> Update {
     let update = focus_pane(ctx, pane_id);
-    // Looking at a slot acknowledges its finish, exactly as focusing a pane acknowledges the
-    // pane's. The pane-wide chokepoint cannot do this: it does not know which slot was asked for.
+    // Looking at a row acknowledges its finish, exactly as focusing a pane acknowledges the
+    // pane's. The pane-wide chokepoint cannot do this: it does not know which row was asked for.
     if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, pane_id)
-        && let Some(ui) = pane.terminal.slot_ui.get_mut(&slot_id)
+        && let Some(ui) = pane.terminal.published_row_ui.get_mut(&row_id)
     {
         ui.finished_unseen = false;
     }
-    crate::ops::agent_slots::request_activation(&mut ctx.state, pane_id, &slot_id);
+    crate::ops::published_rows::request_activation(&mut ctx.state, pane_id, &row_id);
     update
 }
 

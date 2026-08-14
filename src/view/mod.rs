@@ -9,7 +9,7 @@ mod workbar;
 pub use keys::{
     collaboration_key, follow_prompt_key, layout_picker_key, palette_key,
     pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key, pane_window_key,
-    profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
+    pick_key, profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
     search_input_key, session_picker_key, settings_palette_key, sidebar_body_key, theme_picker_key,
 };
 pub(crate) use pane::{
@@ -33,7 +33,7 @@ use pane::pane_title_bg;
 
 use overlays::{
     collaboration_overlay, follow_prompt_overlay, help_overlay, layout_picker_overlay,
-    palette_overlay, pane_padding_overlay, profile_picker_overlay, rename_overlay,
+    palette_overlay, pane_padding_overlay, pick_overlay, profile_picker_overlay, rename_overlay,
     rename_session_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
     settings_overlay, theme_picker_overlay,
 };
@@ -711,6 +711,9 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.show_layout_picker {
         root = root.child(layout_picker_overlay(ctx));
+    }
+    if ctx.state.show_pick {
+        root = root.child(pick_overlay(ctx));
     }
     if ctx.state.search.is_some() {
         root = root.child(search_overlay(ctx));

@@ -163,7 +163,7 @@ pub fn attached_message() -> ServerMessage {
                     status: None,
                     detected_agent: None,
                     work_started_at: None,
-                    slots: Vec::new(),
+                    rows: Vec::new(),
                     sequence: u64::from(pane.pane_id),
                 },
             })

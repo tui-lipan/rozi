@@ -173,11 +173,17 @@ fn run_hooks(state: &crate::state::State, event: &Event) {
         let env = env.clone();
         let runner = runner.clone();
         std::thread::spawn(move || {
-            let _ = std::process::Command::new(runner.program)
+            if let Ok(mut child) = std::process::Command::new(runner.program)
                 .args(runner.args)
                 .arg(command)
                 .envs(env)
-                .spawn();
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                let _ = child.wait();
+            }
         });
     }
 }

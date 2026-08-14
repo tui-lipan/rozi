@@ -412,18 +412,18 @@ impl SessionClient {
     }
 
     /// Replace a pane's published agent slots; an empty list withdraws them.
-    pub fn report_pane_slots(
+    pub fn report_pane_rows(
         &self,
         pane_id: PaneId,
         generation: u64,
         local: bool,
-        slots: Vec<crate::session::protocol::AgentSlot>,
+        rows: Vec<crate::session::protocol::PublishedRow>,
     ) {
-        self.send_control(ClientMessage::ReportPaneSlots {
+        self.send_control(ClientMessage::ReportPaneRows {
             pane_id,
             local,
             generation,
-            slots,
+            rows,
         });
     }
     /// Commit a new shared layout, optimistically based on `base_rev`. The server accepts it only

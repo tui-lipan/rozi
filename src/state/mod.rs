@@ -17,6 +17,7 @@ mod mode;
 mod pane;
 mod pickers;
 mod search;
+mod services;
 mod session;
 mod sessions_view;
 mod settings;
@@ -33,6 +34,7 @@ pub use mode::*;
 pub use pane::*;
 pub use pickers::*;
 pub use search::*;
+pub use services::*;
 pub use session::*;
 pub use sessions_view::*;
 pub use settings::*;
@@ -135,6 +137,9 @@ pub struct State {
     pub theme_picker_selected: Option<usize>,
     pub show_layout_picker: bool,
     pub layout_picker: Option<LayoutPickerState>,
+    pub show_pick: bool,
+    pub pick: Option<PickState>,
+    pub next_pick_id: u64,
     pub theme: Theme,
     pub system_theme: Option<Theme>,
     pub theme_watcher: Option<ThemeWatcher>,
@@ -188,12 +193,13 @@ pub struct State {
     pub popup_return_focus: Option<PaneId>,
     pub control_socket_path: Option<PathBuf>,
     pub event_hub: crate::events::EventHub,
-    /// Open `agent-slots` streams, keyed by the pane whose program opened one.
+    /// Open `publish` streams, keyed by the pane whose program opened one.
     ///
-    /// Held so a sidebar click can ask that program to bring a slot on screen. Dropping the sender
-    /// closes the stream, which is also how a pane's slots are withdrawn - a publisher that dies
+    /// Held so a sidebar click can ask that program to bring a row on screen. Dropping the sender
+    /// closes the stream, which is also how a pane's rows are withdrawn - a publisher that dies
     /// cannot leave rows behind.
-    pub agent_slot_streams: std::collections::HashMap<PaneId, std::sync::mpsc::SyncSender<String>>,
+    pub publish_streams: std::collections::HashMap<PaneId, std::sync::mpsc::SyncSender<String>>,
+    pub services: ServicesState,
     /// The client's connection to the current session (client handle, identity, shared-layout
     /// lease, spawn/replay buffers, and its window-manager state). Reached through [`Self::current`]
     /// / [`Self::current_mut`].
@@ -328,6 +334,9 @@ impl State {
             theme_picker_selected: None,
             show_layout_picker: false,
             layout_picker: None,
+            show_pick: false,
+            pick: None,
+            next_pick_id: 1,
             theme,
             system_theme: None,
             theme_watcher: None,
@@ -360,7 +369,8 @@ impl State {
             popup_return_focus: None,
             control_socket_path: None,
             event_hub: crate::events::EventHub::default(),
-            agent_slot_streams: std::collections::HashMap::new(),
+            publish_streams: std::collections::HashMap::new(),
+            services: ServicesState::default(),
             attachment,
             background: HashMap::new(),
             launcher_seed: None,
@@ -699,6 +709,23 @@ impl State {
     /// viewport).
     pub fn follower_canonical_canvas(&self) -> Option<(u16, u16)> {
         self.current().follower_canonical_canvas()
+    }
+
+    /// Whether any modal overlay (help, palette, settings, pickers, prompts) is currently open.
+    pub fn has_modal_overlay(&self) -> bool {
+        self.show_palette
+            || self.show_settings
+            || self.show_help
+            || self.show_theme_picker
+            || self.show_layout_picker
+            || self.search.is_some()
+            || self.rename.is_some()
+            || self.rename_session.is_some()
+            || self.save_profile_prompt.is_some()
+            || self.show_profile_picker
+            || self.show_session_picker
+            || self.collaboration.is_some()
+            || self.follow_prompt.is_some()
     }
 
     /// Vertical space (in rows) the workbar removes from the panes area. Independent of whether

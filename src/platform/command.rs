@@ -131,7 +131,7 @@ where
 }
 
 #[cfg(unix)]
-fn configure_command_group(command: &mut std::process::Command) {
+pub(crate) fn configure_command_group(command: &mut std::process::Command) {
     use std::os::unix::process::CommandExt;
     unsafe {
         command.pre_exec(|| {
@@ -145,18 +145,19 @@ fn configure_command_group(command: &mut std::process::Command) {
 }
 
 #[cfg(windows)]
-fn configure_command_group(_command: &mut std::process::Command) {}
+pub(crate) fn configure_command_group(_command: &mut std::process::Command) {}
 
 #[cfg(unix)]
-struct CommandGroup(libc::pid_t);
+#[derive(Debug)]
+pub struct CommandGroup(pub(crate) libc::pid_t);
 
 #[cfg(unix)]
 impl CommandGroup {
-    fn new(child: &std::process::Child) -> std::io::Result<Self> {
+    pub(crate) fn new(child: &std::process::Child) -> std::io::Result<Self> {
         Ok(Self(child.id() as libc::pid_t))
     }
 
-    fn terminate(&self, child: &mut std::process::Child) {
+    pub(crate) fn terminate(&self, child: &mut std::process::Child) {
         unsafe {
             libc::kill(-self.0, libc::SIGKILL);
         }
@@ -166,11 +167,12 @@ impl CommandGroup {
 }
 
 #[cfg(windows)]
-struct CommandGroup(windows_sys::Win32::Foundation::HANDLE);
+#[derive(Debug)]
+pub struct CommandGroup(pub(crate) windows_sys::Win32::Foundation::HANDLE);
 
 #[cfg(windows)]
 impl CommandGroup {
-    fn new(child: &std::process::Child) -> std::io::Result<Self> {
+    pub(crate) fn new(child: &std::process::Child) -> std::io::Result<Self> {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::System::JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -200,7 +202,7 @@ impl CommandGroup {
         }
     }
 
-    fn terminate(&self, child: &mut std::process::Child) {
+    pub(crate) fn terminate(&self, child: &mut std::process::Child) {
         unsafe {
             windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
         }

@@ -3,6 +3,7 @@ pub(crate) use attach::spawn_state_panes_on_session;
 mod overlays;
 mod panes;
 mod prompts;
+mod services;
 mod session;
 pub(crate) mod sidebar;
 pub(crate) mod workbar;
@@ -235,15 +236,29 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::PaneResize(id, cols, rows) => panes::pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => panes::pane_scroll(ctx, id, offset),
         Msg::ControlRequest(envelope) => panes::control_request(ctx, envelope),
-        Msg::AgentSlotStreamOpen { pane_id, sender } => {
-            crate::ops::agent_slots::stream_opened(ctx, pane_id, sender)
+        Msg::PublishStreamOpen { pane_id, sender } => {
+            crate::ops::published_rows::stream_opened(ctx, pane_id, sender)
         }
-        Msg::AgentSlotsReported { pane_id, slots } => {
-            crate::ops::agent_slots::slots_reported(ctx, pane_id, slots)
+        Msg::PublishedRowsReported { pane_id, rows } => {
+            crate::ops::published_rows::rows_reported(ctx, pane_id, rows)
         }
-        Msg::AgentSlotStreamClosed { pane_id } => {
-            crate::ops::agent_slots::stream_closed(ctx, pane_id)
+        Msg::PublishStreamClosed { pane_id } => {
+            crate::ops::published_rows::stream_closed(ctx, pane_id)
         }
+        Msg::PickStreamOpen {
+            id,
+            title,
+            placeholder,
+            sender,
+            ack,
+        } => crate::ops::pick::open_pick_stream(ctx, id, title, placeholder, sender, ack),
+        Msg::PickRowsReported { id, rows } => crate::ops::pick::rows_reported(ctx, id, rows),
+        Msg::PickStreamClosed { id } => crate::ops::pick::stream_closed(ctx, id),
+        Msg::ClosePick => crate::ops::pick::close_pick(ctx),
+        Msg::PickSelect(index) => crate::ops::pick::pick_select(ctx, index),
+        Msg::PickActivate(index) => crate::ops::pick::pick_activate(ctx, index),
+        Msg::ServicesTick { epoch } => services::handle_tick(ctx, epoch),
+        Msg::ServiceRestartDue { .. } => Update::none(),
         Msg::SessionConnected {
             epoch,
             name,

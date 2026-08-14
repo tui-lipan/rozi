@@ -402,7 +402,11 @@ mod tests {
     #[test]
     fn reload_reconciles_by_stable_id_and_clears_removed_cache() {
         let old = SidebarConfig {
-            tabs: vec![SidebarTab::Agents, SidebarTab::Panes, SidebarTab::Sessions],
+            tabs: vec![
+                SidebarTab::Activity,
+                SidebarTab::Panes,
+                SidebarTab::Sessions,
+            ],
             ..SidebarConfig::default()
         };
         let mut state = SidebarState::new(&old);
@@ -433,7 +437,7 @@ mod tests {
         let config = SidebarConfig {
             split: true,
             panels: vec![
-                vec![SidebarTabId::new("agents"), SidebarTabId::new("panes")],
+                vec![SidebarTabId::new("activity"), SidebarTabId::new("panes")],
                 vec![SidebarTabId::new("sessions")],
             ],
             ..SidebarConfig::default()
@@ -443,7 +447,7 @@ mod tests {
         assert!(state.transfer_tab(0, 1, 1, 1));
         assert_eq!(
             state.panels[0].active_tab,
-            Some(SidebarTabId::new("agents"))
+            Some(SidebarTabId::new("activity"))
         );
         assert_eq!(state.panels[1].active_tab, Some(SidebarTabId::new("panes")));
     }
@@ -453,21 +457,21 @@ mod tests {
         let config = SidebarConfig {
             split: true,
             panels: vec![
-                vec![SidebarTabId::new("agents"), SidebarTabId::new("panes")],
+                vec![SidebarTabId::new("activity"), SidebarTabId::new("panes")],
                 vec![SidebarTabId::new("sessions")],
             ],
             ..SidebarConfig::default()
         };
         let mut state = SidebarState::new(&config);
-        state.panels[0].active_tab = Some(SidebarTabId::new("agents"));
+        state.panels[0].active_tab = Some(SidebarTabId::new("activity"));
         assert!(state.reorder_tab(0, 0, 1));
         assert_eq!(
             state.panels[0].tabs,
-            vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")]
+            vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")]
         );
         assert_eq!(
             state.panels[0].active_tab,
-            Some(SidebarTabId::new("agents"))
+            Some(SidebarTabId::new("activity"))
         );
 
         state.active_panel = 1;
@@ -477,7 +481,7 @@ mod tests {
             state.panels[0].tabs,
             vec![
                 SidebarTabId::new("panes"),
-                SidebarTabId::new("agents"),
+                SidebarTabId::new("activity"),
                 SidebarTabId::new("sessions"),
             ]
         );
@@ -492,7 +496,7 @@ mod tests {
         let mut config = SidebarConfig {
             split: true,
             panels: vec![
-                vec![SidebarTabId::new("agents")],
+                vec![SidebarTabId::new("activity")],
                 vec![SidebarTabId::new("panes"), SidebarTabId::new("sessions")],
             ],
             ..SidebarConfig::default()

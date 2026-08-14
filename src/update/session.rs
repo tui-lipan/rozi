@@ -982,7 +982,7 @@ pub(super) fn pane_runtime_changed(
                 pane.terminal.reported_status = state.status;
                 pane.terminal.detected_agent = state.detected_agent;
                 pane.terminal.work_started_at = state.work_started_at;
-                let _ = pane.terminal.apply_slots(state.slots);
+                let _ = pane.terminal.apply_rows(state.rows);
                 let _ = update_agent_status_edge(
                     &mut pane.terminal,
                     previous_agent_status.as_deref(),
@@ -1005,7 +1005,7 @@ pub(super) fn pane_runtime_changed(
     let mut edges = None;
     let mut title = None;
     let mut reported_status = None;
-    let mut finished_slots = Vec::new();
+    let mut finished_rows = Vec::new();
     if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
         && pane.pty_generation == generation
         && state.sequence > pane.terminal.runtime_sequence
@@ -1028,7 +1028,7 @@ pub(super) fn pane_runtime_changed(
         reported_status = pane.terminal.reported_status.clone();
         pane.terminal.detected_agent = state.detected_agent;
         pane.terminal.work_started_at = state.work_started_at;
-        finished_slots = pane.terminal.apply_slots(state.slots);
+        finished_rows = pane.terminal.apply_rows(state.rows);
         edges = Some(update_agent_status_edge(
             &mut pane.terminal,
             previous_agent_status.as_deref(),
@@ -1087,17 +1087,17 @@ pub(super) fn pane_runtime_changed(
             ),
         );
     }
-    // A slot the publisher is not showing finished. Attending the pane cannot have acknowledged
+    // A row the publisher is not showing finished. Attending the pane cannot have acknowledged
     // it - the user was looking at a different tab of the same program - so it alerts regardless.
-    if !finished_slots.is_empty()
+    if !finished_rows.is_empty()
         && let Some(title) = title.clone()
     {
         let background = find_pane_in_namespace(&ctx.state, pane_id, local).is_some_and(|pane| {
-            finished_slots.iter().any(|id| {
+            finished_rows.iter().any(|id| {
                 pane.terminal
-                    .slots
+                    .published_rows
                     .iter()
-                    .any(|slot| &slot.id == id && !slot.active)
+                    .any(|row| &row.id == id && !row.active)
             })
         });
         if background {

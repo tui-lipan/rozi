@@ -56,6 +56,7 @@ rozi switch-workspace 2
 rozi move-to-workspace 3
 rozi status blocked --reason "needs approval"
 rozi status --clear
+rozi pick --title "Branch"
 ```
 
 Replies are JSON on stdout. Errors are JSON when returned by the server, or plain stderr for client
@@ -169,13 +170,13 @@ list-panes` is an error instead of a local answer that looks like a remote one. 
 ## Wire protocol
 
 The socket accepts one newline-delimited JSON request per connection and returns one JSON response.
-`subscribe` and `agent-slots` are the exceptions: after their acknowledgement the connection stays
+`subscribe`, `publish`, and `pick` are the exceptions: after their acknowledgement the connection stays
 open. `subscribe` then streams newline-delimited event objects until disconnected, and
-`agent-slots` runs in both directions.
+`publish` runs in both directions.
 
 Requests use a `cmd` field: `list-panes`, `metrics`, `focus`, `send-text`, `send-keys`, `new-pane`,
 `run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`,
-`agent-slots`, or `subscribe`. A client may include `source_pane`; the CLI derives it from
+`publish`, `pick`, or `subscribe`. A client may include `source_pane`; the CLI derives it from
 `ROZI_PANE`.
 
 Examples:
@@ -205,6 +206,7 @@ Examples:
 {"cmd":"set-status","target":2,"status":null}
 {"cmd":"popup","command":"fzf","width":0.7,"height":0.6,"title":"files"}
 {"cmd":"subscribe","events":["pane-exited","pane-status-changed","workspace-switched"]}
+{"cmd":"pick","title":"Branch","placeholder":"Search branches…"}
 ```
 
 Responses have `ok`, and either `data` or `error`.
@@ -230,6 +232,36 @@ Event names and existing fields are stable; later versions may add events or fie
 disconnected rather than blocking the UI. Example:
 `printf '%s\n' '{"cmd":"subscribe"}' | socat - UNIX-CONNECT:$ROZI_SOCKET | jq`.
 
+## Picker protocol
+
+An external program can ask rozi to render a modal fuzzy search palette and return the user's choice:
+
+```bash
+git branch --format='{"id":"%(refname:short)","label":"%(refname:short)"}' \
+  | jq -sc '{rows:.}' | rozi pick --title Branch
+```
+
+Unlike one-shot commands, `pick` opens a streaming connection:
+
+1. The client sends `{"cmd":"pick","title":"...","placeholder":"..."}`.
+2. Rozi checks whether a picker can be opened:
+   - If a picker is already open, it immediately returns `{"ok":false,"error":"a picker is already open"}` and closes.
+   - If any modal overlay (palette, help, settings, search, rename prompt) is open, it immediately returns `{"ok":false,"error":"an overlay is open"}` and closes.
+   - Otherwise, rozi acknowledges with `{"ok":true}`.
+3. The client writes row updates (`{"rows":[...]}`), each line replacing the row set.
+4. When the user selects a row or cancels (Esc), rozi writes exactly one terminal line and closes:
+   - `{"selected":"<id>"}` on activation (CLI exits with status 0). If `id` is omitted in the row, `label` is returned.
+   - `{"cancelled":true}` on cancellation (CLI exits with status 1).
+
+Row attributes supported in `rows`:
+- `id` (string): identifier returned in `selected`. Falls back to `label` when omitted.
+- `label` (string, required): entry text.
+- `description` (string, optional): right-aligned status badge.
+- `group` (string, optional): section category header.
+- `disabled` (string, optional): replaces the status text, renders muted, and makes the row inert on activation.
+- `active` (boolean, optional): highlights entry as active.
+- `priority` (integer, optional): boosts sorting rank.
+
 ## Agent slots
 
 A pane is one terminal, but a program running inside it may be running several agents at once — a
@@ -238,26 +270,26 @@ the one on screen, so it reports a single state for all of them and cannot say w
 Such a program publishes them instead:
 
 ```bash
-rozi agent-slots
+rozi publish
 ```
 
 The command bridges stdin and stdout to rozi and runs until either side closes. Write one JSON
 object per line to publish the current list; read one per line to learn that a user clicked a row:
 
 ```json
-{"slots":[{"id":"ses_a","title":"audit the widget layer","status":"working","active":true},
-          {"id":"ses_b","title":"fix the flaky test","status":"blocked","reason":"permission required"}]}
+{"rows":[{"id":"ses_a","title":"audit the widget layer","status":"working","active":true},
+         {"id":"ses_b","title":"fix the flaky test","status":"blocked","reason":"permission required"}]}
 ```
 
 ```json
 {"activate":"ses_b"}
 ```
 
-Each slot becomes its own row in the sidebar's [Agents tab](sidebar.md), with its own elapsed time
+Each row becomes its own item in the sidebar's [Activity tab](sidebar.md), with its own elapsed time
 and its own finished pulse — so a background tab that finishes, or one that stops for a permission
 prompt, is visible without switching to it. `id` is yours and opaque to rozi; keep it stable, as
-it is what ties a run to its clock across reordering and retitling. `active` marks the slot you
-currently have on screen, which is how rozi knows a finish on a *different* slot has not been
+it is what ties a run to its clock across reordering and retitling. `active` marks the row you
+currently have on screen, which is how rozi knows a finish on a *different* row has not been
 seen. `status` takes the same values as `set-status`.
 
 `title` is what the row shows, and it outranks `reason`. Send an empty one while you have nothing
@@ -267,11 +299,11 @@ title swaps the row over immediately.
 
 Publishing replaces the whole list, and an empty list withdraws it. Closing the connection also
 withdraws it, so a publisher that exits or crashes never leaves rows behind. While a pane publishes
-slots, rozi stops scraping its screen entirely and takes the pane's own state from them: blocked
-if any slot is blocked, working if any is working, idle once all are.
+rows, rozi stops scraping its screen entirely and takes the pane's own state from them: blocked
+if any row is blocked, working if any is working, idle once all are.
 
-Activating a row focuses the pane and writes `{"activate":"<id>"}` back to you; bringing that slot
-on screen is your side of the exchange. Use `rozi agent-slots` rather than opening
+Activating a row focuses the pane and writes `{"activate":"<id>"}` back to you; bringing that row
+on screen is your side of the exchange. Use `rozi publish` rather than opening
 `ROZI_SOCKET` yourself — on Windows that variable names a discovery entry whose pipe name has to
 be derived rather than read, so the bridge is what makes a publisher portable.
 

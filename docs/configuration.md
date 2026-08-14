@@ -691,8 +691,8 @@ See [Sidebar](sidebar.md) for how the built-in tabs behave, interaction, and sha
 | `visible` | `false` | Initial visibility. `toggle-sidebar` persists this the same way `toggle-sidebar-split` writes `split`. |
 | `width` | `32` | Requested width in columns (`16..=80`). On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
 | `position` | `left` | Dock side: `left` or `right`. |
-| `tabs` | `["agents", "panes", "sessions", "files", "git"]` | Catalog of available tab definitions. Built-in names are `agents`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
-| `panels` | `[["agents", "panes", "sessions"], ["files", "git"]]` | Durable placement: one or two ordered arrays of IDs from `tabs`. Missing configured tabs are appended to the first panel so they cannot become inaccessible. |
+| `tabs` | `["activity", "panes", "sessions", "files", "git"]` | Catalog of available tab definitions. Built-in names are `activity`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
+| `panels` | `[["activity", "panes", "sessions"], ["files", "git"]]` | Durable placement: one or two ordered arrays of IDs from `tabs`. Missing configured tabs are appended to the first panel so they cannot become inaccessible. |
 | `split` | inferred from `panels` (`true` by default) | Render two saved panel groups vertically. Turning it off shows all tabs in one bar without changing `panels`; turning it back on restores the saved assignment. |
 | `split_ratio` | `0.4` | Fraction of split-sidebar height assigned to the top panel, clamped to `0.15..=0.85`. Dragging the panel divider updates and persists it. |
 
@@ -704,8 +704,8 @@ are never rewritten. Drag, persist, and live-reload behavior is in [Sidebar](sid
 ```toml
 [sidebar]
 visible = true
-tabs = ["agents", "panes", "sessions", "files"]
-panels = [["agents", "files"], ["panes", "sessions"]]
+tabs = ["activity", "panes", "sessions", "files"]
+panels = [["activity", "files"], ["panes", "sessions"]]
 split = true
 split_ratio = 0.6
 ```
@@ -732,14 +732,14 @@ built-ins with launcher and command-backed tabs.
 ```toml
 [sidebar]
 visible = true
-tabs = ["agents", "files", "git"]
+tabs = ["activity", "files", "git"]
 ```
 
 Both take the same table form as custom tabs when you want options:
 
 ```toml
 tabs = [
-  "agents",
+  "activity",
   {
     name = "files",
     label = "",
@@ -1049,6 +1049,34 @@ are warned and ignored.
 
 See [Hooks](hooks.md) for all 17 events and fields, the complete environment contract, command
 lifecycle and client-side semantics, migration examples, and control-socket callbacks.
+
+## `[[services]]`
+
+Supervised background services started alongside rozi and restarted if they exit. Services inherit `ROZI_SOCKET` and standard environment, with stdio discarded.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | **required** | Unique identifier for the service. |
+| `run` | string | **required** | Command to execute, launched via `command_shell`. |
+| `cwd` | path | launch directory | Working directory for the service (`~` expands to `$HOME`). |
+| `restart` | `on-failure`, `always`, or `never` | `on-failure` | Restart policy. `on-failure` restarts on non-zero exit; `always` restarts on any exit; `never` runs once. |
+| `env` | table | `{}` | Key-value environment variables passed to the child process. |
+
+```toml
+[[services]]
+name = "git-watcher"
+run = "cargo-watch -x check"
+cwd = "~"
+restart = "on-failure"
+env = { RUST_LOG = "info" }
+```
+
+### Restart backoff
+
+Services use fixed exponential backoff on failure: 1s → 2s → 4s → 8s → 16s → 30s (capped).
+The backoff delay and consecutive failure counter reset after 60 seconds of continuous uptime.
+If a service fails 5 consecutive times inside 60 seconds, an error toast is shown and the service goes dormant until the next config reload.
+All running services are cleanly terminated on session exit or detach.
 
 ## Pane synchronization
 

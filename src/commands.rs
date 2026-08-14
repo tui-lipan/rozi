@@ -749,6 +749,8 @@ fn commands_active_without_scratchpad(state: &State) -> bool {
         && !state.show_palette
         && !state.show_settings
         && !state.show_theme_picker
+        && !state.show_layout_picker
+        && !state.show_pick
         && state.search.is_none()
         && state.rename.is_none()
         && state.rename_session.is_none()

@@ -804,6 +804,7 @@ pub struct Config {
     pub rules: Vec<RuleConfig>,
     pub hints: Vec<HintConfig>,
     pub hooks: Vec<HookConfig>,
+    pub services: Vec<ServiceConfig>,
     pub logging: LoggingConfig,
     pub workbar: WorkbarConfig,
     /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
@@ -819,6 +820,23 @@ pub struct Config {
 pub struct HookConfig {
     pub event: crate::events::EventKind,
     pub run: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ServiceRestart {
+    #[default]
+    OnFailure,
+    Always,
+    Never,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceConfig {
+    pub name: String,
+    pub run: String,
+    pub cwd: Option<String>,
+    pub restart: ServiceRestart,
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// Default ceiling on one pane log file. Generous enough that an ordinary logged session never
@@ -1120,7 +1138,7 @@ impl SidebarTreeConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SidebarTab {
-    Agents,
+    Activity,
     Panes,
     Sessions,
     Tree {
@@ -1152,7 +1170,7 @@ impl SidebarTab {
 
     pub fn id(&self) -> SidebarTabId {
         match self {
-            Self::Agents => SidebarTabId::new("agents"),
+            Self::Activity => SidebarTabId::new("activity"),
             Self::Panes => SidebarTabId::new("panes"),
             Self::Sessions => SidebarTabId::new("sessions"),
             Self::Tree { view, .. } => SidebarTabId::new(view.id()),
@@ -1162,7 +1180,7 @@ impl SidebarTab {
 
     pub fn label(&self) -> &str {
         match self {
-            Self::Agents => "Agents",
+            Self::Activity => "Activity",
             Self::Panes => "Panes",
             Self::Sessions => "Sessions",
             Self::Tree { view, .. } => view.label(),
@@ -1197,7 +1215,7 @@ impl Default for SidebarConfig {
         // trees cost nothing until their tab is the active one, so carrying them by default only
         // spends sidebar rows, not work.
         let tabs = vec![
-            SidebarTab::Agents,
+            SidebarTab::Activity,
             SidebarTab::Panes,
             SidebarTab::Sessions,
             SidebarTab::tree(SidebarTreeView::Files),
@@ -1209,7 +1227,7 @@ impl Default for SidebarConfig {
             position: SidebarPosition::Left,
             panels: vec![
                 vec![
-                    SidebarTab::Agents.id(),
+                    SidebarTab::Activity.id(),
                     SidebarTab::Panes.id(),
                     SidebarTab::Sessions.id(),
                 ],
@@ -1303,6 +1321,7 @@ impl Default for Config {
             rules: Vec::new(),
             hints: Vec::new(),
             hooks: Vec::new(),
+            services: Vec::new(),
             logging: LoggingConfig::default(),
             workbar: WorkbarConfig::default(),
             key_overrides: HashMap::new(),

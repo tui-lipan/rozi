@@ -453,7 +453,8 @@ Windows) with a JSON protocol and a CLI front end.
 | `switch-workspace` / `move-to-workspace` | Workspace control |
 | `pane-logging` | Toggle raw PTY logging for a pane |
 | `set-status` | Set or clear a pane status badge (`status blocked --reason ...`) |
-| `agent-slots` | **Publish the agents running inside one pane**, one sidebar row each |
+| `pick` | **Render a modal picker** and return the user's choice |
+| `publish` | **Publish the activities or agents running inside one pane**, one sidebar row each |
 | `subscribe` | **Stream UI events** to an external process |
 
 `subscribe` is the push counterpart to `[[hooks]]`: instead of spawning a command per event, a

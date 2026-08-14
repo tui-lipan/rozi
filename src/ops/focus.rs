@@ -56,22 +56,22 @@ pub(crate) fn acknowledge_pane_if_attended(state: &mut State, pane_id: PaneId) -
         return false;
     };
 
-    // Only the slot the publisher has on screen was actually looked at. The others are behind a
+    // Only the row the publisher has on screen was actually looked at. The others are behind a
     // tab the user has not visited, so their pulses stay lit until that tab is opened.
-    let active_slot = pane
+    let active_row = pane
         .terminal
-        .slots
+        .published_rows
         .iter()
-        .find(|slot| slot.active)
-        .map(|slot| slot.id.clone());
-    let slot_cleared = active_slot
-        .and_then(|id| pane.terminal.slot_ui.get_mut(&id))
+        .find(|row| row.active)
+        .map(|row| row.id.clone());
+    let row_cleared = active_row
+        .and_then(|id| pane.terminal.published_row_ui.get_mut(&id))
         .is_some_and(|ui| std::mem::replace(&mut ui.finished_unseen, false));
 
     let changed = pane.activity.has_unseen_output
         || pane.activity.bell
         || pane.terminal.finished_unseen
-        || slot_cleared;
+        || row_cleared;
     pane.activity.has_unseen_output = false;
     pane.activity.bell = false;
     pane.terminal.finished_unseen = false;
@@ -1301,6 +1301,10 @@ pub(crate) fn request_palette_focus(ctx: &mut Context<AppRoot>) {
 
 pub(crate) fn request_session_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::session_picker_key());
+}
+
+pub(crate) fn request_pick_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::pick_key());
 }
 
 #[cfg(test)]

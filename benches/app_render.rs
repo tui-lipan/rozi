@@ -135,7 +135,7 @@ fn sidebar_render(c: &mut Criterion) {
     let cases: Vec<(&str, Option<SidebarTab>)> = vec![
         ("hidden", None),
         ("panes", Some(SidebarTab::Panes)),
-        ("agents", Some(SidebarTab::Agents)),
+        ("activity", Some(SidebarTab::Activity)),
         ("files", Some(tree_tab(SidebarTreeView::Files))),
         ("git", Some(tree_tab(SidebarTreeView::Changes))),
     ];

@@ -215,12 +215,12 @@ impl SessionServer {
                     )],
                 }
             }
-            ClientMessage::ReportPaneSlots {
+            ClientMessage::ReportPaneRows {
                 pane_id,
                 local,
                 generation,
-                slots,
-            } => match self.report_pane_slots(client_id, pane_id, generation, local, slots) {
+                rows,
+            } => match self.report_pane_rows(client_id, pane_id, generation, local, rows) {
                 Ok(Some(state)) => vec![(
                     if local {
                         Target::Client(client_id)

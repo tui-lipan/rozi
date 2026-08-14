@@ -56,6 +56,10 @@ pub fn palette_key() -> &'static str {
     "rozi-command-palette"
 }
 
+pub fn pick_key() -> &'static str {
+    "rozi-pick"
+}
+
 /// The sidebar's row list — the `request_focus` target for every tab except the file tree, which
 /// mounts under its own root-derived key.
 pub fn sidebar_body_key() -> &'static str {

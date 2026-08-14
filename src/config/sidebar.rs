@@ -9,7 +9,7 @@ use super::schema::{
     SidebarTreeRoot, SidebarTreeView,
 };
 
-const BUILTIN_TABS: &[&str] = &["agents", "panes", "sessions", "files", "git"];
+const BUILTIN_TABS: &[&str] = &["activity", "panes", "sessions", "files", "git"];
 
 /// The built-in tabs that a table form may *configure* rather than merely name. The other built-ins
 /// take no options, so a table naming one is a mistake worth warning about.
@@ -186,7 +186,7 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
     for spec in raw {
         let tab = match spec {
             SidebarTabSpec::Name(name) => match name.trim().to_ascii_lowercase().as_str() {
-                "agents" => SidebarTab::Agents,
+                "activity" => SidebarTab::Activity,
                 "panes" => SidebarTab::Panes,
                 "sessions" => SidebarTab::Sessions,
                 other => match tree_view(other) {
@@ -348,7 +348,7 @@ mod tests {
         assert_eq!(
             config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>(),
             vec![
-                SidebarTabId::new("agents"),
+                SidebarTabId::new("activity"),
                 SidebarTabId::new("panes"),
                 SidebarTabId::new("sessions"),
                 SidebarTabId::new("files"),
@@ -359,7 +359,7 @@ mod tests {
             config.panels,
             vec![
                 vec![
-                    SidebarTabId::new("agents"),
+                    SidebarTabId::new("activity"),
                     SidebarTabId::new("panes"),
                     SidebarTabId::new("sessions"),
                 ],
@@ -390,8 +390,8 @@ mod tests {
     fn panels_assign_order_validate_ids_and_keep_omitted_tabs_reachable() {
         let (config, warnings) = parse(
             r#"
-            tabs = ["agents", "panes", "sessions"]
-            panels = [["panes"], ["agents", "bogus", "agents"]]
+            tabs = ["activity", "panes", "sessions"]
+            panels = [["panes"], ["activity", "bogus", "activity"]]
             split_ratio = 0.7
             "#,
         );
@@ -400,7 +400,7 @@ mod tests {
             config.panels,
             vec![
                 vec![SidebarTabId::new("panes"), SidebarTabId::new("sessions")],
-                vec![SidebarTabId::new("agents")],
+                vec![SidebarTabId::new("activity")],
             ]
         );
         assert!(warnings.iter().any(|warning| warning.contains("bogus")));
@@ -416,8 +416,8 @@ mod tests {
     fn split_controls_presentation_without_discarding_panel_placement() {
         let (config, warnings) = parse(
             r#"
-            tabs = ["agents", "panes", "sessions"]
-            panels = [["agents"], ["panes", "sessions"]]
+            tabs = ["activity", "panes", "sessions"]
+            panels = [["activity"], ["panes", "sessions"]]
             split = false
             "#,
         );
@@ -427,8 +427,8 @@ mod tests {
 
         let (config, warnings) = parse(
             r#"
-            tabs = ["agents", "panes", "sessions"]
-            panels = [["agents"], ["panes", "sessions"]]
+            tabs = ["activity", "panes", "sessions"]
+            panels = [["activity"], ["panes", "sessions"]]
             "#,
         );
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -436,7 +436,7 @@ mod tests {
 
         let (config, warnings) = parse(
             r#"
-            tabs = ["agents", "panes", "sessions"]
+            tabs = ["activity", "panes", "sessions"]
             split = true
             "#,
         );

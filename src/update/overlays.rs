@@ -33,7 +33,7 @@ pub(super) fn command_link_ready(ctx: &mut Context<AppRoot>, link: CommandLink<M
     crate::update::sidebar::request_sessions_refresh(ctx);
     crate::update::sidebar::request_command_poll(ctx);
     crate::update::workbar::request_command_polls(ctx);
-    Update::none()
+    crate::ops::services::start_services(ctx)
 }
 
 pub(super) fn hangup(ctx: &mut Context<AppRoot>) -> Update {

@@ -40,14 +40,14 @@ fn agent_pane(
     pane
 }
 
-fn slot(
+fn published_row(
     id: &str,
     title: &str,
     status: &str,
     reason: Option<&str>,
     active: bool,
-) -> rozi::session::protocol::AgentSlot {
-    rozi::session::protocol::AgentSlot {
+) -> rozi::session::protocol::PublishedRow {
+    rozi::session::protocol::PublishedRow {
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),
@@ -63,17 +63,17 @@ fn slot(
     }
 }
 
-/// Give the Agents tab the whole sidebar: these assertions are about grouping and row order, so
+/// Give the Activity tab the whole sidebar: these assertions are about grouping and row order, so
 /// the default two-panel split would only halve the rows they can see.
 fn agents_fill_the_sidebar(state: &mut rozi::state::State) {
     state.sidebar_visible = true;
     // Revealing the sidebar after the first frame is a real toggle, so it runs the real
     // slide. These tests assert on the settled column, not on a frame part-way through it.
     state.config.animations.sidebar = false;
-    state.config.sidebar.tabs = vec![SidebarTab::Agents];
+    state.config.sidebar.tabs = vec![SidebarTab::Activity];
     state.config.sidebar.split = false;
     state.sidebar.apply_configured_panels(&state.config.sidebar);
-    state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+    state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
 }
 
 /// The same pane, plus the Git project the session server resolved for its cwd.
@@ -321,22 +321,22 @@ fn published_slots_render_one_numbered_row_each() {
                 agents_fill_the_sidebar(state);
                 let mut publisher =
                     agent_pane(1, AgentKind::OpenCode, None, Some("/home/x/work/rozi"));
-                publisher.terminal.slots = vec![
-                    slot("ses_a", "audit the widget layer", "working", None, true),
-                    slot(
+                publisher.terminal.published_rows = vec![
+                    published_row("ses_a", "audit the widget layer", "working", None, true),
+                    published_row(
                         "ses_b",
                         "fix the flaky test",
                         "blocked",
                         Some("permission required"),
                         false,
                     ),
-                    slot("ses_c", "update the changelog", "idle", None, false),
+                    published_row("ses_c", "update the changelog", "idle", None, false),
                     // Titled after the agent itself, so it has no activity to show and its
                     // detail line falls back to the state word.
-                    slot("ses_d", "OpenCode", "idle", None, false),
+                    published_row("ses_d", "OpenCode", "idle", None, false),
                     // A fresh session, blocked on its first question before anything has titled
                     // it: the reason is all this row has to say until a title arrives.
-                    slot("ses_e", "", "blocked", Some("answer required"), false),
+                    published_row("ses_e", "", "blocked", Some("answer required"), false),
                 ];
                 state.current_mut().workspaces[0].panes = vec![publisher];
             }
@@ -385,4 +385,57 @@ fn published_slots_render_one_numbered_row_each() {
         .expect("spawn published slots render thread")
         .join()
         .expect("published slots render completes");
+}
+
+#[test]
+fn published_rows_render_without_detected_agent() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                agents_fill_the_sidebar(state);
+                let mut publisher = Pane::new(
+                    1,
+                    100,
+                    FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 20.0,
+                        h: 10.0,
+                    },
+                );
+                publisher.terminal.detected_agent = None;
+                publisher.terminal.cwd = Some("/home/x/work/rozi".into());
+                publisher.terminal.published_rows = vec![
+                    published_row("build", "Cargo Watch", "working", Some("compiling"), true),
+                    published_row("test", "", "blocked", Some("test failure"), false),
+                ];
+                state.current_mut().workspaces[0].panes = vec![publisher];
+            }
+            backend.render();
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            let sidebar: Vec<String> = lines
+                .iter()
+                .map(|line| line.chars().take(32).collect())
+                .collect();
+            for line in &sidebar {
+                println!("{line}");
+            }
+
+            assert!(sidebar.iter().any(|line| line.contains("Cargo Watch")));
+            assert!(sidebar.iter().any(|line| line.contains("shell")));
+            assert!(sidebar.iter().any(|line| line.contains("compiling")));
+            assert!(sidebar.iter().any(|line| line.contains("test failure")));
+        })
+        .expect("spawn thread")
+        .join()
+        .expect("thread completes");
 }

@@ -51,11 +51,11 @@ pub struct TerminalPane {
     /// reports what it cost, not how long ago it stopped — the attention pulse already says the
     /// finish is recent, and a number that climbs after the work is over says nothing.
     pub last_run: Option<std::time::Duration>,
-    /// Logical agents this pane's program published for itself; empty for every other pane.
-    pub slots: Vec<crate::session::protocol::AgentSlot>,
-    /// Per-slot presentation state the server does not own, keyed by slot id. Entries for ids the
-    /// publisher has dropped are pruned whenever slots are applied.
-    pub slot_ui: std::collections::HashMap<String, SlotUiState>,
+    /// Logical agents or activities this pane's program published for itself; empty for every other pane.
+    pub published_rows: Vec<crate::session::protocol::PublishedRow>,
+    /// Per-row presentation state the server does not own, keyed by row id. Entries for ids the
+    /// publisher has dropped are pruned whenever rows are applied.
+    pub published_row_ui: std::collections::HashMap<String, PublishedRowUiState>,
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
@@ -137,7 +137,7 @@ fn status_is_blocked(value: &str) -> bool {
 
 /// Elapsed wall-clock time since a server-stamped run start, saturating at zero so clock skew
 /// against another host can only shorten the answer, never invent one.
-fn slot_age(started_at: Option<u64>) -> Option<std::time::Duration> {
+fn row_run_age(started_at: Option<u64>) -> Option<std::time::Duration> {
     let started_at = started_at?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -148,24 +148,23 @@ fn slot_age(started_at: Option<u64>) -> Option<std::time::Duration> {
     ))
 }
 
-fn previous_started(slots: &[crate::session::protocol::AgentSlot], id: &str) -> Option<u64> {
-    slots
-        .iter()
-        .find(|slot| slot.id == id)
-        .and_then(|slot| slot.work_started_at)
+fn previous_started(rows: &[crate::session::protocol::PublishedRow], id: &str) -> Option<u64> {
+    rows.iter()
+        .find(|row| row.id == id)
+        .and_then(|row| row.work_started_at)
 }
 
-/// Presentation state for one published slot: the parts of a row the server has no opinion about.
+/// Presentation state for one published row: the parts of a row the server has no opinion about.
 ///
-/// Kept beside the slots rather than inside them because the server owns what a slot *is* and the
+/// Kept beside the rows rather than inside them because the server owns what a row *is* and the
 /// client owns what this viewer has seen of it. Two clients watching one session disagree about
 /// which finishes they have looked at, and that disagreement is correct.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SlotUiState {
-    /// This slot finished a run that has not been looked at. Cleared by attending the slot, which
-    /// means the pane is focused *and* the publisher has this slot on screen.
+pub struct PublishedRowUiState {
+    /// This row finished a run that has not been looked at. Cleared by attending the row, which
+    /// means the pane is focused *and* the publisher has this row on screen.
     pub finished_unseen: bool,
-    /// How long this slot's last run lasted, captured as it ended.
+    /// How long this row's last run lasted, captured as it ended.
     pub last_run: Option<std::time::Duration>,
 }
 
@@ -199,8 +198,8 @@ impl TerminalPane {
             work_started_at: None,
             status_since: None,
             last_run: None,
-            slots: Vec::new(),
-            slot_ui: std::collections::HashMap::new(),
+            published_rows: Vec::new(),
+            published_row_ui: std::collections::HashMap::new(),
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
             last_exit_status: None,
             runtime_sequence: 0,
@@ -244,8 +243,8 @@ impl TerminalPane {
             self.work_started_at = None;
             self.status_since = None;
             self.last_run = None;
-            self.slots.clear();
-            self.slot_ui.clear();
+            self.published_rows.clear();
+            self.published_row_ui.clear();
         }
         self.pane_id = pane_id;
         self.generation = generation;
@@ -597,51 +596,51 @@ impl TerminalPane {
 
     /// How long this pane's active agent run has lasted, for the sidebar's duration column.
     ///
-    /// Replace the pane's published slots, recording each slot's finish edge.
+    /// Replace the pane's published rows, recording each row's finish edge.
     ///
-    /// Returns the ids of slots that just finished a run. Their alerts are raised per slot rather
+    /// Returns the ids of rows that just finished a run. Their alerts are raised per row rather
     /// than per pane: a background tab finishing is news even while the pane is focused, because
-    /// focusing the pane only ever showed the slot the publisher had on screen.
-    pub fn apply_slots(&mut self, slots: Vec<crate::session::protocol::AgentSlot>) -> Vec<String> {
+    /// focusing the pane only ever showed the row the publisher had on screen.
+    pub fn apply_rows(&mut self, rows: Vec<crate::session::protocol::PublishedRow>) -> Vec<String> {
         let mut finished = Vec::new();
-        for slot in &slots {
+        for row in &rows {
             let previous = self
-                .slots
+                .published_rows
                 .iter()
-                .find(|candidate| candidate.id == slot.id)
+                .find(|candidate| candidate.id == row.id)
                 .map(|candidate| candidate.status.as_str());
             let was_working = previous.is_some_and(|status| {
                 status
                     .trim()
                     .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
             });
-            let now_working = slot
+            let now_working = row
                 .status
                 .trim()
                 .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING);
-            let entry = self.slot_ui.entry(slot.id.clone()).or_default();
+            let entry = self.published_row_ui.entry(row.id.clone()).or_default();
             if now_working {
                 entry.finished_unseen = false;
-            } else if was_working && !status_is_blocked(&slot.status) {
-                entry.last_run = slot_age(previous_started(&self.slots, &slot.id));
+            } else if was_working && !status_is_blocked(&row.status) {
+                entry.last_run = row_run_age(previous_started(&self.published_rows, &row.id));
                 entry.finished_unseen = true;
-                finished.push(slot.id.clone());
+                finished.push(row.id.clone());
             }
         }
         // A publisher that closed a tab should not leave its row's pulse behind.
-        self.slot_ui
-            .retain(|id, _| slots.iter().any(|s| &s.id == id));
-        self.slots = slots;
+        self.published_row_ui
+            .retain(|id, _| rows.iter().any(|s| &s.id == id));
+        self.published_rows = rows;
         finished
     }
 
-    /// How long a slot's current run has lasted, by the same rule as [`Self::status_age`].
-    pub fn slot_age(
+    /// How long a row's current run has lasted, by the same rule as [`Self::status_age`].
+    pub fn row_age(
         &self,
-        slot: &crate::session::protocol::AgentSlot,
+        row: &crate::session::protocol::PublishedRow,
     ) -> Option<std::time::Duration> {
-        (!status_is_quiescent(&slot.status))
-            .then(|| slot_age(slot.work_started_at))
+        (!status_is_quiescent(&row.status))
+            .then(|| row_run_age(row.work_started_at))
             .flatten()
     }
 

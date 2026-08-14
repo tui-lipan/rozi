@@ -157,11 +157,11 @@ fn split_sidebar_renders_two_draggable_tab_bars() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.config.sidebar.tabs = vec![SidebarTab::Agents, SidebarTab::Panes];
+                state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
                 state.sidebar.panels = vec![
                     SidebarPanelState {
-                        tabs: vec![SidebarTabId::new("agents")],
-                        active_tab: Some(SidebarTabId::new("agents")),
+                        tabs: vec![SidebarTabId::new("activity")],
+                        active_tab: Some(SidebarTabId::new("activity")),
                         ..Default::default()
                     },
                     SidebarPanelState {
@@ -176,7 +176,7 @@ fn split_sidebar_renders_two_draggable_tab_bars() {
             let snapshot = backend.capture_ui_snapshot().to_markdown();
             assert_eq!(snapshot.matches("DraggableTabBar").count(), 2, "{snapshot}");
             let grid = backend.capture_frame().to_fixed_grid();
-            assert!(grid.contains("Agents"), "{grid}");
+            assert!(grid.contains("Activity"), "{grid}");
             assert!(grid.contains("Panes"), "{grid}");
         })
         .expect("spawn split sidebar thread")
@@ -252,13 +252,13 @@ fn split_flag_changes_presentation_without_changing_panel_recipe() {
         .spawn(|| {
             let mut backend = sidebar_backend(100, 30);
             let configured_panels = vec![
-                vec![SidebarTabId::new("agents")],
+                vec![SidebarTabId::new("activity")],
                 vec![SidebarTabId::new("panes")],
             ];
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.config.sidebar.tabs = vec![SidebarTab::Agents, SidebarTab::Panes];
+                state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
                 state.config.sidebar.panels = configured_panels.clone();
                 state.config.sidebar.split = false;
                 state.sidebar.reconcile(&state.config.sidebar.clone());
@@ -292,11 +292,11 @@ fn split_sidebar_junction_resizes_both_splitters_without_entering_pane_content()
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.config.sidebar.tabs = vec![SidebarTab::Agents, SidebarTab::Panes];
+                state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
                 state.sidebar.panels = vec![
                     SidebarPanelState {
-                        tabs: vec![SidebarTabId::new("agents")],
-                        active_tab: Some(SidebarTabId::new("agents")),
+                        tabs: vec![SidebarTabId::new("activity")],
+                        active_tab: Some(SidebarTabId::new("activity")),
                         ..Default::default()
                     },
                     SidebarPanelState {

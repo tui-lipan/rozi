@@ -376,9 +376,9 @@ fn tab_cycles_sidebar_tabs_while_focused() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Agents];
+            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Activity];
             backend.state_mut().sidebar.panels[0].tabs =
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")];
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
                 .expect("focus sidebar");
@@ -388,7 +388,7 @@ fn tab_cycles_sidebar_tabs_while_focused() {
             settle(&mut backend);
             assert_eq!(
                 backend.state().sidebar.active_tab(),
-                Some(&SidebarTabId::new("agents")),
+                Some(&SidebarTabId::new("activity")),
                 "Tab moves to the next sidebar tab"
             );
             assert!(
@@ -407,9 +407,9 @@ fn left_and_right_do_not_cycle_non_tree_sidebar_tabs() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Agents];
+            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Activity];
             backend.state_mut().sidebar.panels[0].tabs =
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")];
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
                 .expect("focus sidebar");
@@ -441,10 +441,10 @@ fn ctrl_shift_left_and_right_reorder_sidebar_tabs() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Agents];
+            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Activity];
             backend.state_mut().sidebar.panels[0].tabs =
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")];
-            backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("agents"));
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
+            backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("activity"));
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
                 .expect("focus sidebar");
@@ -461,7 +461,7 @@ fn ctrl_shift_left_and_right_reorder_sidebar_tabs() {
             settle(&mut backend);
             assert_eq!(
                 backend.state().sidebar.panels[0].tabs,
-                vec![SidebarTabId::new("agents"), SidebarTabId::new("panes")]
+                vec![SidebarTabId::new("activity"), SidebarTabId::new("panes")]
             );
 
             let _ = backend.send_key(modified_key(
@@ -475,7 +475,7 @@ fn ctrl_shift_left_and_right_reorder_sidebar_tabs() {
             settle(&mut backend);
             assert_eq!(
                 backend.state().sidebar.panels[0].tabs,
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")]
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")]
             );
         })
         .expect("spawn tab reorder thread")
@@ -528,12 +528,12 @@ fn ctrl_vertical_navigation_moves_keyboard_focus_between_sidebar_panels() {
                         ..Default::default()
                     },
                     rozi::state::SidebarPanelState {
-                        tabs: vec![SidebarTabId::new("agents")],
-                        active_tab: Some(SidebarTabId::new("agents")),
+                        tabs: vec![SidebarTabId::new("activity")],
+                        active_tab: Some(SidebarTabId::new("activity")),
                         ..Default::default()
                     },
                 ];
-                state.config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Agents];
+                state.config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Activity];
             }
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))

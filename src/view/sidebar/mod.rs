@@ -245,8 +245,12 @@ pub(crate) fn active_tab_in_state(
 /// sidebar is hidden, another tab is up, or every agent is idle.
 pub(crate) fn agent_durations(state: &crate::state::State) -> Option<String> {
     if !state.sidebar_visible
-        || !(0..state.sidebar.panels.len())
-            .any(|panel| matches!(active_tab_in_state(state, panel), Some(SidebarTab::Agents)))
+        || !(0..state.sidebar.panels.len()).any(|panel| {
+            matches!(
+                active_tab_in_state(state, panel),
+                Some(SidebarTab::Activity)
+            )
+        })
     {
         return None;
     }
@@ -285,7 +289,7 @@ pub(crate) fn body_key(panel: usize) -> String {
 pub(crate) fn body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
     match tab {
         SidebarTab::Panes => panes::panes_rows(ctx),
-        SidebarTab::Agents => agents::agents_rows(ctx),
+        SidebarTab::Activity => agents::agents_rows(ctx),
         SidebarTab::Sessions => sessions::sessions_rows(ctx),
         SidebarTab::Launcher { name, entries, .. } => user_tabs::launcher_rows(ctx, name, entries),
         SidebarTab::Command { name, on_click, .. } => {
@@ -301,7 +305,7 @@ pub(crate) fn body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::Si
 fn empty_text(ctx: &Context<AppRoot>, tab: &SidebarTab) -> &'static str {
     match tab {
         SidebarTab::Panes => "No panes",
-        SidebarTab::Agents => "No agents detected",
+        SidebarTab::Activity => "No activity",
         SidebarTab::Sessions => "No sessions discovered",
         SidebarTab::Launcher { .. } => "No launcher entries",
         SidebarTab::Command { name, .. } => {

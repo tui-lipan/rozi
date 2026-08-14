@@ -251,11 +251,11 @@ fn destination_selection_resolves_after_transfer_into_an_empty_panel() {
             let mut backend = TestBackend::new(AppRoot::default());
             {
                 let state = backend.state_mut();
-                state.config.sidebar.tabs = vec![SidebarTab::Agents];
+                state.config.sidebar.tabs = vec![SidebarTab::Activity];
                 state.sidebar.panels = vec![
                     rozi::state::SidebarPanelState {
-                        tabs: vec![SidebarTabId::new("agents")],
-                        active_tab: Some(SidebarTabId::new("agents")),
+                        tabs: vec![SidebarTabId::new("activity")],
+                        active_tab: Some(SidebarTabId::new("activity")),
                         ..Default::default()
                     },
                     rozi::state::SidebarPanelState::default(),
@@ -268,7 +268,7 @@ fn destination_selection_resolves_after_transfer_into_an_empty_panel() {
                 .expect("destination change follows transfer");
             assert_eq!(
                 backend.state().sidebar.active_tab(),
-                Some(&SidebarTabId::new("agents"))
+                Some(&SidebarTabId::new("activity"))
             );
             assert_eq!(backend.state().sidebar.active_panel, 1);
         })

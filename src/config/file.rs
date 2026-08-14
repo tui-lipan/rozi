@@ -66,8 +66,20 @@ struct FileConfig {
     rules: Vec<RuleFileConfig>,
     hints: Vec<HintFileConfig>,
     hooks: Vec<HookFileConfig>,
+    services: Vec<ServiceFileConfig>,
     logging: LoggingFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ServiceFileConfig {
+    pub(crate) name: Option<String>,
+    pub(crate) run: Option<String>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) restart: Option<String>,
+    #[serde(default)]
+    pub(crate) env: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -805,6 +817,7 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
     config.rules = build_rules(parsed.rules, &mut warnings);
     config.hints = build_hints(parsed.hints, &mut warnings);
     config.hooks = build_hooks(parsed.hooks, &mut warnings);
+    config.services = crate::config::services::build_services(parsed.services, &mut warnings);
     let mut user_commands = Vec::new();
     config.key_overrides = build_key_overrides(
         parsed.keys,

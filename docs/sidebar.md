@@ -11,8 +11,8 @@ and mouse regions. It does not become part of the shared layout document.
 visible = false
 width = 32
 position = "left"
-tabs = ["agents", "panes", "sessions", "files", "git"]
-panels = [["agents", "panes", "sessions"], ["files", "git"]]
+tabs = ["activity", "panes", "sessions", "files", "git"]
+panels = [["activity", "panes", "sessions"], ["files", "git"]]
 split = true
 ```
 
@@ -30,7 +30,7 @@ only of those tabs' stable IDs, so persisting a drag never rewrites a custom tab
 split renders the two saved panel groups vertically:
 
 ```toml
-panels = [["agents"], ["panes", "sessions"]]
+panels = [["activity"], ["panes", "sessions"]]
 split = true
 split_ratio = 0.5
 ```
@@ -86,12 +86,12 @@ identifies a path.
 gains an `@host` suffix, uncompressed — a remote home is not this machine's. When nothing is known
 about where a pane is, the program takes the second line instead so the row keeps its shape.
 
-The **Agents** tab lists detected coding-agent processes from every workspace. The session server
-inspects the foreground process group and its arguments, so agents launched through Node, Python,
+The **Activity** tab lists detected coding-agent processes and published task rows from every workspace.
+The session server inspects the foreground process group and its arguments, so agents launched through Node, Python,
 shell, and package-manager wrappers are recognized without relying only on the executable name.
 `ROZI_AGENT` or `HERDR_AGENT` can provide an explicit agent-name hint for an unusual launcher.
 The built-in catalog includes Claude Code, OpenCode, Codex, Aider, Gemini CLI, Goose, Amp, and other
-common terminal agents; ordinary shells, editors, and other panes are excluded. Rows show the
+common terminal agents; ordinary shells, editors, and other panes are excluded unless they publish rows. Rows show the
 normalized agent name and how long its current run has lasted, over a detail line saying what the
 agent is doing; clicking a row switches workspace and focuses it. Closing panes, the scratchpad, and
 popups are excluded.
@@ -201,10 +201,10 @@ A held state that goes fifteen minutes without any confirming evidence falls bac
 is a backstop for an agent detection lost track of rather than a limit on how long a run may take.
 Publishing status through the control socket avoids the guesswork entirely.
 
-### One row per agent in a pane
+### One row per agent or activity in a pane
 
-A program running several agents behind one terminal can publish them through
-[`rozi agent-slots`](control.md#agent-slots), and each becomes its own row. The rows carry the
+A program running several agents or activities behind one terminal can publish them through
+[`rozi publish`](control.md#publish), and each becomes its own row. The rows carry the
 pane's project, directory, and branch — location belongs to the terminal, so grouping is unchanged
 — but each keeps its own status, elapsed time, and finished pulse, and they sort among every other
 row by status. A blocked tab therefore reaches the top of the list even though the tab beside it in

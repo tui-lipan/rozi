@@ -120,18 +120,18 @@ impl SessionServer {
         Ok(Some(pane.runtime.clone()))
     }
 
-    /// Replace a pane's published agent slots. An empty list withdraws them and lets screen
-    /// detection take the pane back.
+    /// Replace a pane's published rows. An empty list withdraws them and lets screen
+    /// detection speak for the pane again.
     ///
     /// Guards match [`Self::set_pane_status`] exactly: this is the same authority - a program
     /// speaking for its own pane - reporting more than one thing at a time.
-    pub(super) fn report_pane_slots(
+    pub(super) fn report_pane_rows(
         &mut self,
         client_id: ClientId,
         pane_id: PaneId,
         generation: u64,
         local: bool,
-        slots: Vec<protocol::AgentSlot>,
+        rows: Vec<protocol::PublishedRow>,
     ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
         if !self.client_attached(client_id) {
             return Err(("attach-required", "client is not attached".to_string()));
@@ -157,11 +157,11 @@ impl SessionServer {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let slots = sanitize_slots(slots, &pane.runtime.slots, now);
-        if slots == pane.runtime.slots {
+        let rows = sanitize_rows(rows, &pane.runtime.rows, now);
+        if rows == pane.runtime.rows {
             return Ok(None);
         }
-        pane.runtime.slots = slots;
+        pane.runtime.rows = rows;
         // A publisher that enumerates its own sessions is better informed than the scraper, which
         // can only see the one it draws. Drop anything the scraper was holding for this pane.
         pane.agent.hold = None;
@@ -318,11 +318,11 @@ fn compute_runtime_state(
     // A pane whose program enumerates its own sessions is authoritative. Screen detection can only
     // ever see the session in view, so scraping such a pane would answer a question the publisher
     // has already answered better - and would answer it about the wrong session.
-    let detected_agent = if !pane.runtime.slots.is_empty() {
+    let detected_agent = if !pane.runtime.rows.is_empty() {
         pane.agent.hold = None;
-        let aggregate = crate::session::protocol::aggregate_slot_state(&pane.runtime.slots);
-        // Keep whichever kind detection last identified: the publisher says what its sessions are
-        // doing, not which program it is.
+        let aggregate = crate::session::protocol::aggregate_row_state(&pane.runtime.rows);
+        // If an agent kind was previously detected, update its aggregate state.
+        // If nothing was detected, detected_agent remains None.
         pane.runtime
             .detected_agent
             .as_ref()
@@ -331,7 +331,6 @@ fn compute_runtime_state(
                 kind: previous.kind,
                 state,
             })
-            .or_else(|| pane.runtime.detected_agent.clone())
     } else if detect_agent {
         let probe = AgentProbe {
             foreground_program: foreground_program.clone(),
@@ -379,8 +378,8 @@ fn compute_runtime_state(
         status: pane.runtime.status.clone(),
         detected_agent,
         work_started_at,
-        // Owned by `report_pane_slots`, which is the only writer; a recompute carries them.
-        slots: pane.runtime.slots.clone(),
+        // Owned by `report_pane_rows`, which is the only writer; a recompute carries them.
+        rows: pane.runtime.rows.clone(),
         sequence: pane.runtime.sequence,
     };
     let changed = !cwd_unchanged(&candidate.cwd, &pane.runtime.cwd)
@@ -449,28 +448,27 @@ fn next_run_start(
     Some(now)
 }
 
-/// How many slots one pane may publish. A tab bar is a human-sized list; a publisher sending
-/// thousands is malfunctioning, and every slot costs a sidebar row.
-const MAX_PANE_SLOTS: usize = 64;
+/// How many rows one pane may publish. A tab bar is a human-sized list; a publisher sending
+/// thousands is malfunctioning, and every row costs a sidebar row.
+const MAX_PANE_ROWS: usize = 64;
 
-/// Clean a publisher's slot list and give each slot the run clock the server owns.
+/// Clean a publisher's row list and give each row the run clock the server owns.
 ///
 /// Text is sanitized and truncated exactly as [`SessionServer::set_pane_status`] does its own -
-/// this arrives from the same place and is rendered in the same rows. Slots are matched to their
+/// this arrives from the same place and is rendered in the same rows. Rows are matched to their
 /// previous selves by `id`, so a run keeps one start across reorders, title changes, and
 /// block-then-resume; an id appearing for the first time starts a run, and one that disappears
 /// takes its clock with it.
-fn sanitize_slots(
-    slots: Vec<protocol::AgentSlot>,
-    previous: &[protocol::AgentSlot],
+fn sanitize_rows(
+    rows: Vec<protocol::PublishedRow>,
+    previous: &[protocol::PublishedRow],
     now: u64,
-) -> Vec<protocol::AgentSlot> {
+) -> Vec<protocol::PublishedRow> {
     let mut active_seen = false;
-    slots
-        .into_iter()
-        .filter_map(|slot| {
-            let id = clean_text(&slot.id, PANE_STATUS_MAX_LEN)?;
-            let status = clean_text(&slot.status, PANE_STATUS_MAX_LEN)?;
+    rows.into_iter()
+        .filter_map(|row| {
+            let id = clean_text(&row.id, PANE_STATUS_MAX_LEN)?;
+            let status = clean_text(&row.status, PANE_STATUS_MAX_LEN)?;
             let previous = previous.iter().find(|candidate| candidate.id == id);
             let work_started_at = next_run_start(
                 previous.map(|previous| previous.status.as_str()),
@@ -478,23 +476,23 @@ fn sanitize_slots(
                 Some(status.as_str()),
                 now,
             );
-            // At most one slot is the one on screen; a publisher that marks several keeps the
+            // At most one row is the one on screen; a publisher that marks several keeps the
             // first, since the rest cannot also be in view.
-            let active = slot.active && !std::mem::replace(&mut active_seen, slot.active);
-            Some(protocol::AgentSlot {
+            let active = row.active && !std::mem::replace(&mut active_seen, row.active);
+            Some(protocol::PublishedRow {
                 // Left empty when the publisher has none yet - a session is often created, and
                 // can even ask its first question, before anything has titled it. The id is not a
                 // stand-in: it is an opaque handle, and rendering it would put `ses_9f2c` on
                 // screen where a description belongs.
-                title: clean_text(&slot.title, PANE_STATUS_MAX_LEN).unwrap_or_default(),
+                title: clean_text(&row.title, PANE_STATUS_MAX_LEN).unwrap_or_default(),
                 id,
                 status,
-                reason: clean_text(&slot.reason.unwrap_or_default(), PANE_STATUS_REASON_MAX_LEN),
+                reason: clean_text(&row.reason.unwrap_or_default(), PANE_STATUS_REASON_MAX_LEN),
                 active,
                 work_started_at,
             })
         })
-        .take(MAX_PANE_SLOTS)
+        .take(MAX_PANE_ROWS)
         .collect()
 }
 

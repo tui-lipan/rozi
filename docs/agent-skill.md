@@ -78,7 +78,8 @@ rozi capture-pane --scrollback full
 rozi capture-pane --last-output
 rozi status <VALUE> [--reason <TEXT>]
 rozi status --clear
-rozi agent-slots
+rozi pick [--title <TEXT>] [--placeholder <TEXT>]
+rozi publish
 ```
 
 `send-keys` accepts tmux-style names such as `C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,
@@ -88,9 +89,10 @@ rozi agent-slots
 `capture-pane` defaults to the visible grid. `--scrollback N` captures trailing history,
 `--scrollback full` captures all retained history, and `--last-output` captures the last shell
 integration command output. `status` reports a short pane status; `status --clear` removes it.
-`agent-slots` is for a program running several agents in one pane: it bridges stdin/stdout to
-rozi, publishing one JSON slot list per line and reading back `{"activate":"<id>"}` when a user
-clicks a row. It runs until closed, and closing withdraws the pane's slots. See
+`pick` streams candidate rows from stdin into a modal search palette and prints the selected item id to stdout upon user choice (or exits 1 if cancelled).
+`publish` is for a program running several agents or activities in one pane: it bridges stdin/stdout to
+rozi, publishing one JSON row list per line and reading back `{"activate":"<id>"}` when a user
+clicks a row. It runs until closed, and closing withdraws the pane's rows. See
 `docs/control.md`.
 
 `split`/`new-pane` waits for the pane's PTY and replies with a numeric `id`, `accepted:true`, and

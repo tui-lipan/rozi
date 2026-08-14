@@ -143,6 +143,9 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     }
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
     crate::update::workbar::request_command_polls(ctx);
+    crate::ops::services::reconcile_services(ctx);
+    let start_services_tick =
+        !ctx.state.services.running.is_empty() || !ctx.state.services.pending.is_empty();
 
     for warning in loaded.warnings.iter().chain(&resolved.warnings) {
         crate::pty_events::notify_error(ctx, "Config warning", warning.clone());
@@ -158,7 +161,8 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
         );
     }
 
-    if start_theme_tick || start_workbar_tick {
+    if start_theme_tick || start_workbar_tick || start_services_tick {
+        let services_epoch = ctx.state.services.epoch;
         Update::with_command(Command::spawn(move |link: CommandLink<Msg>| {
             if start_theme_tick {
                 // Arming the first tick must not hold this worker for 150ms while the pollers
@@ -167,6 +171,14 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
             }
             if start_workbar_tick {
                 link.send(Msg::WorkbarTick);
+            }
+            if start_services_tick {
+                link.send_after(
+                    Duration::from_secs(1),
+                    Msg::ServicesTick {
+                        epoch: services_epoch,
+                    },
+                );
             }
         }))
     } else {

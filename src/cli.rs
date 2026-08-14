@@ -37,7 +37,7 @@ pub(crate) struct ControlCli {
     request: control::ControlRequest,
 }
 
-/// `rozi agent-slots`: the stdio bridge a program uses to publish the agents running inside its
+/// `rozi publish`: the stdio bridge a program uses to publish the activity rows running inside its
 /// own pane.
 ///
 /// This exists so a publisher needs no IPC code of its own. On Windows `ROZI_SOCKET` names a
@@ -46,8 +46,15 @@ pub(crate) struct ControlCli {
 /// that already owns endpoint discovery and its security checks keeps every publisher to plain
 /// line-delimited JSON on stdin and stdout.
 #[derive(Debug)]
-pub(crate) struct AgentSlotsCli {
+pub(crate) struct PublishCli {
     socket: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PickCli {
+    pub title: Option<String>,
+    pub placeholder: Option<String>,
+    pub socket: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -62,7 +69,8 @@ pub(crate) enum ParsedCli {
     Update(UpdateCommand),
     Run(CliArgs),
     Control(ControlCli),
-    AgentSlots(AgentSlotsCli),
+    Publish(PublishCli),
+    Pick(PickCli),
     Server {
         name: String,
         fresh: bool,
@@ -430,9 +438,48 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }),
                 }));
             }
-            "agent-slots" => {
-                reject_trailing_control_args(&mut iter, "agent-slots")?;
-                return Ok(ParsedCli::AgentSlots(AgentSlotsCli {
+            "publish" => {
+                reject_trailing_control_args(&mut iter, "publish")?;
+                return Ok(ParsedCli::Publish(PublishCli {
+                    socket: reject_launch_flags(&cli, socket)?,
+                }));
+            }
+            "pick" => {
+                let mut title = None;
+                let mut placeholder = None;
+                let mut passthrough = false;
+                while let Some(arg) = iter.next() {
+                    match arg.as_str() {
+                        "--" if !passthrough => passthrough = true,
+                        "--title" | "-t" if !passthrough => {
+                            title = Some(
+                                iter.next()
+                                    .ok_or_else(|| "--title requires a title".to_string())?,
+                            );
+                        }
+                        other if !passthrough && other.starts_with("--title=") => {
+                            title = Some(other.trim_start_matches("--title=").to_string());
+                        }
+                        "--placeholder" | "-p" if !passthrough => {
+                            placeholder = Some(iter.next().ok_or_else(|| {
+                                "--placeholder requires a placeholder".to_string()
+                            })?);
+                        }
+                        other if !passthrough && other.starts_with("--placeholder=") => {
+                            placeholder =
+                                Some(other.trim_start_matches("--placeholder=").to_string());
+                        }
+                        other if !passthrough && other.starts_with('-') && other != "-" => {
+                            return Err(format!("unexpected pick flag `{other}`"));
+                        }
+                        _ => {
+                            return Err(format!("unexpected argument `{arg}` after pick"));
+                        }
+                    }
+                }
+                return Ok(ParsedCli::Pick(PickCli {
+                    title,
+                    placeholder,
                     socket: reject_launch_flags(&cli, socket)?,
                 }));
             }
@@ -668,11 +715,11 @@ fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, St
     }
 }
 
-/// Bridge stdin/stdout to an `agent-slots` control stream for the calling pane.
+/// Bridge stdin/stdout to a `publish` control stream for the calling pane.
 ///
-/// Runs until either side closes: rozi withdraws the pane's slots on EOF, so a publisher that
+/// Runs until either side closes: rozi withdraws the pane's rows on EOF, so a publisher that
 /// exits or crashes cleans up by construction and never has to say so.
-pub(crate) fn run_agent_slots_cli(command: AgentSlotsCli) -> Result<()> {
+pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
     let path = match discover_socket(command.socket) {
         Ok(path) => path,
         Err(err) => {
@@ -684,7 +731,7 @@ pub(crate) fn run_agent_slots_cli(command: AgentSlotsCli) -> Result<()> {
         .ok()
         .and_then(|value| value.parse::<crate::state::PaneId>().ok())
     else {
-        eprintln!("agent-slots must run inside a rozi pane (ROZI_PANE is unset)");
+        eprintln!("publish must run inside a rozi pane (ROZI_PANE is unset)");
         std::process::exit(2);
     };
     let mut stream = match IpcEndpoint::at_path(&path).connect() {
@@ -695,7 +742,7 @@ pub(crate) fn run_agent_slots_cli(command: AgentSlotsCli) -> Result<()> {
         }
     };
     let request = control::ControlRequest {
-        command: control::ControlCommand::AgentSlots,
+        command: control::ControlCommand::Publish,
         source_pane: Some(source_pane),
     };
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
@@ -733,6 +780,74 @@ pub(crate) fn run_agent_slots_cli(command: AgentSlotsCli) -> Result<()> {
         let line = line?;
         writeln!(stream, "{line}")?;
     }
+    Ok(())
+}
+
+pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
+    let path = match discover_socket(command.socket) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    };
+    let mut stream = match IpcEndpoint::at_path(&path).connect() {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("could not connect to {}: {err}", path.display());
+            std::process::exit(2);
+        }
+    };
+    let request = control::ControlRequest {
+        command: control::ControlCommand::Pick {
+            title: command.title,
+            placeholder: command.placeholder,
+        },
+        source_pane: None,
+    };
+    writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
+
+    let reader_stream = stream.try_clone()?;
+    let mut reply = String::new();
+    let mut reader = BufReader::new(reader_stream);
+    reader.read_line(&mut reply)?;
+    let value: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
+    if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
+            eprintln!("{error}");
+        }
+        std::process::exit(1);
+    }
+
+    let reader_thread = std::thread::spawn(move || {
+        for line in reader.lines() {
+            let Ok(line) = line else { break };
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                if value.get("selected").is_some() {
+                    println!("{line}");
+                    let _ = std::io::stdout().flush();
+                    std::process::exit(0);
+                } else if value.get("cancelled").is_some() {
+                    println!("{line}");
+                    let _ = std::io::stdout().flush();
+                    std::process::exit(1);
+                }
+            }
+        }
+        std::process::exit(2);
+    });
+
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { break };
+        if writeln!(stream, "{line}").is_err() {
+            break;
+        }
+    }
+
+    let _ = reader_thread.join();
     Ok(())
 }
 
@@ -1146,7 +1261,11 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "move-to-workspace <1-9>",
                 "Move the focused pane to a workspace",
             ),
-            row("agent-slots", "Publish this pane's agent rows over stdio"),
+            row("publish", "Publish this pane's activity rows over stdio"),
+            row(
+                "pick [--title T] [--placeholder P]",
+                "Stream rows into a modal picker for selection",
+            ),
             row("metrics", "Print runtime metrics as JSON"),
         ],
     },
@@ -1855,7 +1974,7 @@ mod tests {
             vec!["--config", "/tmp/other.toml", "list-panes"],
             vec!["--read-only", "list-panes"],
             vec!["--pick", "metrics"],
-            vec!["--remote", "workbox", "agent-slots"],
+            vec!["--remote", "workbox", "publish"],
             vec!["--remote", "workbox", "capture-pane"],
         ] {
             let parsed = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect());

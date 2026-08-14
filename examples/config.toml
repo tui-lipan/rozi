@@ -251,8 +251,8 @@
 #width = 32
 # Dock side: "left" or "right".
 #position = "left"
-# Catalog of available tabs. Built-ins: agents, panes, sessions, files, git.
-#tabs = ["agents", "panes", "sessions", "files", "git"]
+# Catalog of available tabs. Built-ins: activity, panes, sessions, files, git.
+#tabs = ["activity", "panes", "sessions", "files", "git"]
 # A tab may also be a table, which is how built-ins take options and how custom tabs are
 # defined. Fields: name, label, exactly one of entries (a launcher list of
 # { label, run|send|popup, keep_open }) or command (+ interval seconds), and on_click.
@@ -262,7 +262,7 @@
 # Durable placement: one or two ordered arrays of ids from `tabs`. Tabs missing from it
 # are appended to the first panel so they cannot become unreachable. Naming `tabs` alone
 # replaces this placement too, collapsing that catalog into one panel.
-#panels = [["agents", "panes", "sessions"], ["files", "git"]]
+#panels = [["activity", "panes", "sessions"], ["files", "git"]]
 # Render the two panel groups stacked vertically. Inferred from `panels` when omitted.
 #split = true
 # Fraction of split-sidebar height given to the top panel, clamped to 0.15-0.85.
@@ -367,6 +367,17 @@
 [[hooks]]
 #event = "workspace-switched"
 #run = "logger workspace=$ROZI_WORKSPACE"
+
+# Supervised background services started alongside rozi and restarted if they exit.
+# Services inherit ROZI_SOCKET and standard environment, with stdio discarded.
+# restart: "on-failure" (default, restarts on non-zero exit), "always", or "never".
+# Backoff is exponential (1s -> 2s -> 4s -> 8s -> 16s -> 30s max), reset after 60s uptime.
+[[services]]
+#name = "git-watcher"
+#run = "cargo-watch -x check"
+#cwd = "~"
+#restart = "on-failure"
+#env = { RUST_LOG = "info" }
 
 # Rebind built-in actions, or define new commands. Three binding forms:
 #   "b"              bare key - replaces the default and follows the [input] scheme

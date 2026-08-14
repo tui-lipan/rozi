@@ -9,20 +9,45 @@ language you like, running out of process, unable to take the UI down with it.
 
 Everything below assumes `ROZI_SOCKET` is set, which it is inside any rozi pane.
 
+## Two things that will bite you first
+
+**The `rozi` binary has to be on `PATH`.** A pane is told its socket and its pane id, but not where
+rozi lives, so every recipe here invokes `rozi` by name. A dev build started with `cargo run` is not
+on `PATH`, and neither is a binary installed under another name. Guard your scripts rather than
+letting them fail obscurely:
+
+```bash
+if ! command -v "${ROZI_BIN:-rozi}" >/dev/null 2>&1; then
+  echo "rozi is not on PATH (and ROZI_BIN is unset)" >&2
+  exit 127
+fi
+rozi() { command "${ROZI_BIN:-rozi}" "$@"; }   # must come *after* the check,
+                                               # or `command -v` finds this function
+```
+
+**A pipeline reports its last stage, not the failed one.** `git branch | rozi pick | xargs -r git
+switch` exits `0` even when `rozi` is missing entirely, because `xargs -r` with no input succeeds —
+so a `keep_open` pane cheerfully prints `exited with status 0` over the error. `set -o pipefail`
+fixes it in bash but is not POSIX, so prefer a command substitution and let `&&` carry the status:
+
+```bash
+branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) && git switch "$branch"
+```
+
 ## Pick a branch, worktree, or file
 
 `rozi pick` renders rozi's own palette. In its default mode stdin is one label per line and stdout
 is the chosen line, so it drops into a pipeline with no `jq`:
 
 ```bash
-git branch --format='%(refname:short)' | rozi pick --title Branch | xargs -r git switch
+branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) && git switch "$branch"
 ```
 
 Bind it to a chord so it works from anywhere:
 
 ```toml
 [keys]
-"ctrl-a b" = { run = "git branch --format='%(refname:short)' | rozi pick --title Branch | xargs -r git switch" }
+"ctrl-a i" = { run = "b=$(git branch --format='%(refname:short)' | rozi pick --title Branch) && git switch \"$b\"" }
 ```
 
 `--json` buys what a plain list cannot express — sections, right-aligned badges, and rows that stay
@@ -32,7 +57,7 @@ visible while explaining why they are unavailable:
 #!/usr/bin/env bash
 # Worktrees, with the ones already open in a pane greyed out rather than hidden.
 open=$(rozi list-panes | jq -r '.data[].cwd // empty')
-git worktree list --porcelain \
+chosen=$(git worktree list --porcelain \
   | awk '/^worktree /{print $2}' \
   | jq -R --arg open "$open" --arg here "$PWD" '{
       id: ., label: (split("/") | last), description: .,
@@ -41,8 +66,8 @@ git worktree list --porcelain \
     }' \
   | jq -sc '{rows: .}' \
   | rozi pick --json --title Worktree \
-  | jq -r .selected \
-  | xargs -r -I{} rozi new-pane --cwd {} --focus
+  | jq -r .selected)
+[ -n "$chosen" ] && rozi new-pane --cwd "$chosen" --focus
 ```
 
 The `disabled` field is the part a generic fuzzy finder cannot do: the row stays on screen with the
@@ -142,7 +167,7 @@ multiplexer. Open it in a popup, and route whatever it returns into a pane:
 
 ```toml
 [keys]
-"ctrl-a e" = { popup = "yazi --chooser-file=/tmp/rozi-chosen && rozi new-pane \"$EDITOR $(cat /tmp/rozi-chosen)\" --focus", keep_open = false }
+"ctrl-a shift-e" = { popup = "yazi --chooser-file=/tmp/rozi-chosen && rozi new-pane \"$EDITOR $(cat /tmp/rozi-chosen)\" --focus", keep_open = false }
 ```
 
 The file tree in the sidebar already passes an activated path as `ROZI_FILE`, so a `[keys] run`
@@ -154,8 +179,8 @@ Shell integration records each command's output, so `capture-pane --last-output`
 searchable history that types the winner back into the pane:
 
 ```bash
-history | sed 's/^ *[0-9]* *//' | rozi pick --title History \
-  | xargs -r -0 rozi send-text
+cmd=$(history | sed 's/^ *[0-9]* *//' | rozi pick --title History) \
+  && rozi send-text "$cmd"
 ```
 
 ## What is still out of scope

@@ -1260,6 +1260,11 @@ pub(crate) fn pane_env(
     if !remote_attached && let Some(path) = control_socket_path {
         env.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
     }
+    // Same reasoning for the binary: a remote PTY runs on the other host, where this client's own
+    // path means nothing. A remote pane falls back to whatever `rozi` the remote has on `PATH`.
+    if !remote_attached && let Some(path) = crate::platform::paths::current_binary() {
+        env.push(("ROZI_BIN".to_string(), path.display().to_string()));
+    }
     // Per-spawn additions last so a caller-supplied value wins over the standard set.
     env.extend(pane.identity.env.iter().cloned());
     env
@@ -2229,6 +2234,29 @@ mod tests {
         );
         assert!(remote.iter().any(|(k, _)| k == "ROZI"));
         assert!(remote.iter().any(|(k, _)| k == "ROZI_PANE"));
+    }
+
+    /// A pane is told where rozi is so a script does not have to assume a `PATH` install; a remote
+    /// pane is not, because this client's path names nothing on the other host.
+    #[test]
+    fn pane_env_advertises_the_binary_locally_but_not_remotely() {
+        let pane = Pane::new(1, 100, FloatRect::default());
+        let local = pane_env(None, &pane, false);
+        let advertised = local
+            .iter()
+            .find(|(k, _)| k == "ROZI_BIN")
+            .map(|(_, v)| v.clone())
+            .expect("local pane learns ROZI_BIN");
+        assert_eq!(
+            std::path::PathBuf::from(&advertised),
+            std::env::current_exe().expect("current exe")
+        );
+
+        let remote = pane_env(None, &pane, true);
+        assert!(
+            remote.iter().all(|(k, _)| k != "ROZI_BIN"),
+            "remote attach must not advertise the client binary: {remote:?}"
+        );
     }
 
     /// A spawn parks the Scrollable viewport on the new pane. The scratch spawn skipped that, so

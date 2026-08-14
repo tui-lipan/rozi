@@ -11,10 +11,11 @@ Everything below assumes `ROZI_SOCKET` is set, which it is inside any rozi pane.
 
 ## Two things that will bite you first
 
-**The `rozi` binary has to be on `PATH`.** A pane is told its socket and its pane id, but not where
-rozi lives, so every recipe here invokes `rozi` by name. A dev build started with `cargo run` is not
-on `PATH`, and neither is a binary installed under another name. Guard your scripts rather than
-letting them fail obscurely:
+**Call rozi through `$ROZI_BIN`, not `PATH`.** Panes, hooks, and services all receive `ROZI_BIN`
+holding the path of the running binary, precisely so a recipe does not have to assume an install on
+`PATH` — a build started with `cargo run` is not on it, and neither is a binary installed under
+another name. Prefer it, and fall back for the case where it is genuinely absent (a remote pane,
+where this client's path means nothing on the other host):
 
 ```bash
 if ! command -v "${ROZI_BIN:-rozi}" >/dev/null 2>&1; then

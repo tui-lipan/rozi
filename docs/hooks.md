@@ -61,6 +61,7 @@ Hook commands inherit the client process environment and receive these additiona
 | Variable | Value |
 | --- | --- |
 | `ROZI_EVENT` | The event id from the table above. Always set. |
+| `ROZI_BIN` | Path to the running rozi binary, for hooks that call back into it without assuming a `PATH` install. |
 | `ROZI_SOCKET` | The current UI control endpoint path. Set only when the client successfully created a control endpoint. On Windows this is the discovery-entry path accepted by `rozi --socket`, not a raw named-pipe name. |
 | `ROZI_REMOTE_HOST` | Set when the UI is attached via `--remote`; the resolved remote host string. Hooks still run on the **client** machine. |
 | `ROZI_<FIELD>` | One variable for each field listed for the event. Field names are uppercased; underscores are retained. |

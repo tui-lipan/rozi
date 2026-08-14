@@ -28,6 +28,9 @@ Every spawned pane receives:
 - `ROZI=1`
 - `ROZI_PANE=<pane id>`
 - `ROZI_SOCKET=<endpoint path>` when control is available
+- `ROZI_BIN=<path to this rozi binary>`, so a script can call back without assuming a `PATH`
+  install. Not set for a pane reached over `--remote`: that PTY runs on the other host, where
+  this client's path names nothing.
 
 ## CLI
 

@@ -89,6 +89,13 @@ pub(crate) fn spawn_service_child(
     if let Some(socket) = control_socket {
         command.env("ROZI_SOCKET", socket);
     }
+    // A service exists to talk back to rozi, so it is the caller least able to assume a `PATH`
+    // install. Config `env` is applied after, so a service can override either.
+    if let Some(binary) = crate::platform::paths::current_binary() {
+        command.env("ROZI_BIN", binary);
+    }
+    command.env("ROZI", "1");
+    command.env("ROZI_SERVICE", &config.name);
     command.envs(&config.env);
     command.stdin(std::process::Stdio::null());
     command.stdout(std::process::Stdio::null());
@@ -264,6 +271,38 @@ mod tests {
 
         group.terminate(&mut child);
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    /// A service is the caller least able to assume a `PATH` install, so it is handed the binary
+    /// path outright.
+    #[cfg(unix)]
+    #[test]
+    fn a_service_learns_the_binary_path_and_its_own_name() {
+        let out = std::env::temp_dir().join(format!("rozi-svc-env-{}", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let config = ServiceConfig {
+            name: "env-probe".to_string(),
+            run: format!(
+                "printf '%s\\n%s\\n%s' \"$ROZI_BIN\" \"$ROZI_SERVICE\" \"$ROZI\" > '{}'",
+                out.display()
+            ),
+            cwd: None,
+            restart: ServiceRestart::Never,
+            env: BTreeMap::new(),
+        };
+
+        let (mut child, _group) = spawn_service_child(&config, None, None).expect("spawn");
+        child.wait().expect("probe exits");
+
+        let written = std::fs::read_to_string(&out).expect("probe wrote its environment");
+        let mut lines = written.lines();
+        assert_eq!(
+            std::path::Path::new(lines.next().unwrap()),
+            std::env::current_exe().unwrap()
+        );
+        assert_eq!(lines.next(), Some("env-probe"));
+        assert_eq!(lines.next(), Some("1"));
+        let _ = std::fs::remove_file(&out);
     }
 
     /// `reap_if_exited` answers `None` while the child runs, reaps it once it exits, and is

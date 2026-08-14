@@ -493,11 +493,13 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `ROZI_SOCKET` points CLI control commands at a live UI control socket.
 - `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` / `TERM=dumb` decide whether `--help` is styled, via
   `platform::ansi`. Plain-stdout styling goes through there, never raw escapes at the call site.
-- `ROZI=1`, `ROZI_PANE`, and `ROZI_SOCKET` are injected into spawned panes;
+- `ROZI=1`, `ROZI_PANE`, `ROZI_SOCKET`, and `ROZI_BIN` are injected into spawned panes
+  (`ROZI_BIN` is the running binary's own path, so a script never assumes a `PATH` install;
+  it and `ROZI_SOCKET` are both suppressed for a `--remote` pane);
   `PaneIdentity::env` adds never-persisted per-spawn variables (the file tree passes the activated
   path as `ROZI_FILE` so a `run`/`popup` command never has a filename spliced into it).
 - `[[hooks]]` runs client-side commands for the 16 `events::EventKind` variants and injects
-  `ROZI_EVENT`, event fields, and `ROZI_SOCKET` (plus `ROZI_REMOTE_HOST` when attached via
+  `ROZI_EVENT`, event fields, `ROZI_SOCKET`, and `ROZI_BIN` (plus `ROZI_REMOTE_HOST` when attached via
   `--remote`); see `docs/hooks.md`.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.
 - `[[rules]]` applies first-match command substring placement to interactive command-carrying pane

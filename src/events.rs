@@ -193,6 +193,11 @@ fn hook_env(event: &Event, control_socket_path: Option<&std::path::Path>) -> Vec
     if let Some(path) = control_socket_path {
         env.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
     }
+    // Hooks always run on the client, so this client's own path is the right one even when the
+    // session it is watching lives on another host.
+    if let Some(path) = crate::platform::paths::current_binary() {
+        env.push(("ROZI_BIN".to_string(), path.display().to_string()));
+    }
     env.extend(
         event
             .fields
@@ -271,6 +276,12 @@ mod tests {
         assert!(env.contains(&("ROZI_EVENT".into(), "workspace-switched".into())));
         assert!(env.contains(&("ROZI_WORKSPACE".into(), "2".into())));
         assert!(env.contains(&("ROZI_SOCKET".into(), "/tmp/rozi.sock".into())));
+        // A hook that calls back into rozi should not have to assume a `PATH` install either.
+        assert!(
+            env.iter().any(|(key, value)| key == "ROZI_BIN"
+                && std::path::Path::new(value) == std::env::current_exe().unwrap()),
+            "hooks learn the binary path: {env:?}"
+        );
     }
 
     #[cfg(unix)]

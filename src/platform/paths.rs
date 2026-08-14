@@ -212,6 +212,19 @@ pub fn fallback_runtime_dir_path() -> PathBuf {
     std::env::temp_dir().join(format!("{APP_DIR}-{owner}"))
 }
 
+/// This binary's own path, injected into spawned processes as `ROZI_BIN`.
+///
+/// Everything on the extension surface - a picker, a publisher, a hook, a service - reaches back
+/// into rozi by running `rozi`, which assumes an install on `PATH`. A build started with
+/// `cargo run`, a binary installed under another name, and a portable copy are all counterexamples,
+/// and each one fails as a bare `command not found` deep inside a user's pipeline. Handing out the
+/// path removes the assumption.
+///
+/// `None` when the platform cannot answer, which is not an error: callers fall back to `PATH`.
+pub fn current_binary() -> Option<PathBuf> {
+    std::env::current_exe().ok()
+}
+
 /// Directory for temporary scrollback dumps opened in `$EDITOR` (`state_dir/scrollback`).
 pub fn scrollback_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
     let dir = state_dir(env).join("scrollback");

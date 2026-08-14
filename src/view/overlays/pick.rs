@@ -102,8 +102,8 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
     action_palette(ctx, &title, pick_key(), Msg::ClosePick, body, width)
 }
 
-/// Footer chords: select, whatever the caller declared, and cancel. Built the same way every other
-/// picker builds its own, so a caller-driven one is not visibly a second-class citizen.
+/// Footer chords: select, plus whatever the caller declared. Built the same way every other picker
+/// builds its own, so a caller-driven one is not visibly a second-class citizen.
 fn pick_hints(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let mut row = hint_row().child(hint_pill(theme, "select", "enter"));
@@ -118,7 +118,9 @@ fn pick_hints(ctx: &Context<AppRoot>) -> Element {
             ));
         }
     }
-    row.child(hint_pill(theme, "cancel", "esc")).into()
+    // No `esc` pill: cancelling is the app-wide default for every overlay, and the built-in
+    // pickers do not spend footer space restating it.
+    row.into()
 }
 
 /// Match a declared action chord against the key the palette's input did not consume.

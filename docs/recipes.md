@@ -9,7 +9,7 @@ language you like, running out of process, unable to take the UI down with it.
 
 Everything below assumes `ROZI_SOCKET` is set, which it is inside any rozi pane.
 
-## Two things that will bite you first
+## Three things that will bite you first
 
 **Call rozi through `$ROZI_BIN`, not `PATH`.** Panes, hooks, and services all receive `ROZI_BIN`
 holding the path of the running binary, precisely so a recipe does not have to assume an install on
@@ -24,6 +24,15 @@ if ! command -v "${ROZI_BIN:-rozi}" >/dev/null 2>&1; then
 fi
 rozi() { command "${ROZI_BIN:-rozi}" "$@"; }   # must come *after* the check,
                                                # or `command -v` finds this function
+```
+
+**Cancelling exits 1, and that is not an error.** `rozi pick` reports a cancellation with status 1
+so a `&&` chain stops rather than acting on an empty choice. A script must not propagate it: an
+`exec` binding toasts on any non-zero exit, so pressing Esc would look like a broken command.
+
+```bash
+chosen=$(… | rozi pick …) || true   # a cancel is a decision, not a failure
+[ -n "$chosen" ] || exit 0
 ```
 
 **A pipeline reports its last stage, not the failed one.** `git branch | rozi pick | xargs -r git
@@ -43,6 +52,9 @@ is the chosen line, so it drops into a pipeline with no `jq`:
 ```bash
 branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) && git switch "$branch"
 ```
+
+Straight from a shell that is fine — a cancelled `&&` chain just does nothing. From a keybinding,
+guard it as shown above so Esc does not toast.
 
 That plain list cannot say which branch you are already on. `--json` can, and the convention to
 follow is the layout picker's: a right-aligned `current` badge, plus `active` to tint the row -
@@ -86,8 +98,9 @@ chosen=$(git worktree list --porcelain \
     }' \
   | jq -sc '{rows: .}' \
   | rozi pick --json --title Worktree \
-  | jq -r .selected)
-[ -n "$chosen" ] && rozi new-pane --cwd "$chosen" --focus
+  | jq -r '.selected // empty') || true
+[ -n "$chosen" ] || exit 0
+rozi new-pane --cwd "$chosen" --focus
 ```
 
 The `disabled` field is the part a generic fuzzy finder cannot do: the row stays on screen with the

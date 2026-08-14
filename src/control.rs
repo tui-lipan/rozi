@@ -142,6 +142,18 @@ pub enum ControlCommand {
         #[serde(default)]
         reason: Option<String>,
     },
+    /// Raise a toast from a script.
+    ///
+    /// The automation surface can act but not report: a command that closes its own picker, or
+    /// runs under `[keys] exec` with no pane, finishes invisibly. This is the "useful off-screen
+    /// result" toasts are reserved for - not a receipt for something already on screen.
+    Notify {
+        message: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        level: NotifyLevel,
+    },
     Pick {
         #[serde(default)]
         title: Option<String>,
@@ -154,6 +166,27 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         actions: Vec<crate::state::PickAction>,
     },
+}
+
+/// How prominent a [`ControlCommand::Notify`] toast is.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NotifyLevel {
+    #[default]
+    Info,
+    Error,
+}
+
+impl NotifyLevel {
+    pub fn parse_cli(value: &str) -> std::result::Result<Self, String> {
+        match value.to_ascii_lowercase().as_str() {
+            "info" => Ok(Self::Info),
+            "error" => Ok(Self::Error),
+            other => Err(format!(
+                "unknown level `{other}`; expected `info` or `error`"
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -9,7 +9,7 @@ language you like, running out of process, unable to take the UI down with it.
 
 Everything below assumes `ROZI_SOCKET` is set, which it is inside any rozi pane.
 
-## Three things that will bite you first
+## Four things that will bite you first
 
 **Call rozi through `$ROZI_BIN`, not `PATH`.** Panes, hooks, and services all receive `ROZI_BIN`
 holding the path of the running binary, precisely so a recipe does not have to assume an install on
@@ -33,6 +33,14 @@ so a `&&` chain stops rather than acting on an empty choice. A script must not p
 ```bash
 chosen=$(… | rozi pick …) || true   # a cancel is a decision, not a failure
 [ -n "$chosen" ] || exit 0
+```
+
+**A closing action is silent unless you say something.** An `exec` binding has no pane and toasts
+only on failure, so a script that succeeds and exits reports nothing at all. Use `rozi notify` when
+the result is off screen:
+
+```bash
+git switch "$branch" && rozi notify "switched to $branch"
 ```
 
 **A pipeline reports its last stage, not the failed one.** `git branch | rozi pick | xargs -r git

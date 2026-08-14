@@ -84,6 +84,11 @@ pub(crate) fn handle_control_request(
         ControlCommand::CapturePane { target, scrollback } => {
             capture_pane(ctx, target.or(envelope.request.source_pane), scrollback)
         }
+        ControlCommand::Notify {
+            message,
+            title,
+            level,
+        } => notify_command(ctx, message, title, level),
         ControlCommand::SwitchWorkspace { index } => switch_workspace_command(ctx, index),
         ControlCommand::MoveToWorkspace { index } => move_to_workspace_command(ctx, index),
         ControlCommand::Popup {
@@ -460,6 +465,37 @@ fn capture_pane(
         }
     };
     ControlResponse::ok(PaneCapture { id, text })
+}
+
+/// Raise a toast on behalf of a script.
+///
+/// Empty messages are rejected rather than shown: a blank toast is a bug in the caller, and it
+/// would still occupy the slot a real message needs.
+fn notify_command(
+    ctx: &mut Context<AppRoot>,
+    message: String,
+    title: Option<String>,
+    level: crate::control::NotifyLevel,
+) -> ControlResponse {
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return ControlResponse::error("notify requires a message");
+    }
+    match level {
+        // `title` is meaningful only here: a titled toast is drawn in the error style, so an
+        // `info` carrying one would read as a failure. Info stays the single-line form.
+        crate::control::NotifyLevel::Error => {
+            crate::pty_events::notify_error(
+                ctx,
+                title.unwrap_or_else(|| "Notice".to_string()),
+                message,
+            );
+        }
+        crate::control::NotifyLevel::Info => {
+            crate::pty_events::notify_info(ctx, message);
+        }
+    }
+    ControlResponse::empty()
 }
 
 fn switch_workspace_command(ctx: &mut Context<AppRoot>, index: usize) -> ControlResponse {
@@ -963,6 +999,59 @@ mod tests {
             .expect("spawn new-pane focus test thread")
             .join()
             .expect("new-pane focus test thread completes");
+    }
+
+    /// A blank toast would occupy the slot a real message needs, so it is refused rather than
+    /// drawn empty.
+    #[test]
+    fn notify_refuses_an_empty_message() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                for blank in ["", "   "] {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    backend
+                        .dispatch(crate::Msg::ControlRequest(
+                            crate::control::ControlEnvelope {
+                                request: crate::control::ControlRequest {
+                                    command: crate::control::ControlCommand::Notify {
+                                        message: blank.to_string(),
+                                        title: None,
+                                        level: crate::control::NotifyLevel::Info,
+                                    },
+                                    source_pane: None,
+                                },
+                                reply: tx,
+                            },
+                        ))
+                        .expect("dispatch notify");
+                    let response = rx.try_recv().expect("answered");
+                    assert!(!response.ok, "an empty message was accepted");
+                    assert_eq!(response.error.as_deref(), Some("notify requires a message"));
+                }
+
+                let (tx, rx) = std::sync::mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(
+                        crate::control::ControlEnvelope {
+                            request: crate::control::ControlRequest {
+                                command: crate::control::ControlCommand::Notify {
+                                    message: "deploy finished".into(),
+                                    title: None,
+                                    level: crate::control::NotifyLevel::Info,
+                                },
+                                source_pane: None,
+                            },
+                            reply: tx,
+                        },
+                    ))
+                    .expect("dispatch notify");
+                assert!(rx.try_recv().expect("answered").ok);
+            })
+            .expect("spawn notify test thread")
+            .join()
+            .expect("notify test thread completes");
     }
 
     #[test]

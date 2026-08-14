@@ -410,6 +410,40 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }),
                 }));
             }
+            "notify" => {
+                let mut message = None;
+                let mut title = None;
+                let mut level = control::NotifyLevel::default();
+                let mut passthrough = false;
+                while let Some(arg) = iter.next() {
+                    match arg.as_str() {
+                        "--" if !passthrough => passthrough = true,
+                        "--title" if !passthrough => {
+                            title = Some(require_value(&mut iter, "--title requires text")?);
+                        }
+                        "--level" if !passthrough => {
+                            let value = require_value(&mut iter, "--level requires a value")?;
+                            level = control::NotifyLevel::parse_cli(&value)?;
+                        }
+                        other if !passthrough && other.starts_with('-') && other != "-" => {
+                            return Err(format!("unexpected notify flag `{other}`"));
+                        }
+                        _ if message.is_none() => message = Some(arg),
+                        _ => return Err(format!("unexpected argument `{arg}` after notify")),
+                    }
+                }
+                let Some(message) = message else {
+                    return Err("notify requires a message".to_string());
+                };
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket: reject_launch_flags(&cli, socket)?,
+                    request: control_request(control::ControlCommand::Notify {
+                        message,
+                        title,
+                        level,
+                    }),
+                }));
+            }
             "status" => {
                 let first = iter
                     .next()
@@ -1326,6 +1360,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "move-to-workspace <1-9>",
                 "Move the focused pane to a workspace",
             ),
+            row(
+                "notify <MESSAGE> [--title T] [--level info|error]",
+                "Raise a toast from a script",
+            ),
             row("publish", "Publish this pane's activity rows over stdio"),
             row(
                 "pick [--title T] [--placeholder P] [--json]",
@@ -2054,6 +2092,63 @@ mod tests {
             parse_cli_args(vec!["pick".into(), "--jsn".into()]).is_err(),
             "a mistyped flag must not be swallowed"
         );
+    }
+
+    /// `notify` is how a script reports an off-screen result, so its parsing has to survive
+    /// messages that look like flags and reject a level it cannot honour.
+    #[test]
+    fn notify_parses_message_title_and_level() {
+        let parsed = parse_cli_args(vec![
+            "notify".into(),
+            "deploy finished".into(),
+            "--title".into(),
+            "Deploy".into(),
+            "--level".into(),
+            "error".into(),
+        ])
+        .expect("notify parses");
+        match parsed {
+            ParsedCli::Control(control) => match control.request.command {
+                control::ControlCommand::Notify {
+                    message,
+                    title,
+                    level,
+                } => {
+                    assert_eq!(message, "deploy finished");
+                    assert_eq!(title.as_deref(), Some("Deploy"));
+                    assert_eq!(level, control::NotifyLevel::Error);
+                }
+                other => panic!("wrong command: {other:?}"),
+            },
+            other => panic!("wrong parse: {other:?}"),
+        }
+
+        assert!(
+            parse_cli_args(vec!["notify".into()]).is_err(),
+            "a message is required"
+        );
+        assert!(
+            parse_cli_args(vec![
+                "notify".into(),
+                "x".into(),
+                "--level".into(),
+                "loud".into()
+            ])
+            .is_err(),
+            "an unknown level must not be silently downgraded"
+        );
+        // `--` lets a message that starts with a dash through.
+        let dashed = parse_cli_args(vec!["notify".into(), "--".into(), "-1 test failed".into()])
+            .expect("dashed message parses");
+        match dashed {
+            ParsedCli::Control(control) => match control.request.command {
+                control::ControlCommand::Notify { message, .. } => {
+                    assert_eq!(message, "-1 test failed");
+                }
+                other => panic!("wrong command: {other:?}"),
+            },
+            other => panic!("wrong parse: {other:?}"),
+        }
     }
 
     #[test]

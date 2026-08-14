@@ -78,6 +78,7 @@ rozi capture-pane --scrollback full
 rozi capture-pane --last-output
 rozi status <VALUE> [--reason <TEXT>]
 rozi status --clear
+rozi notify <MESSAGE> [--title <TEXT>] [--level info|error]
 rozi pick [--title <TEXT>] [--placeholder <TEXT>]
 rozi publish
 ```
@@ -89,6 +90,8 @@ rozi publish
 `capture-pane` defaults to the visible grid. `--scrollback N` captures trailing history,
 `--scrollback full` captures all retained history, and `--last-output` captures the last shell
 integration command output. `status` reports a short pane status; `status --clear` removes it.
+`notify` raises a toast, for a result the user cannot otherwise see - a command that finished with
+no pane to print in. Do not use it to announce something already visible on screen.
 `pick` streams candidate rows from stdin into a modal search palette and prints the selected item id to stdout upon user choice (or exits 1 if cancelled).
 `publish` is for a program running several agents or activities in one pane: it bridges stdin/stdout to
 rozi, publishing one JSON row list per line and reading back `{"activate":"<id>"}` when a user

@@ -59,6 +59,8 @@ rozi switch-workspace 2
 rozi move-to-workspace 3
 rozi status blocked --reason "needs approval"
 rozi status --clear
+rozi notify 'deploy finished'
+rozi notify 'tests failed' --title Build --level error
 rozi pick --title "Branch"
 ```
 
@@ -114,6 +116,14 @@ terminator stops flag parsing so arguments that look like options can be typed l
 (`send-keys -- -n hello`). All arguments are validated before any are sent; if a later key fails
 to deliver, earlier keys may already have reached the PTY — automation clients that retry on
 error should treat the pane as partially updated.
+
+`notify` raises a toast on behalf of a script. The automation surface can act but otherwise cannot
+report: a command that closes its own picker, or one bound through `[keys] exec` with no pane,
+finishes invisibly. That is the "useful off-screen result" toasts exist for — not a receipt for a
+change already on screen, which the
+[toast rule](configuration.md#in-app-toasts) rules out. `--level error` styles it as a failure and
+is the only level that uses `--title`, because a titled toast is drawn in the error style and a
+titled `info` would read as one. An empty message is rejected rather than drawn blank.
 
 `run-action` takes any keybindable action's stable id (the same ids used in `[keys]` config and
 shown in the command palette/help overlay), e.g. `toggle-float`, `spawn`, `close`. `capture-pane`
@@ -179,8 +189,8 @@ open. `subscribe` then streams newline-delimited event objects until disconnecte
 
 Requests use a `cmd` field: `list-panes`, `metrics`, `focus`, `send-text`, `send-keys`, `new-pane`,
 `run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`,
-`publish`, `pick`, or `subscribe`. A client may include `source_pane`; the CLI derives it from
-`ROZI_PANE`.
+`publish`, `pick`, `notify`, or `subscribe`. A client may include `source_pane`; the CLI derives it
+from `ROZI_PANE`.
 
 Examples:
 
@@ -207,6 +217,8 @@ Examples:
 {"cmd":"move-to-workspace","index":3}
 {"cmd":"set-status","target":2,"status":"blocked","reason":"needs approval"}
 {"cmd":"set-status","target":2,"status":null}
+{"cmd":"notify","message":"deploy finished"}
+{"cmd":"notify","message":"tests failed","title":"Build","level":"error"}
 {"cmd":"popup","command":"fzf","width":0.7,"height":0.6,"title":"files"}
 {"cmd":"subscribe","events":["pane-exited","pane-status-changed","workspace-switched"]}
 {"cmd":"pick","title":"Branch","placeholder":"Search branches…"}

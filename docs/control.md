@@ -234,12 +234,26 @@ disconnected rather than blocking the UI. Example:
 
 ## Picker protocol
 
-An external program can ask rozi to render a modal fuzzy search palette and return the user's choice:
+An external program can ask rozi to render a modal fuzzy search palette and return the user's choice.
+By default stdin is one row label per line and stdout is the chosen line, so a shell pipeline needs
+no `jq` at either end:
+
+```bash
+git branch --format='%(refname:short)' | rozi pick --title Branch
+ls | rozi pick --title Open | xargs -r $EDITOR
+```
+
+Plain mode sends the whole list once stdin closes. Pass `--json` to speak the wire format instead —
+for groups, badges, disabled rows, or to replace the row set while the palette is already open:
 
 ```bash
 git branch --format='{"id":"%(refname:short)","label":"%(refname:short)"}' \
-  | jq -sc '{rows:.}' | rozi pick --title Branch
+  | jq -sc '{rows:.}' | rozi pick --json --title Branch
 ```
+
+`--json` also prints the raw terminal line (`{"selected":"…"}`) rather than the bare id, and is the
+only mode that reports a cancellation on stdout. Both modes exit 0 on a selection, 1 on a
+cancellation, and 2 on a transport failure.
 
 Unlike one-shot commands, `pick` opens a streaming connection:
 

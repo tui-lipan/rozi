@@ -179,6 +179,7 @@ with search.
 | [Project profiles](docs/project-profiles.md) | Profile files and pane identity |
 | [Control socket](docs/control.md) | Driving rozi from scripts |
 | [Hooks](docs/hooks.md) | Running commands when events happen |
+| [Extension recipes](docs/recipes.md) | Worked examples built on the control socket |
 | [Vim/Neovim navigator](integrations/vim-rozi-navigator/) | One set of keys for editor splits and panes |
 | [Benchmarks](docs/benchmarks.md) | Performance suites and profiling |
 

@@ -197,6 +197,7 @@ export default defineConfig({
           { text: "Control Socket", link: "/control" },
           { text: "Hooks", link: "/hooks" },
           { text: "Agent Skill", link: "/agent-skill" },
+          { text: "Extension Recipes", link: "/recipes" },
         ],
       },
       {

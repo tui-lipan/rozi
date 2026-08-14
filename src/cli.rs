@@ -55,6 +55,10 @@ pub(crate) struct PickCli {
     pub title: Option<String>,
     pub placeholder: Option<String>,
     pub socket: Option<PathBuf>,
+    /// Speak the wire format on both sides instead of plain lines. Plain mode exists so a shell
+    /// pipeline needs no `jq` on either end; `--json` is for a caller that wants groups, badges,
+    /// disabled rows, or to replace the row set while the palette is open.
+    pub json: bool,
 }
 
 #[derive(Debug)]
@@ -447,10 +451,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "pick" => {
                 let mut title = None;
                 let mut placeholder = None;
+                let mut json = false;
                 let mut passthrough = false;
                 while let Some(arg) = iter.next() {
                     match arg.as_str() {
                         "--" if !passthrough => passthrough = true,
+                        "--json" if !passthrough => json = true,
                         "--title" | "-t" if !passthrough => {
                             title = Some(
                                 iter.next()
@@ -481,6 +487,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     title,
                     placeholder,
                     socket: reject_launch_flags(&cli, socket)?,
+                    json,
                 }));
             }
             "split" | "new-pane" => {
@@ -819,32 +826,53 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         std::process::exit(1);
     }
 
+    let json = command.json;
     let reader_thread = std::thread::spawn(move || {
         for line in reader.lines() {
             let Ok(line) = line else { break };
             if line.trim().is_empty() {
                 continue;
             }
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                if value.get("selected").is_some() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if let Some(selected) = value.get("selected").and_then(|v| v.as_str()) {
+                // Plain mode prints the id alone, so `rozi pick | xargs $EDITOR` needs no `jq`.
+                println!("{}", if json { &line } else { selected });
+                let _ = std::io::stdout().flush();
+                std::process::exit(0);
+            }
+            if value.get("cancelled").is_some() {
+                if json {
                     println!("{line}");
                     let _ = std::io::stdout().flush();
-                    std::process::exit(0);
-                } else if value.get("cancelled").is_some() {
-                    println!("{line}");
-                    let _ = std::io::stdout().flush();
-                    std::process::exit(1);
                 }
+                std::process::exit(1);
             }
         }
         std::process::exit(2);
     });
 
-    for line in std::io::stdin().lock().lines() {
-        let Ok(line) = line else { break };
-        if writeln!(stream, "{line}").is_err() {
-            break;
+    if command.json {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            if writeln!(stream, "{line}").is_err() {
+                break;
+            }
         }
+    } else {
+        // Plain mode batches at EOF rather than streaming: it exists for `ls | rozi pick`, where
+        // stdin closes immediately, and one send beats a redraw per line on a long pipeline. A
+        // caller that wants to grow the list while the palette is open uses `--json` and controls
+        // its own batching.
+        let rows: Vec<serde_json::Value> = std::io::stdin()
+            .lock()
+            .lines()
+            .map_while(std::result::Result::ok)
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::json!({ "id": line, "label": line }))
+            .collect();
+        let _ = writeln!(stream, "{}", serde_json::json!({ "rows": rows }));
     }
 
     let _ = reader_thread.join();
@@ -1263,8 +1291,8 @@ const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row("publish", "Publish this pane's activity rows over stdio"),
             row(
-                "pick [--title T] [--placeholder P]",
-                "Stream rows into a modal picker for selection",
+                "pick [--title T] [--placeholder P] [--json]",
+                "Choose a line of stdin in a modal picker",
             ),
             row("metrics", "Print runtime metrics as JSON"),
         ],
@@ -1963,6 +1991,32 @@ mod tests {
             .expect("parses"),
         );
         assert_eq!(dash.profile.as_deref(), Some("-"));
+    }
+
+    /// Plain lines are the default so a shell pipeline needs no `jq` on either end; `--json` is
+    /// the opt-in for callers that want groups, badges, or a live-updating row set.
+    #[test]
+    fn pick_defaults_to_plain_lines_and_takes_json_as_an_opt_in() {
+        let plain = match parse_cli_args(vec!["pick".into(), "--title".into(), "Branch".into()])
+            .expect("plain pick parses")
+        {
+            ParsedCli::Pick(pick) => pick,
+            other => panic!("expected a pick command, got {other:?}"),
+        };
+        assert!(!plain.json);
+        assert_eq!(plain.title.as_deref(), Some("Branch"));
+
+        let json =
+            match parse_cli_args(vec!["pick".into(), "--json".into()]).expect("json pick parses") {
+                ParsedCli::Pick(pick) => pick,
+                other => panic!("expected a pick command, got {other:?}"),
+            };
+        assert!(json.json);
+
+        assert!(
+            parse_cli_args(vec!["pick".into(), "--jsn".into()]).is_err(),
+            "a mistyped flag must not be swallowed"
+        );
     }
 
     #[test]

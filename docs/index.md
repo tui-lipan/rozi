@@ -29,6 +29,7 @@ explicitly.
 | [Control socket](control.md) | Per-run automation socket, pane environment, CLI commands, and JSON protocol. |
 | [Agent skill](agent-skill.md) | The operational contract printed by `rozi --skill` for coding agents controlling panes and sessions. |
 | [Hooks](hooks.md) | Event-triggered commands, event fields, environment variables, and control-socket callbacks. |
+| [Extension recipes](recipes.md) | Worked examples combining pickers, published rows, services, and hooks. |
 | [Benchmarks & profiling](benchmarks.md) | Criterion targets, baseline comparisons, live stress recipes, and Samply profiling. |
 | [Performance records](performance/README.md) | Current assessment, dated audit reports, and conventions for recording future results. |
 | [Performance audit playbook](performance/audit-playbook.md) | Reproduce a full CPU, memory, latency, scaling, lifecycle, and profiling audit. |

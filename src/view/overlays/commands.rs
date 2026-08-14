@@ -157,6 +157,9 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
         "toggle-control-takeover" => alias_list(&["takeover", "control safety", "collaboration"]),
         // The live label leads with Enable/Disable; keep the stable noun searchable as an exact hit.
         "toggle-sidebar" => alias_list(&["sidebar"]),
+        // A user command's label is whatever its author called it, so the group name is the only
+        // term shared by all of them - the same way "collaboration" reaches that cluster above.
+        id if id.starts_with("user.") => alias_list(&["custom"]),
         _ => Vec::new(),
     }
 }

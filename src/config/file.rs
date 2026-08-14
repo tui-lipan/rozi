@@ -137,6 +137,7 @@ pub(super) struct UserCommandTableSpec {
     pub(super) run: Option<String>,
     pub(super) send: Option<String>,
     pub(super) popup: Option<String>,
+    pub(super) exec: Option<String>,
     pub(super) keep_open: Option<bool>,
 }
 
@@ -198,6 +199,9 @@ impl SidebarLauncherEntrySpec {
             run: self.run,
             send: self.send,
             popup: self.popup,
+            // A launcher row is a visible affordance; running its command invisibly would leave
+            // the click with no feedback at all.
+            exec: None,
             keep_open: self.keep_open,
         }
     }

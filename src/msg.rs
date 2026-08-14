@@ -228,6 +228,11 @@ pub enum Msg {
     FollowPromptChoose(usize),
     FocusPane(PaneId),
     ClosePopup,
+    /// A `[keys]` `exec` command finished badly. It runs with no pane to print into, so the toast
+    /// is the only thing standing between a broken binding and silence.
+    UserCommandFailed {
+        message: String,
+    },
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
     MovePane(PaneId, i16, i16, bool),

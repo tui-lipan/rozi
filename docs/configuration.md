@@ -997,6 +997,7 @@ defining a new command that doesn't otherwise exist as an `Action`:
 g = { run = "lazygit", label = "Git UI" }
 alt-t = { run = "btop" }
 "ctrl-a e" = { send = "ls -la\n" }
+i = { exec = "git branch --format='%(refname:short)' | rozi pick --title Branch | xargs -r git switch", label = "Switch branch" }
 ```
 
 - `run = "<command>"` opens a new pane running that shell command (the same mechanism as the
@@ -1004,8 +1005,13 @@ alt-t = { run = "btop" }
 - `send = "<text>"` writes the literal text straight to the focused pane's PTY - TOML escapes
   like `\n` work as usual, so a binding can submit a ready-to-run command.
 - `popup = "<command>"` runs the command in a centered transient popup instead of a workspace pane.
-- Exactly one of `run`/`send`/`popup` must be set; a table with multiple values or none is warned about and
-  skipped.
+- `exec = "<command>"` runs the command detached, with no pane and no popup, and discards its
+  output. Use it when the whole result is a side effect - the command drives rozi over the control
+  socket, or hands off to another program - because a pane there is pure cost: the layout opens and
+  closes around output nobody reads. A non-zero exit still raises an error toast, so a broken
+  binding is quiet rather than silent. `keep_open` does not apply.
+- Exactly one of `run`/`send`/`popup`/`exec` must be set; a table with multiple values or none is
+  warned about and skipped.
 - `keep_open` (default `true`, `run` and `popup` only) preserves command output after exit. A `run`
   pane prints the exit status and replaces the dead PTY with a shell. A `popup` prints the status
   and retains its final screen as a read-only result; Enter, Escape, or Space dismisses it. Set

@@ -11,6 +11,10 @@ fn action_glyph(action: &UserCommandAction) -> (&'static str, &'static str) {
         UserCommandAction::Run { .. } => ("▸", "run"),
         UserCommandAction::Send(_) => ("⏎", "send"),
         UserCommandAction::Popup { .. } => ("▫", "popup"),
+        // Unreachable today: a launcher entry never parses into `Exec` (see
+        // `SidebarLauncherEntrySpec::action`). Kept concrete so adding it there is a visible
+        // decision rather than a glyph that silently reads "run".
+        UserCommandAction::Exec { .. } => ("▹", "exec"),
     }
 }
 

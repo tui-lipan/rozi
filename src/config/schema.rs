@@ -981,9 +981,24 @@ impl PartialEq for HintConfig {
 /// the case worth setting `keep_open = false` on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UserCommandAction {
-    Run { command: String, keep_open: bool },
+    Run {
+        command: String,
+        keep_open: bool,
+    },
     Send(String),
-    Popup { command: String, keep_open: bool },
+    Popup {
+        command: String,
+        keep_open: bool,
+    },
+    /// Run detached with no pane and no popup, output discarded.
+    ///
+    /// For a command whose whole result is a side effect - it drives rozi over the control socket,
+    /// or hands off to another program - a pane is pure cost: the layout opens and closes around
+    /// output nobody reads. `keep_open` has no meaning here because nothing is held open. A
+    /// non-zero exit still raises an error toast, so this is quiet rather than silent.
+    Exec {
+        command: String,
+    },
 }
 
 impl UserCommandAction {
@@ -1006,7 +1021,9 @@ impl UserCommandAction {
     /// The command line or literal text the action carries, for labels and detail lines.
     pub fn target(&self) -> &str {
         match self {
-            Self::Run { command, .. } | Self::Popup { command, .. } => command,
+            Self::Run { command, .. } | Self::Popup { command, .. } | Self::Exec { command } => {
+                command
+            }
             Self::Send(text) => text,
         }
     }
@@ -1276,6 +1293,9 @@ impl UserCommand {
             UserCommandAction::Popup { command, .. } => {
                 format!("Popup: {}", truncate_for_label(command))
             }
+            UserCommandAction::Exec { command } => {
+                format!("Exec: {}", truncate_for_label(command))
+            }
         }
     }
 }
@@ -1293,7 +1313,7 @@ fn escape_for_label(text: &str) -> String {
         .collect()
 }
 
-fn truncate_for_label(text: &str) -> String {
+pub fn truncate_for_label(text: &str) -> String {
     const MAX_LEN: usize = 40;
     if text.chars().count() <= MAX_LEN {
         text.to_string()

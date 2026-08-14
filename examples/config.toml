@@ -395,10 +395,12 @@
 # A trigger mapped to a table defines a new command instead of rebinding one. A bare key
 # expands through the [input] scheme like a built-in does, so `g` answers to both <prefix> g
 # and <modifier>-g; a literal chord ("ctrl-a e", alt-t) binds only itself. Exactly one of run
-# (new pane), send (text to the focused PTY), or popup (centered transient pane). label names
+# (new pane), send (text to the focused PTY), popup (centered transient pane), or exec (no
+# pane at all, output discarded, a failure raises a toast). label names
 # it in the palette and help overlay instead of a truncated copy of the command. keep_open
 # defaults to true and holds the output after the command exits; set it false for a program
 # that should take its pane down with it.
 #g = { run = "lazygit", label = "Git UI", keep_open = false }
 #alt-t = { run = "btop" }
 #"ctrl-a e" = { send = "ls -la\n" }
+#u = { exec = "rozi run-action toggle-float", label = "Float pane" }

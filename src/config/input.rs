@@ -217,9 +217,14 @@ pub(super) fn parse_user_command_action(
         .popup
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    let exec = table
+        .exec
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let choices = usize::from(run.as_ref().is_some_and(|v| !v.is_empty()))
         + usize::from(send.is_some())
-        + usize::from(popup.is_some());
+        + usize::from(popup.is_some())
+        + usize::from(exec.is_some());
     // A command pane holds after its command exits unless the config says otherwise; see
     // `UserCommandAction`.
     let keep_open = table.keep_open.unwrap_or(true);
@@ -229,19 +234,22 @@ pub(super) fn parse_user_command_action(
             keep_open,
         },
         1 if send.is_some() => UserCommandAction::Send(send.unwrap()),
+        1 if exec.is_some() => UserCommandAction::Exec {
+            command: exec.unwrap(),
+        },
         1 => UserCommandAction::Popup {
             command: popup.unwrap(),
             keep_open,
         },
         0 => {
             warnings.push(format!(
-                "{context} needs a `run`, `send`, or `popup` value; skipped"
+                "{context} needs a `run`, `send`, `popup`, or `exec` value; skipped"
             ));
             return None;
         }
         _ => {
             warnings.push(format!(
-                "{context} has conflicting `run`, `send`, or `popup` values; skipped"
+                "{context} has conflicting `run`, `send`, `popup`, or `exec` values; skipped"
             ));
             return None;
         }
@@ -359,6 +367,48 @@ mod tests {
         // The palette shows the bare key, the way a built-in's does.
         assert_eq!(command.hint, "i");
         assert_eq!(command.label(), "Git UI");
+    }
+
+    /// `exec` is the fourth verb: no pane, no popup, nothing held open. `keep_open` is accepted
+    /// but meaningless there, so it must not silently turn into a pane.
+    #[test]
+    fn exec_commands_run_without_a_pane() {
+        let mut commands = Vec::new();
+        let mut warnings = Vec::new();
+        build_key_overrides(
+            keys("[keys]\nu = { exec = \"rozi run-action toggle-float\", label = \"Float\" }"),
+            &InputConfig::default(),
+            &mut commands,
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            commands.first().map(|command| command.action.clone()),
+            Some(UserCommandAction::Exec {
+                command: "rozi run-action toggle-float".to_string(),
+            })
+        );
+    }
+
+    /// Exactly one verb, still. `exec` joins the existing conflict check rather than sitting
+    /// outside it, or `{ run = …, exec = … }` would silently pick one.
+    #[test]
+    fn exec_conflicts_with_the_other_verbs() {
+        let mut commands = Vec::new();
+        let mut warnings = Vec::new();
+        build_key_overrides(
+            keys("[keys]\nu = { exec = \"date\", run = \"date\" }"),
+            &InputConfig::default(),
+            &mut commands,
+            &mut warnings,
+        );
+        assert!(commands.is_empty(), "conflicting table was still bound");
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("conflicting")),
+            "{warnings:?}"
+        );
     }
 
     /// An explicitly-spelled chord still binds only itself - that is how someone pins a command to

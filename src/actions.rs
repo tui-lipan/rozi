@@ -95,6 +95,8 @@ pub(crate) fn execute_user_command_action_with_env(
     env: Vec<(String, String)>,
 ) -> Update {
     match action {
+        // `Exec` needs no session: it starts no PTY, so there is nothing for a session to own.
+        UserCommandAction::Exec { .. } => {}
         UserCommandAction::Run { .. } | UserCommandAction::Popup { .. } => {
             if let Some(update) = crate::ops::session::ensure_session_for_pty(
                 ctx,
@@ -145,6 +147,7 @@ pub(crate) fn execute_user_command_action_with_env(
             }
             Update::full()
         }
+        UserCommandAction::Exec { command } => exec_user_command(ctx, command, env),
         UserCommandAction::Popup { command, keep_open } => crate::popup::open(
             ctx,
             command.clone(),
@@ -160,6 +163,66 @@ pub(crate) fn execute_user_command_action_with_env(
             Update::full()
         }),
     }
+}
+
+/// Run an `exec` command detached: no pane, no popup, output discarded.
+///
+/// Spawned like a hook - one thread, `command_shell`, null stdio - but unlike a hook it is waited
+/// on, so a non-zero exit can raise a toast. A binding that quietly does nothing when its command
+/// is missing is indistinguishable from a binding that is not wired up at all.
+fn exec_user_command(
+    ctx: &mut Context<AppRoot>,
+    command: &str,
+    env: Vec<(String, String)>,
+) -> Update {
+    let runner = crate::platform::command::resolve_command_shell(
+        ctx.state.config.command_shell.as_deref(),
+        &crate::platform::command::ShellEnv::from_process(),
+    );
+    let cwd = crate::pane_lifecycle::focused_spawn_cwd(&ctx.state);
+    let mut environment = vec![("ROZI".to_string(), "1".to_string())];
+    if let Some(path) = ctx.state.control_socket_path.as_deref() {
+        environment.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
+    }
+    if let Some(path) = crate::platform::paths::current_binary() {
+        environment.push(("ROZI_BIN".to_string(), path.display().to_string()));
+    }
+    // Per-spawn additions last so a caller-supplied value wins, matching `pane_env`.
+    environment.extend(env);
+
+    let Some(link) = ctx.state.command_link.clone() else {
+        return Update::none();
+    };
+    let command = command.to_string();
+    let label = crate::config::truncate_for_label(&command);
+    std::thread::spawn(move || {
+        let mut process = std::process::Command::new(runner.program);
+        process
+            .args(runner.args)
+            .arg(&command)
+            .envs(environment)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let Some(cwd) = cwd {
+            process.current_dir(cwd);
+        }
+        let failure = match process.spawn() {
+            Ok(mut child) => match child.wait() {
+                Ok(status) if status.success() => None,
+                Ok(status) => Some(match status.code() {
+                    Some(code) => format!("`{label}` exited with status {code}"),
+                    None => format!("`{label}` was terminated by a signal"),
+                }),
+                Err(err) => Some(format!("`{label}` could not be waited on: {err}")),
+            },
+            Err(err) => Some(format!("`{label}` could not start: {err}")),
+        };
+        if let Some(message) = failure {
+            link.send(crate::Msg::UserCommandFailed { message });
+        }
+    });
+    Update::none()
 }
 
 /// vim-tmux-navigator-style directional focus: if the focused pane runs a split-aware program

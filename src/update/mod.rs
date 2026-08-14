@@ -18,6 +18,10 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
     let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
     let mut update = match msg {
         Msg::ClosePopup => panes::close_popup(ctx),
+        Msg::UserCommandFailed { message } => {
+            crate::pty_events::notify_error(ctx, "Command failed", message);
+            Update::full()
+        }
         Msg::CommandLinkReady(link) => overlays::command_link_ready(ctx, link),
         Msg::Hangup => overlays::hangup(ctx),
         Msg::RunAction(action) => overlays::run_action(ctx, action),

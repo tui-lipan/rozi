@@ -441,6 +441,7 @@ pub(super) struct AnimationFileConfig {
     pub(super) fullscreen: Option<bool>,
     pub(super) tile_float: Option<bool>,
     pub(super) axis_change: Option<bool>,
+    pub(super) sidebar: Option<bool>,
     pub(super) focus_chrome: Option<bool>,
     pub(super) pane_style: Option<String>,
     pub(super) geometry_ms: Option<u64>,

@@ -125,6 +125,10 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                // Revealing the sidebar after the first frame is a real toggle, so it runs the
+                // real slide; these assertions are about the settled column, not a frame
+                // part-way through it.
+                state.config.animations.sidebar = false;
                 state.config.sidebar.tabs = vec![
                     SidebarTab::Panes,
                     SidebarTab::Command {
@@ -189,6 +193,7 @@ fn app_sidebar_tabs_keep_native_selection_hover_click_and_wheel_behavior() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
                 state.config.sidebar.tabs = vec![
                     SidebarTab::Panes,
                     launcher("build", "Build"),

@@ -86,6 +86,10 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                // Revealing the sidebar after the first frame is a real toggle, so it runs the
+                // real slide; these assertions are about the settled column, not a frame
+                // part-way through it.
+                state.config.animations.sidebar = false;
                 // The hierarchy needs every row on screen, so collapse the default split and give
                 // the Sessions tab the whole sidebar.
                 state.config.sidebar.tabs = vec![SidebarTab::Sessions];

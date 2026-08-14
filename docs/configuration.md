@@ -375,9 +375,10 @@ milliseconds.
 | `fullscreen` | `true` | Fullscreen enter/exit geometry animation. |
 | `tile_float` | `true` | Tiling ⇄ floating geometry animation. |
 | `axis_change` | `true` | Split-axis flip animation. |
+| `sidebar` | `true` | Sidebar slide. The pane column is resized as the panel arrives, so its near edge is pushed while its far edge stays put. Like every geometry animation, the panes resize as they move. |
 | `focus_chrome` | `true` | Border/titlebar color transitions when focus moves. |
 | `pane_style` | `"scale"` | Shape of the pane open/close animation: `scale` or `slide`. See below. |
-| `geometry_ms` | `220` | Base geometry transition duration; scratchpad slide uses two-thirds of this. |
+| `geometry_ms` | `220` | Base geometry transition duration; the scratchpad's deploy and the sidebar slide use two-thirds of this. |
 | `close_ms` | `120` | Close transition duration. Ignored by `pane_style = "slide"`, which uses `geometry_ms`. |
 | `focus_chrome_ms` | `160` | Focus-chrome transition duration. |
 | `alert_pulse_ms` | `1600` | Shared breathe period for `alert_border = "pulse"` and inactive workspace-tab breathing. Half-period is floored at 400 ms. |

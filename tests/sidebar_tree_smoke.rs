@@ -59,6 +59,10 @@ fn render_tree(view: SidebarTreeView, cwd: &str) -> Vec<String> {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                // Revealing the sidebar after the first frame is a real toggle, so it runs the
+                // real slide; these assertions are about the settled column, not a frame
+                // part-way through it.
+                state.config.animations.sidebar = false;
                 let tab = SidebarTab::Tree {
                     view,
                     config: SidebarTreeConfig::for_view(view),
@@ -157,6 +161,7 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
                 state.config.sidebar.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Changes,
@@ -230,6 +235,7 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
                 {
                     let state = backend.state_mut();
                     state.sidebar_visible = true;
+                    state.config.animations.sidebar = false;
                     state.config.sidebar.width = 34;
                     state.sidebar.panels[0].tabs = vec![tab.id()];
                     state.sidebar.panels[0].active_tab = Some(tab.id());
@@ -360,6 +366,7 @@ fn expanded_directories_survive_the_tree_re_rooting() {
             let pane = {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
                 state.config.sidebar.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,
@@ -497,6 +504,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
                 state.config.sidebar.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,

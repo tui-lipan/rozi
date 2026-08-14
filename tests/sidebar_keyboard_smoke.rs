@@ -70,6 +70,9 @@ fn sidebar_backend() -> TestBackend<AppRoot> {
         w: 100,
         h: 30,
     });
+    // Revealing the sidebar after the first frame is a real toggle, so it runs the real
+    // slide. These tests assert on the settled column, not on a frame part-way through it.
+    backend.state_mut().config.animations.sidebar = false;
     backend
 }
 

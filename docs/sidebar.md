@@ -465,7 +465,15 @@ can be visible at once, and on the same row.
 
 ## Actions
 
-- `toggle-sidebar` shows or hides the sidebar for this client. Bound to `<prefix> b` / `Alt+b`.
+- `toggle-sidebar` shows or hides the sidebar for this client. Bound to `<prefix> b` / `Alt+b`. The
+  sidebar slides in and out, and the pane column is resized to make room as it goes - the same way
+  the tile beside a spawning pane is. So the panes are pushed rather than uncovered, and only the
+  edge being pushed moves: the far edge stays pinned to the far edge of the screen and the frame is
+  whole throughout. The panel itself is never resized - it is laid out at its settled width and
+  clipped to the columns handed over so far, so it slides in whole instead of re-wrapping its tabs
+  and rows on the way. Like every geometry animation in rozi, the panes resize as they move, so each
+  PTY takes a resize per debounce window for the length of the slide. Turn the slide off with
+  `[animations] sidebar = false`.
 - `focus-sidebar` moves the keyboard into the row list, revealing the sidebar first if needed.
   Bound to `<prefix> B` / `Alt+Shift+B`.
 - `toggle-sidebar-split` shows the saved panel recipe as one or two panels without discarding either

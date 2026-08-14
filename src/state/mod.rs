@@ -87,6 +87,11 @@ pub struct State {
     pub last_viewport: Cell<Option<Rect>>,
     /// Last app-content viewport, used to snap geometry when sidebar reservation changes.
     pub last_content_viewport: Cell<Option<Rect>>,
+    /// Last box the scratchpad's panes tiled inside, in root coordinates. Compared each frame for
+    /// the same reason as [`Self::last_content_viewport`]: the dropdown's box moves while it grows,
+    /// and a pane transition chasing it would settle on its own curve instead. `None` while the
+    /// dropdown is off screen, so its next appearance counts as a move.
+    pub last_scratch_rect: Cell<Option<Rect>>,
     /// Clock text the workbar last actually rendered. The clock ticks every second, but the default
     /// `clock_format` has minute resolution, so this lets the tick skip the ~59 of 60 frames that
     /// would redraw an identical string. Recorded by the view (rather than reformatted in the
@@ -100,6 +105,14 @@ pub struct State {
     /// Whether one delayed alert-pulse tick is already queued.
     pub alert_pulse_armed: bool,
     pub sidebar_visible: bool,
+    /// How far the sidebar has slid in: `0.0` fully retracted, `1.0` fully deployed. Recorded by the
+    /// view each frame, because the transition driving it lives there.
+    ///
+    /// Layout reads this rather than [`Self::sidebar_visible`], so the columns the sidebar reserves
+    /// grow and shrink with the animation and the pane column is genuinely resized to make room -
+    /// the same way the tile beside a spawning pane is. Seeded from the config so a `State` that has
+    /// never been rendered reports settled geometry.
+    pub sidebar_slide: Cell<f32>,
     pub sidebar: SidebarState,
     pub workbar: WorkbarState,
     pub show_palette: bool,
@@ -293,11 +306,13 @@ impl State {
             pane_canvas_epoch: 0,
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),
+            last_scratch_rect: Cell::new(None),
             last_clock_text: RefCell::new(None),
             alert_pulse_phase: false,
             alert_pulse_calm_phase: false,
             alert_pulse_armed: false,
             sidebar_visible,
+            sidebar_slide: Cell::new(if sidebar_visible { 1.0 } else { 0.0 }),
             sidebar,
             workbar: WorkbarState::default(),
             show_palette: false,
@@ -768,11 +783,38 @@ impl State {
         }
     }
 
+    /// Layout columns currently reserved for the sidebar: its deployed width scaled by how far its
+    /// slide has got.
+    ///
+    /// Animating the reservation is what makes the pane column *give up* the space rather than be
+    /// shoved sideways out of it. Both of its edges stay where they belong the whole way - the near
+    /// one travelling with the sidebar, the far one pinned to the far edge of the screen - because
+    /// the column is genuinely resized, exactly like the tile beside a spawning pane.
+    ///
+    /// The price is the price every geometry animation in rozi pays: the panes resize as they move,
+    /// so each PTY takes a `pty.resize` per debounce window for the length of the slide. Set
+    /// `[animations] sidebar = false` to skip straight to the settled width.
     pub fn effective_sidebar_width(&self, terminal_viewport: Rect) -> u16 {
+        let deployed = self.sidebar_slide_width(terminal_viewport);
+        let reserved = (f32::from(deployed) * self.sidebar_slide.get().clamp(0.0, 1.0)).round();
+        let reserved = reserved as u16;
+        // A single column is all splitter handle with no panel behind it, and the splitter's own
+        // minimum would quietly hand it a second one - leaving the pane column a column narrower
+        // than this says, with its far border pushed off the screen. Skip the width that cannot be
+        // honoured rather than report one that is wrong.
+        if reserved <= 1 { 0 } else { reserved }
+    }
+
+    /// The width the sidebar occupies once deployed, whether or not it is currently visible or
+    /// settled.
+    ///
+    /// The panel is always drawn at this width and clipped, never squeezed into the part of it the
+    /// layout has reserved so far - squeezing would reflow its tabs and rows on every frame.
+    pub fn sidebar_slide_width(&self, terminal_viewport: Rect) -> u16 {
         crate::geometry::effective_sidebar_width(
             terminal_viewport.w,
             self.sidebar_requested_width(),
-            self.sidebar_visible,
+            true,
         )
     }
 

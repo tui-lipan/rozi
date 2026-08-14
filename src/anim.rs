@@ -138,6 +138,28 @@ pub fn slide_offset(rect: FloatRect, edge: SlideEdge, progress: f32) -> (f32, f3
     }
 }
 
+/// Where the sidebar panel sits inside its clip window while it is part-way in, in canvas columns.
+///
+/// `window_width` is how much of the panel's `deployed_width` the layout has handed over so far -
+/// the animated quantity. The panel is laid out at its full deployed width whatever that is, and
+/// anchored to its dock edge inside the window, so what shows is the part of it nearest the screen
+/// edge and the rest waits off-screen. Laying it out at `window_width` instead would re-wrap its
+/// tabs and rows on every frame of the slide.
+///
+/// Only the panel needs carrying. The pane column beside it is genuinely resized to whatever the
+/// sidebar has not reserved, which is what keeps both of its edges where they belong - the near one
+/// travelling with the panel, the far one pinned to the far edge of the screen.
+pub fn sidebar_slide_offset(window_width: u16, deployed_width: u16, docked_right: bool) -> f32 {
+    if docked_right {
+        // Anchored by its left edge, which is the one the pane column meets: the overhang runs off
+        // the far side of the window on its own.
+        0.0
+    } else {
+        // Anchored by its right edge, so the overhang runs off the near side.
+        f32::from(window_width) - f32::from(deployed_width)
+    }
+}
+
 /// How much wider a terminal cell is than it is tall, near enough. Lets the two axes of a tile be
 /// compared: 10 rows covers about as much screen as 20 columns.
 const CELL_ASPECT: f32 = 2.0;
@@ -197,6 +219,7 @@ pub struct WindowAnimationConfig {
     pub fullscreen: bool,
     pub tile_float: bool,
     pub axis_change: bool,
+    pub sidebar: bool,
     pub focus_chrome: bool,
     pub pane_style: PaneAnimationStyle,
     pub geometry_duration: Duration,
@@ -215,6 +238,7 @@ impl Default for WindowAnimationConfig {
             fullscreen: true,
             tile_float: true,
             axis_change: true,
+            sidebar: true,
             focus_chrome: true,
             pane_style: PaneAnimationStyle::Scale,
             geometry_duration: Duration::from_millis(GEOMETRY_MS),
@@ -285,6 +309,19 @@ pub fn spring_geometry_transition(duration: Duration, distance: f32) -> Transiti
             overshoot_permille: spring_overshoot_permille(distance),
         },
     }
+}
+
+/// Curve for the sidebar sliding in and out.
+///
+/// Shares the scratchpad's shortened duration rather than the full geometry one: both are a surface
+/// deploying over the workspace rather than tiles rearranging, and a drawer that takes as long as a
+/// tiling reflow feels slow. Keeping them on one duration also keeps the two in step when
+/// `geometry_ms` is retuned.
+pub fn sidebar_transition(animations: WindowAnimationConfig) -> TransitionConfig {
+    if !animations.enabled || !animations.sidebar {
+        return instant_transition();
+    }
+    slide_transition(scratch_transition_duration(animations.geometry_duration))
 }
 
 pub fn instant_transition() -> TransitionConfig {
@@ -513,6 +550,53 @@ mod tests {
         );
         assert_eq!(PaneAnimationStyle::parse("springy"), None);
         assert_eq!(PaneAnimationStyle::default(), PaneAnimationStyle::Scale);
+    }
+
+    #[test]
+    fn the_panel_is_anchored_to_its_dock_edge_inside_its_clip_window() {
+        const SIDEBAR: u16 = 32;
+
+        for window in [0, 1, 15, 31, SIDEBAR] {
+            // Docked right the panel's left edge is the one the pane column meets, so it sits at the
+            // near side of the window and its overhang runs off the far side on its own.
+            assert_eq!(sidebar_slide_offset(window, SIDEBAR, true), 0.0);
+            // Docked left it is anchored by its right edge instead, so the offset is exactly the
+            // part of it still to arrive - never more, which would leave a gap at the seam.
+            let offset = sidebar_slide_offset(window, SIDEBAR, false);
+            assert_eq!(offset, f32::from(window) - f32::from(SIDEBAR));
+            assert!(offset <= 0.0 && offset >= -f32::from(SIDEBAR));
+            // The anchored edge always lands on the edge of the window the pane column meets.
+            assert_eq!(offset + f32::from(SIDEBAR), f32::from(window));
+        }
+
+        // Fully deployed, the panel fills its window exactly, either dock.
+        assert_eq!(sidebar_slide_offset(SIDEBAR, SIDEBAR, false), 0.0);
+        assert_eq!(sidebar_slide_offset(SIDEBAR, SIDEBAR, true), 0.0);
+    }
+
+    #[test]
+    fn the_sidebar_slide_shares_the_scratchpad_curve_and_yields_to_its_toggles() {
+        let animations = WindowAnimationConfig::default();
+        assert_eq!(
+            sidebar_transition(animations).duration,
+            scratch_transition_duration(animations.geometry_duration)
+        );
+        // Ease-out with no overshoot: the pane column is clipped to the viewport, so carrying it
+        // past flush would open a gap at the far edge for as long as the overshoot lasted.
+        assert_eq!(sidebar_transition(animations).easing, Easing::EaseOutQuad);
+
+        for off in [
+            WindowAnimationConfig {
+                sidebar: false,
+                ..animations
+            },
+            WindowAnimationConfig {
+                enabled: false,
+                ..animations
+            },
+        ] {
+            assert_eq!(sidebar_transition(off).duration, Duration::ZERO);
+        }
     }
 
     #[test]

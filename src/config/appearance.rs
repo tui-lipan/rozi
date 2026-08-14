@@ -87,6 +87,9 @@ pub(super) fn apply_animations(
     if let Some(value) = raw.axis_change {
         target.axis_change = value;
     }
+    if let Some(value) = raw.sidebar {
+        target.sidebar = value;
+    }
     if let Some(value) = raw.focus_chrome {
         target.focus_chrome = value;
     }

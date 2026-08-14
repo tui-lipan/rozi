@@ -912,6 +912,10 @@ mod tests {
                 let (client, rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
+                    // The sidebar reserves its columns only once its slide lands, so the canonical
+                    // canvas asserted below is the settled one; this test is about the actions and
+                    // the commit, not about the frames in between.
+                    state.config.animations.sidebar = false;
                     state.current_mut().session_attached = true;
                     state.current_mut().session_client = Some(client);
                     let mut shared = SharedSessionState::new(1);

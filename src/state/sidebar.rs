@@ -539,6 +539,41 @@ mod tests {
     }
 
     #[test]
+    fn the_reserved_columns_follow_the_slide_so_the_pane_column_resizes_with_it() {
+        let viewport = tui_lipan::prelude::Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut config = crate::config::Config::default();
+        config.sidebar.visible = true;
+        let state = crate::state::State::new(config, tui_lipan::prelude::Theme::default());
+        assert_eq!(state.effective_sidebar_width(viewport), 32);
+        assert_eq!(state.sidebar_slide_width(viewport), 32);
+
+        // Part-way in, the layout hands over part of the column and the pane column keeps the rest.
+        // Both together are always the whole viewport, so neither edge of the pane column is ever
+        // off the screen and no gutter can open between them.
+        for (progress, reserved) in [(0.0, 0), (0.25, 8), (0.5, 16), (0.75, 24), (1.0, 32)] {
+            state.sidebar_slide.set(progress);
+            assert_eq!(state.effective_sidebar_width(viewport), reserved);
+            assert_eq!(state.content_viewport(viewport).w, 100 - reserved);
+            assert_eq!(state.terminal_content_left_offset(viewport), reserved);
+            // The panel is drawn at full width and clipped, never squeezed into what it has so far.
+            assert_eq!(state.sidebar_slide_width(viewport), 32);
+        }
+
+        // Both clamp the same way on a viewport too narrow for the configured width, so the slide
+        // never travels further than the column actually occupies.
+        let narrow = tui_lipan::prelude::Rect { w: 40, ..viewport };
+        assert_eq!(state.sidebar_slide_width(narrow), 20);
+        assert_eq!(state.effective_sidebar_width(narrow), 20);
+        state.sidebar_slide.set(0.5);
+        assert_eq!(state.effective_sidebar_width(narrow), 10);
+    }
+
+    #[test]
     fn command_invalidation_preserves_running_process_marker() {
         let mut state = SidebarState::default();
         let id = SidebarTabId::new("rows");

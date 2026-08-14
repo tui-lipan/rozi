@@ -21,6 +21,9 @@ fn sidebar_backend(w: u16, h: u16) -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
+    // Revealing the sidebar after the first frame is a real toggle, so it runs the real
+    // slide. These tests assert on the settled column, not on a frame part-way through it.
+    backend.state_mut().config.animations.sidebar = false;
     backend
 }
 
@@ -131,6 +134,9 @@ fn narrow_sidebar_yields_to_a_one_column_canvas() {
         .spawn(|| {
             let mut backend = sidebar_backend(10, 5);
             backend.state_mut().sidebar_visible = true;
+            // The sidebar reserves its columns once its slide has landed, which the render settles
+            // here (this binary's backends turn the slide off).
+            backend.render();
             assert_eq!(
                 backend.state().effective_sidebar_width(backend.viewport()),
                 9

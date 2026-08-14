@@ -78,11 +78,6 @@ pub(crate) struct WorkspaceLayer<'a> {
     /// origin is zero - translating those by the dropdown's own `y` would push a closing pane a
     /// dropdown's height down the screen and turn its shrink into a slide off the bottom.
     pub float_origin: (f32, f32),
-    /// Root-space vertical translation applied *after* each pane's geometry transition. The
-    /// scratchpad slide rides here rather than in the transition targets: a transition chasing a
-    /// target that is itself animating never tracks the slide curve, which is what made the
-    /// dropdown crawl in and get cut off on the way out.
-    pub offset_y: f32,
     /// Distinguishes the two layers' transition keys and pane index badges.
     pub scratch: bool,
     pub viewport_changed: bool,
@@ -171,12 +166,6 @@ pub(crate) fn render_workspace_panes(
     let mut dragged_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut floating_panes: Vec<(FloatRect, Element)> = Vec::new();
     let mut fullscreen_panes: Vec<(FloatRect, Element)> = Vec::new();
-    // Applied after every transition, so the whole layer translates as one rigid piece.
-    let slide = |rect: FloatRect| FloatRect {
-        y: rect.y + layer.offset_y,
-        ..rect
-    };
-
     for pane in ordered_panes(workspace, focused_pane, |pane| {
         pane_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane).is_some()
     }) {
@@ -225,7 +214,7 @@ pub(crate) fn render_workspace_panes(
         let config = app.transition_config_for(ctx, pane, layer.viewport_changed, target_rect);
         let animated_rect = ctx.transition(layer.pane_rect_key(pane.id), target_rect, config);
 
-        let render_rect = slide(animated_rect);
+        let render_rect = animated_rect;
         // With merged borders, a bar title must keep its left edge off a neighbor's right border,
         // or its background would cover the seam. Compact titlebars live in the frame border and
         // do not need this spacer.
@@ -459,7 +448,7 @@ pub(crate) fn render_workspace_panes(
                 }
             };
             canvas = canvas.child_at(
-                slide(canvas_rect_to_root(divider.rect, top_offset)).to_rect(),
+                canvas_rect_to_root(divider.rect, top_offset).to_rect(),
                 element,
             );
         }
@@ -477,10 +466,7 @@ pub(crate) fn render_workspace_panes(
     // Draggable strips sit above every tiled pane but below floating/fullscreen panes, so a
     // floating pane occludes split handles underneath it instead of passing drag events through.
     for (rect, element) in tiled_resize_strips(ctx, &placements, workspace) {
-        canvas = canvas.child_at(
-            slide(canvas_rect_to_root(rect, top_offset)).to_rect(),
-            element,
-        );
+        canvas = canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
     }
     for (rect, element) in floating_panes {
         canvas = canvas.child_at(rect.to_rect(), element);
@@ -494,6 +480,16 @@ pub(crate) fn render_workspace_panes(
 pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let viewport = ctx.viewport();
+    // Sampled before anything derives geometry, because the columns the sidebar reserves are a
+    // function of it and the whole pane layout follows from those. Sampled every frame (even while
+    // hidden) so the transition is seeded at the value the config asks for - a sidebar configured
+    // visible starts settled rather than sliding in at launch.
+    let sidebar_progress = ctx.transition::<f32>(
+        "rozi-sidebar-progress",
+        if ctx.state.sidebar_visible { 1.0 } else { 0.0 },
+        crate::anim::sidebar_transition(ctx.state.config.animations),
+    );
+    ctx.state.sidebar_slide.set(sidebar_progress);
     let content_viewport = ctx.state.content_viewport(viewport);
     ctx.state.last_viewport.set(Some(viewport));
     let viewport_changed = ctx
@@ -595,7 +591,6 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             top_gap: ctx.state.workspace_top_gap(),
             fullscreen_bounds: root_bounds,
             float_origin: (bounds.x, bounds.y),
-            offset_y: 0.0,
             scratch: false,
             viewport_changed,
         },
@@ -648,8 +643,13 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             scratch_canvas =
                 scratch_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
-        scratch_canvas =
-            crate::scratchpad::scratch_panes(app, ctx, scratch_canvas, scratch_progress);
+        scratch_canvas = crate::scratchpad::scratch_panes(
+            app,
+            ctx,
+            scratch_canvas,
+            scratch_progress,
+            viewport_changed,
+        );
         if let Some((rect, element)) = scratch_resize {
             scratch_canvas =
                 scratch_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
@@ -738,7 +738,11 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     }
 
     let content: Element = root.into();
+    // Grows and shrinks with the slide, so the pane column resizes to make room rather than being
+    // pushed off the far edge of the screen.
     let sidebar_width = ctx.state.effective_sidebar_width(viewport);
+    // Nothing reserved, nothing to wrap - which covers both a hidden sidebar and either end of its
+    // slide, where there is not yet enough width to put a panel in.
     let shell: Element = if sidebar_width == 0 {
         content
     } else {
@@ -748,13 +752,42 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         // dim animates. The scratchpad drops out of this dim: it is a workspace-local layer that
         // never covers the sidebar.
         let sidebar_dim = crate::scratchpad::backdrop_dim(dialog_dim_progress);
-        let sidebar: Element = Animated::new(sidebar::sidebar(ctx))
+        // The splitter spends one column on its own handle, so both the panel's settled width and
+        // the window currently clipping it are one short of their reservations.
+        let panel_width = ctx.state.sidebar_slide_width(viewport).saturating_sub(1);
+        let sidebar_pane_width = sidebar_width.saturating_sub(1);
+        let docked_right =
+            ctx.state.config.sidebar.position == crate::config::SidebarPosition::Right;
+        // The panel is laid out at its settled width and rides inside a clip window that grows with
+        // the slide, anchored to the dock edge - so it arrives whole, sliding in, rather than being
+        // re-laid-out narrower on every frame. Only the pane column beside it actually resizes.
+        let sidebar: Element = Canvas::new()
+            .child_at(
+                FloatRect {
+                    x: crate::anim::sidebar_slide_offset(
+                        sidebar_pane_width,
+                        panel_width,
+                        docked_right,
+                    ),
+                    y: 0.0,
+                    w: f32::from(panel_width),
+                    h: f32::from(viewport.h),
+                }
+                .to_rect(),
+                sidebar::sidebar(ctx, panel_width),
+            )
+            .key("rozi-sidebar-clip");
+        // The dim wraps the clip rather than the panel, so it applies to the sidebar column as it is
+        // seen and leaves the panel's own allocation at its settled width.
+        let sidebar: Element = Animated::new(sidebar)
             .height(Length::Flex(1))
             .opacity(sidebar_dim)
             .opacity_target(theme.surface.backdrop)
             .transition(crate::anim::instant_transition())
             .into();
-        let sidebar_pane_width = sidebar_width.saturating_sub(1);
+        // Whatever the sidebar has not reserved. It shrinks as the panel arrives, which is what
+        // keeps the pane column's far edge pinned to the far edge of the screen while its near edge
+        // travels: the column gives up the space rather than sliding out of it.
         let content_width = viewport.w.saturating_sub(sidebar_width);
         // The splitter paints its own handle column outside both children, so it has to be dimmed
         // by hand to keep the seam from staying lit between two dimmed panes.
@@ -768,7 +801,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             .weights_nonce(ctx.state.sidebar.outer_splitter_nonce(
                 viewport.w,
                 sidebar_width,
-                ctx.state.config.sidebar.position == crate::config::SidebarPosition::Right,
+                docked_right,
             ))
             .min_size(1)
             .handle_symbol('│')
@@ -782,15 +815,16 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             )
             .on_resize_live(ctx.link().callback(Msg::SidebarWidthResizing))
             .on_resize(ctx.link().callback(Msg::SidebarWidthResized));
-        splitter = match ctx.state.config.sidebar.position {
-            crate::config::SidebarPosition::Left => splitter
-                .weights(vec![sidebar_pane_width as f32, content_width as f32])
-                .child(sidebar)
-                .child(content),
-            crate::config::SidebarPosition::Right => splitter
+        splitter = if docked_right {
+            splitter
                 .weights(vec![content_width as f32, sidebar_pane_width as f32])
                 .child(content)
-                .child(sidebar),
+                .child(sidebar)
+        } else {
+            splitter
+                .weights(vec![sidebar_pane_width as f32, content_width as f32])
+                .child(sidebar)
+                .child(content)
         };
         splitter.into()
     };

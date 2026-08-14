@@ -126,12 +126,14 @@
 #fullscreen = true
 #tile_float = true
 #axis_change = true
+#sidebar = true
 #focus_chrome = true
 # Shape of the pane open/close animation. "scale" grows the pane from its own centre with a fade;
 # "slide" brings it in from the edge it was split off, clipped to its tile, and springs the tile that
 # gave up the space. Tiled panes only - floating panes and popups always scale.
 #pane_style = "scale"
-# Base geometry duration, and the slide duration in both directions at every pane size.
+# Base geometry duration, and the slide duration in both directions at every pane size. The
+# scratchpad and sidebar slides run at two-thirds of it.
 #geometry_ms = 220
 # Close duration for "scale" only. A "slide" close uses geometry_ms, so a leaving pane stays in step
 # with the tile expanding into its place.

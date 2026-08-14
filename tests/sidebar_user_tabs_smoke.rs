@@ -18,6 +18,10 @@ fn sidebar_lines(tab: SidebarTab) -> Vec<String> {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                // Revealing the sidebar after the first frame is a real toggle, so it runs the
+                // real slide; these assertions are about the settled column, not a frame
+                // part-way through it.
+                state.config.animations.sidebar = false;
                 state.sidebar.panels[0].tabs = vec![tab.id()];
                 state.sidebar.panels[0].active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
@@ -109,6 +113,7 @@ fn read_only_command_output_has_one_cell_of_leading_padding() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
                 state.config.sidebar.tabs = vec![SidebarTab::Command {
                     name: tab_id.clone(),
                     label: "Branches".into(),

@@ -12,7 +12,12 @@ use tui_lipan::prelude::*;
 use crate::config::SidebarTab;
 use crate::{AppRoot, Msg};
 
-pub(super) fn sidebar(ctx: &Context<AppRoot>) -> Element {
+/// `width` is the panel's settled width, which is not always the width it is being drawn into: on
+/// the way in and out it is clipped to however much of that the slide has handed over. It is laid
+/// out at its full width regardless, so its tabs and rows keep their places and the clip cuts
+/// through them - a `Flex` width would resolve against the clip and re-wrap the panel on every
+/// frame of the slide instead.
+pub(super) fn sidebar(ctx: &Context<AppRoot>, width: u16) -> Element {
     let theme = &ctx.state.theme;
     let panels: Element = if ctx.state.sidebar.panels.len() > 1 {
         let divider_style = Style::new()
@@ -60,7 +65,7 @@ pub(super) fn sidebar(ctx: &Context<AppRoot>) -> Element {
                 .primary
                 .patch(Style::new().bg(ctx.state.theme.surface.element)),
         )
-        .width(Length::Flex(1))
+        .width(Length::Px(width))
         .height(Length::Flex(1))
         .child(panels)
         .into()

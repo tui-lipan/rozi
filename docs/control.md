@@ -316,6 +316,12 @@ trip, not a reopen:
 `selected` is the row under the cursor at the time, or `null` when the list is empty, so an action
 can be about a row without the caller tracking the highlight itself.
 
+Choosing `close` is a UX decision, not a tidiness one. An action whose result is invisible — created
+a branch, renamed a worktree — leaves the user with no confirmation if it closes the picker, because
+nothing on screen changed. Prefer leaving it open and answering with a refreshed `rows`: the updated
+list *is* the confirmation. Reserve `close: true` for actions whose result is plainly visible, or
+that are the last thing the user wanted to do.
+
 `width` sets the modal width in columns, clamped to 30-120; omitted, it uses the same 60 every
 built-in palette uses.
 

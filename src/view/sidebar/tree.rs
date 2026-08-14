@@ -54,6 +54,7 @@ pub(super) fn tree_tab(
         // cannot assume the user's terminal font has them, and the rest of the sidebar is text.
         .git_icon_style(GitIconStyle::Text)
         .git_status_cache(ctx.state.sidebar.tree_git_status_cache.clone())
+        .entry_refresh_token(ctx.state.sidebar.tree_entry_refresh_token)
         .git_refresh_token(ctx.state.sidebar.git_refresh_token)
         // Focusable so the selected row can be a real keyboard cursor, but never a tab stop: the
         // focus ring belongs to the panes, and the enclosing `FocusScope::Exclude` additionally
@@ -176,6 +177,9 @@ pub(super) fn tree_tab(
 fn changes_empty_text(ctx: &Context<AppRoot>) -> &'static str {
     let sidebar = &ctx.state.sidebar;
     if ctx.state.current().remote_host.is_some() {
+        if sidebar.tree_changes_error.is_some() {
+            return "Changes unavailable";
+        }
         // Cleared on every root change, so `Some` means the server has answered for this root.
         return if sidebar.tree_changes_root.is_some() {
             "No changes"

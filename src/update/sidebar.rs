@@ -6,6 +6,7 @@ use crate::state::{SidebarCommandOutput, SidebarCommandRow, ToastChannel};
 use crate::view::sidebar::RowTarget;
 
 const SESSION_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
+const TREE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const COMMAND_CAPTURE_BYTES: usize = 64 * 1024;
 const COMMAND_MAX_ROWS: usize = 500;
@@ -24,6 +25,57 @@ fn sessions_active(ctx: &Context<AppRoot>) -> bool {
 
 fn command_active(ctx: &Context<AppRoot>, id: &SidebarTabId) -> bool {
     ctx.state.sidebar_visible && ctx.state.sidebar.active_tabs().any(|active| active == id)
+}
+
+fn tree_active(ctx: &Context<AppRoot>) -> bool {
+    ctx.state.sidebar_visible
+        && ctx.state.sidebar.active_tabs().any(|id| {
+            ctx.state
+                .config
+                .sidebar
+                .tabs
+                .iter()
+                .any(|tab| matches!(tab, SidebarTab::Tree { view, .. } if view.id() == id.as_str()))
+        })
+}
+
+/// Keep exactly one low-frequency file-tree refresh chain alive while a Files/Git tab is visible.
+/// A generation travels with each tick so hiding and reopening cannot revive an old chain beside
+/// the new one.
+pub(crate) fn ensure_tree_refresh_armed(ctx: &mut Context<AppRoot>) {
+    if !tree_active(ctx) {
+        ctx.state.sidebar.tree_refresh_armed_epoch = None;
+        return;
+    }
+    if ctx.state.sidebar.tree_refresh_armed_epoch.is_some() {
+        return;
+    }
+    let Some(link) = ctx.state.command_link.clone() else {
+        return;
+    };
+    ctx.state.sidebar.tree_refresh_epoch = ctx.state.sidebar.tree_refresh_epoch.wrapping_add(1);
+    let epoch = ctx.state.sidebar.tree_refresh_epoch;
+    ctx.state.sidebar.tree_refresh_armed_epoch = Some(epoch);
+    link.send_after(
+        TREE_REFRESH_INTERVAL,
+        crate::Msg::SidebarTreeRefresh { epoch },
+    );
+}
+
+/// Refresh directory entries and Git state, then reschedule only while a tree remains visible.
+pub(super) fn tree_refresh(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
+    if ctx.state.sidebar.tree_refresh_armed_epoch != Some(epoch) || !tree_active(ctx) {
+        return Update::none();
+    }
+    ctx.state.sidebar.tree_entry_refresh_token =
+        ctx.state.sidebar.tree_entry_refresh_token.wrapping_add(1);
+    ctx.state.sidebar.git_refresh_token = ctx.state.sidebar.git_refresh_token.wrapping_add(1);
+    Update::with_command(Command::after(
+        TREE_REFRESH_INTERVAL,
+        move |link: CommandLink<crate::Msg>| {
+            link.send(crate::Msg::SidebarTreeRefresh { epoch });
+        },
+    ))
 }
 
 fn command_tab(ctx: &Context<AppRoot>, id: &SidebarTabId) -> Option<(String, u64)> {
@@ -1082,10 +1134,19 @@ pub(super) fn tree_directory_listed(
     entries: Vec<crate::session::protocol::WireDirEntry>,
     error: Option<String>,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
+    if epoch != ctx.state.runtime_epoch || !ctx.state.sidebar.tree_pending.remove(&path) {
         return Update::none();
     }
-    ctx.state.sidebar.tree_pending.remove(&path);
+    if error.is_some()
+        && ctx
+            .state
+            .sidebar
+            .tree_listings
+            .iter()
+            .any(|listing| &*listing.path == path.as_str() && listing.entries.is_ok())
+    {
+        return Update::none();
+    }
     ctx.state
         .sidebar
         .tree_listings
@@ -1106,16 +1167,23 @@ pub(super) fn tree_changes_listed(
     changes: Vec<crate::session::protocol::WireChange>,
     error: Option<String>,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
+    if epoch != ctx.state.runtime_epoch
+        || ctx.state.sidebar.tree_changes_pending_root.as_deref() != Some(root.as_str())
+    {
         return Update::none();
     }
-    // An error here means "no repository" or "no git on the server" — an empty change set is the
-    // honest projection, and the tab already renders that as "No changes".
-    ctx.state.sidebar.tree_changes = if error.is_some() {
-        Vec::new()
-    } else {
-        changes.into_iter().map(wire_change_to_widget).collect()
-    };
+    ctx.state.sidebar.tree_changes_pending_root = None;
+    if let Some(error) = error {
+        if ctx.state.sidebar.tree_changes_root.as_deref() == Some(root.as_str()) {
+            return Update::none();
+        }
+        ctx.state.sidebar.tree_changes.clear();
+        ctx.state.sidebar.tree_changes_root = None;
+        ctx.state.sidebar.tree_changes_error = Some(error);
+        return Update::full();
+    }
+    ctx.state.sidebar.tree_changes_error = None;
+    ctx.state.sidebar.tree_changes = changes.into_iter().map(wire_change_to_widget).collect();
     ctx.state.sidebar.tree_changes_root = Some(root);
     Update::full()
 }
@@ -1162,8 +1230,7 @@ fn wire_state_to_status(state: crate::session::protocol::WireChangeState) -> Fil
 }
 
 fn bump_git_refresh(sidebar: &mut crate::state::SidebarState) {
-    // The widget ignores a token that does not increase, so this only counts up.
-    sidebar.git_refresh_token = sidebar.git_refresh_token.saturating_add(1);
+    sidebar.git_refresh_token = sidebar.git_refresh_token.wrapping_add(1);
 }
 
 /// File-tree chokepoint: keep the resolved roots in step with the focused pane, and refresh git
@@ -1179,8 +1246,10 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
     // Under `--remote` the tree roots at the server's path, not a local one, so this follows
     // `server_cwd_ref`. The repository walk stays local-only: `.git` cannot be probed across the
     // link, and `root_for` already falls back to the cwd when there is no repo root.
-    if crate::pane_lifecycle::focused_server_cwd_ref(&ctx.state)
-        != ctx.state.sidebar.tree_cwd.as_deref()
+    let source_changed = ctx.state.sidebar.tree_source_epoch != Some(ctx.state.runtime_epoch);
+    if source_changed
+        || crate::pane_lifecycle::focused_server_cwd_ref(&ctx.state)
+            != ctx.state.sidebar.tree_cwd.as_deref()
     {
         let cwd = crate::pane_lifecycle::focused_server_cwd_ref(&ctx.state).map(str::to_string);
         ctx.state.sidebar.tree_repo = if ctx.state.current().remote_host.is_some() {
@@ -1190,12 +1259,17 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
                 .and_then(crate::platform::paths::discover_project_root)
         };
         ctx.state.sidebar.tree_cwd = cwd;
+        ctx.state.sidebar.tree_source_epoch = Some(ctx.state.runtime_epoch);
         // A new root invalidates every server-served listing: paths under the old root will never
         // be asked for again, and keeping them would leak one host's tree into another's.
         ctx.state.sidebar.tree_listings.clear();
         ctx.state.sidebar.tree_pending.clear();
         ctx.state.sidebar.tree_changes.clear();
         ctx.state.sidebar.tree_changes_root = None;
+        ctx.state.sidebar.tree_changes_pending_root = None;
+        ctx.state.sidebar.tree_changes_error = None;
+        ctx.state.sidebar.tree_entry_refresh_token =
+            ctx.state.sidebar.tree_entry_refresh_token.wrapping_add(1);
         bump_git_refresh(&mut ctx.state.sidebar);
     }
 
@@ -1228,7 +1302,7 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
 /// per root change or completed command rather than per message. Already-known directories are
 /// re-requested in place rather than cleared, so the tree does not flash back to loading rows.
 fn refresh_remote_tree(ctx: &mut Context<AppRoot>) {
-    if ctx.state.current().remote_host.is_none() {
+    if ctx.state.current().remote_host.is_none() || !tree_active(ctx) {
         return;
     }
     let token = ctx.state.sidebar.git_refresh_token;
@@ -1242,6 +1316,7 @@ fn refresh_remote_tree(ctx: &mut Context<AppRoot>) {
         return;
     };
     ctx.state.sidebar.tree_server_token = token;
+    ctx.state.sidebar.tree_changes_pending_root = Some(root.clone());
     client.list_changes(root);
     let known: Vec<String> = ctx
         .state
@@ -1578,6 +1653,77 @@ mod tests {
         backend
     }
 
+    fn show_files_tab(backend: &mut TestBackend<AppRoot>) {
+        let tab = SidebarTab::Tree {
+            view: crate::config::SidebarTreeView::Files,
+            config: crate::config::SidebarTreeConfig::for_view(
+                crate::config::SidebarTreeView::Files,
+            ),
+        };
+        let id = tab.id();
+        let state = backend.state_mut();
+        state.sidebar_visible = true;
+        state.sidebar.panels[0].tabs = vec![id.clone()];
+        state.sidebar.panels[0].active_tab = Some(id);
+        state.config.sidebar.tabs = vec![tab];
+    }
+
+    #[test]
+    fn visible_tree_refresh_ticks_both_sources_and_reject_stale_chains() {
+        on_test_thread(|| {
+            let mut backend = settled_backend();
+            show_files_tab(&mut backend);
+            backend.state_mut().sidebar.tree_refresh_armed_epoch = Some(7);
+            backend.state_mut().sidebar.tree_entry_refresh_token = 3;
+            backend.state_mut().sidebar.git_refresh_token = 5;
+
+            backend
+                .dispatch(crate::Msg::SidebarTreeRefresh { epoch: 6 })
+                .expect("stale tick dispatches");
+            assert_eq!(backend.state().sidebar.tree_entry_refresh_token, 3);
+            assert_eq!(backend.state().sidebar.git_refresh_token, 5);
+
+            backend
+                .dispatch(crate::Msg::SidebarTreeRefresh { epoch: 7 })
+                .expect("current tick dispatches");
+            assert_eq!(backend.state().sidebar.tree_entry_refresh_token, 4);
+            assert_eq!(backend.state().sidebar.git_refresh_token, 6);
+            assert_eq!(backend.state().sidebar.tree_refresh_armed_epoch, Some(7));
+        });
+    }
+
+    #[test]
+    fn tree_refresh_loop_arms_once_and_disarms_when_hidden() {
+        on_test_thread(|| {
+            let mut backend = settled_backend();
+            show_files_tab(&mut backend);
+
+            backend
+                .dispatch(crate::Msg::SidebarTreeFocused)
+                .expect("tree focus dispatches");
+            let epoch = backend
+                .state()
+                .sidebar
+                .tree_refresh_armed_epoch
+                .expect("visible tree arms refresh");
+
+            backend
+                .dispatch(crate::Msg::SidebarTreeFocused)
+                .expect("second tree focus dispatches");
+            assert_eq!(
+                backend.state().sidebar.tree_refresh_armed_epoch,
+                Some(epoch),
+                "repeated updates do not fork the chain"
+            );
+
+            backend.state_mut().sidebar_visible = false;
+            backend
+                .dispatch(crate::Msg::SidebarTreeRefresh { epoch })
+                .expect("hidden tick dispatches");
+            assert_eq!(backend.state().sidebar.tree_refresh_armed_epoch, None);
+        });
+    }
+
     /// Open the Sessions tab with its auto-refresh loop disarmed, for a test that drives discovery
     /// by hand.
     ///
@@ -1724,6 +1870,24 @@ mod tests {
                 .expect("repeat sync");
             assert_eq!(backend.state().sidebar.git_refresh_token, settled);
 
+            // Attachment identity is part of the source even when another session reports the
+            // same path. Never retain one remote host's provided rows under another host.
+            backend
+                .state_mut()
+                .sidebar
+                .tree_listings
+                .push(FileTreeDirectoryListing::error(
+                    nested.clone(),
+                    "old attachment",
+                ));
+            backend.state_mut().runtime_epoch = 99;
+            backend
+                .dispatch(crate::Msg::SidebarTabSelected { panel: 0, index: 0 })
+                .expect("attachment change sync");
+            assert!(backend.state().sidebar.tree_listings.is_empty());
+            assert_eq!(backend.state().sidebar.tree_source_epoch, Some(99));
+            let settled = backend.state().sidebar.git_refresh_token;
+
             // Leaving the repository clears the repo root but keeps the working directory.
             backend.state_mut().current_mut().workspaces[0].panes[0]
                 .terminal
@@ -1737,8 +1901,115 @@ mod tests {
         });
     }
 
-    /// Git status is refreshed on the edge into `Completed` — the moment a command finished
-    /// changing the working tree — rather than on a timer.
+    #[test]
+    fn stale_remote_tree_results_cannot_repopulate_a_replaced_root() {
+        on_test_thread(|| {
+            let mut backend = settled_backend();
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .state_mut()
+                .sidebar
+                .tree_pending
+                .insert("/new".to_string());
+            backend.state_mut().sidebar.tree_changes_pending_root = Some("/new".to_string());
+
+            backend
+                .dispatch(crate::Msg::SessionDirectoryListing {
+                    epoch,
+                    path: "/old".to_string(),
+                    entries: Vec::new(),
+                    error: None,
+                })
+                .expect("stale directory result");
+            backend
+                .dispatch(crate::Msg::SessionChangeListing {
+                    epoch,
+                    root: "/old".to_string(),
+                    changes: Vec::new(),
+                    error: None,
+                })
+                .expect("stale changes result");
+
+            assert!(backend.state().sidebar.tree_listings.is_empty());
+            assert!(backend.state().sidebar.tree_changes_root.is_none());
+            assert!(backend.state().sidebar.tree_pending.contains("/new"));
+            assert_eq!(
+                backend.state().sidebar.tree_changes_pending_root.as_deref(),
+                Some("/new")
+            );
+        });
+    }
+
+    #[test]
+    fn transient_remote_refresh_errors_keep_the_last_successful_data() {
+        on_test_thread(|| {
+            let mut backend = settled_backend();
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .state_mut()
+                .sidebar
+                .tree_listings
+                .push(FileTreeDirectoryListing::new(
+                    "/repo",
+                    [FileTreeEntry::file("kept.rs")],
+                ));
+            backend.state_mut().sidebar.tree_changes_root = Some("/repo".to_string());
+            backend
+                .state_mut()
+                .sidebar
+                .tree_changes
+                .push(FileTreeChange::new(
+                    "kept.rs",
+                    FileTreeChangeStatus::Modified,
+                ));
+            backend
+                .state_mut()
+                .sidebar
+                .tree_pending
+                .insert("/repo".to_string());
+            backend.state_mut().sidebar.tree_changes_pending_root = Some("/repo".to_string());
+
+            backend
+                .dispatch(crate::Msg::SessionDirectoryListing {
+                    epoch,
+                    path: "/repo".to_string(),
+                    entries: Vec::new(),
+                    error: Some("retry later".to_string()),
+                })
+                .expect("directory refresh error");
+            backend
+                .dispatch(crate::Msg::SessionChangeListing {
+                    epoch,
+                    root: "/repo".to_string(),
+                    changes: Vec::new(),
+                    error: Some("retry later".to_string()),
+                })
+                .expect("change refresh error");
+
+            assert_eq!(backend.state().sidebar.tree_listings.len(), 1);
+            assert_eq!(backend.state().sidebar.tree_changes.len(), 1);
+
+            backend.state_mut().sidebar.tree_changes.clear();
+            backend.state_mut().sidebar.tree_changes_root = None;
+            backend.state_mut().sidebar.tree_changes_pending_root = Some("/other".to_string());
+            backend
+                .dispatch(crate::Msg::SessionChangeListing {
+                    epoch,
+                    root: "/other".to_string(),
+                    changes: Vec::new(),
+                    error: Some("timed out".to_string()),
+                })
+                .expect("initial change error");
+            assert_eq!(
+                backend.state().sidebar.tree_changes_error.as_deref(),
+                Some("timed out")
+            );
+            assert!(backend.state().sidebar.tree_changes_root.is_none());
+        });
+    }
+
+    /// Git status is refreshed immediately on the edge into `Completed` — the moment a command
+    /// finished changing the working tree — without waiting for the periodic fallback.
     #[test]
     fn finishing_a_command_refreshes_git_status_once() {
         on_test_thread(|| {

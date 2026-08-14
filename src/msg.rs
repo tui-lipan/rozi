@@ -101,6 +101,10 @@ pub enum Msg {
     SidebarBlur,
     /// The file tree regained focus after leaving its explorer input.
     SidebarTreeFocused,
+    /// Periodic file/Git refresh while at least one tree tab is visible.
+    SidebarTreeRefresh {
+        epoch: u64,
+    },
     SidebarExplorerFocus(Option<FileTreeExplorerFocusOrigin>),
     /// Tab / Shift-Tab while the row list has focus.
     SidebarCycleTab(bool),

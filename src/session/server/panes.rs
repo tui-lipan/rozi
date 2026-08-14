@@ -255,6 +255,77 @@ impl SessionServer {
 
     pub(super) fn handle_event(&mut self, event: ServerEvent) -> Option<ServerOutbound> {
         match event {
+            ServerEvent::DirectoryListing {
+                client_id,
+                path,
+                show_hidden: _,
+                entries,
+                error,
+            } => {
+                let key = BrowseRequestKey::Directory {
+                    client_id,
+                    path: path.clone(),
+                };
+                let state = self.browse_in_flight.remove(&key);
+                if self.client_attached(client_id) {
+                    if let Some(request) = state.and_then(|state| state.rerun) {
+                        self.browse_in_flight.insert(
+                            key,
+                            BrowseState {
+                                request,
+                                rerun: None,
+                                submitted: false,
+                            },
+                        );
+                    } else {
+                        self.enqueue_browse_response(
+                            client_id,
+                            ServerMessage::DirectoryListing {
+                                path,
+                                entries,
+                                error,
+                            },
+                        );
+                    }
+                }
+                self.retry_browse_requests();
+                None
+            }
+            ServerEvent::ChangeListing {
+                client_id,
+                root,
+                changes,
+                error,
+            } => {
+                let key = BrowseRequestKey::Changes {
+                    client_id,
+                    root: root.clone(),
+                };
+                let state = self.browse_in_flight.remove(&key);
+                if self.client_attached(client_id) {
+                    if let Some(request) = state.and_then(|state| state.rerun) {
+                        self.browse_in_flight.insert(
+                            key,
+                            BrowseState {
+                                request,
+                                rerun: None,
+                                submitted: false,
+                            },
+                        );
+                    } else {
+                        self.enqueue_browse_response(
+                            client_id,
+                            ServerMessage::ChangeListing {
+                                root,
+                                changes,
+                                error,
+                            },
+                        );
+                    }
+                }
+                self.retry_browse_requests();
+                None
+            }
             ServerEvent::Pty(owner, id, generation, event) => {
                 let pane = self.pane_mut(owner, id)?;
                 if pane.generation != generation {

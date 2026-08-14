@@ -74,6 +74,7 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::ConfirmationExpired(epoch) => crate::ops::confirm::expired(ctx, epoch),
         Msg::SidebarBlur => sidebar::blur_body(ctx),
         Msg::SidebarTreeFocused => sidebar::tree_focused(ctx),
+        Msg::SidebarTreeRefresh { epoch } => sidebar::tree_refresh(ctx, epoch),
         Msg::SidebarExplorerFocus(origin) => sidebar::explorer_focus(ctx, origin),
         Msg::SidebarCycleTab(forward) => sidebar::cycle_tab(ctx, forward),
         Msg::SidebarFocusPane(id) => sidebar::focus_pane(ctx, id),
@@ -420,6 +421,7 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
     acknowledge_attended_pane(ctx);
     panes::arm_alert_pulse(ctx);
     sidebar::sync_tree_roots(ctx);
+    sidebar::ensure_tree_refresh_armed(ctx);
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,
     // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.
     sidebar::ensure_sessions_refresh_armed(ctx);

@@ -48,13 +48,31 @@ pub fn run_bounded_shell_command(
     timeout: std::time::Duration,
     capture_limit: usize,
 ) -> std::io::Result<CommandOutput> {
+    let mut args = shell.args.clone();
+    args.push(command_line.to_string());
+    run_bounded_argv_command(&shell.program, &args, timeout, capture_limit)
+}
+
+/// Run a program with an already-separated argv. Stdout and stderr are drained to avoid pipe
+/// deadlocks but only `capture_limit` bytes from each stream are retained. The process group/job is
+/// terminated on timeout and after the process exits, so a bounded caller cannot leave descendants
+/// behind or wait forever on a command that outlives its direct child.
+pub fn run_bounded_argv_command<P, A>(
+    program: P,
+    args: &[A],
+    timeout: std::time::Duration,
+    capture_limit: usize,
+) -> std::io::Result<CommandOutput>
+where
+    P: AsRef<std::ffi::OsStr>,
+    A: AsRef<std::ffi::OsStr>,
+{
     use std::io::Read;
     use std::process::Stdio;
 
-    let mut command = std::process::Command::new(&shell.program);
+    let mut command = std::process::Command::new(program);
     command
-        .args(&shell.args)
-        .arg(command_line)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -656,5 +674,23 @@ mod tests {
         .unwrap();
         assert!(output.timed_out);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_argv_command_preserves_argument_boundaries() {
+        let output = run_bounded_argv_command(
+            "/bin/printf",
+            &["%s|%s", "a path with spaces", "literal;$(not-a-command)"],
+            std::time::Duration::from_secs(2),
+            1024,
+        )
+        .unwrap();
+        assert_eq!(
+            output.stdout,
+            b"a path with spaces|literal;$(not-a-command)"
+        );
+        assert_eq!(output.status, Some(0));
+        assert!(!output.timed_out);
     }
 }

@@ -356,6 +356,7 @@ impl SessionServer {
         id: ClientId,
         promotion_reason: ControllerChangeReason,
     ) {
+        self.clear_browse_requests(id);
         if self.origin_seed_client == Some(id) {
             self.origin_seed_client = None;
         }
@@ -403,6 +404,30 @@ impl SessionServer {
         for message in messages {
             self.broadcast_control(&message);
         }
+    }
+
+    fn clear_browse_requests(&mut self, client_id: ClientId) {
+        self.browse_in_flight.retain(|key, state| {
+            let belongs_to_client = match key {
+                BrowseRequestKey::Directory {
+                    client_id: key_client_id,
+                    ..
+                }
+                | BrowseRequestKey::Changes {
+                    client_id: key_client_id,
+                    ..
+                } => *key_client_id == client_id,
+            };
+            if !belongs_to_client {
+                return true;
+            }
+            if state.submitted {
+                state.rerun = None;
+                true
+            } else {
+                false
+            }
+        });
     }
 
     pub(super) fn heartbeat(&mut self) {

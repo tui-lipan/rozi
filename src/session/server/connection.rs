@@ -463,28 +463,18 @@ impl SessionServer {
             }
             // Read-only filesystem queries: allowed from any client, including read-only ones and
             // followers, since browsing changes nothing and is per-client view state.
-            ClientMessage::ListDirectory { path, show_hidden } => {
-                let (entries, error) = super::browse::list_directory(&path, show_hidden);
-                vec![(
-                    Target::Client(client_id),
-                    ServerMessage::DirectoryListing {
-                        path,
-                        entries,
-                        error,
-                    },
-                )]
-            }
-            ClientMessage::ListChanges { root } => {
-                let (changes, error) = super::browse::list_changes(&root);
-                vec![(
-                    Target::Client(client_id),
-                    ServerMessage::ChangeListing {
-                        root,
-                        changes,
-                        error,
-                    },
-                )]
-            }
+            ClientMessage::ListDirectory { path, show_hidden } => self
+                .request_browse(BrowseRequest::Directory {
+                    client_id,
+                    path,
+                    show_hidden,
+                })
+                .map(|message| vec![(Target::Client(client_id), message)])
+                .unwrap_or_default(),
+            ClientMessage::ListChanges { root } => self
+                .request_browse(BrowseRequest::Changes { client_id, root })
+                .map(|message| vec![(Target::Client(client_id), message)])
+                .unwrap_or_default(),
             ClientMessage::RequestRuntimeMetrics => {
                 let known = self.clients.iter().any(|client| client.id == client_id);
                 if known {
@@ -512,6 +502,155 @@ impl SessionServer {
                 }
                 Vec::new()
             }
+        }
+    }
+
+    fn request_browse(&mut self, request: BrowseRequest) -> Option<ServerMessage> {
+        if request.path_len() > MAX_BROWSE_PATH_BYTES {
+            return Some(ServerMessage::Error {
+                code: "browse-path-too-long".to_string(),
+                message: "browse path exceeds the server limit".to_string(),
+            });
+        }
+
+        let key = request.key();
+        if let Some(state) = self.browse_in_flight.get_mut(&key) {
+            if state.submitted {
+                state.rerun = Some(request);
+            } else {
+                state.request = request;
+            }
+            return None;
+        }
+        if self.browse_in_flight.len() >= MAX_BROWSE_PENDING {
+            return Some(request.error_response("too many browse requests are pending"));
+        }
+        let client_id = request.client_id();
+        if self
+            .browse_in_flight
+            .values()
+            .filter(|state| state.request.client_id() == client_id)
+            .count()
+            >= MAX_BROWSE_PENDING_PER_CLIENT
+        {
+            return Some(request.error_response("too many client browse requests are pending"));
+        }
+
+        if self.browse_worker.is_none() {
+            self.browse_worker = Some(BrowseWorker::new(Arc::clone(&self.events)));
+        }
+        let Some(worker) = self.browse_worker.as_ref() else {
+            return Some(request.error_response("browse worker unavailable"));
+        };
+        match worker.try_submit(request.clone()) {
+            Ok(()) => {
+                self.browse_in_flight.insert(
+                    key,
+                    BrowseState {
+                        request,
+                        rerun: None,
+                        submitted: true,
+                    },
+                );
+                None
+            }
+            Err(mpsc::TrySendError::Full(request)) => {
+                self.browse_in_flight.insert(
+                    key,
+                    BrowseState {
+                        request,
+                        rerun: None,
+                        submitted: false,
+                    },
+                );
+                None
+            }
+            Err(mpsc::TrySendError::Disconnected(request)) => {
+                Some(request.error_response("browse worker unavailable"))
+            }
+        }
+    }
+
+    pub(super) fn retry_browse_requests(&mut self) {
+        let pending: Vec<_> = self
+            .browse_in_flight
+            .iter()
+            .filter_map(|(key, state)| (!state.submitted).then_some(key.clone()))
+            .collect();
+        for key in pending {
+            let Some(state) = self.browse_in_flight.get(&key) else {
+                continue;
+            };
+            let client_id = state.request.client_id();
+            if !self.client_attached(client_id) {
+                self.browse_in_flight.remove(&key);
+                continue;
+            }
+            let request = state.request.clone();
+            let submitted = if let Some(worker) = self.browse_worker.as_ref() {
+                worker.try_submit(request)
+            } else {
+                Err(mpsc::TrySendError::Disconnected(request))
+            };
+            match submitted {
+                Ok(()) => {
+                    if let Some(state) = self.browse_in_flight.get_mut(&key) {
+                        state.submitted = true;
+                    }
+                }
+                Err(mpsc::TrySendError::Full(request)) => {
+                    if let Some(state) = self.browse_in_flight.get_mut(&key) {
+                        state.request = request;
+                    }
+                    break;
+                }
+                Err(mpsc::TrySendError::Disconnected(request)) => {
+                    self.browse_in_flight.remove(&key);
+                    self.enqueue_browse_response(
+                        client_id,
+                        request.error_response("browse worker unavailable"),
+                    );
+                }
+            }
+        }
+    }
+
+    pub(super) fn enqueue_browse_response(&mut self, client_id: ClientId, message: ServerMessage) {
+        if !self.client_attached(client_id) {
+            return;
+        }
+        if encode_control(&message).is_some() {
+            self.enqueue(client_id, Target::Client(client_id), message);
+            return;
+        }
+
+        let fallback = match message {
+            ServerMessage::DirectoryListing { path, .. } => ServerMessage::DirectoryListing {
+                path,
+                entries: Vec::new(),
+                error: Some("browse result was too large for the protocol".to_string()),
+            },
+            ServerMessage::ChangeListing { root, .. } => ServerMessage::ChangeListing {
+                root,
+                changes: Vec::new(),
+                error: Some("browse result was too large for the protocol".to_string()),
+            },
+            _ => ServerMessage::Error {
+                code: "browse-result-encode-failed".to_string(),
+                message: "browse result could not be encoded".to_string(),
+            },
+        };
+        if encode_control(&fallback).is_some() {
+            self.enqueue(client_id, Target::Client(client_id), fallback);
+        } else {
+            self.enqueue(
+                client_id,
+                Target::Client(client_id),
+                ServerMessage::Error {
+                    code: "browse-result-encode-failed".to_string(),
+                    message: "browse result could not be encoded".to_string(),
+                },
+            );
         }
     }
 

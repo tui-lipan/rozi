@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use tui_lipan::prelude::*;
@@ -17,7 +17,7 @@ use crate::session::protocol::{
     self, ClientInfo, ClientMessage, ControllerChangeReason, Frame, PROTOCOL_VERSION, PaneMeta,
     ServerMessage, WirePalette,
 };
-use crate::session::queue::ByteQueue;
+use crate::session::queue::{ByteQueue, PushError};
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
@@ -52,6 +52,15 @@ const HEARTBEAT_STALL_THRESHOLD: Duration = Duration::from_millis(100);
 const MAX_PTY_EVENTS_PER_TICK: usize = 256;
 const MAX_PTY_INGRESS_BYTES: usize = 4 * 1024 * 1024;
 const MAX_COALESCED_PANE_BYTES: usize = 64 * 1024;
+/// One reusable worker owns at most this many queued browse jobs, in addition to its active job.
+const BROWSE_QUEUE_CAPACITY: usize = 4;
+/// Total distinct browse keys retained across the worker queue, result queue, and pending map.
+const MAX_BROWSE_PENDING: usize = 128;
+/// A single follower cannot consume the whole global browse admission budget.
+const MAX_BROWSE_PENDING_PER_CLIENT: usize = 64;
+/// Keep fallback listing responses small enough to remain encodable even when a peer sends a very
+/// large path/root string.
+const MAX_BROWSE_PATH_BYTES: usize = 16 * 1024;
 /// Minimum spacing between control-request notifications to the controller from the same requester,
 /// so a held `request-control` key raises one toast rather than a stream (the roster badge is sticky
 /// regardless).
@@ -97,6 +106,10 @@ pub struct SessionServer {
     /// generation whose replay file the live snapshot directory currently holds. Cleared whenever
     /// a snapshot fails, so a broken or externally removed directory self-heals into a full export.
     persisted_replays: HashMap<PaneId, u64>,
+    /// Filesystem listings currently being computed off the session pump. Each entry owns at most
+    /// one latest rerun, so repeated polling cannot queue unbounded duplicate work.
+    browse_in_flight: HashMap<BrowseRequestKey, BrowseState>,
+    browse_worker: Option<BrowseWorker>,
     last_snapshot: Instant,
     last_runtime_poll: Instant,
     last_attached_count: u32,
@@ -345,6 +358,177 @@ impl ClientConn {
 #[derive(Debug)]
 enum ServerEvent {
     Pty(Option<ClientId>, PaneId, u64, TerminalPtyEvent),
+    DirectoryListing {
+        client_id: ClientId,
+        path: String,
+        show_hidden: bool,
+        entries: Vec<protocol::WireDirEntry>,
+        error: Option<String>,
+    },
+    ChangeListing {
+        client_id: ClientId,
+        root: String,
+        changes: Vec<protocol::WireChange>,
+        error: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+enum BrowseRequestKey {
+    Directory { client_id: ClientId, path: String },
+    Changes { client_id: ClientId, root: String },
+}
+
+#[derive(Clone, Debug)]
+enum BrowseRequest {
+    Directory {
+        client_id: ClientId,
+        path: String,
+        show_hidden: bool,
+    },
+    Changes {
+        client_id: ClientId,
+        root: String,
+    },
+}
+
+impl BrowseRequest {
+    fn key(&self) -> BrowseRequestKey {
+        match self {
+            Self::Directory {
+                client_id, path, ..
+            } => BrowseRequestKey::Directory {
+                client_id: *client_id,
+                path: path.clone(),
+            },
+            Self::Changes { client_id, root } => BrowseRequestKey::Changes {
+                client_id: *client_id,
+                root: root.clone(),
+            },
+        }
+    }
+
+    fn client_id(&self) -> ClientId {
+        match self {
+            Self::Directory { client_id, .. } | Self::Changes { client_id, .. } => *client_id,
+        }
+    }
+
+    fn path_len(&self) -> usize {
+        match self {
+            Self::Directory { path, .. } => path.len(),
+            Self::Changes { root, .. } => root.len(),
+        }
+    }
+
+    fn error_response(&self, error: &str) -> ServerMessage {
+        match self {
+            Self::Directory { path, .. } => ServerMessage::DirectoryListing {
+                path: path.clone(),
+                entries: Vec::new(),
+                error: Some(error.to_string()),
+            },
+            Self::Changes { root, .. } => ServerMessage::ChangeListing {
+                root: root.clone(),
+                changes: Vec::new(),
+                error: Some(error.to_string()),
+            },
+        }
+    }
+
+    fn run(self) -> ServerEvent {
+        match self {
+            Self::Directory {
+                client_id,
+                path,
+                show_hidden,
+            } => {
+                let (entries, error) = browse::list_directory(&path, show_hidden);
+                ServerEvent::DirectoryListing {
+                    client_id,
+                    path,
+                    show_hidden,
+                    entries,
+                    error,
+                }
+            }
+            Self::Changes { client_id, root } => {
+                let (changes, error) = browse::list_changes(&root);
+                ServerEvent::ChangeListing {
+                    client_id,
+                    root,
+                    changes,
+                    error,
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct BrowseState {
+    request: BrowseRequest,
+    rerun: Option<BrowseRequest>,
+    submitted: bool,
+}
+
+struct BrowseWorker {
+    jobs: Option<mpsc::SyncSender<BrowseRequest>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl BrowseWorker {
+    fn new(events: Arc<ByteQueue<ServerEvent>>) -> Self {
+        let (jobs, queue) = mpsc::sync_channel::<BrowseRequest>(BROWSE_QUEUE_CAPACITY);
+        let handle = std::thread::Builder::new()
+            .name("rozi-browse".to_string())
+            .spawn(move || {
+                while let Ok(request) = queue.recv() {
+                    push_browse_event(&events, request.run());
+                }
+            })
+            .ok();
+        Self {
+            jobs: handle.is_some().then_some(jobs),
+            handle,
+        }
+    }
+
+    fn try_submit(
+        &self,
+        request: BrowseRequest,
+    ) -> std::result::Result<(), mpsc::TrySendError<BrowseRequest>> {
+        let Some(jobs) = &self.jobs else {
+            return Err(mpsc::TrySendError::Disconnected(request));
+        };
+        jobs.try_send(request)
+    }
+
+    fn finish(mut self) {
+        self.jobs = None;
+        if self
+            .handle
+            .as_ref()
+            .is_some_and(std::thread::JoinHandle::is_finished)
+            && let Some(handle) = self.handle.take()
+        {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn push_browse_event(events: &ByteQueue<ServerEvent>, event: ServerEvent) {
+    let bytes = event.payload_bytes();
+    let result = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
+    match result {
+        Ok(()) | Err(PushError::Closed(_)) => {}
+        Err(PushError::TooLarge(event)) => {
+            let fallback = event.into_error("browse result exceeded the server queue limit");
+            let bytes = fallback.payload_bytes();
+            let _ = events.push_blocking_with(fallback, bytes, ServerEvent::coalesce_output);
+        }
+        Err(PushError::Full(_)) => unreachable!("blocking browse event push cannot be full"),
+    }
 }
 
 impl ServerEvent {
@@ -352,6 +536,44 @@ impl ServerEvent {
         match self {
             Self::Pty(_, _, _, TerminalPtyEvent::Output(bytes)) => bytes.len(),
             Self::Pty(_, _, _, TerminalPtyEvent::Exited(_) | TerminalPtyEvent::Error(_)) => 0,
+            Self::DirectoryListing {
+                path,
+                entries,
+                error,
+                ..
+            } => retained_directory_bytes(path, entries, error),
+            Self::ChangeListing {
+                root,
+                changes,
+                error,
+                ..
+            } => retained_change_bytes(root, changes, error),
+        }
+    }
+
+    fn into_error(self, error: &str) -> Self {
+        match self {
+            Self::DirectoryListing {
+                client_id,
+                path,
+                show_hidden,
+                ..
+            } => Self::DirectoryListing {
+                client_id,
+                path,
+                show_hidden,
+                entries: Vec::new(),
+                error: Some(error.to_string()),
+            },
+            Self::ChangeListing {
+                client_id, root, ..
+            } => Self::ChangeListing {
+                client_id,
+                root,
+                changes: Vec::new(),
+                error: Some(error.to_string()),
+            },
+            other => other,
         }
     }
 
@@ -376,6 +598,48 @@ impl ServerEvent {
         *bytes = Arc::from(combined);
         true
     }
+}
+
+fn retained_directory_bytes(
+    path: &String,
+    entries: &Vec<protocol::WireDirEntry>,
+    error: &Option<String>,
+) -> usize {
+    std::mem::size_of::<ServerEvent>()
+        .saturating_add(path.capacity())
+        .saturating_add(
+            entries
+                .capacity()
+                .saturating_mul(std::mem::size_of::<protocol::WireDirEntry>()),
+        )
+        .saturating_add(error.as_ref().map_or(0, String::capacity))
+        .saturating_add(
+            entries
+                .iter()
+                .map(|entry| entry.name.capacity())
+                .sum::<usize>(),
+        )
+}
+
+fn retained_change_bytes(
+    root: &String,
+    changes: &Vec<protocol::WireChange>,
+    error: &Option<String>,
+) -> usize {
+    std::mem::size_of::<ServerEvent>()
+        .saturating_add(root.capacity())
+        .saturating_add(
+            changes
+                .capacity()
+                .saturating_mul(std::mem::size_of::<protocol::WireChange>()),
+        )
+        .saturating_add(error.as_ref().map_or(0, String::capacity))
+        .saturating_add(
+            changes
+                .iter()
+                .map(|change| change.path.capacity())
+                .sum::<usize>(),
+        )
 }
 
 enum ServerOutbound {
@@ -442,6 +706,8 @@ impl SessionServer {
             snapshot_generation: 0,
             snapshot_worker: None,
             persisted_replays: HashMap::new(),
+            browse_in_flight: HashMap::new(),
+            browse_worker: None,
             last_snapshot: Instant::now(),
             last_runtime_poll: Instant::now(),
             last_attached_count: 0,
@@ -488,7 +754,9 @@ impl SessionServer {
                 }
             }
 
+            self.retry_browse_requests();
             self.pump_clients();
+            self.retry_browse_requests();
             self.poll_pane_runtime();
             if let Some((next, retired)) = self.pending_listener.take() {
                 listener = next;
@@ -598,6 +866,9 @@ impl SessionServer {
 impl Drop for SessionServer {
     fn drop(&mut self) {
         self.events.close();
+        if let Some(worker) = self.browse_worker.take() {
+            worker.finish();
+        }
     }
 }
 

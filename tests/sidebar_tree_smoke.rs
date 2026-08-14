@@ -108,6 +108,81 @@ fn files_tab_lists_the_focused_pane_directory() {
     );
 }
 
+#[test]
+fn files_tab_refresh_tick_reloads_directory_without_remounting() {
+    let Some(repo) = Repo::new("refresh") else {
+        eprintln!("skipping: git is unavailable");
+        return;
+    };
+    let cwd = repo.0.to_string_lossy().into_owned();
+    let new_file = repo.0.join("appeared-later.rs");
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
+                let tab = SidebarTab::Tree {
+                    view: SidebarTreeView::Files,
+                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+                };
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
+                state.config.sidebar.tabs = vec![tab];
+                let pane = state.current().workspaces[0].panes[0].id;
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+            }
+            for _ in 0..20 {
+                backend.render();
+                let _ = backend.pump();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(
+                !backend
+                    .capture_frame()
+                    .plain_text()
+                    .contains("appeared-later.rs"),
+                "the file does not predate its creation"
+            );
+
+            std::fs::write(new_file, "// new\n").expect("create file after initial listing");
+            let epoch = backend
+                .state()
+                .sidebar
+                .tree_refresh_armed_epoch
+                .expect("visible tree has a refresh chain");
+            backend
+                .dispatch(Msg::SidebarTreeRefresh { epoch })
+                .expect("dispatch refresh tick");
+            for _ in 0..40 {
+                backend.render();
+                let _ = backend.pump();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+
+            assert!(
+                backend
+                    .capture_frame()
+                    .plain_text()
+                    .contains("appeared-later.rs"),
+                "the refresh updates local entries without a remount"
+            );
+        })
+        .expect("spawn refresh smoke thread")
+        .join()
+        .expect("refresh smoke completes");
+}
+
 /// The changes view shows only what git reports, with diff stats, and rooted at the repository so
 /// changes outside the pane's own directory are still visible.
 #[test]

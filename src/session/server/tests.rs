@@ -253,6 +253,427 @@ fn pty_ingress_coalesces_only_adjacent_output_for_the_same_pane() {
 }
 
 #[test]
+fn browse_events_account_retained_bytes_in_the_server_queue() {
+    let event = ServerEvent::DirectoryListing {
+        client_id: 1,
+        path: "/tmp/project".to_string(),
+        show_hidden: true,
+        entries: vec![protocol::WireDirEntry {
+            name: "visible.txt".to_string(),
+            is_dir: false,
+            is_symlink: false,
+            ignored: false,
+            git_staged: None,
+            git_unstaged: Some(protocol::WireChangeState::Modified),
+        }],
+        error: None,
+    };
+    let bytes = event.payload_bytes();
+    assert!(bytes > 0, "browse events must retain accounted memory");
+
+    let queue = ByteQueue::new(MAX_PTY_INGRESS_BYTES);
+    queue.try_push(event, bytes).unwrap();
+    assert_eq!(queue.stats().bytes, bytes);
+
+    let change = ServerEvent::ChangeListing {
+        client_id: 1,
+        root: "/tmp/project".to_string(),
+        changes: vec![protocol::WireChange {
+            path: "visible.txt".to_string(),
+            state: protocol::WireChangeState::Modified,
+            staged: false,
+        }],
+        error: None,
+    };
+    let change_bytes = change.payload_bytes();
+    queue.try_push(change, change_bytes).unwrap();
+    assert_eq!(queue.stats().bytes, bytes + change_bytes);
+}
+
+#[test]
+fn oversized_browse_events_become_bounded_error_results() {
+    let entries = vec![
+        protocol::WireDirEntry {
+            name: "x".repeat(600),
+            is_dir: false,
+            is_symlink: false,
+            ignored: false,
+            git_staged: None,
+            git_unstaged: None,
+        };
+        10_000
+    ];
+    let event = ServerEvent::DirectoryListing {
+        client_id: 1,
+        path: "/tmp/project".to_string(),
+        show_hidden: false,
+        entries,
+        error: None,
+    };
+    assert!(event.payload_bytes() > MAX_PTY_INGRESS_BYTES);
+
+    let queue = ByteQueue::new(MAX_PTY_INGRESS_BYTES);
+    push_browse_event(&queue, event);
+    let Some(ServerEvent::DirectoryListing { entries, error, .. }) = queue.try_pop() else {
+        panic!("expected bounded browse error event");
+    };
+    assert!(entries.is_empty());
+    assert!(error.is_some());
+}
+
+#[test]
+fn browse_admission_queue_is_strictly_bounded() {
+    let (jobs, _queue) = std::sync::mpsc::sync_channel(BROWSE_QUEUE_CAPACITY);
+    let worker = BrowseWorker {
+        jobs: Some(jobs),
+        handle: None,
+    };
+    for index in 0..BROWSE_QUEUE_CAPACITY {
+        worker
+            .try_submit(BrowseRequest::Changes {
+                client_id: 1,
+                root: format!("/tmp/{index}"),
+            })
+            .unwrap();
+    }
+    assert!(matches!(
+        worker.try_submit(BrowseRequest::Changes {
+            client_id: 1,
+            root: "/tmp/overflow".to_string(),
+        }),
+        Err(std::sync::mpsc::TrySendError::Full(_))
+    ));
+}
+
+#[test]
+fn browse_burst_waits_in_pending_queue_and_eventually_completes() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let count = BROWSE_QUEUE_CAPACITY + 8;
+
+    for index in 0..count {
+        assert!(
+            server
+                .handle_message(
+                    client_id,
+                    ClientMessage::ListDirectory {
+                        path: format!("/definitely/not/here/rozi-{index}"),
+                        show_hidden: false,
+                    },
+                )
+                .is_empty()
+        );
+    }
+    assert_eq!(server.browse_in_flight.len(), count);
+
+    for _ in 0..count {
+        let event = wait_for_server_events(&server, 1).remove(0);
+        assert!(server.handle_event(event).is_none());
+    }
+    assert!(server.browse_in_flight.is_empty());
+}
+
+#[test]
+fn browse_pending_map_rejects_only_after_total_bound() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let (second_client, _second_stream) = attach_client(&mut server);
+
+    for (client, offset) in [
+        (client_id, 0),
+        (second_client, MAX_BROWSE_PENDING_PER_CLIENT),
+    ] {
+        for index in 0..MAX_BROWSE_PENDING_PER_CLIENT {
+            assert!(
+                server
+                    .handle_message(
+                        client,
+                        ClientMessage::ListDirectory {
+                            path: format!("/definitely/not/here/rozi-bound-{}", offset + index),
+                            show_hidden: false,
+                        },
+                    )
+                    .is_empty()
+            );
+        }
+    }
+    assert_eq!(server.browse_in_flight.len(), MAX_BROWSE_PENDING);
+
+    let response = server.handle_message(
+        client_id,
+        ClientMessage::ListDirectory {
+            path: "/definitely/not/here/rozi-over-bound".to_string(),
+            show_hidden: false,
+        },
+    );
+    assert!(matches!(
+        response.as_slice(),
+        [(Target::Client(id), ServerMessage::DirectoryListing { error: Some(error), .. })]
+            if *id == client_id && error.contains("too many")
+    ));
+    assert_eq!(server.browse_in_flight.len(), MAX_BROWSE_PENDING);
+}
+
+fn wait_for_server_events(server: &SessionServer, count: usize) -> Vec<ServerEvent> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut events = Vec::with_capacity(count);
+    while events.len() < count && Instant::now() < deadline {
+        if let Some(event) = server.events.try_pop() {
+            events.push(event);
+        } else {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    assert_eq!(events.len(), count, "timed out waiting for server events");
+    events
+}
+
+fn decode_outbox_controls(client: &ClientConn) -> Vec<ServerMessage> {
+    client
+        .outbox
+        .iter()
+        .filter_map(|bytes| {
+            let mut decoder = protocol::FrameDecoder::default();
+            decoder.read_from_status(&mut &bytes[..]).ok()?;
+            match decoder.next_frame::<ServerMessage>().ok()? {
+                Some(Frame::Control(message)) => Some(message),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn filesystem_request_returns_without_a_synchronous_response() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let path = "/definitely/not/here/rozi".to_string();
+    let started = Instant::now();
+
+    let responses = server.handle_message(
+        client_id,
+        ClientMessage::ListDirectory {
+            path: path.clone(),
+            show_hidden: true,
+        },
+    );
+
+    assert!(
+        responses.is_empty(),
+        "filesystem work must not reply inline"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "request handling unexpectedly waited on filesystem work"
+    );
+    assert!(
+        server
+            .browse_in_flight
+            .contains_key(&BrowseRequestKey::Directory { client_id, path })
+    );
+
+    let event = wait_for_server_events(&server, 1).remove(0);
+    assert!(matches!(event, ServerEvent::DirectoryListing { .. }));
+    server.handle_event(event);
+}
+
+#[test]
+fn oversized_browse_path_is_rejected_without_pending_state() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let root = "x".repeat(MAX_BROWSE_PATH_BYTES + 1);
+
+    let responses = server.handle_message(client_id, ClientMessage::ListChanges { root });
+    assert!(matches!(
+        responses.as_slice(),
+        [(Target::Client(id), ServerMessage::Error { code, .. })]
+            if *id == client_id && code == "browse-path-too-long"
+    ));
+    assert!(server.browse_in_flight.is_empty());
+}
+
+#[test]
+fn filesystem_results_route_through_handle_event_to_only_the_requester() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _controller_stream) = attach_client(&mut server);
+    let (requester, _requester_stream) = attach_client(&mut server);
+    let (read_only, _read_only_stream) = attach_read_only_client(&mut server);
+    let root = "/definitely/not/here/rozi".to_string();
+
+    assert!(
+        server
+            .handle_message(
+                requester,
+                ClientMessage::ListDirectory {
+                    path: root.clone(),
+                    show_hidden: true,
+                },
+            )
+            .is_empty()
+    );
+    assert!(
+        server
+            .handle_message(read_only, ClientMessage::ListChanges { root: root.clone() },)
+            .is_empty()
+    );
+
+    for event in wait_for_server_events(&server, 2) {
+        assert!(server.handle_event(event).is_none());
+    }
+
+    let requester_messages = decode_outbox_controls(server.client_mut(requester).unwrap());
+    assert!(requester_messages.iter().any(|message| matches!(
+        message,
+        ServerMessage::DirectoryListing { path: replied, .. } if replied == &root
+    )));
+    assert!(
+        decode_outbox_controls(server.client_mut(read_only).unwrap())
+            .iter()
+            .any(|message| matches!(
+                message,
+                ServerMessage::ChangeListing { root: replied, .. } if replied == &root
+            ))
+    );
+    assert!(decode_outbox_controls(server.client_mut(controller).unwrap()).is_empty());
+    assert!(server.browse_in_flight.is_empty());
+}
+
+#[test]
+fn duplicate_filesystem_requests_share_one_in_flight_job() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let path = "/definitely/not/here/rozi".to_string();
+    let directory_request = |show_hidden| ClientMessage::ListDirectory {
+        path: path.clone(),
+        show_hidden,
+    };
+    let changes_request = || ClientMessage::ListChanges { root: path.clone() };
+
+    assert!(
+        server
+            .handle_message(client_id, directory_request(true))
+            .is_empty()
+    );
+    assert!(
+        server
+            .handle_message(client_id, directory_request(false))
+            .is_empty()
+    );
+    assert!(
+        server
+            .handle_message(client_id, changes_request())
+            .is_empty()
+    );
+    assert!(
+        server
+            .handle_message(client_id, changes_request())
+            .is_empty()
+    );
+    assert_eq!(server.browse_in_flight.len(), 2);
+    let outbox_before = server.client_mut(client_id).unwrap().outbox.len();
+    assert!(matches!(
+        server
+            .browse_in_flight
+            .get(&BrowseRequestKey::Directory {
+                client_id,
+                path: path.clone(),
+            })
+            .and_then(|state| state.rerun.as_ref()),
+        Some(BrowseRequest::Directory {
+            show_hidden: false,
+            ..
+        })
+    ));
+
+    let events = wait_for_server_events(&server, 2);
+    assert!(server.events.try_pop().is_none());
+    for event in events {
+        server.handle_event(event);
+    }
+    assert_eq!(
+        server.client_mut(client_id).unwrap().outbox.len(),
+        outbox_before,
+        "superseded results stay server-side"
+    );
+    let reruns = wait_for_server_events(&server, 2);
+    assert!(server.events.try_pop().is_none());
+    for event in reruns {
+        server.handle_event(event);
+    }
+    assert!(server.client_mut(client_id).unwrap().outbox.len() > outbox_before);
+    assert!(server.browse_in_flight.is_empty());
+}
+
+#[test]
+fn filesystem_completion_after_disconnect_is_harmless() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let root = "/definitely/not/here/rozi".to_string();
+
+    assert!(
+        server
+            .handle_message(client_id, ClientMessage::ListChanges { root })
+            .is_empty()
+    );
+    server.remove_client(client_id);
+
+    let event = wait_for_server_events(&server, 1).remove(0);
+    assert!(server.handle_event(event).is_none());
+    assert!(server.clients.is_empty());
+    assert!(server.browse_in_flight.is_empty());
+}
+
+#[test]
+fn disconnect_drops_pending_browse_requests_but_not_submitted_jobs() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let pending_key = BrowseRequestKey::Directory {
+        client_id,
+        path: "/tmp/pending".to_string(),
+    };
+    let submitted_key = BrowseRequestKey::Changes {
+        client_id,
+        root: "/tmp/submitted".to_string(),
+    };
+    server.browse_in_flight.insert(
+        pending_key.clone(),
+        BrowseState {
+            request: BrowseRequest::Directory {
+                client_id,
+                path: "/tmp/pending".to_string(),
+                show_hidden: false,
+            },
+            rerun: None,
+            submitted: false,
+        },
+    );
+    server.browse_in_flight.insert(
+        submitted_key.clone(),
+        BrowseState {
+            request: BrowseRequest::Changes {
+                client_id,
+                root: "/tmp/submitted".to_string(),
+            },
+            rerun: Some(BrowseRequest::Changes {
+                client_id,
+                root: "/tmp/latest".to_string(),
+            }),
+            submitted: true,
+        },
+    );
+
+    server.remove_client(client_id);
+
+    assert!(!server.browse_in_flight.contains_key(&pending_key));
+    assert!(
+        server
+            .browse_in_flight
+            .get(&submitted_key)
+            .is_some_and(|state| state.rerun.is_none())
+    );
+}
+
+#[test]
 fn cursor_position_report_detection_is_strict() {
     assert!(super::panes::is_cursor_position_report(b"\x1b[1;1R"));
     assert!(super::panes::is_cursor_position_report(b"\x1b[24;120R"));

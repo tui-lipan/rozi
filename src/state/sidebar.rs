@@ -101,6 +101,9 @@ pub struct SidebarState {
     /// actually changes, so the ancestor walk does not run on every frame or every shell prompt.
     pub tree_cwd: Option<String>,
     pub tree_repo: Option<String>,
+    /// Attachment identity that produced the current roots and remote listings. Paths alone are
+    /// insufficient: two retained or remote sessions may report the same cwd on different hosts.
+    pub tree_source_epoch: Option<crate::state::AttachmentId>,
     /// Directories the user has expanded in each file-tree tab, so expansion survives the tree
     /// unmounting. It remounts constantly: the tab keys on its root, so focusing a pane in another
     /// directory, switching tabs, or hiding the sidebar all discard the widget's own expansion.
@@ -126,12 +129,22 @@ pub struct SidebarState {
     pub tree_changes: Vec<tui_lipan::prelude::FileTreeChange>,
     /// Root of the current [`Self::tree_changes`] scan, so a root switch refetches.
     pub tree_changes_root: Option<String>,
+    /// Root most recently requested from the server. A completion for any other root is stale.
+    pub tree_changes_pending_root: Option<String>,
+    /// Last initial remote change-scan failure. Successful data remains visible across refresh
+    /// failures, so this is only populated when there is no snapshot to preserve.
+    pub tree_changes_error: Option<String>,
     /// `git_refresh_token` value the server-side tree data was last fetched at. Lets a refresh
-    /// (root change, command completion) re-ask the server exactly once instead of every message.
+    /// re-ask the server exactly once instead of every message.
     pub tree_server_token: u64,
-    /// Monotonic token handed to `FileTree::git_refresh_token`. The widget ignores a token that
-    /// does not increase, so this only ever counts up.
+    /// Tokens handed to the local FileTree. Git refreshes on root changes, completed commands, and
+    /// the visible-tree poll; directory entries refresh only on the poll.
+    pub tree_entry_refresh_token: u64,
     pub git_refresh_token: u64,
+    /// Generation of the visible-tree refresh chain and the generation currently armed. A new arm
+    /// always gets a new epoch so a delayed tick from before a hide/show cycle cannot fork the loop.
+    pub tree_refresh_epoch: u64,
+    pub tree_refresh_armed_epoch: Option<u64>,
     /// Focused pane and its last observed command phase, used to refresh git status on the edge
     /// into `Completed` — the moment a command has finished changing the working tree.
     pub last_command_phase: Option<(crate::state::PaneId, PaneCommandPhase)>,

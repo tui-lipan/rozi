@@ -305,20 +305,23 @@ the focused pane's working directory. **Git** shows only paths git reports as ch
 their directories, with `M`/`A`/`D`/`?` markers and `+N -M` diff stats; it is rooted at the
 repository rather than the pane's directory, so a pane sitting in `src/` still sees changes across
 the whole repo. Both re-root when focus moves or the pane reports a new working directory, and a
-pane on a remote host says so instead of showing a tree that does not exist locally. The same applies
-when the whole UI is attached with [`--remote`](remote.md): the Files/Git tabs report that the tree
-follows the remote session host; browsing remote directories over the session is not wired yet.
+pane on a remote host says so instead of reading that path on the client. The same applies when the
+whole UI is attached with [`--remote`](remote.md): directory listings and Git state come from the
+remote session host.
 
-Both tabs are inert until visible: the tree mounts only as the active tab of a visible sidebar, and
-directory reads and `git status` both run off the UI thread. Git status is refreshed when the
-focused pane's command finishes rather than on a timer, so a build, commit, or checkout updates the
-tab immediately while reading it costs nothing. Change markers are text rather than Nerd Font
+Both tabs are inert until visible: the tree mounts only as the active tab of a visible sidebar.
+While either tab is visible, directory entries and Git state refresh every five seconds; hiding the
+sidebar or switching every panel away from Files/Git stops the loop. A focused pane's command
+finishing also refreshes Git immediately, so a build, commit, or checkout does not wait for the next
+poll. Local refreshes preserve expansion and explorer state, while remote refreshes re-fetch every
+directory already loaded from the session server. Change markers are text rather than Nerd Font
 glyphs, and icons are off by default, so neither tab assumes a patched font.
 
 With nothing to show, **Git** says which nothing it is: `No changes` in a clean repository,
 `Not a git repository` when the pane's directory has no `.git` above it, and `Loading changes…`
-while a [`--remote`](remote.md) session is still scanning. All three replace the tree rather than
-heading an empty list with the repository path.
+while a [`--remote`](remote.md) session is still scanning. A remote scan failure or bounded-result
+overflow says `Changes unavailable` rather than presenting partial data as a clean repository. All
+four replace the tree rather than heading an empty list with the repository path.
 
 Each tab remembers which directories you expanded. The tree itself is rebuilt whenever its root
 changes — focusing a pane in another directory, switching tabs, hiding the sidebar — and the tab

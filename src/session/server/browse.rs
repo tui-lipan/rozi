@@ -9,14 +9,21 @@
 //! repository, and the framework's own git discovery only reads local paths.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::Path;
-use std::process::Command;
+use std::time::Duration;
 
 use crate::session::protocol::{WireChange, WireChangeState, WireDirEntry};
 
 /// How many entries a single listing may return. Matches the widget's own per-directory cap so a
 /// pathological directory cannot turn into a multi-megabyte frame.
 const MAX_ENTRIES: usize = 10_000;
+/// Git can report arbitrarily many paths; keep the result well below the wire frame limit. The byte
+/// budget is conservative for JSON escaping, so a result admitted here remains protocol-safe.
+const MAX_CHANGE_ENTRIES: usize = 4096;
+const MAX_CHANGE_RESULT_BYTES: usize = 2 * 1024 * 1024;
+const GIT_TIMEOUT: Duration = Duration::from_secs(2);
+const GIT_CAPTURE_LIMIT: usize = 4 * 1024 * 1024;
 
 /// List `path` on this host. Errors are returned as a message rather than failing the connection —
 /// an unreadable directory is a normal thing to browse into.
@@ -72,21 +79,58 @@ pub(crate) fn list_changes(root: &str) -> (Vec<WireChange>, Option<String>) {
         Ok(output) => output,
         Err(err) => return (Vec::new(), Some(err)),
     };
+    let (changes, truncated) = changes_from_porcelain(root, &output);
+    if truncated {
+        return (
+            Vec::new(),
+            Some("change list exceeds the server limit".to_string()),
+        );
+    }
+    (changes, None)
+}
+
+fn changes_from_porcelain(root: &str, output: &[u8]) -> (Vec<WireChange>, bool) {
     let mut changes = Vec::new();
-    for record in parse_porcelain_z(&output) {
+    let mut estimated_bytes = change_listing_base_bytes(root);
+    for record in parse_porcelain_z(output) {
         // Staged wins the marker when a path is both, matching the local widget's precedence.
         let (state, is_staged) = match (record.staged, record.unstaged) {
             (Some(state), _) => (state, true),
             (None, Some(state)) => (state, false),
             (None, None) => continue,
         };
-        changes.push(WireChange {
+        let change = WireChange {
             path: record.path.to_string(),
             state,
             staged: is_staged,
-        });
+        };
+        let entry_bytes = change_entry_budget(&change.path);
+        if changes.len() >= MAX_CHANGE_ENTRIES
+            || estimated_bytes.saturating_add(entry_bytes) > MAX_CHANGE_RESULT_BYTES
+        {
+            return (changes, true);
+        }
+        estimated_bytes = estimated_bytes.saturating_add(entry_bytes);
+        changes.push(change);
     }
-    (changes, None)
+    (changes, false)
+}
+
+fn change_listing_base_bytes(root: &str) -> usize {
+    root.len().saturating_mul(6).saturating_add(128)
+}
+
+fn change_entry_budget(path: &str) -> usize {
+    path.len().saturating_mul(6).saturating_add(64)
+}
+
+#[cfg(test)]
+fn estimated_change_listing_bytes(root: &str, changes: &[WireChange]) -> usize {
+    changes
+        .iter()
+        .fold(change_listing_base_bytes(root), |total, change| {
+            total.saturating_add(change_entry_budget(&change.path))
+        })
 }
 
 /// Per-direct-child git state for one directory: `(staged, unstaged, ignored)`.
@@ -140,13 +184,21 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     if !crate::platform::command::program_exists("git") {
         return Err("git was not found on the session server's PATH".to_string());
     }
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|err| format!("git failed: {err}"))?;
-    if !output.status.success() {
+    let mut argv = Vec::with_capacity(args.len() + 2);
+    argv.push(OsString::from("-C"));
+    argv.push(dir.as_os_str().to_os_string());
+    argv.extend(args.iter().map(OsString::from));
+    let output = crate::platform::command::run_bounded_argv_command(
+        "git",
+        &argv,
+        GIT_TIMEOUT,
+        GIT_CAPTURE_LIMIT,
+    )
+    .map_err(|err| format!("git failed: {err}"))?;
+    if output.timed_out {
+        return Err("git timed out".to_string());
+    }
+    if output.status != Some(0) {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     Ok(output.stdout)
@@ -297,5 +349,29 @@ mod tests {
         assert!(all.iter().any(|e| e.name == ".hidden"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn change_listing_caps_count_and_wire_budget() {
+        let mut count_raw = Vec::new();
+        for index in 0..(MAX_CHANGE_ENTRIES + 100) {
+            count_raw.extend_from_slice(format!("?? file-{index}\0").as_bytes());
+        }
+        let (count_limited, count_truncated) = changes_from_porcelain("/tmp", &count_raw);
+        assert!(count_truncated);
+        assert_eq!(count_limited.len(), MAX_CHANGE_ENTRIES);
+        assert!(estimated_change_listing_bytes("/tmp", &count_limited) <= MAX_CHANGE_RESULT_BYTES);
+
+        let long_path = "x".repeat(1_000);
+        let mut size_raw = Vec::new();
+        for _ in 0..MAX_CHANGE_ENTRIES {
+            size_raw.extend_from_slice(b"?? ");
+            size_raw.extend_from_slice(long_path.as_bytes());
+            size_raw.push(0);
+        }
+        let (size_limited, size_truncated) = changes_from_porcelain("/tmp", &size_raw);
+        assert!(size_truncated);
+        assert!(size_limited.len() < MAX_CHANGE_ENTRIES);
+        assert!(estimated_change_listing_bytes("/tmp", &size_limited) <= MAX_CHANGE_RESULT_BYTES);
     }
 }

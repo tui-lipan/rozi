@@ -44,11 +44,30 @@ is the chosen line, so it drops into a pipeline with no `jq`:
 branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) && git switch "$branch"
 ```
 
+That plain list cannot say which branch you are already on. `--json` can, and the convention to
+follow is the layout picker's: a right-aligned `current` badge, plus `active` to tint the row -
+the colour alone is too quiet to rely on. Ordering by commit date beats alphabetical here too:
+
+```bash
+branch=$(git for-each-ref refs/heads/ --sort=-committerdate \
+      --format='%(HEAD)%09%(refname:short)%09%(committerdate:relative)' \
+  | jq -Rc 'split("\t") | {
+      id: .[1], label: .[1], active: (.[0] == "*"),
+      description: (if .[0] == "*" then "current · " + .[2] else .[2] end)
+    }' \
+  | jq -sc '{rows: .}' \
+  | rozi pick --json --title "Switch branch" \
+  | jq -r '.selected // empty') && git switch "$branch"
+```
+
+`description` is one right-aligned string, so a marker and a detail share that column rather than
+occupying separate slots.
+
 Bind it to a chord so it works from anywhere:
 
 ```toml
 [keys]
-"ctrl-a i" = { run = "b=$(git branch --format='%(refname:short)' | rozi pick --title Branch) && git switch \"$b\"" }
+i = { exec = "~/.config/rozi/branch-pick.sh", label = "Switch branch" }
 ```
 
 `--json` buys what a plain list cannot express — sections, right-aligned badges, and rows that stay

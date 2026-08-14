@@ -252,6 +252,11 @@ pub struct PickAction {
     /// updated row set and keep going.
     #[serde(default)]
     pub close: bool,
+    /// Require a second press to fire, the way the session and profile pickers arm a kill or a
+    /// delete. The armed row is struck through in the error colour with an `again to <label>` cue,
+    /// and moving the highlight disarms it.
+    #[serde(default)]
+    pub confirm: bool,
 }
 
 /// An open prompt raised by a [`PickAction`], holding the picker underneath it.
@@ -270,6 +275,10 @@ pub struct PickState {
     pub width: u16,
     pub actions: Vec<PickAction>,
     pub prompt: Option<PickPrompt>,
+    /// The `confirm` action awaiting its second press, with the row it was armed on. Held by row
+    /// id rather than position: the caller can push a new list under an armed row, and a
+    /// confirmation landing on whoever slid into that slot is the mistake arming exists to stop.
+    pub pending_action: Option<(usize, String)>,
     pub rows: Vec<PickRow>,
     pub selected: usize,
     pub reply: std::sync::mpsc::SyncSender<String>,

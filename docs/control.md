@@ -299,6 +299,9 @@ Action attributes:
 - `prompt` (string, optional): opens a text prompt with this title; the entered text rides back as
   `input`. Cancelling the prompt reports nothing and returns to the list.
 - `close` (bool, default `false`): whether firing it ends the picker.
+- `confirm` (bool, default `false`): require a second press, the way the session picker arms a
+  kill. The armed row is struck through in the error colour with an `again to <label>` cue; moving
+  the highlight, or a refresh that drops that row, disarms it.
 
 A fired action writes one line and, unless it declared `close`, **leaves the palette open** so the
 caller can answer with an updated `{"rows":[...]}` - deleting a row and re-listing is one round

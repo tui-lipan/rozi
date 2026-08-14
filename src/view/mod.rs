@@ -517,6 +517,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         || ctx.state.show_settings
         || ctx.state.show_theme_picker
         || ctx.state.show_layout_picker
+        || ctx.state.show_pick
         || ctx.state.rename.is_some()
         || ctx.state.rename_session.is_some()
         || ctx.state.save_profile_prompt.is_some()

@@ -58,6 +58,14 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
     let disabled_style = fg_only(&ctx.state.theme.muted);
     let item_style = fg_only(&ctx.state.theme.primary);
     let description_style = fg_only(&ctx.state.theme.muted);
+    // An armed `confirm` action paints its row exactly like the session picker's armed kill, so
+    // the affordance is one the user has already learned somewhere else.
+    let armed = pick.pending_action.clone().and_then(|(index, row)| {
+        pick.actions
+            .get(index)
+            .map(|action| (row, format!("again to {}", action.label)))
+    });
+    let error_bg = ctx.state.theme.status.error;
 
     let palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
@@ -68,6 +76,17 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
         .render_item(Arc::new(
             move |item: &SearchItem<usize>, _highlight| {
                 let row = &rows[item.value];
+                if let Some((armed_row, cue)) = armed.as_ref()
+                    && row.id.as_ref().unwrap_or(&row.label) == armed_row
+                {
+                    return render_pending_confirm_item(
+                        item.label.as_ref(),
+                        error_bg,
+                        cue,
+                        true,
+                    )
+                    .into();
+                }
                 let disabled_reason = row.disabled.as_deref();
                 let status = disabled_reason.or(row.description.as_deref()).unwrap_or("");
                 let style = if disabled_reason.is_some() {

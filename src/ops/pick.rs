@@ -66,6 +66,7 @@ pub(crate) fn open_pick_stream(
             })
             .collect(),
         prompt: None,
+        pending_action: None,
         rows: Vec::new(),
         selected: 0,
         reply: sender,
@@ -88,6 +89,17 @@ pub(crate) fn rows_reported(ctx: &mut Context<AppRoot>, id: u64, rows: Vec<PickR
     pick.rows = rows;
     if pick.selected >= pick.rows.len() {
         pick.selected = 0;
+    }
+    // An arming survives a refresh only while its row does; otherwise the confirmation would be
+    // aimed at whatever took that id's place.
+    if let Some((_, row)) = pick.pending_action.clone() {
+        let still_there = pick
+            .rows
+            .iter()
+            .any(|candidate| candidate.id.as_ref().unwrap_or(&candidate.label) == &row);
+        if !still_there {
+            pick.pending_action = None;
+        }
     }
     Update::full()
 }
@@ -128,7 +140,14 @@ pub(crate) fn cancel_pick(ctx: &mut Context<AppRoot>, reason: Option<&str>) -> U
 
 pub(crate) fn pick_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if let Some(pick) = ctx.state.pick.as_mut() {
+        let moved = pick.selected != index;
         pick.selected = index;
+        // Moving off the armed row disarms it, so a confirmation can never land on a row the user
+        // has since navigated to.
+        if moved && pick.pending_action.is_some() {
+            pick.pending_action = None;
+            return Update::full();
+        }
     }
     Update::none()
 }
@@ -166,6 +185,26 @@ pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update 
     let Some(action) = pick.actions.get(index).cloned() else {
         return Update::none();
     };
+
+    if action.confirm {
+        let row = pick
+            .rows
+            .get(pick.selected)
+            .map(|row| row.id.clone().unwrap_or_else(|| row.label.clone()));
+        let Some(row) = row else {
+            return Update::none();
+        };
+        // Arm on the first press, fire on a second one aimed at the same row.
+        if pick.pending_action.as_ref() != Some(&(index, row.clone())) {
+            if let Some(pick) = ctx.state.pick.as_mut() {
+                pick.pending_action = Some((index, row));
+            }
+            return Update::full();
+        }
+        if let Some(pick) = ctx.state.pick.as_mut() {
+            pick.pending_action = None;
+        }
+    }
 
     if let Some(title) = action.prompt.clone() {
         if let Some(pick) = ctx.state.pick.as_mut() {
@@ -459,6 +498,7 @@ mod tests {
             label: id.to_string(),
             prompt: prompt.map(str::to_string),
             close,
+            confirm: false,
         }
     }
 
@@ -597,6 +637,94 @@ mod tests {
                     .as_ref()
                     .is_some_and(|pick| pick.prompt.is_none())
             );
+        });
+    }
+
+    fn confirming(id: &str, key: &str) -> crate::state::PickAction {
+        crate::state::PickAction {
+            confirm: true,
+            ..action(id, key, None, false)
+        }
+    }
+
+    /// A `confirm` action arms on the first press and only reports on the second, the way the
+    /// session picker's kill does.
+    #[test]
+    fn a_confirming_action_needs_a_second_press() {
+        with_backend(|backend| {
+            let rx = open_with(backend, vec![confirming("delete", "ctrl-d")], None);
+
+            backend
+                .dispatch(crate::Msg::PickActionKey(0))
+                .expect("first press");
+            assert!(rx.try_recv().is_err(), "fired on the first press");
+            assert!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .is_some_and(|pick| pick.pending_action.is_some()),
+                "did not arm"
+            );
+
+            backend
+                .dispatch(crate::Msg::PickActionKey(0))
+                .expect("second press");
+            let line = rx.try_recv().expect("reported on the second press");
+            assert_eq!(line.trim(), r#"{"action":"delete","selected":"feat/x"}"#);
+            assert!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .is_some_and(|pick| pick.pending_action.is_none()),
+                "stayed armed after firing"
+            );
+        });
+    }
+
+    /// Moving the highlight disarms, so a confirmation cannot land on a row navigated to after
+    /// arming.
+    #[test]
+    fn moving_the_highlight_disarms_a_confirming_action() {
+        with_backend(|backend| {
+            let rx = open_with(backend, vec![confirming("delete", "ctrl-d")], None);
+            backend.dispatch(crate::Msg::PickActionKey(0)).expect("arm");
+            backend
+                .dispatch(crate::Msg::PickSelect(0))
+                .expect("same row is not a move");
+            assert!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .is_some_and(|pick| pick.pending_action.is_some()),
+                "re-selecting the same row disarmed it"
+            );
+
+            backend
+                .dispatch(crate::Msg::PickRowsReported {
+                    id: 1,
+                    rows: vec![PickRow {
+                        id: Some("other".into()),
+                        label: "other".into(),
+                        description: None,
+                        group: None,
+                        disabled: None,
+                        active: false,
+                        priority: None,
+                    }],
+                })
+                .expect("refresh without the armed row");
+            assert!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .is_some_and(|pick| pick.pending_action.is_none()),
+                "arming outlived the row it was aimed at"
+            );
+            assert!(rx.try_recv().is_err());
         });
     }
 

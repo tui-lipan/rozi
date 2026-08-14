@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::config::{SidebarTab, SidebarTabId};
-use crate::update::sidebar::polling::{tree_active, TREE_REFRESH_INTERVAL};
+use crate::update::sidebar::polling::{TREE_REFRESH_INTERVAL, tree_active};
 
 /// Keep exactly one low-frequency file-tree refresh chain alive while a Files/Git tab is visible.
 /// A generation travels with each tick so hiding and reopening cannot revive an old chain beside

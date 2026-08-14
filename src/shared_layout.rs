@@ -88,14 +88,30 @@ pub enum SharedLayoutValidationError {
     ZeroCanvasDimensions,
     DuplicateWorkspaceIndex(usize),
     DuplicatePaneId(PaneId),
-    TreeLeafNotInWorkspace { workspace: usize, pane_id: PaneId },
-    DuplicateTreeLeaf { workspace: usize, pane_id: PaneId },
-    InvalidSplitRatio { workspace: usize },
-    InvalidTreeSplitRatio { workspace: usize },
+    TreeLeafNotInWorkspace {
+        workspace: usize,
+        pane_id: PaneId,
+    },
+    DuplicateTreeLeaf {
+        workspace: usize,
+        pane_id: PaneId,
+    },
+    InvalidSplitRatio {
+        workspace: usize,
+    },
+    InvalidTreeSplitRatio {
+        workspace: usize,
+    },
     MissingFloatingRect(PaneId),
-    InvalidFloatingRect { pane_id: PaneId, reason: &'static str },
+    InvalidFloatingRect {
+        pane_id: PaneId,
+        reason: &'static str,
+    },
     InvalidScrollableWidth(PaneId),
-    InvalidGeneration { pane_id: PaneId, generation: u64 },
+    InvalidGeneration {
+        pane_id: PaneId,
+        generation: u64,
+    },
 }
 
 impl std::fmt::Display for SharedLayoutValidationError {
@@ -106,7 +122,10 @@ impl std::fmt::Display for SharedLayoutValidationError {
             Self::DuplicateWorkspaceIndex(i) => write!(f, "duplicate workspace index {i}"),
             Self::DuplicatePaneId(id) => write!(f, "duplicate pane id {id}"),
             Self::TreeLeafNotInWorkspace { workspace, pane_id } => {
-                write!(f, "tree leaf {pane_id} not found in workspace {workspace} panes")
+                write!(
+                    f,
+                    "tree leaf {pane_id} not found in workspace {workspace} panes"
+                )
             }
             Self::DuplicateTreeLeaf { workspace, pane_id } => {
                 write!(f, "duplicate tree leaf {pane_id} in workspace {workspace}")
@@ -122,9 +141,15 @@ impl std::fmt::Display for SharedLayoutValidationError {
                 write!(f, "floating pane {pane_id} has invalid rect: {reason}")
             }
             Self::InvalidScrollableWidth(id) => {
-                write!(f, "pane {id} has non-positive or non-finite scrollable width")
+                write!(
+                    f,
+                    "pane {id} has non-positive or non-finite scrollable width"
+                )
             }
-            Self::InvalidGeneration { pane_id, generation } => {
+            Self::InvalidGeneration {
+                pane_id,
+                generation,
+            } => {
                 write!(f, "pane {pane_id} has invalid generation {generation}")
             }
         }
@@ -145,7 +170,9 @@ impl SharedLayout {
     /// - Pane generations are non-zero.
     pub fn validate(&self) -> std::result::Result<(), SharedLayoutValidationError> {
         if self.version != SHARED_LAYOUT_VERSION {
-            return Err(SharedLayoutValidationError::UnsupportedVersion(self.version));
+            return Err(SharedLayoutValidationError::UnsupportedVersion(
+                self.version,
+            ));
         }
         if self.canvas_cols == 0 || self.canvas_rows == 0 {
             return Err(SharedLayoutValidationError::ZeroCanvasDimensions);
@@ -156,7 +183,9 @@ impl SharedLayout {
 
         for ws in &self.workspaces {
             if !seen_workspaces.insert(ws.index) {
-                return Err(SharedLayoutValidationError::DuplicateWorkspaceIndex(ws.index));
+                return Err(SharedLayoutValidationError::DuplicateWorkspaceIndex(
+                    ws.index,
+                ));
             }
 
             let mut ws_pane_ids = std::collections::HashSet::new();
@@ -181,7 +210,9 @@ impl SharedLayout {
 
                 if pane.floating {
                     let Some(rect) = pane.rect else {
-                        return Err(SharedLayoutValidationError::MissingFloatingRect(pane.pane_id));
+                        return Err(SharedLayoutValidationError::MissingFloatingRect(
+                            pane.pane_id,
+                        ));
                     };
                     if !rect.x.is_finite()
                         || !rect.y.is_finite()

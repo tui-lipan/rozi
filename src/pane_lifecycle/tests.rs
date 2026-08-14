@@ -1,9 +1,9 @@
 use super::*;
-use tui_lipan::prelude::*;
-use tui_lipan::Theme;
 use crate::anim::GeometryAnimation;
 use crate::geometry::canvas_local_point_from_mouse;
 use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
+use tui_lipan::Theme;
+use tui_lipan::prelude::*;
 
 fn rule(matches: &str) -> crate::config::RuleConfig {
     crate::config::RuleConfig {
@@ -394,8 +394,7 @@ fn closing_a_nonfocused_scrollable_anchor_remaps_without_changing_focus() {
             workspace.scrollable_anchor = Some(30);
             workspace.scrollable_reveal_edge = ScrollableRevealEdge::Right;
             state.current_mut().focused_pane = Some(99);
-            state.sidebar.panels[0].active_tab =
-                Some(crate::config::SidebarTabId::new("panes"));
+            state.sidebar.panels[0].active_tab = Some(crate::config::SidebarTabId::new("panes"));
         }
         backend.render();
         let focus_events =
@@ -461,8 +460,7 @@ fn closing_an_inactive_scrollable_anchor_remaps_its_workspace_only() {
             workspace.focused_pane = Some(130);
             workspace.scrollable_anchor = Some(130);
             workspace.scrollable_reveal_edge = ScrollableRevealEdge::Right;
-            state.sidebar.panels[0].active_tab =
-                Some(crate::config::SidebarTabId::new("panes"));
+            state.sidebar.panels[0].active_tab = Some(crate::config::SidebarTabId::new("panes"));
         }
         backend.render();
         let focus_events =
@@ -619,10 +617,7 @@ fn workspace_switch_replaces_the_canvas_host_without_retaining_old_panes() {
         backend.state_mut().current_mut().workspaces[1]
             .panes
             .push(pane);
-        crate::tiling::append_tiled_window(
-            &mut backend.state_mut().current_mut().workspaces[1],
-            2,
-        );
+        crate::tiling::append_tiled_window(&mut backend.state_mut().current_mut().workspaces[1], 2);
         backend.render();
 
         backend

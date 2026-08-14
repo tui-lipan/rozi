@@ -76,9 +76,15 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
         RowTarget::PublishedRow { pane_id, row_id } => activate_published_row(ctx, pane_id, row_id),
-        RowTarget::Session(entry) => crate::update::sidebar::sessions::activate_session(ctx, *entry),
-        RowTarget::HostConnect(target) => crate::update::sidebar::sessions::connect_host(ctx, target),
-        RowTarget::HostDisconnect(target) => crate::update::sidebar::sessions::disconnect_host(ctx, target, armed_disconnect),
+        RowTarget::Session(entry) => {
+            crate::update::sidebar::sessions::activate_session(ctx, *entry)
+        }
+        RowTarget::HostConnect(target) => {
+            crate::update::sidebar::sessions::connect_host(ctx, target)
+        }
+        RowTarget::HostDisconnect(target) => {
+            crate::update::sidebar::sessions::disconnect_host(ctx, target, armed_disconnect)
+        }
         RowTarget::NewSession(None) => crate::ops::session::open_create_session(ctx),
         RowTarget::NewSession(Some(target)) => {
             crate::ops::session::open_create_session_on_host(ctx, target)
@@ -165,7 +171,11 @@ pub(crate) fn resolve_row_action(action: &UserCommandAction, line: &str) -> User
     substitute(action, "{line}", line)
 }
 
-pub(crate) fn substitute(action: &UserCommandAction, placeholder: &str, value: &str) -> UserCommandAction {
+pub(crate) fn substitute(
+    action: &UserCommandAction,
+    placeholder: &str,
+    value: &str,
+) -> UserCommandAction {
     match action {
         UserCommandAction::Send(text) => UserCommandAction::Send(text.replace(placeholder, value)),
         // Config validation rejects placeholders here; run/popup commands are always fixed.

@@ -1,15 +1,15 @@
 use tui_lipan::prelude::*;
 
+use crate::AppRoot;
 use crate::anim::{self, GeometryAnimation};
 use crate::geometry::{canvas_local_point_from_mouse, clamp_float_rect, default_floating_rect};
 use crate::layout::place_spawned_pane;
-use crate::ops::focus::{request_pane_focus};
+use crate::ops::focus::request_pane_focus;
 use crate::ops::theme::pane_frame_background;
 use crate::pane_lifecycle::namespace::{find_pane, find_pane_mut, pane_env};
 use crate::pane_lifecycle::timers::open_timers_command;
 use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
 use crate::tiling::remove_tiled_window;
-use crate::AppRoot;
 
 /// The focused pane's local working directory, if it has a usable one.
 ///

@@ -4,7 +4,8 @@ use crate::AppRoot;
 use crate::config::{SidebarTab, SidebarTabId};
 use crate::state::{SidebarCommandOutput, SidebarCommandRow};
 
-pub(crate) const SESSION_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
+pub(crate) const SESSION_REFRESH_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(1500);
 pub(crate) const TREE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 pub(crate) const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 pub(crate) const COMMAND_CAPTURE_BYTES: usize = 64 * 1024;

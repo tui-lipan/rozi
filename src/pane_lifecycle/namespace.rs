@@ -1,6 +1,4 @@
-use crate::ops::focus::{
-    first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
-};
+use crate::ops::focus::{first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect};
 use crate::state::{Pane, PaneId, State};
 use crate::tiling::remove_tiled_window;
 

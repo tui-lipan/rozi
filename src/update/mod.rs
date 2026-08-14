@@ -16,7 +16,7 @@ const LAYOUT_COMMIT_DEBOUNCE_MS: u64 = 16;
 
 pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
     let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
-    let mut update = match msg {
+    let update = match msg {
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::UserCommandFailed { message } => {
             crate::pty_events::notify_error(ctx, "Command failed", message);
@@ -439,7 +439,14 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             session: name,
         } => session::renamed(ctx, epoch, name),
     };
+    post_update_sync(ctx, update, is_layout_flush)
+}
 
+fn post_update_sync(
+    ctx: &mut Context<AppRoot>,
+    mut update: Update,
+    is_layout_flush: bool,
+) -> Update {
     ctx.state.current_mut().retired_panes.expire();
     for attachment in ctx.state.background.values_mut() {
         attachment.retired_panes.expire();
@@ -450,8 +457,6 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
     if stale_search {
         ctx.state.search = None;
         ctx.state.commands_dirty = true;
-    }
-    if stale_search {
         let command = update.command.take();
         update = Update::with_command(command);
     }

@@ -59,7 +59,10 @@ pub(crate) fn mark_current_parked(ctx: &mut Context<AppRoot>, parked: bool) {
 /// later asks to be confirmed away on quit — a session the user never asked for and never used.
 ///
 /// A session the user asked for, worked in, or shares with another client is always kept.
-pub(crate) fn discard_parked_if_disposable(ctx: &mut Context<AppRoot>, epoch: crate::state::AttachmentId) {
+pub(crate) fn discard_parked_if_disposable(
+    ctx: &mut Context<AppRoot>,
+    epoch: crate::state::AttachmentId,
+) {
     let disposable = ctx.state.background.get(&epoch).is_some_and(|attachment| {
         attachment.disposition() == crate::state::SessionDisposition::Discard
     });

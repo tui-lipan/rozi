@@ -301,7 +301,10 @@ pub(crate) fn discover_sidebar_sessions(
 /// Add the attached session to `rows` unless it is already listed. Remote discovery returns the
 /// attached session (the current-session exclusion only applies to the *local* scan), so both the
 /// sidebar and the picker would otherwise show two `name@host • current` rows under `--remote`.
-pub(crate) fn merge_current_session_row(rows: &mut Vec<DiscoveredSession>, current: DiscoveredSession) {
+pub(crate) fn merge_current_session_row(
+    rows: &mut Vec<DiscoveredSession>,
+    current: DiscoveredSession,
+) {
     let already = rows
         .iter()
         .any(|row| row.name == current.name && row.remote_target == current.remote_target);
@@ -320,7 +323,10 @@ pub(crate) fn sort_session_rows(rows: &mut [DiscoveredSession]) {
 
 /// Append rows for every current or retained attachment. This keeps ad-hoc remotes selectable even
 /// when they are not part of configured-host discovery.
-pub(crate) fn push_attached_session_rows(ctx: &Context<AppRoot>, rows: &mut Vec<DiscoveredSession>) {
+pub(crate) fn push_attached_session_rows(
+    ctx: &Context<AppRoot>,
+    rows: &mut Vec<DiscoveredSession>,
+) {
     for attached in attached_session_rows(&ctx.state) {
         merge_current_session_row(rows, attached);
     }
@@ -368,7 +374,9 @@ pub(crate) fn attached_session_rows(state: &crate::state::State) -> Vec<Discover
         .collect()
 }
 
-pub(crate) fn attachment_session_row(attachment: &crate::state::Attachment) -> Option<DiscoveredSession> {
+pub(crate) fn attachment_session_row(
+    attachment: &crate::state::Attachment,
+) -> Option<DiscoveredSession> {
     let name = attachment.session_name.clone()?;
     Some(DiscoveredSession {
         name,

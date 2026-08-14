@@ -1,8 +1,8 @@
 use std::time::Duration;
 use tui_lipan::prelude::*;
 
-use crate::state::PaneId;
 use crate::Msg;
+use crate::state::PaneId;
 
 pub(crate) fn open_timers_command(
     epoch: u64,

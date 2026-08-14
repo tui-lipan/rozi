@@ -1,9 +1,9 @@
 use super::*;
-use tui_lipan::prelude::*;
 use crate::config::Config;
 use crate::session::discovery::DiscoveredSession;
 use crate::session::protocol::ClientInfo;
 use crate::state::{NamingMode, SessionPickerState, SharedSessionState, State, ThemePreset};
+use tui_lipan::prelude::*;
 
 fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
     DiscoveredSession {
@@ -138,12 +138,7 @@ fn fresh_host_results_replace_cached_rows() {
     );
     let mut rows = vec![session_row("live", Some("winvm"))];
 
-    push_cached_configured_remote_rows(
-        &mut rows,
-        &config,
-        &cache,
-        std::slice::from_ref(&target),
-    );
+    push_cached_configured_remote_rows(&mut rows, &config, &cache, std::slice::from_ref(&target));
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "live");
@@ -681,15 +676,18 @@ fn cancelling_occupied_attach_does_not_retain_it_as_offline() {
             assert!(!state.background.contains_key(&10));
             assert!(state.attachment_by_identity("occupied", None).is_none());
             assert!(
-                state.background.values().any(|attachment| {
-                    attachment.session_name.as_deref() == Some("previous")
-                }),
+                state
+                    .background
+                    .values()
+                    .any(|attachment| { attachment.session_name.as_deref() == Some("previous") }),
                 "previous stays parked for an explicit picker choice"
             );
-            assert!(target_rx.try_iter().any(|message| matches!(
-                message,
-                ClientOutbound::Control(ClientMessage::Detach)
-            )));
+            assert!(
+                target_rx.try_iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::Detach)
+                ))
+            );
         })
         .expect("spawn cancel attach test")
         .join()

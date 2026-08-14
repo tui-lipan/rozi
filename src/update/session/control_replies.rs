@@ -1,7 +1,9 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::{find_pane_in_namespace, find_pane_in_namespace_mut, remove_pane_after_exit};
+use crate::pane_lifecycle::{
+    find_pane_in_namespace, find_pane_in_namespace_mut, remove_pane_after_exit,
+};
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
@@ -108,9 +110,14 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>, epoch: u64) -> Upd
 /// one, and correctness does not depend on the prompt: type-ahead input is read whenever the
 /// shell gets there. Waiting only avoids the cosmetic double echo of injecting mid-startup
 /// (kernel tty echo first, readline's redraw second).
-pub(crate) const REPLAY_PROMPT_DEADLINE: std::time::Duration = std::time::Duration::from_millis(800);
+pub(crate) const REPLAY_PROMPT_DEADLINE: std::time::Duration =
+    std::time::Duration::from_millis(800);
 
-pub(crate) fn replay_input_deadline_command(epoch: u64, pane_id: PaneId, generation: u64) -> Command {
+pub(crate) fn replay_input_deadline_command(
+    epoch: u64,
+    pane_id: PaneId,
+    generation: u64,
+) -> Command {
     Command::after(
         REPLAY_PROMPT_DEADLINE,
         move |link: CommandLink<crate::Msg>| {

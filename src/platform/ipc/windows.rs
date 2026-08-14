@@ -443,9 +443,16 @@ impl IpcConnection {
         match self {
             Self::Local(local) => {
                 if local.server_end {
-                    unsafe { windows_sys::Win32::System::Pipes::DisconnectNamedPipe(local.handle.0) };
+                    unsafe {
+                        windows_sys::Win32::System::Pipes::DisconnectNamedPipe(local.handle.0)
+                    };
                 } else {
-                    unsafe { windows_sys::Win32::System::IO::CancelIoEx(local.handle.0, std::ptr::null_mut()) };
+                    unsafe {
+                        windows_sys::Win32::System::IO::CancelIoEx(
+                            local.handle.0,
+                            std::ptr::null_mut(),
+                        )
+                    };
                 }
                 Ok(())
             }

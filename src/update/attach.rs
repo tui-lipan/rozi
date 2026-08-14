@@ -31,7 +31,11 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.rows = meta.rows.max(1);
     pane.terminal
         .bind_server_backend(meta.pane_id, meta.generation);
-    pane.terminal.title = meta.title.as_deref().filter(|t| !t.trim().is_empty()).map(String::from);
+    pane.terminal.title = meta
+        .title
+        .as_deref()
+        .filter(|t| !t.trim().is_empty())
+        .map(String::from);
     pane.terminal.original_user = meta.original_user.clone();
     pane.terminal.cwd = meta.runtime.cwd.clone();
     pane.terminal.cwd_host = meta.runtime.cwd_host.clone();

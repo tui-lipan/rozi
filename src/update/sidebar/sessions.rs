@@ -1,7 +1,7 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::update::sidebar::polling::{sessions_active, SESSION_REFRESH_INTERVAL};
+use crate::update::sidebar::polling::{SESSION_REFRESH_INTERVAL, sessions_active};
 
 pub(crate) fn invalidate_sessions(ctx: &mut Context<AppRoot>) {
     ctx.state.sidebar.invalidate_sessions();

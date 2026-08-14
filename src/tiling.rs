@@ -298,11 +298,7 @@ pub fn effective_tile_tree(
 
     for id in active_ids {
         if !tree.as_ref().is_some_and(|tree| tree_contains(tree, id)) {
-            tree = Some(append_tiled_leaf(
-                tree,
-                id,
-                workspace.start_axis,
-            ));
+            tree = Some(append_tiled_leaf(tree, id, workspace.start_axis));
         }
     }
 

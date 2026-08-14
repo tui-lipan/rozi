@@ -362,4 +362,24 @@ mod tests {
             assert_eq!(Action::from_id(id), Some(action));
         }
     }
+
+    #[test]
+    fn every_bindable_action_has_exactly_one_builtin_command() {
+        for action in BINDABLE_ACTIONS {
+            let matches: Vec<_> = crate::commands::BUILTIN_COMMANDS
+                .iter()
+                .filter(|cmd| cmd.action == *action)
+                .collect();
+            assert_eq!(
+                matches.len(),
+                1,
+                "action {action:?} should have exactly one BUILTIN_COMMANDS entry"
+            );
+        }
+        assert_eq!(
+            BINDABLE_ACTIONS.len(),
+            crate::commands::BUILTIN_COMMANDS.len(),
+            "BINDABLE_ACTIONS and BUILTIN_COMMANDS must have identical length"
+        );
+    }
 }

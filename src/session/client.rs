@@ -248,10 +248,10 @@ impl SessionClient {
                     ),
                 };
                 if result.is_err() {
-                    if !writer_shutdown_signal.load(Ordering::Relaxed) {
-                        if let Some(inbound) = &writer_inbound {
-                            inbound.fail("session writer disconnected".to_string());
-                        }
+                    if !writer_shutdown_signal.load(Ordering::Relaxed)
+                        && let Some(inbound) = &writer_inbound
+                    {
+                        inbound.fail("session writer disconnected".to_string());
                     }
                     break;
                 }

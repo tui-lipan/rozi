@@ -194,13 +194,19 @@ fn xdg_style_dir(
 /// Runtime endpoint directory, created (if missing) and validated private to the current user.
 ///
 /// Unix/macOS: `$XDG_RUNTIME_DIR/rozi`, falling back to [`fallback_runtime_dir_path`] when
-/// `XDG_RUNTIME_DIR` is unset. Windows has no equivalent yet: the plan calls for a
-/// `%LOCALAPPDATA%\rozi\run` discovery registry backing named-pipe endpoints (Phase 5), which
-/// is not implemented - this function is not meaningful on Windows today.
+/// `XDG_RUNTIME_DIR` is unset. Windows: `%LOCALAPPDATA%\rozi\run`.
 pub fn runtime_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
-    let dir = match &env.xdg_runtime_dir {
-        Some(base) => base.join(APP_DIR),
-        None => fallback_runtime_dir_path(),
+    let dir = if cfg!(windows) {
+        if let Some(local_appdata) = &env.local_appdata {
+            local_appdata.join(APP_DIR).join("run")
+        } else {
+            fallback_runtime_dir_path()
+        }
+    } else {
+        match &env.xdg_runtime_dir {
+            Some(base) => base.join(APP_DIR),
+            None => fallback_runtime_dir_path(),
+        }
     };
     fs_security::ensure_private_dir(&dir)?;
     Ok(dir)
@@ -742,6 +748,23 @@ mod tests {
         assert_eq!(config_dir(&env), PathBuf::from(".config/rozi"));
         assert_eq!(state_dir(&env), PathBuf::from(".local/state/rozi"));
         assert_eq!(cache_dir(&env), PathBuf::from(".cache/rozi"));
+    }
+
+    #[test]
+    fn runtime_dir_resolves_from_injected_platform_env() {
+        let temp = std::env::temp_dir().join(format!("rozi-paths-test-{}", std::process::id()));
+        let env = PlatformEnv {
+            xdg_runtime_dir: Some(temp.join("run")),
+            local_appdata: Some(temp.join("local_appdata")),
+            ..PlatformEnv::default()
+        };
+        let dir = runtime_dir(&env).expect("runtime dir created");
+        if cfg!(windows) {
+            assert_eq!(dir, temp.join("local_appdata").join(APP_DIR).join("run"));
+        } else {
+            assert_eq!(dir, temp.join("run").join(APP_DIR));
+        }
+        let _ = std::fs::remove_dir_all(&temp);
     }
 
     #[test]

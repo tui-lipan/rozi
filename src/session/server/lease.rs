@@ -31,7 +31,7 @@ impl SessionServer {
         if !self.is_controller(client_id) || self.client_read_only(client_id) {
             return Vec::new();
         }
-        if base_rev != self.layout_rev {
+        if base_rev != self.layout_rev || layout.validate().is_err() {
             return vec![(
                 Target::Sender,
                 ServerMessage::LayoutRejected {

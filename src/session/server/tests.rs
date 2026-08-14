@@ -2,6 +2,8 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 
+use crate::shared_layout::SHARED_LAYOUT_VERSION;
+
 /// Minimal placeholder palette for spawn requests in tests.
 fn test_palette() -> WirePalette {
     WirePalette {
@@ -869,7 +871,7 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
 fn profile_origin_claim_is_ignored_without_seeded_panes() {
     let mut server = SessionServer::new_named("dev");
     server.layout = Some(SharedLayout {
-        version: 1,
+        version: SHARED_LAYOUT_VERSION,
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -935,7 +937,7 @@ fn non_controller_commit_is_ignored() {
     let (_controller, _s1) = attach_client(&mut server);
     let (follower, _s2) = attach_client(&mut server);
     let layout = SharedLayout {
-        version: 1,
+        version: SHARED_LAYOUT_VERSION,
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -956,7 +958,7 @@ fn controller_commit_increments_rev_and_broadcasts_author() {
     let mut server = SessionServer::new_named("dev");
     let (controller, _s1) = attach_client(&mut server);
     let layout = SharedLayout {
-        version: 1,
+        version: SHARED_LAYOUT_VERSION,
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -983,7 +985,7 @@ fn stale_base_rev_is_rejected_with_authoritative_layout() {
     let mut server = SessionServer::new_named("dev");
     let (controller, _s1) = attach_client(&mut server);
     let layout = SharedLayout {
-        version: 1,
+        version: SHARED_LAYOUT_VERSION,
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -1016,6 +1018,39 @@ fn stale_base_rev_is_rejected_with_authoritative_layout() {
     };
     assert_eq!(*current_rev, 1);
     assert!(layout.is_some());
+}
+
+#[test]
+fn malformed_layout_commit_is_rejected() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _s1) = attach_client(&mut server);
+    let invalid_layout = SharedLayout {
+        version: SHARED_LAYOUT_VERSION,
+        canvas_cols: 0, // invalid 0 canvas
+        canvas_rows: 24,
+        workspaces: Vec::new(),
+    };
+    let responses = server.handle_message(
+        controller,
+        ClientMessage::CommitLayout {
+            base_rev: 0,
+            layout: invalid_layout,
+        },
+    );
+    let [
+        (
+            Target::Sender,
+            ServerMessage::LayoutRejected {
+                current_rev,
+                layout,
+            },
+        ),
+    ] = responses.as_slice()
+    else {
+        panic!("expected rejection for malformed layout, got {responses:?}");
+    };
+    assert_eq!(*current_rev, 0);
+    assert!(layout.is_none());
 }
 
 #[test]
@@ -2177,7 +2212,7 @@ fn attach_reports_layout_and_panes() {
     pane.screen_mut().process_bytes(b"ready");
     server.panes.insert(4, pane);
     server.layout = Some(SharedLayout {
-        version: 1,
+        version: SHARED_LAYOUT_VERSION,
         canvas_cols: 20,
         canvas_rows: 5,
         workspaces: Vec::new(),
@@ -2430,7 +2465,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
         );
     }
     server.layout = Some(SharedLayout {
-        version: 1,
+        version: SHARED_LAYOUT_VERSION,
         canvas_cols: 20,
         canvas_rows: 5,
         workspaces: Vec::new(),

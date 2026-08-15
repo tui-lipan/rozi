@@ -405,8 +405,7 @@ struct InputFileConfig {
     modifier: Option<String>,
     prefix: Option<String>,
     modifier_shortcuts: Option<bool>,
-    which_key: Option<bool>,
-    which_key_delay: Option<String>,
+    which_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -557,7 +556,6 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
         parsed.input.prefix,
         parsed.input.modifier_shortcuts,
         parsed.input.which_key,
-        parsed.input.which_key_delay,
         &mut warnings,
     );
     config.input = input;

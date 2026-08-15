@@ -1028,7 +1028,7 @@ pub fn run() -> Result<()> {
         // How long the prefix is held before the which-key strip appears. Only that strip reads the
         // delayed signal; the PREFIX badge, the withheld caret, and prefix mouse gestures all stay
         // on the instant `command_chord_pending`.
-        .command_chord_reveal_delay(config.input.which_key_delay.duration())
+        .command_chord_reveal_delay(config.input.which_key.reveal_delay())
         // Ctrl-q is unbound: rozi's own `quit`/`detach` commands own client lifecycle exits.
         .global_quit(None);
 

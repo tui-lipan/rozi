@@ -5,7 +5,7 @@ use tui_lipan::prelude::KeyBinding;
 
 use super::file::{KeyBindingSpec, UserCommandTableSpec};
 use super::schema::{
-    InputConfig, UserCommand, UserCommandAction, WhichKeyDelay, WmModifier, scheme_shortcuts,
+    InputConfig, UserCommand, UserCommandAction, WhichKey, WmModifier, scheme_shortcuts,
 };
 
 pub(super) fn apply_input_config(
@@ -13,21 +13,17 @@ pub(super) fn apply_input_config(
     modifier: Option<String>,
     prefix: Option<String>,
     modifier_shortcuts: Option<bool>,
-    which_key: Option<bool>,
-    which_key_delay: Option<String>,
+    which_key: Option<String>,
     warnings: &mut Vec<String>,
 ) {
     if let Some(modifier_shortcuts) = modifier_shortcuts {
         input.modifier_shortcuts = modifier_shortcuts;
     }
     if let Some(which_key) = which_key {
-        input.which_key = which_key;
-    }
-    if let Some(delay) = which_key_delay {
-        match WhichKeyDelay::parse(&delay) {
-            Some(parsed) => input.which_key_delay = parsed,
+        match WhichKey::parse(&which_key) {
+            Some(parsed) => input.which_key = parsed,
             None => warnings.push(format!(
-                "Unknown which_key_delay `{delay}`; expected `instant`, `short`, or `long`"
+                "Unknown which_key `{which_key}`; expected `off`, `instant`, `short`, or `long`"
             )),
         }
     }

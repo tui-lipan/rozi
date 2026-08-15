@@ -9,8 +9,7 @@ pub enum SettingsAction {
     Theme,
     EditPadding,
     ToggleAnimations,
-    ToggleWhichKey,
-    CycleWhichKeyDelay,
+    CycleWhichKey,
     ToggleFocusOnHover,
     ToggleBackgroundFollowsTerminal,
     ToggleTitles,
@@ -63,8 +62,7 @@ impl SettingsAction {
             Self::Theme,
             Self::EditPadding,
             Self::ToggleAnimations,
-            Self::ToggleWhichKey,
-            Self::CycleWhichKeyDelay,
+            Self::CycleWhichKey,
             Self::ToggleFocusOnHover,
             Self::ToggleBackgroundFollowsTerminal,
             // Titlebar
@@ -139,7 +137,6 @@ impl SettingsAction {
             Self::CycleBorderStyle if !pane.border_mode.draws_frames() => {
                 Some("Unsupported in this mode")
             }
-            Self::CycleWhichKeyDelay if !config.input.which_key => Some("Needs which-key panel"),
             Self::CyclePaneAnimation if !config.animations.enabled => Some("Needs animations"),
             Self::ToggleWorkbarPosition
             | Self::ToggleWorkbarGap

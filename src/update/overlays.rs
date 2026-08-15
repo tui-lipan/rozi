@@ -252,17 +252,13 @@ fn settings_activate_dir(
                 preference_error(ctx, err);
             }
         }
-        ToggleWhichKey => {
-            ctx.state.config.input.which_key = !ctx.state.config.input.which_key;
-            persisted = Some(("input", "which_key", ctx.state.config.input.which_key));
-        }
-        CycleWhichKeyDelay => {
-            let value = ctx.state.config.input.which_key_delay.step(reverse);
-            ctx.state.config.input.which_key_delay = value;
+        CycleWhichKey => {
+            let value = ctx.state.config.input.which_key.step(reverse);
+            ctx.state.config.input.which_key = value;
             // The delay lives in the runtime, not in `State`, so the new value has to be pushed
             // across the same way `reload_config` does or the row would change nothing.
-            ctx.set_command_chord_reveal_delay(value.duration());
-            if let Err(err) = crate::config::persist_input_string("which_key_delay", value.id()) {
+            ctx.set_command_chord_reveal_delay(value.reveal_delay());
+            if let Err(err) = crate::config::persist_input_string("which_key", value.id()) {
                 preference_error(ctx, err);
             }
         }

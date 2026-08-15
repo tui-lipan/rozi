@@ -153,8 +153,7 @@ equivalent for cmd.exe is `rozi.cmd` in the same directory, which just sets `PRO
 | `modifier` | string | `alt` | Held WM modifier for generated direct command keys and mouse gestures; `alt`/`mod` or `super`/`meta`/`logo`/`win`. |
 | `prefix` | string | `ctrl-a` | Prefix key used by generated leader chords, e.g. `ctrl-a`, `ctrl-b`. |
 | `modifier_shortcuts` | bool | `true` | Also bind every built-in default as a held `<modifier>+<key>` chord (e.g. `Alt+q`) alongside its `<prefix> <key>` leader. Set `false` so held `Alt`/`Super` chords reach the focused pane. |
-| `which_key` | bool | `true` | Show the which-key strip - a compact table of what the prefix can do next - beside the workbar while a prefix chord is pending. |
-| `which_key_delay` | string | `short` | How long the prefix must be held before the strip appears: `instant` (no wait), `short` (300ms), or `long` (750ms). |
+| `which_key` | string | `short` | The which-key strip - a compact table of what the prefix can do next - beside the workbar while a prefix chord is pending, and how long the prefix is held before it appears: `off` (never), `instant` (no wait), `short` (300ms), or `long` (750ms). |
 
 ### The which-key strip
 
@@ -163,9 +162,10 @@ chords that second key can be. It is drawn from the live command registry, so `[
 unbound commands are reflected without any separate table to keep in sync, and only commands that
 can act right now are listed.
 
-It waits out `which_key_delay` first, so a chord you finish from muscle memory never flashes it -
-the strip is for the moment you hesitate. The workbar's `PREFIX` badge and the withheld pane caret
-are not delayed: those confirm the keystroke landed, which has to be immediate.
+Unless `which_key` is `instant`, it waits out that delay first, so a chord you finish from muscle
+memory never flashes it - the strip is for the moment you hesitate. The workbar's `PREFIX` badge
+and the withheld pane caret are not delayed: those confirm the keystroke landed, which has to be
+immediate.
 
 Three things keep it small enough to sit over live panes:
 
@@ -182,8 +182,8 @@ Held `<modifier>+<key>` chords resolve on a single keypress and never leave a ch
 strip only ever appears for the leader scheme. The workbar's `PREFIX` badge is independent of this
 setting and stays either way.
 
-Both keys are also reachable from Settings (`prefix ,`) under General, as **Which-key panel** and
-**Which-key delay**; the delay row greys out while the panel is off.
+The key is also reachable from Settings (command palette, `prefix p`, then **Settings…**) under
+General, as **Which-key**, which cycles `Off` / `Instant` / `Short` / `Long`.
 
 The `modifier_shortcuts` switch is all-or-nothing. To drop the mirror for a single command only, override it in
 `[keys]` with a literal leader-only binding, e.g. `detach = "ctrl-a d"`. Bare-key replacements

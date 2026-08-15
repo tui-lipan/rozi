@@ -259,9 +259,11 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
             "square borders",
             "border glyphs",
         ]),
-        ToggleWhichKey => alias_list(&["which key", "prefix hints", "key hints", "chord panel"]),
-        CycleWhichKeyDelay => alias_list(&[
-            "which key delay",
+        CycleWhichKey => alias_list(&[
+            "which key",
+            "prefix hints",
+            "key hints",
+            "chord panel",
             "prefix hint delay",
             "chord panel timing",
         ]),

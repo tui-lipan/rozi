@@ -394,9 +394,10 @@ fn help_key(ctx: &Context<AppRoot>) -> Option<String> {
 /// disabled, no chord is pending, or the viewport has no room for it.
 pub(crate) fn layer(ctx: &Context<AppRoot>, content: Rect) -> Option<(Rect, Element)> {
     // `command_chord_revealed` rather than `command_chord_pending`: the strip waits out
-    // `[input] which_key_delay_ms` so a chord finished from muscle memory never flashes it. The
-    // runtime schedules the frame at which the delay elapses, so nothing here needs a timer.
-    if !ctx.state.config.input.which_key || !ctx.command_chord_revealed() {
+    // `[input] which_key` so a chord finished from muscle memory never flashes it. The runtime
+    // schedules the frame at which the delay elapses, so nothing here needs a timer. The
+    // `enabled` check comes first, which is what lets `Off` report a zero reveal delay.
+    if !ctx.state.config.input.which_key.enabled() || !ctx.command_chord_revealed() {
         return None;
     }
     let rows = rows(ctx);

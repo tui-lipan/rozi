@@ -22,7 +22,7 @@ portable path because it does not depend on the terminal delivering modified key
   not to the shell.
 - After a short hold, a **which-key strip** beside the workbar lists what the next key can be,
   capped at a fifth of the screen with a `+N · ? all` count for whatever did not fit. Turn it off
-  with `[input] which_key = false` or retime it with `which_key_delay`; see
+  with `[input] which_key = "off"` or retime it with the same key; see
   [the which-key strip](configuration.md#the-which-key-strip).
 
 ### 2. Held modifier (direct)

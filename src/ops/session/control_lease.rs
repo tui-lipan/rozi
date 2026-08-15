@@ -238,7 +238,7 @@ pub(crate) fn resolve_follow_prompt(
         crate::state::FollowChoice::Cancel => {
             let name = ctx.state.current().session_name.clone();
             let detached_epoch = ctx.state.runtime_epoch;
-            crate::update::flush_layout_commit(ctx);
+            flush_layout_commit(ctx);
             crate::ops::exit::mark_session_detached(ctx, None);
             if let Some(client) = ctx.state.current().session_client.clone() {
                 client.detach();
@@ -369,4 +369,72 @@ pub(crate) fn decline_control(ctx: &mut Context<AppRoot>, index: usize) -> Updat
         client.decline_control(target.id);
     }
     Update::full()
+}
+
+pub(crate) const LAYOUT_COMMIT_DEBOUNCE_MS: u64 = 16;
+
+pub(crate) fn schedule_layout_commit(ctx: &mut Context<AppRoot>) {
+    if ctx.state.scratch_visible {
+        return;
+    }
+    if !ctx.state.current().session_attached || !ctx.state.is_controller() {
+        return;
+    }
+    let epoch = ctx.state.runtime_epoch;
+    let Some(shared) = ctx.state.current().shared.as_ref() else {
+        flush_layout_commit(ctx);
+        return;
+    };
+    if shared.layout_commit_scheduled {
+        return;
+    }
+    let Some(link) = ctx.state.command_link.clone() else {
+        flush_layout_commit(ctx);
+        return;
+    };
+    ctx.state
+        .current_mut()
+        .shared
+        .as_mut()
+        .expect("shared session checked above")
+        .layout_commit_scheduled = true;
+    // Re-armed after every message, so during sustained output this fires ~60 times a second.
+    // `send_after` parks it on the shared timer thread instead of spawning one per window.
+    link.send_after(
+        std::time::Duration::from_millis(LAYOUT_COMMIT_DEBOUNCE_MS),
+        crate::Msg::FlushLayoutCommit { epoch },
+    );
+}
+
+/// If this client controls a shared session and its layout differs from the last commit, publish a
+/// new [`SharedLayout`] at the optimistic base revision. The canonical canvas is this controller's
+/// own pane canvas (viewport minus workbar), which followers letterbox to.
+pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>) {
+    if !ctx.state.current().session_attached || !ctx.state.is_controller() {
+        return;
+    }
+    let Some(client) = ctx.state.current().session_client.clone() else {
+        return;
+    };
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let canvas = (
+        bounds.w.round().max(1.0) as u16,
+        bounds.h.round().max(1.0) as u16,
+    );
+    let layout = crate::shared_layout::shared_layout_from_state(&ctx.state, canvas);
+    let Some(shared) = ctx.state.current_mut().shared.as_mut() else {
+        return;
+    };
+    if shared.last_committed_layout.as_ref() == Some(&layout) {
+        return;
+    }
+    let base_rev = shared.assumed_rev;
+    client.commit_layout(base_rev, layout.clone());
+    // Optimistically advance so a rapid burst of edits pipelines onto sequential base revisions;
+    // the server's echo confirms `layout_rev`, and a reject resets `assumed_rev`.
+    shared.assumed_rev = shared.assumed_rev.saturating_add(1);
+    shared.last_committed_layout = Some(layout);
+    shared.canonical_canvas = Some(canvas);
 }

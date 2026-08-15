@@ -281,10 +281,34 @@ pub(crate) fn body_key(panel: usize) -> String {
     format!("{}-{panel}", super::sidebar_body_key())
 }
 
-/// Every sidebar row, in display order, for whichever tab is active. Pure in `State`, which is what
-/// lets `update` rebuild the same list to resolve an activated index — so Enter and a click reach
-/// the same handler instead of two callbacks that can drift apart.
+/// Every sidebar row, in display order, with interaction metadata supplied by the model projection
+/// that update handlers consume too.
 pub(crate) fn body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
+    let mut rows = visual_body_rows(ctx, tab);
+    let projections = ctx.state.sidebar_item_projections(tab);
+    debug_assert_eq!(
+        rows.len(),
+        projections.len(),
+        "sidebar visual rows and semantic projections diverged for {:?}",
+        tab.id()
+    );
+    if rows.len() != projections.len() {
+        // Fail closed in release builds: a stale visual/model mapping must never activate or close
+        // a different row merely because it happens to occupy the same index.
+        for row in &mut rows {
+            row.target = crate::state::RowTarget::Inert;
+            row.close = None;
+        }
+        return rows;
+    }
+    for (row, projection) in rows.iter_mut().zip(projections) {
+        row.target = projection.target;
+        row.close = projection.close;
+    }
+    rows
+}
+
+fn visual_body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
     match tab {
         SidebarTab::Panes => panes::panes_rows(ctx),
         SidebarTab::Activity => agents::agents_rows(ctx),
@@ -329,7 +353,7 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
     }
     let panel_state = &ctx.state.sidebar.panels[panel];
     let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel == panel;
-    let cursor = cursor_index(ctx, panel, &rows);
+    let cursor = cursor_index(ctx, panel, tab);
     let tab_id = tab.id();
 
     let mut view = ScrollView::new()
@@ -430,27 +454,11 @@ fn row_key(panel: usize, index: usize) -> String {
     format!("sidebar-{panel}-row-{index}")
 }
 
-/// Where the cursor actually sits: the stored index if it still points at a selectable row,
-/// otherwise the nearest one. Rows come and go underneath it as panes open, agents change state,
-/// and command output refreshes, so the stored index is only ever a hint.
-pub(crate) fn resolve_cursor(cursor: usize, rows: &[row::SidebarRow]) -> Option<usize> {
-    if rows.get(cursor).is_some_and(row::SidebarRow::selectable) {
-        return Some(cursor);
-    }
-    rows.iter()
-        .position(row::SidebarRow::selectable)
-        .map(|first| {
-            rows.iter()
-                .enumerate()
-                .filter(|(_, row)| row.selectable())
-                .map(|(index, _)| index)
-                .min_by_key(|index| index.abs_diff(cursor))
-                .unwrap_or(first)
-        })
-}
-
-fn cursor_index(ctx: &Context<AppRoot>, panel: usize, rows: &[row::SidebarRow]) -> Option<usize> {
-    resolve_cursor(ctx.state.sidebar.panels[panel].cursor, rows)
+fn cursor_index(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Option<usize> {
+    crate::state::SidebarItemProjection::resolve_cursor(
+        ctx.state.sidebar.panels[panel].cursor,
+        &ctx.state.sidebar_item_projections(tab),
+    )
 }
 
 /// Scrollbar presentation shared by every scrolling surface in the sidebar, including the file

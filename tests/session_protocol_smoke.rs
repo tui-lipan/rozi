@@ -11,7 +11,10 @@ use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{
     ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
-use rozi::shared_layout::{SHARED_LAYOUT_VERSION, SharedLayout};
+use rozi::shared_layout::{
+    SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis,
+    SharedWorkspace,
+};
 use tui_lipan::prelude::TerminalColorPalette;
 
 use common::{
@@ -120,7 +123,29 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         version: SHARED_LAYOUT_VERSION,
         canvas_cols: 80,
         canvas_rows: 23,
-        workspaces: Vec::new(),
+        workspaces: vec![SharedWorkspace {
+            index: 0,
+            name: None,
+            synchronized: false,
+            layout: SharedLayoutKind::Dwindle,
+            start_axis: SharedSplitAxis::Horizontal,
+            split_ratios: Vec::new(),
+            tree: None,
+            panes: vec![SharedPane {
+                pane_id: PANE_ID,
+                generation: PANE_GENERATION,
+                title: Some("protocol smoke".to_string()),
+                profile_name: None,
+                cwd: None,
+                command: Some(format!("echo {}", String::from_utf8_lossy(OUTPUT_MARKER))),
+                replay: false,
+                keep_open: true,
+                floating: false,
+                fullscreen: false,
+                rect: None,
+                scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
+            }],
+        }],
     };
     first.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,

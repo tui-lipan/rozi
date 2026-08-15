@@ -144,6 +144,16 @@ fn agents_tab_renders_project_groups() {
                     ),
                 ];
             }
+            let targets: Vec<_> = backend
+                .state()
+                .sidebar_item_projections(&SidebarTab::Activity)
+                .into_iter()
+                .filter_map(|item| match item.target {
+                    rozi::state::RowTarget::Pane(id) => Some(id),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(targets, vec![3, 1, 2, 6, 5, 4]);
             backend.render();
             let lines = backend.capture_frame().to_fixed_grid_lines();
             let sidebar: Vec<String> = lines

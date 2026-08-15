@@ -11,8 +11,7 @@
 //! | Config  | `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi` | `%APPDATA%\rozi` |
 //! | State   | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi` |
 //! | Cache   | `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
-//! | Data    | `$XDG_DATA_HOME/rozi`, else `~/.local/share/rozi` | `%LOCALAPPDATA%\rozi` |
-//! | Runtime | `$XDG_RUNTIME_DIR/rozi`, else a private per-uid temp dir | not yet implemented (Phase 5 named-pipe registry) |
+//! | Runtime | `$XDG_RUNTIME_DIR/rozi`, else a private per-uid temp dir | `%LOCALAPPDATA%\rozi\run`, else `%TEMP%\rozi-<user-sid>` |
 //!
 //! The Windows column is written per the plan and believed correct against documented API
 //! contracts, but is **unverified**: this environment has no Windows target to run it on. See

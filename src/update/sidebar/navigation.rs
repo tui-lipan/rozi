@@ -128,14 +128,14 @@ pub(crate) fn viewport_changed(
         return Update::none();
     };
     let last = event.last_visible_index.unwrap_or(first).max(first);
-    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
+    let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };
-    let rows = crate::view::sidebar::body_rows(ctx, &tab);
-    let page_rows = rows
+    let items = ctx.state.sidebar_item_projections(&tab);
+    let page_rows = items
         .iter()
         .enumerate()
-        .filter(|(index, row)| *index >= first && *index <= last && row.selectable())
+        .filter(|(index, item)| *index >= first && *index <= last && item.selectable())
         .count()
         .max(1);
     let Some(panel_state) = ctx.state.sidebar.panels.get_mut(panel) else {
@@ -237,21 +237,23 @@ pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<AppRoot>, down: bool) -
 /// as a glitch. Headers and spacers are stepped over rather than landed on.
 pub(crate) fn move_cursor(ctx: &mut Context<AppRoot>, delta: isize) -> Update {
     let panel = ctx.state.sidebar.active_panel;
-    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
+    let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };
-    let rows = crate::view::sidebar::body_rows(ctx, &tab);
-    let selectable: Vec<usize> = rows
+    let items = ctx.state.sidebar_item_projections(&tab);
+    let selectable: Vec<usize> = items
         .iter()
         .enumerate()
-        .filter(|(_, row)| row.selectable())
+        .filter(|(_, item)| item.selectable())
         .map(|(index, _)| index)
         .collect();
     if selectable.is_empty() {
         return Update::none();
     }
-    let current =
-        crate::view::sidebar::resolve_cursor(ctx.state.sidebar.panels[panel].cursor, &rows);
+    let current = crate::state::SidebarItemProjection::resolve_cursor(
+        ctx.state.sidebar.panels[panel].cursor,
+        &items,
+    );
     let position = current
         .and_then(|current| selectable.iter().position(|index| *index == current))
         .unwrap_or(0);

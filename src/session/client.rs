@@ -33,8 +33,8 @@ struct ClientTransport {
     shutdown_signal: Arc<AtomicBool>,
 }
 
-impl Drop for ClientTransport {
-    fn drop(&mut self) {
+impl ClientTransport {
+    fn disconnect(&self) {
         self.shutdown_signal.store(true, Ordering::SeqCst);
         self.outbound.close();
         if let Ok(mut guard) = self.shutdown_stream.lock()
@@ -42,6 +42,12 @@ impl Drop for ClientTransport {
         {
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
+    }
+}
+
+impl Drop for ClientTransport {
+    fn drop(&mut self) {
+        self.disconnect();
     }
 }
 
@@ -233,10 +239,12 @@ impl SessionClient {
         let effective_protocol = validate_attached(&attached)?;
         let outbound = Arc::new(ByteQueue::<ClientOutbound>::new(MAX_CLIENT_OUTBOUND_BYTES));
         let shutdown_signal = Arc::new(AtomicBool::new(false));
-        let shutdown_stream = stream.try_clone().ok();
+        // The worker threads may be blocked in platform I/O. Do not construct a transport without
+        // the duplicate handle used to interrupt those operations.
+        let shutdown_stream = stream.try_clone()?;
         let transport = Arc::new(ClientTransport {
             outbound: Arc::clone(&outbound),
-            shutdown_stream: Mutex::new(shutdown_stream),
+            shutdown_stream: Mutex::new(Some(shutdown_stream)),
             shutdown_signal: Arc::clone(&shutdown_signal),
         });
         let client_inbound = inbound.mailbox();
@@ -513,6 +521,14 @@ impl SessionClient {
 
     pub fn shutdown(&self) {
         self.send_control(ClientMessage::Shutdown);
+    }
+
+    /// Explicit local transport teardown: closes the outbound queue, signals reader/writer
+    /// threads, and shuts down the local socket/pipe without requesting server termination.
+    pub fn disconnect_transport(&self) {
+        if let Some(transport) = &self.transport {
+            transport.disconnect();
+        }
     }
 
     fn send_control(&self, message: ClientMessage) {

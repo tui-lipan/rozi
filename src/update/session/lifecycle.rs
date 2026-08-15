@@ -36,7 +36,7 @@ pub(crate) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String)
             .filter(|attachment| attachment.pending_session_attach.is_none());
         if let Some(attachment) = disconnected {
             attachment.mark_disconnected();
-            crate::update::sidebar::invalidate_sessions(ctx);
+            ctx.state.sidebar.invalidate_sessions();
         }
         return Update::none();
     }
@@ -48,7 +48,7 @@ pub(crate) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String)
     if ctx.state.current().pending_session_attach.is_some() {
         return Update::full();
     }
-    crate::update::sidebar::invalidate_sessions(ctx);
+    ctx.state.sidebar.invalidate_sessions();
     ctx.state.current_mut().mark_disconnected();
     crate::ops::session::reconnect_current_session(ctx)
 }
@@ -160,7 +160,7 @@ pub(crate) fn attached(
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connected;
     ctx.state.current_mut().reconnect_read_only = read_only;
     ctx.state.current_mut().session_attached = true;
-    crate::update::sidebar::invalidate_sessions(ctx);
+    ctx.state.sidebar.invalidate_sessions();
     ctx.state.current_mut().deferred_profile_seed = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
@@ -348,7 +348,7 @@ pub(crate) fn renamed(ctx: &mut Context<AppRoot>, epoch: u64, session: String) -
     if epoch != ctx.state.runtime_epoch {
         if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
             attachment.session_name = Some(session);
-            crate::update::sidebar::invalidate_sessions(ctx);
+            ctx.state.sidebar.invalidate_sessions();
         }
         return Update::none();
     }

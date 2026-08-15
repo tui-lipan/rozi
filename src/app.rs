@@ -365,7 +365,7 @@ impl Component for AppRoot {
         }
         // Key routing can mutate the layout without going through `handle_msg` (prefix-mode window
         // management), so schedule the same commit chokepoint here to publish those changes.
-        update::schedule_layout_commit(ctx);
+        crate::ops::session::schedule_layout_commit(ctx);
         if handled {
             KeyUpdate::handled(update)
         } else {

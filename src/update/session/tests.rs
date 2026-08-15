@@ -1,4 +1,6 @@
-use super::*;
+use super::lease::*;
+use super::pane_events::*;
+use super::status::*;
 use crate::Msg;
 use crate::session::client::SessionClient;
 use crate::session::protocol::{ClientInfo, PaneRuntimeState};
@@ -1340,6 +1342,88 @@ fn colliding_pane_ids_route_session_events_by_namespace() {
         .expect("spawn colliding namespace test")
         .join()
         .expect("colliding namespace test completes");
+}
+
+#[test]
+fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = colliding_namespace_backend();
+            {
+                let state = backend.state_mut();
+                let workspace = &mut state.current_mut().workspaces[0];
+                workspace.panes.retain(|pane| pane.id == 7);
+                workspace.tile_tree = Some(crate::tiling::DwindleTree::Leaf(7));
+                workspace.focused_pane = Some(7);
+                state.current_mut().focused_pane = Some(7);
+                state.scratch.panes[0].terminal.title = Some("scratch-title".into());
+            }
+            let layout = crate::shared_layout::shared_layout_from_state(backend.state(), (80, 24));
+            let (client, _rx) = SessionClient::test_channel();
+            backend.state_mut().current_mut().pending_session_attach =
+                Some(crate::state::PendingSessionAttach {
+                    epoch: 2,
+                    name: "dev".into(),
+                    client: Some(client),
+                    autostart: false,
+                    read_only: false,
+                    reconnect: false,
+                    remote_host: None,
+                    intent: crate::state::AttachIntent::Plain,
+                    left: None,
+                    parked_epoch: None,
+                });
+            let mut runtime = PaneRuntimeState::default();
+            runtime.rows.push(crate::session::protocol::PublishedRow {
+                id: "shared-row".into(),
+                title: "Shared row".into(),
+                status: "working".into(),
+                reason: None,
+                active: true,
+                work_started_at: None,
+            });
+
+            backend
+                .dispatch(Msg::SessionAttached {
+                    epoch: 2,
+                    session: "dev".into(),
+                    client_id: 1,
+                    panes: vec![crate::session::protocol::PaneMeta {
+                        pane_id: 7,
+                        generation: 1,
+                        cols: 80,
+                        rows: 24,
+                        pid: Some(42),
+                        title: Some("shared-title".into()),
+                        original_user: None,
+                        exited: None,
+                        logging: false,
+                        runtime,
+                    }],
+                    layout_rev: 1,
+                    layout: Some(layout),
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    allow_takeover: false,
+                    read_only: false,
+                    created_from_profile: None,
+                })
+                .expect("attach shared pane");
+
+            let shared = crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, false)
+                .expect("shared pane");
+            assert_eq!(shared.terminal.title.as_deref(), Some("shared-title"));
+            assert_eq!(shared.terminal.published_rows[0].id, "shared-row");
+            let scratch = crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                .expect("scratch pane");
+            assert_eq!(scratch.terminal.title.as_deref(), Some("scratch-title"));
+            assert!(scratch.terminal.published_rows.is_empty());
+        })
+        .expect("spawn namespace attach test")
+        .join()
+        .expect("namespace attach test completes");
 }
 
 /// A popup lives outside every workspace, so the generic teardown cannot find it: `local` with

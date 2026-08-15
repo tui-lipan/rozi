@@ -638,7 +638,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
             palette,
         },
     );
-    crate::update::schedule_layout_commit(ctx);
+    crate::ops::session::schedule_layout_commit(ctx);
     Update::full()
 }
 

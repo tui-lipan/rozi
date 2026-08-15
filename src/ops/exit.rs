@@ -59,7 +59,7 @@ fn confirm_second_press(
 /// nothing torn down.
 pub(crate) fn leave_client(ctx: &mut Context<AppRoot>) -> Update {
     crate::popup::kill_if_open(ctx);
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     clear_pending(ctx);
     let temporary = keepable_temporary_count(&ctx.state);
     if temporary > 0 {
@@ -154,7 +154,7 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<AppRoot>, session: Option<
         ),
     );
     ctx.state.current_mut().session_attached = false;
-    crate::update::sidebar::invalidate_sessions(ctx);
+    ctx.state.sidebar.invalidate_sessions();
 }
 
 /// The controlling terminal/console went away (Unix `SIGHUP`/`SIGTERM`, Windows console close,
@@ -167,7 +167,7 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<AppRoot>, session: Option<
 /// and simply detaches: its server shuts itself down after the no-client grace period, which is the
 /// right outcome for a session nobody can reattach to by name anyway.
 pub(crate) fn detach_on_hangup(ctx: &mut Context<AppRoot>) -> Update {
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     crate::ops::pick::cancel_pick(ctx, Some("detached"));
     mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
@@ -190,7 +190,7 @@ pub(crate) fn any_pane_live(state: &State) -> bool {
 /// preserved. Used where there is nobody to answer a question: the control socket, which is
 /// scripted, and any other non-interactive caller. A scripted exit must never destroy a session.
 pub(crate) fn leave_client_unattended(ctx: &mut Context<AppRoot>) -> Update {
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     leave_client_now(ctx, false)
 }
 

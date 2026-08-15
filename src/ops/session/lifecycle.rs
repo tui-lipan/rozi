@@ -449,7 +449,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<AppRoot>) -> Update {
                     );
                     return Update::full();
                 };
-                crate::update::flush_layout_commit(ctx);
+                crate::ops::session::flush_layout_commit(ctx);
                 client.rename(name.clone());
                 ctx.state.current_mut().session_name = Some(name);
                 // Naming kept this one; anything still temporary gets its own prompt on the way

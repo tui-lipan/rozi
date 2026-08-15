@@ -87,6 +87,8 @@ pub enum SharedLayoutValidationError {
     UnsupportedVersion(u32),
     ZeroCanvasDimensions,
     DuplicateWorkspaceIndex(usize),
+    InvalidWorkspaceIndex(usize),
+    ReservedPaneId(PaneId),
     DuplicatePaneId(PaneId),
     TreeLeafNotInWorkspace {
         workspace: usize,
@@ -120,6 +122,10 @@ impl std::fmt::Display for SharedLayoutValidationError {
             Self::UnsupportedVersion(v) => write!(f, "unsupported shared layout version {v}"),
             Self::ZeroCanvasDimensions => write!(f, "canvas dimensions must be positive"),
             Self::DuplicateWorkspaceIndex(i) => write!(f, "duplicate workspace index {i}"),
+            Self::InvalidWorkspaceIndex(i) => write!(f, "workspace index {i} out of bounds"),
+            Self::ReservedPaneId(id) => {
+                write!(f, "reserved pane id {id} not allowed in shared layout")
+            }
             Self::DuplicatePaneId(id) => write!(f, "duplicate pane id {id}"),
             Self::TreeLeafNotInWorkspace { workspace, pane_id } => {
                 write!(
@@ -162,7 +168,7 @@ impl SharedLayout {
     /// Validate that the shared layout document satisfies all structural and security invariants:
     /// - Protocol/layout version matches [`SHARED_LAYOUT_VERSION`].
     /// - Positive canvas dimensions.
-    /// - Unique workspace indexes and pane identities across all workspaces.
+    /// - Unique workspace indexes within `0..WORKSPACE_COUNT` and pane identities across all workspaces.
     /// - Tree leaves belong to their workspace's pane list and do not repeat.
     /// - Split ratios in workspace lists and tree split nodes are finite and within `(0.0, 1.0)`.
     /// - Floating panes carry finite, positive fractional bounds; tiled panes carry no rect.
@@ -182,6 +188,9 @@ impl SharedLayout {
         let mut seen_panes = std::collections::HashSet::new();
 
         for ws in &self.workspaces {
+            if ws.index >= crate::state::WORKSPACE_COUNT {
+                return Err(SharedLayoutValidationError::InvalidWorkspaceIndex(ws.index));
+            }
             if !seen_workspaces.insert(ws.index) {
                 return Err(SharedLayoutValidationError::DuplicateWorkspaceIndex(
                     ws.index,
@@ -190,6 +199,9 @@ impl SharedLayout {
 
             let mut ws_pane_ids = std::collections::HashSet::new();
             for pane in &ws.panes {
+                if pane.pane_id == crate::state::POPUP_PANE_ID {
+                    return Err(SharedLayoutValidationError::ReservedPaneId(pane.pane_id));
+                }
                 if !seen_panes.insert(pane.pane_id) {
                     return Err(SharedLayoutValidationError::DuplicatePaneId(pane.pane_id));
                 }
@@ -1955,6 +1967,30 @@ mod reconciler_tests {
         assert!(matches!(
             bad.validate(),
             Err(SharedLayoutValidationError::InvalidTreeSplitRatio { workspace: 0 })
+        ));
+
+        // Workspace index out of range
+        let mut bad = valid.clone();
+        bad.workspaces[0].index = crate::state::WORKSPACE_COUNT;
+        assert!(matches!(
+            bad.validate(),
+            Err(SharedLayoutValidationError::InvalidWorkspaceIndex(_))
+        ));
+
+        // Reserved popup pane id
+        let mut bad = valid.clone();
+        bad.workspaces[0].panes[0].pane_id = crate::state::POPUP_PANE_ID;
+        bad.workspaces[0].tree = Some(SerializedTree::Split {
+            axis: SharedSplitAxis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(SerializedTree::Leaf {
+                pane: crate::state::POPUP_PANE_ID,
+            }),
+            second: Box::new(SerializedTree::Leaf { pane: 2 }),
+        });
+        assert!(matches!(
+            bad.validate(),
+            Err(SharedLayoutValidationError::ReservedPaneId(_))
         ));
     }
 }

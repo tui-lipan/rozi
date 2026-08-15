@@ -1129,7 +1129,7 @@ mod tests {
 
     /// The slot a content-keyed toast lands in, so a test can look it up the way `notify` does.
     fn content_slot(message: &str) -> crate::pty_events::ToastKey {
-        crate::pty_events::ToastKey::Content(crate::pty_events::content_key(message))
+        crate::pty_events::ToastKey::Content(crate::pty_events::notifications::content_key(message))
     }
 
     #[test]

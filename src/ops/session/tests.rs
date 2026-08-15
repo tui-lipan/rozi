@@ -1,3 +1,4 @@
+use super::discovery::{merge_current_session_row, push_cached_configured_remote_rows};
 use super::*;
 use crate::config::Config;
 use crate::session::discovery::DiscoveredSession;

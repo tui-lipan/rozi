@@ -13,14 +13,14 @@ use crate::state::RowTarget;
 /// attaches a session, so a slip is both easy and expensive — the two are not the same gesture and
 /// do not share a switch.
 pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) -> Update {
-    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
+    let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };
-    let mut rows = crate::view::sidebar::body_rows(ctx, &tab);
-    if index >= rows.len() {
+    let mut items = ctx.state.sidebar_item_projections(&tab);
+    if index >= items.len() {
         return Update::none();
     }
-    let row = rows.swap_remove(index);
+    let row = items.swap_remove(index);
     let Some(close) = row.close else {
         return Update::none();
     };
@@ -47,11 +47,14 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
 /// Enter: run whatever the row under the cursor does — the same path a click on it takes.
 pub(crate) fn activate_cursor(ctx: &mut Context<AppRoot>) -> Update {
     let panel = ctx.state.sidebar.active_panel;
-    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
+    let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };
-    let rows = crate::view::sidebar::body_rows(ctx, &tab);
-    match crate::view::sidebar::resolve_cursor(ctx.state.sidebar.panels[panel].cursor, &rows) {
+    let items = ctx.state.sidebar_item_projections(&tab);
+    match crate::state::SidebarItemProjection::resolve_cursor(
+        ctx.state.sidebar.panels[panel].cursor,
+        &items,
+    ) {
         Some(index) => row_activate(ctx, panel, index),
         None => Update::none(),
     }
@@ -61,18 +64,18 @@ pub(crate) fn activate_cursor(ctx: &mut Context<AppRoot>) -> Update {
 /// list — the same pure function of `State` the view rendered from — so both gestures land on the
 /// same handler and a row list that changed underneath simply resolves to nothing.
 pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usize) -> Update {
-    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
+    let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };
-    let mut rows = crate::view::sidebar::body_rows(ctx, &tab);
-    if index >= rows.len() {
+    let mut items = ctx.state.sidebar_item_projections(&tab);
+    if index >= items.len() {
         return Update::none();
     }
     // Acting on anything disarms a pending confirmation; capture the host one first so the matching
     // disconnect row can still see its own armed state below.
     let armed_disconnect = ctx.state.sidebar.pending_host_disconnect.take();
     ctx.state.sidebar.pending_row_close = None;
-    match rows.swap_remove(index).target {
+    match items.swap_remove(index).target {
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
         RowTarget::PublishedRow { pane_id, row_id } => activate_published_row(ctx, pane_id, row_id),

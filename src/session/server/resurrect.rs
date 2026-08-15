@@ -563,6 +563,13 @@ impl SessionServer {
                 }
             }
         }
+        if let Some(layout_ref) = &layout
+            && (layout_ref.validate().is_err()
+                || (!layout_ref.workspaces.is_empty()
+                    && !self.validate_shared_layout_against_panes(layout_ref)))
+        {
+            layout = None;
+        }
         self.layout = layout;
         self.layout_rev = u64::from(self.layout.is_some());
         self.snapshot_generation = self.dirty_generation;

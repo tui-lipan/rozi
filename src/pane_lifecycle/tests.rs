@@ -1,4 +1,5 @@
-use super::*;
+use super::namespace::*;
+use super::spawn::*;
 use crate::anim::GeometryAnimation;
 use crate::geometry::canvas_local_point_from_mouse;
 use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};

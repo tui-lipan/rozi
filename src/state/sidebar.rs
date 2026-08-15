@@ -1,8 +1,9 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 
-use crate::config::{SidebarConfig, SidebarTabId};
+use crate::config::{SidebarConfig, SidebarTab, SidebarTabId};
 use crate::session::protocol::PaneCommandPhase;
+use crate::state::{HostStatus, State};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SidebarCommandRow {
@@ -79,6 +80,403 @@ pub struct SidebarItemProjection {
 impl SidebarItemProjection {
     pub fn selectable(&self) -> bool {
         !matches!(self.target, RowTarget::Inert)
+    }
+
+    /// Where the cursor actually sits: the stored index if it still points at a selectable item,
+    /// otherwise the nearest one.
+    pub fn resolve_cursor(cursor: usize, items: &[SidebarItemProjection]) -> Option<usize> {
+        if items.get(cursor).is_some_and(Self::selectable) {
+            return Some(cursor);
+        }
+        items.iter().position(Self::selectable).map(|first| {
+            items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.selectable())
+                .map(|(index, _)| index)
+                .min_by_key(|index| index.abs_diff(cursor))
+                .unwrap_or(first)
+        })
+    }
+}
+
+impl State {
+    pub fn active_sidebar_tab(&self, panel: usize) -> Option<&SidebarTab> {
+        let id = self.sidebar.active_tab_in(panel)?;
+        self.config.sidebar.tabs.iter().find(|tab| tab.id() == *id)
+    }
+
+    pub fn sidebar_item_projections(&self, tab: &SidebarTab) -> Vec<SidebarItemProjection> {
+        match tab {
+            SidebarTab::Panes => {
+                let mut items = Vec::new();
+                for workspace in &self.current().workspaces {
+                    let mut ordered_ids = Vec::new();
+                    for id in workspace.tiled_ids() {
+                        if workspace
+                            .panes
+                            .iter()
+                            .any(|p| p.id == id && !p.floating && !p.closing)
+                        {
+                            ordered_ids.push(id);
+                        }
+                    }
+                    for pane in &workspace.panes {
+                        if pane.floating && !pane.closing && !ordered_ids.contains(&pane.id) {
+                            ordered_ids.push(pane.id);
+                        }
+                    }
+                    if ordered_ids.is_empty() {
+                        continue;
+                    }
+                    if !items.is_empty() {
+                        items.push(SidebarItemProjection {
+                            target: RowTarget::Inert,
+                            close: None,
+                        });
+                    }
+                    items.push(SidebarItemProjection {
+                        target: RowTarget::Inert,
+                        close: None,
+                    });
+                    for id in ordered_ids {
+                        items.push(SidebarItemProjection {
+                            target: RowTarget::Pane(id),
+                            close: Some(SidebarClose::Pane(id)),
+                        });
+                    }
+                }
+                items
+            }
+            SidebarTab::Activity => self.activity_item_projections(),
+            SidebarTab::Sessions => {
+                let mut items = Vec::new();
+                items.push(SidebarItemProjection {
+                    target: RowTarget::Inert,
+                    close: None,
+                });
+                let mut any_local = false;
+                for entry in self.sidebar.sessions.iter().filter(|s| s.host.is_none()) {
+                    let close = Some(SidebarClose::Session {
+                        name: entry.name.clone(),
+                        remote_target: entry.remote_target.clone(),
+                    });
+                    items.push(SidebarItemProjection {
+                        target: RowTarget::Session(Box::new(entry.clone())),
+                        close,
+                    });
+                    any_local = true;
+                }
+                if !any_local {
+                    items.push(SidebarItemProjection {
+                        target: RowTarget::Inert,
+                        close: None,
+                    });
+                }
+                items.push(SidebarItemProjection {
+                    target: RowTarget::NewSession(None),
+                    close: None,
+                });
+
+                for host in self.hosts.iter() {
+                    items.push(SidebarItemProjection {
+                        target: RowTarget::Inert,
+                        close: None,
+                    });
+                    let live: Vec<_> = self
+                        .sidebar
+                        .sessions
+                        .iter()
+                        .filter(|s| s.remote_target.as_ref() == Some(&host.target))
+                        .cloned()
+                        .collect();
+                    let conns: Vec<_> = std::iter::once(self.current())
+                        .chain(self.background.values())
+                        .filter(|a| a.remote_target.as_ref() == Some(&host.target))
+                        .map(|a| a.connection)
+                        .collect();
+                    let status =
+                        self.hosts
+                            .status_for(&host.target, conns.iter(), !live.is_empty());
+                    let header_target = match status {
+                        HostStatus::Connected | HostStatus::Reachable => {
+                            RowTarget::HostDisconnect(host.target.clone())
+                        }
+                        HostStatus::Disconnected | HostStatus::Unreachable => {
+                            RowTarget::HostConnect(host.target.clone())
+                        }
+                        HostStatus::Connecting => RowTarget::Inert,
+                    };
+                    items.push(SidebarItemProjection {
+                        target: header_target,
+                        close: None,
+                    });
+                    if host.probe.error().is_some() {
+                        items.push(SidebarItemProjection {
+                            target: RowTarget::Inert,
+                            close: None,
+                        });
+                    }
+
+                    match status {
+                        HostStatus::Connecting => {}
+                        HostStatus::Connected | HostStatus::Reachable => {
+                            if live.is_empty() {
+                                items.push(SidebarItemProjection {
+                                    target: RowTarget::Inert,
+                                    close: None,
+                                });
+                            } else {
+                                for entry in live {
+                                    let close = Some(SidebarClose::Session {
+                                        name: entry.name.clone(),
+                                        remote_target: entry.remote_target.clone(),
+                                    });
+                                    items.push(SidebarItemProjection {
+                                        target: RowTarget::Session(Box::new(entry)),
+                                        close,
+                                    });
+                                }
+                            }
+                            items.push(SidebarItemProjection {
+                                target: RowTarget::NewSession(Some(host.target.clone())),
+                                close: None,
+                            });
+                        }
+                        HostStatus::Disconnected | HostStatus::Unreachable => {
+                            if let Some(cached) =
+                                self.host_session_cache.get(&host.target.display_label())
+                            {
+                                for cached_entry in cached.iter().filter(|s| !s.ephemeral) {
+                                    let entry = crate::session::discovery::DiscoveredSession {
+                                        name: cached_entry.name.clone(),
+                                        ephemeral: false,
+                                        host: Some(host.alias.clone()),
+                                        remote_target: Some(host.target.clone()),
+                                        status:
+                                            crate::session::discovery::DiscoveredSessionStatus::Running {
+                                                panes: cached_entry.panes,
+                                                clients: 0,
+                                                has_layout: false,
+                                                created_from_profile: None,
+                                            },
+                                    };
+                                    items.push(SidebarItemProjection {
+                                        target: RowTarget::Session(Box::new(entry)),
+                                        close: None,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                items.push(SidebarItemProjection {
+                    target: RowTarget::Inert,
+                    close: None,
+                });
+                items.push(SidebarItemProjection {
+                    target: RowTarget::ConnectHost,
+                    close: None,
+                });
+                items
+            }
+            SidebarTab::Launcher { name, entries, .. } => entries
+                .iter()
+                .enumerate()
+                .map(|(entry_index, _)| SidebarItemProjection {
+                    target: RowTarget::Launcher {
+                        config_epoch: self.sidebar.config_epoch,
+                        tab_id: name.clone(),
+                        entry_index,
+                    },
+                    close: None,
+                })
+                .collect(),
+            SidebarTab::Command { name, on_click, .. } => {
+                let Some(output) = self.sidebar.command_output.get(name) else {
+                    return Vec::new();
+                };
+                output
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        let target = if on_click.is_some() && !row.error {
+                            RowTarget::CommandRow {
+                                config_epoch: self.sidebar.config_epoch,
+                                tab_id: name.clone(),
+                                output_epoch: output.epoch,
+                                line: row.raw.clone(),
+                            }
+                        } else {
+                            RowTarget::Inert
+                        };
+                        SidebarItemProjection {
+                            target,
+                            close: None,
+                        }
+                    })
+                    .collect()
+            }
+            SidebarTab::Tree { .. } => Vec::new(),
+        }
+    }
+
+    fn activity_item_projections(&self) -> Vec<SidebarItemProjection> {
+        struct ActivityItem {
+            target: RowTarget,
+            host: Option<String>,
+            path: Option<String>,
+            rank: u8,
+            workspace: usize,
+            pane: usize,
+            slot: usize,
+        }
+
+        fn rank(status: Option<&str>, finished: bool) -> u8 {
+            let Some(status) = status.map(str::trim) else {
+                return 5;
+            };
+            if finished
+                && !status.eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
+                && !status.eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED)
+            {
+                return 3;
+            }
+            if status.eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED) {
+                0
+            } else if status.eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING) {
+                1
+            } else if status.eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE) {
+                3
+            } else if status.eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE) {
+                4
+            } else {
+                2
+            }
+        }
+
+        fn group_label(path: Option<&str>, host: Option<&str>) -> String {
+            let label = path
+                .and_then(|path| {
+                    crate::platform::paths::path_segments(path)
+                        .last()
+                        .map(|segment| (*segment).to_string())
+                })
+                .unwrap_or_else(|| "Unknown".to_string());
+            match host.filter(|host| !host.is_empty()) {
+                Some(host) => format!("{label}@{host}"),
+                None => label,
+            }
+        }
+
+        let mut rows = Vec::new();
+        for (workspace, workspace_state) in self.current().workspaces.iter().enumerate() {
+            for (pane_index, pane) in workspace_state.panes.iter().enumerate() {
+                if pane.id == crate::state::POPUP_PANE_ID
+                    || pane.closing
+                    || (pane.terminal.published_rows.is_empty()
+                        && pane.terminal.detected_agent.is_none())
+                {
+                    continue;
+                }
+                let cwd = pane
+                    .terminal
+                    .cwd
+                    .clone()
+                    .filter(|cwd| !cwd.trim().is_empty());
+                let path = pane.terminal.project_root.clone().or_else(|| cwd.clone());
+                let host = cwd.as_ref().and_then(|_| pane.terminal.cwd_host.clone());
+                if pane.terminal.published_rows.is_empty() {
+                    rows.push(ActivityItem {
+                        target: RowTarget::Pane(pane.id),
+                        host,
+                        path,
+                        rank: rank(
+                            pane.terminal.agent_status().as_deref(),
+                            pane.terminal.finished_unseen,
+                        ),
+                        workspace,
+                        pane: pane_index,
+                        slot: 0,
+                    });
+                } else {
+                    for (slot, published) in pane.terminal.published_rows.iter().enumerate() {
+                        let finished = pane
+                            .terminal
+                            .published_row_ui
+                            .get(&published.id)
+                            .is_some_and(|ui| ui.finished_unseen);
+                        rows.push(ActivityItem {
+                            target: RowTarget::PublishedRow {
+                                pane_id: pane.id,
+                                row_id: published.id.clone(),
+                            },
+                            host: host.clone(),
+                            path: path.clone(),
+                            rank: rank(Some(&published.status), finished),
+                            workspace,
+                            pane: pane_index,
+                            slot,
+                        });
+                    }
+                }
+            }
+        }
+        rows.sort_by_key(|row| (row.rank, row.workspace, row.pane, row.slot));
+
+        let mut groups: Vec<(Option<String>, Option<String>, Vec<ActivityItem>)> = Vec::new();
+        for row in rows {
+            let existing = groups.iter_mut().find(|(host, path, _)| {
+                *host == row.host
+                    && match (path.as_deref(), row.path.as_deref()) {
+                        (Some(left), Some(right)) => {
+                            crate::platform::paths::paths_equal(left, right)
+                        }
+                        (None, None) => true,
+                        _ => false,
+                    }
+            });
+            if let Some((_, _, items)) = existing {
+                items.push(row);
+            } else {
+                groups.push((row.host.clone(), row.path.clone(), vec![row]));
+            }
+        }
+        groups.sort_by(|(host_a, path_a, _), (host_b, path_b, _)| {
+            path_a
+                .is_none()
+                .cmp(&path_b.is_none())
+                .then_with(|| {
+                    group_label(path_a.as_deref(), host_a.as_deref())
+                        .to_lowercase()
+                        .cmp(&group_label(path_b.as_deref(), host_b.as_deref()).to_lowercase())
+                })
+                .then_with(|| path_a.cmp(path_b))
+        });
+
+        let show_headers =
+            groups.len() > 1 || groups.first().is_some_and(|(_, path, _)| path.is_some());
+        let mut items = Vec::new();
+        for (index, (_, _, group)) in groups.into_iter().enumerate() {
+            if index > 0 {
+                items.push(SidebarItemProjection {
+                    target: RowTarget::Inert,
+                    close: None,
+                });
+            }
+            if show_headers {
+                items.push(SidebarItemProjection {
+                    target: RowTarget::Inert,
+                    close: None,
+                });
+            }
+            items.extend(group.into_iter().map(|row| SidebarItemProjection {
+                target: row.target,
+                close: None,
+            }));
+        }
+        items
     }
 }
 

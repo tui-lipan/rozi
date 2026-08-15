@@ -117,6 +117,10 @@ pub fn connect_remote(
     let preamble = match preamble::read_preamble(&mut conn) {
         Ok(preamble) => preamble,
         Err(err) => {
+            // Kill the proxy before joining stderr. The collector reaches EOF only after the child
+            // exits, while the child is owned by this connection.
+            let _ = conn.shutdown(std::net::Shutdown::Both);
+            drop(conn);
             let detail = stderr_tail
                 .and_then(|handle| handle.join().ok())
                 .filter(|s| !s.trim().is_empty())

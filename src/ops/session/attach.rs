@@ -8,10 +8,10 @@ use crate::ops::session::discovery::immediate_picker_rows;
 /// its ephemeral server, while followers, viewers, shared ephemeral clients, and named-session
 /// clients detach so they cannot destroy another client's session.
 pub(crate) fn release_current_session(ctx: &mut Context<AppRoot>) {
-    crate::update::sidebar::invalidate_sessions(ctx);
+    ctx.state.sidebar.invalidate_sessions();
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };
@@ -30,12 +30,12 @@ pub(crate) fn release_current_session(ctx: &mut Context<AppRoot>) {
 /// the session being switched to. Named and ephemeral sessions are both retained; parked sessions
 /// are only torn down on quit (see [`crate::ops::exit`]).
 pub(crate) fn park_current_session(ctx: &mut Context<AppRoot>) {
-    crate::update::sidebar::invalidate_sessions(ctx);
+    ctx.state.sidebar.invalidate_sessions();
     // The popup is a client-local overlay bound to the current server; it must not linger across a
     // switch. The scratchpad, likewise client-local, closes with the current view.
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     mark_current_parked(ctx, true);
     let old_epoch = ctx.state.runtime_epoch;
     ctx.state
@@ -93,10 +93,10 @@ pub(crate) fn switch_to_parked(
     ctx: &mut Context<AppRoot>,
     parked: crate::state::AttachmentId,
 ) -> Update {
-    crate::update::sidebar::invalidate_sessions(ctx);
+    ctx.state.sidebar.invalidate_sessions();
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     mark_current_parked(ctx, true);
     let old_epoch = ctx.state.runtime_epoch;
     let Some(restored_epoch) = ctx.state.unpark(parked, old_epoch) else {
@@ -293,7 +293,7 @@ pub(crate) fn park_current_and_install(
     Option<crate::state::LeftSession>,
 ) {
     prepare_session_install(ctx);
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     let outcome = if ctx.state.current().session_attached {
         mark_current_parked(ctx, true);
         let old_epoch = ctx.state.runtime_epoch;
@@ -337,7 +337,7 @@ pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>, name: String) -> 
         .clone()
         .zip(ctx.state.current().remote_target.clone());
     let picker_was_open = ctx.state.show_session_picker;
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     crate::ops::exit::mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
         client.shutdown();
@@ -363,7 +363,7 @@ pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
     let remote_host = ctx.state.current().remote_host.clone();
     let remote_target = ctx.state.current().remote_target.clone();
     let ephemeral = ctx.state.is_ephemeral_session();
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     crate::ops::exit::mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
         client.shutdown();

@@ -263,10 +263,17 @@ impl PipedConnection {
     }
 
     fn close_writer(&self) {
-        if let Ok(mut writer) = self.shared.writer.lock() {
+        self.shared.shutdown();
+        if let Some(child) = &self.child
+            && let Ok(mut guard) = child.child.lock()
+            && let Some(mut child) = guard.take()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Ok(mut writer) = self.shared.writer.try_lock() {
             *writer = None;
         }
-        self.shared.shutdown();
     }
 
     fn read_inner(&self, out: &mut [u8]) -> io::Result<usize> {
@@ -346,7 +353,19 @@ impl Read for PipedConnection {
 
 impl Write for PipedConnection {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.shared.buf.lock().expect("piped buf").shutdown {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "piped connection shut down",
+            ));
+        }
         let mut guard = self.shared.writer.lock().expect("piped writer");
+        if self.shared.buf.lock().expect("piped buf").shutdown {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "piped connection shut down",
+            ));
+        }
         match guard.as_mut() {
             Some(writer) => writer.write(buf),
             None => Err(io::Error::new(
@@ -582,5 +601,53 @@ mod tests {
             !still_alive,
             "owned child pid {pid} must not survive PipedConnection drop"
         );
+    }
+
+    #[test]
+    fn piped_connection_shutdown_unblocks_immediately() {
+        let (reader, writer) = pipe().unwrap();
+        let mut conn = PipedConnection::from_reader_writer(writer, reader);
+        let clone = conn.try_clone().unwrap();
+
+        // Writing some bytes
+        assert!(conn.write_all(b"hello").is_ok());
+
+        // Shutdown one end
+        assert!(clone.shutdown().is_ok());
+
+        // Further writes should fail or be closed immediately
+        let write_res = conn.write_all(b"world");
+        assert!(write_res.is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn shutdown_unblocks_a_backpressured_child_writer() {
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn child that does not read stdin");
+        let stdin = child.stdin.take().expect("stdin");
+        let stdout = child.stdout.take().expect("stdout");
+        let conn = PipedConnection::from_child_stdio(stdin, stdout, child);
+        let mut writer = conn.try_clone().expect("writer clone");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            writer.write_all(&vec![0; 8 * 1024 * 1024])
+        });
+        started_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(50));
+
+        let started = Instant::now();
+        conn.shutdown().expect("shutdown");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "shutdown must not wait behind the blocked writer mutex"
+        );
+        assert!(worker.join().expect("writer exits").is_err());
     }
 }

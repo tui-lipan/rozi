@@ -3,10 +3,6 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::update::sidebar::polling::{SESSION_REFRESH_INTERVAL, sessions_active};
 
-pub(crate) fn invalidate_sessions(ctx: &mut Context<AppRoot>) {
-    ctx.state.sidebar.invalidate_sessions();
-}
-
 /// Nudge the open Sessions tab to re-sweep now (e.g. after a config reload or a session change),
 /// without disturbing the epoch. The steady-state loop is kept alive by [`ensure_sessions_refresh_armed`];
 /// this just kicks an extra immediate sweep for the current epoch.

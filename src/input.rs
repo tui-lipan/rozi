@@ -1,6 +1,6 @@
 use crate::state::Direction;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
     Spawn,
     /// Spawn a new pane already floating, centered on the mouse pointer.
@@ -365,6 +365,21 @@ mod tests {
 
     #[test]
     fn every_bindable_action_has_exactly_one_builtin_command() {
+        let action_set: std::collections::HashSet<_> = BINDABLE_ACTIONS.iter().copied().collect();
+        assert_eq!(
+            action_set.len(),
+            BINDABLE_ACTIONS.len(),
+            "BINDABLE_ACTIONS contains duplicate actions"
+        );
+        let command_action_set: std::collections::HashSet<_> = crate::commands::BUILTIN_COMMANDS
+            .iter()
+            .map(|cmd| cmd.action)
+            .collect();
+        assert_eq!(
+            command_action_set.len(),
+            crate::commands::BUILTIN_COMMANDS.len(),
+            "BUILTIN_COMMANDS contains duplicate actions"
+        );
         for action in BINDABLE_ACTIONS {
             let matches: Vec<_> = crate::commands::BUILTIN_COMMANDS
                 .iter()

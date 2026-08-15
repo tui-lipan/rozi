@@ -1,7 +1,7 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::{find_pane_mut, pane_env};
+use crate::pane_lifecycle::{find_pane_in_namespace_mut, pane_env};
 use crate::state::State;
 use crate::tiling::append_tiled_window;
 
@@ -50,6 +50,7 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.last_exit_status = meta.runtime.last_exit_status;
     pane.terminal.runtime_sequence = meta.runtime.sequence;
     pane.terminal.child_pid = meta.pid;
+    let _ = pane.terminal.apply_rows(meta.runtime.rows.clone());
     pane.logging = meta.logging;
     pane.terminal.status = ManagedTerminalStatus::Ready;
 }
@@ -62,7 +63,7 @@ pub(super) fn bind_attached_pane_backends(
     panes: Vec<crate::session::protocol::PaneMeta>,
 ) {
     for meta in panes {
-        if let Some(pane) = find_pane_mut(&mut ctx.state, meta.pane_id) {
+        if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, meta.pane_id, false) {
             apply_pane_meta(pane, &meta);
         }
         // The popup slot's reserved id (u32::MAX) must never feed the allocator: bumping past it
@@ -99,7 +100,7 @@ pub(super) fn apply_attached_panes(
     ctx.state.current_mut().focused_pane = None;
 
     for attached in panes {
-        if find_pane_mut(&mut ctx.state, attached.pane_id).is_none() {
+        if find_pane_in_namespace_mut(&mut ctx.state, attached.pane_id, false).is_none() {
             let rect = FloatRect {
                 x: 4.0,
                 y: 3.0,
@@ -110,7 +111,7 @@ pub(super) fn apply_attached_panes(
             ctx.state.current_mut().workspaces[0].panes.push(pane);
             append_tiled_window(&mut ctx.state.current_mut().workspaces[0], attached.pane_id);
         }
-        if let Some(pane) = find_pane_mut(&mut ctx.state, attached.pane_id) {
+        if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, attached.pane_id, false) {
             apply_pane_meta(pane, &attached);
         }
         if attached.pane_id != crate::state::POPUP_PANE_ID {

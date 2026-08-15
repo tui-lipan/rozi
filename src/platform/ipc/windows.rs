@@ -49,6 +49,8 @@
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
@@ -359,6 +361,7 @@ pub struct LocalConnection {
     handle: OwnedHandle,
     /// Which end of the pipe this is, which decides how peer_pid asks for the *other* end's pid.
     server_end: bool,
+    shutdown_signal: Arc<AtomicBool>,
     /// `Cell`s because the Unix backend's `set_*_timeout`/`set_nonblocking` take `&self` (they
     /// forward to socket options, which need no Rust-side state) and both backends must present the
     /// same signature. Here these genuinely are Rust-side state - the pipe API has no equivalent
@@ -373,6 +376,7 @@ impl LocalConnection {
         Self {
             handle: OwnedHandle(handle),
             server_end,
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
             nonblocking: std::cell::Cell::new(false),
             read_timeout: std::cell::Cell::new(None),
             write_timeout: std::cell::Cell::new(None),
@@ -442,6 +446,7 @@ impl IpcConnection {
     pub fn shutdown(&self, _how: std::net::Shutdown) -> io::Result<()> {
         match self {
             Self::Local(local) => {
+                local.shutdown_signal.store(true, Ordering::SeqCst);
                 if local.server_end {
                     unsafe {
                         windows_sys::Win32::System::Pipes::DisconnectNamedPipe(local.handle.0)
@@ -486,10 +491,14 @@ impl LocalConnection {
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
-        let clone = Self::owning(duplicate, self.server_end);
-        clone.nonblocking.set(self.nonblocking.get());
-        clone.read_timeout.set(self.read_timeout.get());
-        clone.write_timeout.set(self.write_timeout.get());
+        let clone = Self {
+            handle: OwnedHandle(duplicate),
+            server_end: self.server_end,
+            shutdown_signal: Arc::clone(&self.shutdown_signal),
+            nonblocking: std::cell::Cell::new(self.nonblocking.get()),
+            read_timeout: std::cell::Cell::new(self.read_timeout.get()),
+            write_timeout: std::cell::Cell::new(self.write_timeout.get()),
+        };
         Ok(clone)
     }
 
@@ -557,6 +566,9 @@ impl Read for LocalConnection {
             .get()
             .map(|timeout| Instant::now() + timeout);
         loop {
+            if self.shutdown_signal.load(Ordering::Relaxed) {
+                return Ok(0);
+            }
             let mut read: u32 = 0;
             let ok = unsafe {
                 ReadFile(
@@ -623,6 +635,12 @@ impl Write for LocalConnection {
             .get()
             .map(|timeout| Instant::now() + timeout);
         loop {
+            if self.shutdown_signal.load(Ordering::Relaxed) {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "connection shut down",
+                ));
+            }
             let mut written: u32 = 0;
             let ok = unsafe {
                 WriteFile(
@@ -685,6 +703,12 @@ impl LocalConnection {
     ///   a `try_clone`d sibling with a read timeout puts the shared pipe instance into non-waiting
     ///   mode, so a write with no timeout of its own still lands here and must block, not fail.
     fn wait_or_block(&self, deadline: Option<Instant>) -> io::Result<Waited> {
+        if self.shutdown_signal.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "connection shut down",
+            ));
+        }
         if self.nonblocking.get() {
             return Ok(Waited::WouldBlock);
         }

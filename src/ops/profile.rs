@@ -390,7 +390,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
     let first_pane_id = ctx.state.current().next_pane_id;
     crate::profiles::replace_layout_from_profile(&mut ctx.state, profile, first_pane_id);
     let spawned = crate::update::spawn_state_panes_on_session(ctx);
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     let session = ctx.state.current().session_name.clone().unwrap_or_default();
     crate::events::emit(
         &ctx.state,

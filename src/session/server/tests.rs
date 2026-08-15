@@ -1053,6 +1053,59 @@ fn malformed_layout_commit_is_rejected() {
     assert!(layout.is_none());
 }
 
+fn shared_layout_for_panes(panes: &[(PaneId, u64)]) -> SharedLayout {
+    SharedLayout {
+        version: SHARED_LAYOUT_VERSION,
+        canvas_cols: 80,
+        canvas_rows: 24,
+        workspaces: vec![crate::shared_layout::SharedWorkspace {
+            index: 0,
+            name: None,
+            synchronized: false,
+            layout: crate::shared_layout::SharedLayoutKind::Dwindle,
+            start_axis: crate::shared_layout::SharedSplitAxis::Horizontal,
+            split_ratios: Vec::new(),
+            tree: None,
+            panes: panes
+                .iter()
+                .map(|(pane_id, generation)| crate::shared_layout::SharedPane {
+                    pane_id: *pane_id,
+                    generation: *generation,
+                    title: None,
+                    profile_name: None,
+                    cwd: None,
+                    command: None,
+                    replay: false,
+                    keep_open: false,
+                    floating: false,
+                    fullscreen: false,
+                    rect: None,
+                    scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                })
+                .collect(),
+        }],
+    }
+}
+
+#[test]
+fn layout_commit_requires_the_exact_live_pane_set_and_generations() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(1, test_pane(7));
+    assert!(server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[(1, 7)])));
+    assert!(!server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[(1, 8)])));
+    assert!(!server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[(2, 7)])));
+    assert!(!server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[])));
+    assert!(!server.validate_shared_layout_against_panes(&SharedLayout {
+        version: SHARED_LAYOUT_VERSION,
+        canvas_cols: 80,
+        canvas_rows: 24,
+        workspaces: Vec::new(),
+    }));
+
+    server.panes.get_mut(&1).unwrap().exited = Some(127);
+    assert!(!server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[(1, 7)])));
+}
+
 #[test]
 fn request_control_flags_requester_and_notifies_controller_without_stealing() {
     let mut server = cooperative_server("dev");

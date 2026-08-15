@@ -101,7 +101,7 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>, epoch: u64) -> Upd
     if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared.layout_commit_scheduled = false;
     }
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     Update::none()
 }
 

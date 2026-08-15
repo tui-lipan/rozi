@@ -158,12 +158,12 @@ pub(crate) fn evicted(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -
         // let it sit there offline, since reconnecting it is exactly what the removal ruled out.
         // The server has closed the connection already, so there is nothing to detach.
         if ctx.state.background.remove(&epoch).is_some() {
-            crate::update::sidebar::invalidate_sessions(ctx);
+            ctx.state.sidebar.invalidate_sessions();
         }
         return Update::none();
     }
     let name = ctx.state.current().session_name.clone();
-    crate::update::flush_layout_commit(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
     crate::ops::exit::mark_session_detached(ctx, None);
     let update = crate::ops::session::land_on_surviving_session(ctx);
     // The attachment was ended by the server, not parked; retaining it would render a session we

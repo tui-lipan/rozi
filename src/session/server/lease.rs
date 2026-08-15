@@ -20,6 +20,27 @@ impl SessionServer {
         }
     }
 
+    pub(super) fn validate_shared_layout_against_panes(&self, layout: &SharedLayout) -> bool {
+        let mut layout_ids = std::collections::HashSet::new();
+        for ws in &layout.workspaces {
+            for pane in &ws.panes {
+                if pane.pane_id == crate::state::POPUP_PANE_ID {
+                    return false;
+                }
+                let Some(server_pane) = self.panes.get(&pane.pane_id) else {
+                    return false;
+                };
+                if server_pane.exited.is_some() || server_pane.generation != pane.generation {
+                    return false;
+                }
+                layout_ids.insert(pane.pane_id);
+            }
+        }
+        self.panes
+            .iter()
+            .all(|(id, pane)| pane.exited.is_some() || layout_ids.contains(id))
+    }
+
     pub(super) fn handle_commit_layout(
         &mut self,
         client_id: ClientId,
@@ -31,7 +52,10 @@ impl SessionServer {
         if !self.is_controller(client_id) || self.client_read_only(client_id) {
             return Vec::new();
         }
-        if base_rev != self.layout_rev || layout.validate().is_err() {
+        if base_rev != self.layout_rev
+            || layout.validate().is_err()
+            || !self.validate_shared_layout_against_panes(&layout)
+        {
             return vec![(
                 Target::Sender,
                 ServerMessage::LayoutRejected {

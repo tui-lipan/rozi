@@ -2,7 +2,7 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
     // Commands (labels, categories, live keybinding hints, and the handler to run) come
     // straight from the registry `commands.rs` builds. Only palette-eligible ids appear here
     // (see `commands::is_palette_eligible`); the help overlay remains the full reference,
-    // including frequent single-key actions this intentionally omits. Group by category
+    // including frequent directional/toggle keys this intentionally omits. Group by category
     // (first-seen order) so each category header appears once even when entries of the same
     // category aren't registered contiguously.
     let mut groups: Vec<(String, Vec<SearchEntry<Callback<()>>>)> = Vec::new();
@@ -143,6 +143,8 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
         ]),
         "toggle-do-not-disturb" => alias_list(&["dnd", "mute", "quiet"]),
         "new-temporary-session" => alias_list(&["ephemeral"]),
+        "spawn" => alias_list(&["new pane", "split pane", "spawn pane"]),
+        "close" => alias_list(&["kill pane", "close focused"]),
         "spawn-float" => alias_list(&["floating pane", "float spawn", "spawn floating"]),
         "collaborators" => alias_list(&[
             "clients",

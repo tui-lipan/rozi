@@ -212,7 +212,7 @@ the search remains open, so a result can never jump to text shifted by live scro
 
 ## Edit scrollback
 
-*Edit scrollback in $EDITOR* (palette / `edit-scrollback` action) dumps the focused pane's full
+*Edit scrollback* (palette / `edit-scrollback` action) dumps the focused pane's full
 retained scrollback to a private file under the state directory
 (`~/.local/state/rozi/scrollback/pane-<id>-<timestamp>.txt`, mode `0600`) and opens it in
 `$EDITOR` (then `$VISUAL`, then `vi`) as a tiled pane — the same pattern as opening the config

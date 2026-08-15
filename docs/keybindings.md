@@ -80,9 +80,9 @@ Key handling is the same on Windows, with two things worth knowing:
 
 | Command | Keys |
 | --- | --- |
-| New shell pane | `Enter` or `c` |
+| New shell pane | `Enter` |
 | New floating pane at pointer | `Shift+Enter` (action id `spawn-float`) |
-| Close focused pane | `w` or `x` (press twice if `[confirm] close_pane` is enabled) |
+| Close focused pane | `w` (press twice if `[confirm] close_pane` is enabled) |
 | Toggle floating / tiling | `t` |
 | Toggle fullscreen | `f` |
 | Rename pane | `Shift+N` |
@@ -321,8 +321,9 @@ have no stable id, so they can't be rebound elsewhere or invoked via `rozi run-a
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
 keyboard - capture session as profile, replace session with profile, open Settings, promote to
-master, plus discoverable extras (rename pane, search, copy mode, scratchpad, resize mode, toggle
-layout, do not disturb, and help). **Settings** groups durable preferences for theme,
+master, plus discoverable extras (new pane, new floating pane, close pane, rename pane, search,
+copy mode, scratchpad, resize mode, toggle layout, do not disturb, and help). **Settings** groups
+durable preferences for theme,
 titlebar, workbar, focused-pane chrome, borders, focus-on-hover, alert markers, desktop
 notifications, sounds, startup mode, and session persistence in one searchable list.
 `change-appearance` and `alerts` remain bindable
@@ -334,14 +335,15 @@ Settings uses **General**, **Titlebar**, **Workbar**, **Panes**, **Alerts**, **D
 **Sounds**, and **Sessions**, with one blank row separating adjacent sections. **Sessions** comes
 last because its rows change what a later launch or server does, so unlike every group above it there
 is nothing on screen to inspect after stepping a value.
-Frequent single-key actions (spawn/close/float/fullscreen/flip/grow/shrink) live in the help
-overlay only, since the key is faster than a search box. "Settings" has no default key; bind its
+Frequent single-key actions (float/fullscreen/flip/grow/shrink, plus directional focus/swap/move)
+live in the help overlay only, since the key is faster than a search box. "Settings" has no default key; bind its
 `settings` action under `[keys]` if desired. "Open config file" is also palette-only; config changes
 reload automatically - see
 [Reloading and editing](configuration.md#reloading-and-editing).
 
 The **help overlay** (`?`) is the complete keybinding reference and lists every binding,
-including the workspace digits and mouse gestures.
+including the workspace digits and mouse gestures. Commands with no key (edit scrollback, open
+config file, kill workspace, …) stay in the command palette until bound under `[keys]`.
 
 ## Resize mode
 

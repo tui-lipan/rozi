@@ -1447,7 +1447,7 @@ mod tests {
     }
 
     #[test]
-    fn command_palette_empty_query_starts_with_new_floating_pane() {
+    fn command_palette_empty_query_starts_with_new_pane() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
@@ -1461,6 +1461,7 @@ mod tests {
                 backend.state_mut().show_palette = true;
                 backend.render();
 
+                let before = backend.state().current().workspaces[0].panes.len();
                 backend
                     .send_key(KeyEvent {
                         code: KeyCode::Enter,
@@ -1470,12 +1471,13 @@ mod tests {
 
                 assert!(!backend.state().show_palette);
                 let spawned = backend.state().focused_pane().expect("spawn takes focus");
-                let pane = backend.state().current().workspaces[0]
-                    .panes
+                let panes = &backend.state().current().workspaces[0].panes;
+                assert_eq!(panes.len(), before + 1);
+                let pane = panes
                     .iter()
                     .find(|pane| pane.id == spawned)
                     .expect("spawned pane");
-                assert!(pane.floating);
+                assert!(!pane.floating);
             })
             .expect("spawn palette selection test thread")
             .join()

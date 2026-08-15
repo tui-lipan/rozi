@@ -35,11 +35,14 @@ pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
         if entry.id.as_str().starts_with("workspace.") {
             continue;
         }
+        // Unbound commands belong in the palette. A Keybindings list that leads with "not set"
+        // is advertising the absence of a key, not a binding.
+        let hint = entry.keybinding_hint.as_deref().unwrap_or("");
+        if hint.is_empty() {
+            continue;
+        }
         let category = entry.category.as_deref().unwrap_or("Other").to_string();
-        let row = (
-            entry.keybinding_hint.as_deref().unwrap_or("").to_string(),
-            entry.label.to_string(),
-        );
+        let row = (hint.to_string(), entry.label.to_string());
         match groups.iter_mut().find(|(name, _)| *name == category) {
             Some((_, rows)) => rows.push(row),
             None => groups.push((category, vec![row])),
@@ -155,7 +158,9 @@ fn help_category_priority(category: &str) -> usize {
         "Profile" => 8,
         "Settings" => 9,
         "Mouse" => 10,
-        "Custom" => 11,
+        "Sidebar" => 11,
+        // User `[keys]` commands always trail built-in sections.
+        "Custom" => usize::MAX,
         _ => 12,
     }
 }
@@ -325,7 +330,7 @@ mod palette_alias_tests {
     }
 
     #[test]
-    fn help_categories_put_settings_after_profiles() {
+    fn help_categories_put_custom_last() {
         let categories = [
             "Settings",
             "Workspace",
@@ -334,7 +339,9 @@ mod palette_alias_tests {
             "App",
             "Panes",
             "Profile",
+            "Sidebar",
             "Custom",
+            "Other",
         ];
         let mut sorted = categories;
         sorted.sort_by_key(|category| help_category_priority(category));
@@ -348,6 +355,8 @@ mod palette_alias_tests {
                 "Workspace",
                 "Profile",
                 "Settings",
+                "Sidebar",
+                "Other",
                 "Custom",
             ]
         );

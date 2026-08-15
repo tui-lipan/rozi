@@ -49,8 +49,8 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::Spawn,
         label: "New pane",
         category: "Panes",
-        default_keys: &["enter", "c"],
-        palette: false,
+        default_keys: &["enter"],
+        palette: true,
     },
     BuiltinCommand {
         action: Action::SpawnFloat,
@@ -63,8 +63,8 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::Close,
         label: "Close pane",
         category: "Panes",
-        default_keys: &["w", "x"],
-        palette: false,
+        default_keys: &["w"],
+        palette: true,
     },
     BuiltinCommand {
         action: Action::ToggleFloat,
@@ -1146,9 +1146,6 @@ pub(crate) fn builtin_label(id: &str) -> Option<&'static str> {
 }
 
 fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
-    if action == Action::EditScrollback {
-        return edit_scrollback_label(&crate::ops::config::config_editor());
-    }
     if let Some(text) = toggle_command_label(action, state) {
         return text;
     }
@@ -1168,10 +1165,6 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
         .to_string();
     }
     base_label.to_string()
-}
-
-fn edit_scrollback_label(editor: &str) -> String {
-    format!("Edit scrollback in {editor}")
 }
 
 fn toggle_command_label(action: Action, state: &State) -> Option<String> {
@@ -1484,7 +1477,7 @@ mod tests {
         // all mirror now.
         let config = Config::default();
         assert!(config.input.modifier_shortcuts);
-        for key in ["d", "v", "tab", "enter", "c"] {
+        for key in ["d", "v", "tab", "enter", "w"] {
             let shortcuts = default_shortcuts_for(&config, &[key]);
             assert!(
                 has_alt(&shortcuts, code_for(key)),
@@ -1597,7 +1590,7 @@ mod tests {
             vec![KeyBinding::from_str("ctrl-b c").unwrap()],
         );
 
-        let shortcuts = resolve_shortcuts(&config, "spawn", &["enter", "c"]);
+        let shortcuts = resolve_shortcuts(&config, "spawn", &["enter"]);
         assert_eq!(shortcuts.len(), 1);
         assert!(
             shortcuts
@@ -1691,7 +1684,9 @@ mod tests {
     #[test]
     fn is_palette_eligible_excludes_workspace_and_frequent_single_key_actions() {
         assert!(!is_palette_eligible("workspace.switch.1"));
-        assert!(!is_palette_eligible("spawn"));
+        assert!(is_palette_eligible("spawn"));
+        assert!(is_palette_eligible("close"));
+        assert!(!is_palette_eligible("toggle-float"));
         assert!(is_palette_eligible("rename-pane"));
         assert!(is_palette_eligible("save-profile"));
     }
@@ -1775,11 +1770,12 @@ mod tests {
 
         let panes = actions("Panes");
         assert_eq!(
-            &panes[..3],
+            &panes[..4],
             &[
+                Action::Spawn,
                 Action::SpawnFloat,
+                Action::Close,
                 Action::RenamePane,
-                Action::TogglePaneSynchronization,
             ]
         );
         assert_eq!(actions("Workspace")[0], Action::RenameWorkspace);
@@ -1826,8 +1822,8 @@ mod tests {
         let config = Config::default();
 
         assert_eq!(
-            builtin_keybinding_hint(&config, "close", &["w", "x"]),
-            Some(Arc::<str>::from("w / x"))
+            builtin_keybinding_hint(&config, "close", &["w"]),
+            Some(Arc::<str>::from("w"))
         );
         assert_eq!(
             builtin_keybinding_hint(&config, "cycle-focus-next", &["tab"]),
@@ -1891,7 +1887,7 @@ mod tests {
         );
 
         assert_eq!(
-            builtin_keybinding_hint(&config, "close", &["w", "x"]),
+            builtin_keybinding_hint(&config, "close", &["w"]),
             Some(Arc::<str>::from("ctrl+b k / alt+x"))
         );
     }

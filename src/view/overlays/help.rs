@@ -1,130 +1,333 @@
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HelpKind {
+    Global,
+    Direct,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HelpRow {
+    category: String,
+    keys: String,
+    label: String,
+    kind: HelpKind,
+    extra: String,
+}
+
+impl HelpRow {
+    fn global(category: &str, keys: &str, label: &str) -> Self {
+        Self {
+            category: category.to_string(),
+            keys: keys.to_string(),
+            label: label.to_string(),
+            kind: HelpKind::Global,
+            extra: String::new(),
+        }
+    }
+
+    fn unbound(category: &str, label: &str) -> Self {
+        Self {
+            extra: "unbound".to_string(),
+            ..Self::global(category, "", label)
+        }
+    }
+
+    fn direct(category: &str, keys: &str, label: &str, extra: &str) -> Self {
+        Self {
+            category: category.to_string(),
+            keys: keys.to_string(),
+            label: label.to_string(),
+            kind: HelpKind::Direct,
+            extra: extra.to_string(),
+        }
+    }
+}
+
+fn help_rows(ctx: &Context<AppRoot>) -> Vec<HelpRow> {
+    let mut rows = ctx
+        .command_registry()
+        .entries()
+        .into_iter()
+        .filter(|entry| {
+            entry.id.as_str() != crate::commands::FORWARD_PREFIX_COMMAND_ID
+                && entry.id.as_str() != "detach"
+                && !entry.id.as_str().starts_with("app.")
+                && !entry.id.as_str().starts_with("workspace.")
+        })
+        .map(|entry| {
+            let category = entry.category.as_deref().unwrap_or("Other");
+            let keys = entry.keybinding_hint.as_deref().unwrap_or("");
+            let label = entry.label.as_ref();
+            if keys.is_empty() {
+                HelpRow::unbound(category, label)
+            } else {
+                HelpRow::global(category, keys, label)
+            }
+        })
+        .collect::<Vec<_>>();
+    rows.splice(0..0, scheme_rows(&ctx.state.config.input));
+    rows.extend([
+        HelpRow::global("Workspaces", "1-9", "Switch to workspace"),
+        HelpRow::global("Workspaces", "Shift+1-9", "Move pane to workspace (follow)"),
+        HelpRow::global(
+            "Workspaces",
+            "Ctrl+Shift+1-9",
+            "Move workspace to workspace (follow)",
+        ),
+        HelpRow::global("Mouse", "drag", "Move pane (left-drag)"),
+        HelpRow::global("Mouse", "right-drag", "Resize pane from corner"),
+        HelpRow::global("Mouse", "drag gap", "Resize a tiled split"),
+    ]);
+    rows.extend(direct_mode_rows());
+    rows
+}
+
+fn direct_mode_rows() -> Vec<HelpRow> {
+    const COPY: &str = "Copy mode · DIRECT";
+    const SIDEBAR: &str = "Sidebar focused · DIRECT";
+    const COPY_EXTRA: &str = "direct copy mode context selection";
+    const SIDEBAR_EXTRA: &str = "direct sidebar focused context tree files git panel";
+    let mut rows = vec![
+        HelpRow::direct(COPY, "hjkl / arrows", "Move cursor", COPY_EXTRA),
+        HelpRow::direct(COPY, "w / b / e", "Word forward / back / end", COPY_EXTRA),
+        HelpRow::direct(COPY, "W / B / E", "WORD forward / back / end", COPY_EXTRA),
+        HelpRow::direct(
+            COPY,
+            "0 / ^ / $",
+            "Line start / first non-blank / end",
+            COPY_EXTRA,
+        ),
+        HelpRow::direct(COPY, "g / G", "Top / bottom of scrollback", COPY_EXTRA),
+        HelpRow::direct(COPY, "Ctrl+u / Ctrl+d", "Half page up / down", COPY_EXTRA),
+        HelpRow::direct(COPY, "v / Space", "Start selection", COPY_EXTRA),
+        HelpRow::direct(COPY, "y / Enter", "Copy selection & exit", COPY_EXTRA),
+        HelpRow::direct(COPY, "Esc / q", "Exit copy mode", COPY_EXTRA),
+        HelpRow::direct(SIDEBAR, "↑ / k, ↓ / j", "Move cursor", SIDEBAR_EXTRA),
+        HelpRow::direct(SIDEBAR, "PageUp / PageDown", "Move one page", SIDEBAR_EXTRA),
+        HelpRow::direct(
+            SIDEBAR,
+            "Home / g, End / G",
+            "First / last row",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(SIDEBAR, "Enter", "Activate", SIDEBAR_EXTRA),
+        HelpRow::direct(SIDEBAR, "Tab / Shift+Tab", "Cycle tabs", SIDEBAR_EXTRA),
+        HelpRow::direct(
+            SIDEBAR,
+            "← / h, → / l, Space",
+            "Collapse / expand / toggle dirs",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
+            "Ctrl+Shift+← / Ctrl+Shift+→",
+            "Reorder the active tab",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
+            "Ctrl+↑ / Ctrl+↓",
+            "Focus the other panel",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
+            "Ctrl+Shift+↑ / Ctrl+Shift+↓",
+            "Move tab to the other panel",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
+            "Shift+← / Shift+→",
+            "Resize sidebar",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
+            "Shift+↑ / Shift+↓",
+            "Resize panel split",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(SIDEBAR, "s", "Toggle panels", SIDEBAR_EXTRA),
+        HelpRow::direct(SIDEBAR, "Esc", "Return to pane", SIDEBAR_EXTRA),
+    ];
+    for row in &mut rows {
+        row.extra.push_str(" modes");
+    }
+    rows
+}
+
+fn filtered_help_groups(
+    rows: impl IntoIterator<Item = HelpRow>,
+    tab: crate::state::HelpTab,
+    query: &str,
+) -> Vec<(String, Vec<HelpRow>)> {
+    let query = normalize_help_query(query);
+    let mut groups: Vec<(String, Vec<HelpRow>)> = Vec::new();
+    for row in rows {
+        let include = match tab {
+            crate::state::HelpTab::Global => row.kind == HelpKind::Global && !row.keys.is_empty(),
+            crate::state::HelpTab::Modes => row.kind == HelpKind::Direct,
+            crate::state::HelpTab::Unbound => row.kind == HelpKind::Global && row.keys.is_empty(),
+            crate::state::HelpTab::All => true,
+        };
+        if !include {
+            continue;
+        }
+        if !query.is_empty() && !help_row_matches(&row, &query) {
+            continue;
+        }
+        match groups
+            .iter_mut()
+            .find(|(category, _)| *category == row.category)
+        {
+            Some((_, entries)) => entries.push(row),
+            None => groups.push((row.category.clone(), vec![row])),
+        }
+    }
+    groups.sort_by_key(|(category, _)| help_category_priority(category));
+    groups
+}
+
+fn normalize_help_query(query: &str) -> String {
+    collapse_ws(
+        &query
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['+', '/', ',', '·'], " "),
+    )
+}
+
+fn help_row_matches(row: &HelpRow, query: &str) -> bool {
+    help_row_haystack(row).contains(query)
+}
+
+fn help_row_haystack(row: &HelpRow) -> String {
+    collapse_ws(&format!(
+        "{} {} {} {}",
+        row.category
+            .to_ascii_lowercase()
+            .replace(['·', '+', '/'], " "),
+        normalize_help_keys(&row.keys),
+        row.label.to_ascii_lowercase(),
+        row.extra.to_ascii_lowercase()
+    ))
+}
+
+fn normalize_help_keys(keys: &str) -> String {
+    keys.to_ascii_lowercase()
+        .replace('←', " left ")
+        .replace('→', " right ")
+        .replace('↑', " up ")
+        .replace('↓', " down ")
+        .replace(['+', '/', ',', '·'], " ")
+}
+
+fn collapse_ws(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn scheme_rows(input: &crate::config::InputConfig) -> Vec<HelpRow> {
+    let prefix = crate::keys_display::format_binding(&input.prefix);
+    let mut rows = vec![HelpRow {
+        extra: "prefix then key scheme".to_string(),
+        ..HelpRow::global("", &prefix, "Prefix · then key")
+    }];
+    if input.modifier_shortcuts {
+        rows.push(HelpRow {
+            extra: "mod hold key scheme".to_string(),
+            ..HelpRow::global("", input.modifier.label(), "Mod · hold + key")
+        });
+    }
+    rows
+}
+
 pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
-    let prefix = ctx.state.config.input.prefix.to_string();
-    let intro = if ctx.state.config.input.modifier_shortcuts {
-        let modifier = ctx.state.config.input.modifier.label();
-        format!(
-            "Prefix keys with {prefix}, or hold {modifier} with any listed key. Scroll for more · Esc closes."
+    let filter = Input::bound(&ctx.state.help_query)
+        .placeholder("Search… (/)")
+        .style(fg_only(&theme.muted))
+        .focus_style(Style::new().fg(theme.border_active))
+        .placeholder_style(fg_only(&theme.muted))
+        .selection_style(theme.text_selection)
+        .width(Length::Auto)
+        .height(Length::Px(1))
+        .border(false)
+        .padding(0)
+        .tab_stop(false)
+        .on_change(ctx.link().callback(Msg::HelpQueryChanged))
+        .key_interceptor(ctx.link().key_handler(|key| {
+            if key.code == KeyCode::Enter && !key.mods.ctrl && !key.mods.alt && !key.mods.super_key
+            {
+                return Some(Msg::HelpBlurFilter);
+            }
+            key.is(KeyCode::Esc).then_some(Msg::HelpEscape)
+        }))
+        .key(help_filter_key());
+    let header = HStack::new()
+        .justify(Justify::End)
+        .height(Length::Px(1))
+        .child(filter.min_width(Length::Px(11)).max_width(Length::Px(22)));
+    let caps = ctx
+        .state
+        .config
+        .pane
+        .workbar_tab_style
+        .glyphs()
+        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
+    let tabs = Tabs::new()
+        .tabs(vec![
+            Tab::new("Global"),
+            Tab::new("Modes"),
+            Tab::new("Unbound"),
+            Tab::new("All"),
+        ])
+        .active(match ctx.state.help_tab {
+            crate::state::HelpTab::Global => 0,
+            crate::state::HelpTab::Modes => 1,
+            crate::state::HelpTab::Unbound => 2,
+            crate::state::HelpTab::All => 3,
+        })
+        .focusable(false)
+        .width(Length::Flex(1))
+        .height(Length::Px(1))
+        .divider(' ')
+        .caps(caps)
+        .style(Style::new().fg(theme.surface.menu).bg(theme.surface.panel))
+        .active_style(
+            Style::new()
+                .fg(theme.surface.backdrop)
+                .bg(theme.border_active)
+                .bold(),
         )
-    } else {
-        format!("Prefix keys with {prefix}. Scroll for more · Esc closes.")
-    };
-
-    // Group commands by category (first-seen order), so a category with non-contiguous
-    // entries still gets a single header - matching the command palette. Commands (labels,
-    // categories, live keybinding hints) come straight from the registry `commands.rs` builds,
-    // so this always reflects the actual active bindings, including `[keys]` overrides and
-    // user-defined commands (registered under category "Custom").
-    let mut groups: Vec<(String, Vec<(String, String)>)> = Vec::new();
-    for entry in ctx.command_registry().entries() {
-        if entry.id.as_str() == crate::commands::FORWARD_PREFIX_COMMAND_ID {
-            continue;
-        }
-        // `detach` and `quit` leave the client in exactly the same way. Keep the detach command
-        // registered for its stable id and bindings, but show both aliases on the canonical Quit
-        // client row instead of making the help reader compare duplicate actions.
-        if entry.id.as_str() == "detach" {
-            continue;
-        }
-        // tui-lipan registers its own `app.*` commands even when their bindings are disabled.
-        // Rozi owns these behaviors, so only show its corresponding commands here.
-        if entry.id.as_str().starts_with("app.") {
-            continue;
-        }
-        // Workspace digit switches are described generically below rather than as 27 rows.
-        if entry.id.as_str().starts_with("workspace.") {
-            continue;
-        }
-        // Unbound commands belong in the palette. A Keybindings list that leads with "not set"
-        // is advertising the absence of a key, not a binding.
-        let hint = entry.keybinding_hint.as_deref().unwrap_or("");
-        if hint.is_empty() {
-            continue;
-        }
-        let category = entry.category.as_deref().unwrap_or("Other").to_string();
-        let row = (hint.to_string(), entry.label.to_string());
-        match groups.iter_mut().find(|(name, _)| *name == category) {
-            Some((_, rows)) => rows.push(row),
-            None => groups.push((category, vec![row])),
-        }
-    }
-    // Workspace digits and mouse gestures aren't individual registry entries; append them.
-    groups.push((
-        "Workspaces".to_string(),
-        vec![
-            ("1-9".to_string(), "Switch to workspace".to_string()),
-            (
-                "Shift+1-9".to_string(),
-                "Move pane to workspace (follow)".to_string(),
-            ),
-            (
-                "Ctrl+Shift+1-9".to_string(),
-                "Move workspace to workspace (follow)".to_string(),
-            ),
-        ],
-    ));
-    groups.push((
-        "Mouse".to_string(),
-        vec![
-            (
-                "mod/prefix-drag".to_string(),
-                "Move pane (left-drag)".to_string(),
-            ),
-            (
-                "mod/prefix-right-drag".to_string(),
-                "Resize pane from corner".to_string(),
-            ),
-            ("drag gap".to_string(), "Resize a tiled split".to_string()),
-        ],
-    ));
-    // User `[keys]` commands are already covered by the registry loop above (category
-    // "Custom"). Copy mode's internal keys aren't discrete commands, so they aren't registered.
-    groups.push((
-        "Copy mode".to_string(),
-        vec![
-            ("hjkl / arrows".to_string(), "Move cursor".to_string()),
-            (
-                "w / b / e".to_string(),
-                "Word forward / back / end".to_string(),
-            ),
-            (
-                "W / B / E".to_string(),
-                "WORD forward / back / end".to_string(),
-            ),
-            (
-                "0 / ^ / $".to_string(),
-                "Line start / first non-blank / end".to_string(),
-            ),
-            (
-                "g / G".to_string(),
-                "Top / bottom of scrollback".to_string(),
-            ),
-            (
-                "Ctrl+u / Ctrl+d".to_string(),
-                "Half page up / down".to_string(),
-            ),
-            ("v / Space".to_string(), "Start selection".to_string()),
-            ("y / Enter".to_string(), "Copy selection & exit".to_string()),
-            ("Esc / q".to_string(), "Exit copy mode".to_string()),
-        ],
-    ));
-    groups.sort_by_key(|(category, _)| help_category_priority(category));
-
+        .tab_hover_style(Style::new().transform_bg(crate::view::hover_lift()))
+        .on_change(
+            ctx.link()
+                .callback(|event: TabsEvent| Msg::HelpTabSelected(event.index)),
+        );
+    let groups = filtered_help_groups(
+        help_rows(ctx),
+        ctx.state.help_tab,
+        ctx.state.help_query.text(),
+    );
     let mut list = VStack::new();
-    for (index, (category, rows)) in groups.iter().enumerate() {
-        list = list.child(help_section(category, theme, index > 0));
-        for (keys, label) in rows {
-            list = list.child(help_row(keys, label, theme));
+    if groups.is_empty() {
+        list = list.child(
+            Text::new("No matches")
+                .style(fg_only(&theme.muted))
+                .height(Length::Px(1)),
+        );
+    } else {
+        for (index, (category, rows)) in groups.iter().enumerate() {
+            if !category.is_empty() {
+                list = list.child(help_section(category, theme, index > 0));
+            }
+            for row in rows {
+                list = list.child(help_row(&row.keys, &row.label, theme));
+            }
         }
     }
-
     let body = VStack::new()
-        .child(
-            Text::new(intro)
-                .style(theme.muted)
-                .overflow(Overflow::Wrap)
-                .height(Length::Auto),
-        )
+        .child(tabs)
         .child(Text::new("").height(Length::Px(1)))
         .child(
             ScrollView::new()
@@ -136,38 +339,51 @@ pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
                 .height(Length::Flex(1))
                 .key(help_scroll_key()),
         );
-
-    styled_modal(ctx, "Keybindings", 60)
+    Modal::new()
+        .width(Length::Px(64))
         .height(Length::Percent(70))
-        .padding((1, 1, 1, 2))
+        .padding(0)
+        .border(false)
+        .frame_style(Style::new().bg(theme.surface.element))
+        .dismiss_on_escape(false)
         .on_close(ctx.link().callback(|_| Msg::CloseHelp))
-        .child(body)
+        .child(
+            Frame::new()
+                .header_left("Keybindings")
+                .header_style(theme.accent.bold())
+                .header_content(header)
+                .border(true)
+                .border_style(BorderStyle::Rounded)
+                .style(Style::new().bg(theme.surface.element))
+                .padding((0, 1, 1, 1))
+                .height(Length::Flex(1))
+                .child(body),
+        )
         .into()
 }
 
 fn help_category_priority(category: &str) -> usize {
     match category {
-        "App" => 0,
-        "Session" => 1,
-        "Collaboration" => 2,
-        "Panes" => 3,
-        "Focus" => 4,
-        "Workspace" => 5,
-        "Workspaces" => 6,
-        "Copy mode" => 7,
-        "Profile" => 8,
-        "Settings" => 9,
-        "Mouse" => 10,
-        "Sidebar" => 11,
-        // User `[keys]` commands always trail built-in sections.
+        "" => 0,
+        "App" => 1,
+        "Session" => 2,
+        "Collaboration" => 3,
+        "Panes" => 4,
+        "Focus" => 5,
+        "Workspace" => 6,
+        "Workspaces" => 7,
+        "Copy mode · DIRECT" => 8,
+        "Profile" => 9,
+        "Settings" => 10,
+        "Mouse" => 11,
+        "Sidebar" => 12,
+        "Sidebar focused · DIRECT" => 13,
         "Custom" => usize::MAX,
-        _ => 12,
+        _ => 14,
     }
 }
 
 fn help_section(title: &str, theme: &Theme, spaced: bool) -> Element {
-    // A horizontal rule with the section title on it - the title in the accent color, the
-    // line muted - so groups read as clear dividers without competing with the key text.
     let divider = Divider::horizontal()
         .label(
             Text::new(format!(" {} ", title.to_uppercase())).style(fg_only(&theme.accent).bold()),
@@ -188,10 +404,10 @@ fn help_section(title: &str, theme: &Theme, spaced: bool) -> Element {
 
 fn help_row(keys: &str, desc: &str, theme: &Theme) -> Element {
     let (keys_text, keys_style) = if keys.is_empty() {
-        ("not set".to_string(), fg_only(&theme.muted))
+        ("—".to_string(), fg_only(&theme.muted))
     } else {
         (
-            keys.to_string(),
+            crate::keys_display::format_keys(keys),
             Style::new().fg(theme.border_active).bold(),
         )
     };
@@ -219,10 +435,10 @@ fn help_row(keys: &str, desc: &str, theme: &Theme) -> Element {
 #[cfg(test)]
 mod palette_alias_tests {
     use super::{
-        command_entries_with_groups, command_palette_aliases, help_category_priority,
-        settings_palette_aliases,
+        HelpRow, command_entries_with_groups, command_palette_aliases, filtered_help_groups,
+        help_category_priority, scheme_rows, settings_palette_aliases,
     };
-    use crate::state::SettingsAction;
+    use crate::state::{HelpTab, SettingsAction};
     use tui_lipan::prelude::SearchEntry;
 
     /// `settings_palette_aliases` always appends the group name, so a row with no aliases of its
@@ -360,5 +576,97 @@ mod palette_alias_tests {
                 "Custom",
             ]
         );
+    }
+
+    #[test]
+    fn unbound_tab_keeps_empty_keys_out_of_global() {
+        let rows = vec![
+            HelpRow::unbound("App", "Edit scrollback"),
+            HelpRow::unbound("App", "Open config file"),
+            HelpRow::unbound("Workspace", "Kill workspace"),
+            HelpRow::global("Panes", "Enter", "New pane"),
+            HelpRow::direct("Copy mode · DIRECT", "Esc / q", "Exit copy mode", "direct"),
+        ];
+        let unbound = filtered_help_groups(rows.clone(), HelpTab::Unbound, "");
+        let global = filtered_help_groups(rows.clone(), HelpTab::Global, "");
+        let modes = filtered_help_groups(rows, HelpTab::Modes, "");
+        assert!(
+            unbound
+                .iter()
+                .flat_map(|(_, rows)| rows)
+                .all(|row| row.keys.is_empty())
+        );
+        assert!(
+            global
+                .iter()
+                .flat_map(|(_, rows)| rows)
+                .all(|row| !row.keys.is_empty() && row.kind == super::HelpKind::Global)
+        );
+        assert!(
+            modes
+                .iter()
+                .flat_map(|(_, rows)| rows)
+                .all(|row| row.kind == super::HelpKind::Direct)
+        );
+    }
+
+    #[test]
+    fn scrollback_filter_finds_an_unbound_row() {
+        let groups = filtered_help_groups(
+            [HelpRow::unbound("App", "Edit scrollback")],
+            HelpTab::Unbound,
+            "SCROLLBACK",
+        );
+        assert_eq!(groups[0].1[0].label, "Edit scrollback");
+    }
+
+    #[test]
+    fn search_matches_keys_groups_and_mode_names() {
+        let rows = vec![
+            HelpRow::global("Panes", "Shift+Enter", "New floating pane"),
+            HelpRow::direct(
+                "Sidebar focused · DIRECT",
+                "Ctrl+Shift+←",
+                "Reorder the active tab",
+                "direct sidebar focused",
+            ),
+            HelpRow::unbound("App", "Open config file"),
+        ];
+        let floating = filtered_help_groups(rows.clone(), HelpTab::Global, "shift enter");
+        assert_eq!(floating[0].1[0].label, "New floating pane");
+        let sidebar = filtered_help_groups(rows.clone(), HelpTab::Modes, "ctrl shift left");
+        assert_eq!(sidebar[0].1[0].label, "Reorder the active tab");
+        let unbound = filtered_help_groups(rows, HelpTab::Unbound, "unbound");
+        assert_eq!(unbound[0].1[0].label, "Open config file");
+    }
+
+    #[test]
+    fn help_tab_defaults_to_global() {
+        assert_eq!(HelpTab::default(), HelpTab::Global);
+    }
+
+    #[test]
+    fn scheme_rows_lead_global_and_all_without_a_group() {
+        let rows = scheme_rows(&crate::config::InputConfig::default());
+        assert_eq!(rows[0].category, "");
+        assert_eq!(rows[0].keys, "Ctrl+a");
+        assert_eq!(rows[0].label, "Prefix · then key");
+        assert_eq!(rows[1].label, "Mod · hold + key");
+        assert_eq!(rows[1].keys, "Alt");
+        let global = filtered_help_groups(rows.clone(), HelpTab::Global, "");
+        assert_eq!(global[0].0, "");
+        assert_eq!(global[0].1.len(), 2);
+        assert!(filtered_help_groups(rows.clone(), HelpTab::Modes, "").is_empty());
+        assert!(filtered_help_groups(rows.clone(), HelpTab::Unbound, "").is_empty());
+        assert_eq!(filtered_help_groups(rows, HelpTab::All, "")[0].0, "");
+    }
+
+    #[test]
+    fn scheme_rows_omit_mod_when_modifier_shortcuts_are_off() {
+        let mut input = crate::config::InputConfig::default();
+        input.modifier_shortcuts = false;
+        let rows = scheme_rows(&input);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "Prefix · then key");
     }
 }

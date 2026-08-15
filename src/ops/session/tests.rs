@@ -294,9 +294,9 @@ fn collaborators_dialog_is_rows_and_chrome_with_no_prose_line() {
             assert!(rendered.contains("wants ctrl"), "{rendered}");
             // Every key that applies is advertised, and each is a Ctrl chord or Enter, because
             // the query input owns focus and a bare letter has to reach the filter.
-            assert!(rendered.contains("grant control enter"), "{rendered}");
-            assert!(rendered.contains("decline ctrl+d"), "{rendered}");
-            assert!(rendered.contains("kick ctrl+k"), "{rendered}");
+            assert!(rendered.contains("grant control Enter"), "{rendered}");
+            assert!(rendered.contains("decline Ctrl+d"), "{rendered}");
+            assert!(rendered.contains("kick Ctrl+k"), "{rendered}");
         })
         .expect("spawn collaborators view test")
         .join()

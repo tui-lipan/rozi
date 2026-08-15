@@ -1243,6 +1243,9 @@ pub(crate) fn active_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane
 }
 
 pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {
+    if ctx.state.has_modal_overlay() {
+        return;
+    }
     if crate::pane_lifecycle::find_pane_mut(&mut ctx.state, id)
         .is_some_and(|pane| pane.terminal_active && !pane.opening && !pane.closing)
     {

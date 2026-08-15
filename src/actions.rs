@@ -601,6 +601,13 @@ fn execute_action_inner(
             ctx.state.show_help = !ctx.state.show_help;
             if ctx.state.show_help {
                 ctx.state.show_palette = false;
+                ctx.state.help_query = TextInput::new("");
+                ctx.state.help_tab = crate::state::HelpTab::Global;
+                ctx.request_focus(crate::view::help_scroll_key());
+            } else {
+                ctx.state.help_query = TextInput::new("");
+                ctx.state.help_tab = crate::state::HelpTab::Global;
+                request_current_pane_focus(ctx);
             }
             Update::full()
         }

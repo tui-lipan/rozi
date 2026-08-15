@@ -58,11 +58,11 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
 
         let rendered = screen(&mut backend);
         assert!(
-            rendered.contains("ephemeral shell enter"),
+            rendered.contains("ephemeral shell Enter"),
             "with no row to activate, Enter carries the scratch session:\n{rendered}"
         );
         assert!(
-            !rendered.contains("ephemeral shell ctrl+t"),
+            !rendered.contains("ephemeral shell Ctrl+t"),
             "the chord goes unsaid while Enter already offers it:\n{rendered}"
         );
 
@@ -103,7 +103,7 @@ fn a_query_that_matches_nothing_frees_enter_the_same_way() {
 
         let rendered = screen(&mut backend);
         assert!(
-            rendered.contains("ephemeral shell enter"),
+            rendered.contains("ephemeral shell Enter"),
             "a filter that hides every row leaves the list as empty as an empty one:\n{rendered}"
         );
     });
@@ -123,11 +123,11 @@ fn a_populated_list_advertises_the_chord_until_the_scratch_session_exists() {
 
         let rendered = screen(&mut backend);
         assert!(
-            rendered.contains("ephemeral shell ctrl+t"),
+            rendered.contains("ephemeral shell Ctrl+t"),
             "with rows on the list, Enter belongs to them and the chord is spelled out:\n{rendered}"
         );
         assert!(
-            !rendered.contains("ephemeral shell enter"),
+            !rendered.contains("ephemeral shell Enter"),
             "Enter stays the list's own key:\n{rendered}"
         );
     });
@@ -150,8 +150,8 @@ fn holding_the_scratch_session_drops_the_hint_but_not_the_key() {
 
         let rendered = screen(&mut backend);
         assert!(
-            !rendered.contains("ephemeral shell ctrl+t")
-                && !rendered.contains("ephemeral shell enter"),
+            !rendered.contains("ephemeral shell Ctrl+t")
+                && !rendered.contains("ephemeral shell Enter"),
             "the scratch session is on the list itself, so the pill would be noise:\n{rendered}"
         );
 
@@ -190,7 +190,7 @@ fn a_parked_scratch_session_also_drops_the_hint() {
 
         let rendered = screen(&mut backend);
         assert!(
-            !rendered.contains("ephemeral shell ctrl+t"),
+            !rendered.contains("ephemeral shell Ctrl+t"),
             "a scratch session parked in the background is one the client already has:\n{rendered}"
         );
     });

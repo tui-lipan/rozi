@@ -25,6 +25,7 @@ use tui_lipan::prelude::*;
 
 use super::fg_only;
 use crate::AppRoot;
+use crate::keys_display::format_binding;
 use crate::state::WORKBAR_HEIGHT;
 
 /// Blank columns between two packed columns.
@@ -172,7 +173,7 @@ fn prefix_continuation(binding: &KeyBinding, prefix: &str) -> Option<String> {
     }
     KeyBinding::from_str(&rest.join(" "))
         .ok()
-        .map(|binding| binding.compact_display())
+        .map(|binding| format_binding(&binding))
 }
 
 /// Fold a family's member keys into one display string, or `None` when they no longer form a set
@@ -510,8 +511,8 @@ mod tests {
 
     #[test]
     fn shared_modifier_lifts_out_of_a_collapsed_family() {
-        let keys = ["ctrl+h", "ctrl+j", "ctrl+k", "ctrl+l"].map(String::from);
-        assert_eq!(collapse_keys(&keys, "").as_deref(), Some("ctrl+hjkl"));
+        let keys = ["Ctrl+h", "Ctrl+j", "Ctrl+k", "Ctrl+l"].map(String::from);
+        assert_eq!(collapse_keys(&keys, "").as_deref(), Some("Ctrl+hjkl"));
     }
 
     #[test]
@@ -532,11 +533,7 @@ mod tests {
     #[test]
     fn continuation_is_read_off_the_chord_and_rejects_non_prefix_bindings() {
         let chord = KeyBinding::from_str("ctrl-a shift-n").expect("chord parses");
-        assert_eq!(
-            prefix_continuation(&chord, "ctrl+a").as_deref(),
-            // `compact_display` renders a shifted letter as the glyph it produces.
-            Some("N")
-        );
+        assert_eq!(prefix_continuation(&chord, "ctrl+a").as_deref(), Some("N"));
         let held = KeyBinding::from_str("alt-n").expect("binding parses");
         assert_eq!(prefix_continuation(&held, "ctrl+a"), None);
         let other_prefix = KeyBinding::from_str("ctrl-b n").expect("chord parses");

@@ -112,9 +112,46 @@ pub(super) fn command_palette_query_changed(ctx: &mut Context<AppRoot>, query: S
 
 pub(super) fn close_help(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_help = false;
+    ctx.state.help_query = TextInput::new("");
+    ctx.state.help_tab = crate::state::HelpTab::Global;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
+}
+
+pub(super) fn help_query_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
+    event.apply_to(&mut ctx.state.help_query);
+    ctx.request_focus(crate::view::help_filter_key());
+    Update::full()
+}
+
+pub(super) fn help_tab_selected(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    ctx.state.help_tab = match index {
+        1 => crate::state::HelpTab::Modes,
+        2 => crate::state::HelpTab::Unbound,
+        3 => crate::state::HelpTab::All,
+        _ => crate::state::HelpTab::Global,
+    };
+    ctx.request_focus(crate::view::help_scroll_key());
+    Update::full()
+}
+
+pub(super) fn help_focus_filter(ctx: &mut Context<AppRoot>) -> Update {
+    ctx.request_focus(crate::view::help_filter_key());
+    Update::full()
+}
+
+pub(super) fn help_blur_filter(ctx: &mut Context<AppRoot>) -> Update {
+    ctx.request_focus(crate::view::help_scroll_key());
+    Update::full()
+}
+
+pub(super) fn help_escape(ctx: &mut Context<AppRoot>) -> Update {
+    if !ctx.state.help_query.text().trim().is_empty() {
+        ctx.state.help_query = TextInput::new("");
+        return Update::full();
+    }
+    close_help(ctx)
 }
 
 pub(super) fn close_settings(ctx: &mut Context<AppRoot>) -> Update {
@@ -684,6 +721,211 @@ mod tests {
                 backend.state().settings_selected,
                 Some(crate::state::SettingsAction::Theme)
             );
+        });
+    }
+
+    #[test]
+    fn help_filter_stays_flush_with_the_header_corner() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 96,
+                h: 40,
+            });
+            backend.state_mut().show_help = true;
+            backend.render();
+
+            let placeholder = backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .into_iter()
+                .find(|line| line.contains("Keybindings"))
+                .expect("help header");
+            assert!(placeholder.contains("Search… (/)╮"));
+
+            backend.state_mut().help_query = TextInput::new("here i am quite long");
+            backend.render();
+            let populated = backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .into_iter()
+                .find(|line| line.contains("Keybindings"))
+                .expect("help header");
+            assert!(
+                populated.contains("here i am quite long ╮"),
+                "growing search input should stay flush with the corner: {populated}"
+            );
+
+            backend.state_mut().help_query =
+                TextInput::new("here i am quite long and it is moving left");
+            backend.render();
+            let overflowing = backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .into_iter()
+                .find(|line| line.contains("Keybindings"))
+                .expect("help header");
+            assert!(
+                overflowing.contains("and it is moving left ╮"),
+                "overflowing search input should stay flush with the corner: {overflowing}"
+            );
+        });
+    }
+
+    #[test]
+    fn help_filter_blurs_without_closing_and_list_escape_closes() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 96,
+                h: 40,
+            });
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleHelp))
+                .expect("open help");
+            backend.render();
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::help_scroll_key())
+            );
+            let pane_id = backend.state().focused_pane().expect("focused pane");
+            let epoch = backend.state().runtime_epoch;
+            let generation = backend
+                .state()
+                .current()
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.panes.iter())
+                .find(|pane| pane.id == pane_id)
+                .expect("focused pane record")
+                .pty_generation;
+            backend
+                .dispatch(Msg::ActivatePane(epoch, pane_id, generation))
+                .expect("pane activate while help is open");
+            backend.render();
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::help_scroll_key())
+            );
+            let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(frame.contains("Keybindings"));
+            assert!(
+                frame.contains("╭Keybindings─"),
+                "title should sit flush on the border like other modals: {frame}"
+            );
+            assert!(
+                frame.contains("Search… (/)╮"),
+                "search should sit flush before the corner: {frame}"
+            );
+            assert!(!frame.contains("╭─ Keybindings"));
+            assert!(frame.contains("Search"));
+            assert!(frame.contains("Global"));
+            assert!(frame.contains("Ctrl+a"));
+            assert!(frame.contains("Prefix · then key"));
+            assert!(frame.contains("Alt"));
+            assert!(frame.contains("Mod · hold + key"));
+            assert!(!frame.contains("Prefix keys with"));
+            assert!(!frame.contains("Mod Alt"));
+            assert!(
+                !frame.contains("Edit scrollback"),
+                "Global tab hides unbound commands: {frame}"
+            );
+            assert!(
+                !frame.contains("SIDEBAR FOCUSED"),
+                "Global tab hides direct mode keys: {frame}"
+            );
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('/'),
+                    mods: KeyMods::NONE,
+                })
+                .expect("focus help filter");
+            backend.render();
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::help_filter_key())
+            );
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Enter,
+                    mods: KeyMods::NONE,
+                })
+                .expect("enter blurs help filter");
+            backend.render();
+            assert!(backend.state().show_help);
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::help_scroll_key())
+            );
+            backend
+                .dispatch(Msg::HelpTabSelected(1))
+                .expect("show mode bindings");
+            backend.render();
+            let modes = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(modes.contains("COPY MODE"));
+            assert!(modes.contains("SIDEBAR FOCUSED"));
+            assert!(modes.contains("DIRECT"));
+            assert!(modes.contains("Cycle tabs"));
+            assert!(
+                !modes.contains("Prefix · then key"),
+                "Modes omits scheme rows: {modes}"
+            );
+            assert!(
+                !modes.contains("Mod · hold + key"),
+                "Modes omits scheme rows: {modes}"
+            );
+            backend
+                .dispatch(Msg::HelpTabSelected(2))
+                .expect("show unbound bindings");
+            backend.render();
+            let unbound = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(unbound.contains("Edit scrollback"));
+            assert!(unbound.contains("—"));
+            assert!(!unbound.contains("not set"));
+            backend
+                .dispatch(Msg::HelpTabSelected(3))
+                .expect("show all bindings");
+            backend.render();
+            let all = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(all.contains("Edit scrollback"));
+            assert!(all.contains("Prefix · then key"));
+            assert!(all.contains("Mod · hold + key"));
+            assert_eq!(backend.state().help_tab, crate::state::HelpTab::All);
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('/'),
+                    mods: KeyMods::NONE,
+                })
+                .expect("focus help filter");
+            backend.render();
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('z'),
+                    mods: KeyMods::NONE,
+                })
+                .expect("type help query");
+            backend.render();
+            assert!(!backend.state().help_query.text().is_empty());
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Esc,
+                    mods: KeyMods::NONE,
+                })
+                .expect("esc clears help query");
+            backend.render();
+            assert!(backend.state().show_help);
+            assert!(backend.state().help_query.text().is_empty());
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Esc,
+                    mods: KeyMods::NONE,
+                })
+                .expect("close help");
+            assert!(!backend.state().show_help);
         });
     }
 

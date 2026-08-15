@@ -85,3 +85,7 @@ pub fn pane_padding_horizontal_key() -> &'static str {
 pub fn help_scroll_key() -> &'static str {
     "rozi-help-scroll"
 }
+
+pub fn help_filter_key() -> &'static str {
+    "rozi-help-filter"
+}

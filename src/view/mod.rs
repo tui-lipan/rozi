@@ -7,9 +7,9 @@ mod which_key;
 mod workbar;
 
 pub use keys::{
-    collaboration_key, follow_prompt_key, layout_picker_key, palette_key,
-    pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key, pane_window_key,
-    pick_key, pick_prompt_input_key, profile_picker_key, rename_input_key,
+    collaboration_key, follow_prompt_key, help_filter_key, help_scroll_key, layout_picker_key,
+    palette_key, pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key,
+    pane_window_key, pick_key, pick_prompt_input_key, profile_picker_key, rename_input_key,
     rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
     settings_palette_key, sidebar_body_key, theme_picker_key,
 };

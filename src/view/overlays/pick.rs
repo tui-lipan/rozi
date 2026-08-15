@@ -140,7 +140,7 @@ fn pick_hints(ctx: &Context<AppRoot>) -> Element {
                 theme,
                 &action.label,
                 &KeyBinding::from_str(&action.key)
-                    .map(|binding| binding.compact_display())
+                    .map(|binding| crate::keys_display::format_binding(&binding))
                     .unwrap_or_else(|_| action.key.clone()),
             ));
         }

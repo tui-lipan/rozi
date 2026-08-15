@@ -341,9 +341,12 @@ live in the help overlay only, since the key is faster than a search box. "Setti
 reload automatically - see
 [Reloading and editing](configuration.md#reloading-and-editing).
 
-The **help overlay** (`?`) is the complete keybinding reference and lists every binding,
-including the workspace digits and mouse gestures. Commands with no key (edit scrollback, open
-config file, kill workspace, …) stay in the command palette until bound under `[keys]`.
+The **help overlay** (`?`) is a keyboard reference, not a command picker. Press `/` to search
+from the top-right border (Enter leaves the search; Esc clears the query, then closes). **Global**
+(default) lists Prefix/Mod actions, led by the scheme itself (`Ctrl+a` Prefix · then key, `Alt`
+Mod · hold + key); **Modes** lists direct keys that take over in copy mode and while the sidebar
+is focused; **Unbound** lists commands with no key; **All** is exhaustive. Search stays inside the
+active tab.
 
 ## Resize mode
 

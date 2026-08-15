@@ -24,6 +24,7 @@ use tui_lipan::prelude::*;
 
 use crate::config::Config;
 use crate::input::Action;
+use crate::keys_display::format_binding;
 use crate::state::{
     Direction::{Down, Left, Right, Up},
     Mode, Pane, State, cap_style_label,
@@ -764,9 +765,10 @@ const WORKSPACE_SHIFT_SYMBOLS: [&str; 9] = ["!", "@", "#", "$", "%", "^", "&", "
 
 /// Whether app command chords should currently match at all: only in `Mode::Normal` with no
 /// modal overlay focused. Scratch is a real pane workspace and keeps pane commands active.
-/// special-casing each handler) means a leading `Ctrl+A` never even becomes a pending chord while,
-/// say, a rename prompt's `Input` wants that key for select-all, and `Resize`/`Copy` mode's own
-/// plain keys are never shadowed by a chord.
+/// Gating the whole registry (rather than special-casing each handler) means a leading
+/// `Ctrl+A` never even becomes a pending chord while, say, a rename prompt's `Input` wants
+/// that key for select-all, and `Resize`/`Copy` mode's own plain keys are never shadowed by
+/// a chord.
 pub(crate) fn commands_active(state: &State) -> bool {
     commands_active_without_scratchpad(state)
 }
@@ -789,26 +791,6 @@ fn commands_active_without_scratchpad(state: &State) -> bool {
         && state.follow_prompt.is_none()
 }
 
-/// Same as [`commands_active`], except the help overlay doesn't block: it is a static,
-/// read-only list with no focused text input, so it carries none of the `Ctrl+A` collision
-/// risk that motivates disabling every other command there. Used for the small set of
-/// "get me out of here" exit actions ([`is_exit_command`]) so a user browsing help always has a
-/// keyboard escape hatch, matching the pre-migration framework `Ctrl-Q` guarantee (every other
-/// overlay legitimately captures raw keys - text input select-all, or its own ctrl-chords like
-/// the profile picker's `ctrl+d` - so those still fully gate exit commands too).
-fn exit_commands_active(state: &State) -> bool {
-    commands_active(state) || (state.mode == Mode::Normal && state.show_help)
-}
-
-/// Whether `action` is one of the "get me out of here" exit actions exempted from the help
-/// overlay via [`exit_commands_active`].
-fn is_exit_command(action: Action) -> bool {
-    matches!(
-        action,
-        Action::Quit | Action::Detach | Action::KillWorkspace | Action::KillSession
-    )
-}
-
 /// Register (or re-register, replacing by id) every command from the current `State`: builtin
 /// actions, workspace digit switches, and user `[keys]` commands. Idempotent - call again after
 /// anything that changes shortcuts (config reload), labels (toggle actions, layout cycling), or
@@ -817,7 +799,6 @@ pub(crate) fn sync(ctx: &Context<AppRoot>) {
     let state = &ctx.state;
     let config = &state.config;
     let active = commands_active(state);
-    let exit_active = exit_commands_active(state);
     for command in BUILTIN_COMMANDS {
         let id = command
             .action
@@ -827,12 +808,7 @@ pub(crate) fn sync(ctx: &Context<AppRoot>) {
         let hint = builtin_keybinding_hint(config, id, command.default_keys);
         let label = resolved_label(command.action, command.label, state);
         let action = command.action;
-        let enabled = command_available(action, state)
-            && if is_exit_command(action) {
-                exit_active
-            } else {
-                active
-            };
+        let enabled = command_available(action, state) && active;
         let link = ctx.link().clone();
         ctx.register_command(
             CommandEntry::builder(id)
@@ -1037,7 +1013,7 @@ pub(crate) fn command_prefix_chord(ctx: &Context<AppRoot>, id: &str) -> Option<S
         .find(|entry| entry.id.as_str() == id)?
         .shortcuts
         .primary()
-        .map(KeyBinding::compact_display)
+        .map(format_binding)
 }
 
 /// Resolve a builtin command's shortcuts: an explicit `[keys]` override (verbatim, including an
@@ -1086,13 +1062,13 @@ fn builtin_keybinding_hint_parts(config: &Config, id: &str, defaults: &[&str]) -
     if config.key_overrides.contains_key(id) {
         resolve_shortcuts(config, id, defaults)
             .iter()
-            .map(KeyBinding::compact_display)
+            .map(format_binding)
             .collect()
     } else {
         let hints: Vec<_> = defaults
             .iter()
             .filter_map(|key| KeyBinding::from_str(key).ok())
-            .map(|binding| binding.compact_display())
+            .map(|binding| format_binding(&binding))
             .collect();
         hints
     }
@@ -1827,7 +1803,7 @@ mod tests {
         );
         assert_eq!(
             builtin_keybinding_hint(&config, "cycle-focus-next", &["tab"]),
-            Some(Arc::<str>::from("tab"))
+            Some(Arc::<str>::from("Tab"))
         );
     }
 
@@ -1846,6 +1822,7 @@ mod tests {
 
         let binding = KeyBinding::from_str("ctrl-shift-x").expect("binding parses");
         assert_eq!(binding.compact_display(), "ctrl+shift+x");
+        assert_eq!(format_binding(&binding), "Ctrl+X");
         assert!(binding.matches_sequence(&[KeyEvent {
             code: KeyCode::Char('x'),
             mods: KeyMods {
@@ -1871,7 +1848,7 @@ mod tests {
         );
         assert_eq!(
             builtin_keybinding_hint(&overridden, "paste", &["v"]),
-            Some(Arc::<str>::from("alt+p"))
+            Some(Arc::<str>::from("Alt+p"))
         );
     }
 
@@ -1888,7 +1865,7 @@ mod tests {
 
         assert_eq!(
             builtin_keybinding_hint(&config, "close", &["w"]),
-            Some(Arc::<str>::from("ctrl+b k / alt+x"))
+            Some(Arc::<str>::from("Ctrl+b k / Alt+x"))
         );
     }
 
@@ -1911,7 +1888,7 @@ mod tests {
         );
         assert_eq!(
             builtin_keybinding_hint(&overridden, "quit", &["q"]),
-            Some(Arc::<str>::from("ctrl+q / alt+d"))
+            Some(Arc::<str>::from("Ctrl+q / Alt+d"))
         );
     }
 

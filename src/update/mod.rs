@@ -28,6 +28,11 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             overlays::command_palette_query_changed(ctx, query)
         }
         Msg::CloseHelp => overlays::close_help(ctx),
+        Msg::HelpQueryChanged(event) => overlays::help_query_changed(ctx, event),
+        Msg::HelpTabSelected(index) => overlays::help_tab_selected(ctx, index),
+        Msg::HelpFocusFilter => overlays::help_focus_filter(ctx),
+        Msg::HelpBlurFilter => overlays::help_blur_filter(ctx),
+        Msg::HelpEscape => overlays::help_escape(ctx),
         Msg::CloseSettings => overlays::close_settings(ctx),
         Msg::SettingsSelect(action) => overlays::settings_select(ctx, action),
         Msg::SettingsActivate(action) => overlays::settings_activate(ctx, action),
@@ -474,6 +479,13 @@ fn post_update_sync(
     if ctx.state.commands_dirty {
         ctx.state.commands_dirty = false;
         crate::commands::sync(ctx);
+    }
+
+    if ctx.state.show_help
+        && !ctx.has_focus_within_key(crate::view::help_filter_key())
+        && !ctx.has_focus_within_key(crate::view::help_scroll_key())
+    {
+        ctx.request_focus(crate::view::help_scroll_key());
     }
 
     // Layout commit chokepoint: after every message, schedule a bounded trailing-edge diff. The

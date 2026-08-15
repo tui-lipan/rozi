@@ -122,7 +122,7 @@ fn directional_families_render_as_one_row_each() {
         let mut backend = backend(3, WhichKey::Instant);
         backend.send_key(prefix()).expect("prefix goes pending");
         let view = rendered(&mut backend);
-        for collapsed in ["hjkl Focus pane", "HJKL Swap pane", "ctrl+hjkl Move pane"] {
+        for collapsed in ["hjkl Focus pane", "HJKL Swap pane", "Ctrl+hjkl Move pane"] {
             assert!(
                 view.contains(collapsed),
                 "expected `{collapsed}` in:\n{view}"

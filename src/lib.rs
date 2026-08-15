@@ -17,6 +17,7 @@ mod geometry;
 mod hints;
 pub mod input;
 mod key_routing;
+mod keys_display;
 mod layout;
 pub mod layout_tree_ser;
 pub mod msg;

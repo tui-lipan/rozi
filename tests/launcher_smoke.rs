@@ -87,7 +87,7 @@ fn a_sessionless_client_renders_the_launcher_panel() {
             assert!(
                 lines
                     .iter()
-                    .any(|line| line.contains("ctrl+a q / ctrl+a d") && line.contains("leave")),
+                    .any(|line| line.contains("Ctrl+a q / Ctrl+a d") && line.contains("leave")),
                 "the launcher must say how to leave, got {lines:#?}"
             );
             // The launcher claims a bare Enter (`key_routing::launcher_start_key`); advertising
@@ -95,7 +95,7 @@ fn a_sessionless_client_renders_the_launcher_panel() {
             assert!(
                 lines
                     .iter()
-                    .any(|line| line.contains("enter / ctrl+a enter")
+                    .any(|line| line.contains("Enter / Ctrl+a Enter")
                         && line.contains("ephemeral shell")),
                 "the launcher must offer the bare Enter it accepts, got {lines:#?}"
             );

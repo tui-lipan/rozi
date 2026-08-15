@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use tui_lipan::prelude::{FloatRect, Rect, Theme, ThemeWatcher};
+use tui_lipan::prelude::{FloatRect, Rect, TextInput, Theme, ThemeWatcher};
 
 use crate::anim::GeometryAnimation;
 use crate::config::Config;
@@ -67,6 +67,15 @@ pub const RATIO_STEP: f32 = 0.04;
 /// Default weight for tile width against height when choosing a dwindle split direction.
 pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HelpTab {
+    #[default]
+    Global,
+    Modes,
+    Unbound,
+    All,
+}
+
 pub struct State {
     pub config: Config,
     /// Whether the host terminal/window currently has focus. This is distinct from which pane the
@@ -122,6 +131,8 @@ pub struct State {
     /// Sidebar toggle's result priority to that one broad query without disturbing empty-list order.
     pub command_palette_sidebar_query: bool,
     pub show_help: bool,
+    pub help_query: TextInput,
+    pub help_tab: HelpTab,
     pub show_settings: bool,
     /// Highlighted settings row. Drives Left/Right stepping and
     /// `initial_selected_item_index` while the overlay is open.
@@ -324,6 +335,8 @@ impl State {
             show_palette: false,
             command_palette_sidebar_query: false,
             show_help: false,
+            help_query: TextInput::new(""),
+            help_tab: HelpTab::Global,
             show_settings: false,
             settings_selected: None,
             do_not_disturb: false,

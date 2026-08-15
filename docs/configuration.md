@@ -170,7 +170,7 @@ immediate.
 Three things keep it small enough to sit over live panes:
 
 - Directional families collapse into one row (`hjkl Focus pane`, `HJKL Swap pane`,
-  `ctrl+hjkl Move pane`, `1-9 Workspace`). Rebinding any member of a family expands it back into
+  `Ctrl+hjkl Move pane`, `1-9 Workspace`). Rebinding any member of a family expands it back into
   individual rows, so a customized binding is never misreported.
 - Commands that need a second tile - focus, swap, move, split resize, promote - are left out in a
   workspace that only has one pane.
@@ -949,8 +949,8 @@ rozi disables tui-lipan's built-in global `Ctrl-q` (`App::global_quit(None)`) so
 conflicts with app routing. Use rozi `[keys]` actions (`detach`, `quit`, …) instead; for
 example `quit = "ctrl-q"` restores a direct quit shortcut through rozi routing.
 
-The help overlay (`?`) shows real active bindings and
-`not set` for bindable commands with no active key.
+The help overlay (`?`) is a filterable reference: **Global** (Prefix/Mod, led by the scheme rows),
+**Modes** (direct keys), **Unbound**, and **All**. Press `/` to search within the active tab.
 
 Examples:
 

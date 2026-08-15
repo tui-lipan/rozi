@@ -887,7 +887,7 @@ fn workspace_tab_count(state: &crate::state::State) -> usize {
 }
 
 pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Element {
-    let prefix = input.prefix.to_string();
+    let prefix = crate::keys_display::format_binding(&input.prefix);
     let spawn_hint = if input.modifier_shortcuts {
         format!(
             "Press {}+Enter or {prefix} Enter to spawn a shell.",
@@ -934,7 +934,7 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// still aligns.
 pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     let input = &ctx.state.config.input;
-    let prefix = input.prefix.compact_display();
+    let prefix = crate::keys_display::format_binding(&input.prefix);
     let mut leave_keys: Vec<_> = ["quit", "detach"]
         .into_iter()
         .filter_map(|id| crate::commands::command_prefix_chord(ctx, id))
@@ -946,8 +946,14 @@ pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
         leave_keys.join(" / ")
     };
     let rows = [
-        (format!("enter / {prefix} enter"), "ephemeral shell"),
-        (format!("{prefix} s"), "pick a session"),
+        (
+            crate::keys_display::format_keys(&format!("enter / {prefix} enter")),
+            "ephemeral shell",
+        ),
+        (
+            crate::keys_display::format_keys(&format!("{prefix} s")),
+            "pick a session",
+        ),
         (leave_keys, "leave"),
     ];
     let key_width = rows

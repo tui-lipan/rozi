@@ -354,6 +354,28 @@ impl Component for AppRoot {
 
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context<Self>) -> KeyUpdate {
         key_routing::sync_focus_from_framework(ctx);
+        if ctx.state.show_help
+            && ctx.has_focus_within_key(crate::view::help_filter_key())
+            && key.code == KeyCode::Enter
+            && !key.mods.ctrl
+            && !key.mods.alt
+            && !key.mods.super_key
+        {
+            ctx.request_focus(crate::view::help_scroll_key());
+            return KeyUpdate::handled(Update::full());
+        }
+        if ctx.state.show_help && key.is(KeyCode::Esc) {
+            ctx.link().send(Msg::HelpEscape);
+            return KeyUpdate::handled(Update::full());
+        }
+        if ctx.state.show_help
+            && !ctx.has_focus_within_key(crate::view::help_filter_key())
+            && key.code == KeyCode::Char('/')
+            && key.mods == KeyMods::NONE
+        {
+            ctx.request_focus(crate::view::help_filter_key());
+            return KeyUpdate::handled(Update::full());
+        }
         let (handled, mut update) = key_routing::handle_key_routing(ctx, key, None);
         if ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
             let command = update.command.take();
@@ -1244,12 +1266,12 @@ mod tests {
                 backend.render();
 
                 let lines = backend.capture_frame().to_fixed_grid_lines();
-                assert!(lines.iter().any(|line| line.contains("attach enter")));
-                assert!(lines.iter().any(|line| line.contains("open as ctrl+o")));
-                assert!(lines.iter().any(|line| line.contains("default ctrl+f")));
-                assert!(lines.iter().any(|line| line.contains("replace ctrl+r")));
+                assert!(lines.iter().any(|line| line.contains("attach Enter")));
+                assert!(lines.iter().any(|line| line.contains("open as Ctrl+o")));
+                assert!(lines.iter().any(|line| line.contains("default Ctrl+f")));
+                assert!(lines.iter().any(|line| line.contains("replace Ctrl+r")));
                 assert!(lines.iter().any(|line| line.contains("• running")));
-                assert!(lines.iter().any(|line| line.contains("new ctrl+n")));
+                assert!(lines.iter().any(|line| line.contains("new Ctrl+n")));
             })
             .expect("spawn test thread")
             .join()
@@ -1604,7 +1626,7 @@ mod tests {
                     .iter()
                     .find(|pane| pane.id == spawned)
                     .expect("spawned pane");
-                assert!(pane.floating);
+                assert!(!pane.floating);
             })
             .expect("spawn palette query reset test thread")
             .join()
@@ -1860,9 +1882,9 @@ mod tests {
                 let frame = backend.capture_frame();
                 let lines = frame.to_fixed_grid_lines();
                 let rendered = lines.join("\n");
-                assert!(rendered.contains("next ctrl+n"), "{rendered}");
-                assert!(rendered.contains("previous ctrl+p"), "{rendered}");
-                assert!(rendered.contains("pane tab"), "{rendered}");
+                assert!(rendered.contains("next Ctrl+n"), "{rendered}");
+                assert!(rendered.contains("previous Ctrl+p"), "{rendered}");
+                assert!(rendered.contains("pane Tab"), "{rendered}");
                 assert!(rendered.contains("1 / 1 matches (pane)"), "{rendered}");
                 assert!(!rendered.contains("scope:"), "{rendered}");
 

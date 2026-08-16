@@ -73,10 +73,11 @@ cargo fmt         # format (use rustfmt --edition 2024 if running rustfmt direct
 **`Alt+q`** (quit). For details on the module
 layout and the layout/animation/input internals, see [AGENTS.md](../AGENTS.md).
 
-`rozi --help` lists every command and option; `rozi --help --advanced` adds the server plumbing a
-normal launch never needs (`--server`). It is colored when stdout is a terminal, and follows
-the usual opt-outs: `NO_COLOR` (any non-empty value) turns styling off, `CLICOLOR=0` does the same,
-and `CLICOLOR_FORCE` keeps it on through a pipe. `TERM=dumb` is treated as plain.
+`rozi --help` lists every command and option; `rozi --help --advanced` adds internals a
+normal launch never needs (`--server`, endpoint resolution, `--socket`, `--skill`). It is
+colored when stdout is a terminal, and follows the usual opt-outs: `NO_COLOR` (any non-empty
+value) turns styling off, `CLICOLOR=0` does the same, and `CLICOLOR_FORCE` keeps it on through
+a pipe. `TERM=dumb` is treated as plain.
 
 ## First-run configuration
 

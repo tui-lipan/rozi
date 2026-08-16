@@ -514,7 +514,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `[session] autosave` enables local layout autosave/restore.
 - `[session] resurrect` snapshots named sessions so layout, commands, and scrollback survive a server restart.
 - `<NAME>` / `--session <NAME>` attaches or launches the canonical same-name profile; `attach
-  <NAME>` is attach-only and `new <NAME> [--profile <RECIPE>]` explicitly creates a session.
+  <NAME>` is attach-only and `new <NAME> [--profile <PROFILE>]` explicitly creates a session.
 - `--remote <HOST|ssh://URL>` attaches over SSH via a remote-side `--remote-serve` stdio proxy; see
   `docs/remote.md`. `ROZI_REMOTE_BINARY` forces which local binary is installed on the remote.
 - Cargo feature flags are inherited from the `tui-lipan` dependency; this crate uses `terminal`,

@@ -1574,6 +1574,7 @@ impl HelpStyles {
 struct HelpRow {
     name: &'static str,
     description: &'static str,
+    advanced_only: bool,
 }
 
 struct HelpSection {
@@ -1651,7 +1652,19 @@ const HELP_NAME_WIDTH: usize = 27;
 const HELP_INDENT: &str = "    ";
 
 const fn row(name: &'static str, description: &'static str) -> HelpRow {
-    HelpRow { name, description }
+    HelpRow {
+        name,
+        description,
+        advanced_only: false,
+    }
+}
+
+const fn advanced_row(name: &'static str, description: &'static str) -> HelpRow {
+    HelpRow {
+        name,
+        description,
+        advanced_only: true,
+    }
 }
 
 const HELP_SECTIONS: &[HelpSection] = &[
@@ -1674,21 +1687,12 @@ const HELP_SECTIONS: &[HelpSection] = &[
         rows: &[
             row("attach <NAME>", "Attach to a running session, never create"),
             row(
-                "new <NAME> [--profile <RECIPE>]",
+                "new <NAME> [--profile <PROFILE>]",
                 "Create a session, optionally from a profile",
             ),
             row(
                 "list-sessions [--format text|json] [--remote <HOST>]",
                 "List connectable sessions",
-            ),
-            row(
-                "list-extensions [OPTIONS]",
-                "Show discovery status (--verbose, --json)",
-            ),
-            row("new-extension <ID>", "Create a valid extension scaffold"),
-            row(
-                "check-extension PATH [OPTIONS]",
-                "Validate an unpacked extension (--json)",
             ),
             row(
                 "kill-session <NAME> [--remote <HOST>]",
@@ -1697,9 +1701,9 @@ const HELP_SECTIONS: &[HelpSection] = &[
         ],
     },
     HelpSection {
-        heading: "CONTROL",
+        heading: "PANES",
         advanced_only: false,
-        note: "Sent to one running rozi, chosen as described under ENDPOINTS.",
+        note: "",
         rows: &[
             row("list-panes", "Print live panes as JSON"),
             row("focus <PANE_ID>", "Focus a pane"),
@@ -1716,16 +1720,23 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "capture-pane [--target <PANE_ID>] [--scrollback <N|full>] [--last-output]",
                 "Print a pane's contents",
             ),
+            row("switch-workspace <1-9>", "Switch the active workspace"),
+            row(
+                "move-to-workspace <1-9>",
+                "Move the focused pane to a workspace",
+            ),
+        ],
+    },
+    HelpSection {
+        heading: "SCRIPTING",
+        advanced_only: false,
+        note: "",
+        rows: &[
             row("status <VALUE> [--reason <TEXT>]", ""),
             row("status --clear", "Set or clear this pane's reported status"),
             row(
                 "run-action <ACTION_ID>",
                 "Run a bindable action by its command id",
-            ),
-            row("switch-workspace <1-9>", "Switch the active workspace"),
-            row(
-                "move-to-workspace <1-9>",
-                "Move the focused pane to a workspace",
             ),
             row(
                 "notify <MESSAGE> [--title T] [--level info|error]",
@@ -1738,6 +1749,22 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "Choose a line of stdin in a modal picker",
             ),
             row("metrics", "Print runtime metrics as JSON"),
+        ],
+    },
+    HelpSection {
+        heading: "EXTENSIONS",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row(
+                "list-extensions [OPTIONS]",
+                "Show discovery status (--verbose, --json)",
+            ),
+            row("new-extension <ID>", "Create a valid extension scaffold"),
+            row(
+                "check-extension PATH [OPTIONS]",
+                "Validate an unpacked extension (--json)",
+            ),
         ],
     },
     HelpSection {
@@ -1762,7 +1789,6 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "Print help; --advanced adds internals",
             ),
             row("-V, --version", "Print version and protocol range"),
-            row("    --skill", "Print agent control instructions"),
             row(
                 "    --session <NAME>",
                 "Session target, same as a positional TARGET",
@@ -1780,10 +1806,11 @@ const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row("", "URL; omit HOST for `[remote] default_host`"),
             row("    --config <PATH>", "Load an alternate config.toml"),
-            row(
+            advanced_row(
                 "    --socket <PATH>",
                 "Send the control command to this endpoint",
             ),
+            advanced_row("    --skill", "Print agent control instructions"),
         ],
     },
     HelpSection {
@@ -1817,7 +1844,15 @@ fn help_text(styles: &HelpStyles, endpoint_help: &str, advanced: bool) -> String
         if !section.note.is_empty() {
             out.push_str(&format!("{HELP_INDENT}{}\n\n", section.note));
         }
-        for HelpRow { name, description } in section.rows {
+        for HelpRow {
+            name,
+            description,
+            advanced_only,
+        } in section.rows
+        {
+            if *advanced_only && !advanced {
+                continue;
+            }
             if name.is_empty() {
                 // A continuation line: no literal, just description under the same column.
                 out.push_str(&format!(
@@ -1851,10 +1886,12 @@ fn help_text(styles: &HelpStyles, endpoint_help: &str, advanced: bool) -> String
         }
     }
 
-    out.push_str(&format!(
-        "\n{heading}ENDPOINTS{reset}\n{HELP_INDENT}{endpoint_help}\n\n\
-         Leave a running rozi with prefix d (detach) or a configured quit binding."
-    ));
+    if advanced {
+        out.push_str(&format!(
+            "\n{heading}ENDPOINTS{reset}\n{HELP_INDENT}{endpoint_help}\n"
+        ));
+    }
+    out.push_str("\nDetach with prefix d, or use a configured quit binding.");
     out
 }
 
@@ -2801,19 +2838,60 @@ mod tests {
         }
     }
 
+    fn heading_order(text: &str, headings: &[&str]) {
+        let mut pos = 0;
+        for heading in headings {
+            let Some(found) = text[pos..].find(heading) else {
+                panic!("{heading} missing or out of order in help");
+            };
+            pos += found + heading.len();
+        }
+    }
+
     #[test]
     fn cli_advanced_help_gates_server_plumbing_without_hiding_it() {
         let render = |advanced| help_text(&HelpStyles::plain(), "<endpoints>", advanced);
         let normal = render(false);
         let advanced = render(true);
+        heading_order(
+            &normal,
+            &[
+                "USAGE",
+                "SESSIONS",
+                "PANES",
+                "SCRIPTING",
+                "EXTENSIONS",
+                "INSTALLATION",
+                "OPTIONS",
+            ],
+        );
+        heading_order(
+            &advanced,
+            &[
+                "USAGE",
+                "SESSIONS",
+                "PANES",
+                "SCRIPTING",
+                "EXTENSIONS",
+                "INSTALLATION",
+                "OPTIONS",
+                "ADVANCED",
+                "ENDPOINTS",
+            ],
+        );
 
         assert!(
             !normal.contains("--server"),
             "plumbing should stay out of the first help a new user reads"
         );
         assert!(!normal.contains("ADVANCED"));
-        assert!(advanced.contains("ADVANCED"));
+        assert!(!normal.contains("ENDPOINTS"));
+        assert!(!normal.contains("--socket"));
+        assert!(!normal.contains("--skill"));
+        assert!(!normal.contains("CONTROL"));
         assert!(advanced.contains("--server"));
+        assert!(advanced.contains("--socket"));
+        assert!(advanced.contains("--skill"));
         // Normal help still has to say where the rest went.
         assert!(normal.contains("--advanced"));
 
@@ -2873,8 +2951,8 @@ mod tests {
         assert_eq!(styled("focus <PANE_ID>"), "L<focus> P<<PANE_ID>>");
         // Brackets and pipes stay unstyled; what is inside them is classified on its own.
         assert_eq!(
-            styled("new <NAME> [--profile <RECIPE>]"),
-            "L<new> P<<NAME>> [L<--profile> P<<RECIPE>>]"
+            styled("new <NAME> [--profile <PROFILE>]"),
+            "L<new> P<<NAME>> [L<--profile> P<<PROFILE>>]"
         );
         // An all-caps bracketed word is a value to supply; a lowercase one is typed verbatim.
         assert_eq!(styled("split [COMMAND]"), "L<split> [P<COMMAND>]");

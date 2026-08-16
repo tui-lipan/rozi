@@ -136,7 +136,7 @@ rozi list-sessions --format json
 rozi attach <NAME>
 rozi attach <NAME> --read-only
 rozi new <NAME>
-rozi new <NAME> --profile <RECIPE>
+rozi new <NAME> --profile <PROFILE>
 rozi kill-session <NAME>
 rozi list-sessions --remote <HOST>
 rozi kill-session <NAME> --remote <HOST>

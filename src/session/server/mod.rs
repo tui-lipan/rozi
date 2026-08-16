@@ -790,14 +790,15 @@ impl SessionServer {
             let idle = if self.clients.is_empty() { 20 } else { 1 };
             std::thread::sleep(Duration::from_millis(idle));
         }
-        // A snapshot is most often triggered by the last client detaching, so let an in-flight
-        // durable write land before the process exits. Ordered before `forget_snapshot` so a
-        // session being forgotten deletes the finished snapshot rather than racing it.
-        self.finish_snapshots();
-        if self.forget_snapshot
-            && let Err(err) = self.delete_snapshot()
-        {
-            eprintln!("rozi: could not delete session snapshot: {err}");
+        // A signal-driven stop must capture the final screen generation before killing PTYs. An
+        // explicit session deletion only waits for an already-started write, then removes it.
+        if self.forget_snapshot {
+            self.finish_snapshots();
+            if let Err(err) = self.delete_snapshot() {
+                eprintln!("rozi: could not delete session snapshot: {err}");
+            }
+        } else if let Err(err) = self.snapshot_before_shutdown() {
+            eprintln!("rozi: final session snapshot failed: {err}");
         }
         for pane in self.panes.values() {
             if let Some(pty) = &pane.pty {

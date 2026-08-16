@@ -3,8 +3,8 @@
 //! Everything the app needs in order to *start*, *stop*, and *survive the death of* a session
 //! server, expressed without Unix signal APIs or Win32 handles leaking into higher-level modules:
 //!
-//! - [`spawn_detached_server`] - background server spawn during session bootstrap. Unix
-//!   detaches by closing all three stdio streams; Windows additionally passes
+//! - [`spawn_detached_server`] - background server spawn during session bootstrap. Unix starts a
+//!   new process session and closes all three stdio streams; Windows additionally passes
 //!   `DETACHED_PROCESS | CREATE_NO_WINDOW` so the server never inherits (or pops up) a console.
 //! - [`on_hangup`] - the *client* half of console-control handling. Unix installs a `SIGHUP`/
 //!   `SIGTERM` handler; Windows installs a `SetConsoleCtrlHandler` for Ctrl+C/close/logoff/shutdown.
@@ -76,6 +76,7 @@ pub fn spawn_detached_server(
     #[cfg(not(windows))]
     {
         let mut command = base_server_command(exe, name, fresh);
+        configure_detached_server(&mut command);
         command.spawn()
     }
 }
@@ -90,6 +91,21 @@ fn base_server_command(exe: &Path, name: &str, fresh: bool) -> std::process::Com
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     command
+}
+
+#[cfg(unix)]
+fn configure_detached_server(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() >= 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        });
+    }
 }
 
 #[cfg(windows)]
@@ -511,5 +527,24 @@ mod tests {
             !status.success(),
             "expected a signalled exit, got {status:?}"
         );
+    }
+
+    #[test]
+    fn detached_server_starts_a_new_process_session() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 30")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        configure_detached_server(&mut command);
+
+        let mut child = command.spawn().expect("spawn detached child");
+        let pid = child.id() as libc::pid_t;
+        assert_eq!(unsafe { libc::getsid(pid) }, pid);
+
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }

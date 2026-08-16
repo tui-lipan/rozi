@@ -76,8 +76,8 @@ control; read-only clients cannot stop the server.
 ## How a server starts and stops
 
 A server is started in the background by whichever client first needs it (a profile-backed target,
-explicit `new`, or configured startup policy), fully detached from that client's terminal — `DETACHED_PROCESS` with no
-inherited console on Windows.
+explicit `new`, or configured startup policy), fully detached from that client's terminal — a new
+process session on Unix, or `DETACHED_PROCESS` with no inherited console on Windows.
 
 Stopping one is **always** the authenticated protocol `Shutdown` message first. That is the
 mechanism on every platform; it is what `kill-session`, the picker's kill action, and a clean quit
@@ -486,7 +486,9 @@ Starting a named server restores its layout, pane commands, working directories,
 and saved scrollback. Processes themselves are not checkpointed: each pane command starts again in
 a fresh PTY, with the old terminal history replayed above its new output. Missing replay files,
 working directories, or individual pane spawn failures do not prevent the rest of the session from
-loading. Unsupported or malformed snapshots are left on disk and reported without blocking startup.
+loading. A dead full-screen application's last view is retained as scrollback, while its cursor,
+mouse, paste, and keypad modes are reset before the replacement process starts. Unsupported or
+malformed snapshots are left on disk and reported without blocking startup.
 
 Reported pane status is intentionally not written to resurrection snapshots. It survives client
 detach/reattach while the same session server remains alive, but is cleared when a dead server is

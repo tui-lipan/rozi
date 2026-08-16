@@ -299,6 +299,10 @@ impl SessionServer {
         if !last_detached && self.last_snapshot.elapsed() < self.settings.snapshot_interval {
             return Ok(());
         }
+        self.dispatch_snapshot()
+    }
+
+    fn dispatch_snapshot(&mut self) -> io::Result<()> {
         // Advance the deadline before doing any work. A transient filesystem error keeps the
         // snapshot dirty for a later retry, but must not turn the server loop into a 1 ms
         // export/write/sync retry storm.
@@ -325,6 +329,29 @@ impl SessionServer {
         self.snapshot_worker
             .get_or_insert_with(SnapshotWorker::new)
             .dispatch(job);
+        Ok(())
+    }
+
+    /// Finish any in-flight write and persist the newest generation before a signal-driven stop.
+    ///
+    /// The periodic interval is irrelevant at shutdown: there will be no later retry, and killing
+    /// the PTYs before capturing their final screens would turn a clean stop into avoidable
+    /// resurrection loss.
+    pub(super) fn snapshot_before_shutdown(&mut self) -> io::Result<()> {
+        if !self.finish_snapshots() {
+            // The old writer exceeded the bounded shutdown grace and may still be inside its atomic
+            // replacement. Starting a second writer would race it; preserve the previous behavior
+            // and let process exit end the attempt instead.
+            return Ok(());
+        }
+        if !self.settings.resurrect
+            || !self.snapshot_dirty()
+            || crate::state::is_ephemeral_session_name(&self.session_name)
+        {
+            return Ok(());
+        }
+        self.dispatch_snapshot()?;
+        self.finish_snapshots();
         Ok(())
     }
 
@@ -408,7 +435,7 @@ impl SessionServer {
     /// losing it matters, so shutdown waits. The wait is bounded: a hung filesystem must not hold
     /// the session open forever, and abandoning a partial write is safe because the previous
     /// snapshot is only replaced by an atomic rename.
-    pub(super) fn finish_snapshots(&mut self) {
+    pub(super) fn finish_snapshots(&mut self) -> bool {
         if let Some(worker) = self.snapshot_worker.take() {
             for outcome in worker.finish(SNAPSHOT_SHUTDOWN_GRACE) {
                 let total = crate::runtime_metrics::duration_micros(outcome.total);
@@ -421,6 +448,8 @@ impl SessionServer {
                 }
             }
         }
+        let metrics = &self.resurrection_metrics;
+        metrics.successes + metrics.failures == metrics.attempts
     }
 
     /// Capture everything the durable write needs, so the write itself needs no access back to
@@ -664,6 +693,39 @@ mod tests {
         .unwrap();
 
         assert_eq!(meta.created_from_profile, None);
+    }
+
+    #[test]
+    fn shutdown_forces_a_dirty_snapshot_before_the_interval() {
+        let root = std::env::temp_dir().join(format!(
+            "rozi-snapshot-shutdown-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "shutdown",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::from_secs(60 * 60),
+                ..ServerSettings::default()
+            },
+        );
+        server.mark_dirty();
+
+        server
+            .maybe_snapshot()
+            .expect("ordinary interval check should be harmless");
+        assert!(!root.join("shutdown/meta.json").exists());
+
+        server
+            .snapshot_before_shutdown()
+            .expect("shutdown snapshot");
+        assert!(root.join("shutdown/meta.json").is_file());
+        assert!(!server.snapshot_dirty());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

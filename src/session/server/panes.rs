@@ -4,7 +4,7 @@ use super::*;
 /// Return a terminal to shell-safe input state without clearing its primary screen or scrollback.
 /// Shell integrations emit the same bytes after a foreground command completes; this copy covers
 /// command-runner PTYs that exit and are replaced by an interactive shell.
-const SHELL_MODE_RECOVERY: &[u8] = b"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b>";
+const SHELL_MODE_RECOVERY: &[u8] = b"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b[?7h\x1b[?25h\x1b[=0u\x1b>\x1b[0 q\x1b[0m";
 use std::fs::OpenOptions;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -130,9 +130,7 @@ impl SessionServer {
         // are answered against the theme palette instead of the screen default.
         screen.set_palette(request.palette.into());
         if let Some(seed) = seed {
-            screen.process_bytes(seed);
-            screen.drain_responses();
-            screen.drain_clipboard_events();
+            recover_restored_screen(&mut screen, seed);
         }
         let mut config = pty_config(
             request.command.as_deref(),
@@ -766,6 +764,63 @@ impl SessionServer {
         {
             eprintln!("rozi: could not remove session log directory: {error}");
         }
+    }
+}
+
+/// Replay a dead process's retained screen as history, then leave a clean cursor and input mode for
+/// the replacement process.
+///
+/// A replay deliberately preserves alternate-screen state and every input mode for a live process.
+/// Resurrection is different: the process that owned those modes is gone. If it died on the
+/// alternate screen, copy that visible grid into the primary screen as plain transcript text before
+/// placing the replacement on a fresh row beneath it. The old UI remains readable without
+/// masquerading as the still-running foreground application.
+pub(super) fn recover_restored_screen(screen: &mut TerminalScreen, seed: &[u8]) {
+    screen.process_bytes(seed);
+    let restored_view = screen.render_snapshot().text.clone();
+
+    screen.process_bytes(SHELL_MODE_RECOVERY);
+    let primary_view = screen.render_snapshot().text.clone();
+    if restored_view != primary_view {
+        append_plain_transcript(screen, &restored_view);
+    }
+
+    place_replacement_cursor(screen);
+    screen.drain_responses();
+    screen.drain_clipboard_events();
+}
+
+fn append_plain_transcript(screen: &mut TerminalScreen, text: &str) {
+    let lines: Vec<_> = text.lines().collect();
+    let Some(last) = lines.iter().rposition(|line| !line.trim().is_empty()) else {
+        return;
+    };
+
+    screen.process_bytes(b"\x1b[999;1H\r\n");
+    for (index, line) in lines[..=last].iter().enumerate() {
+        let safe: String = line
+            .chars()
+            .map(|ch| if ch.is_control() { ' ' } else { ch })
+            .collect();
+        screen.process_bytes(safe.as_bytes());
+        if index != last {
+            screen.process_bytes(b"\r\n");
+        }
+    }
+}
+
+fn place_replacement_cursor(screen: &mut TerminalScreen) {
+    let text = screen.render_snapshot().text.clone();
+    let lines: Vec<_> = text.split('\n').collect();
+    let rows = lines.len().max(1);
+    match lines.iter().rposition(|line| !line.trim().is_empty()) {
+        Some(last) if last + 1 < rows => {
+            screen.process_bytes(format!("\x1b[{};1H", last + 2).as_bytes());
+        }
+        Some(_) => {
+            screen.process_bytes(format!("\x1b[{rows};1H\r\n").as_bytes());
+        }
+        None => screen.process_bytes(b"\x1b[1;1H"),
     }
 }
 

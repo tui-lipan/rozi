@@ -685,6 +685,43 @@ fn cursor_position_report_detection_is_strict() {
 }
 
 #[test]
+fn resurrected_fullscreen_state_becomes_shell_safe_scrollback() {
+    let mut source = TerminalScreen::new(6, 30, 100);
+    source.process_bytes(b"shell before app\r\n");
+    source.process_bytes(
+        b"\x1b[?1049h\x1b[Hdead app\r\nwaiting for input\x1b[3;9H\
+          \x1b[?25l\x1b[?1003h\x1b[?1006h\x1b[?2004h\x1b[?1h",
+    );
+    let replay = source.export_replay_bytes();
+
+    let mut restored = TerminalScreen::new(6, 30, 100);
+    super::panes::recover_restored_screen(&mut restored, &replay);
+    let snapshot = restored.render_snapshot();
+
+    assert!(
+        snapshot.text.contains("dead app"),
+        "dead app output should remain readable:\n{}",
+        snapshot.text
+    );
+    assert_eq!(snapshot.cursor_row, 5);
+    assert_eq!(snapshot.cursor_col, 0);
+    assert!(snapshot.cursor_visible);
+    assert_eq!(snapshot.mouse_mode, tui_lipan::MouseModeState::default());
+    assert_eq!(snapshot.key_modes, tui_lipan::TerminalKeyModes::default());
+
+    restored.process_bytes(b"$ ");
+    let prompt = restored.render_snapshot();
+    assert_eq!(prompt.cursor_row, 5);
+    assert_eq!(prompt.cursor_col, 2);
+    assert!(prompt.text.contains("dead app"));
+
+    // Recovery already left the alternate screen. A redundant reset must not make the retained
+    // transcript disappear.
+    restored.process_bytes(b"\x1b[?1049l");
+    assert!(restored.render_snapshot().text.contains("dead app"));
+}
+
+#[test]
 fn rename_in_place_updates_session_name() {
     let mut server = SessionServer::new_named("eph-123");
     let response = server.rename_session("renametest-unlikely-xyz".into());

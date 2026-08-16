@@ -23,21 +23,28 @@ fn write_extension(root: &Path, directory: &str, id: &str, api: u32) -> PathBuf 
 }
 
 fn rozi(temp: &tempfile::TempDir, args: &[&str]) -> Output {
+    rozi_in(temp, args, None)
+}
+
+fn rozi_in(temp: &tempfile::TempDir, args: &[&str], cwd: Option<&Path>) -> Output {
     let config = temp.path().join("config/rozi/config.toml");
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     if !config.exists() {
         std::fs::write(&config, "[extensions]\ndisabled = [\"disabled\"]\n").unwrap();
     }
-    Command::new(env!("CARGO_BIN_EXE_rozi"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    command
         .args(args)
         .env("XDG_DATA_HOME", temp.path().join("data"))
         .env("XDG_CONFIG_HOME", temp.path().join("config"))
         .env("XDG_STATE_HOME", temp.path().join("state"))
         .env("XDG_CACHE_HOME", temp.path().join("cache"))
         .env("XDG_RUNTIME_DIR", temp.path().join("run"))
-        .env("ROZI_CONFIG", config)
-        .output()
-        .unwrap()
+        .env("ROZI_CONFIG", config);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command.output().unwrap()
 }
 
 #[test]
@@ -113,4 +120,102 @@ fn check_extension_has_deterministic_success_and_failure_exit_codes() {
     assert_eq!(value["extension"]["status"], "incompatible");
     assert_eq!(value["extension"]["api"], 2);
     assert!(String::from_utf8(failure.stderr).unwrap().is_empty());
+}
+
+#[test]
+fn new_extension_creates_a_valid_non_destructive_scaffold_in_unicode_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let parent = temp.path().join("author space 東京");
+    std::fs::create_dir(&parent).unwrap();
+
+    let created = rozi_in(&temp, &["new-extension", "sample-tools"], Some(&parent));
+    assert!(
+        created.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&created.stdout),
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let extension = parent.join("sample-tools");
+    let manifest = std::fs::read_to_string(extension.join("extension.toml")).unwrap();
+    let value: toml::Value = toml::from_str(&manifest).unwrap();
+    assert_eq!(
+        value["extension"]["api"].as_integer(),
+        Some(i64::from(rozi::config::EXTENSION_API_VERSION))
+    );
+    assert!(extension.join("bin/hello.py").is_file());
+    assert!(extension.join("README.md").is_file());
+
+    let checked = rozi(
+        &temp,
+        &["check-extension", extension.to_str().unwrap(), "--json"],
+    );
+    assert!(
+        checked.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&checked.stdout),
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let diagnostic: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
+    assert_eq!(diagnostic["extension"]["commands"][0], "sample-tools.hello");
+
+    let repeated = rozi_in(&temp, &["new-extension", "sample-tools"], Some(&parent));
+    assert!(!repeated.status.success());
+    assert!(String::from_utf8_lossy(&repeated.stderr).contains("destination already exists"));
+    assert_eq!(
+        std::fs::read_to_string(extension.join("extension.toml")).unwrap(),
+        manifest
+    );
+
+    for id in ["Uppercase", "two.words", "../escape", "rozi"] {
+        let rejected = rozi_in(&temp, &["new-extension", id], Some(&parent));
+        assert!(!rejected.status.success(), "accepted invalid id {id:?}");
+        assert!(!parent.join(id).exists());
+    }
+}
+
+#[test]
+fn check_extension_explains_launch_cwd_and_safe_environment_details() {
+    let temp = tempfile::tempdir().unwrap();
+    let extension = temp.path().join("diagnostic extension");
+    std::fs::create_dir_all(extension.join("bin")).unwrap();
+    std::fs::write(extension.join("bin/tool.py"), "print('ok')\n").unwrap();
+    std::fs::write(
+        extension.join("extension.toml"),
+        "[extension]\nid = \"diagnostic\"\napi = 1\n\
+         [[commands]]\nid = \"open\"\nexec = [\"python\", \"{extension_dir}/bin/tool.py\", \"arg with space\"]\n\
+         [[services]]\nname = \"watch\"\nshell = \"echo ready\"\ncwd = \".\"\nrestart = \"never\"\n\
+         [services.env]\nTOKEN = \"do-not-print\"\n",
+    )
+    .unwrap();
+
+    let output = rozi(&temp, &["check-extension", extension.to_str().unwrap()]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains(r#"launch: ["python","#));
+    assert!(stdout.contains("arg with space"));
+    assert!(stdout.contains("cwd:    focused-pane"));
+    assert!(stdout.contains("ROZI_EXTENSION=diagnostic"));
+    assert!(stdout.contains("ROZI_EXTENSION_GENERATION=<assigned-at-load>"));
+    assert!(stdout.contains("manifest env: TOKEN (values redacted)"));
+    assert!(!stdout.contains("do-not-print"));
+
+    let json = rozi(
+        &temp,
+        &["check-extension", extension.to_str().unwrap(), "--json"],
+    );
+    assert!(json.status.success());
+    let document: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(
+        document["extension"]["command_details"][0]["launch"]["kind"],
+        "direct"
+    );
+    assert_eq!(
+        document["extension"]["service_details"][0]["configured_env_keys"][0],
+        "TOKEN"
+    );
+    assert!(
+        !String::from_utf8(json.stdout)
+            .unwrap()
+            .contains("do-not-print")
+    );
 }

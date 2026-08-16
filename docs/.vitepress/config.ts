@@ -195,6 +195,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: "Extensions", link: "/extensions" },
+          { text: "Extension Test Lab", link: "/extension-testing" },
           { text: "Control Socket", link: "/control" },
           { text: "Hooks", link: "/hooks" },
           { text: "Agent Skill", link: "/agent-skill" },

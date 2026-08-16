@@ -1,0 +1,17 @@
+[extension]
+id = "pr-dashboard"
+title = "PR dashboard"
+description = "Focused-repository pull requests and checks through gh"
+version = "1.0.0"
+api = 1
+
+[[commands]]
+id = "open"
+label = "Pull requests…"
+exec = ["python", "{extension_dir}/bin/pr_dashboard.py", "--pick"]
+
+[[services]]
+name = "watch"
+exec = ["python", "{extension_dir}/bin/pr_dashboard.py", "--service"]
+restart = "on-failure"
+env = { PR_DASHBOARD_POLL_SECONDS = "120", PR_DASHBOARD_MAX_ROWS = "12" }

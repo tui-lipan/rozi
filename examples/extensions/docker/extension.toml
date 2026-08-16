@@ -1,0 +1,11 @@
+[extension]
+id = "docker"
+title = "Docker"
+description = "Inspect and manage local Docker containers through rozi pick"
+version = "1.0.0"
+api = 1
+
+[[commands]]
+id = "containers"
+label = "Docker containers…"
+exec = ["python", "{extension_dir}/bin/docker_tools.py", "containers"]

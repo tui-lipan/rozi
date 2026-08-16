@@ -43,7 +43,9 @@ def save_events() -> None:
 
 def event_label(event: dict[str, object]) -> str:
     kind = str(event.get("event", "event"))
-    pane = event.get("pane")
+    raw_data = event.get("data")
+    data = raw_data if isinstance(raw_data, dict) else {}
+    pane = data.get("pane")
     return f"{kind} · pane {pane}" if pane is not None else kind
 
 
@@ -77,7 +79,9 @@ def subscribe() -> None:
         with lock:
             events.append(event)
         save_events()
-        if event.get("event") == "pane-status-changed" and event.get("status") == "blocked":
+        raw_data = event.get("data")
+        data = raw_data if isinstance(raw_data, dict) else {}
+        if event.get("event") == "pane-status-changed" and data.get("status") == "blocked":
             subprocess.run(
                 [
                     ROZI,
@@ -96,7 +100,9 @@ def rows() -> dict[str, object]:
     with lock:
         count = len(events)
         latest = events[-1] if events else None
-    status = "blocked" if latest and latest.get("status") == "blocked" else "idle"
+    raw_data = latest.get("data") if latest else None
+    data = raw_data if isinstance(raw_data, dict) else {}
+    status = "blocked" if data.get("status") == "blocked" else "idle"
     return {
         "rows": [
             {

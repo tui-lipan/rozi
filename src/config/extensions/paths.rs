@@ -34,6 +34,10 @@ pub(super) fn normalize_direct_argv(
         resolved.insert(public_id.to_string(), path_text.clone());
         validate_target(&path, public_id, true, errors);
         argv[0] = path_text;
+    } else if !crate::platform::command::program_exists(&original_program) {
+        errors.push(format!(
+            "`{public_id}` executable `{original_program}` was not found on PATH"
+        ));
     }
 
     if !resolved.contains_key(public_id) {

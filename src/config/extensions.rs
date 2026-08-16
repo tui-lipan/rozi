@@ -3,8 +3,11 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::schema::{NamedCommand, ServiceConfig};
+use super::schema::{
+    NamedCommand, ServiceConfig, ServiceLaunch, ServiceRestart, UserCommandAction,
+};
 
+mod authoring;
 mod contributions;
 mod diagnostics;
 mod discovery;
@@ -13,6 +16,7 @@ mod paths;
 mod runtime;
 mod validation;
 
+pub(crate) use authoring::create_extension_scaffold;
 pub use diagnostics::{
     EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, ExtensionCheckDocument, ExtensionListDocument,
 };
@@ -75,9 +79,39 @@ pub struct ExtensionInfo {
     pub status: ExtensionStatus,
     pub commands: Vec<String>,
     pub services: Vec<String>,
+    pub command_details: Vec<ExtensionCommandDiagnostic>,
+    pub service_details: Vec<ExtensionServiceDiagnostic>,
     pub command_paths: BTreeMap<String, String>,
     pub service_paths: BTreeMap<String, String>,
     pub errors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ExtensionCommandDiagnostic {
+    pub id: String,
+    pub launch: ExtensionLaunchDiagnostic,
+    /// Commands inherit the focused pane's live project directory when invoked.
+    pub cwd: String,
+    pub injected_env: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ExtensionServiceDiagnostic {
+    pub id: String,
+    pub launch: ExtensionLaunchDiagnostic,
+    pub cwd: String,
+    pub restart: String,
+    /// Only Rozi-owned values are shown. Manifest environment values may contain secrets.
+    pub injected_env: BTreeMap<String, String>,
+    pub configured_env_keys: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ExtensionLaunchDiagnostic {
+    Direct { argv: Vec<String> },
+    Shell { command: String },
+    Send { text: String },
 }
 
 impl ExtensionInfo {
@@ -208,6 +242,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         status: ExtensionStatus::Invalid,
         commands: Vec::new(),
         services: Vec::new(),
+        command_details: Vec::new(),
+        service_details: Vec::new(),
         command_paths: BTreeMap::new(),
         service_paths: BTreeMap::new(),
         errors: Vec::new(),
@@ -312,9 +348,13 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut services,
         );
     }
+    info.command_details = commands.iter().map(command_diagnostic).collect();
+    info.service_details = services.iter().map(service_diagnostic).collect();
     if !id_valid {
         info.commands.clear();
         info.services.clear();
+        info.command_details.clear();
+        info.service_details.clear();
         info.command_paths.clear();
         info.service_paths.clear();
     }
@@ -337,6 +377,85 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         commands,
         services,
     }
+}
+
+fn command_diagnostic(command: &NamedCommand) -> ExtensionCommandDiagnostic {
+    let launches_process = !matches!(&command.action, UserCommandAction::Send(_));
+    let launch = match &command.action {
+        UserCommandAction::ExecDirect { argv } => {
+            ExtensionLaunchDiagnostic::Direct { argv: argv.clone() }
+        }
+        UserCommandAction::Exec { command } => ExtensionLaunchDiagnostic::Shell {
+            command: command.clone(),
+        },
+        UserCommandAction::Send(text) => ExtensionLaunchDiagnostic::Send { text: text.clone() },
+        UserCommandAction::Run { command, .. } | UserCommandAction::Popup { command, .. } => {
+            ExtensionLaunchDiagnostic::Shell {
+                command: command.clone(),
+            }
+        }
+    };
+    ExtensionCommandDiagnostic {
+        id: command.id.clone(),
+        launch,
+        cwd: if launches_process {
+            "focused-pane"
+        } else {
+            "focused-pane-input"
+        }
+        .to_string(),
+        injected_env: if launches_process {
+            diagnostic_extension_env(&command.env)
+        } else {
+            BTreeMap::new()
+        },
+    }
+}
+
+fn service_diagnostic(service: &ServiceConfig) -> ExtensionServiceDiagnostic {
+    let launch = match &service.launch {
+        ServiceLaunch::Direct(argv) => ExtensionLaunchDiagnostic::Direct { argv: argv.clone() },
+        ServiceLaunch::Shell(command) => ExtensionLaunchDiagnostic::Shell {
+            command: command.clone(),
+        },
+    };
+    ExtensionServiceDiagnostic {
+        id: service.name.clone(),
+        launch,
+        cwd: service.cwd.clone().unwrap_or_else(|| ".".to_string()),
+        restart: match service.restart {
+            ServiceRestart::Always => "always",
+            ServiceRestart::OnFailure => "on-failure",
+            ServiceRestart::Never => "never",
+        }
+        .to_string(),
+        injected_env: diagnostic_extension_env(
+            &service
+                .env
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<Vec<_>>(),
+        ),
+        configured_env_keys: service
+            .env
+            .keys()
+            .filter(|key| !RESERVED_EXTENSION_ENV.contains(&key.as_str()))
+            .cloned()
+            .collect(),
+    }
+}
+
+fn diagnostic_extension_env(env: &[(String, String)]) -> BTreeMap<String, String> {
+    let mut values: BTreeMap<_, _> = env
+        .iter()
+        .filter(|(key, _)| RESERVED_EXTENSION_ENV.contains(&key.as_str()))
+        .cloned()
+        .collect();
+    values.insert(
+        runtime::GENERATION_ENV.to_string(),
+        "<assigned-at-load>".to_string(),
+    );
+    values
 }
 
 fn read_partial_metadata(value: &toml::Value, info: &mut ExtensionInfo) {
@@ -595,6 +714,24 @@ mod tests {
         assert!(errors.contains("unavailable"));
     }
 
+    #[test]
+    fn missing_path_program_is_reported_before_launch() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "missing-program",
+            &format!(
+                "{}[[commands]]\nid = \"open\"\nexec = [\"rozi-program-that-does-not-exist-42\"]\n",
+                manifest("missing-program", "1")
+            ),
+        );
+        let entry = scan_extensions_in(temp.path()).entries().remove(0);
+        assert_eq!(entry.status, ExtensionStatus::Invalid);
+        assert!(entry.errors.iter().any(|error| {
+            error.contains("executable `rozi-program-that-does-not-exist-42` was not found on PATH")
+        }));
+    }
+
     #[cfg(unix)]
     #[test]
     fn declared_exec_requires_an_executable_file() {
@@ -734,7 +871,14 @@ mod tests {
     #[test]
     fn canonical_example_extensions_validate_as_third_party_checkouts() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/extensions");
-        for directory in ["git-tools", "activity-dashboard"] {
+        for directory in [
+            "git-tools",
+            "activity-dashboard",
+            "pr-dashboard",
+            "docker",
+            "ssh-tools",
+            "agent-activity",
+        ] {
             let extension = check_extension(&root.join(directory));
             assert_eq!(
                 extension.info.status,

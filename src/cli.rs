@@ -101,6 +101,9 @@ pub(crate) enum ParsedCli {
         verbose: bool,
         config_path: Option<String>,
     },
+    NewExtension {
+        id: String,
+    },
     CheckExtension {
         path: PathBuf,
         json: bool,
@@ -238,6 +241,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     verbose,
                     config_path: cli.config_path,
                 });
+            }
+            "new-extension" => {
+                let id = require_value(&mut iter, "new-extension requires an extension id")?;
+                reject_trailing_control_args(&mut iter, "new-extension")?;
+                return Ok(ParsedCli::NewExtension { id });
             }
             "check-extension" => {
                 let path = PathBuf::from(require_value(
@@ -612,12 +620,32 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
             "split" | "new-pane" => {
                 let mut command = None;
+                let mut cwd = None;
+                let mut title = None;
+                let mut keep_open = false;
                 let mut focus = false;
                 let mut passthrough = false;
-                for arg in iter.by_ref() {
+                while let Some(arg) = iter.next() {
                     match arg.as_str() {
                         "--" if !passthrough => passthrough = true,
                         "--focus" if !passthrough => focus = true,
+                        "--keep-open" if !passthrough => keep_open = true,
+                        "--cwd" if !passthrough && cwd.is_none() => {
+                            cwd = Some(require_value(
+                                &mut iter,
+                                "new-pane --cwd requires a directory",
+                            )?);
+                        }
+                        "--cwd" if !passthrough => {
+                            return Err("new-pane --cwd specified more than once".to_string());
+                        }
+                        "--title" if !passthrough && title.is_none() => {
+                            title =
+                                Some(require_value(&mut iter, "new-pane --title requires text")?);
+                        }
+                        "--title" if !passthrough => {
+                            return Err("new-pane --title specified more than once".to_string());
+                        }
                         // A mistyped `--focu` must not become the command that gets run; `--` ends
                         // flag parsing for the rare command that really does start with a dash.
                         other if !passthrough && other.starts_with('-') && other != "-" => {
@@ -633,9 +661,9 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::NewPane {
                         command,
-                        cwd: None,
-                        title: None,
-                        keep_open: false,
+                        cwd,
+                        title,
+                        keep_open,
                         focus,
                     }),
                 }));
@@ -1022,18 +1050,27 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
                 continue;
             };
-            if let Some(selected) = value.get("selected").and_then(|v| v.as_str()) {
-                // Plain mode prints the id alone, so `rozi pick | xargs $EDITOR` needs no `jq`.
-                println!("{}", if json { &line } else { selected });
-                let _ = std::io::stdout().flush();
-                std::process::exit(0);
-            }
-            if value.get("cancelled").is_some() {
-                if json {
-                    println!("{line}");
-                    let _ = std::io::stdout().flush();
+            match classify_pick_stream_event(&value) {
+                PickStreamEvent::Action => {
+                    if json {
+                        println!("{line}");
+                        let _ = std::io::stdout().flush();
+                    }
                 }
-                std::process::exit(1);
+                PickStreamEvent::Selected(selected) => {
+                    // Plain mode prints the id alone, so `rozi pick | xargs $EDITOR` needs no `jq`.
+                    println!("{}", if json { &line } else { selected });
+                    let _ = std::io::stdout().flush();
+                    std::process::exit(0);
+                }
+                PickStreamEvent::Cancelled => {
+                    if json {
+                        println!("{line}");
+                        let _ = std::io::stdout().flush();
+                    }
+                    std::process::exit(1);
+                }
+                PickStreamEvent::Ignore => {}
             }
         }
         std::process::exit(2);
@@ -1066,6 +1103,30 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
 
     let _ = reader_thread.join();
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PickStreamEvent<'a> {
+    Action,
+    Selected(&'a str),
+    Cancelled,
+    Ignore,
+}
+
+fn classify_pick_stream_event(value: &serde_json::Value) -> PickStreamEvent<'_> {
+    if value
+        .get("action")
+        .and_then(serde_json::Value::as_str)
+        .is_some()
+    {
+        PickStreamEvent::Action
+    } else if let Some(selected) = value.get("selected").and_then(serde_json::Value::as_str) {
+        PickStreamEvent::Selected(selected)
+    } else if value.get("cancelled").is_some() {
+        PickStreamEvent::Cancelled
+    } else {
+        PickStreamEvent::Ignore
+    }
 }
 
 pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
@@ -1255,6 +1316,16 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
     Ok(())
 }
 
+pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {
+    let parent = std::env::current_dir()?;
+    let destination =
+        crate::config::create_extension_scaffold(id, &parent).map_err(std::io::Error::other)?;
+    println!("Created {}", destination.display());
+    println!("Validate: rozi check-extension {}", destination.display());
+    println!("Invoke after installation: rozi run-action {id}.hello");
+    Ok(())
+}
+
 pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
     let scan = crate::config::scan_extensions_for_cli();
     for error in &scan.root_errors {
@@ -1355,19 +1426,57 @@ pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Res
             eprintln!("rozi: {error}");
         }
     }
-    if !info.commands.is_empty() {
+    if !info.command_details.is_empty() {
         println!("\nCommands:");
-        for id in &info.commands {
-            println!("  {id}");
+        for command in &info.command_details {
+            println!("  {}", command.id);
+            println!("    launch: {}", format_extension_launch(&command.launch));
+            println!("    cwd:    {}", command.cwd);
+            println!(
+                "    env:    {}",
+                format_extension_env(&command.injected_env)
+            );
         }
     }
-    if !info.services.is_empty() {
+    if !info.service_details.is_empty() {
         println!("\nServices:");
-        for id in &info.services {
-            println!("  {id}");
+        for service in &info.service_details {
+            println!("  {}", service.id);
+            println!("    launch: {}", format_extension_launch(&service.launch));
+            println!("    cwd:    {}", service.cwd);
+            println!("    restart: {}", service.restart);
+            println!(
+                "    env:    {}",
+                format_extension_env(&service.injected_env)
+            );
+            if !service.configured_env_keys.is_empty() {
+                println!(
+                    "    manifest env: {} (values redacted)",
+                    service.configured_env_keys.join(", ")
+                );
+            }
         }
     }
     Ok(info.status == crate::config::ExtensionStatus::Loaded)
+}
+
+fn format_extension_launch(launch: &crate::config::ExtensionLaunchDiagnostic) -> String {
+    match launch {
+        crate::config::ExtensionLaunchDiagnostic::Direct { argv } => {
+            serde_json::to_string(argv).unwrap_or_else(|_| "[]".to_string())
+        }
+        crate::config::ExtensionLaunchDiagnostic::Shell { command } => {
+            format!("shell {command:?}")
+        }
+        crate::config::ExtensionLaunchDiagnostic::Send { text } => format!("send {text:?}"),
+    }
+}
+
+fn format_extension_env(env: &std::collections::BTreeMap<String, String>) -> String {
+    env.iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
@@ -1563,6 +1672,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "list-extensions [OPTIONS]",
                 "Show discovery status (--verbose, --json)",
             ),
+            row("new-extension <ID>", "Create a valid extension scaffold"),
             row(
                 "check-extension PATH [OPTIONS]",
                 "Validate an unpacked extension (--json)",
@@ -1585,7 +1695,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "send-keys [-l|--literal] [--] <KEY|TEXT>...",
                 "Send tmux-style key names, text, or both",
             ),
-            row("split [COMMAND] [--focus]", "Spawn a pane; alias new-pane"),
+            row("split [COMMAND] [OPTIONS]", "Spawn a pane; new-pane alias"),
             row(
                 "capture-pane [--target <PANE_ID>] [--scrollback <N|full>] [--last-output]",
                 "Print a pane's contents",
@@ -2073,6 +2183,25 @@ mod tests {
             expected(Some("cargo test"), true)
         );
         assert_eq!(
+            split(vec![
+                "new-pane".into(),
+                "cargo test".into(),
+                "--cwd".into(),
+                "/repo with space".into(),
+                "--title".into(),
+                "tests".into(),
+                "--keep-open".into(),
+                "--focus".into(),
+            ]),
+            control::ControlCommand::NewPane {
+                command: Some("cargo test".into()),
+                cwd: Some("/repo with space".into()),
+                title: Some("tests".into()),
+                keep_open: true,
+                focus: true,
+            }
+        );
+        assert_eq!(
             split(vec!["split".into(), "--focus".into()]),
             expected(None, true)
         );
@@ -2198,6 +2327,12 @@ mod tests {
             ParsedCli::CheckExtension { path, json: true }
                 if path == std::path::Path::new("./git-tools")
         ));
+        assert!(matches!(
+            parse_cli_args(vec!["new-extension".into(), "git-tools".into()]).expect("parses"),
+            ParsedCli::NewExtension { id } if id == "git-tools"
+        ));
+        assert!(parse_cli_args(vec!["new-extension".into()]).is_err());
+        assert!(parse_cli_args(vec!["new-extension".into(), "one".into(), "two".into()]).is_err());
         let attached = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));
         assert_eq!(attached.session_command, SessionCommand::Dwim);
@@ -2364,6 +2499,28 @@ mod tests {
         assert!(
             parse_cli_args(vec!["pick".into(), "--jsn".into()]).is_err(),
             "a mistyped flag must not be swallowed"
+        );
+    }
+
+    #[test]
+    fn picker_actions_are_non_terminal_even_when_they_carry_a_selection() {
+        assert_eq!(
+            classify_pick_stream_event(&serde_json::json!({
+                "action": "delete",
+                "selected": "feature"
+            })),
+            PickStreamEvent::Action
+        );
+        assert_eq!(
+            classify_pick_stream_event(&serde_json::json!({
+                "action": "refresh",
+                "selected": null
+            })),
+            PickStreamEvent::Action
+        );
+        assert_eq!(
+            classify_pick_stream_event(&serde_json::json!({ "selected": "feature" })),
+            PickStreamEvent::Selected("feature")
         );
     }
 

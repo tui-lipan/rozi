@@ -65,21 +65,25 @@ pub(crate) fn rows_reported(
     {
         return Update::none();
     }
-    report_rows(ctx, pane_id, rows)
+    report_rows(&mut ctx.state, pane_id, rows)
 }
 
-fn report_rows(ctx: &mut Context<AppRoot>, pane_id: PaneId, rows: Vec<PublishedRow>) -> Update {
-    let Some(generation) = crate::pane_lifecycle::find_pane(&ctx.state, pane_id)
+fn report_rows(
+    state: &mut crate::state::State,
+    pane_id: PaneId,
+    rows: Vec<PublishedRow>,
+) -> Update {
+    let Some(generation) = crate::pane_lifecycle::find_pane(state, pane_id)
         .filter(|pane| !pane.closing)
         .map(|pane| pane.pty_generation)
     else {
         return Update::none();
     };
-    if let Some(client) = ctx.state.current().session_client.as_ref() {
+    if let Some(client) = state.current().session_client.as_ref() {
         client.report_pane_rows(
             pane_id,
             generation,
-            crate::pane_lifecycle::pane_is_local(&ctx.state, pane_id),
+            crate::pane_lifecycle::pane_is_local(state, pane_id),
             rows,
         );
     }
@@ -97,7 +101,7 @@ pub(crate) fn stream_closed(ctx: &mut Context<AppRoot>, stream_id: u64, pane_id:
         return Update::none();
     }
     ctx.state.publish_streams.remove(&pane_id);
-    report_rows(ctx, pane_id, Vec::new())
+    report_rows(&mut ctx.state, pane_id, Vec::new())
 }
 
 /// Drop streams owned by extensions that disappeared or materially changed during reload.
@@ -119,7 +123,7 @@ pub(crate) fn unload_extensions(
         .collect();
     for pane_id in &stale {
         ctx.state.publish_streams.remove(pane_id);
-        report_rows(ctx, *pane_id, Vec::new());
+        report_rows(&mut ctx.state, *pane_id, Vec::new());
     }
     if stale.is_empty() {
         Update::none()
@@ -142,6 +146,7 @@ pub(crate) fn request_activation(state: &mut crate::state::State, pane_id: PaneI
     // stream is no longer useful, so drop it rather than blocking the UI thread on it.
     if stream.sender.try_send(line).is_err() {
         state.publish_streams.remove(&pane_id);
+        report_rows(state, pane_id, Vec::new());
     }
 }
 
@@ -270,9 +275,9 @@ mod tests {
 
     /// A publisher that stopped reading is wedged or gone; the UI thread must not block on it.
     #[test]
-    fn a_full_activation_queue_drops_the_stream() {
+    fn a_full_activation_queue_drops_the_stream_and_withdraws_its_rows() {
         with_backend(|backend| {
-            let _outbound = attach(backend);
+            let outbound = attach(backend);
             let (tx, rx) = std::sync::mpsc::sync_channel(1);
             open_stream(backend, 1, Some(1), None, tx);
             super::request_activation(backend.state_mut(), 1, "one");
@@ -281,6 +286,11 @@ mod tests {
                 !backend.state_mut().publish_streams.contains_key(&1),
                 "a stream that stopped draining is dropped"
             );
+            assert!(outbound.try_iter().any(|message| matches!(
+                message,
+                ClientOutbound::Control(ClientMessage::ReportPaneRows { rows, .. })
+                    if rows.is_empty()
+            )));
             drop(rx);
         });
     }

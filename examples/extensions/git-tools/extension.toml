@@ -2,15 +2,15 @@
 id = "git-tools"
 title = "Git tools"
 description = "Branch and worktree workflows implemented through rozi pick"
-version = "1.0.0"
+version = "1.1.0"
 api = 1
 
 [[commands]]
 id = "branches"
 label = "Branches…"
-exec = ["python3", "{extension_dir}/bin/git_tools.py", "branches"]
+exec = ["python", "{extension_dir}/bin/git_tools.py", "branches"]
 
 [[commands]]
 id = "worktrees"
 label = "Worktrees…"
-exec = ["python3", "{extension_dir}/bin/git_tools.py", "worktrees"]
+exec = ["python", "{extension_dir}/bin/git_tools.py", "worktrees"]

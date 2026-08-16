@@ -51,13 +51,20 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
         let config = running.config.clone();
         drop(running);
 
-        let is_success = match exit_result {
-            Ok(status) => status.success(),
-            Err(_) => false,
+        let (is_success, failure_detail) = match exit_result {
+            Ok(status) => (status.success(), status.to_string()),
+            Err(err) => (false, format!("could not read exit status: {err}")),
         };
 
         match config.restart {
             ServiceRestart::Never => {
+                if !is_success {
+                    crate::pty_events::notify_error(
+                        ctx,
+                        "Service failed",
+                        format!("Service '{name}' {failure_detail}; restart disabled"),
+                    );
+                }
                 ctx.state.services.dormant.insert(
                     name,
                     DormantService {
@@ -81,7 +88,10 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                         crate::pty_events::notify_error(
                             ctx,
                             "Service failed",
-                            format!("Service '{name}' failed {MAX_FAILURES} times; stopping"),
+                            format!(
+                                "Service '{name}' failed {MAX_FAILURES} times: \
+                                 {failure_detail}; stopping"
+                            ),
                         );
                         ctx.state.services.dormant.insert(
                             name,
@@ -127,7 +137,10 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                         crate::pty_events::notify_error(
                             ctx,
                             "Service failed",
-                            format!("Service '{name}' failed {MAX_FAILURES} times; stopping"),
+                            format!(
+                                "Service '{name}' failed {MAX_FAILURES} times: \
+                                 {failure_detail}; stopping"
+                            ),
                         );
                         ctx.state.services.dormant.insert(
                             name,
@@ -185,13 +198,14 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                         },
                     );
                 }
-                Err(_) => {
+                Err(err) => {
                     if let Some(message) = record_spawn_failure(
                         &mut ctx.state,
                         name,
                         pending.config,
                         pending.consecutive_failures + 1,
                         pending.backoff_delay,
+                        &err.to_string(),
                     ) {
                         crate::pty_events::notify_error(ctx, "Service failed", message);
                     }

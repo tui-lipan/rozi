@@ -7,6 +7,18 @@
 # Debug symbols
 *.pdb
 
+# Python bytecode, test caches, coverage, and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+
 # Local cargo overrides (e.g. patching tui-lipan to a sibling checkout for framework development).
 # CI and a standalone clone must resolve tui-lipan from crates.io at the version Cargo.toml pins.
 /.cargo/

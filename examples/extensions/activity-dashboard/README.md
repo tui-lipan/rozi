@@ -12,7 +12,7 @@ This example exercises the long-running extension contract without importing Roz
 Recent events are written atomically beside the installed extension, so a supervised restart or
 config reload retains the dashboard history. Rozi intentionally does not watch extension trees.
 
-It requires Python 3. Install the directory manually, validate it, and reload:
+It requires Python 3 available as `python`. Install the directory manually, validate it, and reload:
 
 ```bash
 rozi check-extension ./activity-dashboard

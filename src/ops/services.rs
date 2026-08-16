@@ -29,16 +29,18 @@ pub(crate) fn stays_dormant(dormant: &DormantService, services: &[ServiceConfig]
 ///
 /// A spawn can fail for reasons that pass: a `cwd` not mounted yet, momentary fork pressure. Going
 /// straight to dormant on the first one made startup stricter than mid-session, where the identical
-/// failure is retried. `failures` counts this attempt. Returns the give-up message when the ladder
-/// is exhausted, so the caller raises it with its own `Context`.
+/// failure is retried. `failures` counts this attempt. Returns an actionable message when this
+/// attempt leaves the service dormant, so the caller raises it with its own `Context`.
 pub(crate) fn record_spawn_failure(
     state: &mut State,
     name: String,
     config: ServiceConfig,
     failures: u32,
     backoff_delay: Duration,
+    detail: &str,
 ) -> Option<String> {
     if config.restart == crate::config::ServiceRestart::Never {
+        let message = format!("Service '{name}' failed to start: {detail}; restart disabled");
         state.services.dormant.insert(
             name,
             DormantService {
@@ -46,10 +48,11 @@ pub(crate) fn record_spawn_failure(
                 reason: DormantReason::NeverRestart,
             },
         );
-        return None;
+        return Some(message);
     }
     if failures >= MAX_FAILURES {
-        let message = format!("Service '{name}' failed to start {MAX_FAILURES} times; stopping");
+        let message =
+            format!("Service '{name}' failed to start {MAX_FAILURES} times: {detail}; stopping");
         state.services.dormant.insert(
             name,
             DormantService {
@@ -168,10 +171,15 @@ pub(crate) fn start_services(ctx: &mut Context<AppRoot>) -> Update {
                     },
                 );
             }
-            Err(_) => {
-                if let Some(message) =
-                    record_spawn_failure(&mut ctx.state, name, config, 1, INITIAL_BACKOFF)
-                {
+            Err(err) => {
+                if let Some(message) = record_spawn_failure(
+                    &mut ctx.state,
+                    name,
+                    config,
+                    1,
+                    INITIAL_BACKOFF,
+                    &err.to_string(),
+                ) {
                     crate::pty_events::notify_error(ctx, "Service failed", message);
                 }
             }
@@ -270,8 +278,9 @@ fn reconcile_service_set(
                     },
                 );
             }
-            Err(_) => {
-                if let Some(message) = record_spawn_failure(state, name, config, 1, INITIAL_BACKOFF)
+            Err(err) => {
+                if let Some(message) =
+                    record_spawn_failure(state, name, config, 1, INITIAL_BACKOFF, &err.to_string())
                 {
                     failures.push(message);
                 }
@@ -457,6 +466,7 @@ mod tests {
             config.clone(),
             1,
             INITIAL_BACKOFF,
+            "permission denied",
         );
         assert!(message.is_none(), "first failure must not give up");
         let pending = state.services.pending.get("flaky").expect("queued a retry");
@@ -470,8 +480,12 @@ mod tests {
             config.clone(),
             MAX_FAILURES,
             MAX_BACKOFF,
+            "permission denied",
         );
-        assert!(message.is_some(), "the exhausted ladder reports once");
+        assert!(
+            message.is_some_and(|message| message.contains("permission denied")),
+            "the exhausted ladder reports the last operating-system error"
+        );
         assert_eq!(
             state.services.dormant.get("flaky").map(|d| d.reason),
             Some(DormantReason::ExhaustedBackoff)
@@ -535,9 +549,20 @@ mod tests {
             env: BTreeMap::new(),
         };
 
-        let message =
-            record_spawn_failure(&mut state, config.name.clone(), config, 1, INITIAL_BACKOFF);
-        assert!(message.is_none());
+        let message = record_spawn_failure(
+            &mut state,
+            config.name.clone(),
+            config,
+            1,
+            INITIAL_BACKOFF,
+            "permission denied",
+        );
+        assert!(
+            message.is_some_and(|message| {
+                message.contains("permission denied") && message.contains("restart disabled")
+            }),
+            "a non-restarting service reports its launch failure immediately"
+        );
         assert!(state.services.pending.is_empty());
         assert_eq!(
             state.services.dormant.get("once").map(|d| d.reason),

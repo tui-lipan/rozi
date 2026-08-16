@@ -49,6 +49,7 @@ rozi send-keys -l C-c
 rozi send-keys -- -n hello
 rozi split 'claude --agent helper'
 rozi split 'cargo watch' --focus
+rozi new-pane --cwd '/repo with spaces' --title Tests --keep-open 'cargo test' --focus
 rozi run-action toggle-float
 rozi capture-pane --target 3
 rozi capture-pane --scrollback full
@@ -71,6 +72,10 @@ discovery/connect failures.
 means input sent to the returned `id` will reach the shell. A spawn that has not come up after five
 seconds answers `pty_ready: false` rather than leaving the caller on the connection timeout — the
 pane is still starting, not broken. A spawn that fails answers with a JSON error.
+
+`--cwd`, `--title`, and `--keep-open` expose the corresponding existing pane-spawn fields to shell
+and extension authors. `--cwd` is passed as one path value; the command itself remains a command
+line interpreted by the pane's shell.
 
 `split`/`new-pane` leaves focus alone. The control endpoint is an automation surface, and a pane
 spawned from a script or an agent must not move focus, and the active workspace, away from whoever
@@ -246,8 +251,9 @@ while the command is running, Escape is sent to the popup application.
 Subscriptions support `pane-spawned`, `pane-exited`, `pane-status-changed`, `bell`, `focus-changed`,
 `workspace-switched`, `session-attached`, `session-detached`, `session-renamed`,
 `controller-changed`, `client-joined`, `client-left`, `profile-loaded`, `profile-applied`,
-`profile-saved`, `session-created`, and `config-reloaded`. An empty `events` list subscribes to all
-17. `pane-status-changed` carries
+`profile-saved`, `session-created`, and `config-reloaded`. Every line has
+`{"event":"<name>","data":{...}}`; event-specific fields are nested under `data`. An empty `events`
+list subscribes to all 17. `pane-status-changed` carries
 `pane`, `status`, `reason`, `previous_status`, `previous_reason`, and `focused`; cleared or absent values are
 empty strings. Initial status received while attaching is state seeding, not a transition, and does
 not emit this event.

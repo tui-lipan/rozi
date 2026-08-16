@@ -10,6 +10,18 @@ use super::manifest::{ExtensionCommandFile, ExtensionServiceFile};
 use super::paths::{normalize_direct_argv, resolve_declared_path};
 use super::{ExtensionInfo, RESERVED_EXTENSION_ENV, RESERVED_EXTENSION_IDS, clean_optional};
 
+pub(super) fn validate_requested_extension_id(id: &str) -> Result<(), String> {
+    if id.trim() != id {
+        return Err("extension id may not have leading or trailing whitespace".to_string());
+    }
+    let mut errors = Vec::new();
+    validate_extension_id(Some(id), &mut errors);
+    match errors.into_iter().next() {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 pub(super) fn validate_extension_id(id: Option<&str>, errors: &mut Vec<String>) -> bool {
     let Some(id) = id.filter(|id| !id.is_empty()) else {
         errors.push("missing required field `extension.id`".to_string());

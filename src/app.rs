@@ -769,6 +769,9 @@ pub fn run() -> Result<()> {
             apply_config_path(config_path);
             return cli::run_list_extensions_cli(json, verbose);
         }
+        cli::ParsedCli::NewExtension { id } => {
+            return cli::run_new_extension_cli(&id);
+        }
         cli::ParsedCli::CheckExtension { path, json } => {
             if !cli::run_check_extension_cli(&path, json)? {
                 std::process::exit(1);
@@ -859,6 +862,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::Install
         | cli::ParsedCli::Update(_)
         | cli::ParsedCli::ListExtensions { .. }
+        | cli::ParsedCli::NewExtension { .. }
         | cli::ParsedCli::CheckExtension { .. } => unreachable!("early CLI command returned above"),
     };
 

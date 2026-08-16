@@ -421,9 +421,22 @@ fn run_action(
 ) -> Update {
     let action = action_from_runtime_id(&ctx.state, action_id);
     let Some(action) = action else {
-        let _ = reply.send(ControlResponse::error(format!(
-            "unknown action `{action_id}`"
-        )));
+        let error = if crate::config::is_extension_command_id(action_id) {
+            let extension = action_id
+                .split_once('.')
+                .map(|(id, _)| id)
+                .unwrap_or_default();
+            if ctx.state.config.active_extensions.contains(extension) {
+                format!("extension `{extension}` does not define command `{action_id}`")
+            } else {
+                format!(
+                    "extension command `{action_id}` is unavailable; run `rozi list-extensions --verbose`"
+                )
+            }
+        } else {
+            format!("unknown action `{action_id}`")
+        };
+        let _ = reply.send(ControlResponse::error(error));
         return Update::full();
     };
     if crate::actions::is_layout_mutating(&ctx.state, action)
@@ -811,6 +824,39 @@ mod tests {
                 assert_eq!(
                     response.error.as_deref(),
                     Some("extension generation is not active")
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn unavailable_extension_commands_get_extension_specific_guidance() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::RunAction {
+                                action: "git-tools.branches".to_string(),
+                            },
+                            source_pane: None,
+                            extension: None,
+                        },
+                        reply,
+                    }))
+                    .unwrap();
+
+                let response = response.recv().unwrap();
+                assert_eq!(
+                    response.error.as_deref(),
+                    Some(
+                        "extension command `git-tools.branches` is unavailable; run `rozi list-extensions --verbose`"
+                    )
                 );
             })
             .unwrap()

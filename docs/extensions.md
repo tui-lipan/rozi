@@ -13,6 +13,29 @@ control protocol = runtime behavior and UI interaction
 The manifest is not a declarative UI framework. Pickers, published rows, notifications, and event
 handling come from `rozi pick`, `publish`, `notify`, and `subscribe`.
 
+## Author journey
+
+Create a working extension before designing its final behavior:
+
+```bash
+rozi new-extension my-extension
+cd my-extension
+rozi check-extension .
+```
+
+The generated command is intentionally small but real. Its README is the shortest complete loop:
+
+```text
+create → validate → copy/clone into the user extension directory
+       → reload-config → list-extensions --verbose → invoke
+```
+
+Once that works, add interaction with `pick`, add durable activity with `publish`, and add a
+supervised `[[services]]` process only for behavior that must remain alive. Validate after every
+manifest edit; reload only when the installed copy should change. The repository-local
+[`rozi-extension` agent skill](../.agents/skills/rozi-extension/SKILL.md) is the compressed public
+contract for coding agents.
+
 ## Structure and identity
 
 ```text
@@ -68,7 +91,7 @@ contract changes incompatibly.
 [[commands]]
 id = "branches"
 label = "Switch branch"
-exec = ["python3", "{extension_dir}/bin/branches.py", "--all"]
+exec = ["python", "{extension_dir}/bin/branches.py", "--all"]
 
 [[services]]
 name = "watch"
@@ -102,9 +125,15 @@ Extension programs can compose:
 - [`rozi run-action`](control.md) — built-in, named, and namespaced extension commands.
 
 Use `ROZI_BIN` when launching the matching running binary instead of assuming `rozi` is on `PATH`.
-The canonical [Git tools](../examples/extensions/git-tools/) and
-[activity dashboard](../examples/extensions/activity-dashboard/) examples exercise these surfaces
-without internal APIs.
+Canonical third-party-style examples exercise distinct surfaces without internal APIs:
+
+- [Git tools](../examples/extensions/git-tools/) — grouped/actionable branch and worktree pickers;
+- [PR dashboard](../examples/extensions/pr-dashboard/) — supervised `gh` monitoring with
+  subscribe/publish/notify/pick;
+- [Docker](../examples/extensions/docker/) — dynamic external-process controls and refresh;
+- [SSH tools](../examples/extensions/ssh-tools/) — standard SSH config discovery and pane launch;
+- [Agent activity](../examples/extensions/agent-activity/) — generalized pane status mirrored into
+  actionable Activity rows.
 
 ## Environment and paths
 
@@ -150,7 +179,9 @@ rozi check-extension ./rozi-git-tools --json
 ```
 
 Validation reports all independent manifest, id, API, command, service, environment, and obvious
-path errors it can find. Failure exits non-zero.
+path errors it can find. For every valid process it also prints the resolved direct argv or explicit
+shell command, cwd policy, injected extension environment, restart policy, and configured
+environment keys with their values redacted. Failure exits non-zero.
 
 `list-extensions` is the authoritative discovery report:
 
@@ -171,7 +202,9 @@ ids. The manifest JSON Schema is [`schemas/extension.schema.json`](../schemas/ex
 ## Author workflow and reload
 
 ```bash
-rozi check-extension ./my-extension
+rozi new-extension my-extension
+cd my-extension
+rozi check-extension .
 # edit
 rozi run-action reload-config
 rozi list-extensions --verbose
@@ -224,6 +257,15 @@ rozi run-action reload-config
 
 On Windows, clone below `%LOCALAPPDATA%\rozi\extensions` and pass that directory to
 `check-extension`.
+
+For local development, an explicit symlink from that user extension directory to a checkout is
+supported on platforms where the user can create one. Rozi does not provide `link-extension`:
+portable Windows junction/symlink creation and safe removal need materially more platform machinery
+than an authoring convenience justifies. Merely entering a project directory never discovers or
+executes project-local code.
+
+Use the [manual extension test lab](extension-testing.md) to exercise the canonical Git, PR/CI,
+Docker, SSH, and agent-activity extensions plus adversarial reload and fencing cases.
 
 ## Trust boundary
 

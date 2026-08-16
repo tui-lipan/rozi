@@ -1,0 +1,16 @@
+[extension]
+id = "agent-activity"
+title = "Agent activity"
+description = "Publishes pane-reported activity without agent-specific integrations"
+version = "1.0.0"
+api = 1
+
+[[commands]]
+id = "open"
+label = "Agent activity…"
+exec = ["python", "{extension_dir}/bin/agent_activity.py", "--pick"]
+
+[[services]]
+name = "watch"
+exec = ["python", "{extension_dir}/bin/agent_activity.py", "--service"]
+restart = "on-failure"

@@ -4,4 +4,4 @@ api = 1
 
 [[commands]]
 id = "open"
-exec = ["fixture-program", "{extension_dir}/payload.txt"]
+exec = ["python", "{extension_dir}/command.py"]

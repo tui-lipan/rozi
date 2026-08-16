@@ -8,9 +8,9 @@ api = 1
 [[commands]]
 id = "open"
 label = "Activity dashboard…"
-exec = ["python3", "{extension_dir}/bin/dashboard.py", "--pick"]
+exec = ["python", "{extension_dir}/bin/dashboard.py", "--pick"]
 
 [[services]]
 name = "watch"
-exec = ["python3", "{extension_dir}/bin/dashboard.py", "--service"]
+exec = ["python", "{extension_dir}/bin/dashboard.py", "--service"]
 restart = "on-failure"

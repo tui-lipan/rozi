@@ -1,0 +1,11 @@
+[extension]
+id = "ssh-tools"
+title = "SSH tools"
+description = "Open concrete SSH config hosts in focused panes"
+version = "1.0.0"
+api = 1
+
+[[commands]]
+id = "hosts"
+label = "SSH hosts…"
+exec = ["python", "{extension_dir}/bin/ssh_tools.py"]

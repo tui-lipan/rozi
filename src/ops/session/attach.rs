@@ -51,6 +51,11 @@ pub(crate) fn mark_current_parked(ctx: &mut Context<AppRoot>, parked: bool) {
     if let Some(client) = ctx.state.current().session_client.as_ref() {
         client.set_parked(parked);
     }
+    if parked && let Some(shared) = ctx.state.current_mut().shared.as_mut() {
+        // The server releases the lease as part of this request. Drop cached authority now so a
+        // resize timer racing the reply cannot send geometry that the server will reject.
+        shared.controller = None;
+    }
 }
 
 /// Tear down a just-parked attachment that is not worth keeping: an ephemeral this client created
@@ -162,7 +167,6 @@ pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {
     // it so a geometry change during reconnect can schedule a replacement; retained sizes remain
     // queued and are force-flushed when the new client is installed.
     ctx.state.current_mut().resize_flush_scheduled = false;
-    ctx.state.current_mut().resize_flush_deadline = None;
     ctx.state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
     ctx.state.commands_dirty = true;
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {

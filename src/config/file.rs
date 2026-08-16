@@ -360,6 +360,7 @@ pub(super) enum PaddingSpec {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct PaneFileConfig {
+    resize_debounce_ms: Option<u64>,
     hold_on_exit: Option<bool>,
     highlight_focused_background: Option<bool>,
     highlight_focused_border: Option<bool>,
@@ -701,6 +702,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(highlight_focused_background) = parsed.pane.highlight_focused_background {
         config.pane.highlight_focused_background = highlight_focused_background;
+    }
+    if let Some(resize_debounce_ms) = parsed.pane.resize_debounce_ms {
+        config.pane.resize_debounce_ms = resize_debounce_ms;
     }
     if let Some(hold_on_exit) = parsed.pane.hold_on_exit {
         config.pane.hold_on_exit = hold_on_exit;
@@ -1188,6 +1192,7 @@ mod file_tests {
         let parsed: FileConfig = toml::from_str(
             r#"
             [pane]
+            resize_debounce_ms = 0
             hold_on_exit = true
             highlight_focused_background = true
             highlight_focused_border = true
@@ -1208,6 +1213,7 @@ mod file_tests {
             "#,
         )
         .expect("config parses");
+        assert_eq!(parsed.pane.resize_debounce_ms, Some(0));
         assert_eq!(parsed.pane.highlight_focused_background, Some(true));
         assert_eq!(parsed.pane.hold_on_exit, Some(true));
         assert_eq!(parsed.pane.highlight_focused_border, Some(true));
@@ -1225,6 +1231,14 @@ mod file_tests {
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
         assert_eq!(parsed.pane.workbar_tab_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_style.as_deref(), Some("half"));
+    }
+
+    #[test]
+    fn pane_resize_debounce_applies_and_allows_immediate_forwarding() {
+        let loaded =
+            load_config_from_text("[pane]\nresize_debounce_ms = 0\n", Path::new("config.toml"));
+        assert_eq!(loaded.config.pane.resize_debounce_ms, 0);
+        assert!(loaded.warnings.is_empty());
     }
 
     #[test]

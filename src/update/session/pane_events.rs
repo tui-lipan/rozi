@@ -298,7 +298,8 @@ pub(crate) fn flush_pane_resizes(ctx: &mut Context<AppRoot>, epoch: u64) -> Upda
     if epoch != ctx.state.runtime_epoch {
         return crate::pty_events::flush_background_resizes(&mut ctx.state, epoch);
     }
-    crate::pty_events::flush_scheduled_resizes(ctx)
+    crate::pty_events::flush_pending_resizes(ctx);
+    Update::none()
 }
 
 /// A pane the user already closed is expected to exit, so `hold_on_exit` must not keep its shell

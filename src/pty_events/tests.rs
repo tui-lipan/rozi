@@ -445,7 +445,6 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 let mut shared = SharedSessionState::new(1);
                 shared.controller = Some(1);
                 state.current_mut().shared = Some(shared);
-                state.current_mut().resize_flush_deadline = None;
             }
             backend.render();
             // Pretend a flush is already armed. A real one is a wall-clock timer, and
@@ -468,7 +467,6 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 Some(&(50, 20)),
                 "both resizes coalesce into the latest pending size"
             );
-            backend.state_mut().current_mut().resize_flush_deadline = None;
             backend
                 .dispatch(Msg::FlushPaneResizes { epoch: 0 })
                 .expect("dispatch flush");
@@ -484,12 +482,20 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
             backend
                 .dispatch(Msg::PaneResize(1, 60, 22))
                 .expect("dispatch preview resize");
-            backend.state_mut().current_mut().resize_flush_deadline = None;
             backend
                 .dispatch(Msg::FlushPaneResizes { epoch: 0 })
                 .expect("dispatch flush during preview");
             assert_eq!(resizes(&controller_rx), vec![(60, 22)]);
             backend.state_mut().sidebar.width_preview = None;
+
+            backend.state_mut().config.pane.resize_debounce_ms = 0;
+            backend
+                .dispatch(Msg::PaneResize(1, 61, 23))
+                .expect("dispatch immediate resize");
+            assert!(
+                resizes(&controller_rx).contains(&(61, 23)),
+                "zero debounce forwards the geometry report immediately"
+            );
 
             // A flush with no client must hold the size rather than discard it: nothing
             // re-derives one, so dropping it leaves the PTY wrong until the pane's geometry
@@ -509,8 +515,7 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
             backend
                 .dispatch(Msg::PaneResize(1, 50, 20))
                 .expect("dispatch resize");
-            backend.state_mut().current_mut().resize_flush_deadline = None;
-            // The link drops between the report and the trailing-edge flush it armed. Transport
+            // The link drops between the report and the batched flush it armed. Transport
             // state is discarded, but attachment-owned geometry survives and can still move while
             // reconnecting.
             backend.state_mut().current_mut().mark_disconnected();
@@ -519,7 +524,6 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 state.runtime_epoch = 1;
                 state.current_mut().epoch = 1;
                 state.current_mut().resize_flush_scheduled = false;
-                state.current_mut().resize_flush_deadline = None;
                 state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
@@ -541,7 +545,6 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
             backend
                 .dispatch(Msg::PaneResize(1, 55, 21))
                 .expect("dispatch resize while reconnecting");
-            backend.state_mut().current_mut().resize_flush_deadline = None;
             backend
                 .dispatch(Msg::FlushPaneResizes { epoch: 1 })
                 .expect("dispatch flush while disconnected");
@@ -560,7 +563,6 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 let mut shared = SharedSessionState::new(1);
                 shared.controller = Some(1);
                 state.current_mut().shared = Some(shared);
-                state.current_mut().resize_flush_deadline = None;
             }
             backend
                 .dispatch(Msg::FlushPaneResizes { epoch: 1 })
@@ -594,7 +596,6 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 .pending_resizes
                 .get(&(false, 1))
                 .expect("geometry queued before parking");
-            backend.state_mut().current_mut().resize_flush_deadline = None;
             {
                 let state = backend.state_mut();
                 state.park_current(7, crate::state::Attachment::new());

@@ -213,6 +213,7 @@ Pane focus and chrome behavior.
 
 | Key | Default | Notes |
 | --- | --- | --- |
+| `resize_debounce_ms` | `16` | Minimum interval between live PTY resize batches. `16` tracks a typical 60 Hz render loop; `0` forwards every geometry report immediately. Increase it only when reflowing very long scrollback during resize costs too much CPU. |
 | `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. |
 | `hold_on_exit` | `false` | Keep naturally exited panes in the layout. Their title shows the exit code; `respawn-pane` restarts the retained command and cwd in place. |
 | `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus does not change the pane background. |

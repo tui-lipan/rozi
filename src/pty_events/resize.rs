@@ -4,10 +4,6 @@ use crate::AppRoot;
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::PaneId;
 
-/// Trailing-edge debounce window for controller PTY resizes. A width change reflows retained
-/// history in both parsers, so forwarding at frame rate makes a long transcript costly to drag.
-const RESIZE_DEBOUNCE_MS: u64 = 100;
-
 pub(crate) fn handle_pane_resize(
     ctx: &mut Context<AppRoot>,
     id: PaneId,
@@ -37,43 +33,29 @@ pub(crate) fn handle_pane_resize(
     // Keep pending geometry on the attachment rather than its transport-specific shared state: a
     // reconnect replaces the latter, but the widget may not report an unchanged viewport again.
     let epoch = ctx.state.runtime_epoch;
-    let attachment = ctx.state.current_mut();
-    attachment
-        .pending_resizes
-        .insert((local, id), (cols.max(1), rows.max(1)));
-    attachment.resize_flush_deadline =
-        Some(std::time::Instant::now() + std::time::Duration::from_millis(RESIZE_DEBOUNCE_MS));
-    if attachment.resize_flush_scheduled {
+    let resize_debounce_ms = ctx.state.config.pane.resize_debounce_ms;
+    {
+        let attachment = ctx.state.current_mut();
+        attachment
+            .pending_resizes
+            .insert((local, id), (cols.max(1), rows.max(1)));
+        if resize_debounce_ms > 0 {
+            if attachment.resize_flush_scheduled {
+                return Update::none();
+            }
+            attachment.resize_flush_scheduled = true;
+        }
+    }
+    if resize_debounce_ms == 0 {
+        flush_pending_resizes(ctx);
         return Update::none();
     }
-    attachment.resize_flush_scheduled = true;
-    Update::with_command(schedule_pane_resize_flush(epoch))
+    Update::with_command(schedule_pane_resize_flush(epoch, resize_debounce_ms))
 }
 
-/// Flush after a full quiet window. If geometry changed since the timer was armed, wait out the
-/// remainder rather than reshaping retained terminal history in the middle of a drag.
-pub(crate) fn flush_scheduled_resizes(ctx: &mut Context<AppRoot>) -> Update {
-    if let Some(remaining) = ctx
-        .state
-        .current()
-        .resize_flush_deadline
-        .and_then(|deadline| deadline.checked_duration_since(std::time::Instant::now()))
-    {
-        let epoch = ctx.state.runtime_epoch;
-        return Update::with_command(Command::after(
-            remaining,
-            move |link: CommandLink<crate::Msg>| {
-                link.send(crate::Msg::FlushPaneResizes { epoch });
-            },
-        ));
-    }
-    flush_pending_resizes(ctx);
-    Update::none()
-}
-
-fn schedule_pane_resize_flush(epoch: u64) -> Command {
+fn schedule_pane_resize_flush(epoch: u64, resize_debounce_ms: u64) -> Command {
     Command::after(
-        std::time::Duration::from_millis(RESIZE_DEBOUNCE_MS),
+        std::time::Duration::from_millis(resize_debounce_ms),
         move |link: CommandLink<crate::Msg>| {
             link.send(crate::Msg::FlushPaneResizes { epoch });
         },
@@ -93,13 +75,11 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
         // Mid-attach or a reconnect window. Disarm so a later report can schedule a fresh flush,
         // but keep the sizes: `flush_pending_resizes` runs again once the client is installed.
         ctx.state.current_mut().resize_flush_scheduled = false;
-        ctx.state.current_mut().resize_flush_deadline = None;
         return;
     };
     let is_controller = ctx.state.is_controller();
     let attachment = ctx.state.current_mut();
     attachment.resize_flush_scheduled = false;
-    attachment.resize_flush_deadline = None;
     let pending: Vec<_> = attachment.pending_resizes.drain().collect();
     let (pending, retained): (Vec<_>, Vec<_>) = pending
         .into_iter()
@@ -120,19 +100,7 @@ pub(crate) fn flush_background_resizes(state: &mut crate::state::State, epoch: u
     let Some(attachment) = state.background.get_mut(&epoch) else {
         return Update::none();
     };
-    if let Some(remaining) = attachment
-        .resize_flush_deadline
-        .and_then(|deadline| deadline.checked_duration_since(std::time::Instant::now()))
-    {
-        return Update::with_command(Command::after(
-            remaining,
-            move |link: CommandLink<crate::Msg>| {
-                link.send(crate::Msg::FlushPaneResizes { epoch });
-            },
-        ));
-    }
     attachment.resize_flush_scheduled = false;
-    attachment.resize_flush_deadline = None;
     // Client-local overlays are torn down on a switch and never belong to a background attachment.
     attachment.pending_resizes.retain(|(local, _), _| !*local);
     Update::none()

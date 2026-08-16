@@ -60,6 +60,9 @@
 #default = "dwindle"
 
 [pane]
+# Minimum interval between live PTY resize batches. 16 tracks a 60 Hz render loop;
+# use 0 to forward every geometry report immediately.
+#resize_debounce_ms = 16
 #focus_on_hover = true
 # Keep naturally exited panes in the layout, showing the exit code, so respawn-pane can
 # restart them in place. Panes launched with a command follow that command's keep_open.

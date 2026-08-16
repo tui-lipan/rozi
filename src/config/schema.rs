@@ -455,6 +455,8 @@ impl Default for RemoteConfig {
 
 #[derive(Clone, Copy, Debug)]
 pub struct PaneConfig {
+    /// Minimum interval between PTY resize batches. Zero forwards geometry reports immediately.
+    pub resize_debounce_ms: u64,
     /// Keep naturally exited panes in the layout so they can be respawned in place.
     pub hold_on_exit: bool,
     /// Whether the focused pane uses the theme's panel background instead of the normal
@@ -528,6 +530,7 @@ pub struct PaneConfig {
 impl Default for PaneConfig {
     fn default() -> Self {
         Self {
+            resize_debounce_ms: 16,
             hold_on_exit: false,
             highlight_focused_background: false,
             highlight_focused_border: true,
@@ -1767,6 +1770,7 @@ mod tests {
             ]
         );
         assert!(PaneConfig::default().workbar_powerline);
+        assert_eq!(PaneConfig::default().resize_debounce_ms, 16);
         assert!(PaneConfig::default().show_titles);
         assert_eq!(PaneConfig::default().border_mode, PaneBorderMode::Separate);
         assert!(PaneConfig::default().keep_special_borders);

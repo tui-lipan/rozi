@@ -679,7 +679,7 @@ mod tests {
             generation: 1,
             title: None,
             cwd: Some("/launch/dir".to_string()),
-            command: None,
+            launch: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),

@@ -76,6 +76,7 @@ set `name` (its custom name, settable at runtime with *Rename workspace* - see
 - `name`: pane title shown by `rozi` and restored on startup.
 - `cwd`: directory used when launching that pane's fresh shell or command. `~` and `~/...` expand to `HOME`.
 - `command`: command line typed into the pane's interactive shell at its first prompt.
+- `argv`: direct executable and arguments, launched without a shell; mutually exclusive with `command`.
 - `keep_open`: kept for round-tripping; a command pane returns to its interactive shell on exit.
 - `floating`: whether the pane is floating instead of tiled.
 - `fullscreen`: whether the pane starts fullscreen.
@@ -127,6 +128,12 @@ command exits:
 
 ```toml
 command = "cargo run"
+```
+
+For a direct process with argument boundaries preserved across platforms, use `argv` instead:
+
+```toml
+argv = ["ssh", "--", "host with spaces"]
 ```
 
 ## Session auto-save

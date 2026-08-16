@@ -97,7 +97,7 @@ fn replay_spawn_queues_the_command_as_input_instead_of_a_wire_command() {
             7,
             3,
             PaneIdentity {
-                command: Some("n".to_string()),
+                launch: Some(crate::pane_launch::PaneLaunch::shell("n")),
                 replay: true,
                 ..PaneIdentity::default()
             },
@@ -106,7 +106,7 @@ fn replay_spawn_queues_the_command_as_input_instead_of_a_wire_command() {
     // No client yet: the spawn is queued, with the replay command stripped from the wire
     // request and parked for post-spawn injection instead.
     assert_eq!(state.current().pending_spawns.len(), 1);
-    assert_eq!(state.current().pending_spawns[0].command, None);
+    assert_eq!(state.current().pending_spawns[0].launch, None);
     assert_eq!(
         state
             .current()
@@ -123,14 +123,14 @@ fn replay_spawn_queues_the_command_as_input_instead_of_a_wire_command() {
             8,
             4,
             PaneIdentity {
-                command: Some("htop".to_string()),
+                launch: Some(crate::pane_launch::PaneLaunch::shell("htop")),
                 ..PaneIdentity::default()
             },
         ),
     );
     assert_eq!(
-        state.current().pending_spawns[1].command.as_deref(),
-        Some("htop"),
+        state.current().pending_spawns[1].launch,
+        Some(crate::pane_launch::PaneLaunch::shell("htop")),
         "deterministic command panes must keep command-shell semantics"
     );
     assert!(!state.current().pending_replay_inputs.contains_key(&(8, 4)));
@@ -172,7 +172,7 @@ fn replay_inputs_survive_teardown_only_while_their_spawn_is_still_queued() {
             7,
             3,
             PaneIdentity {
-                command: Some("n".to_string()),
+                launch: Some(crate::pane_launch::PaneLaunch::shell("n")),
                 replay: true,
                 ..PaneIdentity::default()
             },

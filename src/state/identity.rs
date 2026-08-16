@@ -7,9 +7,9 @@ pub struct PaneIdentity {
     pub custom_title: Option<String>,
     pub profile_name: Option<String>,
     pub cwd: Option<String>,
-    pub command: Option<String>,
+    pub launch: Option<crate::pane_launch::PaneLaunch>,
     pub keep_open: bool,
-    /// Run `command` by typing it into the pane's interactive shell instead of handing it to the
+    /// Run a shell launch by typing it into the pane's interactive shell instead of handing it to the
     /// deterministic command-runner shell. Set for profile-restored panes: a captured command is
     /// something the user once typed at their prompt, so replaying it must resolve aliases, shell
     /// functions, and rc-file `PATH` additions, and the shell prompt (with its title/OSC

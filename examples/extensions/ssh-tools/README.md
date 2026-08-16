@@ -38,18 +38,11 @@ The installation directory may be renamed; `id = "ssh-tools"` remains the public
 missing config, an empty concrete alias set, and unreadable included files appear as disabled
 structured rows. A missing `ssh` executable or pane-launch failure produces an error notification.
 
-## Command-string boundary
+## Pane launch boundary
 
-`rozi new-pane` currently accepts the pane program as one command string, not structured argv. The
-extension therefore does not splice the selected alias into shell text. It URL-safe-base64 encodes
-the discovered `ssh` path and alias, renders only fixed/safe tokens with `shlex.join` for the
-POSIX `/bin/sh -c` default or `subprocess.list2cmdline` for the Windows `cmd /D /S /C` default, and
-starts a short Python trampoline in the pane. The trampoline decodes both values and replaces itself
-with `ssh` through `os.execv` and the argv `["ssh", "--", alias]`.
-
-This protects spaces, Unicode, quotes, and shell metacharacters in aliases and paths at the current
-string-only boundary. An arbitrarily customized Rozi `command_shell` may use quoting rules unlike
-the platform default and is outside what an extension can discover through the public environment.
+The selected host opens with `rozi new-pane --argv <ssh> -- <alias>`. Rozi passes the discovered
+SSH executable and alias directly to the child process without shell parsing, preserving spaces,
+Unicode, quotes, and shell metacharacters on every supported platform.
 
 ## Manual checks
 

@@ -50,6 +50,7 @@ rozi send-keys -- -n hello
 rozi split 'claude --agent helper'
 rozi split 'cargo watch' --focus
 rozi new-pane --cwd '/repo with spaces' --title Tests --keep-open 'cargo test' --focus
+rozi new-pane --cwd '/repo with spaces' --focus --argv cargo test -- --nocapture
 rozi run-action toggle-float
 rozi capture-pane --target 3
 rozi capture-pane --scrollback full
@@ -73,9 +74,14 @@ means input sent to the returned `id` will reach the shell. A spawn that has not
 seconds answers `pty_ready: false` rather than leaving the caller on the connection timeout — the
 pane is still starting, not broken. A spawn that fails answers with a JSON error.
 
-`--cwd`, `--title`, and `--keep-open` expose the corresponding existing pane-spawn fields to shell
-and extension authors. `--cwd` is passed as one path value; the command itself remains a command
-line interpreted by the pane's shell.
+`--cwd`, `--title`, and `--keep-open` expose the corresponding pane-spawn fields to shell and
+extension authors. A positional `COMMAND` remains a command line interpreted by the configured
+command runner. `--argv PROGRAM [ARG...]` instead launches the executable directly with exactly
+those arguments and no shell parsing. Because `--argv` consumes the remaining tokens, put pane
+options before it.
+
+`list-panes` reports a shell launch in `command` and a direct launch in `argv`; the other field is
+`null`.
 
 `split`/`new-pane` leaves focus alone. The control endpoint is an automation surface, and a pane
 spawned from a script or an agent must not move focus, and the active workspace, away from whoever
@@ -224,6 +230,7 @@ Examples:
 {"cmd":"focus","target":2,"source_pane":1}
 {"cmd":"send-text","target":2,"text":"hello"}
 {"cmd":"new-pane","command":"cargo test","cwd":"/repo","title":"tests","keep_open":true}
+{"cmd":"new-pane","argv":["cargo","test","--","path with spaces"],"cwd":"/repo"}
 {"cmd":"new-pane","command":"cargo watch","focus":true}
 {"cmd":"run-action","action":"toggle-float"}
 {"cmd":"capture-pane","target":2}

@@ -527,9 +527,13 @@ fn tree_run_actions_pass_the_path_as_env_never_in_the_command() {
             .cloned()
             .expect("run action queues a pane spawn");
         // The command is exactly what the config said — the path is nowhere in it.
-        assert_eq!(spawn.command.as_deref(), Some("git diff -- \"$ROZI_FILE\""));
+        let command = spawn
+            .launch
+            .as_ref()
+            .and_then(crate::pane_launch::PaneLaunch::shell_command);
+        assert_eq!(command, Some("git diff -- \"$ROZI_FILE\""));
         assert!(
-            !spawn.command.as_deref().unwrap().contains("rm -rf"),
+            !command.unwrap().contains("rm -rf"),
             "the filename never reaches the command line"
         );
         // It arrives as environment instead, verbatim.
@@ -1320,7 +1324,13 @@ fn launcher_run_inherits_the_focused_pane_cwd_and_holds_the_pane_open() {
             UserCommandAction::run("cargo build"),
             Some("/home/x/work/rozi"),
         );
-        assert_eq!(spawn.command.as_deref(), Some("cargo build"));
+        assert_eq!(
+            spawn
+                .launch
+                .as_ref()
+                .and_then(crate::pane_launch::PaneLaunch::shell_command),
+            Some("cargo build")
+        );
         assert_eq!(spawn.cwd.as_deref(), Some("/home/x/work/rozi"));
         assert!(spawn.keep_open);
     });

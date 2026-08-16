@@ -75,7 +75,10 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
-        command: Some(format!("echo {}", String::from_utf8_lossy(OUTPUT_MARKER))),
+        launch: Some(rozi::pane_launch::PaneLaunch::shell(format!(
+            "echo {}",
+            String::from_utf8_lossy(OUTPUT_MARKER)
+        ))),
         cwd: None,
         cols: 80,
         rows: 24,
@@ -137,7 +140,10 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
                 title: Some("protocol smoke".to_string()),
                 profile_name: None,
                 cwd: None,
-                command: Some(format!("echo {}", String::from_utf8_lossy(OUTPUT_MARKER))),
+                launch: Some(rozi::pane_launch::PaneLaunch::shell(format!(
+                    "echo {}",
+                    String::from_utf8_lossy(OUTPUT_MARKER)
+                ))),
                 replay: false,
                 keep_open: true,
                 floating: false,

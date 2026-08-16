@@ -178,7 +178,7 @@ pub struct ServerPane {
     /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
     /// what the pane was spawned with, before any live OSC report or process-inspector fallback.
     pub cwd: Option<String>,
-    pub command: Option<String>,
+    pub launch: Option<crate::pane_launch::PaneLaunch>,
     pub keep_open: bool,
     /// Set once a `keep_open` pane's command has finished and its PTY has been replaced by the
     /// interactive shell (see [`SessionServer::replace_with_keep_open_shell`]). Without it, the
@@ -900,7 +900,7 @@ struct SpawnRequest {
     pane_id: PaneId,
     owner: Option<ClientId>,
     generation: u64,
-    command: Option<String>,
+    launch: Option<crate::pane_launch::PaneLaunch>,
     cwd: Option<String>,
     title: Option<String>,
     cols: u16,
@@ -968,8 +968,8 @@ impl ServerPane {
 /// Build the PTY spawn config from the client-resolved `shell`/`command_shell` argv (see
 /// [`crate::platform::command`]). Empty argv falls back to the current platform's resolved policy.
 ///
-/// A pane with a `command` runs it through the deterministic `command_shell` runner; a pane without
-/// one runs the resolved interactive `shell`.
+/// A shell launch runs through the deterministic `command_shell` runner; a direct launch uses its
+/// executable and arguments verbatim. A pane without a launch runs the resolved interactive shell.
 ///
 /// `keep_open` is deliberately *not* handled here, and must not be: interpolating the shell into the
 /// command line (`command; exec <shell>`) would bind this to POSIX shell syntax - `exec` does not
@@ -978,7 +978,7 @@ impl ServerPane {
 /// PTY replacement after the command exits instead; see
 /// [`SessionServer::replace_with_keep_open_shell`].
 fn pty_config(
-    command: Option<&str>,
+    launch: Option<&crate::pane_launch::PaneLaunch>,
     shell: &[String],
     command_shell: &[String],
 ) -> TerminalPtyConfig {
@@ -986,22 +986,32 @@ fn pty_config(
 
     let env = crate::platform::command::ShellEnv::from_process();
 
-    if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
-        let runner = ShellCommand::from_argv(command_shell)
-            .unwrap_or_else(|| crate::platform::command::resolve_command_shell(None, &env));
-        let mut config = TerminalPtyConfig::new(runner.program).term("xterm-256color");
-        for arg in runner.args {
-            config = config.arg(arg);
+    match launch {
+        Some(crate::pane_launch::PaneLaunch::Shell { command }) if !command.trim().is_empty() => {
+            let runner = ShellCommand::from_argv(command_shell)
+                .unwrap_or_else(|| crate::platform::command::resolve_command_shell(None, &env));
+            let mut config = TerminalPtyConfig::new(runner.program).term("xterm-256color");
+            for arg in runner.args {
+                config = config.arg(arg);
+            }
+            config.arg(command.clone())
         }
-        config.arg(command.to_string())
-    } else {
-        let shell = ShellCommand::from_argv(shell)
-            .unwrap_or_else(|| crate::platform::command::resolve_interactive_shell(None, &env));
-        let mut config = TerminalPtyConfig::new(shell.program).term("xterm-256color");
-        for arg in shell.args {
-            config = config.arg(arg);
+        Some(crate::pane_launch::PaneLaunch::Direct { argv }) if !argv.is_empty() => {
+            let mut config = TerminalPtyConfig::new(argv[0].clone()).term("xterm-256color");
+            for arg in &argv[1..] {
+                config = config.arg(arg.clone());
+            }
+            config
         }
-        config
+        _ => {
+            let shell = ShellCommand::from_argv(shell)
+                .unwrap_or_else(|| crate::platform::command::resolve_interactive_shell(None, &env));
+            let mut config = TerminalPtyConfig::new(shell.program).term("xterm-256color");
+            for arg in shell.args {
+                config = config.arg(arg);
+            }
+            config
+        }
     }
 }
 

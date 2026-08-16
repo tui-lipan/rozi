@@ -513,7 +513,7 @@ Known limitation: `list-sessions` reports connectable session sockets only; stal
 are skipped so the command does not hang.
 
 Client and server negotiate a session wire protocol version in a supported range; this build speaks
-protocol 1 only. The wire carries an explicit local/shared namespace on every pane-targeted
+protocol 2 only. The wire carries an explicit local/shared namespace on every pane-targeted
 operation, input frame, and server event, so an owner-local pane and a shared pane can share a
 numeric id without stealing input, resize, or output. Owner-scoped client-local panes back scratch
 workspaces and popups; they are never attached, broadcast, or resurrected, and are killed when

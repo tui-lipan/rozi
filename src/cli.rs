@@ -620,6 +620,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
             "split" | "new-pane" => {
                 let mut command = None;
+                let mut argv = None;
                 let mut cwd = None;
                 let mut title = None;
                 let mut keep_open = false;
@@ -630,6 +631,17 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         "--" if !passthrough => passthrough = true,
                         "--focus" if !passthrough => focus = true,
                         "--keep-open" if !passthrough => keep_open = true,
+                        "--argv" if !passthrough && command.is_none() => {
+                            let direct: Vec<String> = iter.by_ref().collect();
+                            crate::pane_launch::PaneLaunch::direct(direct.clone())?;
+                            argv = Some(direct);
+                            break;
+                        }
+                        "--argv" if !passthrough => {
+                            return Err(
+                                "new-pane accepts either COMMAND or --argv, not both".to_string()
+                            );
+                        }
                         "--cwd" if !passthrough && cwd.is_none() => {
                             cwd = Some(require_value(
                                 &mut iter,
@@ -661,6 +673,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::NewPane {
                         command,
+                        argv,
                         cwd,
                         title,
                         keep_open,
@@ -1695,7 +1708,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "send-keys [-l|--literal] [--] <KEY|TEXT>...",
                 "Send tmux-style key names, text, or both",
             ),
-            row("split [COMMAND] [OPTIONS]", "Spawn a pane; new-pane alias"),
+            row(
+                "split [OPTIONS] [COMMAND | --argv PROGRAM [ARG...]]",
+                "Spawn a pane; new-pane alias",
+            ),
             row(
                 "capture-pane [--target <PANE_ID>] [--scrollback <N|full>] [--last-output]",
                 "Print a pane's contents",
@@ -2159,6 +2175,7 @@ mod tests {
         };
         let expected = |command: Option<&str>, focus: bool| control::ControlCommand::NewPane {
             command: command.map(str::to_string),
+            argv: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -2195,6 +2212,7 @@ mod tests {
             ]),
             control::ControlCommand::NewPane {
                 command: Some("cargo test".into()),
+                argv: None,
                 cwd: Some("/repo with space".into()),
                 title: Some("tests".into()),
                 keep_open: true,
@@ -2209,6 +2227,48 @@ mod tests {
         assert!(
             parse_cli_args(vec!["split".into(), "one".into(), "two".into()]).is_err(),
             "a second positional is still rejected"
+        );
+    }
+
+    #[test]
+    fn cli_new_pane_preserves_structured_argv_without_parsing_child_flags() {
+        let ParsedCli::Control(control) = parse_cli_args(vec![
+            "new-pane".into(),
+            "--cwd".into(),
+            "/repo with spaces".into(),
+            "--focus".into(),
+            "--argv".into(),
+            "/opt/tool with spaces".into(),
+            "--literal".into(),
+            "semi; $HOME 'quoted'".into(),
+        ])
+        .expect("structured argv parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            control.request.command,
+            control::ControlCommand::NewPane {
+                command: None,
+                argv: Some(vec![
+                    "/opt/tool with spaces".into(),
+                    "--literal".into(),
+                    "semi; $HOME 'quoted'".into(),
+                ]),
+                cwd: Some("/repo with spaces".into()),
+                title: None,
+                keep_open: false,
+                focus: true,
+            }
+        );
+        assert!(parse_cli_args(vec!["new-pane".into(), "--argv".into()]).is_err());
+        assert!(
+            parse_cli_args(vec![
+                "new-pane".into(),
+                "shell command".into(),
+                "--argv".into(),
+                "tool".into(),
+            ])
+            .is_err()
         );
     }
 
@@ -2696,6 +2756,7 @@ mod tests {
             dashed.request.command,
             control::ControlCommand::NewPane {
                 command: Some("--odd-command".into()),
+                argv: None,
                 cwd: None,
                 title: None,
                 keep_open: false,

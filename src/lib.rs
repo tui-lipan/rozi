@@ -23,6 +23,7 @@ pub mod layout_tree_ser;
 pub mod msg;
 mod ops;
 pub mod pane;
+pub mod pane_launch;
 mod pane_lifecycle;
 pub mod platform;
 mod popup;

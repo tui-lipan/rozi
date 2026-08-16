@@ -81,7 +81,7 @@ pub struct Attachment {
     /// [`Msg::SessionAttached`](crate::Msg::SessionAttached) installs the client.
     pub pending_spawns: Vec<PendingPaneSpawn>,
     /// Replay commands (see [`PaneIdentity::replay`]) waiting for their pane's `SpawnResult`,
-    /// keyed by `(pane_id, generation)`. The spawn goes out with `command: None` so the server
+    /// keyed by `(pane_id, generation)`. The spawn goes out with `launch: None` so the server
     /// launches the interactive shell; once the spawn succeeds the command is sent as pane input
     /// (with a trailing carriage return), where it sits as type-ahead until the shell's first
     /// prompt reads and runs it. Only the client that requested the spawn holds the entry, so a

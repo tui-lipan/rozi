@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -238,12 +237,6 @@ def mutate(action: str, container: Container) -> None:
     docker(*command)
 
 
-def shell_join(argv: list[str]) -> str:
-    if os.name == "nt":
-        return subprocess.list2cmdline(argv)
-    return shlex.join(argv)
-
-
 def open_pane(mode: str, container: Container) -> None:
     if mode == "shell" and not container.running:
         notify("Container not running")
@@ -252,10 +245,19 @@ def open_pane(mode: str, container: Container) -> None:
         notify(container.disabled)
         return
     script = str(Path(os.path.abspath(__file__)))
-    command = shell_join([sys.executable, script, "--pane", mode, container.id])
     try:
         process = subprocess.run(
-            [ROZI, "new-pane", command, "--focus"],
+            [
+                ROZI,
+                "new-pane",
+                "--focus",
+                "--argv",
+                sys.executable,
+                script,
+                "--pane",
+                mode,
+                container.id,
+            ],
             text=True,
             capture_output=True,
             check=False,

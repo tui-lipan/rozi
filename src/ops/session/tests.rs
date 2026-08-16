@@ -890,8 +890,8 @@ fn create_session_starts_fresh_instead_of_carrying_current_panes() {
                     .command_in_flight
                     .insert("date".to_string(), 3);
                 // Simulate a profile-seeded session: the current pane carries a command.
-                state.current_mut().workspaces[0].panes[0].identity.command =
-                    Some("nvim".to_string());
+                state.current_mut().workspaces[0].panes[0].identity.launch =
+                    Some(crate::pane_launch::PaneLaunch::shell("nvim"));
                 state.rename_session =
                     Some(SessionRenameState::new(&name, NamingMode::CreateSession));
             }
@@ -925,10 +925,7 @@ fn create_session_starts_fresh_instead_of_carrying_current_panes() {
             // The new session must not inherit the current layout: the installed attachment is a
             // fresh single-pane default with no launch command to respawn.
             assert_eq!(state.current().workspaces[0].panes.len(), 1);
-            assert_eq!(
-                state.current().workspaces[0].panes[0].identity.command,
-                None
-            );
+            assert_eq!(state.current().workspaces[0].panes[0].identity.launch, None);
             // Client-global state is not per-session, so installing a fresh attachment leaves it
             // untouched: command/config epochs don't churn (command tabs keep polling, no
             // flicker), the sidebar stays open on its tab, and workbar scheduling stays live.

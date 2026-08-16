@@ -210,7 +210,9 @@ fn large_layout() -> SharedLayout {
                             title: Some(format!("workspace-{index}-pane-{offset}")),
                             profile_name: Some(format!("benchmark-profile-{}", offset % 4)),
                             cwd: Some(format!("/workspace/project-{index}/module-{offset}")),
-                            command: Some(format!("benchmark-worker --shard {offset} --verbose")),
+                            launch: Some(rozi::pane_launch::PaneLaunch::shell(format!(
+                                "benchmark-worker --shard {offset} --verbose"
+                            ))),
                             replay: false,
                             keep_open: offset % 3 == 0,
                             floating: offset == 15,

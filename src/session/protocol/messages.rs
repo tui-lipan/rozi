@@ -62,7 +62,7 @@ pub enum ClientMessage {
         /// operable by their owner without the layout lease, and die with that client.
         local: bool,
         generation: u64,
-        command: Option<String>,
+        launch: Option<crate::pane_launch::PaneLaunch>,
         cwd: Option<String>,
         cols: u16,
         rows: u16,
@@ -76,12 +76,12 @@ pub enum ClientMessage {
         palette: WirePalette,
         /// Resolved interactive-shell argv (non-empty; program then fixed args), resolved
         /// client-side via `platform::command::resolve_interactive_shell` against the live
-        /// config. Used verbatim when `command` is `None`; also used to `exec` into after
-        /// `command` completes when `keep_open` is set (see [`ServerPane`] doc comment).
+        /// config. Used verbatim when `launch` is `None`; also used to `exec` into after a shell
+        /// command or direct process completes when `keep_open` is set (see [`ServerPane`] docs).
         shell: Vec<String>,
         /// Resolved command-runner argv (non-empty; program then fixed args), resolved
-        /// client-side via `platform::command::resolve_command_shell`. Only used when `command`
-        /// is `Some`; the command string becomes its final argument.
+        /// client-side via `platform::command::resolve_command_shell`. Only used for
+        /// [`PaneLaunch::Shell`](crate::pane_launch::PaneLaunch::Shell).
         command_shell: Vec<String>,
         /// Host cell size in pixels, so the PTY reports pixel dimensions a child that draws
         /// images can use. Zero (the pre-17 default) leaves the PTY's own default in place.

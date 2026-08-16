@@ -333,11 +333,15 @@ pub(crate) fn spawn_interactive_pane_with_focus(
     identity: PaneIdentity,
     focus: Option<bool>,
 ) -> (PaneId, Update) {
+    let rule_command = identity
+        .launch
+        .as_ref()
+        .map(crate::pane_launch::PaneLaunch::display);
     let (workspace_index, previous_focused, placement) = interactive_spawn_target(
         &ctx.state,
         source_workspace,
         source,
-        identity.command.as_deref(),
+        rule_command.as_deref(),
         focus,
     );
     spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity, placement)
@@ -420,7 +424,11 @@ pub(crate) fn spawn_pane_in_workspace(
         ctx.state.current().remote_host.is_some(),
     );
     let identity = pane.identity.clone();
-    let command = pane.identity.command.clone();
+    let command = pane
+        .identity
+        .launch
+        .as_ref()
+        .map(crate::pane_launch::PaneLaunch::display);
     let cwd = pane.identity.cwd.clone();
     let cols = pane.terminal.cols;
     let rows = pane.terminal.rows;
@@ -673,7 +681,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
         palette,
     } = request;
     let PaneIdentity {
-        command,
+        launch,
         cwd,
         keep_open,
         replay,
@@ -683,15 +691,15 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     // A replay command (see `PaneIdentity::replay`) spawns a plain interactive shell and is
     // injected as type-ahead input after the spawn succeeds (see `State::pending_replay_inputs`),
     // so aliases/functions/rc-file PATH resolve and the prompt's title integration runs first.
-    let command = match command {
-        Some(command) if replay => {
+    let launch = match launch {
+        Some(crate::pane_launch::PaneLaunch::Shell { command }) if replay => {
             state
                 .current_mut()
                 .pending_replay_inputs
                 .insert((pane_id, generation), command);
             None
         }
-        command => command,
+        launch => launch,
     };
     // Under `--remote` the server owns its own platform, shell, and filesystem. Our locally
     // resolved shell argv (a Linux `/usr/bin/bash` with a local rc-file path, say) and
@@ -710,7 +718,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
         pane_id,
         local,
         generation,
-        command,
+        launch,
         cwd,
         cols,
         rows,

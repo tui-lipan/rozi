@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import base64
 import importlib.util
-import shlex
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).parents[1] / "bin" / "ssh_tools.py"
@@ -67,25 +66,18 @@ class SshConfigTests(unittest.TestCase):
         )
         self.assertIsNone(ssh_tools.parse_directive('Host "unterminated'))
 
-    @unittest.skipIf(sys.platform == "win32", "POSIX command quoting assertion")
-    def test_pane_command_keeps_ssh_path_and_alias_as_single_arguments(self) -> None:
+    def test_pane_launch_preserves_ssh_path_and_alias_as_direct_arguments(self) -> None:
         ssh = "/opt/Open SSH/bin/ssh"
         alias = "prod; touch /tmp/unsafe $(id) ' quoted"
 
-        command = ssh_tools.pane_command(ssh, alias)
-        argv = shlex.split(command)
+        with patch.object(ssh_tools.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            ssh_tools.open_host(ssh, alias)
 
-        self.assertEqual(argv[:3], [sys.executable, "-c", ssh_tools.CONNECT_CODE])
-        self.assertEqual(len(argv), 5)
         self.assertEqual(
-            base64.urlsafe_b64decode(argv[3]).decode("utf-8"),
-            ssh,
+            run.call_args.args[0],
+            [ssh_tools.ROZI, "new-pane", "--focus", "--argv", ssh, "--", alias],
         )
-        self.assertEqual(
-            base64.urlsafe_b64decode(argv[4]).decode("utf-8"),
-            alias,
-        )
-        self.assertNotIn(alias, command)
 
 
 if __name__ == "__main__":

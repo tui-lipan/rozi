@@ -34,7 +34,7 @@ fn spawn_pane(controller: &mut common::TestConnection) {
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
-        command: None,
+        launch: None,
         cwd: None,
         cols: 80,
         rows: 24,

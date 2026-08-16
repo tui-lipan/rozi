@@ -66,8 +66,8 @@ fn toggle_pane_logging(ctx: &mut Context<AppRoot>) -> Update {
     Update::none()
 }
 
-/// Dispatch a `[keys]`-defined user command: `Run` opens a new pane running the shell command
-/// (the same `identity.command` hook the scratchpad and control socket's `NewPane` use), `Send`
+/// Dispatch a `[keys]`-defined user command: `Run` opens a new pane running the shell launch
+/// (the same `PaneIdentity::launch` path the scratchpad and control socket's `NewPane` use), `Send`
 /// writes the literal text straight to the focused pane's PTY.
 fn run_user_command(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(command) = ctx.state.config.user_commands.get(index).cloned() else {
@@ -120,7 +120,7 @@ pub(crate) fn execute_user_command_action_with_env(
     match action {
         UserCommandAction::Run { command, keep_open } => {
             let identity = PaneIdentity {
-                command: Some(command.clone()),
+                launch: Some(crate::pane_launch::PaneLaunch::shell(command.clone())),
                 keep_open: *keep_open,
                 // `cargo build` means "build the project I am looking at"; without this the command
                 // runs wherever the session server was started.

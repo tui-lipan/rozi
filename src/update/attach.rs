@@ -207,22 +207,21 @@ pub(crate) fn spawn_state_panes_on_session(
                 .cloned()
                 .chain(pane_env(control_socket.as_deref(), pane, is_remote))
                 .collect::<Vec<_>>();
-            // A replay command is not sent as the spawn command: the pane starts as a plain
+            // A replay command is not sent as spawn launch intent: the pane starts as a plain
             // interactive shell and the command is injected as type-ahead input once the spawn
             // succeeds (see `Attachment::pending_replay_inputs`).
-            let command = if pane.identity.replay {
-                if let Some(command) = pane.identity.command.clone() {
+            let launch = match (pane.identity.replay, pane.identity.launch.clone()) {
+                (true, Some(crate::pane_launch::PaneLaunch::Shell { command })) => {
                     replay_inserts.push(((pane.id, generation), command));
+                    None
                 }
-                None
-            } else {
-                pane.identity.command.clone()
+                (_, launch) => launch,
             };
             client.spawn_pane(crate::session::client::SpawnPaneRequest {
                 pane_id: pane.id,
                 local: false,
                 generation,
-                command,
+                launch,
                 cwd: pane.identity.cwd.clone(),
                 cols: pane.terminal.cols,
                 rows: pane.terminal.rows,

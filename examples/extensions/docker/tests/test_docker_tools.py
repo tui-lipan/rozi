@@ -126,6 +126,23 @@ class DockerDiscoveryTests(unittest.TestCase):
             "Docker daemon unavailable",
         )
 
+    def test_pane_helper_uses_structured_argv(self) -> None:
+        container = docker_tools.Container(
+            id="a" * 64,
+            name="literal; $(unsafe)",
+            image="alpine",
+            state="running",
+            status="Up",
+        )
+        with mock.patch.object(docker_tools.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            docker_tools.open_pane("logs", container)
+
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:4], [docker_tools.ROZI, "new-pane", "--focus", "--argv"])
+        self.assertEqual(argv[-3:], ["--pane", "logs", container.id])
+        self.assertNotIn(container.name, argv)
+
 
 if __name__ == "__main__":
     unittest.main()

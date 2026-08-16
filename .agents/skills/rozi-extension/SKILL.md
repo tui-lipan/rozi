@@ -175,11 +175,13 @@ events.
 ```bash
 rozi run-action reload-config
 rozi run-action git-tools.branches
-rozi new-pane "ssh devbox" --cwd /project --focus
+rozi new-pane --cwd /project --focus --argv ssh -- devbox
 ```
 
-`run-action` uses stable built-in, config-command, or extension IDs. Pane/popup commands are command
-lines, not structured argv; quote only validated values and document platform assumptions.
+`run-action` uses stable built-in, config-command, or extension IDs. Prefer
+`new-pane --argv PROGRAM [ARG...]` for pane processes; place pane options before `--argv` because it
+consumes the rest. Use a positional command line only when shell syntax is intentional. Popup
+commands remain command lines.
 
 ## Development loop
 

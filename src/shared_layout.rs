@@ -21,8 +21,8 @@ use crate::tiling::DwindleTree;
 pub type ClientId = u64;
 
 /// Wire-format version for [`SharedLayout`]. Bumped if the document shape changes.
-/// Version 2 adds per-pane `scrollable_width`.
-pub const SHARED_LAYOUT_VERSION: u32 = 2;
+/// Version 3 represents pane launch intent without collapsing direct argv into a shell string.
+pub const SHARED_LAYOUT_VERSION: u32 = 3;
 
 /// The complete shared window-manager document for a session. Fractions in [`FracRect`] are
 /// relative to the controller's canonical pane canvas (`canvas_cols` × `canvas_rows`, excluding
@@ -54,7 +54,7 @@ pub struct SharedPane {
     pub title: Option<String>,
     pub profile_name: Option<String>,
     pub cwd: Option<String>,
-    pub command: Option<String>,
+    pub launch: Option<crate::pane_launch::PaneLaunch>,
     /// See [`crate::state::PaneIdentity::replay`]. Shared so a follower that takes control
     /// respawns an exited profile pane through the interactive shell, not the command runner.
     /// Defaulted so layout documents committed before this field existed still parse.
@@ -366,7 +366,7 @@ fn shared_workspace_from_state(
                 title: pane.identity.custom_title.clone(),
                 profile_name: pane.identity.profile_name.clone(),
                 cwd: pane.identity.cwd.clone(),
-                command: pane.identity.command.clone(),
+                launch: pane.identity.launch.clone(),
                 replay: pane.identity.replay,
                 keep_open: pane.identity.keep_open,
                 floating: pane.floating,
@@ -720,8 +720,12 @@ fn apply_shared_pane_fields(
     pane.identity.custom_title = shared_pane.title.clone();
     pane.identity.profile_name = shared_pane.profile_name.clone();
     pane.identity.cwd = shared_pane.cwd.clone();
-    pane.identity.command = shared_pane.command.clone();
-    pane.identity.replay = shared_pane.replay;
+    pane.identity.launch = shared_pane.launch.clone();
+    pane.identity.replay = shared_pane.replay
+        && matches!(
+            pane.identity.launch.as_ref(),
+            Some(crate::pane_launch::PaneLaunch::Shell { .. })
+        );
     pane.identity.keep_open = shared_pane.keep_open;
     pane.scrollable_width = crate::tiling::sanitize_scrollable_width(shared_pane.scrollable_width);
 }
@@ -734,14 +738,14 @@ mod tests {
 
     #[test]
     fn shared_pane_without_replay_field_parses_as_non_replay() {
-        // Layout documents committed by builds predating the `replay` field must still parse.
+        // `replay` remains defaulted independently of the launch representation.
         let pane: SharedPane = serde_json::from_value(serde_json::json!({
             "pane_id": 2,
             "generation": 7,
             "title": null,
             "profile_name": null,
             "cwd": null,
-            "command": "nvim",
+            "launch": {"kind": "shell", "command": "nvim"},
             "keep_open": false,
             "floating": false,
             "fullscreen": false,
@@ -763,7 +767,7 @@ mod tests {
             title: None,
             profile_name: None,
             cwd: None,
-            command: None,
+            launch: None,
             replay: false,
             keep_open: false,
             floating: false,
@@ -801,7 +805,7 @@ mod tests {
             runtime.scrollable_width,
             crate::state::DEFAULT_SCROLLABLE_WIDTH
         );
-        assert_eq!(SHARED_LAYOUT_VERSION, 2);
+        assert_eq!(SHARED_LAYOUT_VERSION, 3);
     }
 
     fn state_with_split() -> State {
@@ -903,7 +907,7 @@ mod tests {
                         title: None,
                         profile_name: None,
                         cwd: None,
-                        command: None,
+                        launch: None,
                         replay: false,
                         keep_open: false,
                         floating: false,
@@ -970,7 +974,7 @@ mod reconciler_tests {
                         title: None,
                         profile_name: None,
                         cwd: None,
-                        command: None,
+                        launch: None,
                         replay: false,
                         keep_open: false,
                         floating: false,
@@ -1399,7 +1403,7 @@ mod reconciler_tests {
                             title: None,
                             profile_name: None,
                             cwd: None,
-                            command: None,
+                            launch: None,
                             replay: false,
                             keep_open: false,
                             floating: false,
@@ -1424,7 +1428,7 @@ mod reconciler_tests {
                                 title: None,
                                 profile_name: None,
                                 cwd: None,
-                                command: None,
+                                launch: None,
                                 replay: false,
                                 keep_open: false,
                                 floating: false,

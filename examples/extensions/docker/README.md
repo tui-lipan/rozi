@@ -53,12 +53,9 @@ Try `s` or `x` and confirm that the row moves between the Running and Stopped gr
 picker reopening. Use `i`, `l`, or `e` to open a pane. To remove a stopped container, press
 `Ctrl-d`, review the armed row, then press `Ctrl-d` again.
 
-## Command-string boundary
+## Pane launch boundary
 
 Docker discovery and every management mutation use structured subprocess argv; container names are
-display-only and are never inserted into commands. Rozi's public `new-pane` command accepts a
-command string, so inspect, logs, and shell cross one deliberate shell boundary. The extension
-accepts only Docker's full hexadecimal container IDs, then quotes every helper argv token with
-`shlex.join` on POSIX or `subprocess.list2cmdline` on Windows before passing that string to
-`rozi new-pane`. The helper converts the validated ID back into structured Docker argv inside the
-pane.
+display-only and are never inserted into commands. Inspect, logs, and shell use
+`rozi new-pane --argv` so the Python executable, helper path, mode, and validated full hexadecimal
+container ID cross into the pane as literal process arguments without shell parsing.

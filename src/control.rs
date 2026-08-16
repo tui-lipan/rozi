@@ -80,7 +80,12 @@ pub enum ControlCommand {
         literal: bool,
     },
     NewPane {
+        /// Shell command line interpreted by the configured command runner.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         command: Option<String>,
+        /// Direct executable and arguments. Mutually exclusive with `command`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        argv: Option<Vec<String>>,
         cwd: Option<String>,
         title: Option<String>,
         #[serde(default)]

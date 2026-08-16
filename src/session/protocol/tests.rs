@@ -63,7 +63,7 @@ fn golden_layout_commit_json_shape() {
                 title: Some("editor".to_string()),
                 profile_name: None,
                 cwd: Some("/repo".to_string()),
-                command: Some("nvim".to_string()),
+                launch: Some(crate::pane_launch::PaneLaunch::shell("nvim")),
                 replay: false,
                 keep_open: false,
                 floating: false,
@@ -86,7 +86,7 @@ fn golden_layout_commit_json_shape() {
             "rev": 4,
             "author": 3,
             "layout": {
-                "version": 2,
+                "version": 3,
                 "canvas_cols": 120,
                 "canvas_rows": 40,
                 "workspaces": [{
@@ -109,7 +109,7 @@ fn golden_layout_commit_json_shape() {
                         "title": "editor",
                         "profile_name": null,
                         "cwd": "/repo",
-                        "command": "nvim",
+                        "launch": {"kind": "shell", "command": "nvim"},
                         "replay": false,
                         "keep_open": false,
                         "floating": false,
@@ -412,7 +412,9 @@ fn oversized_write_frame_is_rejected() {
         pane_id: 1,
         local: false,
         generation: 1,
-        command: Some("x".repeat(MAX_FRAME_SIZE)),
+        launch: Some(crate::pane_launch::PaneLaunch::shell(
+            "x".repeat(MAX_FRAME_SIZE),
+        )),
         cwd: None,
         cols: 80,
         rows: 24,
@@ -662,7 +664,9 @@ fn golden_client_spawn_json_shape() {
         pane_id: 7,
         local: false,
         generation: 9,
-        command: Some("bash".into()),
+        launch: Some(crate::pane_launch::PaneLaunch::Direct {
+            argv: vec!["printf".into(), "space $literal".into()],
+        }),
         cwd: Some("/repo".into()),
         cols: 80,
         rows: 24,
@@ -678,7 +682,7 @@ fn golden_client_spawn_json_shape() {
     .unwrap();
     assert_eq!(
         value,
-        serde_json::json!({"type":"spawn-pane","pane_id":7,"local":false,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap(),"shell":["/bin/zsh"],"command_shell":["/bin/sh","-c"],"cell_width":9,"cell_height":18})
+        serde_json::json!({"type":"spawn-pane","pane_id":7,"local":false,"generation":9,"launch":{"kind":"direct","argv":["printf","space $literal"]},"cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap(),"shell":["/bin/zsh"],"command_shell":["/bin/sh","-c"],"cell_width":9,"cell_height":18})
     );
 }
 

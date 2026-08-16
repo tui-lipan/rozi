@@ -78,6 +78,18 @@ impl SessionServer {
     ) -> ServerMessage {
         let id = request.pane_id;
         let owner = request.owner;
+        if let Some(launch) = &request.launch
+            && let Err(error) = launch.validate()
+        {
+            return ServerMessage::SpawnResult {
+                pane_id: id,
+                local: wire_local(owner),
+                generation: request.generation,
+                pid: None,
+                ok: false,
+                error: Some(error),
+            };
+        }
         // A live pane with this id already exists; refuse. An *exited* pane is replaced in place
         // so keep-open respawn (client re-sends `SpawnPane` with a fresh generation) works.
         if self
@@ -133,7 +145,7 @@ impl SessionServer {
             recover_restored_screen(&mut screen, seed);
         }
         let mut config = pty_config(
-            request.command.as_deref(),
+            request.launch.as_ref(),
             &request.shell,
             &request.command_shell,
         )
@@ -162,7 +174,7 @@ impl SessionServer {
                         generation,
                         title: request.title,
                         cwd: effective_cwd,
-                        command: request.command,
+                        launch: request.launch,
                         keep_open: request.keep_open,
                         command_completed: false,
                         palette: request.palette,
@@ -204,7 +216,7 @@ impl SessionServer {
                             generation,
                             title: request.title,
                             cwd: request.cwd,
-                            command: request.command,
+                            launch: request.launch,
                             keep_open: request.keep_open,
                             command_completed: false,
                             palette: request.palette,
@@ -386,13 +398,13 @@ impl SessionServer {
                     }
                     TerminalPtyEvent::Exited(code) => {
                         pane.pty = None;
-                        // `command.is_some()` is what divides this from the client's
+                        // A launch intent is what divides this from the client's
                         // `[pane] hold_on_exit`: a pane launched with a command is held here, as a
                         // live shell with the command's output above it, while a plain shell pane
                         // has nothing to hold open and falls through to the client, which decides
                         // whether to retain the exited husk. The two never both apply.
                         let keep_open =
-                            pane.keep_open && pane.command.is_some() && !pane.command_completed;
+                            pane.keep_open && pane.launch.is_some() && !pane.command_completed;
                         if keep_open {
                             let outbound = if id == crate::state::POPUP_PANE_ID {
                                 self.retain_completed_popup(owner, id, generation, code)

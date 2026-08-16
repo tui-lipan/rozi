@@ -20,7 +20,7 @@ pub enum PendingSessionAction {
     },
     NewPane {
         source: Option<PaneId>,
-        command: Option<String>,
+        launch: Option<crate::pane_launch::PaneLaunch>,
         cwd: Option<String>,
         title: Option<String>,
         keep_open: bool,

@@ -25,7 +25,7 @@ fn pane_status_broadcasts_and_survives_detach_reattach() {
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
-        command: None,
+        launch: None,
         cwd: None,
         cols: 80,
         rows: 24,

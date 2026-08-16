@@ -9,7 +9,8 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SNAPSHOT_VERSION: u32 = 1;
+/// Version 2 stores pane launch intent as shell-or-direct rather than a shell-only command string.
+const SNAPSHOT_VERSION: u32 = 2;
 
 /// How long shutdown waits for an in-flight durable write before abandoning it.
 const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
@@ -239,7 +240,7 @@ struct SnapshotMeta {
 struct SnapshotPane {
     pane_id: PaneId,
     generation: u64,
-    command: Option<String>,
+    launch: Option<crate::pane_launch::PaneLaunch>,
     cwd: Option<String>,
     keep_open: bool,
     title: Option<String>,
@@ -469,7 +470,7 @@ impl SessionServer {
             panes.push(SnapshotPane {
                 pane_id,
                 generation: pane.generation,
-                command: pane.command.clone(),
+                launch: pane.launch.clone(),
                 cwd: pane.spawnable_cwd(),
                 keep_open: pane.keep_open,
                 title: pane.effective_title(),
@@ -562,7 +563,7 @@ impl SessionServer {
                     owner: None,
                     pane_id: saved.pane_id,
                     generation,
-                    command: saved.command,
+                    launch: saved.launch,
                     cwd: saved.cwd,
                     title: saved.title,
                     cols: saved.cols,
@@ -1039,7 +1040,7 @@ mod tests {
             generation: 1,
             title: None,
             cwd: None,
-            command: None,
+            launch: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),

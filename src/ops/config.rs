@@ -220,7 +220,7 @@ pub(crate) fn open_config_file(ctx: &mut Context<AppRoot>) -> Update {
     let command = format!("{editor} {}", quote_shell_arg(&path.to_string_lossy()));
 
     let identity = PaneIdentity {
-        command: Some(command),
+        launch: Some(crate::pane_launch::PaneLaunch::shell(command)),
         ..PaneIdentity::default()
     };
     crate::pane_lifecycle::spawn_interactive_pane(

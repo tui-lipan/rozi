@@ -53,7 +53,7 @@ pub(crate) fn open(
     let mut pane = Pane::new(POPUP_PANE_ID, ctx.state.config.scrollback, rect);
     pane.pty_generation = generation;
     pane.identity = PaneIdentity {
-        command: Some(command),
+        launch: Some(crate::pane_launch::PaneLaunch::shell(command)),
         // A popup runs where the user is looking, not where the server happens to live; an explicit
         // cwd from the control socket still wins.
         cwd: cwd.or_else(|| focused_spawn_cwd(&ctx.state)),

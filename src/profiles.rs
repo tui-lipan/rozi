@@ -212,14 +212,24 @@ pub(crate) fn attachment_from_profile(
                     .to_string_lossy()
                     .to_string()
             });
-            pane.identity.command = pane_profile
-                .command
+            pane.identity.launch = pane_profile
+                .argv
                 .clone()
-                .filter(|command| !command.trim().is_empty());
+                .and_then(|argv| crate::pane_launch::PaneLaunch::direct(argv).ok())
+                .or_else(|| {
+                    pane_profile
+                        .command
+                        .clone()
+                        .filter(|command| !command.trim().is_empty())
+                        .map(crate::pane_launch::PaneLaunch::shell)
+                });
             // Profile commands are replayed through the interactive shell (typed at the prompt)
             // rather than the command-runner shell: they were captured from what the user ran
             // interactively, so aliases, shell functions, and rc-file PATH entries must resolve.
-            pane.identity.replay = pane.identity.command.is_some();
+            pane.identity.replay = matches!(
+                pane.identity.launch.as_ref(),
+                Some(crate::pane_launch::PaneLaunch::Shell { .. })
+            );
             pane.identity.keep_open = pane_profile.keep_open;
             pane.floating = pane_profile.floating;
             pane.fullscreen = pane_profile.fullscreen;
@@ -352,26 +362,38 @@ fn workspace_profile_from_state(
             .iter()
             .filter(|pane| !pane.closing)
             .enumerate()
-            .map(|(index, pane)| PaneProfile {
-                id: index as PaneId,
-                pane_id: Some(pane.id),
-                name: pane
-                    .identity
-                    .custom_title
-                    .clone()
-                    .or_else(|| pane.identity.profile_name.clone()),
-                title: pane.identity.custom_title.clone(),
-                cwd: pane.local_cwd().map(PathBuf::from),
-                command: live_running_command(pane, shells)
-                    .or_else(|| pane.identity.command.clone()),
-                keep_open: pane.identity.keep_open,
-                floating: pane.floating,
-                fullscreen: pane.fullscreen,
-                rect: pane.floating.then_some(pane.floating_rect.into()),
-                scrollable_width: {
-                    let width = crate::tiling::sanitize_scrollable_width(pane.scrollable_width);
-                    (width != crate::state::DEFAULT_SCROLLABLE_WIDTH).then_some(width)
-                },
+            .map(|(index, pane)| {
+                let (command, argv) = match pane.identity.launch.as_ref() {
+                    Some(crate::pane_launch::PaneLaunch::Direct { argv }) => {
+                        (None, Some(argv.clone()))
+                    }
+                    Some(crate::pane_launch::PaneLaunch::Shell { command }) => (
+                        live_running_command(pane, shells).or_else(|| Some(command.clone())),
+                        None,
+                    ),
+                    None => (live_running_command(pane, shells), None),
+                };
+                PaneProfile {
+                    id: index as PaneId,
+                    pane_id: Some(pane.id),
+                    name: pane
+                        .identity
+                        .custom_title
+                        .clone()
+                        .or_else(|| pane.identity.profile_name.clone()),
+                    title: pane.identity.custom_title.clone(),
+                    cwd: pane.local_cwd().map(PathBuf::from),
+                    command,
+                    argv,
+                    keep_open: pane.identity.keep_open,
+                    floating: pane.floating,
+                    fullscreen: pane.fullscreen,
+                    rect: pane.floating.then_some(pane.floating_rect.into()),
+                    scrollable_width: {
+                        let width = crate::tiling::sanitize_scrollable_width(pane.scrollable_width);
+                        (width != crate::state::DEFAULT_SCROLLABLE_WIDTH).then_some(width)
+                    },
+                }
             })
             .collect(),
     }
@@ -470,8 +492,24 @@ impl Profile {
         toml::to_string_pretty(self)
     }
 
-    pub fn from_toml_str(input: &str) -> Result<Self, toml::de::Error> {
-        toml::from_str(input)
+    pub fn from_toml_str(input: &str) -> Result<Self, String> {
+        let profile: Self = toml::from_str(input).map_err(|error| error.to_string())?;
+        for workspace in &profile.workspaces {
+            for pane in &workspace.panes {
+                if pane.command.is_some() && pane.argv.is_some() {
+                    return Err(format!(
+                        "workspace {} pane {} declares both `command` and `argv`",
+                        workspace.index, pane.id
+                    ));
+                }
+                if let Some(argv) = &pane.argv {
+                    crate::pane_launch::PaneLaunch::direct(argv.clone()).map_err(|error| {
+                        format!("workspace {} pane {}: {error}", workspace.index, pane.id)
+                    })?;
+                }
+            }
+        }
+        Ok(profile)
     }
 }
 
@@ -498,6 +536,8 @@ pub struct PaneProfile {
     pub title: Option<String>,
     pub cwd: Option<PathBuf>,
     pub command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub argv: Option<Vec<String>>,
     pub keep_open: bool,
     pub floating: bool,
     pub fullscreen: bool,
@@ -655,7 +695,7 @@ mod tests {
         first.set_custom_title("editor");
         first.identity.profile_name = Some("profile-editor".to_string());
         first.identity.cwd = Some("/tmp/rozi-profile-test".to_string());
-        first.identity.command = Some("nvim src/main.rs".to_string());
+        first.identity.launch = Some(crate::pane_launch::PaneLaunch::shell("nvim src/main.rs"));
         first.fullscreen = true;
         state.current_mut().workspaces[0].split_ratios[0] = 0.63;
 
@@ -1034,7 +1074,7 @@ mod tests {
         assert_eq!(saved.command, None);
 
         let pane = &mut state.current_mut().workspaces[0].panes[0];
-        pane.identity.command = Some("cargo test".to_string());
+        pane.identity.launch = Some(crate::pane_launch::PaneLaunch::shell("cargo test"));
         pane.terminal.foreground_program = Some("bash".to_string());
         let saved = &profile_from_state(&state).workspaces[0].panes[0];
         assert_eq!(saved.command.as_deref(), Some("cargo test"));
@@ -1102,13 +1142,68 @@ mod tests {
 
         let state = State::from_profile(Config::default(), Theme::default(), profile);
         let panes = &state.current().workspaces[0].panes;
-        assert_eq!(panes[0].identity.command.as_deref(), Some("n"));
+        assert_eq!(
+            panes[0]
+                .identity
+                .launch
+                .as_ref()
+                .and_then(crate::pane_launch::PaneLaunch::shell_command),
+            Some("n")
+        );
         assert!(panes[0].identity.replay);
-        assert_eq!(panes[1].identity.command, None);
+        assert_eq!(panes[1].identity.launch, None);
         assert!(!panes[1].identity.replay);
         // A blank command must not become a stray injected carriage return.
-        assert_eq!(panes[2].identity.command, None);
+        assert_eq!(panes[2].identity.launch, None);
         assert!(!panes[2].identity.replay);
+    }
+
+    #[test]
+    fn direct_argv_profiles_round_trip_without_shell_replay() {
+        let argv = vec![
+            "ssh".to_string(),
+            "--".to_string(),
+            "host with spaces; $literal".to_string(),
+        ];
+        let profile = Profile {
+            workspaces: vec![WorkspaceProfile {
+                index: 0,
+                panes: vec![PaneProfile {
+                    id: 0,
+                    argv: Some(argv.clone()),
+                    ..PaneProfile::default()
+                }],
+                ..WorkspaceProfile::default()
+            }],
+            ..Profile::default()
+        };
+
+        let state = State::from_profile(Config::default(), Theme::default(), profile);
+        let pane = &state.current().workspaces[0].panes[0];
+        assert_eq!(
+            pane.identity.launch,
+            Some(crate::pane_launch::PaneLaunch::Direct { argv: argv.clone() })
+        );
+        assert!(!pane.identity.replay);
+        assert_eq!(
+            profile_from_state(&state).workspaces[0].panes[0].argv,
+            Some(argv)
+        );
+        assert!(
+            Profile::from_toml_str(
+                r#"
+                [[workspaces]]
+                index = 0
+
+                [[workspaces.panes]]
+                id = 0
+                command = "ssh host"
+                argv = ["ssh", "host"]
+                "#
+            )
+            .unwrap_err()
+            .contains("both `command` and `argv`")
+        );
     }
 
     #[test]
@@ -1372,8 +1467,9 @@ scrollable_width = 9.0
         assert_eq!(
             state.current().workspaces[1].panes[0]
                 .identity
-                .command
-                .as_deref(),
+                .launch
+                .as_ref()
+                .and_then(crate::pane_launch::PaneLaunch::shell_command),
             Some("nvim src/main.rs")
         );
         assert_eq!(

@@ -229,7 +229,7 @@ Profiles restore layout and launch intent only, while a live session preserves P
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
 share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol negotiated in a supported
-range; this build speaks 1 only). One client holds the
+range; this build speaks 2 only). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state

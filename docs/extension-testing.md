@@ -146,9 +146,9 @@ Check:
 5. selecting `rozi-local` opens `ssh rozi-local` in a focused pane;
 6. a missing config or `ssh` executable gives an actionable empty/error state.
 
-The pane launch API accepts a command line rather than structured argv. This extension only inserts
-validated concrete aliases and uses platform-aware quoting; do not broaden the test to hostile
-free-form command text.
+The pane launch uses `new-pane --argv`, so the selected alias and discovered SSH executable remain
+literal process arguments. Include spaces, Unicode, quotes, and shell metacharacters in a test alias
+to verify that no shell interpretation occurs.
 
 ## Agent activity
 
@@ -260,7 +260,7 @@ spacing, real external-tool text, and the timing of visible lifecycle transition
 | C — convenience | Worktree/remote helpers needed pane cwd/title options that existed in JSON but not the flat CLI. | Fixed by exposing `--cwd`, `--title`, and `--keep-open` on `split`/`new-pane`; no protocol change. |
 | C — convenience | Repeated copy into the user extension directory is awkward. | Deliberately left as copy/clone or an explicit user-created symlink; no cross-platform link manager. |
 | C — convenience | Continuous validation would shorten edit cycles. | No `--watch`: reliable cross-platform signal handling/output coalescing is disproportionate, and validation is already fast and side-effect free. |
-| D — protocol | SSH and Docker need a pane running external argv, while `new-pane` accepts a shell command line. | Documented, not changed. Current examples constrain/quote machine-derived identifiers; a structured pane-spawn design should be considered only with broader real usage. |
+| D — protocol | SSH and Docker need a pane running external argv, while `new-pane` accepted only a shell command line. | Fixed with `new-pane --argv` and the JSON `argv` field, carried as direct launch intent through session wire, shared layout, profiles, and resurrection. |
 | D — protocol | A service has no initial focused-pane identity until it observes focus or derives context from public pane data. | Left visible in PR dashboard behavior; one example does not justify changing API v1. |
 | D — protocol | Picker action replies carried a `selected` field, so the CLI mistook mutations and refreshes for terminal selection. | Fixed the stream bridge to emit action events without exiting; only selection and cancellation terminate a picker. |
 | D — protocol | Dropping a wedged publisher on activation backpressure removed its stream but left its last rows visible. | Fixed the failure path to withdraw the pane's rows from the session server immediately. |
@@ -277,11 +277,16 @@ The repeated Python code is ordinary subprocess/NDJSON lifecycle handling; it st
 to each tool's domain logic and did not produce a common abstraction stable enough to justify an
 SDK. A small optional helper can be reconsidered after independent authors repeat the same mistakes.
 
-No new protocol primitive was required. The strongest remaining candidate is structured argv for a
-pane spawn, exposed by both Docker and SSH, but those examples remain safe with constrained,
-encoded values and platform quoting. Changing pane launch/session identity for that convenience
-would be premature during API v1 validation.
+Docker and SSH independently exposed the same process-model gap, so pane spawning now has structured
+argv rather than another quoting convention. Both examples use it directly; shell command strings
+remain available only when shell syntax is intentional.
 
-The public runtime is ready to accumulate real usage. Package installation may eventually be the
-next ecosystem-sized problem, but author feedback on interpreter portability, initial service
-context, and pane process launching should come first; none currently warrants more architecture.
+Built-in agent detection was split behind provider modules, but not extracted. Its process
+inspection and terminal-screen evidence are privileged core observations that the public extension
+surface deliberately does not expose. The `agent-activity` extension proves that third-party
+publishers can participate in the generic Activity/status model without requiring those privileges.
+Extraction should be reconsidered only if a detector can be implemented completely from the
+existing public streams.
+
+The subsystem is closed for this maturation pass. Package installation may eventually be the next
+ecosystem-sized problem, but it should be driven by author feedback rather than more architecture.

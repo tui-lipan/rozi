@@ -19,7 +19,7 @@ fn test_pane(generation: u64) -> ServerPane {
         generation,
         title: None,
         cwd: None,
-        command: None,
+        launch: None,
         keep_open: false,
         command_completed: false,
         cell: tui_lipan::TerminalCellSize::default(),
@@ -859,7 +859,7 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
             pane_id: 1,
             local: false,
             generation: 1,
-            command: None,
+            launch: None,
             cwd: None,
             cols: 20,
             rows: 5,
@@ -1111,7 +1111,7 @@ fn shared_layout_for_panes(panes: &[(PaneId, u64)]) -> SharedLayout {
                     title: None,
                     profile_name: None,
                     cwd: None,
-                    command: None,
+                    launch: None,
                     replay: false,
                     keep_open: false,
                     floating: false,
@@ -1386,7 +1386,7 @@ fn spawn_from_follower_is_rejected() {
             pane_id: 1,
             local: false,
             generation: 1,
-            command: None,
+            launch: None,
             cwd: None,
             cols: 20,
             rows: 5,
@@ -1413,7 +1413,7 @@ fn local_spawn(pane_id: PaneId, generation: u64) -> ClientMessage {
         pane_id,
         local: true,
         generation,
-        command: Some("true".to_string()),
+        launch: Some(crate::pane_launch::PaneLaunch::shell("true")),
         cwd: None,
         cols: 20,
         rows: 5,
@@ -1493,7 +1493,7 @@ fn colliding_spawn(pane_id: PaneId, local: bool, generation: u64, command: &str)
         pane_id,
         local,
         generation,
-        command: Some(command.to_string()),
+        launch: Some(crate::pane_launch::PaneLaunch::shell(command)),
         cwd: None,
         cols: 40,
         rows: 10,
@@ -2060,7 +2060,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             generation: 2,
             title: None,
             cwd: None,
-            command: None,
+            launch: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),
@@ -2172,7 +2172,7 @@ fn duplicate_spawn_is_rejected() {
             generation: 2,
             title: None,
             cwd: None,
-            command: None,
+            launch: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),
@@ -2196,7 +2196,7 @@ fn duplicate_spawn_is_rejected() {
         owner: None,
         pane_id: 1,
         generation: 3,
-        command: None,
+        launch: None,
         cwd: None,
         title: None,
         cols: 20,
@@ -2223,7 +2223,7 @@ fn exited_pane_can_be_respawned() {
             generation: 2,
             title: None,
             cwd: None,
-            command: None,
+            launch: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),
@@ -2248,7 +2248,7 @@ fn exited_pane_can_be_respawned() {
         owner: None,
         pane_id: 1,
         generation: 3,
-        command: Some("true".into()),
+        launch: Some(crate::pane_launch::PaneLaunch::shell("true")),
         cwd: None,
         title: None,
         cols: 20,
@@ -2280,7 +2280,7 @@ fn attach_reports_layout_and_panes() {
         generation: 8,
         title: Some("editor".into()),
         cwd: Some("/repo".into()),
-        command: None,
+        launch: None,
         keep_open: false,
         command_completed: false,
         cell: tui_lipan::TerminalCellSize::default(),
@@ -2468,7 +2468,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             generation: 2,
             title: None,
             cwd: None,
-            command: None,
+            launch: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),
@@ -2533,7 +2533,13 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 generation: id as u64,
                 title: Some(format!("pane-{id}")),
                 cwd: None,
-                command: Some("true".into()),
+                launch: Some(if id == 1 {
+                    crate::pane_launch::PaneLaunch::Direct {
+                        argv: vec!["printf".into(), "literal argument".into()],
+                    }
+                } else {
+                    crate::pane_launch::PaneLaunch::shell("true")
+                }),
                 keep_open: false,
                 command_completed: false,
                 cell: tui_lipan::TerminalCellSize::default(),
@@ -2588,6 +2594,12 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     assert!(restored.panes.contains_key(&1));
     assert!(!restored.panes.contains_key(&2));
     assert!(!restored.panes.contains_key(&crate::state::POPUP_PANE_ID));
+    assert_eq!(
+        restored.panes[&1].launch,
+        Some(crate::pane_launch::PaneLaunch::Direct {
+            argv: vec!["printf".into(), "literal argument".into()]
+        })
+    );
     assert!(
         restored
             .panes
@@ -2605,6 +2617,60 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn structured_argv_reaches_the_child_without_shell_interpretation() {
+    let mut server = SessionServer::new_named("dev");
+    let literal = "space; $HOME $(printf unsafe) 'quoted'";
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        launch: Some(crate::pane_launch::PaneLaunch::Direct {
+            argv: vec!["printf".into(), "%s".into(), literal.into()],
+        }),
+        cwd: None,
+        title: None,
+        cols: 80,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        while let Some(event) = server.events.try_pop() {
+            let _ = server.handle_event(event);
+        }
+        if server
+            .panes
+            .get(&1)
+            .is_some_and(|pane| pane.exited.is_some())
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let text = server
+        .panes
+        .get_mut(&1)
+        .expect("direct pane retained")
+        .screen_without_change()
+        .snapshot();
+    assert!(
+        text.contains(literal),
+        "argv was altered before exec: {text:?}"
+    );
+}
+
 /// A `keep_open` pane whose command finishes must not die: the server replaces the dead PTY with the
 /// interactive shell in place, and everything the command printed stays on screen above it.
 ///
@@ -2620,7 +2686,9 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
         owner: None,
         pane_id: 1,
         generation: 1,
-        command: Some("printf 'hello from the command\\n'; exit 3".to_string()),
+        launch: Some(crate::pane_launch::PaneLaunch::shell(
+            "printf 'hello from the command\\n'; exit 3",
+        )),
         cwd: None,
         title: None,
         cols: 40,
@@ -2707,10 +2775,9 @@ fn keep_open_recovers_terminal_modes_before_starting_the_shell() {
         owner: None,
         pane_id: 1,
         generation: 1,
-        command: Some(
-            "printf 'primary marker\\n\\033[?1049h\\033[?1003h\\033[?1006h\\033[?1004h\\033[?2004h\\033[?1h\\033=stale app'; exit 3"
-                .to_string(),
-        ),
+        launch: Some(crate::pane_launch::PaneLaunch::shell(
+            "printf 'primary marker\\n\\033[?1049h\\033[?1003h\\033[?1006h\\033[?1004h\\033[?2004h\\033[?1h\\033=stale app'; exit 3",
+        )),
         cwd: None,
         title: None,
         cols: 40,
@@ -2780,7 +2847,9 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
         owner: None,
         pane_id,
         generation: 1,
-        command: Some("printf 'popup result\\n'; exit 3".to_string()),
+        launch: Some(crate::pane_launch::PaneLaunch::shell(
+            "printf 'popup result\\n'; exit 3",
+        )),
         cwd: None,
         title: None,
         cols: 40,

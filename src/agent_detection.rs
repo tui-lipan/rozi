@@ -1,5 +1,25 @@
-use crate::platform::process::{ForegroundJob, ForegroundProcess};
+mod process;
+mod providers;
+
+use crate::platform::process::ForegroundJob;
+#[cfg(test)]
+use crate::platform::process::ForegroundProcess;
 use crate::session::protocol::{AgentKind, DetectedAgentState};
+
+use process::identify_job;
+
+#[derive(Clone, Copy)]
+struct AgentDetectionInput<'a> {
+    screen: &'a str,
+    title: &'a str,
+}
+
+/// One provider's translation from generic pane observations into the shared agent-status
+/// vocabulary. Providers remain in core because their evidence includes privileged screen and
+/// process state that the public extension surface intentionally does not expose.
+trait AgentDetector: Sync {
+    fn detect(&self, input: AgentDetectionInput<'_>) -> Option<DetectedAgentState>;
+}
 
 /// What one detection sweep saw.
 ///
@@ -24,201 +44,16 @@ pub(crate) fn detect(
     })
 }
 
-fn identify_job(job: &ForegroundJob) -> Option<AgentKind> {
-    for process in &job.processes {
-        if let Some(kind) = process.agent_hint.as_deref().and_then(parse_agent) {
-            return Some(kind);
-        }
-    }
-
-    job.processes
-        .iter()
-        .filter_map(|process| {
-            let (kind, wrapped) = identify_process(process)?;
-            let leader = process.pid == job.process_group_id;
-            Some(((leader as u8) * 2 + wrapped as u8, kind))
-        })
-        .max_by_key(|(score, _)| *score)
-        .map(|(_, kind)| kind)
+#[cfg(test)]
+fn identify_process(
+    process: &crate::platform::process::ForegroundProcess,
+) -> Option<(AgentKind, bool)> {
+    process::identify_process(process)
 }
 
-fn identify_process(process: &ForegroundProcess) -> Option<(AgentKind, bool)> {
-    if let Some(kind) = process
-        .executable
-        .as_deref()
-        .and_then(|path| parse_agent(path_basename(path)))
-    {
-        return Some((kind, false));
-    }
-    let argv0 = process
-        .argv
-        .first()
-        .map(String::as_str)
-        .unwrap_or(&process.name);
-    if let Some(kind) = parse_agent(path_basename(argv0)).or_else(|| parse_agent(&process.name)) {
-        return Some((kind, false));
-    }
-    identify_wrapped(&process.argv).map(|kind| (kind, true))
-}
-
-fn identify_wrapped(argv: &[String]) -> Option<AgentKind> {
-    let runtime = argv
-        .first()
-        .map(|value| normalized_name(path_basename(value)))?;
-    let mut candidates: Vec<&str> = Vec::new();
-    match runtime.as_str() {
-        "node" | "nodejs" | "bun" | "deno" | "python" | "python3" | "ruby" => {
-            candidates.extend(
-                argv.iter()
-                    .skip(1)
-                    .filter(|arg| !arg.starts_with('-'))
-                    .map(String::as_str),
-            );
-        }
-        "sh" | "bash" | "zsh" | "fish" | "cmd" | "powershell" | "pwsh" => {
-            for command in argv.iter().skip(1).filter(|arg| !arg.starts_with('-')) {
-                candidates.extend(command.split_whitespace());
-            }
-        }
-        "env" | "npm" | "npx" | "pnpm" | "pnpx" | "yarn" | "bunx" | "uv" | "uvx" => {
-            candidates.extend(
-                argv.iter()
-                    .skip(1)
-                    .filter(|arg| !arg.starts_with('-'))
-                    .map(String::as_str),
-            );
-        }
-        _ => candidates.extend(argv.iter().map(String::as_str)),
-    }
-    candidates.into_iter().find_map(agent_from_path)
-}
-
-fn agent_from_path(value: &str) -> Option<AgentKind> {
-    let token = value.trim_matches(|ch| matches!(ch, '\'' | '"' | ';' | '&'));
-    parse_agent(path_basename(token)).or_else(|| {
-        let normalized = token.replace('\\', "/").to_ascii_lowercase();
-        [
-            ("@anthropic-ai/claude-code", AgentKind::Claude),
-            ("@openai/codex", AgentKind::Codex),
-            ("opencode-ai", AgentKind::OpenCode),
-            ("/opencode/", AgentKind::OpenCode),
-            ("@google/gemini-cli", AgentKind::Gemini),
-            ("@github/copilot", AgentKind::GithubCopilot),
-            ("pi-coding-agent", AgentKind::Pi),
-        ]
-        .into_iter()
-        .find_map(|(needle, kind)| normalized.contains(needle).then_some(kind))
-    })
-}
-
+#[cfg(test)]
 fn parse_agent(value: &str) -> Option<AgentKind> {
-    match normalized_name(path_basename(value)).as_str() {
-        "pi" | "pi-coding-agent" => Some(AgentKind::Pi),
-        "claude" | "claude-code" => Some(AgentKind::Claude),
-        "codex" | "codex-cli" => Some(AgentKind::Codex),
-        "gemini" | "gemini-cli" => Some(AgentKind::Gemini),
-        "cursor" | "cursor-agent" => Some(AgentKind::Cursor),
-        "devin" | "devin-cli" => Some(AgentKind::Devin),
-        "agy" | "antigravity" | "antigravity-cli" => Some(AgentKind::Antigravity),
-        "cline" => Some(AgentKind::Cline),
-        "omp" => Some(AgentKind::Omp),
-        "mastracode" | "mastra-code" => Some(AgentKind::Mastracode),
-        "opencode" | "open-code" | "opencode-tui" => Some(AgentKind::OpenCode),
-        "copilot" | "github-copilot" | "ghcs" => Some(AgentKind::GithubCopilot),
-        "kimi" | "kimi-code" => Some(AgentKind::Kimi),
-        "kiro" | "kiro-cli" => Some(AgentKind::Kiro),
-        "droid" => Some(AgentKind::Droid),
-        "amp" | "amp-local" => Some(AgentKind::Amp),
-        "grok" | "grok-build" => Some(AgentKind::Grok),
-        "hermes" | "hermes-agent" => Some(AgentKind::Hermes),
-        "kilo" | "kilo-code" => Some(AgentKind::Kilo),
-        "qoder" | "qodercn" | "qodercli" | "qoderclicn" => Some(AgentKind::QoderCli),
-        "maki" => Some(AgentKind::Maki),
-        "aider" | "aider-chat" => Some(AgentKind::Aider),
-        "goose" | "goose-cli" => Some(AgentKind::Goose),
-        _ => None,
-    }
-}
-
-fn normalized_name(value: &str) -> String {
-    let mut value = value.trim().to_ascii_lowercase();
-    for suffix in [".exe", ".cmd", ".bat", ".ps1", ".js", ".mjs", ".py"] {
-        if value.ends_with(suffix) {
-            value.truncate(value.len() - suffix.len());
-            break;
-        }
-    }
-    value
-}
-
-fn path_basename(value: &str) -> &str {
-    value
-        .rsplit(['/', '\\'])
-        .find(|part| !part.is_empty())
-        .unwrap_or(value)
-}
-
-/// The dialog drawn on screen is the only evidence that a Claude Code run stopped for an answer:
-/// it reports nothing through its title (2.1.227 emits no `OSC 0` at all, spinner or otherwise).
-///
-/// Match its *structure* - the selection cursor sitting on a numbered choice - rather than the
-/// question above it. Those questions are ordinary English that varies per dialog ("do you want to
-/// proceed?" for a command, "would you like to proceed?" under a written plan, the file's own name
-/// for an edit), and worse, any pane can have them on screen without a dialog being open: a
-/// transcript that discusses approvals reads as blocked under prose matching. A cursored numbered
-/// option is drawn only while a dialog is actually waiting.
-fn claude_choice_dialog(screen: &str) -> bool {
-    screen.lines().any(|line| {
-        let Some(option) = line.trim_start().strip_prefix('❯') else {
-            return false;
-        };
-        let option = option.trim_start();
-        let index: String = option.chars().take_while(char::is_ascii_digit).collect();
-        !index.is_empty() && option[index.len()..].starts_with(". ")
-    })
-}
-
-/// Screen text that means a run is in flight.
-///
-/// `esc interrupt` is OpenCode's current spelling; the longer forms belong to Claude Code and
-/// Codex. OpenCode's is not a prefix of any other, so matching it costs nothing here.
-const INTERRUPT_HINTS: &[&str] = &[
-    "esc to interrupt",
-    "esc again to interrupt",
-    "press esc to interrupt",
-    "ctrl+c to interrupt",
-    "esc interrupt",
-];
-
-/// How far above the last written row an agent's status chrome can sit.
-///
-/// Claude Code's shortcut row is the final row and its spinner line rides just above the composer;
-/// OpenCode's shortcut row sits above its model and cwd rows. Eight covers both with room to spare
-/// while staying far from the transcript, which is the point: an interrupt hint is chrome, and
-/// chrome is drawn at the bottom of the screen. Found the hard way - an idle pane whose transcript
-/// discussed these very hints, 34 rows up, read as a run in flight.
-const FOOTER_ROWS: usize = 8;
-
-/// Whether the agent's *footer* says one of `needles`, as opposed to its transcript quoting it.
-fn footer_says(screen: &str, needles: &[&str]) -> bool {
-    screen
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .rev()
-        .take(FOOTER_ROWS)
-        .any(|line| needles.iter().any(|needle| line.contains(needle)))
-}
-
-/// OpenCode's subagent view, which replaces the composer and the status line - the only places a
-/// run's progress bar and interrupt hint are ever drawn - with a child-session navigator.
-///
-/// The parent's run continues underneath it. This screen simply cannot report on it, which is a
-/// different fact from seeing an idle prompt, and conflating the two turned every visit to a
-/// subagent into a finished run: the run clock restarted and a completion alert fired for work
-/// that never stopped. Match the navigator's own hint row rather than the heading, so a transcript
-/// that merely mentions a subagent is not mistaken for the view itself.
-fn opencode_subagent_view(screen: &str) -> bool {
-    screen.contains("parent up") && (screen.contains("prev left") || screen.contains("next right"))
+    providers::catalog::kind_from_name(value)
 }
 
 /// The agent state a pane's screen provides evidence for.
@@ -230,65 +65,10 @@ fn opencode_subagent_view(screen: &str) -> bool {
 fn detect_state(kind: AgentKind, screen: &str, title: &str) -> Option<DetectedAgentState> {
     let screen = screen.to_lowercase();
     let title = title.to_lowercase();
-    // Claude Code has an exact structural signature, so it decides on that alone. The loose prose
-    // patterns are the fallback for agents whose prompts we cannot recognize by shape; on a Claude
-    // pane they only add false positives, since "do you want to proceed?" is Claude's own wording
-    // and reads as blocked from any transcript that merely quotes it.
-    let blocked = if kind == AgentKind::Claude {
-        claude_choice_dialog(&screen)
-    } else {
-        [
-            "permission required",
-            "action required",
-            "do you want to proceed?",
-            "waiting for permission",
-            "allow command?",
-            "[y/n]",
-            "yes (y)",
-        ]
-        .iter()
-        .any(|pattern| screen.contains(pattern))
-            || title.contains("action required")
-            // Current OpenCode question prompts use this footer in every state: single choice,
-            // multi-select, custom answer, and review. Scope it to OpenCode so another program's
-            // ordinary dismiss hint cannot masquerade as an agent waiting for input.
-            || (kind == AgentKind::OpenCode
-                && screen.contains("esc dismiss")
-                && ["enter submit", "enter toggle", "enter confirm"]
-                    .iter()
-                    .any(|hint| screen.contains(hint)))
-    };
-    if blocked {
-        return Some(DetectedAgentState::Blocked);
-    }
-
-    let interrupt_hint = footer_says(&screen, INTERRUPT_HINTS);
-    let opencode_progress = screen
-        .chars()
-        .fold((0usize, false), |(run, found), ch| {
-            let run = if matches!(ch, '■' | '⬝') {
-                run + 1
-            } else {
-                0
-            };
-            (run, found || run >= 4)
-        })
-        .1;
-    let agent_working = match kind {
-        AgentKind::Claude => title
-            .chars()
-            .next()
-            .is_some_and(|ch| ('\u{2800}'..='\u{28ff}').contains(&ch)),
-        AgentKind::OpenCode => opencode_progress,
-        _ => false,
-    };
-    if interrupt_hint || agent_working {
-        return Some(DetectedAgentState::Working);
-    }
-    if kind == AgentKind::OpenCode && opencode_subagent_view(&screen) {
-        return None;
-    }
-    Some(DetectedAgentState::Idle)
+    providers::detector(kind).detect(AgentDetectionInput {
+        screen: &screen,
+        title: &title,
+    })
 }
 
 #[cfg(test)]

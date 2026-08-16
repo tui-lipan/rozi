@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import base64
 import glob
 import json
 import os
@@ -18,12 +17,6 @@ from pathlib import Path
 ROZI = os.environ.get("ROZI_BIN", "rozi")
 DESCRIPTION_WORKERS = 8
 DESCRIPTION_TIMEOUT_SECONDS = 2
-CONNECT_CODE = (
-    "import base64, os, sys; "
-    "decode=lambda value: base64.urlsafe_b64decode(value).decode('utf-8'); "
-    "executable=decode(sys.argv[1]); host=decode(sys.argv[2]); "
-    "os.execv(executable,[executable,'--',host])"
-)
 
 
 def notify_error(message: str) -> None:
@@ -210,29 +203,10 @@ def picker_rows(
     return rows, set(aliases)
 
 
-def encode_argument(value: str) -> str:
-    return base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii")
-
-
-def pane_command(ssh: str, alias: str) -> str:
-    # Rozi currently accepts one command string at this boundary. Keep every dynamic value in
-    # URL-safe base64, then recover structured argv in the pane before replacing Python with ssh.
-    argv = [
-        sys.executable,
-        "-c",
-        CONNECT_CODE,
-        encode_argument(ssh),
-        encode_argument(alias),
-    ]
-    if os.name == "nt":
-        return subprocess.list2cmdline(argv)
-    return shlex.join(argv)
-
-
 def open_host(ssh: str, alias: str) -> None:
     try:
         result = subprocess.run(
-            [ROZI, "new-pane", "--focus", pane_command(ssh, alias)],
+            [ROZI, "new-pane", "--focus", "--argv", ssh, "--", alias],
             capture_output=True,
             encoding="utf-8",
             errors="replace",

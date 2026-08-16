@@ -21,6 +21,7 @@ struct PaneInfo {
     title: String,
     workspace: usize,
     command: Option<String>,
+    argv: Option<Vec<String>>,
     cwd: Option<String>,
     status: String,
     reported_status: Option<String>,
@@ -75,6 +76,7 @@ pub(crate) fn handle_control_request(
         } => send_keys(ctx, target.or(envelope.request.source_pane), keys, literal),
         ControlCommand::NewPane {
             command,
+            argv,
             cwd,
             title,
             keep_open,
@@ -84,6 +86,7 @@ pub(crate) fn handle_control_request(
                 ctx,
                 envelope.request.source_pane,
                 command,
+                argv,
                 cwd,
                 title,
                 keep_open,
@@ -207,7 +210,18 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
                 id: pane.id,
                 title: pane.display_title(None),
                 workspace: workspace_index + 1,
-                command: pane.identity.command.clone(),
+                command: pane
+                    .identity
+                    .launch
+                    .as_ref()
+                    .and_then(crate::pane_launch::PaneLaunch::shell_command)
+                    .map(str::to_string),
+                argv: pane
+                    .identity
+                    .launch
+                    .as_ref()
+                    .and_then(crate::pane_launch::PaneLaunch::argv)
+                    .map(<[String]>::to_vec),
                 cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
                 status: pane.terminal.status_text(),
                 reported_status: pane
@@ -228,7 +242,18 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
             id: pane.id,
             title: pane.display_title(None),
             workspace: 0,
-            command: pane.identity.command.clone(),
+            command: pane
+                .identity
+                .launch
+                .as_ref()
+                .and_then(crate::pane_launch::PaneLaunch::shell_command)
+                .map(str::to_string),
+            argv: pane
+                .identity
+                .launch
+                .as_ref()
+                .and_then(crate::pane_launch::PaneLaunch::argv)
+                .map(<[String]>::to_vec),
             cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
             status: pane.terminal.status_text(),
             reported_status: pane
@@ -580,12 +605,20 @@ fn new_pane(
     ctx: &mut Context<AppRoot>,
     source: Option<PaneId>,
     command: Option<String>,
+    argv: Option<Vec<String>>,
     cwd: Option<String>,
     title: Option<String>,
     keep_open: bool,
     focus: bool,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
+    let launch = match requested_pane_launch(command, argv) {
+        Ok(launch) => launch,
+        Err(message) => {
+            let _ = reply.send(ControlResponse::error(message));
+            return Update::full();
+        }
+    };
     let scratch_source = source.is_some_and(|id| crate::scratchpad::contains(&ctx.state, id));
     if ctx.state.scratch_visible && source.is_some() && !scratch_source {
         let _ = reply.send(ControlResponse::error(
@@ -601,7 +634,7 @@ fn new_pane(
         ctx,
         crate::state::PendingSessionAction::NewPane {
             source,
-            command: command.clone(),
+            launch: launch.clone(),
             cwd: cwd.clone(),
             title: title.clone(),
             keep_open,
@@ -613,7 +646,7 @@ fn new_pane(
     }
     if scratch_source || (ctx.state.scratch_visible && source.is_none()) {
         let mut identity = PaneIdentity {
-            command,
+            launch,
             cwd,
             keep_open,
             ..PaneIdentity::default()
@@ -640,7 +673,7 @@ fn new_pane(
         ctx,
         source_workspace,
         source,
-        command,
+        launch,
         cwd,
         title,
         keep_open,
@@ -722,7 +755,7 @@ pub(crate) fn resolve_spawn_reply(
 pub(crate) fn new_pane_after_session(
     ctx: &mut Context<AppRoot>,
     source: Option<PaneId>,
-    command: Option<String>,
+    launch: Option<crate::pane_launch::PaneLaunch>,
     cwd: Option<String>,
     title: Option<String>,
     keep_open: bool,
@@ -738,7 +771,7 @@ pub(crate) fn new_pane_after_session(
         ctx,
         source_workspace,
         source,
-        command,
+        launch,
         cwd,
         title,
         keep_open,
@@ -751,14 +784,14 @@ fn spawn_new_pane(
     ctx: &mut Context<AppRoot>,
     source_workspace: usize,
     source: Option<PaneId>,
-    command: Option<String>,
+    launch: Option<crate::pane_launch::PaneLaunch>,
     cwd: Option<String>,
     title: Option<String>,
     keep_open: bool,
     focus: bool,
 ) -> (PaneId, Update) {
     let mut identity = PaneIdentity {
-        command,
+        launch,
         cwd,
         keep_open,
         ..PaneIdentity::default()
@@ -767,6 +800,20 @@ fn spawn_new_pane(
         identity.set_custom_title(title);
     }
     spawn_interactive_pane_with_focus(ctx, source_workspace, source, identity, Some(focus))
+}
+
+fn requested_pane_launch(
+    command: Option<String>,
+    argv: Option<Vec<String>>,
+) -> std::result::Result<Option<crate::pane_launch::PaneLaunch>, String> {
+    match (command, argv) {
+        (Some(_), Some(_)) => {
+            Err("new-pane accepts either `command` or `argv`, not both".to_string())
+        }
+        (Some(command), None) => Ok(Some(crate::pane_launch::PaneLaunch::shell(command))),
+        (None, Some(argv)) => crate::pane_launch::PaneLaunch::direct(argv).map(Some),
+        (None, None) => Ok(None),
+    }
 }
 
 fn workspace_for_source(
@@ -793,6 +840,19 @@ mod tests {
     use crate::state::{Pane, State};
     use std::sync::mpsc;
     use tui_lipan::TestBackend;
+
+    #[test]
+    fn new_pane_launch_requires_one_valid_process_model() {
+        assert_eq!(
+            requested_pane_launch(None, Some(vec!["tool".into(), "space; $literal".into()]))
+                .unwrap(),
+            Some(crate::pane_launch::PaneLaunch::Direct {
+                argv: vec!["tool".into(), "space; $literal".into()]
+            })
+        );
+        assert!(requested_pane_launch(None, Some(Vec::new())).is_err());
+        assert!(requested_pane_launch(Some("echo hi".into()), Some(vec!["echo".into()])).is_err());
+    }
 
     #[test]
     fn stale_extension_generation_is_rejected_at_execution_time() {
@@ -1032,6 +1092,7 @@ mod tests {
                 request: ControlRequest {
                     command: ControlCommand::NewPane {
                         command: None,
+                        argv: None,
                         cwd: None,
                         title: None,
                         keep_open: false,

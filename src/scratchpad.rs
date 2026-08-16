@@ -127,7 +127,13 @@ pub(crate) fn toggle(ctx: &mut Context<AppRoot>) -> Update {
         }
         ctx.state.scratch.layout_kind = ctx.state.config.layout.default;
         let identity = PaneIdentity {
-            command: ctx.state.config.scratchpad.command.clone(),
+            launch: ctx
+                .state
+                .config
+                .scratchpad
+                .command
+                .clone()
+                .map(crate::pane_launch::PaneLaunch::shell),
             cwd: ctx.state.config.scratchpad.cwd.clone(),
             ..PaneIdentity::default()
         };

@@ -44,6 +44,19 @@ pub(crate) fn handle_control_request(
     ctx: &mut Context<AppRoot>,
     envelope: ControlEnvelope,
 ) -> Update {
+    if envelope
+        .request
+        .extension
+        .as_ref()
+        .is_some_and(|provenance| {
+            !crate::config::provenance_is_active(&ctx.state.extension_generations, provenance)
+        })
+    {
+        let _ = envelope
+            .reply
+            .send(ControlResponse::error("extension generation is not active"));
+        return Update::none();
+    }
     let response = match envelope.request.command {
         ControlCommand::ListPanes => list_panes(ctx),
         ControlCommand::Metrics => {
@@ -134,7 +147,7 @@ pub(crate) fn handle_control_request(
         ControlCommand::Subscribe { .. } => {
             ControlResponse::error("subscribe is handled by the control listener")
         }
-        ControlCommand::Publish { .. } => {
+        ControlCommand::Publish => {
             ControlResponse::error("publish is handled by the control listener")
         }
         ControlCommand::Pick { .. } => {
@@ -768,6 +781,43 @@ mod tests {
     use std::sync::mpsc;
     use tui_lipan::TestBackend;
 
+    #[test]
+    fn stale_extension_generation_is_rejected_at_execution_time() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::Notify {
+                                message: "stale".to_string(),
+                                title: None,
+                                level: crate::control::NotifyLevel::Info,
+                            },
+                            source_pane: None,
+                            extension: Some(crate::config::ExtensionProvenance {
+                                id: "tools".to_string(),
+                                generation: "retired".to_string(),
+                            }),
+                        },
+                        reply,
+                    }))
+                    .unwrap();
+
+                let response = response.recv().unwrap();
+                assert!(!response.ok);
+                assert_eq!(
+                    response.error.as_deref(),
+                    Some("extension generation is not active")
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
     fn rect() -> FloatRect {
         FloatRect {
             x: 0.0,
@@ -849,6 +899,7 @@ mod tests {
                                 reason: Some("waiting".into()),
                             },
                             source_pane: None,
+                            extension: None,
                         },
                         reply,
                     }))
@@ -882,6 +933,7 @@ mod tests {
                                 reason: None,
                             },
                             source_pane: None,
+                            extension: None,
                         },
                         reply,
                     }))
@@ -940,6 +992,7 @@ mod tests {
                         focus,
                     },
                     source_pane: None,
+                    extension: None,
                 },
                 reply,
             },
@@ -1051,6 +1104,7 @@ mod tests {
                                         level: crate::control::NotifyLevel::Info,
                                     },
                                     source_pane: None,
+                                    extension: None,
                                 },
                                 reply: tx,
                             },
@@ -1072,6 +1126,7 @@ mod tests {
                                     level: crate::control::NotifyLevel::Info,
                                 },
                                 source_pane: None,
+                                extension: None,
                             },
                             reply: tx,
                         },
@@ -1147,6 +1202,7 @@ mod tests {
                                 text: "cargo test\n".into(),
                             },
                             source_pane: None,
+                            extension: None,
                         },
                         reply,
                     }))
@@ -1205,6 +1261,7 @@ mod tests {
                                 text: "hi".into(),
                             },
                             source_pane: None,
+                            extension: None,
                         },
                         reply,
                     }))
@@ -1240,6 +1297,7 @@ mod tests {
                         request: ControlRequest {
                             command: ControlCommand::ListPanes,
                             source_pane: None,
+                            extension: None,
                         },
                         reply,
                     }))
@@ -1267,6 +1325,7 @@ mod tests {
                         request: ControlRequest {
                             command: ControlCommand::Metrics,
                             source_pane: None,
+                            extension: None,
                         },
                         reply,
                     }))

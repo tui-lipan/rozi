@@ -18,6 +18,9 @@ pub struct ControlRequest {
     pub command: ControlCommand,
     #[serde(default)]
     pub source_pane: Option<PaneId>,
+    /// Automatically attached by the CLI when launched from an extension process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension: Option<crate::config::ExtensionProvenance>,
 }
 
 /// How many scrollback lines `capture-pane` should include when not using the visible grid.
@@ -123,12 +126,7 @@ pub enum ControlCommand {
     /// Publish the logical agents or activities running inside the calling pane, and receive
     /// activations for them. Unlike every other command this connection stays open in both
     /// directions; closing it withdraws the pane's rows. Reached through `rozi publish`.
-    Publish {
-        /// Stable extension owner. Set by the `rozi` CLI from `ROZI_EXTENSION`; omitted for
-        /// ordinary pane-local publishers.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        extension: Option<String>,
-    },
+    Publish,
     Subscribe {
         #[serde(default)]
         events: Vec<String>,
@@ -170,9 +168,6 @@ pub enum ControlCommand {
         /// Extra chords offered beside select and cancel, advertised in the footer.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         actions: Vec<crate::state::PickAction>,
-        /// Stable extension owner used to cancel stale pickers when that extension unloads.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        extension: Option<String>,
     },
 }
 
@@ -316,7 +311,7 @@ fn run_publish_stream(
     link: CommandLink<Msg>,
     stream_id: u64,
     requested_pane: Option<PaneId>,
-    extension: Option<String>,
+    extension: Option<crate::config::ExtensionProvenance>,
 ) {
     let Ok(reader_stream) = stream.try_clone() else {
         return;
@@ -409,7 +404,7 @@ fn run_pick_stream(
     placeholder: Option<String>,
     width: Option<u16>,
     actions: Vec<crate::state::PickAction>,
-    extension: Option<String>,
+    extension: Option<crate::config::ExtensionProvenance>,
 ) {
     let Ok(reader_stream) = stream.try_clone() else {
         return;
@@ -506,6 +501,15 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             return;
         }
     };
+    if let Some(provenance) = request.extension.clone() {
+        let (reply, authorized) = mpsc::channel();
+        link.send(Msg::AuthorizeExtensionControl { provenance, reply });
+        if authorized.recv_timeout(Duration::from_secs(10)) != Ok(true) {
+            let response = ControlResponse::error("extension generation is not active");
+            let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
+            return;
+        }
+    }
     if let ControlCommand::Subscribe { events } = &request.command {
         let mut kinds = std::collections::HashSet::new();
         for id in events {
@@ -516,6 +520,27 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             };
             kinds.insert(kind);
         }
+        static NEXT_SUBSCRIPTION_ID: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
+        let owned_subscription = request.extension.clone().map(|provenance| {
+            let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let (cancel, cancelled) = mpsc::sync_channel(1);
+            let (reply, opened) = mpsc::channel();
+            link.send(Msg::ExtensionSubscriptionOpen {
+                id,
+                provenance,
+                cancel,
+                reply,
+            });
+            (id, cancelled, opened)
+        });
+        if let Some((_, _, opened)) = &owned_subscription
+            && opened.recv_timeout(Duration::from_secs(10)) != Ok(true)
+        {
+            let response = ControlResponse::error("extension generation is not active");
+            let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
+            return;
+        }
         let rx = event_hub.subscribe((!kinds.is_empty()).then_some(kinds));
         let _ = writeln!(
             stream,
@@ -524,10 +549,16 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
         );
         let _ = stream.set_read_timeout(None);
         loop {
-            match rx.recv_timeout(Duration::from_secs(30)) {
+            if owned_subscription
+                .as_ref()
+                .is_some_and(|(_, cancelled, _)| cancelled.try_recv().is_ok())
+            {
+                break;
+            }
+            match rx.recv_timeout(Duration::from_secs(1)) {
                 Ok(event) => {
                     if writeln!(stream, "{event}").is_err() {
-                        return;
+                        break;
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -543,14 +574,18 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
                     };
                     let _ = stream.set_nonblocking(false);
                     if disconnected {
-                        return;
+                        break;
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
         }
+        if let Some((id, _, _)) = owned_subscription {
+            link.send(Msg::ExtensionSubscriptionClosed { id });
+        }
+        return;
     }
-    if let ControlCommand::Publish { extension } = &request.command {
+    if let ControlCommand::Publish = &request.command {
         static NEXT_PUBLISH_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let stream_id = NEXT_PUBLISH_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         run_publish_stream(
@@ -558,7 +593,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             link,
             stream_id,
             request.source_pane,
-            extension.clone(),
+            request.extension.clone(),
         );
         return;
     }
@@ -567,7 +602,6 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
         placeholder,
         width,
         actions,
-        extension,
     } = &request.command
     {
         static NEXT_PICK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -580,7 +614,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             placeholder.clone(),
             *width,
             actions.clone(),
-            extension.clone(),
+            request.extension.clone(),
         );
         return;
     }
@@ -640,6 +674,7 @@ mod tests {
                 action: "toggle-float".to_string(),
             },
             source_pane: Some(3),
+            extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -655,6 +690,7 @@ mod tests {
         let request = ControlRequest {
             command: ControlCommand::Metrics,
             source_pane: None,
+            extension: None,
         };
         assert_eq!(
             serde_json::to_string(&request).unwrap(),
@@ -674,6 +710,7 @@ mod tests {
                 scrollback: None,
             },
             source_pane: None,
+            extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         let round_tripped: ControlRequest = serde_json::from_str(&json).unwrap();
@@ -730,6 +767,7 @@ mod tests {
         let switch = ControlRequest {
             command: ControlCommand::SwitchWorkspace { index: 3 },
             source_pane: None,
+            extension: None,
         };
         let json = serde_json::to_string(&switch).unwrap();
         assert_eq!(
@@ -740,6 +778,7 @@ mod tests {
         let move_to = ControlRequest {
             command: ControlCommand::MoveToWorkspace { index: 4 },
             source_pane: None,
+            extension: None,
         };
         let json = serde_json::to_string(&move_to).unwrap();
         assert_eq!(
@@ -760,6 +799,7 @@ mod tests {
                 keep_open: Some(false),
             },
             source_pane: None,
+            extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -777,6 +817,7 @@ mod tests {
                 reason: Some("needs approval".into()),
             },
             source_pane: Some(3),
+            extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -803,9 +844,9 @@ mod tests {
                 placeholder: Some("Search branches…".into()),
                 width: None,
                 actions: Vec::new(),
-                extension: None,
             },
             source_pane: None,
+            extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(

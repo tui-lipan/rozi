@@ -65,6 +65,16 @@ pub fn isolate_user_dirs() -> &'static Path {
     scratch_root()
 }
 
+/// Build the real configured root with a live control endpoint inside the isolated test
+/// environment. Integration tests use this when `AppRoot::default()` would intentionally be too
+/// inert: the default root has no filesystem config, startup tasks, or listener.
+pub fn configured_app() -> crate::AppRoot {
+    let config = crate::config::load_config().config;
+    let (listener, guard) =
+        crate::control::bind_control_socket().expect("bind isolated test control endpoint");
+    crate::AppRoot::configured_for_test(config, listener, guard)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

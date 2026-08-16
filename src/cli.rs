@@ -51,6 +51,12 @@ pub(crate) struct PublishCli {
 }
 
 #[derive(Debug)]
+pub(crate) struct SubscribeCli {
+    socket: Option<PathBuf>,
+    events: Vec<String>,
+}
+
+#[derive(Debug)]
 pub(crate) struct PickCli {
     pub title: Option<String>,
     pub placeholder: Option<String>,
@@ -74,6 +80,7 @@ pub(crate) enum ParsedCli {
     Run(CliArgs),
     Control(ControlCli),
     Publish(PublishCli),
+    Subscribe(SubscribeCli),
     Pick(PickCli),
     Server {
         name: String,
@@ -544,6 +551,23 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     socket: reject_launch_flags(&cli, socket)?,
                 }));
             }
+            "subscribe" => {
+                let mut events = Vec::new();
+                let mut passthrough = false;
+                for arg in iter.by_ref() {
+                    if arg == "--" && !passthrough {
+                        passthrough = true;
+                    } else if !passthrough && arg.starts_with('-') {
+                        return Err(format!("unexpected subscribe flag `{arg}`"));
+                    } else {
+                        events.push(arg);
+                    }
+                }
+                return Ok(ParsedCli::Subscribe(SubscribeCli {
+                    socket: reject_launch_flags(&cli, socket)?,
+                    events,
+                }));
+            }
             "pick" => {
                 let mut title = None;
                 let mut placeholder = None;
@@ -792,6 +816,7 @@ fn control_request(command: control::ControlCommand) -> control::ControlRequest 
     control::ControlRequest {
         command,
         source_pane: std::env::var("ROZI_PANE").ok().and_then(|v| v.parse().ok()),
+        extension: crate::config::provenance_from_process(),
     }
 }
 
@@ -840,12 +865,8 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
             std::process::exit(2);
         }
     };
-    let request = control::ControlRequest {
-        command: control::ControlCommand::Publish {
-            extension: std::env::var("ROZI_EXTENSION").ok(),
-        },
-        source_pane,
-    };
+    let mut request = control_request(control::ControlCommand::Publish);
+    request.source_pane = source_pane;
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 
     let reader_stream = stream.try_clone()?;
@@ -880,6 +901,46 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
     for line in std::io::stdin().lock().lines() {
         let line = line?;
         writeln!(stream, "{line}")?;
+    }
+    Ok(())
+}
+
+/// Print matching application events as newline-delimited JSON until the connection closes.
+pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
+    let path = match discover_socket(command.socket) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    };
+    let mut stream = match IpcEndpoint::at_path(&path).connect() {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("could not connect to {}: {err}", path.display());
+            std::process::exit(2);
+        }
+    };
+    let request = control_request(control::ControlCommand::Subscribe {
+        events: command.events,
+    });
+    writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
+
+    let mut reader = BufReader::new(stream);
+    let mut response = String::new();
+    reader.read_line(&mut response)?;
+    let value: serde_json::Value = serde_json::from_str(&response).unwrap_or_default();
+    if value.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        if let Some(error) = value.get("error").and_then(|value| value.as_str()) {
+            eprintln!("{error}");
+        }
+        std::process::exit(1);
+    }
+
+    let mut stdout = std::io::stdout().lock();
+    for line in reader.lines() {
+        writeln!(stdout, "{}", line?)?;
+        stdout.flush()?;
     }
     Ok(())
 }
@@ -931,16 +992,12 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         (command.title, command.placeholder, None, Vec::new())
     };
 
-    let request = control::ControlRequest {
-        command: control::ControlCommand::Pick {
-            title,
-            placeholder,
-            width,
-            actions,
-            extension: std::env::var("ROZI_EXTENSION").ok(),
-        },
-        source_pane: None,
-    };
+    let request = control_request(control::ControlCommand::Pick {
+        title,
+        placeholder,
+        width,
+        actions,
+    });
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 
     let reader_stream = stream.try_clone()?;
@@ -1205,9 +1262,10 @@ pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
     }
     let entries = scan.entries();
     if json {
+        let document = crate::config::ExtensionListDocument::new(entries);
         println!(
             "{}",
-            serde_json::to_string_pretty(&entries).map_err(std::io::Error::other)?
+            serde_json::to_string_pretty(&document).map_err(std::io::Error::other)?
         );
         return Ok(());
     }
@@ -1269,9 +1327,10 @@ pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Res
     let extension = crate::config::check_extension(path);
     let info = &extension.info;
     if json {
+        let document = crate::config::ExtensionCheckDocument::new(info.clone());
         println!(
             "{}",
-            serde_json::to_string_pretty(info).map_err(std::io::Error::other)?
+            serde_json::to_string_pretty(&document).map_err(std::io::Error::other)?
         );
         return Ok(info.status == crate::config::ExtensionStatus::Loaded);
     }
@@ -1547,6 +1606,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "Raise a toast from a script",
             ),
             row("publish", "Publish activity rows over stdio"),
+            row("subscribe [EVENT...]", "Stream application events as JSON"),
             row(
                 "pick [--title T] [--placeholder P] [--json]",
                 "Choose a line of stdin in a modal picker",
@@ -2305,6 +2365,20 @@ mod tests {
             parse_cli_args(vec!["pick".into(), "--jsn".into()]).is_err(),
             "a mistyped flag must not be swallowed"
         );
+    }
+
+    #[test]
+    fn subscribe_accepts_an_optional_event_filter() {
+        let ParsedCli::Subscribe(command) = parse_cli_args(vec![
+            "subscribe".into(),
+            "pane-exited".into(),
+            "workspace-switched".into(),
+        ])
+        .expect("subscribe parses") else {
+            panic!("expected subscribe");
+        };
+        assert_eq!(command.events, ["pane-exited", "workspace-switched"]);
+        assert!(parse_cli_args(vec!["subscribe".into(), "--unknown".into()]).is_err());
     }
 
     /// `notify` is how a script reports an off-screen result, so its parsing has to survive

@@ -821,6 +821,9 @@ pub struct Config {
     pub services: Vec<ServiceConfig>,
     /// Stable IDs of extensions that are valid, compatible, unique, and enabled for this load.
     pub active_extensions: HashSet<String>,
+    /// Process-facing definitions used to preserve or rotate opaque runtime fencing tokens.
+    pub(crate) extension_runtime:
+        std::collections::BTreeMap<String, super::extensions::ExtensionRuntimeFingerprint>,
     pub logging: LoggingConfig,
     pub workbar: WorkbarConfig,
     /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
@@ -849,10 +852,16 @@ pub enum ServiceRestart {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServiceConfig {
     pub name: String,
-    pub run: String,
+    pub launch: ServiceLaunch,
     pub cwd: Option<String>,
     pub restart: ServiceRestart,
     pub env: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ServiceLaunch {
+    Direct(Vec<String>),
+    Shell(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1033,6 +1042,10 @@ pub enum UserCommandAction {
     Exec {
         command: String,
     },
+    /// Run an argv vector directly without a command shell.
+    ExecDirect {
+        argv: Vec<String>,
+    },
 }
 
 impl UserCommandAction {
@@ -1053,12 +1066,13 @@ impl UserCommandAction {
     }
 
     /// The command line or literal text the action carries, for labels and detail lines.
-    pub fn target(&self) -> &str {
+    pub fn target(&self) -> std::borrow::Cow<'_, str> {
         match self {
             Self::Run { command, .. } | Self::Popup { command, .. } | Self::Exec { command } => {
-                command
+                std::borrow::Cow::Borrowed(command)
             }
-            Self::Send(text) => text,
+            Self::Send(text) => std::borrow::Cow::Borrowed(text),
+            Self::ExecDirect { argv } => std::borrow::Cow::Owned(argv.join(" ")),
         }
     }
 }
@@ -1335,6 +1349,9 @@ fn user_command_action_label(action: &UserCommandAction) -> String {
         UserCommandAction::Exec { command } => {
             format!("Exec: {}", truncate_for_label(command))
         }
+        UserCommandAction::ExecDirect { argv } => {
+            format!("Exec: {}", truncate_for_label(&argv.join(" ")))
+        }
     }
 }
 
@@ -1393,6 +1410,7 @@ impl Default for Config {
             commands: Vec::new(),
             services: Vec::new(),
             active_extensions: HashSet::new(),
+            extension_runtime: std::collections::BTreeMap::new(),
             logging: LoggingConfig::default(),
             workbar: WorkbarConfig::default(),
             key_overrides: HashMap::new(),

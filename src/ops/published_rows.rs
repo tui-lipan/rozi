@@ -19,14 +19,13 @@ pub(crate) fn stream_opened(
     ctx: &mut Context<AppRoot>,
     stream_id: u64,
     requested_pane: Option<PaneId>,
-    extension: Option<String>,
+    extension: Option<crate::config::ExtensionProvenance>,
     sender: std::sync::mpsc::SyncSender<String>,
     ack: std::sync::mpsc::Sender<std::result::Result<PaneId, String>>,
 ) -> Update {
-    if extension
-        .as_ref()
-        .is_some_and(|id| !ctx.state.config.active_extensions.contains(id))
-    {
+    if extension.as_ref().is_some_and(|provenance| {
+        !crate::config::provenance_is_active(&ctx.state.extension_generations, provenance)
+    }) {
         let _ = ack.send(Err("extension is not active".to_string()));
         return Update::none();
     }
@@ -114,7 +113,7 @@ pub(crate) fn unload_extensions(
             stream
                 .extension
                 .as_ref()
-                .is_some_and(|id| stale_extensions.contains(id))
+                .is_some_and(|provenance| stale_extensions.contains(&provenance.id))
                 .then_some(*pane_id)
         })
         .collect();
@@ -194,11 +193,15 @@ mod tests {
         sender: std::sync::mpsc::SyncSender<String>,
     ) {
         let (ack, reply) = mpsc::channel();
+        let extension = extension.map(|id| crate::config::ExtensionProvenance {
+            id: id.to_string(),
+            generation: backend.state().extension_generations[id].clone(),
+        });
         backend
             .dispatch(crate::Msg::PublishStreamOpen {
                 stream_id,
                 requested_pane,
-                extension: extension.map(str::to_string),
+                extension,
                 sender,
                 ack,
             })
@@ -288,9 +291,8 @@ mod tests {
             let outbound = attach(backend);
             backend
                 .state_mut()
-                .config
-                .active_extensions
-                .insert("dashboard".to_string());
+                .extension_generations
+                .insert("dashboard".to_string(), "generation-a".to_string());
             let (old_tx, old_rx) = std::sync::mpsc::sync_channel(1);
             open_stream(backend, 1, Some(1), Some("dashboard"), old_tx);
             let (new_tx, _new_rx) = std::sync::mpsc::sync_channel(1);
@@ -341,16 +343,16 @@ mod tests {
             let (tx, rx) = std::sync::mpsc::sync_channel(1);
             backend
                 .state_mut()
-                .config
-                .active_extensions
-                .insert("dashboard".to_string());
+                .extension_generations
+                .insert("dashboard".to_string(), "generation-a".to_string());
             open_stream(backend, 1, None, Some("dashboard"), tx);
             assert_eq!(
                 backend
                     .state_mut()
                     .publish_streams
                     .get(&1)
-                    .and_then(|stream| stream.extension.as_deref()),
+                    .and_then(|stream| stream.extension.as_ref())
+                    .map(|provenance| provenance.id.as_str()),
                 Some("dashboard")
             );
             backend
@@ -377,7 +379,10 @@ mod tests {
                 .dispatch(crate::Msg::PublishStreamOpen {
                     stream_id: 1,
                     requested_pane: None,
-                    extension: Some("dashboard".into()),
+                    extension: Some(crate::config::ExtensionProvenance {
+                        id: "dashboard".to_string(),
+                        generation: "retired".to_string(),
+                    }),
                     sender: tx,
                     ack,
                 })

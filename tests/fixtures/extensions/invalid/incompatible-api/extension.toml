@@ -1,0 +1,7 @@
+[extension]
+id = "future-api"
+api = 2
+
+[[commands]]
+id = "open"
+exec = ["program"]

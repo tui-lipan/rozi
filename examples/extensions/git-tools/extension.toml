@@ -8,9 +8,9 @@ api = 1
 [[commands]]
 id = "branches"
 label = "Branches…"
-exec = "python3 \"$ROZI_EXTENSION_DIR/bin/git_tools.py\" branches"
+exec = ["python3", "{extension_dir}/bin/git_tools.py", "branches"]
 
 [[commands]]
 id = "worktrees"
 label = "Worktrees…"
-exec = "python3 \"$ROZI_EXTENSION_DIR/bin/git_tools.py\" worktrees"
+exec = ["python3", "{extension_dir}/bin/git_tools.py", "worktrees"]

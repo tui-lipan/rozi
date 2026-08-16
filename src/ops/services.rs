@@ -1,4 +1,4 @@
-use crate::config::{ServiceConfig, expand_path};
+use crate::config::{ServiceConfig, ServiceLaunch, expand_path};
 use crate::platform::command::{CommandGroup, ShellEnv, configure_command_group};
 use crate::state::{DormantReason, DormantService, PendingRestart, RunningService, State};
 use crate::{AppRoot, Msg};
@@ -76,11 +76,29 @@ pub(crate) fn spawn_service_child(
     command_shell: Option<&[String]>,
     control_socket: Option<&std::path::Path>,
 ) -> std::io::Result<(std::process::Child, CommandGroup)> {
-    let runner =
-        crate::platform::command::resolve_command_shell(command_shell, &ShellEnv::from_process());
-    let mut command = std::process::Command::new(&runner.program);
-    command.args(&runner.args);
-    command.arg(&config.run);
+    let mut command = match &config.launch {
+        ServiceLaunch::Direct(argv) => {
+            let Some((program, args)) = argv.split_first() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "direct service argv is empty",
+                ));
+            };
+            let mut command = std::process::Command::new(program);
+            command.args(args);
+            command
+        }
+        ServiceLaunch::Shell(command_line) => {
+            let runner = crate::platform::command::resolve_command_shell(
+                command_shell,
+                &ShellEnv::from_process(),
+            );
+            let mut command = std::process::Command::new(&runner.program);
+            command.args(&runner.args);
+            command.arg(command_line);
+            command
+        }
+    };
     if let Some(cwd) = &config.cwd {
         let expanded = expand_path(cwd);
         command.current_dir(expanded);
@@ -269,14 +287,19 @@ mod tests {
     use crate::config::ServiceRestart;
     use std::collections::BTreeMap;
 
+    fn shell(command: impl Into<String>) -> ServiceLaunch {
+        ServiceLaunch::Shell(command.into())
+    }
+
     #[test]
     fn spawn_and_terminate_service() {
         let config = ServiceConfig {
             name: "test-sleeper".to_string(),
-            #[cfg(unix)]
-            run: "sleep 10".to_string(),
-            #[cfg(windows)]
-            run: "ping 127.0.0.1 -n 10".to_string(),
+            launch: shell(if cfg!(windows) {
+                "ping 127.0.0.1 -n 10"
+            } else {
+                "sleep 10"
+            }),
             cwd: None,
             restart: ServiceRestart::Never,
             env: BTreeMap::new(),
@@ -298,10 +321,10 @@ mod tests {
         let _ = std::fs::remove_file(&out);
         let config = ServiceConfig {
             name: "env-probe".to_string(),
-            run: format!(
+            launch: shell(format!(
                 "printf '%s\\n%s\\n%s' \"$ROZI_BIN\" \"$ROZI_SERVICE\" \"$ROZI\" > '{}'",
                 out.display()
-            ),
+            )),
             cwd: None,
             restart: ServiceRestart::Never,
             env: BTreeMap::new(),
@@ -328,10 +351,10 @@ mod tests {
         let out = directory.path().join("environment.txt");
         let config = ServiceConfig {
             name: "git-tools.watch".to_string(),
-            run: format!(
+            launch: shell(format!(
                 "printf '%s\\n%s\\n%s' \"$ROZI_EXTENSION\" \"$ROZI_EXTENSION_DIR\" \"$PWD\" > '{}'",
                 out.display()
-            ),
+            )),
             cwd: Some(directory.path().display().to_string()),
             restart: ServiceRestart::Never,
             env: BTreeMap::from([
@@ -365,10 +388,11 @@ mod tests {
     fn reap_if_exited_waits_for_the_child_then_reaps_it_once() {
         let config = ServiceConfig {
             name: "test-reaper".to_string(),
-            #[cfg(unix)]
-            run: "sleep 0.2".to_string(),
-            #[cfg(windows)]
-            run: "ping 127.0.0.1 -n 2".to_string(),
+            launch: shell(if cfg!(windows) {
+                "ping 127.0.0.1 -n 2"
+            } else {
+                "sleep 0.2"
+            }),
             cwd: None,
             restart: ServiceRestart::Never,
             env: BTreeMap::new(),
@@ -421,7 +445,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Default::default());
         let config = ServiceConfig {
             name: "flaky".to_string(),
-            run: "does-not-matter".to_string(),
+            launch: shell("does-not-matter"),
             cwd: None,
             restart: ServiceRestart::OnFailure,
             env: BTreeMap::new(),
@@ -461,7 +485,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Default::default());
         let config = ServiceConfig {
             name: "looper".to_string(),
-            run: "does-not-matter".to_string(),
+            launch: shell("does-not-matter"),
             cwd: None,
             restart: ServiceRestart::OnFailure,
             env: BTreeMap::new(),
@@ -505,7 +529,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Default::default());
         let config = ServiceConfig {
             name: "once".to_string(),
-            run: "does-not-matter".to_string(),
+            launch: shell("does-not-matter"),
             cwd: None,
             restart: ServiceRestart::Never,
             env: BTreeMap::new(),
@@ -524,10 +548,11 @@ mod tests {
     fn long_running_service(name: &str) -> ServiceConfig {
         ServiceConfig {
             name: name.to_string(),
-            #[cfg(unix)]
-            run: "sleep 30".to_string(),
-            #[cfg(windows)]
-            run: "ping 127.0.0.1 -n 30".to_string(),
+            launch: shell(if cfg!(windows) {
+                "ping 127.0.0.1 -n 30"
+            } else {
+                "sleep 30"
+            }),
             cwd: None,
             restart: ServiceRestart::OnFailure,
             env: BTreeMap::from([
@@ -594,5 +619,163 @@ mod tests {
         assert!(state.services.running.is_empty());
         assert!(state.services.pending.is_empty());
         assert!(state.services.dormant.is_empty());
+    }
+
+    #[test]
+    // The helper process is itself terminated as part of the service job/process group. It cannot
+    // wait for descendants whose survival is what the parent test is measuring.
+    #[allow(clippy::zombie_processes)]
+    fn service_process_helper() {
+        let Ok(role) = std::env::var("ROZI_TEST_SERVICE_ROLE") else {
+            return;
+        };
+        let root = std::path::PathBuf::from(std::env::var_os("ROZI_TEST_SERVICE_ROOT").unwrap());
+        match role.as_str() {
+            "probe" => {
+                std::fs::write(
+                    root.join("probe.txt"),
+                    format!(
+                        "{}\n{}",
+                        std::env::current_dir().unwrap().display(),
+                        std::env::var("ROZI_TEST_SERVICE_VALUE").unwrap()
+                    ),
+                )
+                .unwrap();
+            }
+            "parent" => {
+                while !root.join("go").exists() {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let child = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "ops::services::tests::service_process_helper",
+                        "--nocapture",
+                    ])
+                    .env("ROZI_TEST_SERVICE_ROLE", "child")
+                    .spawn()
+                    .unwrap();
+                std::fs::write(root.join("child.pid"), child.id().to_string()).unwrap();
+                loop {
+                    std::thread::sleep(Duration::from_secs(60));
+                }
+            }
+            "child" => {
+                let child = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "ops::services::tests::service_process_helper",
+                        "--nocapture",
+                    ])
+                    .env("ROZI_TEST_SERVICE_ROLE", "leaf")
+                    .spawn()
+                    .unwrap();
+                std::fs::write(root.join("leaf.pid"), child.id().to_string()).unwrap();
+                loop {
+                    std::thread::sleep(Duration::from_secs(60));
+                }
+            }
+            "leaf" => loop {
+                std::thread::sleep(Duration::from_secs(60));
+            },
+            _ => panic!("unknown helper role"),
+        }
+    }
+
+    #[test]
+    fn direct_service_preserves_unicode_space_paths_and_argument_boundaries() {
+        let directory = tempfile::Builder::new()
+            .prefix("rozi service ünicode ")
+            .tempdir()
+            .unwrap();
+        let executable_name = if cfg!(windows) {
+            "probe helper.exe"
+        } else {
+            "probe helper"
+        };
+        let executable = directory.path().join(executable_name);
+        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        let cwd = directory.path().join("working dir 東京");
+        std::fs::create_dir(&cwd).unwrap();
+        let value = "one argument with spaces 東京";
+        let config = ServiceConfig {
+            name: "direct-probe".to_string(),
+            launch: ServiceLaunch::Direct(vec![
+                executable.display().to_string(),
+                "--exact".to_string(),
+                "ops::services::tests::service_process_helper".to_string(),
+                "--nocapture".to_string(),
+            ]),
+            cwd: Some(cwd.display().to_string()),
+            restart: ServiceRestart::Never,
+            env: BTreeMap::from([
+                ("ROZI_TEST_SERVICE_ROLE".to_string(), "probe".to_string()),
+                (
+                    "ROZI_TEST_SERVICE_ROOT".to_string(),
+                    directory.path().display().to_string(),
+                ),
+                ("ROZI_TEST_SERVICE_VALUE".to_string(), value.to_string()),
+            ]),
+        };
+        let (mut child, _group) = spawn_service_child(&config, None, None).unwrap();
+        assert!(child.wait().unwrap().success());
+        let output = std::fs::read_to_string(directory.path().join("probe.txt")).unwrap();
+        assert_eq!(output, format!("{}\n{value}", cwd.display()));
+    }
+
+    #[test]
+    fn terminating_a_service_kills_its_child_and_grandchild() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = ServiceConfig {
+            name: "tree".to_string(),
+            launch: ServiceLaunch::Direct(vec![
+                std::env::current_exe().unwrap().display().to_string(),
+                "--exact".to_string(),
+                "ops::services::tests::service_process_helper".to_string(),
+                "--nocapture".to_string(),
+            ]),
+            cwd: None,
+            restart: ServiceRestart::Never,
+            env: BTreeMap::from([
+                ("ROZI_TEST_SERVICE_ROLE".to_string(), "parent".to_string()),
+                (
+                    "ROZI_TEST_SERVICE_ROOT".to_string(),
+                    directory.path().display().to_string(),
+                ),
+            ]),
+        };
+        let (child, group) = spawn_service_child(&config, None, None).unwrap();
+        std::fs::write(directory.path().join("go"), "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !directory.path().join("child.pid").exists()
+            || !directory.path().join("leaf.pid").exists()
+        {
+            assert!(Instant::now() < deadline, "service tree did not start");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let child_pid: u32 = std::fs::read_to_string(directory.path().join("child.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let leaf_pid: u32 = std::fs::read_to_string(directory.path().join("leaf.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        terminate_service(RunningService {
+            config,
+            child,
+            group,
+            started_at: Instant::now(),
+            backoff_delay: INITIAL_BACKOFF,
+            consecutive_failures: 0,
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while crate::platform::command::process_is_alive(child_pid)
+            || crate::platform::command::process_is_alive(leaf_pid)
+        {
+            assert!(Instant::now() < deadline, "service descendants survived");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }

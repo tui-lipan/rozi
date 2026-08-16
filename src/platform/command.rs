@@ -147,6 +147,31 @@ pub(crate) fn configure_command_group(command: &mut std::process::Command) {
 #[cfg(windows)]
 pub(crate) fn configure_command_group(_command: &mut std::process::Command) {}
 
+#[cfg(all(test, unix))]
+pub(crate) fn process_is_alive(pid: u32) -> bool {
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().kind() == std::io::ErrorKind::PermissionDenied
+}
+
+#[cfg(all(test, windows))]
+pub(crate) fn process_is_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut code = 0;
+        let alive = GetExitCodeProcess(handle, &mut code) != 0 && code == 259;
+        CloseHandle(handle);
+        alive
+    }
+}
+
 #[cfg(unix)]
 #[derive(Debug)]
 pub struct CommandGroup(pub(crate) libc::pid_t);

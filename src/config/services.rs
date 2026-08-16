@@ -55,7 +55,7 @@ pub(crate) fn build_services(
 
         services.push(ServiceConfig {
             name,
-            run,
+            launch: super::schema::ServiceLaunch::Shell(run),
             cwd,
             restart,
             env: service.env,

@@ -103,7 +103,7 @@ pub(crate) fn execute_user_command_action_with_env(
 ) -> Update {
     match action {
         // `Exec` needs no session: it starts no PTY, so there is nothing for a session to own.
-        UserCommandAction::Exec { .. } => {}
+        UserCommandAction::Exec { .. } | UserCommandAction::ExecDirect { .. } => {}
         UserCommandAction::Run { .. } | UserCommandAction::Popup { .. } => {
             if let Some(update) = crate::ops::session::ensure_session_for_pty(
                 ctx,
@@ -155,6 +155,7 @@ pub(crate) fn execute_user_command_action_with_env(
             Update::full()
         }
         UserCommandAction::Exec { command } => exec_user_command(ctx, command, env),
+        UserCommandAction::ExecDirect { argv } => exec_direct_user_command(ctx, argv, env),
         UserCommandAction::Popup { command, keep_open } => crate::popup::open(
             ctx,
             command.clone(),
@@ -186,6 +187,35 @@ fn exec_user_command(
         ctx.state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
     );
+    let mut argv = vec![runner.program];
+    argv.extend(runner.args);
+    argv.push(command.to_string());
+    exec_argv(ctx, argv, crate::config::truncate_for_label(command), env)
+}
+
+fn exec_direct_user_command(
+    ctx: &mut Context<AppRoot>,
+    argv: &[String],
+    env: Vec<(String, String)>,
+) -> Update {
+    exec_argv(
+        ctx,
+        argv.to_vec(),
+        crate::config::truncate_for_label(&argv.join(" ")),
+        env,
+    )
+}
+
+fn exec_argv(
+    ctx: &mut Context<AppRoot>,
+    argv: Vec<String>,
+    label: String,
+    env: Vec<(String, String)>,
+) -> Update {
+    let Some((program, args)) = argv.split_first() else {
+        crate::pty_events::notify_error(ctx, "Command failed", "direct command argv is empty");
+        return Update::none();
+    };
     let cwd = crate::pane_lifecycle::focused_spawn_cwd(&ctx.state);
     let mut environment = vec![("ROZI".to_string(), "1".to_string())];
     if let Some(path) = ctx.state.control_socket_path.as_deref() {
@@ -200,13 +230,12 @@ fn exec_user_command(
     let Some(link) = ctx.state.command_link.clone() else {
         return Update::none();
     };
-    let command = command.to_string();
-    let label = crate::config::truncate_for_label(&command);
+    let program = program.clone();
+    let args = args.to_vec();
     std::thread::spawn(move || {
-        let mut process = std::process::Command::new(runner.program);
+        let mut process = std::process::Command::new(program);
         process
-            .args(runner.args)
-            .arg(&command)
+            .args(args)
             .envs(environment)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -1427,6 +1456,7 @@ mod tests {
                                 action: "command-palette".into(),
                             },
                             source_pane: None,
+                            extension: None,
                         },
                         reply,
                     }))

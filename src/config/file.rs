@@ -564,12 +564,13 @@ fn load_config_from_text_with_extensions(
     let mut config = Config::default();
 
     let Some(parsed) = parse_file_config(text, path, &mut warnings) else {
-        let (commands, services, active_extensions, extension_warnings) =
+        let (commands, services, active_extensions, extension_runtime, extension_warnings) =
             extensions.into_contributions(&[]);
         warnings.extend(extension_warnings);
         config.commands = commands;
         config.active_extensions = active_extensions;
-        config.services = crate::config::services::build_services(services, &mut warnings);
+        config.extension_runtime = extension_runtime;
+        config.services = services;
         return LoadedConfig { config, warnings };
     };
 
@@ -877,19 +878,24 @@ fn load_config_from_text_with_extensions(
     config.hints = build_hints(parsed.hints, &mut warnings);
     config.hooks = build_hooks(parsed.hooks, &mut warnings);
     config.commands = build_named_commands(parsed.commands, &mut warnings);
-    let (extension_commands, extension_services, active_extensions, extension_warnings) =
-        extensions.into_contributions(&parsed.extensions.disabled);
+    let (
+        extension_commands,
+        extension_services,
+        active_extensions,
+        extension_runtime,
+        extension_warnings,
+    ) = extensions.into_contributions(&parsed.extensions.disabled);
     warnings.extend(extension_warnings);
     config.active_extensions = active_extensions;
+    config.extension_runtime = extension_runtime;
     config.commands.extend(extension_commands);
     let named_ids: HashSet<_> = config
         .commands
         .iter()
         .map(|command| command.id.clone())
         .collect();
-    let mut raw_services = parsed.services;
-    raw_services.extend(extension_services);
-    config.services = crate::config::services::build_services(raw_services, &mut warnings);
+    config.services = crate::config::services::build_services(parsed.services, &mut warnings);
+    config.services.extend(extension_services);
     let mut user_commands = Vec::new();
     config.key_overrides = build_key_overrides(
         parsed.keys,

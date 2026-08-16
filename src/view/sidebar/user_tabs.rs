@@ -14,7 +14,7 @@ fn action_glyph(action: &UserCommandAction) -> (&'static str, &'static str) {
         // Unreachable today: a launcher entry never parses into `Exec` (see
         // `SidebarLauncherEntrySpec::action`). Kept concrete so adding it there is a visible
         // decision rather than a glyph that silently reads "run".
-        UserCommandAction::Exec { .. } => ("▹", "exec"),
+        UserCommandAction::Exec { .. } | UserCommandAction::ExecDirect { .. } => ("▹", "exec"),
     }
 }
 
@@ -29,6 +29,7 @@ pub(super) fn launcher_rows(
         .enumerate()
         .map(|(entry_index, entry)| {
             let (glyph, kind) = action_glyph(&entry.action);
+            let target = entry.action.target();
             let row = Row::new(entry.label.clone())
                 .title_style(super::super::fg_only(&ctx.state.theme.primary))
                 .glyph(
@@ -41,7 +42,7 @@ pub(super) fn launcher_rows(
                 // reopening their config.
                 .detail(kind, super::super::fg_only(&ctx.state.theme.muted))
                 .detail(
-                    row::truncate(entry.action.target(), 24),
+                    row::truncate(target.as_ref(), 24),
                     super::super::fg_only(&ctx.state.theme.muted).dim(),
                 );
             SidebarRow::item(

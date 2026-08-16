@@ -68,11 +68,11 @@ contract changes incompatibly.
 [[commands]]
 id = "branches"
 label = "Switch branch"
-exec = "./bin/branches"
+exec = ["python3", "{extension_dir}/bin/branches.py", "--all"]
 
 [[services]]
 name = "watch"
-run = "./bin/watch"
+exec = ["./bin/watch", "--json"]
 restart = "on-failure"
 ```
 
@@ -80,9 +80,12 @@ A command is invoked behavior: it may be keyless, bound under `[keys]`, selected
 or called with `rozi run-action git-tools.branches`. A service is a long-lived helper supervised
 with restart policy and backoff.
 
-Command fields match [`[[commands]]`](configuration.md#commands); service fields match
-[`[[services]]`](configuration.md#services). A validation error in either declaration invalidates
-the extension atomically rather than loading only a surprising subset.
+`exec` is an argv array and launches directly without a command shell. Use `shell = "..."` only
+when shell syntax such as a pipeline is intentional. Extension manifests do not accept the
+application config's legacy shell-string `exec`/`run` forms. A command may instead declare
+`send = "..."`; each command must declare exactly one action, and each service exactly one of
+`exec` or `shell`. A validation error invalidates the extension atomically rather than loading only
+a surprising subset.
 
 Hooks are intentionally absent. A service holding `rozi subscribe` retains state and avoids one
 process per event. Sidebar/workbar/picker declarations are also absent: runtime UI is expressed
@@ -111,8 +114,14 @@ Every extension command and service receives:
 | --- | --- |
 | `ROZI_EXTENSION` | Stable manifest id, such as `git-tools` |
 | `ROZI_EXTENSION_DIR` | Absolute lexical installation directory |
+| `ROZI_EXTENSION_GENERATION` | Opaque runtime fencing token |
 
-These names are owned by Rozi. A service manifest attempting to override either is invalid.
+These names are owned by Rozi. A service manifest attempting to override one is invalid.
+
+`ROZI_EXTENSION_GENERATION` is not authentication. The CLI automatically attaches the id and token
+to extension-originated control traffic, and Rozi rejects a retired generation. Its purpose is to
+fence a stale process after reload even if process-tree termination fails; another process running
+as the same user remains inside the same trust boundary.
 
 `ROZI_EXTENSION_DIR` is lexical rather than canonicalized. A symlink installed as
 `extensions/git-tools` therefore reports that installation path, not a surprising target elsewhere.
@@ -122,6 +131,10 @@ Relative executable paths beginning `./` or `../` are resolved against the insta
 at load time. Explicit absolute and `~` paths are normalized too. A command still executes with the
 focused pane/project as its working directory. A service defaults its cwd to the installation
 directory; its explicit relative `cwd` is resolved there.
+
+Direct argv supports one platform-independent substitution:
+`{extension_dir}`. Generic `$VAR`, `${VAR}`, and `%VAR%` expansion is deliberately absent from
+direct execution. An explicit `shell` command may use that shell's normal environment syntax.
 
 Symlinked installation directories are supported. Broken links, missing manifests or executable
 targets, inaccessible files, and non-UTF-8 installation paths that cannot be represented in the
@@ -149,8 +162,11 @@ rozi list-extensions --json
 
 Normal output shows loaded, disabled, invalid, incompatible, and duplicate candidates. Verbose
 output adds installation and manifest paths, API generation, public command/service ids, resolved
-executable paths, and every validation error. JSON is undecorated structured data; public ids such
-as `git-tools.branches` are exposed, never internal registry ids.
+executable paths, and every validation error. JSON is a tooling contract with its own
+`schema_version` (currently `1`), independent of extension runtime API `1`; `list-extensions`
+returns `{ "schema_version": 1, "extensions": [...] }`, while `check-extension` returns one
+`extension` field. Public ids such as `git-tools.branches` are exposed, never internal registry
+ids. The manifest JSON Schema is [`schemas/extension.schema.json`](../schemas/extension.schema.json).
 
 ## Author workflow and reload
 
@@ -163,8 +179,12 @@ rozi list-extensions --verbose
 
 Rozi deliberately does not watch extension trees because extensions may write their own state
 there. A successful explicit reload makes commands, bindings, palette entries, services, open
-extension pickers, and published rows agree with the newly valid/enabled set. Removed services
-terminate, materially changed services restart once, and unchanged services keep running.
+extension pickers, published rows, and subscriptions agree with the newly valid/enabled set.
+Removed services terminate, materially changed services restart once, and unchanged services keep
+running. Presentation-only edits such as title, label, description, or package version do not
+rotate the runtime generation; process-facing command, service, API, environment, or path changes
+do. Returning from revision A to B and back to A creates a new opaque token rather than reviving the
+original A generation.
 
 Disable without deleting:
 

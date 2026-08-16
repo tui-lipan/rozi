@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rozi.tui-lipan.dev/schemas/extension.schema.json",
+  "title": "Rozi extension manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["extension"],
+  "properties": {
+    "extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "api"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+        "api": { "const": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+          "label": { "type": "string" },
+          "exec": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "shell": { "type": "string", "minLength": 1 },
+          "send": { "type": "string", "minLength": 1 }
+        },
+        "oneOf": [
+          { "required": ["exec"] },
+          { "required": ["shell"] },
+          { "required": ["send"] }
+        ]
+      }
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+          "exec": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "shell": { "type": "string", "minLength": 1 },
+          "cwd": { "type": "string" },
+          "restart": {
+            "enum": ["on-failure", "always", "never"]
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        },
+        "oneOf": [
+          { "required": ["exec"] },
+          { "required": ["shell"] }
+        ]
+      }
+    }
+  }
+}

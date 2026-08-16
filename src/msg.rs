@@ -272,11 +272,25 @@ pub enum Msg {
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
     ControlRequest(control::ControlEnvelope),
+    /// Control-listener authorization for a request carrying extension provenance.
+    AuthorizeExtensionControl {
+        provenance: crate::config::ExtensionProvenance,
+        reply: std::sync::mpsc::Sender<bool>,
+    },
+    ExtensionSubscriptionOpen {
+        id: u64,
+        provenance: crate::config::ExtensionProvenance,
+        cancel: std::sync::mpsc::SyncSender<()>,
+        reply: std::sync::mpsc::Sender<bool>,
+    },
+    ExtensionSubscriptionClosed {
+        id: u64,
+    },
     /// A pane's program opened a `publish` stream. The sender carries activations back to it.
     PublishStreamOpen {
         stream_id: u64,
         requested_pane: Option<crate::state::PaneId>,
-        extension: Option<String>,
+        extension: Option<crate::config::ExtensionProvenance>,
         sender: std::sync::mpsc::SyncSender<String>,
         ack: std::sync::mpsc::Sender<std::result::Result<crate::state::PaneId, String>>,
     },
@@ -298,7 +312,7 @@ pub enum Msg {
         placeholder: Option<String>,
         width: Option<u16>,
         actions: Vec<crate::state::PickAction>,
-        extension: Option<String>,
+        extension: Option<crate::config::ExtensionProvenance>,
         sender: std::sync::mpsc::SyncSender<String>,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },

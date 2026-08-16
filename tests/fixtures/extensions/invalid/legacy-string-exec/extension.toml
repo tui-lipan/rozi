@@ -1,0 +1,7 @@
+[extension]
+id = "legacy-string"
+api = 1
+
+[[commands]]
+id = "open"
+exec = "program --argument"

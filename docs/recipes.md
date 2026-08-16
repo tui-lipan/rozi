@@ -245,7 +245,7 @@ api = 1
 [[commands]]
 id = "branches"
 label = "Switch branch"
-exec = "./bin/branch-pick"
+exec = ["./bin/branch-pick"]
 ```
 
 Rozi registers it as `git-tools.branches`. It is immediately available in the **Git tools**
@@ -256,10 +256,11 @@ palette group and through `rozi run-action git-tools.branches`; a key is optiona
 "git-tools.branches" = "i"
 ```
 
-The command receives `ROZI_EXTENSION_DIR` for its own assets while its working directory remains
-the focused pane's repository. See [Extensions](extensions.md) for the full manifest and trust
-model. The repository's [canonical Git tools extension](../examples/extensions/git-tools/) expands
-this recipe into branch creation/deletion/refresh actions and a worktree picker.
+The command receives `ROZI_EXTENSION_DIR` and an opaque generation token while its working
+directory remains the focused pane's repository. See [Extensions](extensions.md) for the full
+manifest and trust model. The repository's
+[canonical Git tools extension](../examples/extensions/git-tools/) expands this recipe into branch
+creation/deletion/refresh actions and a worktree picker.
 
 ## What is still out of scope
 

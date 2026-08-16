@@ -1,0 +1,7 @@
+[extension]
+id = "fixture-direct"
+api = 1
+
+[[commands]]
+id = "open"
+exec = ["fixture-program", "{extension_dir}/payload.txt"]

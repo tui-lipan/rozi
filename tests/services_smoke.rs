@@ -1,5 +1,5 @@
 use rozi::AppRoot;
-use rozi::config::{ServiceConfig, ServiceRestart};
+use rozi::config::{ServiceConfig, ServiceLaunch, ServiceRestart};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tui_lipan::TestBackend;
@@ -14,10 +14,14 @@ fn services_spawn_on_ready_and_terminate_on_exit() {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().config.services = vec![ServiceConfig {
                 name: "test-service".to_string(),
-                #[cfg(unix)]
-                run: "sleep 10".to_string(),
-                #[cfg(windows)]
-                run: "ping 127.0.0.1 -n 10".to_string(),
+                launch: ServiceLaunch::Shell(
+                    if cfg!(windows) {
+                        "ping 127.0.0.1 -n 10"
+                    } else {
+                        "sleep 10"
+                    }
+                    .to_string(),
+                ),
                 cwd: None,
                 restart: ServiceRestart::Never,
                 env: BTreeMap::new(),
@@ -65,10 +69,14 @@ fn service_with_never_restart_goes_dormant_on_exit() {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().config.services = vec![ServiceConfig {
                 name: "fast-exit".to_string(),
-                #[cfg(unix)]
-                run: "true".to_string(),
-                #[cfg(windows)]
-                run: "cmd /c exit 0".to_string(),
+                launch: ServiceLaunch::Shell(
+                    if cfg!(windows) {
+                        "cmd /c exit 0"
+                    } else {
+                        "true"
+                    }
+                    .to_string(),
+                ),
                 cwd: None,
                 restart: ServiceRestart::Never,
                 env: BTreeMap::new(),
@@ -107,10 +115,14 @@ fn service_with_on_failure_restarts_on_error() {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().config.services = vec![ServiceConfig {
                 name: "failing-service".to_string(),
-                #[cfg(unix)]
-                run: "false".to_string(),
-                #[cfg(windows)]
-                run: "cmd /c exit 1".to_string(),
+                launch: ServiceLaunch::Shell(
+                    if cfg!(windows) {
+                        "cmd /c exit 1"
+                    } else {
+                        "false"
+                    }
+                    .to_string(),
+                ),
                 cwd: None,
                 restart: ServiceRestart::OnFailure,
                 env: BTreeMap::new(),

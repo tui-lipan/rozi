@@ -79,11 +79,18 @@ pub enum HelpTab {
 pub struct PublishStreamState {
     pub id: u64,
     pub sender: std::sync::mpsc::SyncSender<String>,
-    pub extension: Option<String>,
+    pub extension: Option<crate::config::ExtensionProvenance>,
+}
+
+pub struct ExtensionSubscriptionState {
+    pub extension: crate::config::ExtensionProvenance,
+    pub cancel: std::sync::mpsc::SyncSender<()>,
 }
 
 pub struct State {
     pub config: Config,
+    /// Opaque per-runtime fencing tokens keyed by stable extension id.
+    pub extension_generations: HashMap<String, String>,
     /// Whether the host terminal/window currently has focus. This is distinct from which pane the
     /// app has selected: a selected pane is only attended while the host window is focused too.
     pub window_focused: bool,
@@ -216,6 +223,8 @@ pub struct State {
     /// closes the stream, which is also how a pane's rows are withdrawn. Each value carries a
     /// generation id so a replaced publisher's late rows/close cannot affect its successor.
     pub publish_streams: std::collections::HashMap<PaneId, PublishStreamState>,
+    /// Long-lived event subscriptions owned by extension generations.
+    pub extension_subscriptions: HashMap<u64, ExtensionSubscriptionState>,
     pub services: ServicesState,
     /// The client's connection to the current session (client handle, identity, shared-layout
     /// lease, spawn/replay buffers, and its window-manager state). Reached through [`Self::current`]
@@ -310,13 +319,17 @@ pub fn fresh_default_attachment(config: &Config) -> Attachment {
 }
 
 impl State {
-    pub fn new(config: Config, theme: Theme) -> Self {
+    pub fn new(mut config: Config, theme: Theme) -> Self {
+        let (extension_generations, retired) =
+            crate::config::reconcile_generations(None, &mut config, &HashMap::new());
+        debug_assert!(retired.is_empty());
         let sidebar_visible = config.sidebar.visible;
         let sidebar = SidebarState::new(&config.sidebar);
         let attachment = fresh_default_attachment(&config);
 
         Self {
             config,
+            extension_generations,
             window_focused: true,
             runtime_epoch: 0,
             next_attachment_id: 1,
@@ -389,6 +402,7 @@ impl State {
             control_socket_path: None,
             event_hub: crate::events::EventHub::default(),
             publish_streams: std::collections::HashMap::new(),
+            extension_subscriptions: HashMap::new(),
             services: ServicesState::default(),
             attachment,
             background: HashMap::new(),

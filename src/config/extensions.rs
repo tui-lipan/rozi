@@ -1,12 +1,30 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
+use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-use super::commands::valid_command_segment;
-use super::file::{NamedCommandFileConfig, ServiceFileConfig, UserCommandTableSpec};
-use super::input::parse_user_command_action;
-use super::schema::NamedCommand;
+use super::schema::{NamedCommand, ServiceConfig};
+
+mod contributions;
+mod diagnostics;
+mod discovery;
+mod manifest;
+mod paths;
+mod runtime;
+mod validation;
+
+pub use diagnostics::{
+    EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, ExtensionCheckDocument, ExtensionListDocument,
+};
+use manifest::{ExtensionManifestFile, ExtensionSettingsOnly};
+use paths::{absolute_path, normalize_path};
+pub use runtime::{ExtensionProvenance, GENERATION_ENV};
+pub(crate) use runtime::{
+    ExtensionRuntimeFingerprint, fingerprint, fingerprints_by_id, provenance_from_process,
+    provenance_is_active, reconcile_generations,
+};
+pub(crate) use validation::is_extension_command_id;
+use validation::{validate_command, validate_extension_id, validate_service};
 
 /// The generation of Rozi's complete public extension contract.
 ///
@@ -15,7 +33,11 @@ use super::schema::NamedCommand;
 pub const EXTENSION_API_VERSION: u32 = 1;
 
 const RESERVED_EXTENSION_IDS: &[&str] = &["app", "command", "rozi", "user", "workspace"];
-const RESERVED_EXTENSION_ENV: &[&str] = &["ROZI_EXTENSION", "ROZI_EXTENSION_DIR"];
+const RESERVED_EXTENSION_ENV: &[&str] = &[
+    "ROZI_EXTENSION",
+    "ROZI_EXTENSION_DIR",
+    runtime::GENERATION_ENV,
+];
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -85,7 +107,7 @@ impl ExtensionInfo {
 pub(crate) struct DiscoveredExtension {
     pub(crate) info: ExtensionInfo,
     commands: Vec<NamedCommand>,
-    services: Vec<ServiceFileConfig>,
+    services: Vec<ServiceConfig>,
 }
 
 #[derive(Debug, Default)]
@@ -119,66 +141,11 @@ impl ExtensionScan {
     }
 
     pub(crate) fn into_contributions(
-        mut self,
+        self,
         disabled: &[String],
-    ) -> (
-        Vec<NamedCommand>,
-        Vec<ServiceFileConfig>,
-        HashSet<String>,
-        Vec<String>,
-    ) {
-        self.apply_disabled(disabled);
-        let mut commands = Vec::new();
-        let mut services = Vec::new();
-        let mut active_ids = HashSet::new();
-        let mut warnings = self.root_errors;
-        for extension in self.extensions {
-            if extension.info.status == ExtensionStatus::Loaded {
-                if let Some(id) = extension.info.id {
-                    active_ids.insert(id);
-                }
-                commands.extend(extension.commands);
-                services.extend(extension.services);
-            } else if extension.info.status != ExtensionStatus::Disabled {
-                warnings.extend(extension.info.errors.iter().map(|error| {
-                    format!("extension `{}`: {error}", extension.info.display_name())
-                }));
-            }
-        }
-        (commands, services, active_ids, warnings)
+    ) -> contributions::ExtensionContributions {
+        contributions::build(self, disabled)
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExtensionManifestFile {
-    extension: ExtensionMetadataFile,
-    #[serde(default)]
-    commands: Vec<NamedCommandFileConfig>,
-    #[serde(default)]
-    services: Vec<ServiceFileConfig>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExtensionMetadataFile {
-    id: Option<String>,
-    title: Option<String>,
-    description: Option<String>,
-    version: Option<String>,
-    api: Option<u32>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ExtensionSettingsOnly {
-    #[serde(default)]
-    extensions: ExtensionDisabledOnly,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ExtensionDisabledOnly {
-    #[serde(default)]
-    disabled: Vec<String>,
 }
 
 pub(crate) fn scan_extensions() -> ExtensionScan {
@@ -211,40 +178,16 @@ pub(crate) fn check_extension(path: &Path) -> DiscoveredExtension {
 }
 
 pub(crate) fn scan_extensions_in(root: &Path) -> ExtensionScan {
-    let mut scan = ExtensionScan::default();
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return scan,
-        Err(error) => {
-            scan.root_errors.push(format!(
-                "extensions directory read failed for {}: {error}",
-                root.display()
-            ));
-            return scan;
-        }
+    let (directories, root_errors) = discovery::directories(root);
+    let mut scan = ExtensionScan {
+        extensions: Vec::new(),
+        root_errors,
     };
-    let mut directories = Vec::new();
-    for entry in entries {
-        match entry {
-            Ok(entry) => match entry.file_type() {
-                Ok(kind) if kind.is_dir() || kind.is_symlink() => directories.push(entry),
-                Ok(_) => {}
-                Err(error) => scan.root_errors.push(format!(
-                    "extension entry {} could not be inspected: {error}",
-                    entry.path().display()
-                )),
-            },
-            Err(error) => scan.root_errors.push(format!(
-                "extension directory entry could not be read: {error}"
-            )),
-        }
-    }
-    directories.sort_by_key(|entry| entry.file_name());
     scan.extensions = directories
         .into_iter()
-        .map(|entry| build_candidate(&absolute_path(&entry.path())))
+        .map(|directory| build_candidate(&absolute_path(&directory)))
         .collect();
-    mark_duplicate_ids(&mut scan.extensions);
+    discovery::mark_duplicate_ids(&mut scan.extensions);
     scan
 }
 
@@ -422,366 +365,17 @@ fn read_partial_metadata(value: &toml::Value, info: &mut ExtensionInfo) {
         .and_then(|api| u32::try_from(api).ok());
 }
 
-fn validate_extension_id(id: Option<&str>, errors: &mut Vec<String>) -> bool {
-    let Some(id) = id.filter(|id| !id.is_empty()) else {
-        errors.push("missing required field `extension.id`".to_string());
-        return false;
-    };
-    if !valid_command_segment(id) {
-        errors.push("extension id must match [a-z0-9_-]+".to_string());
-        return false;
-    }
-    if RESERVED_EXTENSION_IDS.contains(&id) {
-        errors.push(format!("extension id `{id}` is reserved by rozi"));
-        return false;
-    }
-    true
-}
-
-pub(crate) fn is_extension_command_id(id: &str) -> bool {
-    let mut segments = id.split('.');
-    let (Some(extension), Some(command), None) =
-        (segments.next(), segments.next(), segments.next())
-    else {
-        return false;
-    };
-    valid_command_segment(extension)
-        && !RESERVED_EXTENSION_IDS.contains(&extension)
-        && valid_command_segment(command)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn validate_command(
-    raw: NamedCommandFileConfig,
-    extension_id: &str,
-    category: &str,
-    directory: &Path,
-    env: &[(String, String)],
-    seen: &mut HashSet<String>,
-    info: &mut ExtensionInfo,
-    commands: &mut Vec<NamedCommand>,
-) {
-    let Some(local_id) = raw
-        .id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(str::to_string)
-    else {
-        info.errors
-            .push("command missing required field `id`".to_string());
-        return;
-    };
-    if !valid_command_segment(&local_id) {
-        info.errors
-            .push(format!("command id `{local_id}` must match [a-z0-9_-]+"));
-        return;
-    }
-    let id = format!("{extension_id}.{local_id}");
-    if !seen.insert(local_id) {
-        info.errors.push(format!("duplicate command id `{id}`"));
-        return;
-    }
-    info.commands.push(id.clone());
-    let label = clean_optional(raw.label);
-    let run = resolve_command(
-        raw.run,
-        directory,
-        &id,
-        &mut info.command_paths,
-        &mut info.errors,
-    );
-    let popup = resolve_command(
-        raw.popup,
-        directory,
-        &id,
-        &mut info.command_paths,
-        &mut info.errors,
-    );
-    let exec = resolve_command(
-        raw.exec,
-        directory,
-        &id,
-        &mut info.command_paths,
-        &mut info.errors,
-    );
-    let table = UserCommandTableSpec {
-        label: None,
-        run,
-        send: raw.send,
-        popup,
-        exec,
-        keep_open: raw.keep_open,
-    };
-    let mut action_errors = Vec::new();
-    let action = parse_user_command_action(
-        table,
-        &format!("Extension command `{id}`"),
-        &mut action_errors,
-    );
-    info.errors.extend(action_errors);
-    if let Some(action) = action {
-        commands.push(NamedCommand {
-            id,
-            label,
-            action,
-            category: category.to_string(),
-            env: env.to_vec(),
-        });
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn validate_service(
-    mut raw: ServiceFileConfig,
-    extension_id: &str,
-    directory: &Path,
-    extension_dir: &str,
-    seen: &mut HashSet<String>,
-    info: &mut ExtensionInfo,
-    services: &mut Vec<ServiceFileConfig>,
-) {
-    let Some(local_name) = raw
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
-    else {
-        info.errors
-            .push("service missing required field `name`".to_string());
-        return;
-    };
-    if !valid_command_segment(&local_name) {
-        info.errors.push(format!(
-            "service name `{local_name}` must match [a-z0-9_-]+"
-        ));
-        return;
-    }
-    let name = format!("{extension_id}.{local_name}");
-    if !seen.insert(local_name) {
-        info.errors.push(format!("duplicate service name `{name}`"));
-        return;
-    }
-    info.services.push(name.clone());
-    for reserved in RESERVED_EXTENSION_ENV {
-        if raw.env.contains_key(*reserved) {
-            info.errors.push(format!(
-                "service `{name}` may not override reserved environment variable `{reserved}`"
-            ));
-        }
-    }
-    raw.name = Some(name.clone());
-    raw.run = resolve_command(
-        raw.run,
-        directory,
-        &name,
-        &mut info.service_paths,
-        &mut info.errors,
-    );
-    raw.cwd = match clean_optional(raw.cwd) {
-        Some(cwd) => {
-            let path = resolve_declared_path(directory, &cwd);
-            match std::fs::metadata(&path) {
-                Ok(metadata) if metadata.is_dir() => {}
-                Ok(_) => info.errors.push(format!(
-                    "service `{name}` cwd is not a directory: {}",
-                    path.display()
-                )),
-                Err(error) => info.errors.push(format!(
-                    "service `{name}` cwd is unavailable at {}: {error}",
-                    path.display()
-                )),
-            }
-            Some(path.to_string_lossy().to_string())
-        }
-        None => Some(extension_dir.to_string()),
-    };
-    raw.env
-        .insert("ROZI_EXTENSION".to_string(), extension_id.to_string());
-    raw.env
-        .insert("ROZI_EXTENSION_DIR".to_string(), extension_dir.to_string());
-    let mut validation_errors = Vec::new();
-    if super::services::build_services(vec![raw.clone()], &mut validation_errors).len() == 1 {
-        services.push(raw);
-    }
-    info.errors.extend(validation_errors);
-}
-
-fn mark_duplicate_ids(extensions: &mut [DiscoveredExtension]) {
-    let mut by_id: HashMap<String, Vec<usize>> = HashMap::new();
-    for (index, extension) in extensions.iter().enumerate() {
-        if let Some(id) = extension.info.id.clone()
-            && valid_command_segment(&id)
-        {
-            by_id.entry(id).or_default().push(index);
-        }
-    }
-    for (id, indices) in by_id.into_iter().filter(|(_, indices)| indices.len() > 1) {
-        let paths = indices
-            .iter()
-            .map(|index| extensions[*index].info.path.clone())
-            .collect::<Vec<_>>()
-            .join(", ");
-        for index in indices {
-            let extension = &mut extensions[index];
-            extension.info.status = ExtensionStatus::Duplicate;
-            extension.info.enabled = false;
-            extension.info.errors.insert(
-                0,
-                format!("duplicate extension id `{id}` is declared by: {paths}"),
-            );
-            extension.commands.clear();
-            extension.services.clear();
-        }
-    }
-}
-
-fn resolve_command(
-    value: Option<String>,
-    base: &Path,
-    public_id: &str,
-    resolved: &mut BTreeMap<String, String>,
-    errors: &mut Vec<String>,
-) -> Option<String> {
-    let value = clean_optional(value)?;
-    let (program, rest, quote) = split_program(&value);
-    if !is_declared_path(program) {
-        if let Some(relative) = extension_dir_reference(&value) {
-            let path = resolve_declared_path(base, relative);
-            resolved.insert(public_id.to_string(), path.to_string_lossy().to_string());
-            validate_target(&path, public_id, false, errors);
-        }
-        return Some(value);
-    }
-    let path = resolve_declared_path(base, program);
-    let path_text = path.to_string_lossy().to_string();
-    resolved.insert(public_id.to_string(), path_text.clone());
-    validate_target(&path, public_id, true, errors);
-    let rendered = quote_program(&path_text, quote);
-    Some(format!("{rendered}{rest}"))
-}
-
-fn validate_target(
-    path: &Path,
-    public_id: &str,
-    require_executable: bool,
-    errors: &mut Vec<String>,
-) {
-    match std::fs::metadata(path) {
-        Ok(metadata) if metadata.is_file() => {
-            if require_executable
-                && !crate::platform::command::program_exists(&path.to_string_lossy())
-            {
-                errors.push(format!(
-                    "`{public_id}` declared executable is not executable: {}",
-                    path.display()
-                ));
-            }
-        }
-        Ok(_) => errors.push(format!(
-            "`{public_id}` declared path is not a file: {}",
-            path.display()
-        )),
-        Err(error) => errors.push(format!(
-            "`{public_id}` declared path is unavailable at {}: {error}",
-            path.display()
-        )),
-    }
-}
-
-fn extension_dir_reference(value: &str) -> Option<&str> {
-    ["$ROZI_EXTENSION_DIR/", "${ROZI_EXTENSION_DIR}/"]
-        .into_iter()
-        .find_map(|prefix| {
-            let start = value.find(prefix)? + prefix.len();
-            let tail = &value[start..];
-            let end = tail
-                .find(|character: char| {
-                    character.is_whitespace() || character == '"' || character == '\''
-                })
-                .unwrap_or(tail.len());
-            (end > 0).then_some(&tail[..end])
-        })
-}
-
-fn split_program(value: &str) -> (&str, &str, Option<char>) {
-    let value = value.trim();
-    if let Some(quote @ ('"' | '\'')) = value.chars().next()
-        && let Some(end) = value[1..].find(quote)
-    {
-        return (&value[1..1 + end], &value[2 + end..], Some(quote));
-    }
-    let split = value.find(char::is_whitespace).unwrap_or(value.len());
-    let (program, rest) = value.split_at(split);
-    (program, rest, None)
-}
-
-fn is_declared_path(program: &str) -> bool {
-    let unix_relative = program.starts_with("./") || program.starts_with("../");
-    let windows_relative = program.starts_with(".\\") || program.starts_with("..\\");
-    unix_relative
-        || windows_relative
-        || program.starts_with('~')
-        || Path::new(program).is_absolute()
-}
-
-fn resolve_declared_path(base: &Path, value: &str) -> PathBuf {
-    let expanded = if value == "~" || value.starts_with("~/") || value.starts_with("~\\") {
-        super::expand_path(value)
-    } else {
-        PathBuf::from(value)
-    };
-    if expanded.is_absolute() {
-        normalize_path(&expanded)
-    } else {
-        normalize_path(&base.join(expanded))
-    }
-}
-
-fn quote_program(program: &str, original_quote: Option<char>) -> String {
-    if original_quote.is_some() || program.chars().any(char::is_whitespace) {
-        format!("\"{}\"", program.replace('"', "\\\""))
-    } else {
-        program.to_string()
-    }
-}
-
 fn clean_optional(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-fn absolute_path(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        normalize_path(path)
-    } else {
-        normalize_path(
-            &std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(path),
-        )
-    }
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    normalized
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ServiceLaunch;
+    use std::path::PathBuf;
 
     fn write_manifest(root: &Path, directory: &str, text: &str) -> PathBuf {
         let dir = root.join(directory);
@@ -816,8 +410,8 @@ mod tests {
             temp.path(),
             "rozi-git-tools",
             &format!(
-                "{}[[commands]]\nid = \"branches\"\nexec = \"./bin/branches --all\"\n\
-                 [[services]]\nname = \"watch\"\nrun = \"./bin/watch\"\n",
+                "{}[[commands]]\nid = \"branches\"\nexec = [\"./bin/branches\", \"--all\"]\n\
+                 [[services]]\nname = \"watch\"\nexec = [\"./bin/watch\"]\n",
                 manifest("git-tools", "1")
             ),
         );
@@ -833,9 +427,10 @@ mod tests {
         assert_eq!(entries[0].services, ["git-tools.watch"]);
         assert_eq!(entries[0].path, directory.display().to_string());
 
-        let (commands, services, active, warnings) = scan.into_contributions(&[]);
+        let (commands, services, active, runtime, warnings) = scan.into_contributions(&[]);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(active.contains("git-tools"));
+        assert!(runtime.contains_key("git-tools"));
         assert_eq!(commands[0].id, "git-tools.branches");
         assert_eq!(commands[0].category, "Git tools");
         assert!(
@@ -845,24 +440,22 @@ mod tests {
                 .any(|(key, value)| key == "ROZI_EXTENSION" && value == "git-tools")
         );
         let command = match &commands[0].action {
-            super::super::schema::UserCommandAction::Exec { command } => command,
+            super::super::schema::UserCommandAction::ExecDirect { argv } => argv,
             other => panic!("unexpected action: {other:?}"),
         };
         assert!(
-            command.contains("/rozi-git-tools/bin/branches --all"),
-            "{command}"
+            command[0].contains("/rozi-git-tools/bin/branches"),
+            "{command:?}"
         );
-        assert_eq!(services[0].name.as_deref(), Some("git-tools.watch"));
+        assert_eq!(services[0].name, "git-tools.watch");
         assert_eq!(
             services[0].cwd.as_deref(),
             Some(directory.display().to_string().as_str())
         );
-        assert!(
-            services[0]
-                .run
-                .as_deref()
-                .is_some_and(|run| run.contains("/rozi-git-tools/bin/watch"))
-        );
+        assert!(matches!(
+            &services[0].launch,
+            ServiceLaunch::Direct(argv) if argv[0].contains("/rozi-git-tools/bin/watch")
+        ));
         assert_eq!(
             services[0].env.get("ROZI_EXTENSION").map(String::as_str),
             Some("git-tools")
@@ -907,7 +500,7 @@ mod tests {
             .unwrap();
         assert_eq!(malformed.status, ExtensionStatus::Invalid);
         assert!(malformed.errors[0].contains("invalid extension.toml"));
-        let (commands, services, active, _) = scan.into_contributions(&[]);
+        let (commands, services, active, _, _) = scan.into_contributions(&[]);
         assert!(commands.is_empty());
         assert!(services.is_empty());
         assert!(active.is_empty());
@@ -942,7 +535,7 @@ mod tests {
                 && entry.errors[0].contains("/one")
                 && entry.errors[0].contains("/two")
         }));
-        let (commands, services, active, _) = scan.into_contributions(&[]);
+        let (commands, services, active, _, _) = scan.into_contributions(&[]);
         assert!(commands.is_empty());
         assert!(services.is_empty());
         assert!(active.is_empty());
@@ -955,7 +548,7 @@ mod tests {
         let mut scan = scan_extensions_in(temp.path());
         scan.apply_disabled(&["docker".to_string()]);
         assert_eq!(scan.entries()[0].status, ExtensionStatus::Disabled);
-        let (commands, services, active, warnings) =
+        let (commands, services, active, _, warnings) =
             scan.into_contributions(&["docker".to_string()]);
         assert!(commands.is_empty());
         assert!(services.is_empty());
@@ -985,11 +578,11 @@ mod tests {
             temp.path(),
             "bad",
             &format!(
-                "{}[[commands]]\nid = \"same\"\nexec = \"./missing\"\n\
+                "{}[[commands]]\nid = \"same\"\nexec = [\"./missing\"]\n\
                  [[commands]]\nid = \"same\"\nsend = \"x\"\n\
-                 [[services]]\nname = \"watch\"\nrun = \"./missing-service\"\n\
+                 [[services]]\nname = \"watch\"\nexec = [\"./missing-service\"]\n\
                  [services.env]\nROZI_EXTENSION = \"spoof\"\n\
-                 [[services]]\nname = \"watch\"\nrun = \"echo ok\"\n",
+                 [[services]]\nname = \"watch\"\nshell = \"echo ok\"\n",
                 manifest("bad-tools", "1")
             ),
         );
@@ -1010,7 +603,7 @@ mod tests {
             temp.path(),
             "not-executable",
             &format!(
-                "{}[[commands]]\nid = \"open\"\nexec = \"./bin/open\"\n",
+                "{}[[commands]]\nid = \"open\"\nexec = [\"./bin/open\"]\n",
                 manifest("tools", "1")
             ),
         );
@@ -1120,7 +713,7 @@ mod tests {
             temp.path(),
             "windows",
             &format!(
-                "{}[[commands]]\nid = \"open\"\nexec = \".\\\\bin\\\\open.cmd\"\n",
+                "{}[[commands]]\nid = \"open\"\nexec = [\".\\\\bin\\\\open.cmd\"]\n",
                 manifest("windows-tools", "1")
             ),
         );
@@ -1150,6 +743,37 @@ mod tests {
                 extension.info.errors
             );
         }
+    }
+
+    #[test]
+    fn golden_manifest_fixtures_cover_valid_invalid_and_api_compatibility_contracts() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/extensions");
+        for (bucket, expected) in [
+            ("valid", ExtensionStatus::Loaded),
+            ("invalid", ExtensionStatus::Invalid),
+        ] {
+            for entry in std::fs::read_dir(fixtures.join(bucket)).unwrap() {
+                let path = entry.unwrap().path();
+                let info = check_extension(&path).info;
+                if path.ends_with("incompatible-api") {
+                    assert_eq!(info.status, ExtensionStatus::Incompatible, "{path:?}");
+                } else {
+                    assert_eq!(info.status, expected, "{path:?}: {:?}", info.errors);
+                }
+            }
+        }
+
+        let schema: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas/extension.schema.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            schema["properties"]["extension"]["properties"]["api"]["const"],
+            EXTENSION_API_VERSION
+        );
     }
 
     #[test]
@@ -1190,7 +814,7 @@ mod tests {
         let changed = scan_extensions_in(temp.path());
         assert_eq!(changed.entries()[0].commands, ["matrix.two"]);
 
-        let (commands, _, active, _) =
+        let (commands, _, active, _, _) =
             scan_extensions_in(temp.path()).into_contributions(&["matrix".to_string()]);
         assert!(commands.is_empty());
         assert!(active.is_empty());

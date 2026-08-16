@@ -136,10 +136,16 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     // The reveal delay lives in the runtime rather than in `State`, so a reload has to push it
     // across explicitly - otherwise it is the one `[input]` key that silently needs a restart.
     ctx.set_command_chord_reveal_delay(new_config.input.which_key.reveal_delay());
-    let stale_extensions = changed_extension_ids(&ctx.state.config, &new_config);
+    let (extension_generations, stale_extensions) = crate::config::reconcile_generations(
+        Some(&ctx.state.config),
+        &mut new_config,
+        &ctx.state.extension_generations,
+    );
+    ctx.state.extension_generations = extension_generations;
     ctx.state.config = new_config;
     let _ = crate::ops::pick::unload_extensions(ctx, &stale_extensions);
     let _ = crate::ops::published_rows::unload_extensions(ctx, &stale_extensions);
+    crate::ops::extensions::unload(ctx, &stale_extensions);
     // Releasing focus when a reload hides the sidebar is part of the same visibility transition as
     // the interactive toggle. Refresh work is kicked explicitly below, so only the synchronous
     // focus/cache effects are needed here.
@@ -190,51 +196,6 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     } else {
         Update::full()
     }
-}
-
-fn changed_extension_ids(
-    old: &crate::config::Config,
-    new: &crate::config::Config,
-) -> std::collections::HashSet<String> {
-    let ids: std::collections::HashSet<_> = old
-        .active_extensions
-        .union(&new.active_extensions)
-        .cloned()
-        .collect();
-    ids.into_iter()
-        .filter(|id| {
-            if old.active_extensions.contains(id) != new.active_extensions.contains(id) {
-                return true;
-            }
-            let commands = |config: &crate::config::Config| {
-                config
-                    .commands
-                    .iter()
-                    .filter(|command| {
-                        command
-                            .env
-                            .iter()
-                            .any(|(key, value)| key == "ROZI_EXTENSION" && value == id)
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-            };
-            let services = |config: &crate::config::Config| {
-                config
-                    .services
-                    .iter()
-                    .filter(|service| {
-                        service
-                            .env
-                            .get("ROZI_EXTENSION")
-                            .is_some_and(|value| value == id)
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-            };
-            commands(old) != commands(new) || services(old) != services(new)
-        })
-        .collect()
 }
 
 /// Opens `config.toml` in `$EDITOR` (falling back to `$VISUAL`, then `vi`) in a new pane, so
@@ -350,37 +311,6 @@ mod tests {
         assert_eq!(
             first_shell_word("'/opt/my editor/bin/edit' --wait"),
             Some("/opt/my editor/bin/edit")
-        );
-    }
-
-    fn extension_config(label: &str) -> crate::config::Config {
-        let mut config = crate::config::Config::default();
-        config.active_extensions.insert("git-tools".to_string());
-        config.commands.push(crate::config::NamedCommand {
-            id: "git-tools.branches".to_string(),
-            label: Some(label.to_string()),
-            action: crate::config::UserCommandAction::Send("x".to_string()),
-            category: "Git tools".to_string(),
-            env: vec![("ROZI_EXTENSION".to_string(), "git-tools".to_string())],
-        });
-        config
-    }
-
-    #[test]
-    fn extension_generation_changes_only_for_material_definition_changes() {
-        let old = extension_config("Branches");
-        assert!(changed_extension_ids(&old, &old.clone()).is_empty());
-
-        let changed = extension_config("Switch branch");
-        assert_eq!(
-            changed_extension_ids(&old, &changed),
-            std::collections::HashSet::from(["git-tools".to_string()])
-        );
-
-        let removed = crate::config::Config::default();
-        assert_eq!(
-            changed_extension_ids(&old, &removed),
-            std::collections::HashSet::from(["git-tools".to_string()])
         );
     }
 }

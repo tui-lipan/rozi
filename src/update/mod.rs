@@ -242,6 +242,21 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::PaneMouse(id, bytes) => panes::pane_mouse(ctx, id, bytes),
         Msg::PaneResize(id, cols, rows) => panes::pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => panes::pane_scroll(ctx, id, offset),
+        Msg::AuthorizeExtensionControl { provenance, reply } => {
+            let active =
+                crate::config::provenance_is_active(&ctx.state.extension_generations, &provenance);
+            let _ = reply.send(active);
+            Update::none()
+        }
+        Msg::ExtensionSubscriptionOpen {
+            id,
+            provenance,
+            cancel,
+            reply,
+        } => crate::ops::extensions::subscription_opened(ctx, id, provenance, cancel, reply),
+        Msg::ExtensionSubscriptionClosed { id } => {
+            crate::ops::extensions::subscription_closed(ctx, id)
+        }
         Msg::ControlRequest(envelope) => panes::control_request(ctx, envelope),
         Msg::PublishStreamOpen {
             stream_id,

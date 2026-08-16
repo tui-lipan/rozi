@@ -70,8 +70,11 @@ fn list_extensions_reports_loaded_disabled_and_incompatible_in_all_formats() {
 
     let json = rozi(&temp, &["list-extensions", "--json"]);
     assert!(json.status.success());
-    let entries: Vec<serde_json::Value> = serde_json::from_slice(&json.stdout).unwrap();
-    let loaded = entries
+    let document: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(document["schema_version"], 1);
+    let loaded = document["extensions"]
+        .as_array()
+        .unwrap()
         .iter()
         .find(|entry| entry["id"] == "loaded")
         .unwrap();
@@ -106,7 +109,8 @@ fn check_extension_has_deterministic_success_and_failure_exit_codes() {
     );
     assert!(!failure.status.success());
     let value: serde_json::Value = serde_json::from_slice(&failure.stdout).unwrap();
-    assert_eq!(value["status"], "incompatible");
-    assert_eq!(value["api"], 2);
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["extension"]["status"], "incompatible");
+    assert_eq!(value["extension"]["api"], 2);
     assert!(String::from_utf8(failure.stderr).unwrap().is_empty());
 }

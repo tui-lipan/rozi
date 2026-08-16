@@ -1,0 +1,8 @@
+[extension]
+id = "conflicting-launch"
+api = 1
+
+[[services]]
+name = "watch"
+exec = ["watcher"]
+shell = "watcher | logger"

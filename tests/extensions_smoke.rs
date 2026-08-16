@@ -51,7 +51,7 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
     };
     let manifest = format!(
         "[extension]\nid = \"smoke\"\ntitle = \"Extension smoke\"\nversion = \"1.0.0\"\napi = 1\n\
-         [[commands]]\nid = \"probe\"\nlabel = \"Run extension probe\"\nexec = \"{program}\"\n"
+         [[commands]]\nid = \"probe\"\nlabel = \"Run extension probe\"\nexec = [\"{program}\"]\n"
     );
     std::fs::write(extension_dir.join("extension.toml"), &manifest).unwrap();
     let config_path = rozi::config::config_path();

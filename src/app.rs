@@ -124,6 +124,29 @@ impl AppRoot {
             event_hub: events::EventHub::default(),
         }
     }
+
+    pub(crate) fn configured_for_test(
+        config: Config,
+        listener: crate::platform::ipc::IpcListener,
+        guard: control::ControlSocketGuard,
+    ) -> Self {
+        Self::new(
+            config,
+            ThemePreset::Lipan.theme(),
+            None,
+            None,
+            Vec::new(),
+            Some(listener),
+            Some(guard),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            None,
+        )
+    }
 }
 
 impl Component for AppRoot {
@@ -802,6 +825,7 @@ pub fn run() -> Result<()> {
     let cli = match parsed {
         cli::ParsedCli::Control(command) => return cli::run_control_cli(command),
         cli::ParsedCli::Publish(command) => return cli::run_publish_cli(command),
+        cli::ParsedCli::Subscribe(command) => return cli::run_subscribe_cli(command),
         cli::ParsedCli::Pick(command) => return cli::run_pick_cli(command),
         cli::ParsedCli::Server {
             name,

@@ -2,6 +2,7 @@ pub(crate) mod config;
 pub(crate) mod confirm;
 pub(crate) mod control;
 pub(crate) mod exit;
+pub(crate) mod extensions;
 pub(crate) mod focus;
 pub(crate) mod identity;
 pub(crate) mod last_output;

@@ -29,7 +29,9 @@ jobs:
         run: cargo check --locked --all-targets
       - name: Lint
         run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Test
+      # This includes extension argv/path probes and service child/grandchild termination tests;
+      # keep it native rather than replacing the matrix with cross-compilation.
+      - name: Test (including native process integration)
         run: cargo test --locked
       - name: Release build
         run: cargo build --locked --release

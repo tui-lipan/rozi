@@ -24,7 +24,7 @@ pub(crate) struct PickOpen {
     pub placeholder: Option<String>,
     pub width: Option<u16>,
     pub actions: Vec<crate::state::PickAction>,
-    pub extension: Option<String>,
+    pub extension: Option<crate::config::ExtensionProvenance>,
 }
 
 pub(crate) fn open_pick_stream(
@@ -41,10 +41,9 @@ pub(crate) fn open_pick_stream(
         actions,
         extension,
     } = open;
-    if extension
-        .as_ref()
-        .is_some_and(|id| !ctx.state.config.active_extensions.contains(id))
-    {
+    if extension.as_ref().is_some_and(|provenance| {
+        !crate::config::provenance_is_active(&ctx.state.extension_generations, provenance)
+    }) {
         let _ = ack.send(ControlResponse::error("extension is not active"));
         return Update::none();
     }
@@ -140,7 +139,7 @@ pub(crate) fn unload_extensions(
         .pick
         .as_ref()
         .and_then(|pick| pick.extension.as_ref())
-        .is_some_and(|id| stale_extensions.contains(id));
+        .is_some_and(|provenance| stale_extensions.contains(&provenance.id));
     if stale {
         cancel_pick(ctx, Some("extension unloaded"))
     } else {
@@ -897,11 +896,14 @@ mod tests {
         with_backend(|backend| {
             let (tx, rx) = mpsc::sync_channel(1);
             let (ack_tx, ack_rx) = mpsc::channel();
+            let provenance = crate::config::ExtensionProvenance {
+                id: "git-tools".to_string(),
+                generation: "generation-a".to_string(),
+            };
             backend
                 .state_mut()
-                .config
-                .active_extensions
-                .insert("git-tools".to_string());
+                .extension_generations
+                .insert(provenance.id.clone(), provenance.generation.clone());
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
                     id: 7,
@@ -909,7 +911,7 @@ mod tests {
                     actions: Vec::new(),
                     title: Some("Extension picker".into()),
                     placeholder: None,
-                    extension: Some("git-tools".into()),
+                    extension: Some(provenance),
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -937,7 +939,10 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
-                    extension: Some("git-tools".into()),
+                    extension: Some(crate::config::ExtensionProvenance {
+                        id: "git-tools".to_string(),
+                        generation: "retired".to_string(),
+                    }),
                     sender: tx,
                     ack: ack_tx,
                 })

@@ -47,6 +47,7 @@ regex-lite = "0.1"
 semver = { version = "1", features = ["serde"] }
 unicode-width = "0.2.2"
 unicode-segmentation = "1.13.3"
+getrandom = "0.4.3"
 
 [features]
 # Headless PNG/JSON capture for visual review. Opt-in so release builds do not

@@ -1,0 +1,8 @@
+[extension]
+id = "fixture-shell"
+api = 1
+
+[[services]]
+name = "watch"
+shell = "echo ready"
+restart = "never"

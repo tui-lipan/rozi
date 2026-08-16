@@ -162,6 +162,17 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
         // A user command's label is whatever its author called it, so the group name is the only
         // term shared by all of them - the same way "collaboration" reaches that cluster above.
         id if id.starts_with("user.") => alias_list(&["custom"]),
+        id if id.starts_with("command.") => {
+            let extension = id
+                .strip_prefix("command.")
+                .and_then(|id| id.split_once('.'))
+                .map(|(extension, _)| extension);
+            let mut aliases = alias_list(&["custom"]);
+            if let Some(extension) = extension {
+                aliases.push(Arc::from(extension));
+            }
+            aliases
+        }
         _ => Vec::new(),
     }
 }

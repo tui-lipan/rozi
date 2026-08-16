@@ -356,6 +356,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::ReloadConfig,
+        label: "Reload config",
+        category: "App",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::ToggleHelp,
         label: "Keybindings…",
         category: "App",
@@ -824,6 +831,7 @@ pub(crate) fn sync(ctx: &Context<AppRoot>) {
 
     register_forward_prefix_command(ctx, config, active);
     register_workspace_commands(ctx, config, active);
+    register_named_commands(ctx, config, active);
     register_user_commands(ctx, config, active);
 }
 
@@ -931,6 +939,45 @@ fn register_user_commands(ctx: &Context<AppRoot>, config: &Config, active: bool)
         .filter_map(|entry| {
             let index: usize = entry.id.as_str().strip_prefix("user.")?.parse().ok()?;
             (index >= current_len).then_some(entry.id)
+        })
+        .collect();
+    for id in stale_ids {
+        registry.unregister(id);
+    }
+}
+
+fn register_named_commands(ctx: &Context<AppRoot>, config: &Config, active: bool) {
+    for (index, command) in config.commands.iter().enumerate() {
+        let registry_id = format!("command.{}", command.id);
+        let shortcuts = resolve_shortcuts(config, &command.id, &[]);
+        let hint = builtin_keybinding_hint(config, &command.id, &[]);
+        let link = ctx.link().clone();
+        ctx.register_command(
+            CommandEntry::builder(registry_id)
+                .label(command.label())
+                .category(command.category.clone())
+                .keybinding_hint_opt(hint)
+                .shortcuts(shortcuts)
+                .enabled(active)
+                .handler(Callback::new(move |_| {
+                    link.send(Msg::RunAction(Action::RunNamedCommand(index)))
+                }))
+                .build(),
+        );
+    }
+
+    let current: std::collections::HashSet<_> = config
+        .commands
+        .iter()
+        .map(|command| command.id.as_str())
+        .collect();
+    let registry = ctx.command_registry();
+    let stale_ids: Vec<_> = registry
+        .entries()
+        .into_iter()
+        .filter_map(|entry| {
+            let id = entry.id.as_str().strip_prefix("command.")?;
+            (!current.contains(id)).then_some(entry.id)
         })
         .collect();
     for id in stale_ids {

@@ -126,7 +126,9 @@ is the only level that uses `--title`, because a titled toast is drawn in the er
 titled `info` would read as one. An empty message is rejected rather than drawn blank.
 
 `run-action` takes any keybindable action's stable id (the same ids used in `[keys]` config and
-shown in the command palette/help overlay), e.g. `toggle-float`, `spawn`, `close`. `capture-pane`
+shown in the command palette/help overlay), e.g. `toggle-float`, `spawn`, `close`. It also accepts
+config-level named command ids such as `branches` and extension command ids such as
+`git-tools.branches`. `capture-pane`
 returns the plain text of a pane's current visible snapshot grid by default, or scrollback history
 with `--scrollback N` / `--scrollback full`, or the last shell-integration command's output with
 `--last-output` (JSON: `"scrollback":"last-output"`). It defaults to the request's `source_pane`

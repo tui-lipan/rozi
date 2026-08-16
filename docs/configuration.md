@@ -1037,6 +1037,50 @@ i = { exec = "git branch --format='%(refname:short)' | rozi pick --title Branch 
   shows the bare key there, the way a built-in does. It still can't be rebound elsewhere or invoked
   via `rozi run-action` - only the trigger you configured runs it.
 
+## `[[commands]]`
+
+Named commands exist independently of a key. They have a stable id, appear in the command palette,
+can be invoked with `rozi run-action <id>`, and can optionally be bound with any existing `[keys]`
+form:
+
+```toml
+[[commands]]
+id = "branches"
+label = "Switch branch"
+exec = "~/.config/rozi/branch-pick.sh"
+
+[keys]
+branches = "i"
+```
+
+Exactly one of `run`, `send`, `popup`, or `exec` is required. `keep_open` and generated labels have
+the same behavior as the inline table form above. Ids use lowercase letters, digits, `_`, and `-`;
+built-in ids and reserved namespaces are rejected.
+
+| Inline action — `[keys] g = { run = … }` | Named command — `[[commands]]` |
+| --- | --- |
+| exists only at its binding site | exists independently |
+| no stable id | stable id |
+| in the palette, labelled | in the palette, labelled |
+| reachable only by its chord | also `run-action`, also `[keys] <id> = …` |
+| must have a key | may have no key |
+| a one-off shortcut | reusable behavior |
+
+> If it needs an id, it is a `[[commands]]` command. If it only needs this key, inline it.
+
+## `[extensions]`
+
+Extensions are discovered under the platform data directory and may contribute namespaced named
+commands and supervised services. Disable an installed extension by directory id without deleting
+it:
+
+```toml
+[extensions]
+disabled = ["docker"]
+```
+
+See [Extensions](extensions.md) for the manifest, paths, environment, and trust boundary.
+
 ## `[[hooks]]`
 
 > **Breaking change:** the former flat `[hooks]` table is no longer supported. Convert every old

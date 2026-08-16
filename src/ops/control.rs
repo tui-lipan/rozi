@@ -406,7 +406,8 @@ fn run_action(
     action_id: &str,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
-    let Some(action) = Action::from_id(action_id) else {
+    let action = action_from_runtime_id(&ctx.state, action_id);
+    let Some(action) = action else {
         let _ = reply.send(ControlResponse::error(format!(
             "unknown action `{action_id}`"
         )));
@@ -434,6 +435,17 @@ fn run_action(
     let update = execute_action(ctx, action);
     let _ = reply.send(ControlResponse::empty());
     update
+}
+
+fn action_from_runtime_id(state: &crate::state::State, action_id: &str) -> Option<Action> {
+    Action::from_id(action_id).or_else(|| {
+        state
+            .config
+            .commands
+            .iter()
+            .position(|command| command.id == action_id)
+            .map(Action::RunNamedCommand)
+    })
 }
 
 fn capture_pane(
@@ -791,6 +803,24 @@ mod tests {
         assert!(validate_workspace_index(1).is_none());
         assert!(validate_workspace_index(crate::state::WORKSPACE_COUNT).is_none());
         assert!(validate_workspace_index(crate::state::WORKSPACE_COUNT + 1).is_some());
+    }
+
+    #[test]
+    fn runtime_action_ids_include_named_commands() {
+        let mut config = crate::config::Config::default();
+        config.commands.push(crate::config::NamedCommand {
+            id: "branches".to_string(),
+            label: None,
+            action: crate::config::UserCommandAction::Send("git branch\n".to_string()),
+            category: "Custom".to_string(),
+            env: Vec::new(),
+        });
+        let state = State::new(config, Theme::default());
+        assert_eq!(
+            action_from_runtime_id(&state, "branches"),
+            Some(Action::RunNamedCommand(0))
+        );
+        assert_eq!(action_from_runtime_id(&state, "not-there"), None);
     }
 
     #[test]

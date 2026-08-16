@@ -89,6 +89,10 @@ pub(crate) enum ParsedCli {
         remote: Option<String>,
         config_path: Option<String>,
     },
+    ListExtensions {
+        json: bool,
+        config_path: Option<String>,
+    },
     KillSession {
         name: String,
         remote: Option<String>,
@@ -190,6 +194,28 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 return Ok(ParsedCli::ListSessions {
                     format,
                     remote,
+                    config_path: cli.config_path,
+                });
+            }
+            "list-extensions" => {
+                let mut json = false;
+                for flag in iter.by_ref() {
+                    match flag.as_str() {
+                        "--json" if !json => json = true,
+                        "--json" => {
+                            return Err(
+                                "list-extensions --json specified more than once".to_string()
+                            );
+                        }
+                        other => {
+                            return Err(format!(
+                                "unexpected argument `{other}` after list-extensions"
+                            ));
+                        }
+                    }
+                }
+                return Ok(ParsedCli::ListExtensions {
+                    json,
                     config_path: cli.config_path,
                 });
             }
@@ -1137,6 +1163,33 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
     Ok(())
 }
 
+pub(crate) fn run_list_extensions_cli(json: bool) -> Result<()> {
+    let scan = crate::config::scan_extensions();
+    for warning in &scan.warnings {
+        eprintln!("{warning}");
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&scan.entries).map_err(std::io::Error::other)?
+        );
+        return Ok(());
+    }
+    for extension in scan.entries {
+        let title = extension.title.as_deref().unwrap_or("-");
+        let version = extension.version.as_deref().unwrap_or("-");
+        print!(
+            "{}\ttitle={title}\tversion={version}\tcommands={}\tservices={}",
+            extension.id, extension.commands, extension.services
+        );
+        if let Some(error) = extension.error {
+            print!("\terror={error}");
+        }
+        println!();
+    }
+    Ok(())
+}
+
 pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
     if !session::discovery::valid_attach_target(name) {
         return Err(
@@ -1325,6 +1378,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
             row(
                 "list-sessions [--format text|json] [--remote <HOST>]",
                 "List connectable sessions",
+            ),
+            row(
+                "list-extensions [--json]",
+                "List installed extensions and manifest errors",
             ),
             row(
                 "kill-session <NAME> [--remote <HOST>]",
@@ -1924,6 +1981,14 @@ mod tests {
                 remote: None,
                 ..
             }
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["list-extensions".into()]).expect("parses"),
+            ParsedCli::ListExtensions { json: false, .. }
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["list-extensions".into(), "--json".into()]).expect("parses"),
+            ParsedCli::ListExtensions { json: true, .. }
         ));
         let attached = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));

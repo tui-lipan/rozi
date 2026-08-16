@@ -224,6 +224,39 @@ cmd=$(history | sed 's/^ *[0-9]* *//' | rozi pick --title History) \
   && rozi send-text "$cmd"
 ```
 
+## Package the branch picker as an extension
+
+The branch picker above becomes distributable by giving it a manifest and stable namespaced id:
+
+```text
+~/.local/share/rozi/extensions/git-tools/
+├── extension.toml
+└── bin/branch-pick
+```
+
+```toml
+[extension]
+title = "Git tools"
+version = "0.1.0"
+
+[[commands]]
+id = "branches"
+label = "Switch branch"
+exec = "./bin/branch-pick"
+```
+
+Rozi registers it as `git-tools.branches`. It is immediately available in the **Git tools**
+palette group and through `rozi run-action git-tools.branches`; a key is optional:
+
+```toml
+[keys]
+"git-tools.branches" = "i"
+```
+
+The command receives `ROZI_EXTENSION_DIR` for its own assets while its working directory remains
+the focused pane's repository. See [Extensions](extensions.md) for the full manifest and trust
+model.
+
 ## What is still out of scope
 
 - **Rows without a pane.** `publish` is pane-scoped: its rows belong to the pane whose program

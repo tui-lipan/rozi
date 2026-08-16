@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -9,6 +9,7 @@ use crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
 use crate::state::{AlertMode, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, parse_cap_style};
 
 use super::appearance::{apply_animations, resolve_pane_padding};
+use super::commands::build_named_commands;
 use super::input::{apply_input_config, build_key_overrides};
 use super::rules::{build_hints, build_rules};
 use super::schema::*;
@@ -66,7 +67,9 @@ struct FileConfig {
     rules: Vec<RuleFileConfig>,
     hints: Vec<HintFileConfig>,
     hooks: Vec<HookFileConfig>,
+    commands: Vec<NamedCommandFileConfig>,
     services: Vec<ServiceFileConfig>,
+    extensions: ExtensionsFileConfig,
     logging: LoggingFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
 }
@@ -80,6 +83,37 @@ pub(crate) struct ServiceFileConfig {
     pub(crate) restart: Option<String>,
     #[serde(default)]
     pub(crate) env: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct NamedCommandFileConfig {
+    pub(crate) id: Option<String>,
+    pub(crate) label: Option<String>,
+    pub(crate) run: Option<String>,
+    pub(crate) send: Option<String>,
+    pub(crate) popup: Option<String>,
+    pub(crate) exec: Option<String>,
+    pub(crate) keep_open: Option<bool>,
+}
+
+impl NamedCommandFileConfig {
+    pub(super) fn action(self) -> UserCommandTableSpec {
+        UserCommandTableSpec {
+            label: None,
+            run: self.run,
+            send: self.send,
+            popup: self.popup,
+            exec: self.exec,
+            keep_open: self.keep_open,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ExtensionsFileConfig {
+    pub(crate) disabled: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -489,36 +523,61 @@ pub fn config_text_changed_on_disk() -> bool {
 
 pub fn load_config() -> LoadedConfig {
     let path = config_path();
+    let extension_scan = super::extensions::scan_extensions();
 
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             note_config_text(None);
-            return LoadedConfig {
-                config: Config::default(),
-                warnings: Vec::new(),
-            };
+            return load_config_from_text_with_extensions(
+                "",
+                &path,
+                extension_scan.extensions,
+                extension_scan.warnings,
+            );
         }
         Err(err) => {
             note_config_text(None);
-            return LoadedConfig {
-                config: Config::default(),
-                warnings: vec![format!("Config read failed for {}: {err}", path.display())],
-            };
+            let mut warnings = extension_scan.warnings;
+            warnings.push(format!("Config read failed for {}: {err}", path.display()));
+            return load_config_from_text_with_extensions(
+                "",
+                &path,
+                extension_scan.extensions,
+                warnings,
+            );
         }
     };
     note_config_text(Some(text.clone()));
 
-    load_config_from_text(&text, &path)
+    load_config_from_text_with_extensions(
+        &text,
+        &path,
+        extension_scan.extensions,
+        extension_scan.warnings,
+    )
 }
 
 /// Applies one config document over the defaults. `path` only names the source in warnings, so
 /// this is the whole load pipeline minus the filesystem.
+#[cfg(test)]
 fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
-    let mut warnings = Vec::new();
+    load_config_from_text_with_extensions(text, path, Vec::new(), Vec::new())
+}
+
+fn load_config_from_text_with_extensions(
+    text: &str,
+    path: &Path,
+    extensions: Vec<super::extensions::DiscoveredExtension>,
+    mut warnings: Vec<String>,
+) -> LoadedConfig {
     let mut config = Config::default();
 
     let Some(parsed) = parse_file_config(text, path, &mut warnings) else {
+        let (commands, services) =
+            super::extensions::build_extension_contributions(extensions, &[], &mut warnings);
+        config.commands = commands;
+        config.services = crate::config::services::build_services(services, &mut warnings);
         return LoadedConfig { config, warnings };
     };
 
@@ -825,11 +884,26 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
     config.rules = build_rules(parsed.rules, &mut warnings);
     config.hints = build_hints(parsed.hints, &mut warnings);
     config.hooks = build_hooks(parsed.hooks, &mut warnings);
-    config.services = crate::config::services::build_services(parsed.services, &mut warnings);
+    config.commands = build_named_commands(parsed.commands, &mut warnings);
+    let (extension_commands, extension_services) = super::extensions::build_extension_contributions(
+        extensions,
+        &parsed.extensions.disabled,
+        &mut warnings,
+    );
+    config.commands.extend(extension_commands);
+    let named_ids: HashSet<_> = config
+        .commands
+        .iter()
+        .map(|command| command.id.clone())
+        .collect();
+    let mut raw_services = parsed.services;
+    raw_services.extend(extension_services);
+    config.services = crate::config::services::build_services(raw_services, &mut warnings);
     let mut user_commands = Vec::new();
     config.key_overrides = build_key_overrides(
         parsed.keys,
         &config.input,
+        &named_ids,
         &mut user_commands,
         &mut warnings,
     );

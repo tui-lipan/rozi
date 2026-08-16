@@ -99,8 +99,12 @@ pub enum Action {
     CycleWorkbarStyle,
     TogglePaneSynchronization,
     OpenConfigFile,
+    ReloadConfig,
     EditScrollback,
     CopyLastOutput,
+    /// Runs `config.commands[index]`. The stable runtime id lives in config and is registered
+    /// explicitly, so this index-bearing action remains `Copy`.
+    RunNamedCommand(usize),
     /// Runs `config.user_commands[index]`. Defined only by `[keys]` table entries (see
     /// `crate::config::build_key_overrides`), so - like workspace digits - it has no static id
     /// and isn't independently rebindable or listed in `crate::commands::BUILTIN_COMMANDS`.
@@ -204,6 +208,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::CycleWorkbarStyle,
     Action::TogglePaneSynchronization,
     Action::OpenConfigFile,
+    Action::ReloadConfig,
     Action::EditScrollback,
     Action::CopyLastOutput,
 ];
@@ -311,11 +316,13 @@ impl Action {
             Action::CycleWorkbarStyle => "cycle-workbar-style",
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
             Action::OpenConfigFile => "open-config",
+            Action::ReloadConfig => "reload-config",
             Action::EditScrollback => "edit-scrollback",
             Action::CopyLastOutput => "copy-last-output",
             Action::SwitchWorkspace(_)
             | Action::MoveToWorkspace(_)
             | Action::RelocateWorkspace(_)
+            | Action::RunNamedCommand(_)
             | Action::RunUserCommand(_) => {
                 return None;
             }

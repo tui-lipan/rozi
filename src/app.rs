@@ -800,6 +800,10 @@ pub fn run() -> Result<()> {
             apply_config_path(config_path);
             return cli::run_list_sessions_cli(format, remote.as_deref());
         }
+        cli::ParsedCli::ListExtensions { json, config_path } => {
+            apply_config_path(config_path);
+            return cli::run_list_extensions_cli(json);
+        }
         cli::ParsedCli::KillSession {
             name,
             remote,

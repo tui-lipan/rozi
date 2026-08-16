@@ -817,6 +817,7 @@ pub struct Config {
     pub rules: Vec<RuleConfig>,
     pub hints: Vec<HintConfig>,
     pub hooks: Vec<HookConfig>,
+    pub commands: Vec<NamedCommand>,
     pub services: Vec<ServiceConfig>,
     pub logging: LoggingConfig,
     pub workbar: WorkbarConfig,
@@ -850,6 +851,24 @@ pub struct ServiceConfig {
     pub cwd: Option<String>,
     pub restart: ServiceRestart,
     pub env: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedCommand {
+    pub id: String,
+    pub label: Option<String>,
+    pub action: UserCommandAction,
+    pub category: String,
+    pub env: Vec<(String, String)>,
+}
+
+impl NamedCommand {
+    pub fn label(&self) -> String {
+        if let Some(label) = &self.label {
+            return label.clone();
+        }
+        user_command_action_label(&self.action)
+    }
 }
 
 /// Default ceiling on one pane log file. Generous enough that an ordinary logged session never
@@ -1296,19 +1315,23 @@ impl UserCommand {
         if let Some(label) = &self.label {
             return label.clone();
         }
-        match &self.action {
-            UserCommandAction::Run { command, .. } => {
-                format!("Run: {}", truncate_for_label(command))
-            }
-            UserCommandAction::Send(text) => {
-                format!("Send: {}", truncate_for_label(&escape_for_label(text)))
-            }
-            UserCommandAction::Popup { command, .. } => {
-                format!("Popup: {}", truncate_for_label(command))
-            }
-            UserCommandAction::Exec { command } => {
-                format!("Exec: {}", truncate_for_label(command))
-            }
+        user_command_action_label(&self.action)
+    }
+}
+
+fn user_command_action_label(action: &UserCommandAction) -> String {
+    match action {
+        UserCommandAction::Run { command, .. } => {
+            format!("Run: {}", truncate_for_label(command))
+        }
+        UserCommandAction::Send(text) => {
+            format!("Send: {}", truncate_for_label(&escape_for_label(text)))
+        }
+        UserCommandAction::Popup { command, .. } => {
+            format!("Popup: {}", truncate_for_label(command))
+        }
+        UserCommandAction::Exec { command } => {
+            format!("Exec: {}", truncate_for_label(command))
         }
     }
 }
@@ -1365,6 +1388,7 @@ impl Default for Config {
             rules: Vec::new(),
             hints: Vec::new(),
             hooks: Vec::new(),
+            commands: Vec::new(),
             services: Vec::new(),
             logging: LoggingConfig::default(),
             workbar: WorkbarConfig::default(),

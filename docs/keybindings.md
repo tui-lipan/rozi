@@ -319,6 +319,10 @@ keybindings](configuration.md#user-defined-command-keybindings). They show up in
 overlay (under "Custom") and command palette with a generated label, but are config-only: they
 have no stable id, so they can't be rebound elsewhere or invoked via `rozi run-action`.
 
+A [`[[commands]]`](configuration.md#commands) entry is the reusable alternative: its id binds under
+`[keys]` exactly like a built-in, while the command remains palette-visible and reachable through
+`rozi run-action` even when it has no key.
+
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
 keyboard - capture session as profile, replace session with profile, open Settings, promote to
 master, plus discoverable extras (new pane, new floating pane, close pane, rename pane, search,
@@ -337,8 +341,9 @@ last because its rows change what a later launch or server does, so unlike every
 is nothing on screen to inspect after stepping a value.
 Frequent single-key actions (float/fullscreen/flip/grow/shrink, plus directional focus/swap/move)
 live in the help overlay only, since the key is faster than a search box. "Settings" has no default key; bind its
-`settings` action under `[keys]` if desired. "Open config file" is also palette-only; config changes
-reload automatically - see
+`settings` action under `[keys]` if desired. "Open config file" and "Reload config" are also
+palette-only. `config.toml` changes reload automatically; the manual action also reloads extension
+manifest changes - see
 [Reloading and editing](configuration.md#reloading-and-editing).
 
 The **help overlay** (`?`) is a keyboard reference, not a command picker. Press `/` to search

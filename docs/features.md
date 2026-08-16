@@ -425,6 +425,9 @@ Top-level tables:
 | `[[rules]]` | Command-matched pane placement |
 | `[[hints]]` | Contextual popup actions |
 | `[[hooks]]` | Event-triggered commands |
+| `[[commands]]` | Stable keyless or bindable custom commands |
+| `[[services]]` | Supervised client-side background services |
+| `[extensions]` | Disable installed data-directory extensions |
 | `[logging]` | Pane-log directory |
 | `[workbar]` | Segments, styles, position |
 | `[keys]` | Rebinds and user-defined commands |
@@ -456,6 +459,7 @@ Windows) with a JSON protocol and a CLI front end.
 | `pick` | **Render a modal picker** and return the user's choice |
 | `publish` | **Publish the activities or agents running inside one pane**, one sidebar row each |
 | `subscribe` | **Stream UI events** to an external process |
+| `notify` | Raise an informational or error toast from a script |
 
 `subscribe` is the push counterpart to `[[hooks]]`: instead of spawning a command per event, a
 long-lived client receives the event stream over the socket.
@@ -473,12 +477,16 @@ event's fields, `ROZI_SOCKET`, and `ROZI_REMOTE_HOST` when remote:
 `controller-changed`, `client-joined`, `client-left`, `profile-loaded`, `profile-applied`,
 `profile-saved`, `config-reloaded`.
 
+**Services** — `[[services]]` supervises long-lived client-side processes with restart policy and
+backoff. **Extensions** package named commands and services under stable namespaced ids from the
+user data directory; see [Extensions](extensions.md).
+
 **Runtime metrics** — `rozi metrics` exposes resource counters for monitoring.
 
 **Editor integration** — the [Vim/Neovim navigator](../integrations/vim-rozi-navigator/) plugin
 pairs with `smart-focus-<dir>`.
 
-See [Control socket](control.md) and [Hooks](hooks.md).
+See [Control socket](control.md), [Hooks](hooks.md), and [Extensions](extensions.md).
 
 ## Platform support
 

@@ -367,6 +367,19 @@
 #event = "workspace-switched"
 #run = "logger workspace=$ROZI_WORKSPACE"
 
+# Stable, reusable commands. They appear in the palette without a key, can be invoked with
+# `rozi run-action <id>`, and can be bound below with `[keys] <id> = ...`.
+[[commands]]
+#id = "branches"
+#label = "Switch branch"
+#exec = "~/.config/rozi/branch-pick.sh"
+#keep_open = true
+
+# User extensions are discovered under the platform data directory. Disable one by directory id
+# without deleting it; see docs/extensions.md.
+[extensions]
+#disabled = ["docker"]
+
 # Supervised background services started alongside rozi and restarted if they exit.
 # Services inherit ROZI_SOCKET and standard environment, with stdio discarded.
 # restart: "on-failure" (default, restarts on non-zero exit), "always", or "never".

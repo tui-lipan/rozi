@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use tui_lipan::prelude::KeyBinding;
@@ -65,9 +65,10 @@ fn is_bare_key_step(candidate: &str) -> bool {
 
 /// Build `[keys]` overrides. Strings/lists replace an action's defaults, `{ add = ... }` extends
 /// its generated defaults, and `{ run = ... }` / `{ send = ... }` defines a user command.
-pub(super) fn build_key_overrides(
+pub(crate) fn build_key_overrides(
     keys: HashMap<String, KeyBindingSpec>,
     input: &InputConfig,
+    named_ids: &HashSet<String>,
     user_commands: &mut Vec<UserCommand>,
     warnings: &mut Vec<String>,
 ) -> HashMap<String, Vec<KeyBinding>> {
@@ -78,10 +79,13 @@ pub(super) fn build_key_overrides(
             continue;
         }
 
-        let Some(default_bindings) = crate::commands::default_shortcuts_for_action(input, &key)
-        else {
-            warnings.push(format!("Unknown key action `{key}`; skipped"));
-            continue;
+        let default_bindings = match crate::commands::default_shortcuts_for_action(input, &key) {
+            Some(defaults) => defaults,
+            None if named_ids.contains(&key) => Vec::new(),
+            None => {
+                warnings.push(format!("Unknown key action `{key}`; skipped"));
+                continue;
+            }
         };
 
         let (bindings, additive) = match spec {
@@ -204,7 +208,7 @@ pub(super) fn bind_user_command(
     });
 }
 
-pub(super) fn parse_user_command_action(
+pub(crate) fn parse_user_command_action(
     table: UserCommandTableSpec,
     context: &str,
     warnings: &mut Vec<String>,
@@ -286,7 +290,13 @@ mod tests {
         input: &InputConfig,
     ) -> (HashMap<String, Vec<KeyBinding>>, Vec<String>) {
         let mut warnings = Vec::new();
-        let result = build_key_overrides(keys(text), input, &mut Vec::new(), &mut warnings);
+        let result = build_key_overrides(
+            keys(text),
+            input,
+            &HashSet::new(),
+            &mut Vec::new(),
+            &mut warnings,
+        );
         (result, warnings)
     }
 
@@ -312,12 +322,28 @@ mod tests {
     }
 
     #[test]
+    fn named_command_ids_accept_scheme_expanded_bindings() {
+        let mut warnings = Vec::new();
+        let overrides = build_key_overrides(
+            keys("[keys]\nbranches = \"i\""),
+            &InputConfig::default(),
+            &HashSet::from(["branches".to_string()]),
+            &mut Vec::new(),
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(overrides["branches"].contains(&KeyBinding::from_str("ctrl-a i").unwrap()));
+        assert!(overrides["branches"].contains(&KeyBinding::from_str("alt-i").unwrap()));
+    }
+
+    #[test]
     fn user_command_tables_register_run_and_send_actions() {
         let mut commands = Vec::new();
         let mut warnings = Vec::new();
         build_key_overrides(
             keys("[keys]\n\"ctrl-a g\" = { run = \"lazygit\" }\nalt-g = { send = \"echo hi\\n\" }"),
             &InputConfig::default(),
+            &HashSet::new(),
             &mut commands,
             &mut warnings,
         );
@@ -343,6 +369,7 @@ mod tests {
         build_key_overrides(
             keys("[keys]\ni = { run = \"lazygit\", label = \"Git UI\" }"),
             &InputConfig::default(),
+            &HashSet::new(),
             &mut commands,
             &mut warnings,
         );
@@ -377,6 +404,7 @@ mod tests {
         build_key_overrides(
             keys("[keys]\nu = { exec = \"rozi run-action toggle-float\", label = \"Float\" }"),
             &InputConfig::default(),
+            &HashSet::new(),
             &mut commands,
             &mut warnings,
         );
@@ -398,6 +426,7 @@ mod tests {
         build_key_overrides(
             keys("[keys]\nu = { exec = \"date\", run = \"date\" }"),
             &InputConfig::default(),
+            &HashSet::new(),
             &mut commands,
             &mut warnings,
         );
@@ -419,6 +448,7 @@ mod tests {
         build_key_overrides(
             keys("[keys]\n\"ctrl-a i\" = { run = \"lazygit\" }"),
             &InputConfig::default(),
+            &HashSet::new(),
             &mut commands,
             &mut warnings,
         );
@@ -453,6 +483,7 @@ mod tests {
                 "\"ctrl-a f\" = { popup = \"fzf\", keep_open = false }\n",
             )),
             &InputConfig::default(),
+            &HashSet::new(),
             &mut commands,
             &mut warnings,
         );
@@ -504,6 +535,7 @@ mod tests {
             build_key_overrides(
                 keys(&format!("[keys]\n\"ctrl-a g\" = {table}")),
                 &InputConfig::default(),
+                &HashSet::new(),
                 &mut commands,
                 &mut warnings,
             );

@@ -89,6 +89,9 @@ pub(crate) fn config_file_changed(ctx: &mut Context<AppRoot>) -> Update {
 /// (including switching the theme file watcher), and pane chrome - the same result a restart
 /// would produce, without losing running panes/workspaces/session state.
 pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
+    // Manual reloads are how extension manifest changes reach the runtime; command registration
+    // must be refreshed even when config.toml itself did not change.
+    ctx.state.commands_dirty = true;
     let loaded = crate::config::load_config();
     let mut new_config = loaded.config;
     // The framework clipboard service is configured when the runtime starts. Keep the state-side

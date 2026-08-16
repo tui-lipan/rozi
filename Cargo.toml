@@ -62,6 +62,7 @@ path = "src/bin/rozi-launcher.rs"
 
 [dev-dependencies]
 criterion = "0.8.2"
+tempfile = "3.27.0"
 
 [[bench]]
 name = "terminal_ingest"

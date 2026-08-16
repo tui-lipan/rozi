@@ -159,6 +159,11 @@ pub fn data_dir(env: &PlatformEnv) -> PathBuf {
     xdg_style_dir(env.xdg_data_home.as_ref(), &env.home, ".local/share")
 }
 
+/// User-installed extension manifests and executable payloads (`data_dir/extensions`).
+pub fn extensions_dir(env: &PlatformEnv) -> PathBuf {
+    data_dir(env).join("extensions")
+}
+
 /// The command path owned by a managed installation. Unix keeps the stable command as an absolute
 /// symlink into [`data_dir`]; Windows keeps a stable launcher beside the active-version selector.
 pub fn managed_command_path(env: &PlatformEnv) -> PathBuf {

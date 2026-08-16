@@ -194,6 +194,7 @@ export default defineConfig({
         text: "Automation",
         collapsed: false,
         items: [
+          { text: "Extensions", link: "/extensions" },
           { text: "Control Socket", link: "/control" },
           { text: "Hooks", link: "/hooks" },
           { text: "Agent Skill", link: "/agent-skill" },

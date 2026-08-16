@@ -76,6 +76,13 @@ fn run_user_command(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     execute_user_command_action(ctx, &command.action)
 }
 
+fn run_named_command(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    let Some(command) = ctx.state.config.commands.get(index).cloned() else {
+        return Update::none();
+    };
+    execute_user_command_action_with_env(ctx, &command.action, command.env)
+}
+
 pub(crate) fn execute_user_command_action(
     ctx: &mut Context<AppRoot>,
     action: &UserCommandAction,
@@ -352,6 +359,10 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         // A user `Run` command spawns a shared pane; popup/send remain client-local.
         Action::RunUserCommand(index) => matches!(
             state.config.user_commands.get(index).map(|cmd| &cmd.action),
+            Some(UserCommandAction::Run { .. })
+        ),
+        Action::RunNamedCommand(index) => matches!(
+            state.config.commands.get(index).map(|cmd| &cmd.action),
             Some(UserCommandAction::Run { .. })
         ),
         _ => false,
@@ -719,7 +730,9 @@ fn execute_action_inner(
             Update::full()
         }
         Action::RunUserCommand(index) => run_user_command(ctx, index),
+        Action::RunNamedCommand(index) => run_named_command(ctx, index),
         Action::OpenConfigFile => crate::ops::config::open_config_file(ctx),
+        Action::ReloadConfig => crate::ops::config::reload_config(ctx),
         Action::EditScrollback => crate::ops::scrollback::edit_scrollback(ctx),
         Action::CopyLastOutput => crate::ops::last_output::copy_last_output(ctx),
         Action::TogglePaneSynchronization => {

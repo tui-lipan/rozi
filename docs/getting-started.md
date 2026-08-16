@@ -77,7 +77,8 @@ layout and the layout/animation/input internals, see [AGENTS.md](../AGENTS.md).
 normal launch never needs (`--server`, endpoint resolution, `--socket`, `--skill`). It is
 colored when stdout is a terminal, and follows the usual opt-outs: `NO_COLOR` (any non-empty
 value) turns styling off, `CLICOLOR=0` does the same, and `CLICOLOR_FORCE` keeps it on through
-a pipe. `TERM=dumb` is treated as plain.
+a pipe. `TERM=dumb` is treated as plain. Install the built-in agent skill with
+`rozi skill install` or `rozi skill install --global`; see [Agent skill](agent-skill.md).
 
 ## First-run configuration
 

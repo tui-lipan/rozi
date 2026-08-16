@@ -4,9 +4,7 @@ use std::path::PathBuf;
 use tui_lipan::Result;
 
 use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
-use crate::{control, session};
-
-const AGENT_SKILL: &str = include_str!("../docs/agent-skill.md");
+use crate::{control, session, skill};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CliArgs {
@@ -74,7 +72,8 @@ pub(crate) enum ParsedCli {
         advanced: bool,
     },
     Version,
-    Skill,
+    Skill(SkillCommand),
+    SkillHelp,
     Install,
     Update(UpdateCommand),
     Run(CliArgs),
@@ -116,6 +115,14 @@ pub(crate) enum ParsedCli {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SkillCommand {
+    Install { global: bool },
+    Uninstall { global: bool },
+    Status { global: bool },
+    Print,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UpdateCommand {
     Check,
     Apply,
@@ -132,10 +139,13 @@ pub(crate) enum ListFormat {
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
     if args.first().is_some_and(|arg| arg == "--skill") {
         return if args.len() == 1 {
-            Ok(ParsedCli::Skill)
+            Ok(ParsedCli::Skill(SkillCommand::Print))
         } else {
             Err("--skill must be used without other arguments".to_string())
         };
+    }
+    if args.first().is_some_and(|arg| arg == "skill") {
+        return parse_skill_args(&args[1..]);
     }
     // Help wins over whatever else was typed, and from wherever it was typed: someone who has
     // already mistyped the rest of the line is exactly who is asking for it. `--advanced` is only
@@ -1265,8 +1275,121 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
     Ok(())
 }
 
+const SKILL_HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        heading: "USAGE",
+        advanced_only: false,
+        note: "",
+        rows: &[row("rozi skill [COMMAND] [OPTIONS]", "")],
+    },
+    HelpSection {
+        heading: "COMMANDS",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row("install [--global]", "Install the Rozi skill"),
+            row("uninstall [--global]", "Remove the installed Rozi skill"),
+            row("status [--global]", "Show skill installation status"),
+            row("print", "Print the skill to stdout"),
+        ],
+    },
+    HelpSection {
+        heading: "OPTIONS",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row(
+                "    --global",
+                "Install, uninstall, or status for this user",
+            ),
+            row("-h, --help", "Print help"),
+        ],
+    },
+];
+
+fn parse_skill_args(args: &[String]) -> std::result::Result<ParsedCli, String> {
+    let mut global = false;
+    let mut command = None;
+    for arg in args {
+        match arg.as_str() {
+            "-h" | "--help" => return Ok(ParsedCli::SkillHelp),
+            "--global" => {
+                if global {
+                    return Err("--global specified more than once".to_string());
+                }
+                global = true;
+            }
+            "install" | "uninstall" | "status" | "print" if command.is_none() => {
+                command = Some(arg.as_str());
+            }
+            other if command.is_none() => {
+                return Err(format!("unknown skill command `{other}`"));
+            }
+            other => {
+                return Err(format!("unexpected argument `{other}` after skill"));
+            }
+        }
+    }
+    match command {
+        None => {
+            if global {
+                return Err("--global requires a skill command".to_string());
+            }
+            Ok(ParsedCli::SkillHelp)
+        }
+        Some("print") => {
+            if global {
+                return Err("skill print does not accept --global".to_string());
+            }
+            Ok(ParsedCli::Skill(SkillCommand::Print))
+        }
+        Some("install") => Ok(ParsedCli::Skill(SkillCommand::Install { global })),
+        Some("uninstall") => Ok(ParsedCli::Skill(SkillCommand::Uninstall { global })),
+        Some("status") => Ok(ParsedCli::Skill(SkillCommand::Status { global })),
+        Some(other) => Err(format!("unknown skill command `{other}`")),
+    }
+}
+
 pub(crate) fn print_skill() {
-    print!("{AGENT_SKILL}");
+    skill::print_skill();
+}
+
+pub(crate) fn print_skill_help() {
+    let styles = HelpStyles::detect();
+    let mut out = format!(
+        "{}rozi skill{} - install the built-in Rozi agent skill\n",
+        styles.title, styles.reset
+    );
+    append_help_sections(&mut out, SKILL_HELP_SECTIONS, &styles, true);
+    println!("{out}");
+}
+
+pub(crate) fn run_skill_cli(command: SkillCommand) -> Result<()> {
+    match command {
+        SkillCommand::Print => {
+            print_skill();
+            Ok(())
+        }
+        SkillCommand::Install { global } => {
+            let paths = skill::default_paths(global).map_err(std::io::Error::other)?;
+            let report = skill::install(&paths, crate::agent_detection::claude_cli_available())
+                .map_err(std::io::Error::other)?;
+            print!("{}", skill::format_install(&report, &paths));
+            Ok(())
+        }
+        SkillCommand::Uninstall { global } => {
+            let paths = skill::default_paths(global).map_err(std::io::Error::other)?;
+            let report = skill::uninstall(&paths).map_err(std::io::Error::other)?;
+            print!("{}", skill::format_uninstall(&report, &paths));
+            Ok(())
+        }
+        SkillCommand::Status { global } => {
+            let paths = skill::default_paths(global).map_err(std::io::Error::other)?;
+            let report = skill::status(&paths, crate::agent_detection::claude_cli_available());
+            print!("{}", skill::format_status(&report, &paths));
+            Ok(())
+        }
+    }
 }
 
 pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) -> Result<()> {
@@ -1768,6 +1891,12 @@ const HELP_SECTIONS: &[HelpSection] = &[
         ],
     },
     HelpSection {
+        heading: "AGENTS",
+        advanced_only: false,
+        note: "",
+        rows: &[row("skill [COMMAND]", "Manage the Rozi agent skill")],
+    },
+    HelpSection {
         heading: "INSTALLATION",
         advanced_only: false,
         note: "",
@@ -1835,8 +1964,25 @@ fn help_text(styles: &HelpStyles, endpoint_help: &str, advanced: bool) -> String
     } = *styles;
     let version = env!("CARGO_PKG_VERSION");
     let mut out = format!("{title}rozi {version}{reset} - dynamic tiling terminal multiplexer\n");
+    append_help_sections(&mut out, HELP_SECTIONS, styles, advanced);
 
-    for section in HELP_SECTIONS {
+    if advanced {
+        out.push_str(&format!(
+            "\n{heading}ENDPOINTS{reset}\n{HELP_INDENT}{endpoint_help}\n"
+        ));
+    }
+    out.push_str("\nDetach with prefix d, or use a configured quit binding.");
+    out
+}
+
+fn append_help_sections(
+    out: &mut String,
+    sections: &[HelpSection],
+    styles: &HelpStyles,
+    advanced: bool,
+) {
+    let HelpStyles { heading, reset, .. } = *styles;
+    for section in sections {
         if section.advanced_only && !advanced {
             continue;
         }
@@ -1854,7 +2000,6 @@ fn help_text(styles: &HelpStyles, endpoint_help: &str, advanced: bool) -> String
                 continue;
             }
             if name.is_empty() {
-                // A continuation line: no literal, just description under the same column.
                 out.push_str(&format!(
                     "{HELP_INDENT}{:width$}{description}\n",
                     "",
@@ -1863,13 +2008,11 @@ fn help_text(styles: &HelpStyles, endpoint_help: &str, advanced: bool) -> String
                 continue;
             }
             out.push_str(HELP_INDENT);
-            push_styled_name(&mut out, name, styles);
+            push_styled_name(out, name, styles);
             if description.is_empty() {
                 out.push('\n');
                 continue;
             }
-            // One space has to survive between the two columns, so a name that fills the column
-            // hands its description the next line rather than butting up against it.
             if name.chars().count() < HELP_NAME_WIDTH {
                 out.push_str(&format!(
                     "{:width$}{description}\n",
@@ -1885,14 +2028,6 @@ fn help_text(styles: &HelpStyles, endpoint_help: &str, advanced: bool) -> String
             }
         }
     }
-
-    if advanced {
-        out.push_str(&format!(
-            "\n{heading}ENDPOINTS{reset}\n{HELP_INDENT}{endpoint_help}\n"
-        ));
-    }
-    out.push_str("\nDetach with prefix d, or use a configured quit binding.");
-    out
 }
 
 /// The `--socket`/`ROZI_SOCKET` explanation, which differs by platform: a Unix-domain socket
@@ -1957,10 +2092,27 @@ mod tests {
     fn cli_skill_is_a_strict_early_variant_backed_by_the_contract_document() {
         assert!(matches!(
             parse_cli_args(vec!["--skill".into()]).expect("parses"),
-            ParsedCli::Skill
+            ParsedCli::Skill(SkillCommand::Print)
         ));
         assert!(parse_cli_args(vec!["--skill".into(), "extra".into()]).is_err());
         assert!(parse_cli_args(vec!["target".into(), "--skill".into()]).is_err());
+        assert!(matches!(
+            parse_cli_args(vec!["skill".into(), "print".into()]).expect("parses"),
+            ParsedCli::Skill(SkillCommand::Print)
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["skill".into()]).expect("parses"),
+            ParsedCli::SkillHelp
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["skill".into(), "-h".into()]).expect("parses"),
+            ParsedCli::SkillHelp
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["skill".into(), "install".into(), "--global".into()])
+                .expect("parses"),
+            ParsedCli::Skill(SkillCommand::Install { global: true })
+        ));
 
         for section in [
             "---\nname: rozi",
@@ -1984,7 +2136,7 @@ mod tests {
             "Input lock",
         ] {
             assert!(
-                AGENT_SKILL.contains(section),
+                crate::skill::SKILL_MD.contains(section),
                 "missing skill section: {section}"
             );
         }
@@ -2836,6 +2988,24 @@ mod tests {
                 "help reaches {widest} columns (advanced: {advanced})"
             );
         }
+        let mut skill_help = String::from("rozi skill - install the built-in Rozi agent skill\n");
+        append_help_sections(
+            &mut skill_help,
+            SKILL_HELP_SECTIONS,
+            &HelpStyles::plain(),
+            true,
+        );
+        for line in skill_help.lines() {
+            assert!(
+                !line.ends_with(' '),
+                "trailing whitespace in skill help line: {line:?}"
+            );
+            assert!(
+                line.chars().count() <= 80,
+                "skill help reaches {} columns: {line}",
+                line.chars().count()
+            );
+        }
     }
 
     fn heading_order(text: &str, headings: &[&str]) {
@@ -2861,6 +3031,7 @@ mod tests {
                 "PANES",
                 "SCRIPTING",
                 "EXTENSIONS",
+                "AGENTS",
                 "INSTALLATION",
                 "OPTIONS",
             ],
@@ -2873,6 +3044,7 @@ mod tests {
                 "PANES",
                 "SCRIPTING",
                 "EXTENSIONS",
+                "AGENTS",
                 "INSTALLATION",
                 "OPTIONS",
                 "ADVANCED",

@@ -758,8 +758,8 @@ pub fn run() -> Result<()> {
         }
     };
 
-    // Pure extension diagnostics do not need a runnable terminal host or a healthy managed binary
-    // installation. Keeping them first makes `check-extension` useful while repairing either.
+    // Pure extension diagnostics and the built-in skill do not need a runnable terminal host or a
+    // healthy managed binary. Keeping them first makes them useful while repairing either.
     let parsed = match parsed {
         cli::ParsedCli::ListExtensions {
             json,
@@ -774,6 +774,17 @@ pub fn run() -> Result<()> {
         }
         cli::ParsedCli::CheckExtension { path, json } => {
             if !cli::run_check_extension_cli(&path, json)? {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        cli::ParsedCli::SkillHelp => {
+            cli::print_skill_help();
+            return Ok(());
+        }
+        cli::ParsedCli::Skill(command) => {
+            if let Err(message) = cli::run_skill_cli(command) {
+                eprintln!("rozi: {message}");
                 std::process::exit(1);
             }
             return Ok(());
@@ -795,10 +806,6 @@ pub fn run() -> Result<()> {
         }
         cli::ParsedCli::Version => {
             cli::print_version();
-            return Ok(());
-        }
-        cli::ParsedCli::Skill => {
-            cli::print_skill();
             return Ok(());
         }
         cli::ParsedCli::Install => {
@@ -858,7 +865,8 @@ pub fn run() -> Result<()> {
         cli::ParsedCli::Run(args) => args,
         cli::ParsedCli::Help { .. }
         | cli::ParsedCli::Version
-        | cli::ParsedCli::Skill
+        | cli::ParsedCli::Skill(_)
+        | cli::ParsedCli::SkillHelp
         | cli::ParsedCli::Install
         | cli::ParsedCli::Update(_)
         | cli::ParsedCli::ListExtensions { .. }

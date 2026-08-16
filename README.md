@@ -178,6 +178,7 @@ with search.
 | [Profiles](docs/profiles.md) | Saving and relaunching layouts |
 | [Project profiles](docs/project-profiles.md) | Profile files and pane identity |
 | [Control socket](docs/control.md) | Driving rozi from scripts |
+| [Agent skill](docs/agent-skill.md) | Install the built-in skill for coding agents |
 | [Hooks](docs/hooks.md) | Running commands when events happen |
 | [Extensions](docs/extensions.md) | Authoring, validating, debugging, and installing extensions |
 | [Extension recipes](docs/recipes.md) | Worked examples built on the control socket |

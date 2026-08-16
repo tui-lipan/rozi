@@ -177,8 +177,9 @@ then uses local stale-server recovery only when that local protocol transport ca
 destroys the server's PTYs for every attached client and is not a generic process killer. The
 `--remote` form runs the same command over SSH and never force-terminates the local SSH transport.
 
-Agents that need to control panes or session lifecycle should first read the operational contract
-printed by `rozi --skill`.
+Agents that need to control panes or session lifecycle should install the built-in skill with
+`rozi skill install` (or `rozi skill install --global`). `rozi --skill` still prints the same
+contract. See [Agent skill](agent-skill.md).
 
 An unknown positional target errors instead of silently creating a session. `attach` and `new` are
 reserved command words; use `rozi --session attach` or `rozi --session new` to target those

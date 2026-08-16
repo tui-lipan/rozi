@@ -56,6 +56,14 @@ fn parse_agent(value: &str) -> Option<AgentKind> {
     providers::catalog::kind_from_name(value)
 }
 
+/// Whether a Claude Code CLI is on `PATH`, using the same name vocabulary as pane detection.
+pub(crate) fn claude_cli_available() -> bool {
+    ["claude", "claude-code"].into_iter().any(|name| {
+        providers::catalog::kind_from_name(name) == Some(AgentKind::Claude)
+            && crate::platform::command::program_exists(name)
+    })
+}
+
 /// The agent state a pane's screen provides evidence for.
 ///
 /// `None` means the agent was recognized but the screen said nothing either way - it is *not*

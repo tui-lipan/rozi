@@ -8,6 +8,7 @@ server-backed named sessions for detach/reattach workflows.
 ## Repository Structure
 
 - `.agents/` - Local agent skills and references used by this workspace.
+- `skills/` - The built-in Rozi Agent Skill (`skills/rozi/SKILL.md`), embedded in the binary.
 - `.claude/` - Local Claude/agent helper material; preserve unless explicitly asked.
 - `.github/` - GitHub metadata such as funding configuration.
 - `.superpowers/` - Historical planning and execution notes; do not treat as live product docs.
@@ -266,6 +267,7 @@ Major module map:
 - `shared_layout.rs` - Server-authoritative shared layout document, conversions, and the follower
   reconciler (`apply_shared_layout`).
 - `profiles.rs` / `ops/profile.rs` - Named profile serialization, restore, picker, default profile.
+- `skill.rs` - Built-in Agent Skill embed, `.agents` install/uninstall/status, Claude compatibility.
 - `config/` / `ops/config.rs` / `ops/theme.rs` - Serde file models and load orchestration in
   `config/file.rs`, with rules, input, workbar, appearance, persistence, schema, and theme helpers
   in flat sibling modules; runtime reload and terminal-color reactions live under `ops/`.
@@ -517,6 +519,8 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
   <NAME>` is attach-only and `new <NAME> [--profile <PROFILE>]` explicitly creates a session.
 - `--remote <HOST|ssh://URL>` attaches over SSH via a remote-side `--remote-serve` stdio proxy; see
   `docs/remote.md`. `ROZI_REMOTE_BINARY` forces which local binary is installed on the remote.
+- `rozi skill install [--global]` installs the built-in Agent Skill under `.agents/skills/rozi`;
+  `rozi --skill` prints the same embedded `skills/rozi/SKILL.md`. See `docs/agent-skill.md`.
 - Cargo feature flags are inherited from the `tui-lipan` dependency; this crate uses `terminal`,
   `terminal-images`, `terminal-serde`, `clipboard-images`, `theme-reload`, and `devtools`.
 
@@ -535,6 +539,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - [docs/sessions.md](docs/sessions.md) - Local vs attached sessions and detach/reattach semantics.
 - [docs/remote.md](docs/remote.md) - SSH `--remote` attach, bootstrap/install, and feature split.
 - [docs/control.md](docs/control.md) - Control socket CLI and JSON protocol.
+- [docs/agent-skill.md](docs/agent-skill.md) - Built-in Agent Skill install location and CLI.
 - [docs/hooks.md](docs/hooks.md) - Hook syntax, event fields, environment, and execution semantics.
 - [docs/benchmarks.md](docs/benchmarks.md) - Benchmarks, baselines, live stress, and profiling.
 - [docs/themes.md](docs/themes.md) - Themes, hot reload, and terminal color palette.

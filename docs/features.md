@@ -466,6 +466,11 @@ long-lived client receives the event stream over the socket.
 
 `ROZI_SOCKET` points the CLI at a live UI control socket.
 
+**Agent skill** — `rozi skill install` writes the built-in control contract to
+`.agents/skills/rozi/SKILL.md` (or `~/.agents/skills/rozi` with `--global`). Claude Code gets a
+compatibility symlink or junction when a Claude CLI is on `PATH`. `rozi --skill` still prints the
+same file. See [Agent skill](agent-skill.md).
+
 **Injected pane environment** — `ROZI=1`, `ROZI_PANE`, and `ROZI_SOCKET` are set in every
 spawned pane. `PaneIdentity::env` adds never-persisted per-spawn variables.
 

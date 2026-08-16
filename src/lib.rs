@@ -36,6 +36,7 @@ mod scratchpad;
 mod send_keys;
 pub mod session;
 pub mod shared_layout;
+mod skill;
 pub mod state;
 #[doc(hidden)]
 pub mod test_support;

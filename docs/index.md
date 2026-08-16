@@ -27,7 +27,7 @@ explicitly.
 | [Project profiles & pane identity](project-profiles.md) | Saving and restoring named workspace layouts. |
 | [Named profiles](profiles.md) | Profile files, CLI launch/default profile priority, and in-app profile management. |
 | [Control socket](control.md) | Per-run automation socket, pane environment, CLI commands, and JSON protocol. |
-| [Agent skill](agent-skill.md) | The operational contract printed by `rozi --skill` for coding agents controlling panes and sessions. |
+| [Agent skill](agent-skill.md) | Install the built-in Agent Skill (`rozi skill install`); `rozi --skill` still prints it. |
 | [Hooks](hooks.md) | Event-triggered commands, event fields, environment variables, and control-socket callbacks. |
 | [Extensions](extensions.md) | Stable identity/API, manifests, diagnostics, lifecycle, examples, and author workflow. |
 | [Extension test lab](extension-testing.md) | Canonical extension setup, real-tool workflows, and adversarial lifecycle checks. |

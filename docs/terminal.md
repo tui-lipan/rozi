@@ -173,10 +173,11 @@ local depths without changing the server's retained replay.
 
 Transport buffering is separately bounded: PTY readers apply backpressure after 4 MiB is waiting
 for the server, and each client's steady-state inbound and outbound backlog is capped at 8 MiB.
-Terminal output is never discarded. A child producing faster than the server can consume blocks in
-the kernel PTY path; a client or remote writer that cannot keep up is disconnected explicitly
-instead of losing output or input. Initial attach replay uses a separate 64 MiB server-side seed
-cap because it may legitimately exceed the steady-state backlog.
+Terminal output is never discarded. A full client inbound mailbox backpressures its socket reader;
+a child producing faster than the server can consume blocks in the kernel PTY path; and a client or
+remote writer that remains unable to keep up is disconnected by the server instead of losing output
+or input. Initial attach replay uses a separate 64 MiB server-side seed cap because it may
+legitimately exceed the steady-state backlog.
 
 ## Scrollback search
 

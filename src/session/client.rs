@@ -16,13 +16,12 @@ use crate::session::protocol::Frame;
 use crate::session::protocol::{
     self, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
-use crate::session::queue::ByteQueue;
+use crate::session::queue::{ByteQueue, PushError};
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
 const MAX_CLIENT_INBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CLIENT_OUTBOUND_BYTES: usize = 8 * 1024 * 1024;
-const MAX_COALESCED_PANE_BYTES: usize = 64 * 1024;
 
 /// Explicit transport lifecycle owner. When the final `SessionClient` handle for a session
 /// is dropped, `ClientTransport` shuts down the stream, signals termination to reader/writer
@@ -618,13 +617,28 @@ impl InboundMailbox {
 
     fn push(self: &Arc<Self>, frame: Frame<ServerMessage>) -> std::result::Result<(), ()> {
         let bytes = inbound_frame_bytes(&frame);
-        let result =
-            self.queue
-                .try_push_with(InboundEvent::Frame(Box::new(frame)), bytes, |back, next| {
-                    coalesce_inbound(back, next)
-                });
-        if result.is_err() {
-            self.fail("session inbound queue exceeded 8 MiB".to_string());
+        // Parsing terminal graphics can briefly take longer than the socket reader needs to fill
+        // this bounded mailbox. Backpressure that reader instead of tearing down a healthy local
+        // session: the server still owns per-client outbox isolation, so a genuinely slow client
+        // cannot stall broadcasts to everyone else.
+        //
+        // Keep all adjacent output for one pane in one entry, up to the mailbox's byte cap. A
+        // browser redraw is hundreds of KiB split across many server frames; delivering every
+        // 64-KiB piece as a separate UI message forces redundant paints and can make the reader
+        // outrun the parser even though one batched pass catches up.
+        let result = self.queue.push_blocking_with(
+            InboundEvent::Frame(Box::new(frame)),
+            bytes,
+            coalesce_inbound,
+        );
+        if let Err(error) = result {
+            let message = match error {
+                PushError::TooLarge(_) => "session inbound frame exceeded 8 MiB",
+                PushError::Closed(_) => "session inbound queue closed",
+                // Blocking insertion waits for capacity, so `Full` is not produced.
+                PushError::Full(_) => "session inbound queue unavailable",
+            };
+            self.fail(message.to_string());
             return Err(());
         }
         self.schedule();
@@ -710,11 +724,7 @@ fn coalesce_inbound(back: &mut InboundEvent, next: &InboundEvent) -> bool {
     else {
         return false;
     };
-    if pane_id != next_pane
-        || local != next_local
-        || generation != next_generation
-        || bytes.len().saturating_add(next_bytes.len()) > MAX_COALESCED_PANE_BYTES
-    {
+    if pane_id != next_pane || local != next_local || generation != next_generation {
         return false;
     }
     bytes.extend_from_slice(next_bytes);
@@ -1070,6 +1080,33 @@ mod tests {
             &mut output,
             &InboundEvent::Frame(Box::new(Frame::Control(ServerMessage::Ping { seq: 1 })))
         ));
+    }
+
+    #[test]
+    fn inbound_coalescing_keeps_large_browser_redraws_in_one_ui_delivery() {
+        let first = vec![b'a'; 64 * 1024];
+        let second = vec![b'b'; 512 * 1024];
+        let mut output = InboundEvent::Frame(Box::new(Frame::PaneBytes {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            bytes: first,
+        }));
+        let continuation = InboundEvent::Frame(Box::new(Frame::PaneBytes {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            bytes: second,
+        }));
+
+        assert!(coalesce_inbound(&mut output, &continuation));
+        let InboundEvent::Frame(frame) = output else {
+            panic!("coalesced pane output");
+        };
+        let Frame::PaneBytes { bytes, .. } = *frame else {
+            panic!("coalesced pane bytes");
+        };
+        assert_eq!(bytes.len(), 576 * 1024);
     }
 
     #[test]

@@ -205,11 +205,6 @@ pub struct SharedSessionState {
     /// Pane output that arrived before the pane's `LayoutCommitted` created it locally, keyed by
     /// `(pane_id, generation)`; drained into the pane once the reconciler adds it.
     orphan_output: OrphanOutputStore,
-    /// Latest pending resize per `(local, pane)` while the controller debounces resize storms.
-    pub pending_resizes: HashMap<(bool, PaneId), (u16, u16)>,
-    /// Whether a trailing-edge `Msg::FlushPaneResizes` is already in flight, so a burst of resizes
-    /// schedules only one flush timer.
-    pub resize_flush_scheduled: bool,
     /// Whether a trailing-edge `Msg::FlushLayoutCommit` is already in flight.
     pub layout_commit_scheduled: bool,
 }
@@ -228,8 +223,6 @@ impl SharedSessionState {
             canonical_canvas: None,
             last_committed_layout: None,
             orphan_output: OrphanOutputStore::default(),
-            pending_resizes: HashMap::new(),
-            resize_flush_scheduled: false,
             layout_commit_scheduled: false,
         }
     }

@@ -158,7 +158,13 @@ pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {
     let epoch = ctx.state.mint_attachment_id();
     ctx.state.runtime_epoch = epoch;
     ctx.state.current_mut().epoch = epoch;
+    // A timer from the dead transport carries the previous epoch and will now be ignored. Disarm
+    // it so a geometry change during reconnect can schedule a replacement; retained sizes remain
+    // queued and are force-flushed when the new client is installed.
+    ctx.state.current_mut().resize_flush_scheduled = false;
+    ctx.state.current_mut().resize_flush_deadline = None;
     ctx.state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+    ctx.state.commands_dirty = true;
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
@@ -171,12 +177,6 @@ pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {
         left: None,
         parked_epoch: None,
     });
-    crate::pty_events::notify_on(
-        ctx,
-        crate::state::ToastChannel::SessionLifecycle,
-        None,
-        format!("Reconnecting to {name}…"),
-    );
     if let Some(target) = ctx.state.current().remote_target.clone() {
         let remote_config = ctx.state.config.remote.clone();
         return Update::with_command(Command::spawn(move |link| {

@@ -796,6 +796,7 @@ fn commands_active_without_scratchpad(state: &State) -> bool {
         && !state.show_session_picker
         && state.collaboration.is_none()
         && state.follow_prompt.is_none()
+        && state.current().connection != crate::state::ConnectionState::Reconnecting
 }
 
 /// Register (or re-register, replacing by id) every command from the current `State`: builtin
@@ -2048,5 +2049,13 @@ mod tests {
             resolved_label(Action::ToggleInputLock, "Toggle input lock", &state),
             "Disable input lock"
         );
+    }
+
+    #[test]
+    fn reconnecting_suspends_app_commands() {
+        let mut state = State::new(Config::default(), Theme::default());
+        assert!(commands_active(&state));
+        state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+        assert!(!commands_active(&state));
     }
 }

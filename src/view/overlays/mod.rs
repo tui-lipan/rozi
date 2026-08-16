@@ -21,7 +21,7 @@ use super::keys::{
 };
 use super::{
     action_palette_frame, action_palette_modal, action_palette_modal_with_width, fg_only,
-    modal_scrollbar_config, search_entries_with_groups, shared_search_palette,
+    modal_scrollbar_config, search_entries_with_groups, shared_search_palette, styled_modal,
 };
 
 include!("search.rs");

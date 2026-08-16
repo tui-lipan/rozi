@@ -35,8 +35,9 @@ use pane::pane_title_bg;
 use overlays::{
     collaboration_overlay, follow_prompt_overlay, help_overlay, layout_picker_overlay,
     palette_overlay, pane_padding_overlay, pick_overlay, pick_prompt_overlay,
-    profile_picker_overlay, rename_overlay, rename_session_overlay, save_profile_overlay,
-    search_overlay, session_picker_overlay, settings_overlay, theme_picker_overlay,
+    profile_picker_overlay, reconnecting_overlay, rename_overlay, rename_session_overlay,
+    save_profile_overlay, search_overlay, session_picker_overlay, settings_overlay,
+    theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
@@ -512,7 +513,16 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     // Centered modal dialogs dim the workspace behind them the same way the scratchpad does, so
     // the dialog reads as the focused layer. The scrollback search is excluded: it scrolls the
     // panes to reveal matches, so they must stay readable.
-    let dialog_open = ctx.state.show_palette
+    let reconnecting = ctx.state.current().connection
+        == crate::state::ConnectionState::Reconnecting
+        && ctx
+            .state
+            .current()
+            .pending_session_attach
+            .as_ref()
+            .is_some_and(|pending| pending.reconnect);
+    let dialog_open = reconnecting
+        || ctx.state.show_palette
         || ctx.state.show_help
         || ctx.state.show_settings
         || ctx.state.show_theme_picker
@@ -758,6 +768,9 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.follow_prompt.is_some() {
         root = root.child(follow_prompt_overlay(ctx));
+    }
+    if reconnecting {
+        root = root.child(reconnecting_overlay(ctx));
     }
 
     let content: Element = root.into();
@@ -1157,6 +1170,45 @@ mod grouped_search_tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn reconnecting_with_retained_panes_shows_progress_modal() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+                backend.set_viewport(tui_lipan::prelude::Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("dev".into());
+                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+                state.current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: state.runtime_epoch,
+                        name: "dev".into(),
+                        client: None,
+                        autostart: false,
+                        read_only: false,
+                        reconnect: true,
+                        remote_host: None,
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+                backend.render();
+
+                let frame = backend.capture_frame().to_fixed_grid();
+                assert!(frame.contains("Session · dev"));
+                assert!(frame.contains("reconnecting"));
+            })
+            .expect("spawn reconnect modal test")
+            .join()
+            .expect("reconnect modal test completes");
     }
 }
 

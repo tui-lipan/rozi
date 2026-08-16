@@ -4,9 +4,9 @@ use crate::AppRoot;
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::PaneId;
 
-/// Trailing-edge debounce window for controller PTY resizes, coalescing a resize storm (drag,
-/// tiling reflow) into one `pty.resize`/SIGWINCH per pane.
-const RESIZE_DEBOUNCE_MS: u64 = 16;
+/// Trailing-edge debounce window for controller PTY resizes. A width change reflows retained
+/// history in both parsers, so forwarding at frame rate makes a long transcript costly to drag.
+const RESIZE_DEBOUNCE_MS: u64 = 100;
 
 pub(crate) fn handle_pane_resize(
     ctx: &mut Context<AppRoot>,
@@ -18,38 +18,56 @@ pub(crate) fn handle_pane_resize(
     // and their screens reshape only via the server's broadcast `Resized`. Owner-local panes
     // (scratch/popup) do not affect canonical shared sizing, so their owner may resize them.
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
-    if !ctx.state.is_controller() && !local {
+    if ctx.state.current().shared.is_some() && !ctx.state.is_controller() && !local {
         return Update::none();
     }
     // The pane rect updates immediately, but the client-side screen only reshapes on the server's
     // ordered `Resized` broadcast, so both parsers reshape at the same byte position.
     let client = ctx.state.current().session_client.clone();
-    let generation = match find_pane_mut(&mut ctx.state, id) {
+    let attach_pending = ctx.state.current().pending_session_attach.is_some();
+    match find_pane_mut(&mut ctx.state, id) {
         Some(pane) => {
-            if client.is_none() {
+            if client.is_none() && !attach_pending {
                 pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
                 return Update::full();
             }
-            pane.pty_generation
         }
         None => return Update::none(),
-    };
-    // Debounce through the shared bookkeeping when attached: record the latest size and arm a single
-    // trailing-edge flush. Without shared state (a brief unattached window), send immediately.
+    }
+    // Keep pending geometry on the attachment rather than its transport-specific shared state: a
+    // reconnect replaces the latter, but the widget may not report an unchanged viewport again.
     let epoch = ctx.state.runtime_epoch;
-    if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
-        shared
-            .pending_resizes
-            .insert((local, id), (cols.max(1), rows.max(1)));
-        if shared.resize_flush_scheduled {
-            return Update::none();
-        }
-        shared.resize_flush_scheduled = true;
-        return Update::with_command(schedule_pane_resize_flush(epoch));
+    let attachment = ctx.state.current_mut();
+    attachment
+        .pending_resizes
+        .insert((local, id), (cols.max(1), rows.max(1)));
+    attachment.resize_flush_deadline =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(RESIZE_DEBOUNCE_MS));
+    if attachment.resize_flush_scheduled {
+        return Update::none();
     }
-    if let Some(client) = client {
-        client.resize(id, generation, local, cols.max(1), rows.max(1));
+    attachment.resize_flush_scheduled = true;
+    Update::with_command(schedule_pane_resize_flush(epoch))
+}
+
+/// Flush after a full quiet window. If geometry changed since the timer was armed, wait out the
+/// remainder rather than reshaping retained terminal history in the middle of a drag.
+pub(crate) fn flush_scheduled_resizes(ctx: &mut Context<AppRoot>) -> Update {
+    if let Some(remaining) = ctx
+        .state
+        .current()
+        .resize_flush_deadline
+        .and_then(|deadline| deadline.checked_duration_since(std::time::Instant::now()))
+    {
+        let epoch = ctx.state.runtime_epoch;
+        return Update::with_command(Command::after(
+            remaining,
+            move |link: CommandLink<crate::Msg>| {
+                link.send(crate::Msg::FlushPaneResizes { epoch });
+            },
+        ));
     }
+    flush_pending_resizes(ctx);
     Update::none()
 }
 
@@ -74,18 +92,19 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
     let Some(client) = ctx.state.current().session_client.clone() else {
         // Mid-attach or a reconnect window. Disarm so a later report can schedule a fresh flush,
         // but keep the sizes: `flush_pending_resizes` runs again once the client is installed.
-        if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
-            shared.resize_flush_scheduled = false;
-        }
+        ctx.state.current_mut().resize_flush_scheduled = false;
+        ctx.state.current_mut().resize_flush_deadline = None;
         return;
     };
-    let pending: Vec<((bool, PaneId), (u16, u16))> = match ctx.state.current_mut().shared.as_mut() {
-        Some(shared) => {
-            shared.resize_flush_scheduled = false;
-            shared.pending_resizes.drain().collect()
-        }
-        None => return,
-    };
+    let is_controller = ctx.state.is_controller();
+    let attachment = ctx.state.current_mut();
+    attachment.resize_flush_scheduled = false;
+    attachment.resize_flush_deadline = None;
+    let pending: Vec<_> = attachment.pending_resizes.drain().collect();
+    let (pending, retained): (Vec<_>, Vec<_>) = pending
+        .into_iter()
+        .partition(|((local, _), _)| *local || is_controller);
+    ctx.state.current_mut().pending_resizes.extend(retained);
     for ((local, id), (cols, rows)) in pending {
         if let Some(pane) =
             crate::pane_lifecycle::find_pane_in_namespace_mut(&mut ctx.state, id, local)
@@ -93,4 +112,28 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
             client.resize(id, pane.pty_generation, local, cols.max(1), rows.max(1));
         }
     }
+}
+
+/// Complete a timer that followed its attachment into the background. Parking releases the server
+/// lease, so preserve shared geometry until this attachment returns and regains control.
+pub(crate) fn flush_background_resizes(state: &mut crate::state::State, epoch: u64) -> Update {
+    let Some(attachment) = state.background.get_mut(&epoch) else {
+        return Update::none();
+    };
+    if let Some(remaining) = attachment
+        .resize_flush_deadline
+        .and_then(|deadline| deadline.checked_duration_since(std::time::Instant::now()))
+    {
+        return Update::with_command(Command::after(
+            remaining,
+            move |link: CommandLink<crate::Msg>| {
+                link.send(crate::Msg::FlushPaneResizes { epoch });
+            },
+        ));
+    }
+    attachment.resize_flush_scheduled = false;
+    attachment.resize_flush_deadline = None;
+    // Client-local overlays are torn down on a switch and never belong to a background attachment.
+    attachment.pending_resizes.retain(|(local, _), _| !*local);
+    Update::none()
 }

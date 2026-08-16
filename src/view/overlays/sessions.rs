@@ -284,6 +284,27 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
     )
 }
 
+/// Non-dismissible progress chrome while an automatic reconnect preserves the panes underneath.
+pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
+    let name = ctx
+        .state
+        .current()
+        .session_name
+        .as_deref()
+        .unwrap_or("session");
+    styled_modal(ctx, &format!("Session · {name}"), 42)
+        .auto_focus(false)
+        .dismiss_on_escape(false)
+        .child(
+            Spinner::new()
+                .spinner_style(SpinnerStyle::Dots)
+                .label("reconnecting")
+                .style(Style::new().fg(ctx.state.theme.status.warning))
+                .label_style(fg_only(&ctx.state.theme.primary)),
+        )
+        .into()
+}
+
 /// The footer hint row only advertises keys that would actually act on the current state, so a
 /// hint never lies. Enter is **switch** for a background-connected session and **connect** when
 /// establishing a connection; **disconnect** closes this client's attachment; **kill** destroys the

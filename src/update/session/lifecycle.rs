@@ -80,8 +80,7 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
     } else {
         crate::state::ConnectionState::Disconnected
     };
-    // Same slot as the `Reconnecting to X…` progress message this outcome answers, so the
-    // failure replaces the attempt instead of stacking on top of it.
+    ctx.state.commands_dirty = true;
     crate::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::SessionLifecycle,
@@ -284,7 +283,9 @@ pub(crate) fn attached(
     // Landing on a session someone else is driving is a fork in the road, not a fait accompli: ask
     // before this client settles in as a follower. Raised last so the attach is fully installed —
     // cancelling from the prompt leaves the session the same way switching away from it would.
-    crate::ops::session::prompt_follow_if_occupied(ctx);
+    if !reconnect {
+        crate::ops::session::prompt_follow_if_occupied(ctx);
+    }
     if ctx.state.pending_session_action.is_some() {
         let deferred = crate::ops::session::run_pending_session_action(ctx);
         // Empty-seed deferred starts leave `update` as a command-less full refresh; prefer the

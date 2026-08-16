@@ -93,6 +93,13 @@ pub struct Attachment {
     /// Structural closes deferred while this attachment is parked. Applied after it returns to the
     /// foreground and regains layout control.
     pub pending_background_closes: Vec<(PaneId, u64)>,
+    /// Latest pending terminal size per `(local, pane)`. This outlives a transport reconnect so an
+    /// unchanged viewport is still delivered after the new client is installed.
+    pub pending_resizes: HashMap<(bool, PaneId), (u16, u16)>,
+    /// Whether a trailing-edge `Msg::FlushPaneResizes` timer is in flight.
+    pub resize_flush_scheduled: bool,
+    /// The quiet-period deadline, moved forward by every geometry report.
+    pub resize_flush_deadline: Option<std::time::Instant>,
     /// Recently removed authoritative panes retained only so a same-generation layout correction
     /// can restore the client-side terminal screen while Canvas owns the visual exit subtree.
     pub retired_panes: ExitQueue<(PaneId, u64), Pane>,
@@ -141,6 +148,9 @@ impl Attachment {
             pending_replay_inputs: HashMap::new(),
             pending_background_layout: None,
             pending_background_closes: Vec::new(),
+            pending_resizes: HashMap::new(),
+            resize_flush_scheduled: false,
+            resize_flush_deadline: None,
             retired_panes: ExitQueue::with_exit_timeout(crate::anim::retained_pane_timeout(
                 crate::anim::WindowAnimationConfig::default(),
             )),

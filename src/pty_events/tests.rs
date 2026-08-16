@@ -445,19 +445,14 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 let mut shared = SharedSessionState::new(1);
                 shared.controller = Some(1);
                 state.current_mut().shared = Some(shared);
+                state.current_mut().resize_flush_deadline = None;
             }
             backend.render();
-            // Pretend a flush is already armed. A real one is a 16 ms wall-clock timer, and
+            // Pretend a flush is already armed. A real one is a wall-clock timer, and
             // everything asserted below is state that firing it drains - so left to run, how
             // loaded the machine is decides the outcome. Arming it by hand keeps the flush in
             // this test's hands instead of the clock's.
-            backend
-                .state_mut()
-                .current_mut()
-                .shared
-                .as_mut()
-                .expect("controller has shared state")
-                .resize_flush_scheduled = true;
+            backend.state_mut().current_mut().resize_flush_scheduled = true;
             backend
                 .dispatch(Msg::PaneResize(1, 40, 12))
                 .expect("dispatch first resize");
@@ -469,17 +464,11 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 "debounced resizes are not sent until the flush"
             );
             assert_eq!(
-                backend
-                    .state()
-                    .current()
-                    .shared
-                    .as_ref()
-                    .expect("controller has shared state")
-                    .pending_resizes
-                    .get(&(false, 1)),
+                backend.state().current().pending_resizes.get(&(false, 1)),
                 Some(&(50, 20)),
                 "both resizes coalesce into the latest pending size"
             );
+            backend.state_mut().current_mut().resize_flush_deadline = None;
             backend
                 .dispatch(Msg::FlushPaneResizes { epoch: 0 })
                 .expect("dispatch flush");
@@ -495,6 +484,7 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
             backend
                 .dispatch(Msg::PaneResize(1, 60, 22))
                 .expect("dispatch preview resize");
+            backend.state_mut().current_mut().resize_flush_deadline = None;
             backend
                 .dispatch(Msg::FlushPaneResizes { epoch: 0 })
                 .expect("dispatch flush during preview");
@@ -519,33 +509,133 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
             backend
                 .dispatch(Msg::PaneResize(1, 50, 20))
                 .expect("dispatch resize");
-            // The link drops between the report and the trailing-edge flush it armed.
-            backend.state_mut().current_mut().session_client = None;
+            backend.state_mut().current_mut().resize_flush_deadline = None;
+            // The link drops between the report and the trailing-edge flush it armed. Transport
+            // state is discarded, but attachment-owned geometry survives and can still move while
+            // reconnecting.
+            backend.state_mut().current_mut().mark_disconnected();
+            {
+                let state = backend.state_mut();
+                state.runtime_epoch = 1;
+                state.current_mut().epoch = 1;
+                state.current_mut().resize_flush_scheduled = false;
+                state.current_mut().resize_flush_deadline = None;
+                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+                state.current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: 1,
+                        name: "dev".into(),
+                        client: None,
+                        autostart: false,
+                        read_only: false,
+                        reconnect: true,
+                        remote_host: None,
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+            }
             backend
                 .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                .expect("dispatch stale pre-reconnect timer");
+            backend
+                .dispatch(Msg::PaneResize(1, 55, 21))
+                .expect("dispatch resize while reconnecting");
+            backend.state_mut().current_mut().resize_flush_deadline = None;
+            backend
+                .dispatch(Msg::FlushPaneResizes { epoch: 1 })
                 .expect("dispatch flush while disconnected");
-            assert_eq!(
-                backend
-                    .state()
-                    .current()
-                    .shared
-                    .as_ref()
-                    .expect("controller has shared state")
-                    .pending_resizes
-                    .get(&(false, 1)),
-                Some(&(50, 20)),
-                "a flush with no client keeps the size for the next one"
-            );
+            let reconnect_size = *backend
+                .state()
+                .current()
+                .pending_resizes
+                .get(&(false, 1))
+                .expect("a flush with no client keeps the latest size");
 
             // The client arriving is what delivers it.
-            backend.state_mut().current_mut().session_client = Some(client);
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_client = Some(client);
+                state.current_mut().pending_session_attach = None;
+                let mut shared = SharedSessionState::new(1);
+                shared.controller = Some(1);
+                state.current_mut().shared = Some(shared);
+                state.current_mut().resize_flush_deadline = None;
+            }
             backend
-                .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                .dispatch(Msg::FlushPaneResizes { epoch: 1 })
                 .expect("dispatch flush after reconnect");
             assert_eq!(
                 resizes(&reconnect_rx),
-                vec![(50, 20)],
+                vec![reconnect_size],
                 "the held size reaches the PTY once a client is back"
+            );
+
+            // A session switch can race the debounce timer. The attachment and its live client
+            // move into the background together, so the stale-epoch timer must finish there.
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(viewport);
+            let (client, parked_rx) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                state.runtime_epoch = 7;
+                state.current_mut().session_client = Some(client);
+                let mut shared = SharedSessionState::new(1);
+                shared.controller = Some(1);
+                state.current_mut().shared = Some(shared);
+                state.current_mut().resize_flush_scheduled = true;
+            }
+            backend
+                .dispatch(Msg::PaneResize(1, 70, 24))
+                .expect("dispatch resize before parking");
+            let parked_size = *backend
+                .state()
+                .current()
+                .pending_resizes
+                .get(&(false, 1))
+                .expect("geometry queued before parking");
+            backend.state_mut().current_mut().resize_flush_deadline = None;
+            {
+                let state = backend.state_mut();
+                state.park_current(7, crate::state::Attachment::new());
+                state.runtime_epoch = 8;
+            }
+            backend
+                .dispatch(Msg::FlushPaneResizes { epoch: 7 })
+                .expect("dispatch parked resize flush");
+            assert!(resizes(&parked_rx).is_empty());
+            {
+                let state = backend.state_mut();
+                let parked = state.background.get_mut(&7).expect("parked attachment");
+                assert_eq!(parked.pending_resizes.get(&(false, 1)), Some(&parked_size));
+                parked
+                    .shared
+                    .as_mut()
+                    .expect("parked shared state")
+                    .controller = None;
+                let restored = state.unpark(7, 8).expect("restore parked attachment");
+                state.runtime_epoch = restored;
+            }
+            backend
+                .dispatch(Msg::FlushPaneResizes { epoch: 7 })
+                .expect("dispatch flush before control returns");
+            assert!(resizes(&parked_rx).is_empty());
+            assert_eq!(
+                backend.state().current().pending_resizes.get(&(false, 1)),
+                Some(&parked_size),
+                "foreground follower retains geometry until control returns"
+            );
+            backend
+                .dispatch(Msg::SessionControllerChanged {
+                    epoch: 7,
+                    controller: Some(1),
+                    reason: crate::session::protocol::ControllerChangeReason::Granted,
+                })
+                .expect("dispatch control reacquisition");
+            assert_eq!(
+                resizes(&parked_rx),
+                vec![parked_size],
+                "parked geometry reaches the PTY after foreground control returns"
             );
         })
         .expect("spawn resize test thread")

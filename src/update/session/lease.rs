@@ -69,6 +69,9 @@ pub(crate) fn controller_changed(
         // server handed over - either way the chip is the whole story.
         crate::ops::session::apply_pending_background_closes(ctx);
     }
+    if now_controller && !ctx.state.current().pending_resizes.is_empty() {
+        crate::pty_events::flush_pending_resizes(ctx);
+    }
     ctx.state.commands_dirty = true;
     Update::full()
 }

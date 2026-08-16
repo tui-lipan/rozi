@@ -296,19 +296,9 @@ pub(crate) fn pane_logging_changed(
 
 pub(crate) fn flush_pane_resizes(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if epoch != ctx.state.runtime_epoch {
-        if let Some(shared) = ctx
-            .state
-            .background
-            .get_mut(&epoch)
-            .and_then(|attachment| attachment.shared.as_mut())
-        {
-            shared.resize_flush_scheduled = false;
-            shared.pending_resizes.clear();
-        }
-        return Update::none();
+        return crate::pty_events::flush_background_resizes(&mut ctx.state, epoch);
     }
-    crate::pty_events::flush_pending_resizes(ctx);
-    Update::none()
+    crate::pty_events::flush_scheduled_resizes(ctx)
 }
 
 /// A pane the user already closed is expected to exit, so `hold_on_exit` must not keep its shell

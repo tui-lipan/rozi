@@ -1054,7 +1054,7 @@ fn failed_local_create_restores_the_parked_session() {
 
 /// Attaching where another client already holds the lease: the client must ask what to do
 /// instead of quietly becoming a follower. `controller` is who the server says holds it.
-fn attach_with_controller(controller: crate::shared_layout::ClientId) -> bool {
+fn attach_with_controller(controller: crate::shared_layout::ClientId, reconnect: bool) -> bool {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -1068,7 +1068,7 @@ fn attach_with_controller(controller: crate::shared_layout::ClientId) -> bool {
                     client: Some(client),
                     autostart: false,
                     read_only: false,
-                    reconnect: false,
+                    reconnect,
                     remote_host: None,
                     intent: crate::state::AttachIntent::Plain,
                     left: None,
@@ -1101,14 +1101,19 @@ fn attach_with_controller(controller: crate::shared_layout::ClientId) -> bool {
 
 #[test]
 fn attaching_to_an_occupied_session_asks_before_following() {
-    assert!(attach_with_controller(1));
+    assert!(attach_with_controller(1, false));
 }
 
 /// Getting the lease on attach — which is what happens when the only other client is parked —
 /// is not a fork in the road, so nothing is asked.
 #[test]
 fn attaching_with_the_lease_in_hand_asks_nothing() {
-    assert!(!attach_with_controller(2));
+    assert!(!attach_with_controller(2, false));
+}
+
+#[test]
+fn reconnecting_to_an_occupied_session_does_not_interrupt_with_follow_prompt() {
+    assert!(!attach_with_controller(1, true));
 }
 
 #[test]

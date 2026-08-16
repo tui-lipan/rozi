@@ -158,8 +158,7 @@ pub(crate) enum ToastChannel {
     /// rather than leaving a column of superseded names.
     LayoutMode,
     PreferenceSave,
-    /// Attach/reconnect progress and its outcome, so `Reconnecting to X…` is replaced by whatever
-    /// happened rather than being buried under it.
+    /// Session attach/reconnect outcomes, so repeated lifecycle failures replace one another.
     SessionLifecycle,
 }
 

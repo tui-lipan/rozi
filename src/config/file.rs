@@ -529,54 +529,46 @@ pub fn load_config() -> LoadedConfig {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             note_config_text(None);
-            return load_config_from_text_with_extensions(
-                "",
-                &path,
-                extension_scan.extensions,
-                extension_scan.warnings,
-            );
+            return load_config_from_text_with_extensions("", &path, extension_scan, Vec::new());
         }
         Err(err) => {
             note_config_text(None);
-            let mut warnings = extension_scan.warnings;
+            let mut warnings = Vec::new();
             warnings.push(format!("Config read failed for {}: {err}", path.display()));
-            return load_config_from_text_with_extensions(
-                "",
-                &path,
-                extension_scan.extensions,
-                warnings,
-            );
+            return load_config_from_text_with_extensions("", &path, extension_scan, warnings);
         }
     };
     note_config_text(Some(text.clone()));
 
-    load_config_from_text_with_extensions(
-        &text,
-        &path,
-        extension_scan.extensions,
-        extension_scan.warnings,
-    )
+    load_config_from_text_with_extensions(&text, &path, extension_scan, Vec::new())
 }
 
 /// Applies one config document over the defaults. `path` only names the source in warnings, so
 /// this is the whole load pipeline minus the filesystem.
 #[cfg(test)]
 fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
-    load_config_from_text_with_extensions(text, path, Vec::new(), Vec::new())
+    load_config_from_text_with_extensions(
+        text,
+        path,
+        super::extensions::ExtensionScan::default(),
+        Vec::new(),
+    )
 }
 
 fn load_config_from_text_with_extensions(
     text: &str,
     path: &Path,
-    extensions: Vec<super::extensions::DiscoveredExtension>,
+    extensions: super::extensions::ExtensionScan,
     mut warnings: Vec<String>,
 ) -> LoadedConfig {
     let mut config = Config::default();
 
     let Some(parsed) = parse_file_config(text, path, &mut warnings) else {
-        let (commands, services) =
-            super::extensions::build_extension_contributions(extensions, &[], &mut warnings);
+        let (commands, services, active_extensions, extension_warnings) =
+            extensions.into_contributions(&[]);
+        warnings.extend(extension_warnings);
         config.commands = commands;
+        config.active_extensions = active_extensions;
         config.services = crate::config::services::build_services(services, &mut warnings);
         return LoadedConfig { config, warnings };
     };
@@ -885,11 +877,10 @@ fn load_config_from_text_with_extensions(
     config.hints = build_hints(parsed.hints, &mut warnings);
     config.hooks = build_hooks(parsed.hooks, &mut warnings);
     config.commands = build_named_commands(parsed.commands, &mut warnings);
-    let (extension_commands, extension_services) = super::extensions::build_extension_contributions(
-        extensions,
-        &parsed.extensions.disabled,
-        &mut warnings,
-    );
+    let (extension_commands, extension_services, active_extensions, extension_warnings) =
+        extensions.into_contributions(&parsed.extensions.disabled);
+    warnings.extend(extension_warnings);
+    config.active_extensions = active_extensions;
     config.commands.extend(extension_commands);
     let named_ids: HashSet<_> = config
         .commands

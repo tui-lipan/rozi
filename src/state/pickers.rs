@@ -269,6 +269,7 @@ pub struct PickPrompt {
 
 pub struct PickState {
     pub id: u64,
+    pub extension: Option<String>,
     pub title: String,
     pub placeholder: String,
     /// Caller-chosen modal width in columns, clamped on the way in.

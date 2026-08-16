@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
 use tui_lipan::prelude::*;
@@ -819,6 +819,8 @@ pub struct Config {
     pub hooks: Vec<HookConfig>,
     pub commands: Vec<NamedCommand>,
     pub services: Vec<ServiceConfig>,
+    /// Stable IDs of extensions that are valid, compatible, unique, and enabled for this load.
+    pub active_extensions: HashSet<String>,
     pub logging: LoggingConfig,
     pub workbar: WorkbarConfig,
     /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
@@ -1390,6 +1392,7 @@ impl Default for Config {
             hooks: Vec::new(),
             commands: Vec::new(),
             services: Vec::new(),
+            active_extensions: HashSet::new(),
             logging: LoggingConfig::default(),
             workbar: WorkbarConfig::default(),
             key_overrides: HashMap::new(),

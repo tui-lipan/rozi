@@ -134,7 +134,7 @@ pub(crate) fn handle_control_request(
         ControlCommand::Subscribe { .. } => {
             ControlResponse::error("subscribe is handled by the control listener")
         }
-        ControlCommand::Publish => {
+        ControlCommand::Publish { .. } => {
             ControlResponse::error("publish is handled by the control listener")
         }
         ControlCommand::Pick { .. } => {

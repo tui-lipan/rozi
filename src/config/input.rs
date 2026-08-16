@@ -82,6 +82,12 @@ pub(crate) fn build_key_overrides(
         let default_bindings = match crate::commands::default_shortcuts_for_action(input, &key) {
             Some(defaults) => defaults,
             None if named_ids.contains(&key) => Vec::new(),
+            None if super::extensions::is_extension_command_id(&key) => {
+                warnings.push(format!(
+                    "Extension command `{key}` is currently unavailable; its binding is preserved but inactive"
+                ));
+                Vec::new()
+            }
             None => {
                 warnings.push(format!("Unknown key action `{key}`; skipped"));
                 continue;
@@ -334,6 +340,34 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(overrides["branches"].contains(&KeyBinding::from_str("ctrl-a i").unwrap()));
         assert!(overrides["branches"].contains(&KeyBinding::from_str("alt-i").unwrap()));
+    }
+
+    #[test]
+    fn unavailable_extension_binding_is_preserved_and_resolves_later() {
+        let mut warnings = Vec::new();
+        let unresolved = build_key_overrides(
+            keys("[keys]\n\"git-tools.branches\" = \"g\""),
+            &InputConfig::default(),
+            &HashSet::new(),
+            &mut Vec::new(),
+            &mut warnings,
+        );
+        assert!(unresolved.contains_key("git-tools.branches"));
+        assert!(warnings[0].contains("preserved but inactive"));
+
+        warnings.clear();
+        let resolved = build_key_overrides(
+            keys("[keys]\n\"git-tools.branches\" = \"g\""),
+            &InputConfig::default(),
+            &HashSet::from(["git-tools.branches".to_string()]),
+            &mut Vec::new(),
+            &mut warnings,
+        );
+        assert!(warnings.is_empty());
+        assert_eq!(
+            unresolved["git-tools.branches"],
+            resolved["git-tools.branches"]
+        );
     }
 
     #[test]

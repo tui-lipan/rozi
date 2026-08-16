@@ -49,14 +49,11 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
     } else {
         "./bin/probe"
     };
-    std::fs::write(
-        extension_dir.join("extension.toml"),
-        format!(
-            "[extension]\ntitle = \"Extension smoke\"\nversion = \"1.0.0\"\n\
-             [[commands]]\nid = \"probe\"\nlabel = \"Run extension probe\"\nexec = \"{program}\"\n"
-        ),
-    )
-    .unwrap();
+    let manifest = format!(
+        "[extension]\nid = \"smoke\"\ntitle = \"Extension smoke\"\nversion = \"1.0.0\"\napi = 1\n\
+         [[commands]]\nid = \"probe\"\nlabel = \"Run extension probe\"\nexec = \"{program}\"\n"
+    );
+    std::fs::write(extension_dir.join("extension.toml"), &manifest).unwrap();
     let config_path = rozi::config::config_path();
     std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
     std::fs::write(&config_path, "[keys]\n\"smoke.probe\" = \"i\"\n").unwrap();
@@ -123,6 +120,42 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
     }
     assert_eq!(std::fs::read_to_string(result).unwrap(), "smoke");
 
+    let changed_manifest = manifest
+        .replace("id = \"probe\"", "id = \"probe-two\"")
+        .replace("Run extension probe", "Changed extension probe");
+    std::fs::write(extension_dir.join("extension.toml"), &changed_manifest).unwrap();
+    std::fs::write(&config_path, "[keys]\n\"smoke.probe-two\" = \"i\"\n").unwrap();
+    let changed = rozi::config::load_config();
+    assert!(changed.warnings.is_empty(), "{:?}", changed.warnings);
+    {
+        let state = backend.state_mut();
+        state.config = changed.config;
+        state.commands_dirty = true;
+    }
+    backend
+        .dispatch(Msg::RunAction(Action::ToggleDoNotDisturb))
+        .unwrap();
+    backend.state_mut().show_palette = true;
+    backend.render();
+    for ch in "changed".chars() {
+        backend
+            .send_key(KeyEvent {
+                code: KeyCode::Char(ch),
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+    }
+    let changed_palette = backend.capture_frame().to_fixed_grid_lines().join("\n");
+    assert!(
+        changed_palette.contains("Changed extension probe"),
+        "{changed_palette}"
+    );
+    assert!(
+        !changed_palette.contains("Run extension probe"),
+        "{changed_palette}"
+    );
+    backend.state_mut().show_palette = false;
+
     {
         let state = backend.state_mut();
         state.config.commands.clear();
@@ -136,4 +169,42 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
     backend.render();
     let reloaded = backend.capture_frame().to_fixed_grid_lines().join("\n");
     assert!(!reloaded.contains("Run extension probe"), "{reloaded}");
+
+    std::fs::write(
+        &config_path,
+        "[extensions]\ndisabled = [\"smoke\"]\n[keys]\n\"smoke.probe\" = \"i\"\n",
+    )
+    .unwrap();
+    let disabled = rozi::config::load_config();
+    assert!(disabled.config.commands.is_empty());
+    assert!(disabled.config.key_overrides.contains_key("smoke.probe"));
+    assert!(
+        disabled
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("preserved but inactive"))
+    );
+
+    std::fs::write(extension_dir.join("extension.toml"), "not a valid manifest").unwrap();
+    std::fs::write(&config_path, "[keys]\n\"smoke.probe\" = \"i\"\n").unwrap();
+    let invalid = rozi::config::load_config();
+    assert!(invalid.config.commands.is_empty());
+    assert!(invalid.config.key_overrides.contains_key("smoke.probe"));
+    assert!(
+        invalid
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("invalid extension.toml"))
+    );
+
+    std::fs::write(extension_dir.join("extension.toml"), manifest).unwrap();
+    let restored = rozi::config::load_config();
+    assert_eq!(restored.config.commands[0].id, "smoke.probe");
+    assert!(restored.config.key_overrides.contains_key("smoke.probe"));
+    assert!(
+        !restored
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("currently unavailable"))
+    );
 }

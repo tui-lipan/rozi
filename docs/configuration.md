@@ -1071,7 +1071,7 @@ built-in ids and reserved namespaces are rejected.
 ## `[extensions]`
 
 Extensions are discovered under the platform data directory and may contribute namespaced named
-commands and supervised services. Disable an installed extension by directory id without deleting
+commands and supervised services. Disable an installed extension by stable manifest id without deleting
 it:
 
 ```toml
@@ -1079,7 +1079,12 @@ it:
 disabled = ["docker"]
 ```
 
-See [Extensions](extensions.md) for the manifest, paths, environment, and trust boundary.
+The disabled value is the stable manifest `extension.id`, not the installation directory name. A
+`[keys]` override for a missing/disabled/incompatible extension command is preserved inactive and
+activates automatically after a successful reload when that command becomes available.
+
+See [Extensions](extensions.md) for API compatibility, validation, diagnostics, paths,
+environment, lifecycle, and the trust boundary.
 
 ## `[[hooks]]`
 

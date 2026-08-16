@@ -274,16 +274,21 @@ pub enum Msg {
     ControlRequest(control::ControlEnvelope),
     /// A pane's program opened a `publish` stream. The sender carries activations back to it.
     PublishStreamOpen {
-        pane_id: crate::state::PaneId,
+        stream_id: u64,
+        requested_pane: Option<crate::state::PaneId>,
+        extension: Option<String>,
         sender: std::sync::mpsc::SyncSender<String>,
+        ack: std::sync::mpsc::Sender<std::result::Result<crate::state::PaneId, String>>,
     },
     /// One row list from an open stream, replacing whatever that pane published before.
     PublishedRowsReported {
+        stream_id: u64,
         pane_id: crate::state::PaneId,
         rows: Vec<crate::session::protocol::PublishedRow>,
     },
     /// A `publish` stream ended, withdrawing the pane's rows.
     PublishStreamClosed {
+        stream_id: u64,
         pane_id: crate::state::PaneId,
     },
     /// An external program opened a `pick` stream.
@@ -293,6 +298,7 @@ pub enum Msg {
         placeholder: Option<String>,
         width: Option<u16>,
         actions: Vec<crate::state::PickAction>,
+        extension: Option<String>,
         sender: std::sync::mpsc::SyncSender<String>,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },

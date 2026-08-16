@@ -20,6 +20,7 @@ fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, mpsc::Receiver<String>
             id: 1,
             title: Some("Select Branch".into()),
             placeholder: Some("Search branches…".into()),
+            extension: None,
             sender: tx,
             ack: ack_tx,
         })

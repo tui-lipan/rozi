@@ -189,10 +189,17 @@ The socket accepts one newline-delimited JSON request per connection and returns
 open. `subscribe` then streams newline-delimited event objects until disconnected, and
 `publish` runs in both directions.
 
+`rozi publish` associates rows with `ROZI_PANE` when present. A supervised service has no pane
+identity, so Rozi resolves the focused live pane when the stream opens. Extension-launched
+`publish`/`pick` streams carry the stable `ROZI_EXTENSION` owner; reload closes streams whose
+extension was removed or materially changed, preventing stale rows or picker events from crossing
+generations.
+
 Requests use a `cmd` field: `list-panes`, `metrics`, `focus`, `send-text`, `send-keys`, `new-pane`,
 `run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`,
 `publish`, `pick`, `notify`, or `subscribe`. A client may include `source_pane`; the CLI derives it
-from `ROZI_PANE`.
+from `ROZI_PANE`. Extension-aware `publish` and `pick` requests may also include the public
+`extension` id.
 
 Examples:
 

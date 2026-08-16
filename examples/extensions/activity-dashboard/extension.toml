@@ -1,0 +1,16 @@
+[extension]
+id = "activity-dashboard"
+title = "Activity dashboard"
+description = "A supervised event dashboard using subscribe, publish, notify, and pick"
+version = "1.0.0"
+api = 1
+
+[[commands]]
+id = "open"
+label = "Activity dashboard…"
+exec = "python3 \"$ROZI_EXTENSION_DIR/bin/dashboard.py\" --pick"
+
+[[services]]
+name = "watch"
+run = "python3 \"$ROZI_EXTENSION_DIR/bin/dashboard.py\" --service"
+restart = "on-failure"

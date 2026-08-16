@@ -7,7 +7,8 @@ None of these need a plugin runtime. A supervised service that subscribes to eve
 sidebar rows, and raises a picker when it needs a decision *is* a plugin — written in whatever
 language you like, running out of process, unable to take the UI down with it.
 
-Everything below assumes `ROZI_SOCKET` is set, which it is inside any rozi pane.
+Everything below assumes `ROZI_SOCKET` is set, which it is inside any rozi pane and supervised
+service.
 
 ## Four things that will bite you first
 
@@ -236,8 +237,10 @@ The branch picker above becomes distributable by giving it a manifest and stable
 
 ```toml
 [extension]
+id = "git-tools"
 title = "Git tools"
 version = "0.1.0"
+api = 1
 
 [[commands]]
 id = "branches"
@@ -255,7 +258,8 @@ palette group and through `rozi run-action git-tools.branches`; a key is optiona
 
 The command receives `ROZI_EXTENSION_DIR` for its own assets while its working directory remains
 the focused pane's repository. See [Extensions](extensions.md) for the full manifest and trust
-model.
+model. The repository's [canonical Git tools extension](../examples/extensions/git-tools/) expands
+this recipe into branch creation/deletion/refresh actions and a worktree picker.
 
 ## What is still out of scope
 

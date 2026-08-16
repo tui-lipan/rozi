@@ -24,6 +24,7 @@ pub(crate) struct PickOpen {
     pub placeholder: Option<String>,
     pub width: Option<u16>,
     pub actions: Vec<crate::state::PickAction>,
+    pub extension: Option<String>,
 }
 
 pub(crate) fn open_pick_stream(
@@ -38,7 +39,15 @@ pub(crate) fn open_pick_stream(
         placeholder,
         width,
         actions,
+        extension,
     } = open;
+    if extension
+        .as_ref()
+        .is_some_and(|id| !ctx.state.config.active_extensions.contains(id))
+    {
+        let _ = ack.send(ControlResponse::error("extension is not active"));
+        return Update::none();
+    }
     if ctx.state.show_pick {
         let _ = ack.send(ControlResponse::error("a picker is already open"));
         return Update::none();
@@ -51,6 +60,7 @@ pub(crate) fn open_pick_stream(
 
     ctx.state.pick = Some(PickState {
         id,
+        extension,
         title: title.unwrap_or_else(|| "Pick".to_string()),
         placeholder: placeholder.unwrap_or_else(|| "Search…".to_string()),
         width: width
@@ -119,6 +129,23 @@ pub(crate) fn stream_closed(ctx: &mut Context<AppRoot>, id: u64) -> Update {
 
 pub(crate) fn close_pick(ctx: &mut Context<AppRoot>) -> Update {
     cancel_pick(ctx, None)
+}
+
+pub(crate) fn unload_extensions(
+    ctx: &mut Context<AppRoot>,
+    stale_extensions: &std::collections::HashSet<String>,
+) -> Update {
+    let stale = ctx
+        .state
+        .pick
+        .as_ref()
+        .and_then(|pick| pick.extension.as_ref())
+        .is_some_and(|id| stale_extensions.contains(id));
+    if stale {
+        cancel_pick(ctx, Some("extension unloaded"))
+    } else {
+        Update::none()
+    }
 }
 
 /// Cancel an open picker, telling the caller why.
@@ -347,6 +374,7 @@ mod tests {
                     actions: Vec::new(),
                     title: Some("Branches".into()),
                     placeholder: None,
+                    extension: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -387,6 +415,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    extension: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -429,6 +458,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    extension: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -456,6 +486,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    extension: None,
                     sender: tx1,
                     ack: ack_tx1,
                 })
@@ -471,6 +502,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    extension: None,
                     sender: tx2,
                     ack: ack_tx2,
                 })
@@ -495,6 +527,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    extension: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -530,6 +563,7 @@ mod tests {
                 placeholder: None,
                 width,
                 actions,
+                extension: None,
                 sender: tx,
                 ack: ack_tx,
             })
@@ -828,6 +862,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    extension: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -854,6 +889,63 @@ mod tests {
 
             assert!(rx.try_recv().is_err());
             assert!(backend.state().show_pick);
+        });
+    }
+
+    #[test]
+    fn materially_unloaded_extension_cancels_its_open_picker() {
+        with_backend(|backend| {
+            let (tx, rx) = mpsc::sync_channel(1);
+            let (ack_tx, ack_rx) = mpsc::channel();
+            backend
+                .state_mut()
+                .config
+                .active_extensions
+                .insert("git-tools".to_string());
+            backend
+                .dispatch(crate::Msg::PickStreamOpen {
+                    id: 7,
+                    width: None,
+                    actions: Vec::new(),
+                    title: Some("Extension picker".into()),
+                    placeholder: None,
+                    extension: Some("git-tools".into()),
+                    sender: tx,
+                    ack: ack_tx,
+                })
+                .expect("dispatch open");
+            assert!(ack_rx.recv().unwrap().ok);
+
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::ReloadConfig))
+                .expect("reload without extension");
+            assert!(!backend.state().show_pick);
+            let response = rx.try_recv().expect("picker cancelled");
+            assert!(response.contains("extension unloaded"), "{response}");
+        });
+    }
+
+    #[test]
+    fn inactive_extension_cannot_open_a_picker() {
+        with_backend(|backend| {
+            let (tx, _rx) = mpsc::sync_channel(1);
+            let (ack_tx, ack_rx) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::PickStreamOpen {
+                    id: 7,
+                    width: None,
+                    actions: Vec::new(),
+                    title: None,
+                    placeholder: None,
+                    extension: Some("git-tools".into()),
+                    sender: tx,
+                    ack: ack_tx,
+                })
+                .expect("dispatch open");
+            let response = ack_rx.recv().unwrap();
+            assert!(!response.ok);
+            assert_eq!(response.error.as_deref(), Some("extension is not active"));
+            assert!(!backend.state().show_pick);
         });
     }
 }

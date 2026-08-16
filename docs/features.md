@@ -457,7 +457,7 @@ Windows) with a JSON protocol and a CLI front end.
 | `pane-logging` | Toggle raw PTY logging for a pane |
 | `set-status` | Set or clear a pane status badge (`status blocked --reason ...`) |
 | `pick` | **Render a modal picker** and return the user's choice |
-| `publish` | **Publish the activities or agents running inside one pane**, one sidebar row each |
+| `publish` | **Publish actionable activity rows** from a pane or supervised extension service |
 | `subscribe` | **Stream UI events** to an external process |
 | `notify` | Raise an informational or error toast from a script |
 
@@ -478,8 +478,9 @@ event's fields, `ROZI_SOCKET`, and `ROZI_REMOTE_HOST` when remote:
 `profile-saved`, `config-reloaded`.
 
 **Services** — `[[services]]` supervises long-lived client-side processes with restart policy and
-backoff. **Extensions** package named commands and services under stable namespaced ids from the
-user data directory; see [Extensions](extensions.md).
+backoff. **Extensions** package named commands and services under manifest-declared stable
+namespaced ids and an explicit API generation. Discovery retains loaded, disabled, incompatible,
+invalid, and duplicate candidates for `list-extensions --verbose`; see [Extensions](extensions.md).
 
 **Runtime metrics** — `rozi metrics` exposes resource counters for monitoring.
 

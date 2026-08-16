@@ -663,8 +663,10 @@ mod palette_alias_tests {
 
     #[test]
     fn scheme_rows_omit_mod_when_modifier_shortcuts_are_off() {
-        let mut input = crate::config::InputConfig::default();
-        input.modifier_shortcuts = false;
+        let input = crate::config::InputConfig {
+            modifier_shortcuts: false,
+            ..crate::config::InputConfig::default()
+        };
         let rows = scheme_rows(&input);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].label, "Prefix · then key");

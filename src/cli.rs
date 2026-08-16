@@ -91,7 +91,12 @@ pub(crate) enum ParsedCli {
     },
     ListExtensions {
         json: bool,
+        verbose: bool,
         config_path: Option<String>,
+    },
+    CheckExtension {
+        path: PathBuf,
+        json: bool,
     },
     KillSession {
         name: String,
@@ -199,12 +204,19 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
             "list-extensions" => {
                 let mut json = false;
+                let mut verbose = false;
                 for flag in iter.by_ref() {
                     match flag.as_str() {
                         "--json" if !json => json = true,
                         "--json" => {
                             return Err(
                                 "list-extensions --json specified more than once".to_string()
+                            );
+                        }
+                        "--verbose" if !verbose => verbose = true,
+                        "--verbose" => {
+                            return Err(
+                                "list-extensions --verbose specified more than once".to_string()
                             );
                         }
                         other => {
@@ -216,8 +228,32 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
                 return Ok(ParsedCli::ListExtensions {
                     json,
+                    verbose,
                     config_path: cli.config_path,
                 });
+            }
+            "check-extension" => {
+                let path = PathBuf::from(require_value(
+                    &mut iter,
+                    "check-extension requires an extension directory or extension.toml path",
+                )?);
+                let mut json = false;
+                for flag in iter.by_ref() {
+                    match flag.as_str() {
+                        "--json" if !json => json = true,
+                        "--json" => {
+                            return Err(
+                                "check-extension --json specified more than once".to_string()
+                            );
+                        }
+                        other => {
+                            return Err(format!(
+                                "unexpected argument `{other}` after check-extension"
+                            ));
+                        }
+                    }
+                }
+                return Ok(ParsedCli::CheckExtension { path, json });
             }
             "kill-session" => {
                 let name = require_value(&mut iter, "kill-session requires a session name")?;
@@ -794,13 +830,9 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
             std::process::exit(2);
         }
     };
-    let Some(source_pane) = std::env::var("ROZI_PANE")
+    let source_pane = std::env::var("ROZI_PANE")
         .ok()
-        .and_then(|value| value.parse::<crate::state::PaneId>().ok())
-    else {
-        eprintln!("publish must run inside a rozi pane (ROZI_PANE is unset)");
-        std::process::exit(2);
-    };
+        .and_then(|value| value.parse::<crate::state::PaneId>().ok());
     let mut stream = match IpcEndpoint::at_path(&path).connect() {
         Ok(stream) => stream,
         Err(err) => {
@@ -809,8 +841,10 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
         }
     };
     let request = control::ControlRequest {
-        command: control::ControlCommand::Publish,
-        source_pane: Some(source_pane),
+        command: control::ControlCommand::Publish {
+            extension: std::env::var("ROZI_EXTENSION").ok(),
+        },
+        source_pane,
     };
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 
@@ -903,6 +937,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
             placeholder,
             width,
             actions,
+            extension: std::env::var("ROZI_EXTENSION").ok(),
         },
         source_pane: None,
     };
@@ -1163,31 +1198,117 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
     Ok(())
 }
 
-pub(crate) fn run_list_extensions_cli(json: bool) -> Result<()> {
-    let scan = crate::config::scan_extensions();
-    for warning in &scan.warnings {
-        eprintln!("{warning}");
+pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
+    let scan = crate::config::scan_extensions_for_cli();
+    for error in &scan.root_errors {
+        eprintln!("rozi: {error}");
     }
+    let entries = scan.entries();
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&scan.entries).map_err(std::io::Error::other)?
+            serde_json::to_string_pretty(&entries).map_err(std::io::Error::other)?
         );
         return Ok(());
     }
-    for extension in scan.entries {
+    println!("NAME\tTITLE\tVERSION\tCOMMANDS\tSERVICES\tSTATUS");
+    for extension in &entries {
+        let name = extension.display_name();
         let title = extension.title.as_deref().unwrap_or("-");
         let version = extension.version.as_deref().unwrap_or("-");
-        print!(
-            "{}\ttitle={title}\tversion={version}\tcommands={}\tservices={}",
-            extension.id, extension.commands, extension.services
+        println!(
+            "{name}\t{title}\t{version}\t{}\t{}\t{}",
+            extension.commands.len(),
+            extension.services.len(),
+            extension.status_detail()
         );
-        if let Some(error) = extension.error {
-            print!("\terror={error}");
+        if verbose {
+            println!("  directory: {}", extension.path);
+            println!("  manifest:  {}", extension.manifest_path);
+            println!(
+                "  id:        {}",
+                extension.id.as_deref().unwrap_or("<unresolved>")
+            );
+            println!("  title:     {}", extension.title.as_deref().unwrap_or("-"));
+            println!(
+                "  api:       {}",
+                extension
+                    .api
+                    .map(|api| api.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            );
+            if !extension.commands.is_empty() {
+                println!("  commands:");
+                for id in &extension.commands {
+                    if let Some(path) = extension.command_paths.get(id) {
+                        println!("    {id}\t{path}");
+                    } else {
+                        println!("    {id}");
+                    }
+                }
+            }
+            if !extension.services.is_empty() {
+                println!("  services:");
+                for id in &extension.services {
+                    if let Some(path) = extension.service_paths.get(id) {
+                        println!("    {id}\t{path}");
+                    } else {
+                        println!("    {id}");
+                    }
+                }
+            }
+            for error in &extension.errors {
+                println!("  error:     {error}");
+            }
         }
-        println!();
     }
     Ok(())
+}
+
+pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Result<bool> {
+    let extension = crate::config::check_extension(path);
+    let info = &extension.info;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(info).map_err(std::io::Error::other)?
+        );
+        return Ok(info.status == crate::config::ExtensionStatus::Loaded);
+    }
+    println!("Extension: {}", info.display_name());
+    println!("Version:   {}", info.version.as_deref().unwrap_or("-"));
+    println!(
+        "API:       {}",
+        info.api
+            .map(|api| api.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!();
+    if info.status == crate::config::ExtensionStatus::Loaded {
+        println!("✓ manifest valid");
+        println!("✓ extension id valid");
+        println!("✓ {} commands", info.commands.len());
+        println!("✓ {} services", info.services.len());
+        println!("✓ executable paths resolved");
+    } else {
+        println!("status: {}", info.status.as_str());
+        for error in &info.errors {
+            eprintln!("rozi: {error}");
+        }
+    }
+    if !info.commands.is_empty() {
+        println!("\nCommands:");
+        for id in &info.commands {
+            println!("  {id}");
+        }
+    }
+    if !info.services.is_empty() {
+        println!("\nServices:");
+        for id in &info.services {
+            println!("  {id}");
+        }
+    }
+    Ok(info.status == crate::config::ExtensionStatus::Loaded)
 }
 
 pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
@@ -1380,8 +1501,12 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "List connectable sessions",
             ),
             row(
-                "list-extensions [--json]",
-                "List installed extensions and manifest errors",
+                "list-extensions [OPTIONS]",
+                "Show discovery status (--verbose, --json)",
+            ),
+            row(
+                "check-extension PATH [OPTIONS]",
+                "Validate an unpacked extension (--json)",
             ),
             row(
                 "kill-session <NAME> [--remote <HOST>]",
@@ -1421,7 +1546,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "notify <MESSAGE> [--title T] [--level info|error]",
                 "Raise a toast from a script",
             ),
-            row("publish", "Publish this pane's activity rows over stdio"),
+            row("publish", "Publish activity rows over stdio"),
             row(
                 "pick [--title T] [--placeholder P] [--json]",
                 "Choose a line of stdin in a modal picker",
@@ -1984,11 +2109,34 @@ mod tests {
         ));
         assert!(matches!(
             parse_cli_args(vec!["list-extensions".into()]).expect("parses"),
-            ParsedCli::ListExtensions { json: false, .. }
+            ParsedCli::ListExtensions {
+                json: false,
+                verbose: false,
+                ..
+            }
         ));
         assert!(matches!(
-            parse_cli_args(vec!["list-extensions".into(), "--json".into()]).expect("parses"),
-            ParsedCli::ListExtensions { json: true, .. }
+            parse_cli_args(vec![
+                "list-extensions".into(),
+                "--verbose".into(),
+                "--json".into()
+            ])
+            .expect("parses"),
+            ParsedCli::ListExtensions {
+                json: true,
+                verbose: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse_cli_args(vec![
+                "check-extension".into(),
+                "./git-tools".into(),
+                "--json".into()
+            ])
+            .expect("parses"),
+            ParsedCli::CheckExtension { path, json: true }
+                if path == std::path::Path::new("./git-tools")
         ));
         let attached = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));

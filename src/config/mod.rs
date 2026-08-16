@@ -12,7 +12,8 @@ mod theme;
 mod workbar;
 
 pub use appearance::*;
-pub(crate) use extensions::scan_extensions;
+pub use extensions::{EXTENSION_API_VERSION, ExtensionInfo, ExtensionStatus};
+pub(crate) use extensions::{check_extension, scan_extensions_for_cli};
 pub use file::*;
 pub use persist::*;
 pub use schema::*;

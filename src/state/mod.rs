@@ -76,6 +76,12 @@ pub enum HelpTab {
     All,
 }
 
+pub struct PublishStreamState {
+    pub id: u64,
+    pub sender: std::sync::mpsc::SyncSender<String>,
+    pub extension: Option<String>,
+}
+
 pub struct State {
     pub config: Config,
     /// Whether the host terminal/window currently has focus. This is distinct from which pane the
@@ -207,9 +213,9 @@ pub struct State {
     /// Open `publish` streams, keyed by the pane whose program opened one.
     ///
     /// Held so a sidebar click can ask that program to bring a row on screen. Dropping the sender
-    /// closes the stream, which is also how a pane's rows are withdrawn - a publisher that dies
-    /// cannot leave rows behind.
-    pub publish_streams: std::collections::HashMap<PaneId, std::sync::mpsc::SyncSender<String>>,
+    /// closes the stream, which is also how a pane's rows are withdrawn. Each value carries a
+    /// generation id so a replaced publisher's late rows/close cannot affect its successor.
+    pub publish_streams: std::collections::HashMap<PaneId, PublishStreamState>,
     pub services: ServicesState,
     /// The client's connection to the current session (client handle, identity, shared-layout
     /// lease, spawn/replay buffers, and its window-manager state). Reached through [`Self::current`]

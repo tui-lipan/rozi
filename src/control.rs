@@ -123,7 +123,12 @@ pub enum ControlCommand {
     /// Publish the logical agents or activities running inside the calling pane, and receive
     /// activations for them. Unlike every other command this connection stays open in both
     /// directions; closing it withdraws the pane's rows. Reached through `rozi publish`.
-    Publish,
+    Publish {
+        /// Stable extension owner. Set by the `rozi` CLI from `ROZI_EXTENSION`; omitted for
+        /// ordinary pane-local publishers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extension: Option<String>,
+    },
     Subscribe {
         #[serde(default)]
         events: Vec<String>,
@@ -165,6 +170,9 @@ pub enum ControlCommand {
         /// Extra chords offered beside select and cancel, advertised in the footer.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         actions: Vec<crate::state::PickAction>,
+        /// Stable extension owner used to cancel stale pickers when that extension unloads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extension: Option<String>,
     },
 }
 
@@ -303,26 +311,57 @@ const PUBLISH_ACTIVATION_BACKLOG: usize = 32;
 /// The only bidirectional command: after the acknowledgement, the publisher writes one row list
 /// per line and rozi writes one activation per line back. Both directions run for the life of
 /// the connection, so a writer thread carries activations while this thread reads.
-fn run_publish_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane_id: PaneId) {
+fn run_publish_stream(
+    mut stream: IpcConnection,
+    link: CommandLink<Msg>,
+    stream_id: u64,
+    requested_pane: Option<PaneId>,
+    extension: Option<String>,
+) {
     let Ok(reader_stream) = stream.try_clone() else {
         return;
     };
     let Ok(mut writer_stream) = stream.try_clone() else {
         return;
     };
-    let _ = writeln!(
-        stream,
-        "{}",
-        serde_json::to_string(&ControlResponse::empty()).unwrap()
-    );
+    let (tx, rx) = mpsc::sync_channel::<String>(PUBLISH_ACTIVATION_BACKLOG);
+    let (ack_tx, ack_rx) = mpsc::channel();
+    link.send(Msg::PublishStreamOpen {
+        stream_id,
+        requested_pane,
+        extension,
+        sender: tx,
+        ack: ack_tx,
+    });
+    let pane_id = match ack_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(pane_id)) => {
+            let _ = writeln!(
+                stream,
+                "{}",
+                serde_json::to_string(&ControlResponse::empty()).unwrap()
+            );
+            pane_id
+        }
+        Ok(Err(error)) => {
+            let _ = writeln!(
+                stream,
+                "{}",
+                serde_json::to_string(&ControlResponse::error(error)).unwrap()
+            );
+            return;
+        }
+        Err(_) => {
+            let _ = writeln!(
+                stream,
+                "{}",
+                serde_json::to_string(&ControlResponse::error("publish request timed out"))
+                    .unwrap()
+            );
+            return;
+        }
+    };
     // A publisher is silent between state changes, and those can be minutes apart.
     let _ = stream.set_read_timeout(None);
-
-    let (tx, rx) = mpsc::sync_channel::<String>(PUBLISH_ACTIVATION_BACKLOG);
-    link.send(Msg::PublishStreamOpen {
-        pane_id,
-        sender: tx,
-    });
     let writer = std::thread::spawn(move || {
         while let Ok(line) = rx.recv() {
             if writer_stream.write_all(line.as_bytes()).is_err() {
@@ -340,6 +379,7 @@ fn run_publish_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane_id
         // the stream open so the next good list still lands.
         if let Ok(report) = serde_json::from_str::<PublishReport>(&line) {
             link.send(Msg::PublishedRowsReported {
+                stream_id,
                 pane_id,
                 rows: report.rows,
             });
@@ -347,7 +387,7 @@ fn run_publish_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane_id
     }
 
     // Reaching here means EOF or a read error: the publisher is gone, so its rows go with it.
-    link.send(Msg::PublishStreamClosed { pane_id });
+    link.send(Msg::PublishStreamClosed { stream_id, pane_id });
     drop(stream);
     let _ = writer.join();
 }
@@ -369,6 +409,7 @@ fn run_pick_stream(
     placeholder: Option<String>,
     width: Option<u16>,
     actions: Vec<crate::state::PickAction>,
+    extension: Option<String>,
 ) {
     let Ok(reader_stream) = stream.try_clone() else {
         return;
@@ -386,6 +427,7 @@ fn run_pick_stream(
         placeholder,
         width,
         actions,
+        extension,
         sender: reply_tx,
         ack: ack_tx,
     });
@@ -508,13 +550,16 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             }
         }
     }
-    if let ControlCommand::Publish = &request.command {
-        let Some(pane_id) = request.source_pane else {
-            let response = ControlResponse::error("publish requires a source pane");
-            let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
-            return;
-        };
-        run_publish_stream(stream, link, pane_id);
+    if let ControlCommand::Publish { extension } = &request.command {
+        static NEXT_PUBLISH_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let stream_id = NEXT_PUBLISH_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_publish_stream(
+            stream,
+            link,
+            stream_id,
+            request.source_pane,
+            extension.clone(),
+        );
         return;
     }
     if let ControlCommand::Pick {
@@ -522,6 +567,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
         placeholder,
         width,
         actions,
+        extension,
     } = &request.command
     {
         static NEXT_PICK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -534,6 +580,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             placeholder.clone(),
             *width,
             actions.clone(),
+            extension.clone(),
         );
         return;
     }
@@ -756,6 +803,7 @@ mod tests {
                 placeholder: Some("Search branches…".into()),
                 width: None,
                 actions: Vec::new(),
+                extension: None,
             },
             source_pane: None,
         };

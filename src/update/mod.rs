@@ -243,14 +243,27 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::PaneResize(id, cols, rows) => panes::pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => panes::pane_scroll(ctx, id, offset),
         Msg::ControlRequest(envelope) => panes::control_request(ctx, envelope),
-        Msg::PublishStreamOpen { pane_id, sender } => {
-            crate::ops::published_rows::stream_opened(ctx, pane_id, sender)
-        }
-        Msg::PublishedRowsReported { pane_id, rows } => {
-            crate::ops::published_rows::rows_reported(ctx, pane_id, rows)
-        }
-        Msg::PublishStreamClosed { pane_id } => {
-            crate::ops::published_rows::stream_closed(ctx, pane_id)
+        Msg::PublishStreamOpen {
+            stream_id,
+            requested_pane,
+            extension,
+            sender,
+            ack,
+        } => crate::ops::published_rows::stream_opened(
+            ctx,
+            stream_id,
+            requested_pane,
+            extension,
+            sender,
+            ack,
+        ),
+        Msg::PublishedRowsReported {
+            stream_id,
+            pane_id,
+            rows,
+        } => crate::ops::published_rows::rows_reported(ctx, stream_id, pane_id, rows),
+        Msg::PublishStreamClosed { stream_id, pane_id } => {
+            crate::ops::published_rows::stream_closed(ctx, stream_id, pane_id)
         }
         Msg::PickStreamOpen {
             id,
@@ -258,6 +271,7 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             placeholder,
             width,
             actions,
+            extension,
             sender,
             ack,
         } => crate::ops::pick::open_pick_stream(
@@ -268,6 +282,7 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
                 placeholder,
                 width,
                 actions,
+                extension,
             },
             sender,
             ack,

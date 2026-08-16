@@ -735,8 +735,28 @@ pub fn run() -> Result<()> {
         }
     };
 
-    // Reconcile a managed pointer before any command can observe or start the application. This is
-    // local-only and makes updater recovery precede ConPTY checks, endpoints, sessions, and the TUI.
+    // Pure extension diagnostics do not need a runnable terminal host or a healthy managed binary
+    // installation. Keeping them first makes `check-extension` useful while repairing either.
+    let parsed = match parsed {
+        cli::ParsedCli::ListExtensions {
+            json,
+            verbose,
+            config_path,
+        } => {
+            apply_config_path(config_path);
+            return cli::run_list_extensions_cli(json, verbose);
+        }
+        cli::ParsedCli::CheckExtension { path, json } => {
+            if !cli::run_check_extension_cli(&path, json)? {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        parsed => parsed,
+    };
+
+    // Reconcile a managed pointer before commands can update or start the application. This keeps
+    // updater recovery ahead of ConPTY checks, endpoints, sessions, and the TUI.
     if let Err(message) = cli::recover_managed_installation() {
         eprintln!("rozi: {message}");
         std::process::exit(1);
@@ -772,8 +792,8 @@ pub fn run() -> Result<()> {
         parsed => parsed,
     };
 
-    // Every runtime/session command still receives the platform support check; only the updater,
-    // help, version, and agent-skill paths above intentionally run before it.
+    // Runtime/session commands receive the host support check. Pure installation and extension
+    // diagnostics above intentionally remain usable on a host that cannot launch the TUI.
     if let Err(reason) = platform::server_lifecycle::check_host_supported() {
         eprintln!("rozi: {reason}");
         std::process::exit(1);
@@ -800,10 +820,6 @@ pub fn run() -> Result<()> {
             apply_config_path(config_path);
             return cli::run_list_sessions_cli(format, remote.as_deref());
         }
-        cli::ParsedCli::ListExtensions { json, config_path } => {
-            apply_config_path(config_path);
-            return cli::run_list_extensions_cli(json);
-        }
         cli::ParsedCli::KillSession {
             name,
             remote,
@@ -817,7 +833,9 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::Version
         | cli::ParsedCli::Skill
         | cli::ParsedCli::Install
-        | cli::ParsedCli::Update(_) => unreachable!("early CLI command returned above"),
+        | cli::ParsedCli::Update(_)
+        | cli::ParsedCli::ListExtensions { .. }
+        | cli::ParsedCli::CheckExtension { .. } => unreachable!("early CLI command returned above"),
     };
 
     apply_config_path(cli.config_path.clone());

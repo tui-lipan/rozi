@@ -72,6 +72,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
         min_protocol_version: MIN_SUPPORTED_PROTOCOL,
         label: "snapshot-writer".into(),
         read_only: false,
+        shares_filesystem: true,
     });
     read_until(&mut client, |frame| {
         matches!(frame, Frame::Control(ServerMessage::Attached { .. }))

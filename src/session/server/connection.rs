@@ -1,5 +1,15 @@
 use super::*;
 
+/// What a client says about itself when it attaches.
+pub(super) struct AttachRequest {
+    pub session: String,
+    pub protocol_version: u32,
+    pub min_protocol_version: u32,
+    pub label: String,
+    pub read_only: bool,
+    pub shares_filesystem: bool,
+}
+
 impl SessionServer {
     pub(super) fn accept_new(&mut self, listener: &IpcListener) -> io::Result<()> {
         loop {
@@ -120,13 +130,17 @@ impl SessionServer {
                 min_protocol_version,
                 label,
                 read_only,
+                shares_filesystem,
             } => self.handle_attach(
                 client_id,
-                session,
-                protocol_version,
-                min_protocol_version,
-                label,
-                read_only,
+                AttachRequest {
+                    session,
+                    protocol_version,
+                    min_protocol_version,
+                    label,
+                    read_only,
+                    shares_filesystem,
+                },
             ),
             ClientMessage::SetSessionOrigin { profile } => {
                 if self.created_from_profile.is_none()
@@ -657,12 +671,16 @@ impl SessionServer {
     pub(super) fn handle_attach(
         &mut self,
         client_id: ClientId,
-        session: String,
-        protocol_version: u32,
-        min_protocol_version: u32,
-        label: String,
-        read_only: bool,
+        request: AttachRequest,
     ) -> Vec<(Target, ServerMessage)> {
+        let AttachRequest {
+            session,
+            protocol_version,
+            min_protocol_version,
+            label,
+            read_only,
+            shares_filesystem,
+        } = request;
         let effective = match protocol::negotiate_protocol(
             protocol_version,
             min_protocol_version,
@@ -696,9 +714,11 @@ impl SessionServer {
             client.attached = true;
             client.label = Some(label);
             client.read_only = read_only;
+            client.shares_filesystem = shares_filesystem;
             client.last_pong = Instant::now();
             client.effective_protocol = effective;
         }
+        self.sync_image_media_policy();
         // First attacher is auto-granted the layout-control lease.
         let granted = if self.controller.is_none() && !read_only {
             self.controller = Some(client_id);

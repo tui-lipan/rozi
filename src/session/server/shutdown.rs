@@ -197,7 +197,12 @@ fn retirement_timeout_error(name: &str) -> io::Error {
 fn graceful_shutdown(stream: &mut IpcConnection, name: &str) -> io::Result<()> {
     protocol::write_frame(
         stream,
-        &protocol::attach_message(name, crate::platform::user::current_user_label(), false),
+        &protocol::attach_message(
+            name,
+            crate::platform::user::current_user_label(),
+            false,
+            true,
+        ),
     )?;
     match protocol::read_frame::<_, ServerMessage>(stream)? {
         ServerMessage::Attached { .. } => {

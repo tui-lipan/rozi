@@ -141,6 +141,7 @@ impl SessionServer {
         // Clients parse the same raw stream and own rendering. The server only needs terminal
         // semantics, protocol replies, and image-implied cursor movement.
         screen.set_image_storage_enabled(false);
+        screen.set_image_media_policy(self.image_media_policy());
         // Seed the palette before the PTY spawns so the child's startup OSC 4/10/11 color queries
         // are answered against the theme palette instead of the screen default.
         screen.set_palette(request.palette.into());
@@ -613,6 +614,37 @@ impl SessionServer {
     ) -> Option<&mut ServerPane> {
         self.pane_mut(owner, id)
             .filter(|pane| pane.generation == generation && pane.exited.is_none())
+    }
+
+    /// Which out-of-band graphics media this session may offer its children.
+    ///
+    /// A frame named in a file costs a hundred bytes on the wire instead of a compressed and
+    /// base64-ed copy of every pixel, but it only works when the client that draws it can open the
+    /// file. Two things rule it out: a client attached over SSH, which is looking at panes on
+    /// another machine, and the consuming media (`t=t`, `t=s`), which are claimed by being read -
+    /// with several clients attached to one session, the first reader would take the frame and
+    /// leave the rest with nothing.
+    pub(super) fn image_media_policy(&self) -> GraphicsMediaPolicy {
+        let reachable = self
+            .clients
+            .iter()
+            .all(|client| !client.attached || client.shares_filesystem);
+        if reachable {
+            GraphicsMediaPolicy::SHARED
+        } else {
+            GraphicsMediaPolicy::NONE
+        }
+    }
+
+    /// Re-answer the capability question for every live pane after the set of clients changed.
+    pub(super) fn sync_image_media_policy(&mut self) {
+        let policy = self.image_media_policy();
+        for pane in self.panes.values_mut() {
+            pane.screen_without_change().set_image_media_policy(policy);
+        }
+        for pane in self.local_panes.values_mut() {
+            pane.screen_without_change().set_image_media_policy(policy);
+        }
     }
 
     pub(super) fn pane_mut(

@@ -179,6 +179,7 @@ impl SessionClient {
             session,
             InboundTarget::Channel(inbound),
             read_only,
+            true,
         )
     }
 
@@ -188,25 +189,34 @@ impl SessionClient {
         inbound: Arc<InboundMailbox>,
         read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
+        // A local endpoint puts this client on the server's own machine, so it can read whatever
+        // the session's children leave in a file.
         Self::from_stream_attached_target(
             endpoint.connect()?,
             session,
             InboundTarget::Mailbox(inbound),
             read_only,
+            true,
         )
     }
 
+    /// Attach over a stream that may not lead to this machine's filesystem.
+    ///
+    /// `shares_filesystem` is what an SSH attach sets to `false`: the panes run over there, so a
+    /// frame the child leaves in a file over there is not something this process can open.
     pub(crate) fn from_stream_attached_mailbox(
         stream: IpcConnection,
         session: impl Into<String>,
         inbound: Arc<InboundMailbox>,
         read_only: bool,
+        shares_filesystem: bool,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
             session,
             InboundTarget::Mailbox(inbound),
             read_only,
+            shares_filesystem,
         )
     }
 
@@ -215,6 +225,7 @@ impl SessionClient {
         session: impl Into<String>,
         inbound: InboundTarget,
         read_only: bool,
+        shares_filesystem: bool,
     ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
         let server_pid = stream.peer_pid();
@@ -227,6 +238,7 @@ impl SessionClient {
                 session,
                 crate::platform::user::current_user_label(),
                 read_only,
+                shares_filesystem,
             ),
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut reader)?;

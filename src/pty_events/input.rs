@@ -157,7 +157,11 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
-            client.send_input(id, pane.pty_generation, local, bytes);
+            // Motion may be held here until the child answers the position it already has; a report
+            // that is not motion always goes. See `pty_events::pointer_flow`.
+            if let Some(bytes) = pane.terminal.pointer_flow.admit(bytes) {
+                client.send_input(id, pane.pty_generation, local, bytes);
+            }
         } else {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             return Update::full();

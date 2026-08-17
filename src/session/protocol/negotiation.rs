@@ -70,6 +70,7 @@ pub fn attach_message(
     session: impl Into<String>,
     label: impl Into<String>,
     read_only: bool,
+    shares_filesystem: bool,
 ) -> ClientMessage {
     ClientMessage::Attach {
         session: session.into(),
@@ -77,6 +78,7 @@ pub fn attach_message(
         min_protocol_version: MIN_SUPPORTED_PROTOCOL,
         label: label.into(),
         read_only,
+        shares_filesystem,
     }
 }
 

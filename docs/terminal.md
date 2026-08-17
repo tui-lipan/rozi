@@ -86,6 +86,22 @@ stays active for the mouse gesture and is cleared when the button is released:
 
 The mouse scroll wheel over a pane scrolls its terminal scrollback.
 
+### Pointer motion and slow programs
+
+A host that reports pixel-precise positions reports every pixel of motion, so one drag produces
+hundreds of positions a second - more than a program that redraws on each one can answer. Rozi keeps
+one motion report in flight per pane: while a program has a position it has not answered, a newer
+one replaces whatever was waiting rather than queueing behind it, and the program's own output
+releases the next.
+
+What that buys is a program working on where the pointer *is* rather than on a backlog of where it
+has been. Dragging a scrollbar in a program that needs 16 ms a frame, the grip used to finish about
+half a second behind the hand and catch up only once the drag stopped.
+
+Presses, releases and wheel notches are never held - each means something on its own - and a program
+that answers nothing at all keeps receiving motion after a short wait, so this can only reduce lag,
+never introduce it.
+
 ## Text selection and clipboard
 
 - **Selection** - drag to select terminal text; the selection is styled with the theme's
@@ -240,13 +256,21 @@ The controller reports its cell size to the server, which passes it to every PTY
 Attached clients on terminals with different cell sizes render against the controller's value, the
 same rule the canonical pane size already follows.
 
+**A program can hand over a frame by naming it rather than sending it** (`t=f`). Instead of
+compressing every pixel and base64-ing it through the PTY, the child writes the frame where it likes
+and puts the path in a hundred-byte escape. This is the difference between a stuttering picture and a
+smooth one for anything drawing at video rates, such as a browser or a video player in a pane.
+
+The two media that are *claimed* by being read — a temporary file (`t=t`) and a shared-memory object
+(`t=s`) — are refused, because a session can have several clients attached and the first reader would
+take the frame from the others. A program that probes for them falls back to `t=f` on its own.
+Attached over [`--remote`](remote.md), no medium is offered at all: a path written on the server
+means nothing on the machine drawing the picture, so those panes use inline transmission.
+
 Limits worth knowing:
 
 - **Reattaching loses images drawn before the attach.** Attach seeding replays VT text, not image
   payloads.
-- **Transmission through a file or shared memory is refused** (`t=f`, `t=t`, `t=s`). A client can
-  be attached from a different machine than the one that wrote the file. Tools fall back to inline
-  transmission.
 - **The protocol's own animation frames are not supported.** A program that animates by
   re-drawing the image — which is what most do — works fine.
 - Decoded pixels are capped per pane and evicted least-recently-used.

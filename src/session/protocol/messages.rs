@@ -39,6 +39,14 @@ pub enum ClientMessage {
         min_protocol_version: u32,
         label: String,
         read_only: bool,
+        /// Whether this client can open paths the session's children write.
+        ///
+        /// A child may hand the terminal a frame by naming a file instead of pasting megabytes of
+        /// pixels into the byte stream, but only a client on the server's own machine can go and
+        /// read it. Attaching over SSH says so here, and the server stops offering that route.
+        /// Absent on a peer that predates the field, where refusing is the safe reading.
+        #[serde(default)]
+        shares_filesystem: bool,
     },
     /// Record the reusable profile that supplied this session's initial panes. Sent only after the
     /// profile seed requests have been queued successfully.

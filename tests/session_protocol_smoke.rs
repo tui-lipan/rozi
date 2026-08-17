@@ -237,5 +237,6 @@ fn attach_message(session: &str, label: &str) -> ClientMessage {
         min_protocol_version: MIN_SUPPORTED_PROTOCOL,
         label: label.to_string(),
         read_only: false,
+        shares_filesystem: true,
     }
 }

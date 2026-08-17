@@ -412,6 +412,7 @@ fn try_attach_remote(
                 name.to_string(),
                 std::sync::Arc::clone(&mailbox),
                 read_only,
+                false,
             ) {
                 Ok((client, attached)) => {
                     link.send(Msg::SessionConnected {

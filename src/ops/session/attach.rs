@@ -36,11 +36,12 @@ pub(crate) fn park_current_session(ctx: &mut Context<AppRoot>) {
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
+    let disposition = current_disposition(ctx);
     mark_current_parked(ctx, true);
     let old_epoch = ctx.state.runtime_epoch;
     ctx.state
         .park_current(old_epoch, crate::state::Attachment::new());
-    discard_parked_if_disposable(ctx, old_epoch);
+    discard_parked_if_disposable(ctx, old_epoch, disposition);
 }
 
 /// Tell the server the current session is going into (or coming out of) the background, so the
@@ -58,20 +59,31 @@ pub(crate) fn mark_current_parked(ctx: &mut Context<AppRoot>, parked: bool) {
     }
 }
 
+/// Whether the session on screen is worth keeping once it leaves the foreground.
+///
+/// Read before parking, and only there: parking clears this client's cached controller authority,
+/// which is one of the things [`crate::state::Attachment::disposition`] weighs.
+pub(crate) fn current_disposition(ctx: &Context<AppRoot>) -> crate::state::SessionDisposition {
+    ctx.state.current().disposition()
+}
+
 /// Tear down a just-parked attachment that is not worth keeping: an ephemeral this client created
 /// on the user's behalf and that they never worked in. Without this, every launch that ends in a
 /// switch leaves its startup ephemeral running in the background, where it clutters the picker and
 /// later asks to be confirmed away on quit — a session the user never asked for and never used.
 ///
 /// A session the user asked for, worked in, or shares with another client is always kept.
+///
+/// The verdict is taken by the caller rather than read here, because it cannot be read at this
+/// point: parking releases the layout-control lease, and [`crate::state::Attachment::disposition`]
+/// only calls a session ours to close while this client leads it. Asked after parking it answers
+/// `Keep` for everything. See [`current_disposition`].
 pub(crate) fn discard_parked_if_disposable(
     ctx: &mut Context<AppRoot>,
     epoch: crate::state::AttachmentId,
+    disposition: crate::state::SessionDisposition,
 ) {
-    let disposable = ctx.state.background.get(&epoch).is_some_and(|attachment| {
-        attachment.disposition() == crate::state::SessionDisposition::Discard
-    });
-    if !disposable {
+    if disposition != crate::state::SessionDisposition::Discard {
         return;
     }
     let Some(attachment) = ctx.state.background.remove(&epoch) else {
@@ -102,6 +114,7 @@ pub(crate) fn switch_to_parked(
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
+    let disposition = current_disposition(ctx);
     mark_current_parked(ctx, true);
     let old_epoch = ctx.state.runtime_epoch;
     let Some(restored_epoch) = ctx.state.unpark(parked, old_epoch) else {
@@ -109,7 +122,7 @@ pub(crate) fn switch_to_parked(
         mark_current_parked(ctx, false);
         return Update::none();
     };
-    discard_parked_if_disposable(ctx, old_epoch);
+    discard_parked_if_disposable(ctx, old_epoch, disposition);
     ctx.state.runtime_epoch = restored_epoch;
     // Back in the foreground: reclaim the lease, which the server grants outright when the session
     // has no active controller — the usual case for a session this client left parked.
@@ -299,10 +312,11 @@ pub(crate) fn park_current_and_install(
     prepare_session_install(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     let outcome = if ctx.state.current().session_attached {
+        let disposition = current_disposition(ctx);
         mark_current_parked(ctx, true);
         let old_epoch = ctx.state.runtime_epoch;
         ctx.state.park_current(old_epoch, attachment);
-        discard_parked_if_disposable(ctx, old_epoch);
+        discard_parked_if_disposable(ctx, old_epoch, disposition);
         // A discarded session is gone, so there is nothing for a failed attach to fall back to.
         (
             ctx.state

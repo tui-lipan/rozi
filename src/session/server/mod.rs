@@ -292,6 +292,10 @@ struct ClientConn {
     attached: bool,
     label: Option<String>,
     read_only: bool,
+    /// Whether this client can open the paths this server's children write, which is what decides
+    /// if a pane may hand out a frame by naming a file instead of pasting the pixels into the
+    /// stream. False for an SSH attach, and until this client has attached at all.
+    shares_filesystem: bool,
     /// True while the initial replay seed is still queued; raises the backlog cap.
     seeding: bool,
     /// Close this connection once its outbox drains (query probes, rejected attaches).
@@ -325,6 +329,7 @@ impl ClientConn {
             attached: false,
             label: None,
             read_only: false,
+            shares_filesystem: false,
             seeding: false,
             close_after_flush: false,
             last_pong: now,

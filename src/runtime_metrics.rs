@@ -159,6 +159,14 @@ impl RuntimeMetrics {
         );
 
         vec![
+            DevToolsMetric::new(
+                "Pointer",
+                format_pointer(tui_lipan::prelude::pixel_pointer_status()),
+            ),
+            DevToolsMetric::new(
+                "Frames",
+                format_frame_transport(tui_lipan::prelude::host_reads_shared_frames()),
+            ),
             DevToolsMetric::new("PTY", format_queue(pty, server_age)),
             DevToolsMetric::new(
                 "Srv out",
@@ -243,6 +251,37 @@ pub(crate) fn duration_micros(duration: Duration) -> u64 {
 
 fn duration_millis(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+/// Whether pointer reports carry pixels, and which half is missing when they do not.
+///
+/// Not part of [`RuntimeMetrics`]: that is a resource sample the control socket serves, and this is
+/// a fact about the host that neither changes with load nor belongs to a session. It is here
+/// because DevTools is where a question about the running client gets answered.
+fn format_pointer(status: tui_lipan::prelude::PixelPointerStatus) -> String {
+    let cell = status
+        .cell
+        .map_or_else(|| "no cell".to_string(), |(w, h)| format!("{w}x{h}"));
+    format!(
+        "{} · {} · {}",
+        if status.active() { "px" } else { "cell" },
+        if status.host_supports {
+            "1016"
+        } else {
+            "no 1016"
+        },
+        cell
+    )
+}
+
+/// How a pane's pixels reach the host terminal.
+///
+/// `shm` names an object the host maps; `inline` deflates and base64s every pixel of every frame
+/// down the PTY, which for a full-window animation is the difference between 0.03 MB/s and 20 MB/s,
+/// and between a steady 60 fps and 21 fps with stalls. Worth being able to read off a running
+/// client, because nothing else says which one a host ended up with.
+fn format_frame_transport(shared: bool) -> &'static str {
+    if shared { "shm" } else { "inline · zlib" }
 }
 
 fn format_queue(queue: QueueMetrics, age: Option<(u64, bool)>) -> String {
@@ -362,6 +401,37 @@ mod tests {
                     "stale": false
                 }
             })
+        );
+    }
+
+    /// The row exists to say *which* half is missing when reports are not pixel-precise, so the
+    /// three states have to stay distinguishable at a glance.
+    #[test]
+    fn pointer_row_names_the_missing_half() {
+        use tui_lipan::prelude::PixelPointerStatus;
+
+        assert_eq!(
+            format_pointer(PixelPointerStatus {
+                host_supports: true,
+                cell: Some((9, 18))
+            }),
+            "px · 1016 · 9x18"
+        );
+        assert_eq!(
+            format_pointer(PixelPointerStatus {
+                host_supports: false,
+                cell: Some((9, 18))
+            }),
+            "cell · no 1016 · 9x18",
+            "the host never answered the probe"
+        );
+        assert_eq!(
+            format_pointer(PixelPointerStatus {
+                host_supports: true,
+                cell: None
+            }),
+            "cell · 1016 · no cell",
+            "a padded window divides into no exact cell size"
         );
     }
 

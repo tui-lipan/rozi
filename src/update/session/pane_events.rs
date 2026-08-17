@@ -29,6 +29,9 @@ pub(crate) fn output(
     let focused = ctx.state.current().focused_pane;
     let attended = ctx.state.is_pane_attended(pane_id);
     let bell_notifications = ctx.state.config.notifications.bell;
+    // Reasserted here, on the output path itself, so it holds for every pane however it was
+    // created and whichever attachment is feeding it.
+    let policy = ctx.state.current().image_media_policy();
     // Activity/bell indicators are workspace-agnostic (the workbar counts them across every
     // workspace), so an off-screen pane still needs a frame on the chunk that first raises one.
     // Both flags only ever go false -> true here, so that is a single frame per quiet period
@@ -38,9 +41,15 @@ pub(crate) fn output(
     let mut clipboard_events = Vec::new();
     let mut bell_fired = false;
     let mut bell_alert_raised = false;
+    // A position held back while the child was busy, released by the child's own output below.
+    let mut released_pointer = None;
     let matched = match find_pane_in_namespace_mut(&mut ctx.state, pane_id, local) {
         Some(pane) if pane.pty_generation == generation => {
+            pane.terminal.set_media_policy(policy);
             let output = pane.terminal.process_server_output(&bytes);
+            // Output is the child saying it has moved on from the position it was given, and the
+            // only such signal it sends. See `pty_events::pointer_flow`.
+            released_pointer = pane.terminal.pointer_flow.answered();
             chrome_changed |= matches!(output.frame, crate::pane::OutputFrame::Rebuild);
             clipboard_events = output.clipboard_events;
             let bell = pane.terminal.take_bell();
@@ -68,6 +77,11 @@ pub(crate) fn output(
             shared.buffer_orphan_output(pane_id, generation, &bytes);
         }
         return Update::none();
+    }
+    if let Some(bytes) = released_pointer
+        && let Some(client) = ctx.state.current().session_client.clone()
+    {
+        client.send_input(pane_id, generation, local, bytes);
     }
     if ctx.state.config.clipboard.enable_osc52 {
         for event in clipboard_events {

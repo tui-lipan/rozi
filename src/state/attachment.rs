@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use tui_lipan::prelude::ExitQueue;
+use tui_lipan::prelude::{ExitQueue, GraphicsMediaPolicy};
 
 use super::{
     Pane, PaneId, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, WORKSPACE_COUNT,
@@ -214,14 +214,32 @@ impl Attachment {
             .find(|pane| pane.id == id)
     }
 
+    /// Which out-of-band graphics media the panes of this attachment may read.
+    ///
+    /// A pane hands over a picture by naming a file only when the process that wrote it and the
+    /// client that draws it share a filesystem. Over `--remote` they do not, so nothing named is
+    /// opened - a path arriving from the far side would resolve against this machine's files.
+    /// Locally the re-readable medium is allowed and the consuming ones are not, because several
+    /// clients can be attached to one session and the first reader would take the frame from the
+    /// others.
+    pub fn image_media_policy(&self) -> GraphicsMediaPolicy {
+        if self.remote_target.is_some() {
+            GraphicsMediaPolicy::NONE
+        } else {
+            GraphicsMediaPolicy::SHARED
+        }
+    }
+
     /// Apply server output to a *background* attachment: update the pane's screen (or buffer it as
     /// orphan output when the pane's layout commit has not arrived yet) and mark unseen activity.
     /// None of the current-attachment view side effects (bell notifications, focus, rendering) run,
     /// since a background attachment is never drawn - only its screen is kept live for an instant
     /// switch-back.
     pub fn apply_background_output(&mut self, pane_id: PaneId, generation: u64, bytes: &[u8]) {
+        let policy = self.image_media_policy();
         if let Some(pane) = self.find_pane_mut(pane_id) {
             if pane.pty_generation == generation {
+                pane.terminal.set_media_policy(policy);
                 pane.terminal.process_server_output(bytes);
                 pane.terminal.take_bell();
                 pane.activity.last_activity = Some(std::time::Instant::now());

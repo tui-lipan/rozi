@@ -60,8 +60,16 @@ pub struct TerminalPane {
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
     pub last_palette: Option<TerminalColorPalette>,
+    /// Which out-of-band graphics media this pane's screen will read. It follows the attachment
+    /// feeding the pane rather than the pane itself: pixels named as a path only exist for a
+    /// client on the machine that wrote them, so a `--remote` attachment allows none of it and a
+    /// path arriving anyway must not be opened here.
+    media_policy: GraphicsMediaPolicy,
     seen_bell_count: u64,
     scrollback_limit: usize,
+    /// Holds forwarded pointer motion to one position in flight at a time. See
+    /// [`crate::pty_events::pointer_flow`].
+    pub(crate) pointer_flow: crate::pty_events::pointer_flow::PointerFlow,
     /// Behind a `RefCell` so [`TerminalPane::snapshot`] can rebuild through a shared reference:
     /// the render snapshot is pulled by the view (which only ever holds `&State`), and rebuilding
     /// it at read time rather than at write time is what collapses a burst of output messages into
@@ -177,6 +185,7 @@ impl TerminalPane {
         // server with every resize, so the PTY reports it to the child and both ends agree on how
         // many rows a picture takes.
         screen.set_cell_size(tui_lipan::host_cell_size());
+        screen.set_image_media_policy(GraphicsMediaPolicy::SHARED);
         Self {
             pane_id: 0,
             generation: 0,
@@ -204,8 +213,10 @@ impl TerminalPane {
             last_exit_status: None,
             runtime_sequence: 0,
             last_palette: None,
+            media_policy: GraphicsMediaPolicy::SHARED,
             seen_bell_count: 0,
             scrollback_limit: scrollback,
+            pointer_flow: crate::pty_events::pointer_flow::PointerFlow::default(),
             screen: Rc::new(RefCell::new(screen)),
         }
     }
@@ -233,6 +244,9 @@ impl TerminalPane {
 
     pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         if self.pane_id != pane_id || self.generation != generation {
+            // A position held for the process that just went away belongs to nothing: the pointer
+            // was over the old pane's content, and the new one has never been pointed at.
+            self.pointer_flow.reset();
             self.original_user = None;
             self.display_path = None;
             self.project_root = None;
@@ -258,6 +272,7 @@ impl TerminalPane {
         let mut screen = self.screen.borrow_mut();
         *screen = TerminalScreen::new(self.rows, self.cols, self.scrollback_limit);
         screen.set_cell_size(tui_lipan::host_cell_size());
+        screen.set_image_media_policy(self.media_policy);
         self.seen_bell_count = screen.bell_count();
         if let Some(palette) = self.last_palette {
             screen.set_palette(palette);
@@ -320,6 +335,14 @@ impl TerminalPane {
 
     pub fn accepts_input(&self) -> bool {
         self.is_ready()
+    }
+
+    pub fn set_media_policy(&mut self, policy: GraphicsMediaPolicy) {
+        if self.media_policy == policy {
+            return;
+        }
+        self.media_policy = policy;
+        self.screen.borrow_mut().set_image_media_policy(policy);
     }
 
     pub fn set_palette(&mut self, palette: TerminalColorPalette) -> bool {

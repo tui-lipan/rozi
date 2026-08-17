@@ -210,6 +210,11 @@ Notes:
   server can spawn correctly; local filesystem helpers (for example opening a path on this machine)
   skip those paths while `--remote` is attached.
 - Hooks receive `ROZI_REMOTE_HOST` when attached remotely. See [Hooks](hooks.md).
+- **Out-of-band graphics are off.** Locally a program can hand a picture over by writing it
+  somewhere and naming the path (`t=f`), which is what keeps a browser or a video player in a pane
+  smooth. Attached remotely there is no shared filesystem to name into, so panes fall back to inline
+  transmission, and one remote client withdraws the offer for every client on that session. See
+  [Terminal](terminal.md#images).
 - The sidebar **Files** / **Git** tabs browse the **remote** filesystem. The client asks the session
   server to read each directory (`ListDirectory`) and to scan the repository for changes
   (`ListChanges`), then renders the replies locally, so expansion, icons, search, and theming stay

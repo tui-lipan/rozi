@@ -17,6 +17,7 @@ fn version_mismatch_is_refused_without_stopping_the_listener() {
         min_protocol_version: PROTOCOL_VERSION + 1,
         label: "future-client".to_string(),
         read_only: false,
+        shares_filesystem: true,
     });
     read_until(&mut client, |frame| {
         matches!(

@@ -94,6 +94,7 @@ fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
             min_protocol_version: PROTOCOL_VERSION,
             label: format!("client-{id}"),
             read_only: false,
+            shares_filesystem: true,
         },
     );
     assert!(
@@ -114,6 +115,7 @@ fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream)
             min_protocol_version: PROTOCOL_VERSION,
             label: format!("viewer-{id}"),
             read_only: true,
+            shares_filesystem: true,
         },
     );
     (id, stream)
@@ -122,6 +124,33 @@ fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream)
 #[test]
 fn session_socket_path_rejects_invalid_names() {
     assert!(session_socket_path("dev/../../x").is_err());
+}
+
+/// A pane hands a frame over by naming a file only when every client can open it. One client
+/// watching from another machine is enough to take the offer off the table for all of them, since
+/// the panes are shared and a path from this machine would resolve against that one's files.
+#[test]
+fn a_client_that_cannot_reach_the_filesystem_withdraws_out_of_band_graphics() {
+    let mut server = SessionServer::new_named("dev");
+    let (_local, _stream) = attach_client(&mut server);
+    assert_eq!(server.image_media_policy(), GraphicsMediaPolicy::SHARED);
+
+    let (remote, _remote_stream) = add_client(&mut server);
+    server.handle_message(
+        remote,
+        ClientMessage::Attach {
+            session: server.session_name.clone(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
+            label: "over-ssh".into(),
+            read_only: false,
+            shares_filesystem: false,
+        },
+    );
+    assert_eq!(server.image_media_policy(), GraphicsMediaPolicy::NONE);
+
+    server.remove_client(remote);
+    assert_eq!(server.image_media_policy(), GraphicsMediaPolicy::SHARED);
 }
 
 #[test]
@@ -217,6 +246,7 @@ fn runtime_metrics_request_serves_protocol_19_peers() {
             min_protocol_version: 12,
             label: "legacy".into(),
             read_only: true,
+            shares_filesystem: true,
         },
     );
     assert!(
@@ -751,6 +781,7 @@ fn attach_reports_protocol_mismatch() {
             min_protocol_version: PROTOCOL_VERSION + 1,
             label: "client".into(),
             read_only: false,
+            shares_filesystem: true,
         },
     );
     assert!(
@@ -2318,6 +2349,7 @@ fn attach_reports_layout_and_panes() {
             min_protocol_version: PROTOCOL_VERSION,
             label: "client".into(),
             read_only: false,
+            shares_filesystem: true,
         },
     );
     let Some((

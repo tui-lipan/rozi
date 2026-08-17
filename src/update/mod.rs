@@ -54,6 +54,7 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::WorkbarTick => overlays::workbar_tick(ctx),
         Msg::AgentTick => sidebar::agent_tick(ctx),
         Msg::AlertPulseTick => panes::alert_pulse_tick(ctx),
+        Msg::PointerFlowTick(id) => crate::pty_events::input::pointer_flow_tick(ctx, id),
         Msg::WorkbarCommandPoll { epoch, command } => workbar::poll_command(ctx, epoch, command),
         Msg::WorkbarCommandOutput {
             epoch,

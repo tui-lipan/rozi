@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
@@ -155,19 +157,60 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
 
     let client = ctx.state.current().session_client.clone();
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let mut hold = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
             // Motion may be held here until the child answers the position it already has; a report
             // that is not motion always goes. See `pty_events::pointer_flow`.
             if let Some(bytes) = pane.terminal.pointer_flow.admit(bytes) {
                 client.send_input(id, pane.pty_generation, local, bytes);
+            } else {
+                hold = pane.terminal.pointer_flow.arm();
             }
         } else {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             return Update::full();
         }
     }
+    // A held report is released by the child's own output, and a child that draws nothing produces
+    // none - so the position the pointer came to rest at needs a clock rather than an event.
+    if let Some(after) = hold {
+        arm_pointer_flow(ctx, id, after);
+    }
     focus_update
+}
+
+/// Ask to be woken for a pane holding a pointer report nothing else will release.
+pub(crate) fn arm_pointer_flow(ctx: &mut Context<AppRoot>, id: PaneId, after: Duration) {
+    if let Some(link) = ctx.state.command_link.clone() {
+        link.send_after(after, crate::Msg::PointerFlowTick(id));
+    }
+}
+
+/// A pane's pointer wakeup fired. Forwards the held position if the child has had its turn, and
+/// asks again if something released the report this wakeup was armed for.
+pub(crate) fn pointer_flow_tick(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
+    use crate::pty_events::pointer_flow::Stalled;
+
+    let client = ctx.state.current().session_client.clone();
+    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let mut retry = None;
+    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+        match pane.terminal.pointer_flow.stalled() {
+            Stalled::Send(bytes) => {
+                if let Some(client) = client {
+                    client.send_input(id, pane.pty_generation, local, bytes);
+                }
+            }
+            Stalled::Retry(after) => retry = Some(after),
+            Stalled::Idle => {}
+        }
+    }
+    if let Some(after) = retry {
+        arm_pointer_flow(ctx, id, after);
+    }
+    // Nothing here changes what is on screen: the pane's own output is what draws the answer.
+    Update::none()
 }
 
 pub(crate) fn handle_pane_scroll(ctx: &mut Context<AppRoot>, id: PaneId, offset: usize) -> Update {

@@ -100,7 +100,9 @@ half a second behind the hand and catch up only once the drag stopped.
 
 Presses, releases and wheel notches are never held - each means something on its own - and a program
 that answers nothing at all keeps receiving motion after a short wait, so this can only reduce lag,
-never introduce it.
+never introduce it. The position the pointer comes to rest at is delivered on that same wait even if
+the program never draws again, so a page that is finished redrawing still learns where the pointer
+finally stopped.
 
 ## Text selection and clipboard
 

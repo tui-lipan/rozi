@@ -25,6 +25,13 @@
 //! - **Motion from a child that answers nothing.** A pane that ignores mouse reports entirely would
 //!   otherwise hold the first one forever and never see another. After [`STALL`] the gate opens
 //!   regardless, which degrades to forwarding everything - the behavior this replaces.
+//!
+//! That last one needs a clock of its own. The gate is otherwise only consulted when something
+//! happens - a new report arrives, or the child writes - and the case it exists for is the one
+//! where neither does: the pointer comes to rest over a page that draws nothing, and the position
+//! it came to rest at is the one still waiting. [`PointerFlow::arm`] asks for a wakeup when a
+//! report is first held and [`PointerFlow::stalled`] answers it, so the last position of a gesture
+//! is delivered late rather than never.
 
 use std::time::{Duration, Instant};
 
@@ -49,9 +56,23 @@ fn is_motion_report(bytes: &[u8]) -> bool {
     let mut any = false;
     for digit in digits {
         any = true;
-        code = code.saturating_mul(10).saturating_add(u32::from(digit - b'0'));
+        code = code
+            .saturating_mul(10)
+            .saturating_add(u32::from(digit - b'0'));
     }
     any && code & 0x20 != 0
+}
+
+/// What a wakeup found for a pane whose motion was held.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Stalled {
+    /// The child has had its turn; forward this now.
+    Send(Vec<u8>),
+    /// Something answered in the meantime and the report waiting now is younger than it looks.
+    /// Ask again after this long.
+    Retry(Duration),
+    /// Nothing is waiting; the wakeup was overtaken by the child's own output.
+    Idle,
 }
 
 /// Per-pane gate on forwarded pointer motion. See the module comment.
@@ -61,6 +82,8 @@ pub(crate) struct PointerFlow {
     in_flight: Option<Instant>,
     /// The newest motion report, waiting for the child to answer the one before it.
     waiting: Option<Vec<u8>>,
+    /// A wakeup is already scheduled, so holding another report does not ask for a second one.
+    armed: bool,
 }
 
 impl PointerFlow {
@@ -90,10 +113,43 @@ impl PointerFlow {
         Some(waiting)
     }
 
+    /// How long to wait before asking this pane again, for a report that was just held.
+    ///
+    /// `None` when nothing is waiting or a wakeup is already outstanding, so a burst of motion
+    /// asks for one timer rather than one per report.
+    pub(crate) fn arm(&mut self) -> Option<Duration> {
+        if self.armed || self.waiting.is_none() {
+            return None;
+        }
+        self.armed = true;
+        Some(STALL)
+    }
+
+    /// Answer a wakeup: forward the held report if the child has had its turn.
+    pub(crate) fn stalled(&mut self) -> Stalled {
+        self.armed = false;
+        if self.waiting.is_none() {
+            return Stalled::Idle;
+        }
+        // The report waiting now may not be the one this wakeup was armed for - the child may have
+        // answered since, taking the old one and starting a fresh turn for a newer arrival.
+        if let Some(at) = self.in_flight {
+            let waited = at.elapsed();
+            if waited < STALL {
+                self.armed = true;
+                return Stalled::Retry(STALL - waited);
+            }
+        }
+        let bytes = self.waiting.take().expect("checked above");
+        self.in_flight = Some(Instant::now());
+        Stalled::Send(bytes)
+    }
+
     /// Drop anything held for a pane that is going away or being re-bound.
     pub(crate) fn reset(&mut self) {
         self.in_flight = None;
         self.waiting = None;
+        self.armed = false;
     }
 }
 
@@ -113,7 +169,10 @@ mod tests {
         assert!(!is_motion_report(b"\x1b[<0;10;20m"), "release");
         assert!(!is_motion_report(b"\x1b[<64;10;20M"), "wheel up");
         assert!(!is_motion_report(b"\x1b[<65;10;20M"), "wheel down");
-        assert!(!is_motion_report(b"\x1b[M abc"), "x10 encoding reports no motion");
+        assert!(
+            !is_motion_report(b"\x1b[M abc"),
+            "x10 encoding reports no motion"
+        );
         assert!(!is_motion_report(b""), "nothing at all");
     }
 
@@ -143,6 +202,41 @@ mod tests {
             "the release must not overtake the position it happened at"
         );
         assert_eq!(flow.answered(), None, "nothing is still waiting");
+    }
+
+    /// The hole a wakeup exists to close: the pointer stops, and the child - a page that draws
+    /// nothing until something changes - never produces the output that would release the last
+    /// position. Without this the child's idea of the pointer stays one report behind for as long
+    /// as the pane is quiet.
+    #[test]
+    fn the_last_position_of_a_gesture_is_delivered_even_if_the_child_stays_quiet() {
+        let mut flow = PointerFlow::default();
+        assert_eq!(flow.admit(drag(1)), Some(drag(1)));
+        assert_eq!(flow.admit(drag(2)), None, "held, and nothing else arrives");
+        assert_eq!(flow.arm(), Some(STALL), "the hold asks for a wakeup");
+        assert_eq!(flow.arm(), None, "one timer covers a whole burst");
+
+        // Too early: the child is still inside its turn.
+        match flow.stalled() {
+            Stalled::Retry(after) => assert!(after <= STALL),
+            other => panic!("expected a retry, got {other:?}"),
+        }
+        assert_eq!(flow.arm(), None, "the retry re-armed it");
+
+        flow.in_flight = Some(Instant::now() - STALL - Duration::from_millis(1));
+        assert_eq!(flow.stalled(), Stalled::Send(drag(2)));
+        assert_eq!(flow.stalled(), Stalled::Idle, "and nothing is left over");
+    }
+
+    /// A wakeup that arrives after the child has already answered must not resend anything.
+    #[test]
+    fn a_wakeup_overtaken_by_the_childs_own_output_does_nothing() {
+        let mut flow = PointerFlow::default();
+        flow.admit(drag(1));
+        assert_eq!(flow.admit(drag(2)), None);
+        assert_eq!(flow.arm(), Some(STALL));
+        assert_eq!(flow.answered(), Some(drag(2)), "output released it first");
+        assert_eq!(flow.stalled(), Stalled::Idle);
     }
 
     #[test]

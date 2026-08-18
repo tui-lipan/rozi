@@ -168,16 +168,18 @@ or ran a binary out of `./target/release` - the executable's full path is saved 
 restoring runs the same program rather than reporting `command not found`.
 
 Arguments come from the running process itself, so what is saved is what the program received
-after the shell was done with it: aliases, globs, and variables appear expanded. Some cases save
-the program without its arguments:
+after the shell was done with it: aliases, globs, and variables appear expanded. For an interpreted
+program, rozi finds the shell-reported program where it appears in the interpreter's argument
+vector, so `/tmp/agent --flag` is not saved as `python3 /tmp/agent --flag`. Some cases save the
+program without its arguments:
 
 - **macOS.** Rozi can inspect the executable path, but not its argument vector, so a saved command
   preserves the program without its flags.
 - **Windows.** Native process inspection is unavailable, so saving keeps only a program name
   reported by shell integration.
-- **Wrapped programs.** When the process holding the terminal is not the program the pane reports
-  running - an `npx`-style runner, a shell function, a launcher script - its arguments belong to
-  the wrapper, not to what you ran, so they are dropped rather than guessed at.
+- **Unmatched wrappers.** When the process command line never names the program the pane reports
+  running - a shell function or a launcher that execs something unrelated, for example - its
+  arguments belong to the wrapper, not to what you ran, so they are dropped rather than guessed at.
 - **Arguments that cannot be typed back.** A restored command is replayed at a shell prompt, so an
   argument containing a control character would not survive as one argument; the whole vector is
   dropped rather than replayed in part.

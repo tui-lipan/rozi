@@ -7,7 +7,9 @@
 //! [`ServerMessage::PaneRuntimeChanged`].
 
 use super::*;
-use crate::platform::process::{LazyProcessScan, PlatformProcessInspector, ProcessInspector};
+use crate::platform::process::{
+    ForegroundLaunch, LazyProcessScan, PlatformProcessInspector, ProcessInspector,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::session::protocol::{
@@ -429,10 +431,11 @@ fn compute_runtime_state(
 /// a name never carries them: `claude` and `claude --dangerously-skip-permissions` are the same
 /// executable and very different panes.
 ///
-/// Both are trusted only when the inspected process is the program the pane reports running. Shell
-/// integration reports the command word the shell started while the inspector reports whatever
-/// holds the terminal now, and for wrappers, `npx`-style runners, and shell functions those are
-/// different programs whose arguments belong to neither.
+/// Both are trusted only when the inspected process can be shown to *be* the program the pane
+/// reports running. Shell integration reports the command word the shell started while the
+/// inspector reports whatever holds the terminal now; where those cannot be reconciled - a shell
+/// function, a launcher that execs something unrelated - the arguments belong to neither and are
+/// dropped rather than guessed at.
 fn foreground_launch(
     pane: &mut ServerPane,
     inspector: &impl ProcessInspector,
@@ -445,22 +448,47 @@ fn foreground_launch(
     let Some(launch) = inspector.foreground_launch(pty) else {
         return empty;
     };
-    let identified = launch
+    let Some(position) = program_position(program, &launch) else {
+        return empty;
+    };
+    // Past the program word, the executable behind the process is the interpreter rather than the
+    // program - `/usr/bin/python3`, not the script the user ran - so the argument naming the
+    // program is the path worth keeping.
+    let executable = match position {
+        0 => launch.executable,
+        position => Some(std::path::PathBuf::from(&launch.argv[position])),
+    };
+    let executable = executable
+        .filter(|path| path.is_absolute())
+        .filter(|_| !program_is_on_path(&mut pane.program_on_path, program))
+        .map(|path| path.to_string_lossy().into_owned());
+    (executable, replayable_arguments(&launch.argv[position..]))
+}
+
+/// Where in a process's `argv` the program the pane reports running appears, and therefore where
+/// its arguments begin.
+///
+/// Usually position zero: the process *is* that program. An interpreted one is not - a
+/// `#!/usr/bin/env python3` script runs as `python3 /path/to/script --flags`, so the terminal is
+/// held by `python3` while the shell reports the script's own name. Every npm- and pip-installed
+/// command-line tool has this shape, and reading their arguments off `argv[1..]` would capture the
+/// interpreter's view (`/path/to/script --flags`) rather than the user's (`--flags`).
+///
+/// Searching for the reported name is what keeps this honest rather than clever: a wrapper that
+/// never mentions the program - a shell function, a `sudo`-style launcher whose own name is what
+/// the shell reported - simply does not match, and nothing is captured.
+fn program_position(program: &str, launch: &ForegroundLaunch) -> Option<usize> {
+    if launch
         .executable
         .as_deref()
         .is_some_and(|path| same_program(program, path))
-        || launch
-            .argv
-            .first()
-            .is_some_and(|argv0| same_program(program, std::path::Path::new(argv0)));
-    if !identified {
-        return empty;
+    {
+        return Some(0);
     }
-    let executable = launch
-        .executable
-        .filter(|_| !program_is_on_path(&mut pane.program_on_path, program))
-        .map(|path| path.to_string_lossy().into_owned());
-    (executable, replayable_arguments(&launch.argv))
+    launch
+        .argv
+        .iter()
+        .position(|argument| same_program(program, std::path::Path::new(argument)))
 }
 
 /// Whether `program` resolves on this server's `PATH`, remembering the last answer.
@@ -840,6 +868,47 @@ mod tests {
         assert!(
             replayable_arguments(&argv(&["sh", "-c", "one\ntwo"])).is_empty(),
             "a newline would end the replayed command line early"
+        );
+    }
+
+    /// An interpreted program is not the process holding the terminal: `python3 /bin/agent --go`
+    /// is what a `#!/usr/bin/env python3` script named `agent` looks like from outside. The
+    /// arguments the user gave start after the program's own name, not after the interpreter's.
+    #[test]
+    fn an_interpreted_program_is_found_where_it_sits_in_the_command_line() {
+        let launch = |exe: Option<&str>, words: &[&str]| ForegroundLaunch {
+            executable: exe.map(std::path::PathBuf::from),
+            argv: words.iter().map(|word| word.to_string()).collect(),
+        };
+
+        assert_eq!(
+            program_position(
+                "agent",
+                &launch(Some("/usr/bin/python3"), &["python3", "/bin/agent", "--go"])
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            program_position("agent", &launch(Some("/bin/agent"), &["agent", "--go"])),
+            Some(0),
+            "a program that runs as itself starts at the front"
+        );
+        // `sudo agent --go` reports `sudo`, which is genuinely what the pane is running.
+        assert_eq!(
+            program_position(
+                "sudo",
+                &launch(Some("/usr/bin/sudo"), &["sudo", "agent", "--go"])
+            ),
+            Some(0)
+        );
+        // A shell function or a launcher that execs something unrelated never names the program
+        // the shell reported, and must not have its own arguments attributed to it.
+        assert_eq!(
+            program_position(
+                "agent",
+                &launch(Some("/usr/bin/node"), &["node", "/opt/other.js", "--go"])
+            ),
+            None
         );
     }
 

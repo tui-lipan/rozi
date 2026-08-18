@@ -123,7 +123,7 @@ Or use the in-app **Profiles** command (command palette): highlight a profile an
 The default seeds **every session opened without a recipe**, not just the launch that started
 rozi: the initial session, each new temporary session, and each named session created without a
 profile. Paths that already name a recipe are unaffected — attaching to an existing session, a
-canonical `rozi <name>` target, `new <name> --profile <recipe>`, and the picker's **Open as** all
+canonical `rozi <name>` target, `new <name> --profile <recipe>`, and the picker's **Launch as** all
 keep using theirs. Sessions seeded this way record the default as their creating profile, so the
 capture prompt offers its name back.
 
@@ -136,26 +136,17 @@ invalid profile reports an error instead.
 
 | Command | Action |
 | --- | --- |
-| **Capture session as profile...** | Prompts for a name and writes `profiles/<name>.toml`. Overwriting requires a second **Enter**. From a temporary session, **Enter** also names that session after the profile — see below. |
+| **Capture session as profile...** | Prompts for a name and writes `profiles/<name>.toml`. Overwriting requires a second **Enter**. The live session is left as it is. |
 | **Profiles** | Lists saved profiles with in-picker actions (see below). |
-| **Replace session with profile...** | Destructively replaces every pane in the current session from a profile without changing the session name or disconnecting its clients. |
+| **Replace session with profile...** | Destructively replaces every pane in the current session from a profile without changing the session name or disconnecting its clients. Offered only while attached. |
 
 The capture prompt prefers the creating profile as the initial name, then the session name.
 
 ### Capturing a temporary session
 
-Capturing from a temporary session names that session after the profile on the same **Enter**, so
-the running session and its recipe end up sharing one identity:
-
-- while the session lives, `rozi <name>` reattaches to it,
-- once it is gone, `rozi <name>` rebuilds a new one from the profile.
-
-A session that is *already* named keeps its name — capturing `dev-full` out of session `dev` leaves
-`dev` called `dev`. To capture a temporary session without keeping it, capture it and kill the
-resulting named session afterwards.
-
-Naming is skipped, and the capture reported as `session name already in use`, when another session
-is already running under that name. The profile is still written.
+Capturing writes a recipe and leaves the running session unchanged: an ephemeral session stays
+ephemeral, and a named session keeps its name. Use **Name session** if you want the live session to
+become a durable identity of its own.
 
 ### Profile picker actions
 
@@ -164,9 +155,9 @@ Open **Profiles** from the command palette, then:
 | Key | Action |
 | --- | --- |
 | **Enter** | Attach to the running canonical same-name session, or launch that canonical session from the profile. Leaving a live ephemeral session may require a second press. |
-| **Ctrl+o** | **Open as**: launch the highlighted recipe under a new session name, or leave the name empty for a fresh ephemeral session. A name must not already be running. |
+| **Ctrl+o** | **Launch as**: launch the highlighted recipe under a new session name, or leave the name empty for a fresh ephemeral session. A name must not already be running. |
 | **Ctrl+n** | Capture the current session as a new profile. |
-| **Ctrl+r** | Replace the current session with the highlighted profile. Press twice to close all panes and running processes and launch the recipe; the session name and attached clients are kept. |
+| **Ctrl+r** | Replace the current session with the highlighted profile. Press twice to close all panes and running processes and launch the recipe; the session name and attached clients are kept. Shown only while attached. |
 | **Ctrl+f** | Toggle the highlighted profile as `[profile] default`. Pressing it on the current default clears the setting. Clearing it while `[session] startup` is `"profile"` also puts startup back to `"picker"`. |
 | **Ctrl+d** | Delete the highlighted profile file. Press **Ctrl+d** again on the same row to confirm. |
 

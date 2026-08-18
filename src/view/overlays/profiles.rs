@@ -33,7 +33,7 @@ fn profile_picker_hints(ctx: &Context<AppRoot>) -> Element {
     });
     if picker.apply_mode {
         let mut hints = hint_row();
-        if selected.is_some() {
+        if selected.is_some() && crate::ops::profile::can_replace_session(&ctx.state) {
             hints = hints.child(hint_pill(theme, "replace", "enter"));
         }
         return hints
@@ -54,8 +54,10 @@ fn profile_picker_hints(ctx: &Context<AppRoot>) -> Element {
                 "enter",
             ));
         }
-        hints = hints.child(hint_pill(theme, "open as", "ctrl+o"));
-        hints = hints.child(hint_pill(theme, "replace", "ctrl+r"));
+        hints = hints.child(hint_pill(theme, "launch as", "ctrl+o"));
+        if crate::ops::profile::can_replace_session(&ctx.state) {
+            hints = hints.child(hint_pill(theme, "replace", "ctrl+r"));
+        }
         hints = hints.child(hint_pill(theme, "default", "ctrl+f"));
     }
     hints = hints.child(hint_pill(theme, "new", "ctrl+n"));
@@ -188,7 +190,8 @@ fn profile_picker_palette(
 }
 
 fn profile_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
-    ctx.link().key_handler(|key| {
+    let can_replace = crate::ops::profile::can_replace_session(&ctx.state);
+    ctx.link().key_handler(move |key| {
         if key.mods.ctrl && matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O')) {
             Some(Msg::ProfilePickerOpenAs)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
@@ -197,7 +200,10 @@ fn profile_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
             Some(Msg::ProfilePickerDelete)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
             Some(Msg::ProfilePickerSetDefault)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
+        } else if can_replace
+            && key.mods.ctrl
+            && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+        {
             Some(Msg::ProfilePickerApply)
         } else {
             None

@@ -1322,17 +1322,54 @@ mod tests {
                     },
                 );
                 backend.state_mut().config.profile.default = Some("rust-dev".to_string());
+                backend.state_mut().current_mut().session_attached = true;
                 backend.state_mut().profile_picker = Some(picker);
                 backend.state_mut().show_profile_picker = true;
                 backend.render();
 
                 let lines = backend.capture_frame().to_fixed_grid_lines();
                 assert!(lines.iter().any(|line| line.contains("attach Enter")));
-                assert!(lines.iter().any(|line| line.contains("open as Ctrl+o")));
+                assert!(lines.iter().any(|line| line.contains("launch as Ctrl+o")));
                 assert!(lines.iter().any(|line| line.contains("default Ctrl+f")));
                 assert!(lines.iter().any(|line| line.contains("replace Ctrl+r")));
                 assert!(lines.iter().any(|line| line.contains("• running")));
                 assert!(lines.iter().any(|line| line.contains("new Ctrl+n")));
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
+    fn profile_picker_omits_replace_in_the_launcher() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 52,
+                    h: 18,
+                });
+                backend.state_mut().profile_picker =
+                    Some(crate::state::ProfilePickerState::new(vec![
+                        crate::config::ProfileEntry {
+                            name: "rust-dev".to_string(),
+                            path: PathBuf::from("rust-dev.toml"),
+                        },
+                    ]));
+                backend.state_mut().show_profile_picker = true;
+                assert!(!backend.state().current().session_attached);
+                backend.render();
+
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                assert!(lines.iter().any(|line| line.contains("launch as Ctrl+o")));
+                assert!(
+                    lines.iter().all(|line| !line.contains("replace")),
+                    "replace is not offered until a session is attached\n{}",
+                    lines.join("\n")
+                );
             })
             .expect("spawn test thread")
             .join()

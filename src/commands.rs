@@ -1047,6 +1047,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         }),
         Action::GrantControl => shared
             .is_some_and(|shared| shared.is_controller() && shared.has_pending_control_requests()),
+        Action::ApplyProfile => crate::ops::profile::can_replace_session(state),
         _ => true,
     }
 }
@@ -2016,6 +2017,14 @@ mod tests {
         assert!(command_available(Action::OpenCollaborators, &viewer));
         assert!(!command_available(Action::RequestControl, &viewer));
         assert!(!command_available(Action::ToggleInputLock, &viewer));
+    }
+
+    #[test]
+    fn apply_profile_is_unavailable_until_a_session_is_attached() {
+        let mut state = State::new(Config::default(), Theme::default());
+        assert!(!command_available(Action::ApplyProfile, &state));
+        state.current_mut().session_attached = true;
+        assert!(command_available(Action::ApplyProfile, &state));
     }
 
     #[test]

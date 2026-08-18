@@ -46,9 +46,9 @@ binding. Launch the recipe under another name explicitly with:
 rozi new review --profile dev
 ```
 
-Open **Profiles** to use the canonical flow with `Enter`, open the recipe under another name or as
+Open **Profiles** to use the canonical flow with `Enter`, launch the recipe under another name or as
 an ephemeral session with `Ctrl+O`, capture a new profile with `Ctrl+N`, replace the current session
-with `Ctrl+R` twice, delete profiles, or toggle one as the ephemeral startup default:
+with `Ctrl+R` twice (while attached), delete profiles, or toggle one as the ephemeral startup default:
 
 ```toml
 [profile]

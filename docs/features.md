@@ -241,7 +241,7 @@ See [Remote SSH sessions](remote.md) for the local-vs-remote feature split.
 Profiles are named, reusable launch recipes stored in `~/.config/rozi/profiles/`.
 
 - **Capture** the current session as a profile (`save-profile`).
-- **Launch** the canonical same-name session, or open a profile under another name.
+- **Launch** the canonical same-name session, or launch a profile under another name.
 - **Apply** a profile to replace the current session's contents.
 - **Profile picker** with fuzzy search.
 - `[profile] default` seeds every session opened without a recipe, not just the startup one, and

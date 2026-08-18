@@ -43,32 +43,14 @@ pub(crate) fn close_save_profile_prompt(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::overlay_return::finish(ctx)
 }
 
-/// Whether committing this capture should also name the current session after the profile.
-///
-/// Only a *temporary* session is promoted. A named session already carries a durable identity the
-/// user chose, so capturing `dev-full` out of session `dev` must leave `dev` named `dev`.
-///
-/// The controller/read-only checks mirror the server's, which drops `Rename` from anyone else
-/// without a reply: a follower would otherwise be offered a commit that silently does half of what
-/// it says. Failing the check falls back to a plain capture, hints included.
-pub(crate) fn should_promote_session(state: &crate::state::State) -> bool {
-    let current = state.current();
-    current.session_attached
-        && state.is_ephemeral_session()
-        && current.is_controller()
-        && current
-            .shared
-            .as_ref()
-            .is_none_or(|shared| !shared.read_only)
+/// Replace tears down every pane in the attached session. The launcher has nothing to replace, so
+/// the picker omits the action rather than advertising a toast.
+pub(crate) fn can_replace_session(state: &crate::state::State) -> bool {
+    state.current().session_attached
 }
 
-/// Capture the current session's layout as a profile.
-///
-/// Capturing a temporary session also names it after the profile, so the runtime and its recipe end
-/// up sharing one durable identity: `rozi <name>` then resumes the live session while it exists
-/// and rebuilds from the profile once it is gone. That is simply what capture *means* here, so
-/// there is no second commit to opt out of it - a session captured under a name it should not keep
-/// can be killed afterwards.
+/// Capture the current session's layout as a profile. The live session is left as it is: an
+/// ephemeral session stays ephemeral, and a named session keeps the name the user chose.
 pub(crate) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
     let Some(name) = ctx
         .state
@@ -113,32 +95,11 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
                     ],
                 ),
             );
-            // The overwrite arm above already gated this commit, so promotion never runs ahead of
-            // its confirmation.
-            let mut clash = false;
-            if should_promote_session(&ctx.state) {
-                clash = crate::ops::session::session_name_already_running(
-                    ctx,
-                    &name,
-                    ctx.state.current().remote_target.as_ref(),
-                );
-                if !clash && let Some(client) = ctx.state.current().session_client.clone() {
-                    client.rename(name.clone());
-                }
-            }
-            // The server echoes the rename back and the workbar badge repaints with it, so the
-            // toast only reports the file write - except when promotion lost a name race, which is
-            // an outcome the prompt promised and the screen cannot show.
             crate::pty_events::notify_info(
                 ctx,
                 format!(
-                    "{} profile `{name}`{}",
+                    "{} profile `{name}`",
                     if existed { "Overwrote" } else { "Captured" },
-                    if clash {
-                        " · session name already in use"
-                    } else {
-                        ""
-                    }
                 ),
             );
         }
@@ -163,6 +124,9 @@ pub(crate) fn open_profile_picker(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn open_apply_profile_picker(ctx: &mut Context<AppRoot>) -> Update {
+    if !can_replace_session(&ctx.state) {
+        return Update::none();
+    }
     open_profile_picker_mode(ctx, true)
 }
 
@@ -318,9 +282,8 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
     let Some(entry) = selected_profile_entry(ctx) else {
         return Update::none();
     };
-    if !ctx.state.current().session_attached {
-        crate::pty_events::notify_error(ctx, "Replace failed", "Attach to a session first");
-        return Update::full();
+    if !can_replace_session(&ctx.state) {
+        return Update::none();
     }
     if ctx
         .state
@@ -911,48 +874,50 @@ mod tests {
         });
     }
 
-    /// Capturing a temporary session names it after the profile, so the running session and its
-    /// recipe end up sharing one identity. A session that is already named keeps the name the user
-    /// chose - capturing `dev-full` out of session `dev` must not rename `dev`.
+    /// Capture writes a recipe and leaves the live session as it is. An ephemeral session stays
+    /// ephemeral; a named session keeps the name the user chose.
     #[test]
-    fn only_an_attached_temporary_session_is_promoted_by_a_capture() {
+    fn capturing_an_ephemeral_session_does_not_rename_it() {
         on_large_stack(|| {
+            let (client, rx) = crate::session::client::SessionClient::test_channel();
             let mut backend = TestBackend::new(AppRoot::default());
-            backend.state_mut().current_mut().session_attached = true;
-            backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
-            assert!(should_promote_session(backend.state()));
-
-            backend.state_mut().current_mut().session_name = Some("dev".to_string());
-            assert!(!should_promote_session(backend.state()));
-
-            backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
-            backend.state_mut().current_mut().session_attached = false;
-            assert!(!should_promote_session(backend.state()));
-
-            // The server drops `Rename` from a follower or a read-only client without replying, so
-            // neither may be offered a commit that names the session.
-            backend.state_mut().current_mut().session_attached = true;
-            let mut shared = crate::state::SharedSessionState::new(7);
-            shared.controller = Some(9);
-            backend.state_mut().current_mut().shared = Some(shared);
-            assert!(!should_promote_session(backend.state()));
-
-            if let Some(shared) = backend.state_mut().current_mut().shared.as_mut() {
-                shared.controller = Some(7);
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_attached = true;
+                state.current_mut().session_name = Some("eph-123".to_string());
+                state.current_mut().session_client = Some(client);
             }
-            assert!(should_promote_session(backend.state()));
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
+                .expect("open save prompt");
+            let name = format!("capture-eph-{}", std::process::id());
+            backend
+                .state_mut()
+                .save_profile_prompt
+                .as_mut()
+                .unwrap()
+                .input
+                .set_text(&name);
+            backend
+                .dispatch(Msg::SubmitSaveProfile)
+                .expect("capture profile");
 
-            if let Some(shared) = backend.state_mut().current_mut().shared.as_mut() {
-                shared.read_only = true;
-            }
-            assert!(!should_promote_session(backend.state()));
+            assert_eq!(
+                backend.state().current().session_name.as_deref(),
+                Some("eph-123")
+            );
+            assert!(
+                rx.try_recv().is_err(),
+                "capture must not send Rename to the live session"
+            );
+            let path = crate::config::profile_path_for_name(&name);
+            assert!(path.exists(), "profile file should be written");
+            let _ = std::fs::remove_file(&path);
         });
     }
 
-    /// There is one commit either way, so the hint is the only thing telling the user whether this
-    /// capture also names the session.
     #[test]
-    fn capture_prompt_says_whether_the_commit_also_names_the_session() {
+    fn capture_prompt_is_a_plain_capture_from_ephemeral_and_named_sessions() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().current_mut().session_attached = true;
@@ -963,8 +928,8 @@ mod tests {
             backend.render();
             let hints = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(
-                hints.contains("capture + name session"),
-                "capturing a temporary session names it too\n{hints}"
+                hints.contains("capture ") && !hints.contains("name session"),
+                "capturing a temporary session must not also name it\n{hints}"
             );
 
             backend.state_mut().current_mut().session_name = Some("dev".to_string());
@@ -1271,6 +1236,50 @@ mod tests {
             assert_eq!(event["data"]["session"], "work");
             assert!(events.try_recv().is_err());
             std::fs::remove_file(path).expect("remove profile");
+        });
+    }
+
+    #[test]
+    fn replace_from_the_launcher_is_inert() {
+        on_large_stack(|| {
+            let path = temp_profile_path();
+            save_profile(&path, &Profile::default()).expect("write profile");
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().profile_picker =
+                Some(ProfilePickerState::new(vec![entry("dev", path.clone())]));
+            backend.state_mut().show_profile_picker = true;
+            assert!(
+                !backend.state().current().session_attached,
+                "default TestBackend is the launcher"
+            );
+
+            backend
+                .dispatch(Msg::ProfilePickerApply)
+                .expect("replace from launcher");
+            assert!(
+                backend
+                    .state()
+                    .profile_picker
+                    .as_ref()
+                    .unwrap()
+                    .pending_apply
+                    .is_none(),
+                "replace must not arm when nothing is attached"
+            );
+            assert!(backend.state().show_profile_picker);
+            let _ = std::fs::remove_file(&path);
+        });
+    }
+
+    #[test]
+    fn apply_profile_command_does_not_open_from_the_launcher() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::ApplyProfile))
+                .expect("apply-profile from launcher");
+            assert!(!backend.state().show_profile_picker);
+            assert!(backend.state().profile_picker.is_none());
         });
     }
 }

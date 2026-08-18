@@ -158,7 +158,7 @@ pub(crate) fn rename_session_overlay(ctx: &Context<AppRoot>) -> Element {
             (title, "Session name".to_string())
         }
         crate::state::NamingMode::OpenProfileAs => (
-            "Open profile as".to_string(),
+            "Launch profile as".to_string(),
             "Name (empty: ephemeral)".to_string(),
         ),
         // The same ephemeral-naming prompt serves in-place naming and the leave prompt. The latter
@@ -221,13 +221,6 @@ pub(crate) fn save_profile_overlay(ctx: &Context<AppRoot>) -> Element {
             prompt.input.text().trim()
         )
     });
-    // Capturing a temporary session names it after the profile too, so the runtime and its recipe
-    // share one identity. There is one commit either way; the hint just says which one it is.
-    let hints: &[(&str, &str)] = if crate::ops::profile::should_promote_session(&ctx.state) {
-        &[("capture + name session", "enter")]
-    } else {
-        &[("capture", "enter")]
-    };
     prompt_overlay(
         ctx,
         "Capture session as profile",
@@ -237,7 +230,7 @@ pub(crate) fn save_profile_overlay(ctx: &Context<AppRoot>) -> Element {
         Msg::SaveProfileNameChanged,
         Msg::CloseSaveProfile,
         Msg::SubmitSaveProfile,
-        hints,
+        &[("capture", "enter")],
         confirm.as_deref(),
     )
 }

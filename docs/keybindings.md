@@ -471,11 +471,11 @@ While an overlay is open (command palette, help, theme picker, search, rename):
   application-provided terminal title, then the contextual current working directory).
 
 In the **Profiles** picker, `Enter` attaches to or launches the highlighted profile's canonical
-same-name session. `Ctrl+O` opens that recipe under a new name, or as an ephemeral session when the
+same-name session. `Ctrl+O` launches that recipe under a new name, or as an ephemeral session when the
 name is left empty. `Ctrl+N` captures the current session as a new profile, and `Ctrl+F` toggles the
-selected startup default. `Ctrl+R` twice runs **Replace session with profile...**, closing every
-pane and running process while keeping the session name and attached clients. The row status
-describes only the canonical same-name session, not every session created from that recipe.
+selected startup default. While attached, `Ctrl+R` twice runs **Replace session with profile...**,
+closing every pane and running process while keeping the session name and attached clients. The row
+status describes only the canonical same-name session, not every session created from that recipe.
 
 ## Session collaboration
 

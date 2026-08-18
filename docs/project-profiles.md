@@ -171,7 +171,10 @@ Arguments come from the running process itself, so what is saved is what the pro
 after the shell was done with it: aliases, globs, and variables appear expanded. Some cases save
 the program without its arguments:
 
-- **macOS and Windows.** Reading another process's arguments is Linux-only in rozi today.
+- **macOS.** Rozi can inspect the executable path, but not its argument vector, so a saved command
+  preserves the program without its flags.
+- **Windows.** Native process inspection is unavailable, so saving keeps only a program name
+  reported by shell integration.
 - **Wrapped programs.** When the process holding the terminal is not the program the pane reports
   running - an `npx`-style runner, a shell function, a launcher script - its arguments belong to
   the wrapper, not to what you ran, so they are dropped rather than guessed at.

@@ -96,11 +96,15 @@ Key handling is the same on Windows, with two things worth knowing:
 pane you started with:
 
 - **Swap** exchanges the two panes' slots. The layout keeps exactly the shape it had — only the
-  contents of two slots change places. This is the everyday one, so it gets `Shift`.
+  contents of two slots change places, so each pane takes on the size of the slot it lands in. This
+  is the everyday one, so it gets `Shift`.
 - **Move** lifts the pane out of the layout and re-inserts it beside that neighbor, so the slot it
   vacated collapses and the layout changes shape. It is the keyboard equivalent of dragging a pane
   onto another one with the mouse. Moving left/up docks the pane before its neighbor, right/down
-  after it.
+  after it. The pane brings its own size along: it and the neighbor divide the space in the
+  proportion they already had, so a 70/30 pair stays 70/30 rather than being reset to even. Panes
+  that already match on the axis being split — a side-by-side pair moved vertically — divide it
+  evenly, which is what that reshape wants anyway.
 
 Starting from pane `A` on the left with `B` over `C` on the right, pressing *right* on `A` gives:
 

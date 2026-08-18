@@ -108,7 +108,7 @@ with the mouse and remember their geometry.
 **Movement** — two distinct operations:
 
 - `move-pane-<dir>` lifts the pane out of the tree and re-inserts it beside the neighbor,
-  reshaping the layout.
+  reshaping the layout. The two keep the proportion they already had instead of splitting evenly.
 - `swap-pane-<dir>` trades slots with the neighbor, keeping the layout's shape.
 - `promote-to-master` moves the focused pane into the master slot.
 

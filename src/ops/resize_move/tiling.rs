@@ -9,11 +9,14 @@ use crate::layout::{self, insert_tiled_pane_at_point, placement_for, workspace_t
 use crate::ops::focus::{
     active_pane_is_fullscreen, active_pane_mut, request_pane_focus, sync_scrollable_reveal,
 };
-use crate::state::{Direction, LayoutKind, MoveSwapHint, PaneId, State, TileGap, Workspace};
+use crate::state::{
+    Direction, EVEN_SPLIT_RATIO, LayoutKind, MoveSwapHint, PaneId, State, TileGap, Workspace,
+};
 use crate::tiling::{
     append_tiled_window, cell_split_ratio, flip_tree_split_for_focused, innermost_split_for,
-    move_tiled_window_around_target, ratio_at, remove_tiled_window, resize_tiled_split,
-    sanitize_scrollable_width, scrollable_column_width, swap_tree_leaves, usable_axis_extent,
+    move_tiled_window_around_target, ratio_at, redock_split_ratio, remove_tiled_window,
+    resize_tiled_split, sanitize_scrollable_width, scrollable_column_width, swap_tree_leaves,
+    usable_axis_extent,
 };
 
 use super::float::{
@@ -324,11 +327,22 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
         };
 
         // The pane travels past its neighbor and docks on the far side, so moving left/up lands it
-        // first (leading) in the new split and right/down lands it second — the same convention
+        // first (leading) in the new split and right/down lands it second - the same convention
         // `layout::drop_split_for_target` uses for a mouse drop.
         let axis = crate::ops::focus::split_axis_for_direction(direction);
         let moving_first = matches!(direction, Direction::Left | Direction::Up);
-        let moved = move_tiled_window_around_target(workspace, focused, target, axis, moving_first);
+        // Measured before the move, so the pane keeps the extent it is leaving with.
+        let ratio = match (
+            placement_for(&placements, focused),
+            placement_for(&placements, target),
+        ) {
+            (Some(moving_rect), Some(target_rect)) => {
+                redock_split_ratio(moving_rect, target_rect, axis, moving_first)
+            }
+            _ => EVEN_SPLIT_RATIO,
+        };
+        let moved =
+            move_tiled_window_around_target(workspace, focused, target, axis, moving_first, ratio);
         if moved {
             workspace.focused_pane = Some(focused);
         }
@@ -520,7 +534,7 @@ mod tests {
     use crate::input::Action;
     use crate::layout::workspace_target_rects_excluding;
     use crate::ops::resize_move::test_util::{
-        TEST_VIEWPORT, first_pane_extent, in_test_stack, steps, three_pane_stack_tree,
+        TEST_VIEWPORT, first_pane_extent, in_test_stack, pane_extent, steps, three_pane_stack_tree,
         three_pane_stack_workspace, two_pane_backend,
     };
     use crate::state::{Pane, SplitAxis};
@@ -627,6 +641,64 @@ mod tests {
                     second: Box::new(DwindleTree::Leaf(3)),
                 }),
                 "move must re-insert the pane beside its neighbor"
+            );
+        });
+    }
+
+    /// A move carries the pane's own size across; it does not halve whatever it lands on.
+    ///
+    /// The moving pane frees its slot and takes a bite out of its neighbor's, so the two divide the
+    /// space in the proportion they already had. Splitting the target evenly instead threw away a
+    /// deliberate resize: a 70/30 pair came back 50/50 just for being reordered.
+    #[test]
+    fn move_carries_each_pane_its_own_width_across() {
+        in_test_stack(|| {
+            let axis = SplitAxis::Horizontal;
+            let mut backend = two_pane_backend(axis);
+            {
+                let state = backend.state_mut();
+                let Some(DwindleTree::Split { ratio, .. }) =
+                    state.active_workspace_mut().tile_tree.as_mut()
+                else {
+                    panic!("expected a root split");
+                };
+                *ratio = 0.7;
+            }
+            backend.render();
+
+            let wide = pane_extent(&mut backend, 1, axis);
+            let narrow = pane_extent(&mut backend, 2, axis);
+            assert!(
+                wide > narrow,
+                "fixture must start lopsided: {wide} vs {narrow}"
+            );
+
+            backend
+                .dispatch(Msg::RunAction(Action::Move(Direction::Right)))
+                .expect("move pane right");
+
+            let state = backend.state_mut();
+            let tree = state.current().workspaces[state.current().active_workspace]
+                .tile_tree
+                .clone();
+            assert!(
+                matches!(
+                    tree.as_ref(),
+                    Some(DwindleTree::Split { first, second, .. })
+                        if matches!(first.as_ref(), DwindleTree::Leaf(2))
+                            && matches!(second.as_ref(), DwindleTree::Leaf(1))
+                ),
+                "pane 1 must have docked to the right of pane 2, got {tree:?}"
+            );
+            assert_eq!(
+                pane_extent(&mut backend, 1, axis),
+                wide,
+                "the moved pane keeps the width it left with"
+            );
+            assert_eq!(
+                pane_extent(&mut backend, 2, axis),
+                narrow,
+                "its neighbor keeps its width too"
             );
         });
     }

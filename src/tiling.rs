@@ -1,8 +1,8 @@
 use tui_lipan::prelude::FloatRect;
 
 use crate::state::{
-    DEFAULT_RATIO, DEFAULT_SCROLLABLE_WIDTH, MAX_SPLIT_RATIO, MIN_SPLIT_RATIO, PaneId,
-    ScrollableRevealEdge, SplitAxis, TileGap, Workspace,
+    DEFAULT_RATIO, DEFAULT_SCROLLABLE_WIDTH, EVEN_SPLIT_RATIO, MAX_SPLIT_RATIO, MIN_SPLIT_RATIO,
+    PaneId, ScrollableRevealEdge, SplitAxis, TileGap, Workspace,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -220,12 +220,15 @@ pub fn remove_tree_leaf(tree: DwindleTree, id: PaneId) -> (Option<DwindleTree>, 
     }
 }
 
+/// Replace `target`'s leaf with a split of `axis` holding `target` and `moving`, divided by
+/// `ratio` (the leading side's share).
 pub fn insert_leaf_around_target(
     tree: DwindleTree,
     target: PaneId,
     moving: PaneId,
     axis: SplitAxis,
     moving_first: bool,
+    ratio: f32,
 ) -> Option<DwindleTree> {
     match tree {
         DwindleTree::Leaf(id) if id == target => {
@@ -238,7 +241,7 @@ pub fn insert_leaf_around_target(
             };
             Some(DwindleTree::Split {
                 axis,
-                ratio: 0.5,
+                ratio: clamp_split_ratio(ratio),
                 first: Box::new(first),
                 second: Box::new(second),
             })
@@ -253,7 +256,7 @@ pub fn insert_leaf_around_target(
             let first = *first;
             let second = *second;
             if tree_contains(&first, target) {
-                insert_leaf_around_target(first, target, moving, axis, moving_first).map(
+                insert_leaf_around_target(first, target, moving, axis, moving_first, ratio).map(
                     |inserted| DwindleTree::Split {
                         axis: split_axis,
                         ratio,
@@ -262,7 +265,7 @@ pub fn insert_leaf_around_target(
                     },
                 )
             } else if tree_contains(&second, target) {
-                insert_leaf_around_target(second, target, moving, axis, moving_first).map(
+                insert_leaf_around_target(second, target, moving, axis, moving_first, ratio).map(
                     |inserted| DwindleTree::Split {
                         axis: split_axis,
                         ratio,
@@ -305,12 +308,44 @@ pub fn effective_tile_tree(
     tree
 }
 
+/// Ratio for a re-dock split that leaves both panes the extent they already had.
+///
+/// A move lifts a pane out of the tree and puts it back down beside a neighbor, so it brings its
+/// own size along rather than halving whatever it lands on - a deliberate 70/30 survives the trip.
+/// Panes that already span the axis equally, such as a side-by-side pair moved vertically, fall out
+/// of this as an even split on their own, which is what that genuine reshape wants anyway.
+pub fn redock_split_ratio(
+    moving: FloatRect,
+    target: FloatRect,
+    axis: SplitAxis,
+    moving_first: bool,
+) -> f32 {
+    let extent = |rect: FloatRect| {
+        match axis {
+            SplitAxis::Horizontal => rect.w,
+            SplitAxis::Vertical => rect.h,
+        }
+        .max(0.0)
+    };
+    let moving = extent(moving);
+    let target = extent(target);
+    let total = moving + target;
+    if total <= 0.0 {
+        return EVEN_SPLIT_RATIO;
+    }
+    let leading = if moving_first { moving } else { target };
+    clamp_split_ratio(leading / total)
+}
+
+/// Lift `moving` out of the tree and re-insert it beside `target`, splitting `target`'s slot along
+/// `axis` at `ratio`. See `redock_split_ratio` for what callers pass.
 pub fn move_tiled_window_around_target(
     workspace: &mut Workspace,
     moving: PaneId,
     target: PaneId,
     axis: SplitAxis,
     moving_first: bool,
+    ratio: f32,
 ) -> bool {
     if moving == target {
         return false;
@@ -327,7 +362,7 @@ pub fn move_tiled_window_around_target(
         return false;
     };
     let Some(inserted) =
-        insert_leaf_around_target(without_moving, target, moving, axis, moving_first)
+        insert_leaf_around_target(without_moving, target, moving, axis, moving_first, ratio)
     else {
         workspace.tile_tree = Some(original);
         return false;

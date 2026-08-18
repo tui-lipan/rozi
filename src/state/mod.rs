@@ -59,6 +59,10 @@ pub const TILE_GAP: f32 = 1.0;
 pub const OUTER_GAP: f32 = 1.0;
 pub const OFFSCREEN_MIN_VISIBLE: f32 = 6.0;
 pub const DEFAULT_RATIO: f32 = 0.58;
+/// Share for a split whose two sides have no size of their own to keep: a freshly spawned
+/// pane, or one dropped in from floating. A pane that already had a width brings it along
+/// instead - see `tiling::redock_split_ratio`.
+pub const EVEN_SPLIT_RATIO: f32 = 0.5;
 /// Default Scrollable column width as a fraction of the tile viewport.
 pub const DEFAULT_SCROLLABLE_WIDTH: f32 = 0.45;
 pub const MIN_SPLIT_RATIO: f32 = 0.20;

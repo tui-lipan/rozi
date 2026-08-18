@@ -2,7 +2,7 @@ use tui_lipan::prelude::FloatRect;
 
 use crate::anim::SlideEdge;
 use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
-use crate::state::{LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
+use crate::state::{EVEN_SPLIT_RATIO, LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
 pub use crate::tiling::effective_tile_tree;
 use crate::tiling::{
     PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
@@ -298,16 +298,28 @@ pub fn insert_tiled_pane_at_point(
 
     let (target_id, target_rect) = target?;
     let (axis, moving_first) = drop_split_for_target(target_rect, point);
-    insert_tiled_pane_around_target(workspace, id, target_id, axis, moving_first)
-        .then_some((target_id, moving_first))
+    insert_tiled_pane_around_target(
+        workspace,
+        id,
+        target_id,
+        axis,
+        moving_first,
+        EVEN_SPLIT_RATIO,
+    )
+    .then_some((target_id, moving_first))
 }
 
+/// Split `target`'s slot along `axis` at `ratio` and put `id` in the new half. `id` is a pane the
+/// tree has no prior extent for - newly spawned, or arriving from floating - so callers pass
+/// `EVEN_SPLIT_RATIO`; a tiled pane that already has a width moves through
+/// `tiling::move_tiled_window_around_target` instead.
 pub fn insert_tiled_pane_around_target(
     workspace: &mut Workspace,
     id: PaneId,
     target: PaneId,
     axis: SplitAxis,
     moving_first: bool,
+    ratio: f32,
 ) -> bool {
     if id == target {
         return false;
@@ -315,7 +327,8 @@ pub fn insert_tiled_pane_around_target(
     let Some(tree) = effective_tile_tree(workspace, Some(id)) else {
         return false;
     };
-    let Some(inserted) = insert_leaf_around_target(tree, target, id, axis, moving_first) else {
+    let Some(inserted) = insert_leaf_around_target(tree, target, id, axis, moving_first, ratio)
+    else {
         return false;
     };
     workspace.tile_tree = Some(inserted);
@@ -399,7 +412,14 @@ pub fn place_spawned_pane(
         if let Some(rect) = placement_for(&placements, target) {
             let axis = spawn_split_for_rect(rect, split_width_multiplier).0;
             let moving_first = false;
-            if insert_tiled_pane_around_target(workspace, id, target, axis, moving_first) {
+            if insert_tiled_pane_around_target(
+                workspace,
+                id,
+                target,
+                axis,
+                moving_first,
+                EVEN_SPLIT_RATIO,
+            ) {
                 return SpawnPlacement::Split { target, axis };
             }
         }

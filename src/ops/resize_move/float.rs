@@ -12,11 +12,12 @@ use crate::layout::{
 };
 use crate::ops::focus::{active_pane_mut, focus_pane, request_pane_focus, sync_scrollable_reveal};
 use crate::state::{
-    self, Direction, LayoutKind, MoveSession, PaneId, ResizeCorner, ResizeSession, State, TileGap,
-    Workspace,
+    self, Direction, EVEN_SPLIT_RATIO, LayoutKind, MoveSession, PaneId, ResizeCorner,
+    ResizeSession, State, TileGap, Workspace,
 };
 use crate::tiling::{
-    SplitEdge, allocate_dwindle, move_tiled_window_around_target, resize_tiled_split_for_edge,
+    SplitEdge, allocate_dwindle, move_tiled_window_around_target, redock_split_ratio,
+    resize_tiled_split_for_edge,
 };
 
 use super::tiling::{
@@ -536,8 +537,24 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
     };
 
     let (axis, moving_first) = layout::drop_split_for_target(target_rect, drop_point);
+    // `target_rect` above comes from the layout with the dragged pane already taken out, which is
+    // what the drop edge should be measured against. The proportion the two panes keep is a
+    // different question, so it reads the layout as it stood before the drag.
+    let before = {
+        let workspace = state.active_workspace_ref();
+        workspace_target_rects(workspace, bounds, top_gap, tile_gap)
+    };
+    let ratio = match (
+        placement_for(&before, id),
+        placement_for(&before, target_id),
+    ) {
+        (Some(moving_rect), Some(target_rect)) => {
+            redock_split_ratio(moving_rect, target_rect, axis, moving_first)
+        }
+        _ => EVEN_SPLIT_RATIO,
+    };
     let workspace = state.active_workspace_mut();
-    move_tiled_window_around_target(workspace, id, target_id, axis, moving_first);
+    move_tiled_window_around_target(workspace, id, target_id, axis, moving_first, ratio);
 }
 
 #[cfg(test)]

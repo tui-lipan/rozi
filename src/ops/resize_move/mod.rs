@@ -31,7 +31,7 @@ pub(super) mod test_util {
     use tui_lipan::prelude::*;
 
     use crate::AppRoot;
-    use crate::state::{Pane, SplitAxis, Workspace};
+    use crate::state::{Pane, PaneId, SplitAxis, Workspace};
     use crate::tiling::DwindleTree;
 
     pub(super) const TEST_VIEWPORT: Rect = Rect {
@@ -83,6 +83,15 @@ pub(super) mod test_util {
 
     /// Pane 1's extent along `axis`, in cells - the visible half of a resize.
     pub(super) fn first_pane_extent(backend: &mut TestBackend<AppRoot>, axis: SplitAxis) -> f32 {
+        pane_extent(backend, 1, axis)
+    }
+
+    /// One tiled pane's extent along `axis`, in cells.
+    pub(super) fn pane_extent(
+        backend: &mut TestBackend<AppRoot>,
+        id: PaneId,
+        axis: SplitAxis,
+    ) -> f32 {
         let state = backend.state_mut();
         let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);
         let top_gap = state.workspace_top_gap();
@@ -95,8 +104,8 @@ pub(super) mod test_util {
             gap,
         )
         .iter()
-        .find(|placement| placement.id == 1)
-        .expect("pane 1 placement")
+        .find(|placement| placement.id == id)
+        .expect("tiled pane placement")
         .rect;
         match axis {
             SplitAxis::Horizontal => rect.w,

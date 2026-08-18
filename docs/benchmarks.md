@@ -376,18 +376,19 @@ The current evidence still argues against a large scoped-render refactor:
 
 - Even at 16 panes, the whole avoidable view/layout slice remains below 0.4 ms.
 - At 8 panes, an `Update::full()` costs about 219 µs of view/layout more than an `Update::paint()`.
-  Sustained at the runtime's 60fps ceiling, that is about 1.3% of one core.
+  Sustained at the runtime's default 120fps ceiling, that is about 2.6% of one core.
 
 So splitting panes into child `Component`s with `memo_key()` has a hard ceiling of a few percent of
 a core, against a large refactor of `view/pane.rs` and real visual-regression risk. Prefer
 eliminating whole frames instead: a frame that never runs saves view, layout, draw, and terminal
 I/O, rather than just the view/layout slice measured here.
 
-Note also that a `ctx.transition`-driven color (pane focus chrome) **cannot** be animated by
-`Update::paint()`. Property transitions mark the frame full precisely because the interpolated
-value only reaches the screen through the next `view()`
-(`tui-lipan/src/app/runner/animation_ticker.rs`), while paint-only redraws the existing realized
-tree. Focus-chrome animation frames are therefore inherently full frames.
+Pane focus chrome uses `ctx.animated_color`, whose late-bound paint is resolved by the renderer.
+Those fades need only `Update::paint()` frames — no view, expand, or layout — but each paint still
+walks the realized terminal-sized tree. tui-lipan therefore paces an isolated style-color fade at
+30fps instead of the 120fps geometry/video ceiling. A 160 ms focus transition costs about five
+paints rather than nineteen; if a geometry or concrete-value transition overlaps it, both advance
+on the higher-rate frame.
 
 Draw cost is deliberately not benchmarked here: `TestBackend::capture_frame()` allocates a heap
 `String` per cell, so it measures the harness, not the real buffer write and frame diff. Read the

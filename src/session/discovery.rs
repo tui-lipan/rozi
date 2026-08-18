@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
+use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcEndpoint};
 use crate::session::protocol::{
     ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
 };
@@ -139,51 +139,79 @@ fn push_restorable_sessions(
     }
 }
 
-/// Probes one session endpoint. Returns `None` for a stale endpoint whose server is gone
-/// (connection refused): the dead socket file is unlinked so a killed or crashed session stops
-/// appearing in the list.
+/// Whether a failed handshake means the peer hung up rather than answered badly. A server that
+/// is retiring closes mid-exchange while its endpoint is still bound - the listening socket keeps
+/// accepting until the process exits - so this, not a second connect, is what tells a dying
+/// server apart from a live one we cannot talk to.
+fn peer_hung_up(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::UnexpectedEof
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::NotConnected
+    )
+}
+
+/// Ask one connected endpoint what it is. `Err` means the handshake never completed; a server that
+/// answers with anything but `SessionInfo` speaks a protocol we cannot use and is `Unknown`.
+fn query_status(
+    name: &str,
+    stream: &mut IpcConnection,
+) -> std::io::Result<DiscoveredSessionStatus> {
+    let _ = stream.set_read_timeout(Some(QUERY_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(QUERY_TIMEOUT));
+    crate::session::protocol::write_frame(
+        stream,
+        &ClientMessage::Query {
+            session: name.to_string(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+        },
+    )?;
+    match crate::session::protocol::read_frame::<_, ServerMessage>(stream)? {
+        ServerMessage::SessionInfo {
+            panes,
+            clients,
+            has_layout,
+            created_from_profile,
+            ..
+        } => Ok(DiscoveredSessionStatus::Running {
+            panes,
+            clients,
+            has_layout,
+            created_from_profile,
+        }),
+        _ => Ok(DiscoveredSessionStatus::Unknown),
+    }
+}
+
+/// Probes one session endpoint. Returns `None` whenever the server behind it is gone, so a killed
+/// or crashed session stops appearing in the list: an endpoint that refuses the connection outright
+/// is stale and gets unlinked, and one that accepts and then hangs up is still retiring and is left
+/// to unlink its own.
 pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<DiscoveredSession> {
     let status = match endpoint.connect() {
-        Ok(mut stream) => {
-            let _ = stream.set_read_timeout(Some(QUERY_TIMEOUT));
-            let _ = stream.set_write_timeout(Some(QUERY_TIMEOUT));
-            if crate::session::protocol::write_frame(
-                &mut stream,
-                &ClientMessage::Query {
-                    session: name.to_string(),
-                    protocol_version: PROTOCOL_VERSION,
-                    min_protocol_version: MIN_SUPPORTED_PROTOCOL,
-                },
-            )
-            .is_err()
+        Ok(mut stream) => match query_status(name, &mut stream) {
+            Ok(status) => status,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
             {
-                DiscoveredSessionStatus::Unknown
-            } else {
-                match crate::session::protocol::read_frame::<_, ServerMessage>(&mut stream) {
-                    Ok(ServerMessage::SessionInfo {
-                        panes,
-                        clients,
-                        has_layout,
-                        created_from_profile,
-                        ..
-                    }) => DiscoveredSessionStatus::Running {
-                        panes,
-                        clients,
-                        has_layout,
-                        created_from_profile,
-                    },
-                    Err(err)
-                        if matches!(
-                            err.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                        ) =>
-                    {
-                        DiscoveredSessionStatus::Busy
-                    }
-                    _ => DiscoveredSessionStatus::Unknown,
-                }
+                DiscoveredSessionStatus::Busy
             }
-        }
+            // Accepted, then hung up mid-handshake: a server on its way out, whose endpoint has
+            // simply not been retired yet. Drop the row rather than reporting it "unavailable" for
+            // one sweep, which makes a deliberate kill look like a fault. Leave the endpoint file
+            // alone - the retiring server unlinks its own, and a crashed one is unlinked by the
+            // next sweep once connecting is refused outright.
+            Err(err) if peer_hung_up(err.kind()) => return None,
+            // Answered, but not in a language we speak. Stays listed so it can be killed.
+            Err(_) => DiscoveredSessionStatus::Unknown,
+        },
         Err(err)
             if matches!(
                 err.kind(),
@@ -405,6 +433,16 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
 mod tests {
     use super::*;
 
+    /// A private endpoint for one test, named so parallel tests and repeated runs never collide.
+    fn test_endpoint(label: &str) -> IpcEndpoint {
+        let endpoint = IpcEndpoint::at_path(std::env::temp_dir().join(format!(
+            "rozi-discovery-{label}-{}.sock",
+            std::process::id()
+        )));
+        endpoint.remove_stale();
+        endpoint
+    }
+
     /// Real messages, verbatim from ssh/OpenSSH and from this module, mapped onto the phrase the
     /// sidebar shows. The point of the test is the shapes, not the mapping: each of these is what
     /// the user actually hits, and each names a different thing to go fix.
@@ -485,6 +523,51 @@ mod tests {
             )),
             "SSH login rejected"
         );
+    }
+
+    /// A server on its way out accepts the probe and then hangs up. Discovery must read that as
+    /// "gone", not as a session that exists and is unusable: the picker refreshes the instant a
+    /// kill is requested, and a lingering "unavailable" row makes a deliberate kill look like a
+    /// fault. The endpoint itself is left alone - the retiring server retires its own.
+    #[test]
+    fn a_server_that_hangs_up_mid_probe_is_gone_rather_than_unavailable() {
+        let endpoint = test_endpoint("hangup");
+        let listener = endpoint.bind().expect("bind").into_listener();
+        let server = std::thread::spawn(move || drop(listener.accept().expect("accept")));
+
+        assert_eq!(query_session_endpoint("hangup", &endpoint), None);
+        server.join().expect("server thread");
+        assert!(
+            endpoint.path().exists(),
+            "a live endpoint is never unlinked"
+        );
+        endpoint.remove_stale();
+    }
+
+    /// A server that answers, but with something other than `SessionInfo`, is a live session we
+    /// cannot speak to. It stays listed so it can still be killed from the picker.
+    #[test]
+    fn a_server_that_refuses_the_handshake_stays_listed_as_unknown() {
+        let endpoint = test_endpoint("mismatch");
+        let listener = endpoint.bind().expect("bind").into_listener();
+        let server = std::thread::spawn(move || {
+            let mut stream = listener.accept().expect("accept");
+            let _: ClientMessage =
+                crate::session::protocol::read_frame(&mut stream).expect("query");
+            crate::session::protocol::write_frame(
+                &mut stream,
+                &ServerMessage::Error {
+                    code: "protocol-mismatch".to_string(),
+                    message: "speaks another version".to_string(),
+                },
+            )
+            .expect("error reply");
+        });
+
+        let row = query_session_endpoint("mismatch", &endpoint).expect("listed");
+        assert_eq!(row.status, DiscoveredSessionStatus::Unknown);
+        server.join().expect("server thread");
+        endpoint.remove_stale();
     }
 
     #[test]

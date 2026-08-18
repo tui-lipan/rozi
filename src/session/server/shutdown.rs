@@ -45,18 +45,27 @@ pub(crate) fn shutdown_named_session(name: &str) -> io::Result<()> {
         stream.set_write_timeout(Some(SHUTDOWN_TIMEOUT))?;
         graceful_shutdown(&mut stream, name)
     })();
-    drop(stream);
 
-    let Err(graceful_error) = graceful else {
-        // Delete while the old server is still live. Its Shutdown path also forgets the snapshot,
-        // and no same-name replacement can start until this server retires its endpoint.
-        let snapshot_error = super::delete_snapshot(name).err();
-        return match wait_for_retirement(&endpoint, server_pid)? {
-            Retirement::Retired => snapshot_error.map_or(Ok(()), Err),
-            Retirement::Recreated => Err(recreated_server_error(name)),
-            Retirement::TimedOut => Err(retirement_timeout_error(name)),
-        };
+    let graceful_error = match graceful {
+        Ok(()) => {
+            // Delete while the old server is still live. Its Shutdown path also forgets the
+            // snapshot, and no same-name replacement can start until this server retires its
+            // endpoint.
+            let snapshot_error = super::delete_snapshot(name).err();
+            // Keep the authenticated connection open until the server retires so Shutdown remains
+            // associated with a live attached client throughout delivery. Dropping immediately
+            // makes the final control frame race the peer-EOF teardown under load.
+            let retirement = wait_for_retirement(&endpoint, server_pid)?;
+            drop(stream);
+            return match retirement {
+                Retirement::Retired => snapshot_error.map_or(Ok(()), Err),
+                Retirement::Recreated => Err(recreated_server_error(name)),
+                Retirement::TimedOut => Err(retirement_timeout_error(name)),
+            };
+        }
+        Err(error) => error,
     };
+    drop(stream);
 
     let Some(server_pid) = server_pid else {
         // Without a local peer pid there is no safe forced-termination path. Do not unlink a live

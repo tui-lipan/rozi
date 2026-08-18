@@ -2034,11 +2034,10 @@ fn local_named_shutdown_waits_for_the_real_server_to_retire() {
     let server_thread = std::thread::spawn(move || {
         let mut server =
             SessionServer::new_named_with_settings(thread_name, ServerSettings::default());
-        let result = server.run_listener(listener);
-        // `run_named_session_mode` owns this same post-loop retirement in production. Keep the
-        // test's direct server thread faithful to that lifecycle so the helper can observe it.
-        thread_endpoint.remove_stale();
-        result
+        // Production gives the endpoint to `SessionServer`, which retires it synchronously before
+        // `run_listener` returns.
+        server.endpoint = Some(thread_endpoint);
+        server.run_listener(listener)
     });
 
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -2834,18 +2833,21 @@ fn keep_open_recovers_terminal_modes_before_starting_the_shell() {
     ));
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
+    'wait: while Instant::now() < deadline {
         while let Some(event) = server.events.try_pop() {
             if let Some(outbound) = server.handle_event(event) {
                 server.broadcast_outbound(&outbound);
             }
-        }
-        if server
-            .panes
-            .get(&1)
-            .is_some_and(|pane| pane.command_completed)
-        {
-            break;
+            // The exit event writes SHELL_MODE_RECOVERY and only then marks the replacement
+            // complete. Stop at that boundary, before already-queued startup output from the live
+            // replacement shell can legitimately re-enable one of the recovered modes.
+            if server
+                .panes
+                .get(&1)
+                .is_some_and(|pane| pane.command_completed)
+            {
+                break 'wait;
+            }
         }
         std::thread::sleep(Duration::from_millis(10));
     }

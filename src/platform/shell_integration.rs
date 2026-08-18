@@ -345,6 +345,45 @@ mod tests {
         dir
     }
 
+    fn executable_marker_key(script: &str) -> &str {
+        script
+            .lines()
+            .find_map(|line| {
+                let (_, marker) = line.split_once("]133;C;")?;
+                let (key, _) = marker.split_once('=')?;
+                (!key.is_empty()
+                    && key
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
+                .then_some(key)
+            })
+            .expect("shell integration emits a named OSC 133 executable marker")
+    }
+
+    /// The executable marker is an app/framework boundary that otherwise degrades silently to
+    /// process inspection. Derive each shipped key from the embedded asset so either side changing
+    /// the `<vendor>_exe` contract breaks this test.
+    #[test]
+    fn shipped_executable_markers_reach_terminal_semantics() {
+        for (shell, script) in [
+            ("bash", BASH_SCRIPT),
+            ("zsh", ZSH_SCRIPT),
+            ("fish", FISH_SCRIPT),
+            ("PowerShell", POWERSHELL_SCRIPT),
+        ] {
+            let key = executable_marker_key(script);
+            let sequence = format!("\x1b]133;C;{key}=profile-agent\x1b\\");
+            let mut screen = tui_lipan::prelude::TerminalScreen::new(5, 20, 100);
+            screen.process_bytes(sequence.as_bytes());
+
+            assert_eq!(
+                screen.semantic_state().executable.as_deref(),
+                Some("profile-agent"),
+                "{shell} executable marker {key:?} was not recognized"
+            );
+        }
+    }
+
     #[test]
     fn detects_recognized_shell_kinds_by_basename_only() {
         assert_eq!(detect_shell_kind("/usr/bin/bash"), ShellKind::Bash);

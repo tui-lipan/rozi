@@ -225,6 +225,9 @@ pub struct ServerPane {
     /// Agent-detection scratch: never persisted, never on the wire, and reset as a unit whenever
     /// the program behind this pane is replaced.
     pub agent: AgentScratch,
+    /// The last `PATH` lookup for a foreground program name, and its answer. A miss stats every
+    /// `PATH` entry, and the pane's foreground program rarely changes between polls.
+    pub program_on_path: Option<(String, bool)>,
     /// When this pane's project root and branch were last read from disk. A checkout changes the
     /// branch without the working directory moving, so unlike the rest of the runtime state this
     /// cannot be driven by a cwd change alone; see

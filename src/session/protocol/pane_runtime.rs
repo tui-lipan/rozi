@@ -311,16 +311,20 @@ pub struct PaneRuntimeState {
     /// reports a name that no later launch could run, so a client replaying that program (profile
     /// capture) launches this path instead. `None` is the ordinary case and means "the name is
     /// enough" - or that the platform cannot read the path, which is every Windows pane.
+    ///
+    /// Like [`Self::foreground_arguments`], this describes a command that is running *now*: a pane
+    /// at its prompt reports neither, even though [`Self::foreground_program`] still names the
+    /// last command it ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foreground_executable: Option<String>,
     /// Arguments [`Self::foreground_program`] was launched with, `argv[0]` excluded.
     ///
     /// A name says which program a pane is running; only the arguments say what it is doing with
     /// it, which is why a captured profile replays them - `claude` and `claude
-    /// --dangerously-skip-permissions` are the same executable and different panes. Empty when the
-    /// platform cannot read another process's arguments (macOS, Windows), when the inspected
-    /// process is not the program the pane reports running, or when an argument could not survive
-    /// being typed back at a prompt.
+    /// --dangerously-skip-permissions` are the same executable and different panes. Empty while the
+    /// pane sits at a prompt with nothing running, when the platform cannot read another process's
+    /// arguments (macOS, Windows), when the inspected process is not the program the pane reports
+    /// running, or when an argument could not survive being typed back at a prompt.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub foreground_arguments: Vec<String>,
     /// The most recently observed exit status, from either an `OSC 133;D` report or the PTY child

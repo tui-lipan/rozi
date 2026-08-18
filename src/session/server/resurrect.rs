@@ -1060,6 +1060,7 @@ mod tests {
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
             agent: AgentScratch::default(),
+            program_on_path: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
         }

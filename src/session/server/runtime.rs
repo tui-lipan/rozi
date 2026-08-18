@@ -310,17 +310,18 @@ fn compute_runtime_state(
                 .and_then(|pty| inspector.foreground_program(pty))
         });
     // How the foreground program was invoked - where it lives when its name cannot find it, and
-    // the arguments it was given. Only when the program changes: `program_exists` stats every
-    // `PATH` entry, which is not worth repeating at the poll rate for a name that has not moved.
-    let (foreground_executable, foreground_arguments) =
-        if foreground_program == pane.runtime.foreground_program {
-            (
-                pane.runtime.foreground_executable.clone(),
-                pane.runtime.foreground_arguments.clone(),
-            )
-        } else {
+    // the arguments it was given. Read afresh every poll while something is running, because the
+    // program name is not enough to tell two runs apart: `sleep 1 && sleep 444` never changes it,
+    // and a cached answer would describe the run that already finished. A pane sitting at its
+    // prompt is not running anything worth replaying, so it reads nothing at all.
+    let (foreground_executable, foreground_arguments) = match command_phase {
+        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => {
             foreground_launch(pane, inspector, foreground_program.as_deref())
-        };
+        }
+        PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. } => {
+            (None, Vec::new())
+        }
+    };
     // Agent detection sweeps every process on the host (it has to, to find this pane's
     // process-group members), so running it on every poll cost ~2% of a core per idle pane. The
     // foreground program and command phase above are already known and change whenever the pane
@@ -433,7 +434,7 @@ fn compute_runtime_state(
 /// holds the terminal now, and for wrappers, `npx`-style runners, and shell functions those are
 /// different programs whose arguments belong to neither.
 fn foreground_launch(
-    pane: &ServerPane,
+    pane: &mut ServerPane,
     inspector: &impl ProcessInspector,
     foreground_program: Option<&str>,
 ) -> (Option<String>, Vec<String>) {
@@ -457,9 +458,24 @@ fn foreground_launch(
     }
     let executable = launch
         .executable
-        .filter(|_| !crate::platform::command::program_exists(program))
+        .filter(|_| !program_is_on_path(&mut pane.program_on_path, program))
         .map(|path| path.to_string_lossy().into_owned());
     (executable, replayable_arguments(&launch.argv))
+}
+
+/// Whether `program` resolves on this server's `PATH`, remembering the last answer.
+///
+/// The lookup stats every `PATH` entry - and stats all of them for the miss, which is the case
+/// that matters here - so at the poll rate it is the one part of reading a pane's invocation worth
+/// not repeating. Unlike the invocation itself the answer cannot go stale between two runs of the
+/// same name: it is a property of the name.
+fn program_is_on_path(cached: &mut Option<(String, bool)>, program: &str) -> bool {
+    if let Some((_, resolves)) = cached.as_ref().filter(|(name, _)| name == program) {
+        return *resolves;
+    }
+    let resolves = crate::platform::command::program_exists(program);
+    *cached = Some((program.to_string(), resolves));
+    resolves
 }
 
 /// A process's arguments, minus `argv[0]`, when every one of them can survive being typed back at
@@ -781,6 +797,7 @@ mod tests {
             log: None,
             runtime: PaneRuntimeState::default(),
             agent: AgentScratch::default(),
+            program_on_path: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
         }

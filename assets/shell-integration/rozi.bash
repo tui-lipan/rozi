@@ -40,10 +40,16 @@ __rozi_urlencode_path() {
     printf '%s' "$output"
 }
 
+# Resolved and encoded once, not per prompt. rozi compares this host against its own, which it
+# caches for the lifetime of the session server (`platform::user::hostname`), so a live lookup on
+# every prompt would fork for a value both sides treat as fixed - and after a machine rename it
+# would report a name the already-running server no longer recognizes, turning every local cwd
+# report into an unusable remote one. `$HOSTNAME` is bash's own start-time snapshot, which is the
+# lifetime the server assumes; the fork remains only as a fallback for a shell that unset it.
+__rozi_host_encoded=$(__rozi_urlencode "${HOSTNAME:-$(hostname 2>/dev/null)}")
+
 __rozi_osc7() {
-    local host
-    host=$(hostname 2>/dev/null || printf '%s' "${HOSTNAME:-}")
-    printf '\e]7;file://%s%s\e\\' "$(__rozi_urlencode "$host")" "$(__rozi_urlencode_path "$PWD")"
+    printf '\e]7;file://%s%s\e\\' "$__rozi_host_encoded" "$(__rozi_urlencode_path "$PWD")"
 }
 
 # `B` (end of prompt) is embedded directly in PS1 (see below) rather than emitted from a function,

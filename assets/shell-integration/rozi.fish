@@ -50,9 +50,17 @@ function __rozi_urlencode_path
     printf '%s' $output
 end
 
+# Resolved and encoded once, not per prompt - see `rozi.bash` for why this must be a snapshot
+# rather than a live lookup. `$hostname` is fish's own start-time global; the fork remains only as
+# a fallback for a shell that cleared it.
+set -l __rozi_host $hostname
+if test -z "$__rozi_host"
+    set __rozi_host (hostname 2>/dev/null; or echo "")
+end
+set -g __rozi_host_encoded (__rozi_urlencode "$__rozi_host")
+
 function __rozi_osc7
-    set -l host (hostname 2>/dev/null; or echo "")
-    printf '\e]7;file://%s%s\e\\' (__rozi_urlencode $host) (__rozi_urlencode_path $PWD)
+    printf '\e]7;file://%s%s\e\\' "$__rozi_host_encoded" (__rozi_urlencode_path $PWD)
 end
 
 function __rozi_prompt --on-event fish_prompt

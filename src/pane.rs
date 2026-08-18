@@ -251,6 +251,15 @@ impl TerminalPane {
         TerminalScreenHandle::new(Rc::clone(&self.screen))
     }
 
+    /// Whether this pane currently retains Kitty graphics.
+    ///
+    /// Process name is the wrong signal: any child that speaks the protocol looks the same
+    /// here. Close animation shrinks and fades the widget; Ghostty's image layer does not,
+    /// so these panes are the ones that can look wrong on the way out.
+    pub fn has_images(&self) -> bool {
+        self.screen.borrow().has_images()
+    }
+
     pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         if self.pane_id != pane_id || self.generation != generation {
             // A position held for the process that just went away belongs to nothing: the pointer
@@ -790,6 +799,19 @@ mod tests {
 
         pane.process_server_output(b"\x1b]2;root@host:/etc\x07");
         assert_eq!(pane.original_user.as_deref(), Some("razuer"));
+    }
+
+    #[test]
+    fn has_images_follows_kitty_graphics_not_the_foreground_program() {
+        let mut pane = TerminalPane::new(100);
+        assert!(!pane.has_images());
+
+        // 1x1 RGB pixel; "gICA" is `[0x80, 0x80, 0x80]` in standard base64.
+        pane.process_server_output(b"\x1b_Ga=T,f=24,s=1,v=1,t=d,i=1,C=1;gICA\x1b\\");
+        assert!(pane.has_images());
+
+        pane.process_server_output(b"\x1b_Ga=d,d=A\x1b\\");
+        assert!(!pane.has_images());
     }
 
     /// The snapshot is rebuilt on read, so every path that changes what the pane should display

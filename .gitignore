@@ -19,8 +19,9 @@ htmlcov/
 .venv/
 venv/
 
-# Local cargo overrides (e.g. patching tui-lipan to a sibling checkout for framework development).
-# CI and a standalone clone must resolve tui-lipan from crates.io at the version Cargo.toml pins.
+# Local cargo overrides: a path patch pointing tui-lipan at a sibling checkout, for iterating on
+# the framework without pushing and re-pinning the rev Cargo.toml commits. Everyone else - CI, a
+# fresh clone, a release build - resolves that rev instead. See AGENTS.md.
 /.cargo/
 
 # Documentation site (docs/ doubles as the VitePress source for rozi.tui-lipan.dev)

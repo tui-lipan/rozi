@@ -49,6 +49,16 @@ unicode-width = "0.2.2"
 unicode-segmentation = "1.13.3"
 getrandom = "0.4.3"
 
+# rozi tracks tui-lipan's `master` between framework releases: both are developed together, and
+# publishing a crate for every framework PR is not worth the ceremony. The rev is what makes that
+# work anywhere but the author's machine - CI checks out only this repository, and a `path` here
+# would resolve to nothing. `Cargo.lock` pins the same commit, so a release build and CI agree.
+#
+# Re-pin whenever rozi needs newer framework work. At release time this section goes away: publish
+# tui-lipan, raise the version requirement above, and drop the patch (see AGENTS.md).
+[patch.crates-io]
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "1715b7553fee5abc819fbe3627bfdbc36640d415" }
+
 [features]
 # Headless PNG/JSON capture for visual review. Opt-in so release builds do not
 # carry the font and image-encoding dependencies. Use `cargo snap`.

@@ -413,14 +413,33 @@ git diff --check
 cargo build
 ```
 
-- `Cargo.toml` depends on the published `tui-lipan = "0.2.0"`, so this repository builds, tests, and
-  releases from a standalone checkout with no sibling clone. `Cargo.lock` pins it by `source` and
-  `checksum`; keep it that way.
-- To try an unreleased framework change, add a `[patch.crates-io]` override pointing at the sibling
-  checkout **locally, without committing it**. A committed patch would make CI and a release build
-  silently disagree with the lock.
-- Publish the framework version first; a rozi change that needs it cannot go green in CI until the
-  version it requires is on crates.io. Bump the requirement here in the same change that needs it.
+- **rozi tracks unreleased `tui-lipan` between framework releases.** Both are developed together,
+  so `Cargo.toml` carries a committed `[patch.crates-io]` pinning the framework to a **git rev**,
+  and `Cargo.lock` records that same commit. This is what lets a machine that is not the author's -
+  CI, a fresh clone, a release build from a tag - resolve the framework at all: the workflow checks
+  out only this repository, so a `path` patch would resolve to nothing. Never commit a `path`
+  patch, and never leave the rev and the lock disagreeing; CI runs every cargo command with
+  `--locked` and fails outright on a lock that does not match the manifest.
+- Needing newer framework work is a one-line change: push the framework commit, re-point the `rev`,
+  and let `cargo check` rewrite the lock. A rev that exists only in a local clone is as unreachable
+  to CI as a path. Prefer a rev on the framework's default branch - a pull-request branch can be
+  deleted after merge.
+- **For local framework iteration**, put a path override in `.cargo/config.toml`, which `.gitignore`
+  already excludes:
+
+```toml
+[patch.crates-io]
+tui-lipan = { path = "../tui-lipan" }
+```
+
+  It takes precedence over the manifest's git rev, so builds pick up the sibling working tree with
+  no push and no re-pin. It also rewrites `Cargo.lock` into the source-less path form, which must
+  never be committed - `git checkout -- Cargo.lock` before staging, or let CI's `--locked` catch it.
+- **At release time the patch goes away.** Publish the framework version, raise the `tui-lipan`
+  requirement in `[dependencies]`, delete the `[patch.crates-io]` section, and confirm the lock
+  pins it by `source` and `checksum` again. Cutting a rozi release therefore means cutting a
+  framework release first - that is the point at which "publish the framework first" applies, not
+  every pull request.
 
 - For framework terminal changes in `../tui-lipan`, verify both sides:
 
@@ -429,13 +448,15 @@ cargo check --features terminal
 cargo clippy --features terminal
 ```
 
-  Then rerun the relevant `rozi` tests and lints, and publish the framework before the rozi
-  change that needs it can go green in CI.
+  Then rerun the relevant `rozi` tests and lints. Push the framework commit and re-point the `rev`
+  in `Cargo.toml` before the rozi change that needs it can go green in CI; publishing waits for the
+  release.
 
 CI (`.github/workflows/ci.yml`) runs `fmt --check`, `check --all-targets` (which compiles benches),
 `clippy -D warnings`, `test`, and a release build natively on `ubuntu-latest`, `macos-latest`, and
 `windows-latest`, plus `cargo audit` in a separate Linux job. The workflow checks out only this
-repository, which is all it needs now that the framework comes from crates.io.
+repository and fetches the framework from the pinned git rev, so nothing depends on a sibling
+clone being present.
 
 Windows code cannot be run in this workspace. Type-check it before pushing - CI is the first thing
 that actually executes it:

@@ -3,8 +3,6 @@
 //! Talks to the real session server through the production typed protocol, so this exercises the
 //! server's own run-clock bookkeeping rather than a reimplementation of it.
 
-mod common;
-
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{
     ClientMessage, Frame, PaneRuntimeState, PublishedRow, ServerMessage, WirePalette,
@@ -12,7 +10,7 @@ use rozi::session::protocol::{
 use rozi::session::server::ServerSettings;
 use tui_lipan::prelude::TerminalColorPalette;
 
-use common::{attach_client, read_until, spawn_listener};
+use crate::common::{attach_client, read_until, spawn_listener};
 
 const PANE_ID: u32 = 52;
 const PANE_GENERATION: u64 = 1;
@@ -28,7 +26,7 @@ fn row(id: &str, status: &str, active: bool) -> PublishedRow {
     }
 }
 
-fn spawn_pane(controller: &mut common::TestConnection) {
+fn spawn_pane(controller: &mut crate::common::TestConnection) {
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     controller.write_control(&ClientMessage::SpawnPane {
         local: false,
@@ -62,7 +60,7 @@ fn spawn_pane(controller: &mut common::TestConnection) {
 
 /// Wait for the next runtime broadcast whose rows satisfy `check`, and return that state.
 fn read_rows(
-    client: &mut common::TestConnection,
+    client: &mut crate::common::TestConnection,
     check: impl Fn(&[PublishedRow]) -> bool,
 ) -> PaneRuntimeState {
     let mut captured = None;

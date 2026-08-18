@@ -4,18 +4,16 @@
 //! Driven through the real typed protocol and the platform IPC helpers, like every other session
 //! test — never raw sockets or hand-rolled framing.
 
-mod common;
-
 use rozi::session::protocol::{
     ClientMessage, Frame, PROTOCOL_VERSION, ServerMessage, WireChangeState,
 };
 use rozi::session::server::ServerSettings;
 
-use common::{attach_client, private_temp_dir, spawn_listener};
+use crate::common::{attach_client, private_temp_dir, spawn_listener};
 
 /// Read the reply to one `ListDirectory`, ignoring unrelated traffic.
 fn list_directory(
-    client: &mut common::TestConnection,
+    client: &mut crate::common::TestConnection,
     path: &str,
 ) -> (Vec<rozi::session::protocol::WireDirEntry>, Option<String>) {
     client.write_control(&ClientMessage::ListDirectory {
@@ -23,7 +21,7 @@ fn list_directory(
         show_hidden: true,
     });
     let mut result = None;
-    common::read_until(client, |frame| {
+    crate::common::read_until(client, |frame| {
         if let Frame::Control(ServerMessage::DirectoryListing {
             path: replied,
             entries,
@@ -151,7 +149,7 @@ fn change_scan_reports_repository_state_from_the_server_host() {
         root: root_path.clone(),
     });
     let mut changes = None;
-    common::read_until(&mut client, |frame| {
+    crate::common::read_until(&mut client, |frame| {
         if let Frame::Control(ServerMessage::ChangeListing {
             root: replied,
             changes: listed,

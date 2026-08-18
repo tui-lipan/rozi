@@ -3,8 +3,6 @@
 //! The test launches the real `--server` entry point and communicates through the same typed
 //! protocol and platform-neutral IPC abstraction used by production clients.
 
-mod common;
-
 use std::process::{Command, Stdio};
 
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
@@ -17,7 +15,7 @@ use rozi::shared_layout::{
 };
 use tui_lipan::prelude::TerminalColorPalette;
 
-use common::{
+use crate::common::{
     ServerGuard, TestConnection, connect_when_ready, contains, private_temp_dir, read_until,
     subprocess_endpoint, unique_session_name,
 };

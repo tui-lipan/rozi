@@ -91,6 +91,16 @@ Run one test by substring:
 cargo test spawn_split_direction_follows_focused_tile_aspect
 ```
 
+Keep the edit loop narrow when possible:
+
+```bash
+cargo test --lib
+cargo test --test pane_suite pane_slide_smoke
+```
+
+Run the full suite before handing work off. Avoid starting Cargo commands concurrently in separate
+terminals or agents: they contend on the package/build locks without doing useful work in parallel.
+
 Lint:
 
 ```bash
@@ -152,7 +162,7 @@ See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, a
 
 ## Code Style & Conventions
 
-- Rust edition is 2024; minimum supported Rust version is `1.88` (what CI builds on).
+- Rust edition is 2024; minimum supported Rust version is `1.90` (what CI builds on).
 - Targets Linux, macOS, and Windows natively. Reach OS-specific behavior through `src/platform/`,
   never `std::os::unix` / `/proc` / Win32 directly from a feature module.
 - Use `cargo fmt`; avoid hand-formatting style debates.

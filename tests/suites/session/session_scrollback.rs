@@ -8,15 +8,13 @@
 //! Windows scrollback behaviour wants its own test with a shell it can actually run.
 #![cfg(unix)]
 
-mod common;
-
 use rozi::pane::TerminalPane;
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};
 use rozi::session::server::ServerSettings;
 use tui_lipan::prelude::TerminalColorPalette;
 
-use common::{attach_client, read_until, spawn_listener};
+use crate::common::{attach_client, read_until, spawn_listener};
 
 const PANE_ID: u32 = 71;
 const GENERATION: u64 = 1;

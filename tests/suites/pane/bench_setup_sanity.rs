@@ -14,7 +14,7 @@ use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
 
-#[path = "../benches/support/mod.rs"]
+#[path = "../../../benches/support/mod.rs"]
 mod bench_support;
 
 const PANES: usize = 4;

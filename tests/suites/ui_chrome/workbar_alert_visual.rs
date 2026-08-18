@@ -6,7 +6,7 @@
 //! side instead of judged from a description.
 //!
 //! ```bash
-//! cargo test --features ui-snapshot --test workbar_alert_visual -- --nocapture
+//! cargo test --features ui-snapshot --test ui_chrome_suite workbar_alert_visual -- --nocapture
 //! ```
 //!
 //! Feature-gated: `ui-snapshot` pulls in the PNG encoder and fonts, so an ordinary `cargo test`

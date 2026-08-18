@@ -70,6 +70,7 @@ ui-snapshot = ["tui-lipan/ui-snapshot-png"]
 [[bin]]
 name = "rozi-launcher"
 path = "src/bin/rozi-launcher.rs"
+test = false
 
 [dev-dependencies]
 criterion = "0.8.2"
@@ -134,6 +135,11 @@ panic = "abort"
 inherits = "release"
 debug = true
 strip = false
+
+[profile.test]
+# Full DWARF made each integration-test executable hundreds of megabytes and turned linking into
+# an I/O bottleneck. Test names remain symbolized without source-level debugger information.
+debug = 0
 
 [profile.dev-fast]
 inherits = "dev"

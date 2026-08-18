@@ -1,5 +1,3 @@
-mod common;
-
 use std::time::{Duration, Instant};
 
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
@@ -13,7 +11,7 @@ use rozi::shared_layout::{
 };
 use tui_lipan::prelude::TerminalColorPalette;
 
-use common::{attach_client, contains, read_until, spawn_listener};
+use crate::common::{attach_client, contains, read_until, spawn_listener};
 
 const PANE_ID: u32 = 71;
 const PANE_GENERATION: u64 = 1;

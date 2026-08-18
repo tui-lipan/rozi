@@ -1,11 +1,9 @@
-mod common;
-
 use rozi::session::protocol::{
     ClientMessage, Frame, MAX_FRAME_SIZE, PROTOCOL_VERSION, ServerMessage,
 };
 use rozi::session::server::ServerSettings;
 
-use common::{TestConnection, attach_client, read_until, spawn_listener};
+use crate::common::{TestConnection, attach_client, read_until, spawn_listener};
 
 #[test]
 fn version_mismatch_is_refused_without_stopping_the_listener() {
@@ -58,7 +56,7 @@ fn oversized_frame_is_rejected_without_stopping_the_listener() {
     assert_server_accepts_another_client(&server);
 }
 
-fn assert_server_accepts_another_client(server: &common::ListenerGuard) {
+fn assert_server_accepts_another_client(server: &crate::common::ListenerGuard) {
     let (client, attached) = attach_client(server.endpoint(), server.session(), "healthy-client");
     assert!(matches!(attached, ServerMessage::Attached { .. }));
     drop(client);

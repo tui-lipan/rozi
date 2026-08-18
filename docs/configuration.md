@@ -94,6 +94,7 @@ reference for each key.
 | `shell_integration.mode` | `auto` or `off` | `auto` | Inject OSC cwd/command metadata into supported interactive shells. |
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
 | `scrollback` | integer | `5000` | Scrollback lines per pane (minimum 1). Existing screens keep their current capacity; restart a named server or create new panes after changing it. |
+| `frame_rate` | integer | `120` | Ceiling in frames per second on redraws nothing asked for: every live pane is polled at this cadence and animations advance on it. Range `15`-`480`; values outside it are clamped with a warning. Read once at startup, so a live reload does not move it - detach and reattach, or relaunch. See [Frame rate](#frame-rate). |
 
 Both `shell` and `command_shell` accept either a bare string (a program with no arguments - the
 historical form) or an argument-preserving array whose first element is the program, e.g.
@@ -109,6 +110,33 @@ snippet using it behaves identically regardless of the invoking user's interacti
 Both are resolved by the client (not the session server) at spawn/command-run time, so a
 detached/persistent named-session server never falls back to its own process environment or a
 stale on-disk config after the client-side config hot-reloads.
+
+### Frame rate
+
+Most redraws come from something happening: a key, a message, a pane exiting. `frame_rate` is the
+ceiling on the rest - the content that changes without telling anyone. Two things live there. A
+pane's child program writes whenever it likes and announces nothing, so **every live pane in the
+window** is looked at on this cadence, not only the focused one. Animations advance on it too.
+
+The default of `120` keeps up with a 120 Hz display. Lower it when drawing is the expensive part
+rather than when rozi is busy:
+
+| Situation | Try |
+| --- | --- |
+| Attached over a slow link with `--remote`, or a very large viewport | `60`, or `30` |
+| Laptop on battery, many live panes | `60` |
+| 60 Hz display, want the CPU back | `60` |
+
+Raising it past what the terminal can present buys nothing.
+
+Lowering it costs smoothness, not output. The frame rate belongs to the *client*: the session
+server keeps reading its PTYs at full speed regardless, so a burst of output is coalesced into
+fewer repaints rather than truncated. Style-only color fades (focus chrome) are already paced
+separately at 30fps by `tui-lipan` and stay there unless `frame_rate` drops below it, in which case
+they follow it down.
+
+The value is read once when the client starts. A live reload cannot move it, because the runner has
+already turned it into its poll interval - detach and reattach, or relaunch, to apply a change.
 
 ## `[shell_integration]`
 

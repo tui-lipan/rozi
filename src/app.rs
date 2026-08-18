@@ -1093,6 +1093,9 @@ pub fn run() -> Result<()> {
         .toast_placement(ToastPlacement::BottomEnd)
         .toast_margin((1, 2, 1, 1))
         .clipboard_config(clipboard_config(&config))
+        // Read once at startup: the runner turns this into its poll interval, so a live config
+        // reload cannot move it. Detaching and reattaching picks up a new value.
+        .frame_rate(config.frame_rate)
         .mouse(true)
         // Leader chords (`ctrl-a c`) and WM-modifier chords (`alt-c`) are executable command
         // shortcuts (see `commands.rs`), not a framework keymap file - resolve them ahead of

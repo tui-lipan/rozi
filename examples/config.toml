@@ -31,6 +31,12 @@
 # so restart a named server to widen existing panes.
 #scrollback = 5000
 
+# Ceiling in frames per second on redraws nothing asked for: every live pane is polled at this
+# cadence and animations advance on it. Lower it to spend less client CPU over a slow link or on
+# battery; output is coalesced into fewer repaints, never dropped. Range 15-480. Read once at
+# startup, so detach and reattach after changing it.
+#frame_rate = 120
+
 [shell_integration]
 # "auto" injects bash, zsh, fish, and PowerShell support without editing any dotfile;
 # "off" leaves shell startup completely untouched.

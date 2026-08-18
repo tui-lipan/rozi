@@ -802,6 +802,11 @@ pub struct Config {
     pub shell_integration: ShellIntegrationConfig,
     pub cwd: Option<String>,
     pub scrollback: usize,
+    /// Ceiling on frames the client draws for content nothing asked it to redraw: every live pane
+    /// is polled on this cadence, and animations advance on it. Lowering it trades smoothness for
+    /// client CPU, which is the trade worth making over a slow link or on battery. The server's PTY
+    /// reads are unaffected - output is coalesced into fewer repaints, never dropped.
+    pub frame_rate: u16,
     pub input: InputConfig,
     pub animations: WindowAnimationConfig,
     pub theme: ThemeConfig,
@@ -1392,6 +1397,7 @@ impl Default for Config {
                 .ok()
                 .map(|path| path.to_string_lossy().to_string()),
             scrollback: 5000,
+            frame_rate: DEFAULT_FRAME_RATE,
             input: InputConfig::default(),
             animations: WindowAnimationConfig::default(),
             theme: ThemeConfig::default(),

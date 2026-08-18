@@ -263,6 +263,8 @@ Provided by `tui-lipan`'s terminal primitives and wired into rozi panes:
 - **Clipboard** — paste (`v`), copy from selection and copy mode, image clipboard support
   (`clipboard-images`), and **OSC 52** clipboard, gated by `[clipboard].enable_osc52`.
 - **Scroll-wheel scrollback**, with a configurable `scrollback` line budget.
+- **`frame_rate`** caps redraws for content nothing asked for - every live pane is polled on that
+  cadence. Lower it to spend less client CPU over a slow link or on battery.
 - **Shell integration** — per-shell injection emitting OSC 133 prompt/command boundary markers and
   OSC 7 cwd. It emits only an executable basename, never a command line, and never modifies a
   dotfile, `$PROFILE`, or the `AutoRun` registry key.

@@ -48,6 +48,7 @@ struct FileConfig {
     shell_integration: ShellIntegrationFileConfig,
     cwd: Option<String>,
     scrollback: Option<usize>,
+    frame_rate: Option<u16>,
     input: InputFileConfig,
     animations: AnimationFileConfig,
     theme: ThemeFileConfig,
@@ -595,6 +596,9 @@ fn load_config_from_text_with_extensions(
     if let Some(scrollback) = parsed.scrollback {
         config.scrollback = scrollback.max(1);
     }
+    if let Some(frame_rate) = parsed.frame_rate {
+        config.frame_rate = clamp_frame_rate(frame_rate, &mut warnings);
+    }
     if let Some(dir) = non_empty(parsed.logging.dir) {
         config.logging.dir = Some(expand_path(dir));
     }
@@ -993,6 +997,23 @@ pub(crate) fn expand_path(path: impl AsRef<Path>) -> PathBuf {
     PathBuf::from(text.as_ref())
 }
 
+/// Bounds `tui-lipan`'s `App::frame_rate` accepts. Rozi clamps against them itself rather than
+/// letting the framework do it silently, so a typo (`frame_rate = 6`) warns instead of leaving the
+/// user at an unexplained 15.
+pub const MIN_FRAME_RATE: u16 = 15;
+/// Upper bound of the range described by [`MIN_FRAME_RATE`].
+pub const MAX_FRAME_RATE: u16 = 480;
+
+fn clamp_frame_rate(value: u16, warnings: &mut Vec<String>) -> u16 {
+    let clamped = value.clamp(MIN_FRAME_RATE, MAX_FRAME_RATE);
+    if clamped != value {
+        warnings.push(format!(
+            "Clamped frame_rate {value} to {clamped} (supported range {MIN_FRAME_RATE}-{MAX_FRAME_RATE})"
+        ));
+    }
+    clamped
+}
+
 pub(super) fn non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -1338,6 +1359,30 @@ mod file_tests {
             live.is_empty(),
             "reference example must ship inert; these carry live values: {live:?}"
         );
+    }
+
+    #[test]
+    fn frame_rate_clamps_out_of_range_values_with_a_warning() {
+        let path = Path::new("test.toml");
+
+        let loaded = load_config_from_text("", path);
+        assert_eq!(
+            loaded.config.frame_rate,
+            tui_lipan::prelude::DEFAULT_FRAME_RATE
+        );
+
+        let loaded = load_config_from_text("frame_rate = 60\n", path);
+        assert_eq!(loaded.config.frame_rate, 60);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+
+        let loaded = load_config_from_text("frame_rate = 6\n", path);
+        assert_eq!(loaded.config.frame_rate, MIN_FRAME_RATE);
+        assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+        assert!(loaded.warnings[0].contains("frame_rate"));
+
+        let loaded = load_config_from_text("frame_rate = 1000\n", path);
+        assert_eq!(loaded.config.frame_rate, MAX_FRAME_RATE);
+        assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
     }
 
     /// Guards `examples/config.toml` against silent drift. Every struct in the file model denies

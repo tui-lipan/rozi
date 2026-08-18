@@ -376,7 +376,8 @@ The current evidence still argues against a large scoped-render refactor:
 
 - Even at 16 panes, the whole avoidable view/layout slice remains below 0.4 ms.
 - At 8 panes, an `Update::full()` costs about 219 µs of view/layout more than an `Update::paint()`.
-  Sustained at the runtime's default 120fps ceiling, that is about 2.6% of one core.
+  Sustained at the default 120fps ceiling, that is about 2.6% of one core - halved by the
+  `frame_rate` config key, which is the knob a user on a slow link reaches for.
 
 So splitting panes into child `Component`s with `memo_key()` has a hard ceiling of a few percent of
 a core, against a large refactor of `view/pane.rs` and real visual-regression risk. Prefer

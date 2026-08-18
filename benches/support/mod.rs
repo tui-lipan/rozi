@@ -159,6 +159,7 @@ pub fn attached_message() -> ServerMessage {
                     cwd_source: PaneCwdSource::ShellReport,
                     command_phase: PaneCommandPhase::Executing,
                     foreground_program: Some("benchmark-worker".to_string()),
+                    foreground_executable: None,
                     last_exit_status: Some(0),
                     status: None,
                     detected_agent: None,

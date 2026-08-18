@@ -309,6 +309,15 @@ fn compute_runtime_state(
                 .as_ref()
                 .and_then(|pty| inspector.foreground_program(pty))
         });
+    // A program name the session's own `PATH` cannot resolve - a shell alias, a build-tree
+    // binary - names something no restored pane could launch, so record where it actually lives.
+    // Only when the program changes: `program_exists` stats every `PATH` entry, which is not
+    // worth repeating at the poll rate for a name that has not moved.
+    let foreground_executable = if foreground_program == pane.runtime.foreground_program {
+        pane.runtime.foreground_executable.clone()
+    } else {
+        foreground_executable(pane, inspector, foreground_program.as_deref())
+    };
     // Agent detection sweeps every process on the host (it has to, to find this pane's
     // process-group members), so running it on every poll cost ~2% of a core per idle pane. The
     // foreground program and command phase above are already known and change whenever the pane
@@ -374,6 +383,7 @@ fn compute_runtime_state(
         cwd_source,
         command_phase,
         foreground_program,
+        foreground_executable,
         last_exit_status,
         status: pane.runtime.status.clone(),
         detected_agent,
@@ -390,6 +400,7 @@ fn compute_runtime_state(
         || candidate.cwd_source != pane.runtime.cwd_source
         || candidate.command_phase != pane.runtime.command_phase
         || candidate.foreground_program != pane.runtime.foreground_program
+        || candidate.foreground_executable != pane.runtime.foreground_executable
         || candidate.last_exit_status != pane.runtime.last_exit_status
         || candidate.status != pane.runtime.status
         || candidate.detected_agent != pane.runtime.detected_agent
@@ -402,6 +413,39 @@ fn compute_runtime_state(
         },
         ..candidate
     }
+}
+
+/// Where the foreground program lives, when its name alone could not launch it again.
+///
+/// Returns `None` for the ordinary pane: a program on `PATH` is reachable by name, and a name is
+/// what profiles should store - pinning `/usr/bin/nvim` into every capture would make profiles
+/// machine-specific for no gain. The path is trusted only when it names the same program the pane
+/// reports running: shell integration reports the command the shell started, the inspector reports
+/// whatever holds the terminal now, and for wrappers and shell functions those are different
+/// programs.
+fn foreground_executable(
+    pane: &ServerPane,
+    inspector: &impl ProcessInspector,
+    foreground_program: Option<&str>,
+) -> Option<String> {
+    let program = foreground_program?;
+    if crate::platform::command::program_exists(program) {
+        return None;
+    }
+    let path = pane
+        .pty
+        .as_ref()
+        .and_then(|pty| inspector.foreground_executable(pty))?;
+    same_program(program, &path).then(|| path.to_string_lossy().into_owned())
+}
+
+/// Whether an inspected executable path is the program the pane reports running.
+fn same_program(program: &str, path: &std::path::Path) -> bool {
+    use crate::platform::command::normalized_program_name;
+
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| normalized_program_name(name) == normalized_program_name(program))
 }
 
 /// Keep one run's wall-clock start across blocked and resumed states. The server owns this value so
@@ -708,6 +752,25 @@ mod tests {
         fn foreground_program(&self, _pty: &TerminalPty) -> Option<String> {
             None
         }
+    }
+
+    /// The path only travels when it is the same program the pane reports; a wrapper or a shell
+    /// function leaves the inspector pointing at something else entirely, and replaying *that*
+    /// would start a program the user never ran.
+    #[test]
+    fn an_inspected_path_is_only_trusted_for_the_reported_program() {
+        assert!(same_program(
+            "opencode-tui",
+            std::path::Path::new("/build/target/release/opencode-tui")
+        ));
+        assert!(
+            same_program("Opencode-TUI", std::path::Path::new("/opt/opencode-tui")),
+            "spelling differences must not make one program look like two"
+        );
+        assert!(!same_program(
+            "opencode-tui",
+            std::path::Path::new("/usr/bin/bash")
+        ));
     }
 
     /// Detection walks every process on the host, so a poll where nothing changed must skip it —

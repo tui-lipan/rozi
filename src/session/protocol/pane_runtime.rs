@@ -304,6 +304,15 @@ pub struct PaneRuntimeState {
     /// expected to emit just the name; the process-inspector fallbacks read a `comm`/`proc_name`
     /// value that is inherently already just a basename).
     pub foreground_program: Option<String>,
+    /// Absolute path of the foreground executable, set **only** when [`Self::foreground_program`]
+    /// does not resolve on the session server's own `PATH`.
+    ///
+    /// A pane started through a shell alias, a `./target` binary, or anything else off `PATH`
+    /// reports a name that no later launch could run, so a client replaying that program (profile
+    /// capture) launches this path instead. `None` is the ordinary case and means "the name is
+    /// enough" - or that the platform cannot read the path, which is every Windows pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground_executable: Option<String>,
     /// The most recently observed exit status, from either an `OSC 133;D` report or the PTY child
     /// itself exiting. Sticky across the next command's `Prompt`/`Input` phases so callers can
     /// still show "last command exited N" at a fresh prompt.

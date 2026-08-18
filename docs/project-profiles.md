@@ -161,3 +161,9 @@ all (the last command you ran is not replayed), and an explicit launch command i
 nothing is running. rozi cannot reconstruct the foreground program's original arguments, so a
 detected `nvim` process is saved as `command = "nvim"`, not its full invocation. Rename panes
 explicitly when you want stable profile titles.
+
+A basename is only saved when a basename can launch the program again. If the session server
+cannot resolve the name on its own `PATH` - you started the program through a shell alias, or ran
+a binary out of `./target/release` - the executable's full path is saved instead, so restoring
+runs the same program rather than reporting `command not found`. Panes attached over `--remote`
+keep the bare name: the path belongs to the remote host's filesystem.

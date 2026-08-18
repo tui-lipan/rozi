@@ -407,19 +407,47 @@ fn workspace_profile_from_state(
 /// `__zoxide_hook` and replay it as a pane command. Only trust it while shell integration reports
 /// a command mid-flight (`Executing`), or when there is no integration at all (`Unknown`) and the
 /// value comes from the process inspector, which reads the live foreground process group.
+///
+/// What is captured is a name only when a name is enough to run it again. A program the session
+/// server could not resolve on `PATH` - started through an alias, or straight out of a build tree -
+/// reports its executable's path alongside, and that is what gets replayed: the name on its own
+/// restores as `command not found`. A path belonging to another host (`--remote`) is not ours to
+/// replay, so those panes keep the bare name.
 fn live_running_command(pane: &Pane, shells: &HashSet<String>) -> Option<String> {
     use crate::session::protocol::PaneCommandPhase;
 
     match pane.terminal.command_phase {
-        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => pane
-            .terminal
-            .foreground_program
-            .clone()
-            .filter(|program| !shells.contains(&normalize_executable(program))),
+        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => {}
         PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. } => {
-            None
+            return None;
         }
     }
+    let program = pane
+        .terminal
+        .foreground_program
+        .as_deref()
+        .filter(|program| {
+            !shells.contains(&crate::platform::command::normalized_program_name(program))
+        })?;
+    let path = pane
+        .terminal
+        .foreground_executable
+        .as_deref()
+        .filter(|_| pane.terminal.cwd_host.is_none());
+    Some(match path {
+        Some(path) => shell_quote(path),
+        None => program.to_string(),
+    })
+}
+
+/// Quote `word` so an interactive shell reads it as one literal argument. Only reached for
+/// inspector-reported executable paths, which exist on Unix alone - a Windows pane never has one.
+fn shell_quote(word: &str) -> String {
+    let plain = |ch: char| ch.is_ascii_alphanumeric() || "_-./:@%+=".contains(ch);
+    if !word.is_empty() && word.chars().all(plain) {
+        return word.to_string();
+    }
+    format!("'{}'", word.replace('\'', r"'\''"))
 }
 
 fn shell_basenames(config: &crate::config::Config) -> HashSet<String> {
@@ -444,20 +472,10 @@ fn shell_basenames(config: &crate::config::Config) -> HashSet<String> {
         config.shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
     );
-    shells.insert(normalize_executable(&resolved.program));
+    shells.insert(crate::platform::command::normalized_program_name(
+        &resolved.program,
+    ));
     shells
-}
-
-fn normalize_executable(program: &str) -> String {
-    let basename = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(program);
-    let normalized = basename.to_ascii_lowercase();
-    normalized
-        .strip_suffix(".exe")
-        .unwrap_or(&normalized)
-        .to_string()
 }
 
 fn profile_tree_from_dwindle(
@@ -1111,6 +1129,41 @@ mod tests {
             .command_phase = PaneCommandPhase::Executing;
         let saved = &profile_from_state(&state).workspaces[0].panes[0];
         assert_eq!(saved.command.as_deref(), Some("__zoxide_hook"));
+    }
+
+    #[test]
+    fn save_replays_an_off_path_program_by_the_path_the_server_reported() {
+        // A pane started through a shell alias runs a binary whose *name* nothing resolves, so
+        // capturing the name replays as `command not found`. The server sends the path exactly
+        // when the name is unusable; that is what the profile has to store.
+        let mut state = State::new(Config::default(), Theme::default());
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.foreground_program = Some("opencode-tui".to_string());
+        pane.terminal.foreground_executable =
+            Some("/home/dev/opencode/target/release/opencode-tui".to_string());
+
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(
+            saved.command.as_deref(),
+            Some("/home/dev/opencode/target/release/opencode-tui")
+        );
+
+        // A path with a space is still one command word at the prompt.
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.foreground_executable = Some("/opt/My Apps/opencode-tui".to_string());
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(
+            saved.command.as_deref(),
+            Some("'/opt/My Apps/opencode-tui'")
+        );
+
+        // Under `--remote` the path names a file on the server's filesystem, which the local
+        // restore cannot run: fall back to the name.
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.cwd = Some("/remote/project".to_string());
+        pane.terminal.cwd_host = Some("server.example".to_string());
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(saved.command.as_deref(), Some("opencode-tui"));
     }
 
     #[test]

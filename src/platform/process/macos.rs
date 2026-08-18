@@ -32,6 +32,10 @@ impl ProcessInspector for MacosProcessInspector {
         name_for_pid(pgid)
     }
 
+    fn foreground_executable(&self, pty: &TerminalPty) -> Option<PathBuf> {
+        path_for_pid(pty.foreground_process_group_id()?)
+    }
+
     fn foreground_job(&self, pty: &TerminalPty) -> Option<ForegroundJob> {
         let process_group_id = pty.foreground_process_group_id()?.try_into().ok()?;
         Some(ForegroundJob {
@@ -82,6 +86,25 @@ fn cwd_for_pid(pid: u32) -> Option<PathBuf> {
 /// Resolve a process name via `proc_name(3)`, truncated by the kernel to `MAXCOMLEN` (16 bytes) -
 /// acceptable here since only a normalized executable basename is ever surfaced, never a full path
 /// or command line.
+/// Read `pid`'s executable path via `proc_pidpath`.
+///
+/// The buffer is `PROC_PIDPATHINFO_MAXSIZE` (4 * `MAXPATHLEN`), the size Darwin documents as
+/// always sufficient; it is spelled out here rather than taken from `libc` so the size does not
+/// depend on which constants that crate exposes for this target.
+fn path_for_pid(pid: i32) -> Option<PathBuf> {
+    const MAX_PATH_BYTES: usize = 4 * 1024;
+
+    let mut buf = [0u8; MAX_PATH_BYTES];
+    let written =
+        unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr() as *mut c_void, buf.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+    let cstr = CStr::from_bytes_until_nul(&buf).ok()?;
+    let path = PathBuf::from(cstr.to_str().ok()?);
+    path.is_absolute().then_some(path)
+}
+
 fn name_for_pid(pid: i32) -> Option<String> {
     let mut buf = [0u8; 64];
     let written =

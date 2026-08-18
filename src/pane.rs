@@ -33,6 +33,10 @@ pub struct TerminalPane {
     /// [`crate::session::protocol::ServerMessage::PaneRuntimeChanged`] rather than inspected
     /// locally, since the server (not necessarily this client's host) owns the PTY.
     pub foreground_program: Option<String>,
+    /// Absolute path of that same program, sent only when its name would not resolve on the
+    /// session server's `PATH` (a shell alias, a build-tree binary). Profile capture replays this
+    /// instead of the name, which is all a restored pane could otherwise fail to find.
+    pub foreground_executable: Option<String>,
     /// Free-form status reported by the pane through the session server. This is distinct from
     /// `status`, which tracks whether the client-side terminal parser is ready or exited.
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
@@ -201,6 +205,7 @@ impl TerminalPane {
             git_branch: None,
             child_pid: None,
             foreground_program: None,
+            foreground_executable: None,
             reported_status: None,
             detected_agent: None,
             finished_unseen: false,

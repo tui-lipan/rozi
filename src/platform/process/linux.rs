@@ -95,6 +95,16 @@ impl ProcessInspector for LinuxProcessInspector {
         (!name.is_empty()).then(|| name.to_string())
     }
 
+    fn foreground_executable(&self, pty: &TerminalPty) -> Option<PathBuf> {
+        let pgid = pty.foreground_process_group_id()?;
+        // `/proc/<pid>/exe` resolves to the real file even when the process was started through a
+        // name that no longer reaches it (an alias, a relative path, a deleted-and-replaced
+        // build artifact), which is exactly the case this exists for. A replaced binary reads
+        // back as `<path> (deleted)`; that is not a runnable path, so drop it.
+        let path = std::fs::read_link(format!("/proc/{pgid}/exe")).ok()?;
+        path.is_absolute().then_some(path)
+    }
+
     fn foreground_job(&self, pty: &TerminalPty) -> Option<ForegroundJob> {
         foreground_job_for_group(
             pty.foreground_process_group_id()?.try_into().ok()?,

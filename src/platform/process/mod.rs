@@ -91,6 +91,15 @@ pub trait ProcessInspector {
     /// The normalized basename of the process currently in the PTY's foreground process group, if
     /// the platform can determine one. Never a full command line.
     fn foreground_program(&self, pty: &TerminalPty) -> Option<String>;
+    /// Absolute path of the executable behind that same foreground process group.
+    ///
+    /// The basename alone is enough to *name* a running program, but not always enough to *run*
+    /// it again: a pane started through a shell alias or from a build tree reports a name nothing
+    /// on `PATH` resolves. Callers use this to replay such a program by path. It is a path, never
+    /// a command line - arguments are deliberately not exposed here.
+    fn foreground_executable(&self, _pty: &TerminalPty) -> Option<PathBuf> {
+        None
+    }
     fn foreground_job(&self, _pty: &TerminalPty) -> Option<ForegroundJob> {
         None
     }

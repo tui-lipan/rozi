@@ -421,6 +421,22 @@ fn lookup_program_in(program: &str, env: &ShellEnv) -> Option<std::path::PathBuf
     None
 }
 
+/// The comparable form of an executable name: basename only, lowercased, with a Windows `.exe`
+/// suffix dropped. Use it whenever two spellings of the same program have to be recognized as
+/// one - a shell-reported `ZSH.EXE` against a configured `zsh`, an inspector's absolute path
+/// against the name a pane reports running.
+pub fn normalized_program_name(program: &str) -> String {
+    let basename = std::path::Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    let normalized = basename.to_ascii_lowercase();
+    normalized
+        .strip_suffix(".exe")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
 /// Whether `program` names an executable available to the current process.
 pub fn program_exists(program: &str) -> bool {
     #[cfg(windows)]

@@ -44,6 +44,7 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.git_branch = meta.runtime.git_branch.clone();
     pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
     pane.terminal.foreground_executable = meta.runtime.foreground_executable.clone();
+    pane.terminal.foreground_arguments = meta.runtime.foreground_arguments.clone();
     pane.terminal.reported_status = meta.runtime.status.clone();
     pane.terminal.detected_agent = meta.runtime.detected_agent.clone();
     pane.terminal.work_started_at = meta.runtime.work_started_at;

@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use tui_lipan::prelude::TerminalPty;
 
-use super::{ForegroundJob, ForegroundProcess, ProcessInspector};
+use super::{ForegroundJob, ForegroundLaunch, ForegroundProcess, ProcessInspector};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MacosProcessInspector;
@@ -32,8 +32,14 @@ impl ProcessInspector for MacosProcessInspector {
         name_for_pid(pgid)
     }
 
-    fn foreground_executable(&self, pty: &TerminalPty) -> Option<PathBuf> {
-        path_for_pid(pty.foreground_process_group_id()?)
+    /// Path only: reading another process's arguments on Darwin means `KERN_PROCARGS2`, which is
+    /// a different contract from every other call in this file and cannot be verified here.
+    /// Callers already treat empty arguments as "not available", which is also the Windows answer.
+    fn foreground_launch(&self, pty: &TerminalPty) -> Option<ForegroundLaunch> {
+        Some(ForegroundLaunch {
+            executable: Some(path_for_pid(pty.foreground_process_group_id()?)?),
+            argv: Vec::new(),
+        })
     }
 
     fn foreground_job(&self, pty: &TerminalPty) -> Option<ForegroundJob> {

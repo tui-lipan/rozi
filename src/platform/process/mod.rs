@@ -91,13 +91,17 @@ pub trait ProcessInspector {
     /// The normalized basename of the process currently in the PTY's foreground process group, if
     /// the platform can determine one. Never a full command line.
     fn foreground_program(&self, pty: &TerminalPty) -> Option<String>;
-    /// Absolute path of the executable behind that same foreground process group.
+    /// How the process leading that same foreground process group was invoked.
     ///
-    /// The basename alone is enough to *name* a running program, but not always enough to *run*
-    /// it again: a pane started through a shell alias or from a build tree reports a name nothing
-    /// on `PATH` resolves. Callers use this to replay such a program by path. It is a path, never
-    /// a command line - arguments are deliberately not exposed here.
-    fn foreground_executable(&self, _pty: &TerminalPty) -> Option<PathBuf> {
+    /// [`foreground_program`](Self::foreground_program) names what is running; this says where it
+    /// lives and which arguments it was given, which is what it takes to *run it again*. A pane
+    /// started through a shell alias or from a build tree reports a name nothing on `PATH`
+    /// resolves, and a name on its own never carries the flags an agent was launched with.
+    ///
+    /// Both halves come from the same process and are only meaningful together, so they are read
+    /// in one call: an executable path that belongs to a different process than the arguments
+    /// would compose into a command nobody ran.
+    fn foreground_launch(&self, _pty: &TerminalPty) -> Option<ForegroundLaunch> {
         None
     }
     fn foreground_job(&self, _pty: &TerminalPty) -> Option<ForegroundJob> {
@@ -123,6 +127,16 @@ pub type PlatformProcessInspector = macos::MacosProcessInspector;
 pub type PlatformProcessInspector = windows::WindowsProcessInspector;
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub type PlatformProcessInspector = NullProcessInspector;
+
+/// How the leader of a PTY's foreground process group was invoked, as far as the platform can see.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ForegroundLaunch {
+    /// Absolute path of the running executable, when the platform can read it.
+    pub executable: Option<PathBuf>,
+    /// The process's argument vector, `argv[0]` included, bounded in both count and length by the
+    /// platform backend. Empty when the platform cannot read arguments at all.
+    pub argv: Vec<String>,
+}
 
 /// Fallback for any Unix-like target that is neither Linux nor macOS (e.g. the BSDs), which the
 /// plan does not otherwise commit to supporting - always unavailable, but keeps the crate building

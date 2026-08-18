@@ -309,15 +309,18 @@ fn compute_runtime_state(
                 .as_ref()
                 .and_then(|pty| inspector.foreground_program(pty))
         });
-    // A program name the session's own `PATH` cannot resolve - a shell alias, a build-tree
-    // binary - names something no restored pane could launch, so record where it actually lives.
-    // Only when the program changes: `program_exists` stats every `PATH` entry, which is not
-    // worth repeating at the poll rate for a name that has not moved.
-    let foreground_executable = if foreground_program == pane.runtime.foreground_program {
-        pane.runtime.foreground_executable.clone()
-    } else {
-        foreground_executable(pane, inspector, foreground_program.as_deref())
-    };
+    // How the foreground program was invoked - where it lives when its name cannot find it, and
+    // the arguments it was given. Only when the program changes: `program_exists` stats every
+    // `PATH` entry, which is not worth repeating at the poll rate for a name that has not moved.
+    let (foreground_executable, foreground_arguments) =
+        if foreground_program == pane.runtime.foreground_program {
+            (
+                pane.runtime.foreground_executable.clone(),
+                pane.runtime.foreground_arguments.clone(),
+            )
+        } else {
+            foreground_launch(pane, inspector, foreground_program.as_deref())
+        };
     // Agent detection sweeps every process on the host (it has to, to find this pane's
     // process-group members), so running it on every poll cost ~2% of a core per idle pane. The
     // foreground program and command phase above are already known and change whenever the pane
@@ -384,6 +387,7 @@ fn compute_runtime_state(
         command_phase,
         foreground_program,
         foreground_executable,
+        foreground_arguments,
         last_exit_status,
         status: pane.runtime.status.clone(),
         detected_agent,
@@ -401,6 +405,7 @@ fn compute_runtime_state(
         || candidate.command_phase != pane.runtime.command_phase
         || candidate.foreground_program != pane.runtime.foreground_program
         || candidate.foreground_executable != pane.runtime.foreground_executable
+        || candidate.foreground_arguments != pane.runtime.foreground_arguments
         || candidate.last_exit_status != pane.runtime.last_exit_status
         || candidate.status != pane.runtime.status
         || candidate.detected_agent != pane.runtime.detected_agent
@@ -415,28 +420,65 @@ fn compute_runtime_state(
     }
 }
 
-/// Where the foreground program lives, when its name alone could not launch it again.
+/// How to launch the foreground program again: where it lives, and what it was given.
 ///
-/// Returns `None` for the ordinary pane: a program on `PATH` is reachable by name, and a name is
-/// what profiles should store - pinning `/usr/bin/nvim` into every capture would make profiles
-/// machine-specific for no gain. The path is trusted only when it names the same program the pane
-/// reports running: shell integration reports the command the shell started, the inspector reports
-/// whatever holds the terminal now, and for wrappers and shell functions those are different
-/// programs.
-fn foreground_executable(
+/// The path is empty for the ordinary pane, because a program on `PATH` is reachable by name and a
+/// name is what profiles should store - pinning `/usr/bin/nvim` into every capture would make
+/// profiles machine-specific for no gain. Arguments are reported whenever they can be read, since
+/// a name never carries them: `claude` and `claude --dangerously-skip-permissions` are the same
+/// executable and very different panes.
+///
+/// Both are trusted only when the inspected process is the program the pane reports running. Shell
+/// integration reports the command word the shell started while the inspector reports whatever
+/// holds the terminal now, and for wrappers, `npx`-style runners, and shell functions those are
+/// different programs whose arguments belong to neither.
+fn foreground_launch(
     pane: &ServerPane,
     inspector: &impl ProcessInspector,
     foreground_program: Option<&str>,
-) -> Option<String> {
-    let program = foreground_program?;
-    if crate::platform::command::program_exists(program) {
-        return None;
+) -> (Option<String>, Vec<String>) {
+    let empty = (None, Vec::new());
+    let (Some(program), Some(pty)) = (foreground_program, pane.pty.as_ref()) else {
+        return empty;
+    };
+    let Some(launch) = inspector.foreground_launch(pty) else {
+        return empty;
+    };
+    let identified = launch
+        .executable
+        .as_deref()
+        .is_some_and(|path| same_program(program, path))
+        || launch
+            .argv
+            .first()
+            .is_some_and(|argv0| same_program(program, std::path::Path::new(argv0)));
+    if !identified {
+        return empty;
     }
-    let path = pane
-        .pty
-        .as_ref()
-        .and_then(|pty| inspector.foreground_executable(pty))?;
-    same_program(program, &path).then(|| path.to_string_lossy().into_owned())
+    let executable = launch
+        .executable
+        .filter(|_| !crate::platform::command::program_exists(program))
+        .map(|path| path.to_string_lossy().into_owned());
+    (executable, replayable_arguments(&launch.argv))
+}
+
+/// A process's arguments, minus `argv[0]`, when every one of them can survive being typed back at
+/// a shell prompt.
+///
+/// A restored command is replayed by typing it, so an argument containing a control character -
+/// a newline above all - would not come back as one argument but as a truncated command followed
+/// by whatever the rest of the bytes happen to mean. There is no partial answer worth giving: a
+/// program restored with some of its flags is a different program, so an unquotable argument
+/// discards the whole vector and the pane restores as the bare program it already was.
+fn replayable_arguments(argv: &[String]) -> Vec<String> {
+    let arguments = argv.get(1..).unwrap_or_default();
+    if arguments
+        .iter()
+        .any(|argument| argument.chars().any(char::is_control))
+    {
+        return Vec::new();
+    }
+    arguments.to_vec()
 }
 
 /// Whether an inspected executable path is the program the pane reports running.
@@ -752,6 +794,36 @@ mod tests {
         fn foreground_program(&self, _pty: &TerminalPty) -> Option<String> {
             None
         }
+    }
+
+    /// A command is replayed by typing it back at a prompt, so an argument carrying a control
+    /// character would not return as one argument at all. Half an invocation is worse than none:
+    /// a program restored with some of its flags is a different program.
+    #[test]
+    fn arguments_that_could_not_be_typed_back_discard_the_whole_invocation() {
+        let argv = |words: &[&str]| {
+            words
+                .iter()
+                .map(|word| word.to_string())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            replayable_arguments(&argv(&["claude", "--model", "opus"])),
+            argv(&["--model", "opus"]),
+            "argv[0] is the program, not one of its arguments"
+        );
+        assert!(replayable_arguments(&argv(&["claude"])).is_empty());
+        assert!(replayable_arguments(&[]).is_empty());
+        assert_eq!(
+            replayable_arguments(&argv(&["grep", "-r", ""])),
+            argv(&["-r", ""]),
+            "an empty argument is quotable, so it is not a reason to drop the rest"
+        );
+        assert!(
+            replayable_arguments(&argv(&["sh", "-c", "one\ntwo"])).is_empty(),
+            "a newline would end the replayed command line early"
+        );
     }
 
     /// The path only travels when it is the same program the pane reports; a wrapper or a shell

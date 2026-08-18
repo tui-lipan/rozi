@@ -37,6 +37,9 @@ pub struct TerminalPane {
     /// session server's `PATH` (a shell alias, a build-tree binary). Profile capture replays this
     /// instead of the name, which is all a restored pane could otherwise fail to find.
     pub foreground_executable: Option<String>,
+    /// Arguments that program was launched with, `argv[0]` excluded, as read by the session
+    /// server. Empty on platforms that cannot read another process's arguments.
+    pub foreground_arguments: Vec<String>,
     /// Free-form status reported by the pane through the session server. This is distinct from
     /// `status`, which tracks whether the client-side terminal parser is ready or exited.
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
@@ -206,6 +209,7 @@ impl TerminalPane {
             child_pid: None,
             foreground_program: None,
             foreground_executable: None,
+            foreground_arguments: Vec::new(),
             reported_status: None,
             detected_agent: None,
             finished_unseen: false,

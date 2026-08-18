@@ -155,15 +155,32 @@ state, floating geometry, Scrollable pane widths, and each pane's detected local
 remote host, such as an SSH session, is never saved as a local path; rozi falls back to the
 pane's original local launch directory instead.
 
-When a pane is running a command at save time, saving records the detected executable basename as
-`command`. Interactive shells are filtered out, a pane idling at its prompt saves no command at
-all (the last command you ran is not replayed), and an explicit launch command is kept when
-nothing is running. rozi cannot reconstruct the foreground program's original arguments, so a
-detected `nvim` process is saved as `command = "nvim"`, not its full invocation. Rename panes
-explicitly when you want stable profile titles.
+When a pane is running a command at save time, saving records how that program was launched as
+`command`: the executable and the arguments it is running with, so
+`claude --dangerously-skip-permissions` comes back with its flag rather than as a bare `claude`.
+Interactive shells are filtered out, a pane idling at its prompt saves no command at all (the last
+command you ran is not replayed), and an explicit launch command is kept when nothing is running.
+Rename panes explicitly when you want stable profile titles.
 
-A basename is only saved when a basename can launch the program again. If the session server
-cannot resolve the name on its own `PATH` - you started the program through a shell alias, or ran
-a binary out of `./target/release` - the executable's full path is saved instead, so restoring
-runs the same program rather than reporting `command not found`. Panes attached over `--remote`
-keep the bare name: the path belongs to the remote host's filesystem.
+The program is saved as a bare name whenever a bare name can launch it again. If the session
+server cannot resolve the name on its own `PATH` - you started the program through a shell alias,
+or ran a binary out of `./target/release` - the executable's full path is saved instead, so
+restoring runs the same program rather than reporting `command not found`.
+
+Arguments come from the running process itself, so what is saved is what the program received
+after the shell was done with it: aliases, globs, and variables appear expanded. Some cases save
+the program without its arguments:
+
+- **macOS and Windows.** Reading another process's arguments is Linux-only in rozi today.
+- **Wrapped programs.** When the process holding the terminal is not the program the pane reports
+  running - an `npx`-style runner, a shell function, a launcher script - its arguments belong to
+  the wrapper, not to what you ran, so they are dropped rather than guessed at.
+- **Arguments that cannot be typed back.** A restored command is replayed at a shell prompt, so an
+  argument containing a control character would not survive as one argument; the whole vector is
+  dropped rather than replayed in part.
+- **`--remote` panes.** Both the path and the arguments describe a process on the far host, so
+  those panes keep the bare program name.
+
+A saved `command` is a literal record of a command line, so treat a profile like any other file
+that quotes your shell history: check it before sharing one that captured a program you passed a
+token or password to on the command line.

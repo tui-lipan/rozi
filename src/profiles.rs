@@ -408,11 +408,15 @@ fn workspace_profile_from_state(
 /// a command mid-flight (`Executing`), or when there is no integration at all (`Unknown`) and the
 /// value comes from the process inspector, which reads the live foreground process group.
 ///
-/// What is captured is a name only when a name is enough to run it again. A program the session
-/// server could not resolve on `PATH` - started through an alias, or straight out of a build tree -
-/// reports its executable's path alongside, and that is what gets replayed: the name on its own
-/// restores as `command not found`. A path belonging to another host (`--remote`) is not ours to
-/// replay, so those panes keep the bare name.
+/// What is captured is the whole invocation, not just the program: an agent started with
+/// `--dangerously-skip-permissions` is a different pane from the same agent without it. The
+/// program is named where a name is enough to find it again and given as a path where it is not -
+/// one started through an alias, or straight out of a build tree, restores as `command not found`
+/// if only its name is written down.
+///
+/// Neither the path nor the arguments belong to a pane attached over `--remote`: both describe a
+/// process on the far host, which the machine doing the restoring is not. Those panes keep the
+/// bare program name, as they did before either was captured.
 fn live_running_command(pane: &Pane, shells: &HashSet<String>) -> Option<String> {
     use crate::session::protocol::PaneCommandPhase;
 
@@ -429,19 +433,29 @@ fn live_running_command(pane: &Pane, shells: &HashSet<String>) -> Option<String>
         .filter(|program| {
             !shells.contains(&crate::platform::command::normalized_program_name(program))
         })?;
-    let path = pane
-        .terminal
-        .foreground_executable
-        .as_deref()
-        .filter(|_| pane.terminal.cwd_host.is_none());
-    Some(match path {
+    if pane.terminal.cwd_host.is_some() {
+        return Some(program.to_string());
+    }
+    let program = match pane.terminal.foreground_executable.as_deref() {
         Some(path) => shell_quote(path),
         None => program.to_string(),
-    })
+    };
+    Some(
+        std::iter::once(program)
+            .chain(
+                pane.terminal
+                    .foreground_arguments
+                    .iter()
+                    .map(|argument| shell_quote(argument)),
+            )
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
 }
 
-/// Quote `word` so an interactive shell reads it as one literal argument. Only reached for
-/// inspector-reported executable paths, which exist on Unix alone - a Windows pane never has one.
+/// Quote `word` so an interactive shell reads it as one literal argument, since the captured
+/// command is replayed by typing it at a prompt. Only reached for inspector-reported paths and
+/// arguments, which exist on Unix alone - a Windows pane has neither.
 fn shell_quote(word: &str) -> String {
     let plain = |ch: char| ch.is_ascii_alphanumeric() || "_-./:@%+=".contains(ch);
     if !word.is_empty() && word.chars().all(plain) {
@@ -1164,6 +1178,50 @@ mod tests {
         pane.terminal.cwd_host = Some("server.example".to_string());
         let saved = &profile_from_state(&state).workspaces[0].panes[0];
         assert_eq!(saved.command.as_deref(), Some("opencode-tui"));
+    }
+
+    #[test]
+    fn save_captures_the_arguments_the_program_is_running_with() {
+        // The flags are the pane: an agent restored without `--dangerously-skip-permissions` is
+        // not the agent that was captured.
+        let mut state = State::new(Config::default(), Theme::default());
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.foreground_program = Some("claude".to_string());
+        pane.terminal.foreground_arguments = vec![
+            "--dangerously-skip-permissions".to_string(),
+            "--model".to_string(),
+            "opus".to_string(),
+        ];
+
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(
+            saved.command.as_deref(),
+            Some("claude --dangerously-skip-permissions --model opus")
+        );
+
+        // Arguments are quoted per word, so a path with a space stays one argument.
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.foreground_arguments = vec!["/tmp/my notes.md".to_string()];
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(saved.command.as_deref(), Some("claude '/tmp/my notes.md'"));
+
+        // The path replaces only the program word; the arguments follow it.
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.foreground_executable = Some("/opt/agents/claude".to_string());
+        pane.terminal.foreground_arguments = vec!["--resume".to_string()];
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(
+            saved.command.as_deref(),
+            Some("/opt/agents/claude --resume")
+        );
+
+        // A remote pane describes a process on another host: neither its path nor its arguments
+        // are ours to replay locally.
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.cwd = Some("/remote/project".to_string());
+        pane.terminal.cwd_host = Some("server.example".to_string());
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(saved.command.as_deref(), Some("claude"));
     }
 
     #[test]

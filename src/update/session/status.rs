@@ -90,6 +90,7 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.git_branch = state.git_branch;
     pane.terminal.foreground_program = state.foreground_program;
     pane.terminal.foreground_executable = state.foreground_executable;
+    pane.terminal.foreground_arguments = state.foreground_arguments;
     pane.terminal.command_phase = state.command_phase;
     pane.terminal.last_exit_status = state.last_exit_status;
     pane.terminal.reported_status = state.status;

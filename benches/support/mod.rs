@@ -160,6 +160,7 @@ pub fn attached_message() -> ServerMessage {
                     command_phase: PaneCommandPhase::Executing,
                     foreground_program: Some("benchmark-worker".to_string()),
                     foreground_executable: None,
+                    foreground_arguments: Vec::new(),
                     last_exit_status: Some(0),
                     status: None,
                     detected_agent: None,

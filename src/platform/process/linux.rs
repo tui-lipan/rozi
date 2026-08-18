@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use tui_lipan::prelude::TerminalPty;
 
-use super::{ForegroundJob, ForegroundProcess, ProcessInspector};
+use super::{ForegroundJob, ForegroundLaunch, ForegroundProcess, ProcessInspector};
 
 const MAX_FOREGROUND_PROCESSES: usize = 64;
 const MAX_PROC_BYTES: u64 = 64 * 1024;
@@ -95,14 +95,17 @@ impl ProcessInspector for LinuxProcessInspector {
         (!name.is_empty()).then(|| name.to_string())
     }
 
-    fn foreground_executable(&self, pty: &TerminalPty) -> Option<PathBuf> {
+    fn foreground_launch(&self, pty: &TerminalPty) -> Option<ForegroundLaunch> {
         let pgid = pty.foreground_process_group_id()?;
         // `/proc/<pid>/exe` resolves to the real file even when the process was started through a
         // name that no longer reaches it (an alias, a relative path, a deleted-and-replaced
         // build artifact), which is exactly the case this exists for. A replaced binary reads
         // back as `<path> (deleted)`; that is not a runnable path, so drop it.
-        let path = std::fs::read_link(format!("/proc/{pgid}/exe")).ok()?;
-        path.is_absolute().then_some(path)
+        let executable = std::fs::read_link(format!("/proc/{pgid}/exe"))
+            .ok()
+            .filter(|path| path.is_absolute());
+        let argv = read_nul_records(&format!("/proc/{pgid}/cmdline"));
+        (executable.is_some() || !argv.is_empty()).then_some(ForegroundLaunch { executable, argv })
     }
 
     fn foreground_job(&self, pty: &TerminalPty) -> Option<ForegroundJob> {

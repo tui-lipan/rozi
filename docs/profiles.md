@@ -33,10 +33,12 @@ Each pane entry supports:
 
 Workspace entries may also include `synchronized = true` to restore pane synchronization for that
 workspace. Omit `tree` in a workspace to let rozi auto-build a dwindle tree from pane order.
-Saving a `command` keeps an explicit launch command, or captures the executable of a still-running
-command. A program the session server cannot find on its `PATH` - one started through a shell
-alias, or straight out of a build tree - is saved as its full path instead of its bare name, since
-the name alone would restore as `command not found`.
+Saving a `command` keeps an explicit launch command, or captures a still-running command with the
+arguments it is running with (`claude --dangerously-skip-permissions`, not just `claude`). A
+program the session server cannot find on its `PATH` - one started through a shell alias, or
+straight out of a build tree - is saved as its full path instead of its bare name, since the name
+alone would restore as `command not found`. See
+[Saving limitations](project-profiles.md#saving-limitations) for when arguments are left out.
 
 ## Example: lazygit + nvim
 

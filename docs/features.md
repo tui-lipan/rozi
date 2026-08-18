@@ -248,6 +248,9 @@ Profiles are named, reusable launch recipes stored in `~/.config/rozi/profiles/`
   with `[session] startup = "profile"` also names the session a bare launch opens.
 - Profiles store the layout tree, pane commands and identities, workspace names, layout kinds, and
   pane-synchronization state, via the serde-stable tree shared with session layout documents.
+- Capturing a running pane records the whole invocation - arguments included, and the executable's
+  path when its name is not on `PATH` - so a flagged agent or an aliased binary comes back as
+  itself. See [Saving limitations](project-profiles.md#saving-limitations).
 
 Profiles restore *launch intent*, not live process state — use a named session for that.
 

@@ -1039,7 +1039,8 @@ mod tests {
                     .dispatch(Msg::RunAction(Action::ToggleSidebar))
                     .expect("toggle controller sidebar");
                 assert!(backend.state().sidebar_visible);
-                assert!(backend.state().config.sidebar.visible);
+                // Toggling is client-local: it must not write the config default back.
+                assert!(!backend.state().config.sidebar.visible);
                 assert_eq!(
                     backend
                         .state()

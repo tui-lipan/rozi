@@ -127,7 +127,9 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     let had_workbar_tick = ctx.state.config.workbar.has_clock();
     let start_workbar_tick = !had_workbar_tick && new_config.workbar.has_clock();
 
-    ctx.state.sidebar_visible = new_config.sidebar.visible;
+    // `[sidebar] visible` is a startup default only. A reload deliberately does not reapply it:
+    // visibility is client-local view chrome, so the file must not reach in and open or close a
+    // running client's sidebar - not on an unrelated edit, and not on an edit to the key itself.
     ctx.state.sidebar.reconcile(&new_config.sidebar);
     // Every reload invalidates scheduled/running results, including interval-only and
     // command-shell-only changes. Keep matching in-flight guards until their old results arrive so
@@ -146,9 +148,9 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     let _ = crate::ops::pick::unload_extensions(ctx, &stale_extensions);
     let _ = crate::ops::published_rows::unload_extensions(ctx, &stale_extensions);
     crate::ops::extensions::unload(ctx, &stale_extensions);
-    // Releasing focus when a reload hides the sidebar is part of the same visibility transition as
-    // the interactive toggle. Refresh work is kicked explicitly below, so only the synchronous
-    // focus/cache effects are needed here.
+    // A reload cannot change visibility, but it can change the tab set and panel split, so the
+    // caches and active-tab refresh still run. Refresh work is kicked explicitly below, so only
+    // the synchronous focus/cache effects are needed here.
     let _ = crate::update::sidebar::visibility_changed(ctx);
     if ctx.state.sidebar_visible && ctx.state.sidebar.focused {
         crate::update::sidebar::refocus_body(ctx);

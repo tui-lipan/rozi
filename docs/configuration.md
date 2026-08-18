@@ -717,7 +717,7 @@ See [Sidebar](sidebar.md) for how the built-in tabs behave, interaction, and sha
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `visible` | `false` | Initial visibility. `toggle-sidebar` persists this the same way `toggle-sidebar-split` writes `split`. |
+| `visible` | `false` | Startup visibility only. `toggle-sidebar` is client-local: it is never written back here, and a reload never reapplies this key to a running client. |
 | `width` | `32` | Requested width in columns (`16..=80`). On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
 | `position` | `left` | Dock side: `left` or `right`. |
 | `tabs` | `["activity", "panes", "sessions", "files", "git"]` | Catalog of available tab definitions. Built-in names are `activity`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |

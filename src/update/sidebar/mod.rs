@@ -215,18 +215,13 @@ pub(crate) fn persist_sidebar_preference(
     }
 }
 
+/// Visibility is client-local view chrome, like the active tab or a tree's expanded directories:
+/// it is never written back to `config.toml`. `[sidebar] visible` is the startup default only, so
+/// two clients sharing one config can disagree, and a toggle costs no disk write on a key that is
+/// pressed constantly.
 pub(crate) fn toggle_visible(ctx: &mut Context<AppRoot>) -> Update {
-    set_visible(ctx, !ctx.state.sidebar_visible);
+    ctx.state.sidebar_visible = !ctx.state.sidebar_visible;
     visibility_changed(ctx)
-}
-
-pub(crate) fn set_visible(ctx: &mut Context<AppRoot>, visible: bool) {
-    ctx.state.sidebar_visible = visible;
-    if ctx.state.config.sidebar.visible == visible {
-        return;
-    }
-    ctx.state.config.sidebar.visible = visible;
-    persist_sidebar_preference(ctx, crate::config::persist_sidebar_visible(visible));
 }
 
 pub(crate) fn toggle_split(ctx: &mut Context<AppRoot>) -> Update {

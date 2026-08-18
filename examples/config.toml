@@ -253,6 +253,7 @@
 #height = 0.4
 
 [sidebar]
+# Whether the sidebar starts open. `toggle-sidebar` (`b`) is client-local and never writes here.
 #visible = false
 # Requested width in columns, clamped to 16-80. On a narrow terminal the sidebar yields
 # columns so the pane canvas keeps usable space.

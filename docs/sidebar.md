@@ -39,8 +39,9 @@ Set `split` to `false` to keep the recipe while showing one bar. Both tab bars s
 so tabs reorder live within one bar and move between bars. The panel divider is also draggable.
 Dragging its junction with the outer divider resizes both axes at once; the junction ends at the
 sidebar gutter and does not extend onto pane borders. Tab order/assignment and both splitter sizes
-persist to `config.toml` and remain live-editable there. Toggling the sidebar (`toggle-sidebar` /
-`b`) writes `visible` the same way. Disabling `split` temporarily presents the saved groups as one
+persist to `config.toml` and remain live-editable there. `visible` is not among them: it is the
+startup default only, and `toggle-sidebar` (`b`) changes this client alone without writing to disk.
+Disabling `split` temporarily presents the saved groups as one
 tab bar; it does not merge or erase the `panels` recipe, so enabling it again restores the previous
 groups.
 
@@ -494,8 +495,10 @@ can be visible at once, and on the same row.
   `[keys]` or invoked with `rozi run-action <id>`.
 
 Visibility, active tabs, focused panel, cursors, and caches are local runtime state. A config reload
-reapplies `visible`, panel assignment, split mode, split ratio, and width, then reconciles selected
-tabs by stable ID. If a selected tab was removed, the first tab in that panel becomes active.
+reapplies panel assignment, split mode, split ratio, and width, then reconciles selected tabs by
+stable ID. If a selected tab was removed, the first tab in that panel becomes active. A reload
+deliberately leaves visibility alone, including when `visible` itself was edited, so the file cannot
+open or close the sidebar of a client that is already running.
 Visibility toggles and active selections are not written to disk. Tab drag/reorder, split mode,
 outer resize, and panel
 resize are preferences and update `panels`, `split`, `width`, or `split_ratio` in `config.toml`.

@@ -57,7 +57,7 @@ getrandom = "0.4.3"
 # Re-pin whenever rozi needs newer framework work. At release time this section goes away: publish
 # tui-lipan, raise the version requirement above, and drop the patch (see AGENTS.md).
 [patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "18714bf4e97f99449c1185ee7d0f8f78c60afadf" }
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "419bbf203c595db6d29423cbf14ddfe464c7d0d5" }
 
 [features]
 # Headless PNG/JSON capture for visual review. Opt-in so release builds do not

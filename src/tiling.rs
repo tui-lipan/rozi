@@ -249,7 +249,9 @@ pub fn insert_leaf_around_target(
         DwindleTree::Leaf(_) => None,
         DwindleTree::Split {
             axis: split_axis,
-            ratio,
+            // Named apart from the `ratio` parameter: this one belongs to the split being
+            // descended through and stays on it, while `ratio` travels down to the new split.
+            ratio: split_ratio,
             first,
             second,
         } => {
@@ -259,7 +261,7 @@ pub fn insert_leaf_around_target(
                 insert_leaf_around_target(first, target, moving, axis, moving_first, ratio).map(
                     |inserted| DwindleTree::Split {
                         axis: split_axis,
-                        ratio,
+                        ratio: split_ratio,
                         first: Box::new(inserted),
                         second: Box::new(second),
                     },
@@ -268,7 +270,7 @@ pub fn insert_leaf_around_target(
                 insert_leaf_around_target(second, target, moving, axis, moving_first, ratio).map(
                     |inserted| DwindleTree::Split {
                         axis: split_axis,
-                        ratio,
+                        ratio: split_ratio,
                         first: Box::new(first),
                         second: Box::new(inserted),
                     },
@@ -1436,6 +1438,36 @@ mod tests {
             &mut placements,
         );
         assert_eq!(placements.iter().map(|p| p.id).collect::<Vec<_>>(), ids);
+    }
+
+    /// The requested ratio survives the descent to a nested target, and the splits passed through
+    /// keep their own. A spawn asks for an even split; reading the enclosing split's ratio instead
+    /// handed every new pane whatever proportion its neighbor had been resized to.
+    #[test]
+    fn insert_around_nested_target_splits_at_the_requested_ratio() {
+        let tree = DwindleTree::Split {
+            axis: SplitAxis::Horizontal,
+            ratio: 0.8,
+            first: Box::new(DwindleTree::Leaf(1)),
+            second: Box::new(DwindleTree::Leaf(2)),
+        };
+        let inserted =
+            insert_leaf_around_target(tree, 2, 3, SplitAxis::Vertical, false, EVEN_SPLIT_RATIO)
+                .expect("target 2 is in the tree");
+
+        let DwindleTree::Split {
+            ratio: outer,
+            second,
+            ..
+        } = inserted
+        else {
+            panic!("expected the root split to survive");
+        };
+        assert_close(outer, 0.8);
+        let DwindleTree::Split { ratio: inner, .. } = *second else {
+            panic!("expected pane 2's slot to become a split");
+        };
+        assert_close(inner, EVEN_SPLIT_RATIO);
     }
 
     #[test]

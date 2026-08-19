@@ -627,20 +627,34 @@ mod tests {
             );
 
             // Move: 1 vacates the left column (which collapses) and docks to the right of 2.
-            assert_eq!(
-                tree_after(Action::Move),
-                Some(DwindleTree::Split {
-                    axis: SplitAxis::Vertical,
-                    ratio: 0.5,
-                    first: Box::new(DwindleTree::Split {
-                        axis: SplitAxis::Horizontal,
-                        ratio: 0.5,
-                        first: Box::new(DwindleTree::Leaf(2)),
-                        second: Box::new(DwindleTree::Leaf(1)),
-                    }),
-                    second: Box::new(DwindleTree::Leaf(3)),
-                }),
-                "move must re-insert the pane beside its neighbor"
+            // The new split's ratio carries both panes' widths across, so it sits a hair off
+            // even here: the columns being merged are 50 and 49 cells, an odd extent the old
+            // divider could not halve exactly.
+            let Some(DwindleTree::Split {
+                axis: SplitAxis::Vertical,
+                ratio: outer,
+                first,
+                second,
+            }) = tree_after(Action::Move)
+            else {
+                panic!("move must leave a vertical root split");
+            };
+            assert_eq!(*second, DwindleTree::Leaf(3));
+            assert!((outer - 0.5).abs() < 0.001, "root ratio moved: {outer}");
+            let DwindleTree::Split {
+                axis: SplitAxis::Horizontal,
+                ratio: docked,
+                first: left,
+                second: right,
+            } = *first
+            else {
+                panic!("move must re-insert the pane beside its neighbor");
+            };
+            assert_eq!(*left, DwindleTree::Leaf(2));
+            assert_eq!(*right, DwindleTree::Leaf(1));
+            assert!(
+                (docked - 49.0 / 99.0).abs() < 0.001,
+                "docked ratio must keep both widths: {docked}"
             );
         });
     }

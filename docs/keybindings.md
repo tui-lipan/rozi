@@ -371,10 +371,18 @@ this with `Shift+h/j/k/l` to move the pane, since resize mode never repositions 
 ## Hint mode
 
 Press `u` (or choose *Hint mode* in the palette) to label URLs, paths (including optional line
-numbers), and 7-40 character Git SHAs in the focused pane's current visible snapshot. Type a
-lowercase label to copy it. Type the final label character uppercase to open a URL with the system
-handler; non-URL matches still copy. `Esc` or `q` exits, and keys never leak to the PTY. Hint mode
-uses the pane's current scrollback position.
+numbers), and 7-40 character Git SHAs in the focused pane's current visible snapshot. A target the
+terminal wrapped across several rows is one hint: the rows are rejoined before scanning, every row
+it covers is highlighted, and copying it yields the whole thing. Each label is painted right after
+the target it names, moving onto its last characters only when the row ends there, so a label at
+the pane's right-hand edge stays on screen.
+
+Type a lowercase label to copy it. Type the final label character uppercase to open a URL with the
+system handler; non-URL matches still copy. `Esc` or `q` exits, and keys never leak to the PTY.
+Hint mode labels one pane, so it also pins the focus and the pointer: a mouse click dismisses it
+and does nothing else - focus stays where it was and the click never reaches the program under the
+pointer. Hint mode uses the pane's current scrollback position, and the wheel is inert while it is
+up.
 
 ## Copy mode
 

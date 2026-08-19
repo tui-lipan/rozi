@@ -15,6 +15,12 @@ pub(super) fn close_popup(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(super) fn focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
+    // A click while hint mode is up dismisses it and stops there: the labels belong to the pane
+    // that was focused when the mode was entered, so moving focus out from under them would leave
+    // a pane wearing another pane's hints.
+    if crate::hints::cancel_for_pointer(ctx) {
+        return Update::full();
+    }
     focus(&mut ctx.state, id);
     request_pane_focus(ctx, id);
     Update::full()

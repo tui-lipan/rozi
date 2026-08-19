@@ -153,10 +153,19 @@ integration marks the action shows a status hint rather than an error.
 Press `u` (or *Hint mode* in the palette) to detect URLs, filesystem paths containing `/` (with an
 optional `:line` suffix), and 7-40 character Git SHAs in the visible terminal snapshot, plus any
 additive `[[hints]]` patterns from config. Built-ins run first and win on overlap; trailing
-`.,;:!?)]}` characters are trimmed from custom matches too. Each match receives a home-row label.
+`.,;:!?)]}` characters are trimmed from custom matches too. Each match receives a home-row label,
+painted just past its last character - or over that character when the row ends there, so a match
+reaching the pane's right edge still shows one.
+
+Rows the terminal soft-wrapped are rejoined before scanning, so a URL or path longer than the pane
+is wide is a single hint spanning those rows rather than fragments that match nothing. Copying or
+opening it uses the rejoined text.
+
 A lowercase label copies the match; an uppercase final label character opens URL matches (and
-custom hints with `open = true`) and copies other kinds. `Esc`/`q` exits. Scroll first to hint
-older output.
+custom hints with `open = true`) and copies other kinds. `Esc`/`q` exits, as does a mouse click -
+hint mode belongs to one pane, so the whole click is spent dismissing it: focus stays put, and
+nothing reaches the program under the pointer. The wheel is inert for the same reason, since
+scrolling would move the rows the labels sit on. Scroll first to hint older output.
 
 ## Bell urgency
 

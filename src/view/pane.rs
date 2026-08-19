@@ -850,6 +850,20 @@ pub(crate) fn pane_element(
     }
 
     let terminal_ready = pane.terminal_active && !pane.opening && !pane.closing;
+    // Hint mode owns the pointer as well as the keyboard, and both halves of that are load-bearing.
+    // Leaving mouse reporting attached would let a child running mouse tracking swallow the click
+    // in the framework, so it would never reach the `MouseRegion` below that dismisses the mode;
+    // without the callback every pane answers a click the same way. The wheel goes with it, since
+    // scrolling would move the rows the labels are pinned to. Every pane but the labelled one also
+    // stops taking focus on click: the framework hands the caret to whatever the pointer lands on,
+    // and a caret blinking in a pane the app does not consider focused is the visible half of that
+    // split. The labelled pane stays focusable because it is the one holding the keyboard.
+    let hinting = ctx.state.hint_mode.is_some();
+    let takes_pointer_focus = ctx
+        .state
+        .hint_mode
+        .as_ref()
+        .is_none_or(|hints| hints.target == id);
     // The widget reads the screen itself rather than being handed a snapshot, which keeps this
     // element identical from one chunk of output to the next - that is what lets `session::output`
     // ask for a repaint instead of a rebuild of every pane in the window. Decorations ride along
@@ -869,7 +883,7 @@ pub(crate) fn pane_element(
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(theme.text_selection)
         .focus_style(Style::default())
-        .focusable(terminal_ready)
+        .focusable(terminal_ready && takes_pointer_focus)
         .width(Length::Flex(1))
         .height(Length::Flex(1))
         .scrollbar_config({
@@ -879,7 +893,7 @@ pub(crate) fn pane_element(
                 .thumb_focus_style(Style::new().fg(frame_fg))
                 .track_style(Style::new().fg(frame_fg).bg(frame_bg))
         })
-        .scroll_wheel(terminal_ready)
+        .scroll_wheel(terminal_ready && !hinting)
         .on_resize(ctx.link().callback(move |viewport: TerminalViewport| {
             Msg::PaneResize(id, viewport.cols, viewport.rows)
         }))
@@ -896,8 +910,11 @@ pub(crate) fn pane_element(
             .on_key(
                 ctx.link()
                     .key_handler(move |key| Some(Msg::PaneKey(id, key))),
-            )
-            .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
+            );
+        if !hinting {
+            terminal_widget = terminal_widget
+                .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
+        }
     }
     if let Some(selection) = copy_mode_selection(ctx, id) {
         // Navigation cursor (no range yet) uses accent so it stays distinct from
@@ -1177,30 +1194,31 @@ fn terminal_decorations_for_pane(ctx: &Context<AppRoot>, pane: &Pane) -> Vec<Ter
         .as_ref()
         .filter(|hints| hints.target == pane.id)
     {
-        return hints
-            .matches
-            .iter()
-            .enumerate()
-            .filter_map(|(index, matched)| {
-                let label = hints.labels.get(index)?;
-                if !label.starts_with(&hints.input) {
-                    return None;
-                }
-                Some([
-                    TerminalDecoration::highlight(
-                        matched.row,
-                        matched.start_col..matched.end_col,
-                        ctx.state.theme.text_selection,
-                    ),
-                    TerminalDecoration::label(
-                        matched.row,
-                        matched.end_col,
-                        Span::new(label.as_str()).style(active_search_match_style()),
-                    ),
-                ])
-            })
-            .flatten()
-            .collect();
+        let snapshot = pane.terminal.snapshot();
+        let mut decorations = Vec::new();
+        for (index, matched) in hints.matches.iter().enumerate() {
+            let Some(label) = hints.labels.get(index) else {
+                continue;
+            };
+            if !label.starts_with(&hints.input) {
+                continue;
+            }
+            // One highlight per row: a match long enough to have been wrapped covers several.
+            for span in &matched.spans {
+                decorations.push(TerminalDecoration::highlight(
+                    span.row,
+                    span.start_col..span.end_col,
+                    ctx.state.theme.text_selection,
+                ));
+            }
+            let (row, col) = hint_label_placement(&snapshot, matched, label);
+            decorations.push(TerminalDecoration::overlay(
+                row,
+                col,
+                Span::new(label.as_str()).style(hint_label_style()),
+            ));
+        }
+        return decorations;
     }
     let Some(query) = search_highlight_query(ctx, pane.id) else {
         return Vec::new();
@@ -1287,6 +1305,36 @@ fn search_match_style() -> Style {
     Style::new()
         .fg(Color::White)
         .bg(Color::rgb(92, 64, 8))
+        .contrast_policy(ContrastPolicy::BlackOrWhite)
+}
+
+/// Where a hint's label is painted: the row the match ends on, in the columns just past its last
+/// character, or over that character when the row has no room left.
+///
+/// The label is painted over the row rather than inserted into it. A row is exactly as wide as the
+/// terminal, so an insert past the end of a match that fills it has nowhere to go and is clipped
+/// away - which is every wrapped URL, the case labels matter most for. Overlaying keeps the label
+/// on screen; sliding it left onto the match's own tail is what it costs when the row is full.
+fn hint_label_placement(
+    snapshot: &TerminalRenderSnapshot,
+    matched: &crate::hints::HintMatch,
+    label: &str,
+) -> (usize, usize) {
+    let row = matched.end_row();
+    let width = tui_lipan::utils::spans::line_width(&[Span::new(label)]);
+    let row_width = snapshot
+        .color_lines
+        .get(row)
+        .map_or(0, |line| tui_lipan::utils::spans::line_width(line));
+    (row, matched.end_col().min(row_width.saturating_sub(width)))
+}
+
+/// Home-row hint label, painted beside the match it names.
+fn hint_label_style() -> Style {
+    Style::new()
+        .fg(Color::Black)
+        .bg(Color::Yellow)
+        .bold()
         .contrast_policy(ContrastPolicy::BlackOrWhite)
 }
 
@@ -1901,6 +1949,45 @@ mod tests {
         assert!(app_allows_cursor(None, 7, false, false));
         assert!(!app_allows_cursor(None, 7, true, false));
         assert!(!app_allows_cursor(Some(7), 7, true, false));
+    }
+
+    #[test]
+    fn hint_labels_follow_the_end_of_the_match_and_never_past_the_row() {
+        let row = || vec![Span::new("x".repeat(20))];
+        let snapshot = TerminalRenderSnapshot {
+            color_lines: std::sync::Arc::new([row(), row()]),
+            ..Default::default()
+        };
+        let hint = |spans: Vec<(usize, usize, usize)>| crate::hints::HintMatch {
+            spans: spans
+                .into_iter()
+                .map(
+                    |(row, start_col, end_col)| tui_lipan::utils::hints::HintSpan {
+                        row,
+                        start_col,
+                        end_col,
+                    },
+                )
+                .collect(),
+            text: String::new(),
+            kind: crate::hints::HintKind::Url,
+        };
+
+        // Room after the match: the label sits in the columns right after it.
+        assert_eq!(
+            hint_label_placement(&snapshot, &hint(vec![(0, 3, 9)]), "as"),
+            (0, 9)
+        );
+        // A match filling the row to its edge gives up its last columns instead of the label.
+        assert_eq!(
+            hint_label_placement(&snapshot, &hint(vec![(0, 0, 20)]), "as"),
+            (0, 18)
+        );
+        // A wrapped match is labelled where it ends, not where it starts.
+        assert_eq!(
+            hint_label_placement(&snapshot, &hint(vec![(0, 4, 20), (1, 0, 6)]), "a"),
+            (1, 6)
+        );
     }
 
     #[test]

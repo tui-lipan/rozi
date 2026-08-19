@@ -177,6 +177,12 @@ fn framework_focused_pane(ctx: &Context<AppRoot>) -> Option<PaneId> {
 }
 
 pub(crate) fn sync_focus_from_framework(ctx: &mut Context<AppRoot>) {
+    // Hint mode is pinned to the pane it scanned: every label names a position on that pane's
+    // screen. A pane running mouse tracking takes the framework's focus with the click itself, so
+    // without this the mode would keep labelling a pane the app no longer considers focused.
+    if ctx.state.mode == Mode::Hint {
+        return;
+    }
     let workspace = ctx.state.active_workspace_ref();
     if let Some(id) = ctx.state.focused_pane()
         && workspace

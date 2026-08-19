@@ -140,6 +140,11 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     // for a full-screen TUI. The framework has already moved its *own* focus for clicks, drags and
     // scrolls (but deliberately not for plain motion), so reconciling from it restores
     // click-to-focus without reintroducing hover-to-focus against the user's config.
+    // The press half of this click was consumed to dismiss hint mode; the release completes the
+    // same click and is consumed with it, rather than reaching the child or pulling focus along.
+    if std::mem::take(&mut ctx.state.consumed_pointer_click) {
+        return Update::none();
+    }
     let before = ctx.state.focused_pane();
     crate::key_routing::sync_focus_from_framework(ctx);
     let focus_moved = ctx.state.focused_pane() != before;

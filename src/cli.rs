@@ -453,23 +453,29 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }));
             }
             "send-text" => {
-                let text = iter
-                    .next()
-                    .ok_or_else(|| "send-text requires literal text".to_string())?;
-                reject_trailing_control_args(&mut iter, "send-text")?;
+                let mut target = None;
+                let mut text = None;
+                while let Some(next) = iter.next() {
+                    match next.as_str() {
+                        "--target" => target = Some(parse_target(&mut iter)?),
+                        _ if text.is_none() => text = Some(next),
+                        other => {
+                            return Err(format!("unexpected argument `{other}` after send-text"));
+                        }
+                    }
+                }
+                let text = text.ok_or_else(|| "send-text requires literal text".to_string())?;
                 return Ok(ParsedCli::Control(ControlCli {
                     socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::SendText {
-                        target: None,
-                        text,
-                    }),
+                    request: control_request(control::ControlCommand::SendText { target, text }),
                 }));
             }
             "send-keys" => {
                 let mut literal = false;
+                let mut target = None;
                 let mut keys = Vec::new();
                 let mut passthrough = false;
-                for arg in iter.by_ref() {
+                while let Some(arg) = iter.next() {
                     if !passthrough {
                         if arg == "--" {
                             passthrough = true;
@@ -477,6 +483,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         }
                         if arg == "-l" || arg == "--literal" {
                             literal = true;
+                            continue;
+                        }
+                        if arg == "--target" && keys.is_empty() {
+                            target = Some(parse_target(&mut iter)?);
                             continue;
                         }
                         if arg.starts_with('-') && keys.is_empty() && arg != "-" {
@@ -491,7 +501,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 return Ok(ParsedCli::Control(ControlCli {
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::SendKeys {
-                        target: None,
+                        target,
                         keys,
                         literal,
                     }),
@@ -704,15 +714,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut scrollback = None;
                 while let Some(next) = iter.next() {
                     match next.as_str() {
-                        "--target" => {
-                            let value = iter
-                                .next()
-                                .ok_or_else(|| "--target requires a pane id".to_string())?;
-                            target =
-                                Some(value.parse().map_err(|_| {
-                                    "--target requires a numeric pane id".to_string()
-                                })?);
-                        }
+                        "--target" => target = Some(parse_target(&mut iter)?),
                         "--scrollback" => {
                             let value = iter.next().ok_or_else(|| {
                                 "--scrollback requires a line count or `full`".to_string()
@@ -801,6 +803,16 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
 
 /// Take the value that must follow a name-taking flag or verb, rejecting a flag-shaped one.
 ///
+/// The pane id after a `--target` flag, shared by every control command that accepts one.
+fn parse_target(
+    iter: &mut impl Iterator<Item = String>,
+) -> std::result::Result<crate::state::PaneId, String> {
+    let value = require_value(iter, "--target requires a pane id")?;
+    value
+        .parse()
+        .map_err(|_| "--target requires a numeric pane id".to_string())
+}
+
 /// Session names, profile names, and action ids all accept `-`, so a bare `next()` silently eats
 /// the following option: without this, `rozi attach --read-only` hunts for a session literally
 /// named `--read-only`, and `rozi --server --pick` starts a session server for one. A lone `-` is
@@ -1830,9 +1842,12 @@ const HELP_SECTIONS: &[HelpSection] = &[
         rows: &[
             row("list-panes", "Print live panes as JSON"),
             row("focus <PANE_ID>", "Focus a pane"),
-            row("send-text <TEXT>", "Send literal text to this pane"),
             row(
-                "send-keys [-l|--literal] [--] <KEY|TEXT>...",
+                "send-text [--target <PANE_ID>] <TEXT>",
+                "Send literal text to a pane",
+            ),
+            row(
+                "send-keys [--target <PANE_ID>] [-l|--literal] [--] <KEY|TEXT>...",
                 "Send tmux-style key names, text, or both",
             ),
             row(
@@ -2295,6 +2310,81 @@ mod tests {
                 keys: vec!["C-c".into(), "Enter".into()],
                 literal: false,
             }
+        );
+
+        // A script driving a pane it spawned has to address it: run from inside a pane, the
+        // source-pane fallback would send the input back to the script's own pane.
+        let ParsedCli::Control(targeted_text) = parse_cli_args(vec![
+            "send-text".into(),
+            "--target".into(),
+            "3".into(),
+            "ls".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            targeted_text.request.command,
+            control::ControlCommand::SendText {
+                target: Some(3),
+                text: "ls".into(),
+            }
+        );
+
+        let ParsedCli::Control(targeted_keys) = parse_cli_args(vec![
+            "send-keys".into(),
+            "--target".into(),
+            "3".into(),
+            "Enter".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            targeted_keys.request.command,
+            control::ControlCommand::SendKeys {
+                target: Some(3),
+                keys: vec!["Enter".into()],
+                literal: false,
+            }
+        );
+
+        // `--target` is a flag only while it could still be one: past the first key it is text to
+        // send, exactly as `-n` is after `--`.
+        let ParsedCli::Control(literal_target) =
+            parse_cli_args(vec!["send-keys".into(), "Enter".into(), "--target".into()])
+                .expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            literal_target.request.command,
+            control::ControlCommand::SendKeys {
+                target: None,
+                keys: vec!["Enter".into(), "--target".into()],
+                literal: false,
+            }
+        );
+        // Order-independent, like every other control command's flags.
+        let ParsedCli::Control(trailing_target) = parse_cli_args(vec![
+            "send-text".into(),
+            "hi".into(),
+            "--target".into(),
+            "3".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            trailing_target.request.command,
+            control::ControlCommand::SendText {
+                target: Some(3),
+                text: "hi".into(),
+            }
+        );
+        assert!(
+            parse_cli_args(vec!["send-text".into(), "one".into(), "two".into()]).is_err(),
+            "send-text takes one block of text, not several"
         );
 
         let ParsedCli::Control(send_keys_dash) = parse_cli_args(vec![

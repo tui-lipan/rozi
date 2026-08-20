@@ -171,5 +171,18 @@ surprising partial form. In an `extension.toml` the same errors invalidate the w
 matching how a bad command or service is treated there — check it with
 `rozi check-extension .` before installing.
 
-To see what Rozi currently makes of a pane, `rozi list-panes` reports each pane's reported status,
-and the Activity sidebar shows the resolved label and state.
+To see what Rozi currently makes of a pane, `rozi list-panes` reports the matched definition in
+`agent` and detection's own reading in `agent_state`, alongside the pane's self-reported status. The
+Activity sidebar shows the same resolved label and state.
+
+Writing a rule from memory does not work: a rule is a claim about a program's chrome, and only that
+program can settle it. Get the tool into the state you care about and read the screen it drew:
+
+```bash
+rozi capture-pane --target 3
+```
+
+That is exactly the text and title the rules run against. The built-in definitions are held to
+captured screens under [`tests/fixtures/agents/`](../tests/fixtures/agents/), and
+`scripts/capture-agents.sh` collects them for every agent installed on the machine - each one run
+through working, blocked, and idle, with detection's current reading recorded beside every screen.

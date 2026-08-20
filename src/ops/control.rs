@@ -26,6 +26,12 @@ struct PaneInfo {
     status: String,
     reported_status: Option<String>,
     status_reason: Option<String>,
+    /// The agent detection recognized behind this pane, by definition id, and what it reads the
+    /// pane as doing. Both absent when no definition matched. This is detection's own answer, not
+    /// the pane's `reported_status` - a script capturing screens to test the rules against needs to
+    /// see what the rules currently say about the screen it just took.
+    agent: Option<String>,
+    agent_state: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -39,6 +45,9 @@ pub(crate) struct NewPaneAccepted {
 struct PaneCapture {
     id: PaneId,
     text: String,
+    /// The terminal title, which several detection rules match instead of the screen. A capture
+    /// without it cannot stand in for what the detector saw.
+    title: Option<String>,
 }
 
 pub(crate) fn handle_control_request(
@@ -202,46 +211,14 @@ fn runtime_metrics(ctx: &Context<AppRoot>) -> ControlResponse {
     ))
 }
 
-fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
-    let mut panes = Vec::new();
-    for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
-        for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
-            panes.push(PaneInfo {
-                id: pane.id,
-                title: pane.display_title(None),
-                workspace: workspace_index + 1,
-                command: pane
-                    .identity
-                    .launch
-                    .as_ref()
-                    .and_then(crate::pane_launch::PaneLaunch::shell_command)
-                    .map(str::to_string),
-                argv: pane
-                    .identity
-                    .launch
-                    .as_ref()
-                    .and_then(crate::pane_launch::PaneLaunch::argv)
-                    .map(<[String]>::to_vec),
-                cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
-                status: pane.terminal.status_text(),
-                reported_status: pane
-                    .terminal
-                    .reported_status
-                    .as_ref()
-                    .map(|status| status.value.clone()),
-                status_reason: pane
-                    .terminal
-                    .reported_status
-                    .as_ref()
-                    .and_then(|status| status.reason.clone()),
-            });
-        }
-    }
-    for pane in ctx.state.scratch.panes.iter().filter(|pane| !pane.closing) {
-        panes.push(PaneInfo {
+impl PaneInfo {
+    /// Scratch panes report workspace `0`; a tiled pane reports its one-based workspace number.
+    fn new(pane: &crate::state::Pane, workspace: usize) -> Self {
+        let detected = pane.terminal.detected_agent.as_ref();
+        Self {
             id: pane.id,
             title: pane.display_title(None),
-            workspace: 0,
+            workspace,
             command: pane
                 .identity
                 .launch
@@ -266,7 +243,23 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
                 .reported_status
                 .as_ref()
                 .and_then(|status| status.reason.clone()),
-        });
+            agent: detected.map(|detected| detected.agent.id.clone()),
+            agent_state: detected.map(|detected| {
+                crate::session::protocol::detected_agent_status(detected).to_string()
+            }),
+        }
+    }
+}
+
+fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
+    let mut panes = Vec::new();
+    for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
+        for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
+            panes.push(PaneInfo::new(pane, workspace_index + 1));
+        }
+    }
+    for pane in ctx.state.scratch.panes.iter().filter(|pane| !pane.closing) {
+        panes.push(PaneInfo::new(pane, 0));
     }
     ControlResponse::ok(panes)
 }
@@ -527,7 +520,8 @@ fn capture_pane(
             }
         }
     };
-    ControlResponse::ok(PaneCapture { id, text })
+    let title = pane.terminal.title();
+    ControlResponse::ok(PaneCapture { id, text, title })
 }
 
 /// Raise a toast on behalf of a script.

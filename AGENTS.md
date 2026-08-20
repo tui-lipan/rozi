@@ -19,6 +19,9 @@ server-backed named sessions for detach/reattach workflows.
   to the sidebar in `docs/.vitepress/config.ts`. Links that leave `docs/` are rewritten to GitHub
   URLs at build time, so keep writing them the way GitHub wants. See `docs/.vitepress/README.md`.
 - `examples/` - Example profiles and runnable/user-copyable configuration snippets.
+- `scripts/` - Developer tooling that drives a running Rozi rather than building it, such as
+  `capture-agents.sh`, which puts every installed agent CLI through one scenario and keeps the
+  screens for `tests/fixtures/agents/`.
 - `src/` - Rust application source, grouped by runtime, layout, panes, input, and features.
 - `tests/` - Integration and smoke tests outside the main binary crate.
 - `target/` - Cargo build output; generated and ignored.
@@ -358,6 +361,10 @@ under Code Style.
   one with `rozi capture-pane` and read it before committing, because it is a real screen. Adding a
   built-in agent means adding a screen, not just a table - `every_shipped_agent_has_screen_evidence`
   fails otherwise, and the list excusing an agent from the corpus is where the gap is admitted.
+  `scripts/capture-agents.sh` collects those screens: it runs each installed agent through
+  working/blocked/idle in a throwaway directory and writes candidates to `target/agent-captures/`,
+  noting what detection currently reads each screen as. `--list` alone reports which agents are
+  installed and which already have evidence.
 - To *look* at a screen, capture the real binary headlessly rather than writing a snapshot test with
   no assertion. The rule above forbids an in-process test mutating the environment; a child process
   is a different thing entirely, and isolating one is just its env:

@@ -47,6 +47,9 @@ rozi send-keys C-c
 rozi send-keys 'echo hi' Enter
 rozi send-keys -l C-c
 rozi send-keys -- -n hello
+rozi send-text --target 3 'ls
+'
+rozi send-keys --target 3 Enter
 rozi split 'claude --agent helper'
 rozi split 'cargo watch' --focus
 rozi new-pane --cwd '/repo with spaces' --title Tests --keep-open 'cargo test' --focus
@@ -81,13 +84,23 @@ those arguments and no shell parsing. Because `--argv` consumes the remaining to
 options before it.
 
 `list-panes` reports a shell launch in `command` and a direct launch in `argv`; the other field is
-`null`.
+`null`. `agent` and `agent_state` carry [agent detection](agents.md)'s own reading of the pane - the
+matched definition's id, and whether its rules see the pane as `working`, `blocked`, or `idle`. Both
+are `null` when no definition matched. This is detection's answer about the screen, not the pane's
+self-reported `reported_status`.
+
+`capture-pane` returns the pane's `text` and its terminal `title`. Detection rules match both, so a
+capture kept as evidence needs the title with it.
 
 `split`/`new-pane` leaves focus alone. The control endpoint is an automation surface, and a pane
 spawned from a script or an agent must not move focus, and the active workspace, away from whoever
 is typing. Pass `--focus` (or `"focus": true` in JSON) to move to the new pane. This overrides the
 `focus` field of a matched `[[rules]]` entry; the rule still decides workspace, float, position, and
 fullscreen.
+
+`send-text`/`send-keys` reach the source pane, or the focused pane when there is none. `--target
+<PANE_ID>` addresses another pane instead, which is what a script driving a pane it spawned needs:
+run from inside a pane, `ROZI_PANE` would otherwise make it type into itself.
 
 `send-text`/`send-keys` targeting a pane whose PTY is still starting are queued and written as
 type-ahead once it is ready, matching what typing into a freshly split pane already does. Input to a

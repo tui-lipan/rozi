@@ -106,6 +106,28 @@ fn open_cli_stream(
     child
 }
 
+struct CleanupBackend(TestBackend<AppRoot>);
+
+impl std::ops::Deref for CleanupBackend {
+    type Target = TestBackend<AppRoot>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for CleanupBackend {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for CleanupBackend {
+    fn drop(&mut self) {
+        let _ = self.0.dispatch(Msg::RunAction(rozi::input::Action::Quit));
+    }
+}
+
 #[test]
 fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
     rozi::test_support::isolate_user_dirs();
@@ -115,7 +137,8 @@ fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
             let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
             write_manifest(&root, "a");
 
-            let mut backend = TestBackend::new(rozi::test_support::configured_app());
+            let mut backend =
+                CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
             if !backend
                 .state()
                 .config

@@ -282,10 +282,13 @@ pub struct AgentScratch {
     pub read: Option<(std::sync::Arc<str>, Option<String>)>,
     /// The last state a sweep positively observed, retained while later sweeps see no evidence.
     pub hold: Option<AgentHold>,
-    /// When this pane last looked blocked, so a blinking attention signal reads as one state
-    /// rather than as a state change twice a second. See
-    /// [`BLOCKED_BLINK_GRACE`](super::runtime::BLOCKED_BLINK_GRACE).
-    pub blocked_at: Option<std::time::Instant>,
+    /// The last state loud enough to hold, and when it was last positively seen, so neither a
+    /// blinking attention signal nor a status line caught mid-redraw reads as a state change. See
+    /// [`STATE_SETTLE_GRACE`](super::runtime::STATE_SETTLE_GRACE).
+    pub settled: Option<(
+        crate::session::protocol::DetectedAgentState,
+        std::time::Instant,
+    )>,
 }
 
 /// A positively observed agent state, held across sweeps that observe nothing.

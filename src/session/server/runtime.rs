@@ -36,18 +36,23 @@ pub(super) const AGENT_DETECT_REFRESH: Duration = Duration::from_secs(2);
 /// that it is not worth a finer trigger.
 pub(super) const GIT_REFRESH: Duration = Duration::from_secs(2);
 
-/// How long a blocked reading survives evidence that says otherwise.
+/// How long a louder reading survives evidence that says the pane has gone quiet.
 ///
-/// An agent asking for attention may *blink* the fact. Grok alternates `⚠ Action Required` into
-/// its terminal title and out again on a ~1.1 s cycle while it waits, which read literally is not
-/// an agent that needs you and then does not: it is one agent, waiting, drawing a flashing sign.
-/// Taken frame by frame it produced two state changes a second, so the badge flickered and every
-/// attention edge behind it fired again on each cycle.
+/// Two different things make a settled pane look like a flapping one, and neither is a state
+/// change. An agent asking for attention may *blink* the fact: Grok alternates `⚠ Action Required`
+/// into its terminal title and out again on a ~1.1 s cycle while it waits, which read literally is
+/// not an agent that needs you and then does not - it is one agent, waiting, drawing a flashing
+/// sign. And an agent that is working redraws its status line constantly, so a poll can land in the
+/// gap between the erase and the rewrite and see a screen with no spinner and no interrupt hint on
+/// it. Codex and Cursor both do this often enough to catch within a minute of sampling.
 ///
-/// Long enough to bridge the dark half of a blink several times over, short enough that answering
-/// a prompt still clears within a beat. The cost is one-directional by design: a run that stops
-/// being blocked reports it a moment late, which is worth far more than a state that oscillates.
-pub(super) const BLOCKED_BLINK_GRACE: Duration = Duration::from_secs(2);
+/// Either way one frame is not evidence that a run ended, and treating it as evidence is expensive:
+/// the run clock restarts from zero and the "finished" pulse arms, both of which a person sees.
+///
+/// Long enough to bridge the dark half of a blink several times over, short enough that answering a
+/// prompt still clears within a beat. The cost is one-directional by design: a run that really has
+/// stopped reports it a moment late, which is worth far more than a state that oscillates.
+pub(super) const STATE_SETTLE_GRACE: Duration = Duration::from_secs(2);
 
 /// How long a held agent state survives with no confirming evidence.
 ///
@@ -850,37 +855,49 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
     pane.agent.read = Some((screen, title));
     let now = Instant::now();
     let resolved = resolve_detected_agent(Some(observed), &mut pane.agent.hold, now);
-    settle_blocked_blink(resolved, &mut pane.agent.blocked_at, now)
+    settle_state_flicker(resolved, &mut pane.agent.settled, now)
 }
 
-/// Keep a blocked reading steady across the dark half of a blinking attention signal.
+/// How loud a state is, which is the only ordering this settle needs: a pane can go quiet in a
+/// single frame for reasons that have nothing to do with the agent, but it never *becomes* blocked
+/// or starts working by accident.
+fn attention_rank(state: crate::session::protocol::DetectedAgentState) -> u8 {
+    use crate::session::protocol::DetectedAgentState;
+
+    match state {
+        DetectedAgentState::Blocked => 2,
+        DetectedAgentState::Working => 1,
+        _ => 0,
+    }
+}
+
+/// Keep a reading steady across a single frame that says the pane went quiet.
 ///
-/// Pure in `now`, and deliberately narrow: only blocked is held, and only against evidence
-/// gathered within [`BLOCKED_BLINK_GRACE`]. A pane that has genuinely moved on says so once the
-/// grace runs out, and every other transition is immediate.
-fn settle_blocked_blink(
+/// Pure in `now`, and one-directional: a state only ever holds against a *quieter* one, and only
+/// for [`STATE_SETTLE_GRACE`] measured from the last frame that positively showed it. Getting
+/// louder - starting work, or stopping to ask - is always immediate, and a pane that has genuinely
+/// finished says so once the grace runs out.
+fn settle_state_flicker(
     resolved: Option<DetectedAgent>,
-    blocked_at: &mut Option<Instant>,
+    settled: &mut Option<(crate::session::protocol::DetectedAgentState, Instant)>,
     now: Instant,
 ) -> Option<DetectedAgent> {
     let Some(detected) = resolved else {
-        *blocked_at = None;
+        *settled = None;
         return None;
     };
-    if detected.state == crate::session::protocol::DetectedAgentState::Blocked {
-        *blocked_at = Some(now);
-        return Some(detected);
-    }
-    match blocked_at {
-        Some(at) if now.duration_since(*at) < BLOCKED_BLINK_GRACE => Some(DetectedAgent {
+    if let Some((held, since)) = *settled
+        && attention_rank(detected.state) < attention_rank(held)
+        && now.duration_since(since) < STATE_SETTLE_GRACE
+    {
+        return Some(DetectedAgent {
             agent: detected.agent,
-            state: crate::session::protocol::DetectedAgentState::Blocked,
-        }),
-        _ => {
-            *blocked_at = None;
-            Some(detected)
-        }
+            state: held,
+        });
     }
+    // Quiet is the resting state, not something to hold anything against later.
+    *settled = (attention_rank(detected.state) > 0).then_some((detected.state, now));
+    Some(detected)
 }
 
 /// Resolve the pane's displayable cwd per [`PaneCwdSource`]'s precedence order: a valid local or
@@ -1547,25 +1564,21 @@ mod tests {
             })
         };
         let start = Instant::now();
-        let mut blocked_at = None;
+        let mut settled = None;
         let at = |offset_ms: u64| start + Duration::from_millis(offset_ms);
 
         // Half a cycle on, half off, repeatedly: every frame must still read blocked.
         for cycle in 0..5 {
             let on = cycle * 1100;
             assert_eq!(
-                settle_blocked_blink(
-                    detected(DetectedAgentState::Blocked),
-                    &mut blocked_at,
-                    at(on)
-                )
-                .map(|agent| agent.state),
+                settle_state_flicker(detected(DetectedAgentState::Blocked), &mut settled, at(on))
+                    .map(|agent| agent.state),
                 Some(DetectedAgentState::Blocked)
             );
             assert_eq!(
-                settle_blocked_blink(
+                settle_state_flicker(
                     detected(DetectedAgentState::Idle),
-                    &mut blocked_at,
+                    &mut settled,
                     at(on + 550)
                 )
                 .map(|agent| agent.state),
@@ -1575,18 +1588,65 @@ mod tests {
         }
 
         // Once the sign really is gone, the pane says so - a beat late, and once.
-        let quiet = at(5 * 1100 + BLOCKED_BLINK_GRACE.as_millis() as u64 + 1);
+        let quiet = at(5 * 1100 + STATE_SETTLE_GRACE.as_millis() as u64 + 1);
         assert_eq!(
-            settle_blocked_blink(detected(DetectedAgentState::Idle), &mut blocked_at, quiet)
+            settle_state_flicker(detected(DetectedAgentState::Idle), &mut settled, quiet)
                 .map(|agent| agent.state),
             Some(DetectedAgentState::Idle)
         );
-        assert!(blocked_at.is_none(), "an expired grace is dropped");
+        assert!(settled.is_none(), "an expired grace is dropped");
 
         // Losing the agent entirely carries nothing forward.
-        blocked_at = Some(start);
-        assert!(settle_blocked_blink(None, &mut blocked_at, start).is_none());
-        assert!(blocked_at.is_none());
+        settled = Some((DetectedAgentState::Blocked, start));
+        assert!(settle_state_flicker(None, &mut settled, start).is_none());
+        assert!(settled.is_none());
+    }
+
+    /// An agent redrawing its status line erases it before writing the new one, so a poll can land
+    /// on a screen carrying neither a spinner nor an interrupt hint. Codex and Cursor were both
+    /// caught doing it inside a minute of sampling. One such frame used to end the run outright:
+    /// the clock restarted from zero and the finished pulse armed, on a pane that never stopped.
+    #[test]
+    fn a_status_line_caught_mid_redraw_does_not_end_the_run() {
+        use crate::session::protocol::{AgentIdentity, DetectedAgentState};
+
+        let agent: std::sync::Arc<AgentIdentity> = AgentIdentity::new("codex", "Codex").into();
+        let detected = |state| {
+            Some(DetectedAgent {
+                agent: agent.clone(),
+                state,
+            })
+        };
+        let start = Instant::now();
+        let mut settled = None;
+        let at = |offset_ms: u64| start + Duration::from_millis(offset_ms);
+
+        assert_eq!(
+            settle_state_flicker(detected(DetectedAgentState::Working), &mut settled, at(0))
+                .map(|agent| agent.state),
+            Some(DetectedAgentState::Working)
+        );
+        assert_eq!(
+            settle_state_flicker(detected(DetectedAgentState::Idle), &mut settled, at(250))
+                .map(|agent| agent.state),
+            Some(DetectedAgentState::Working),
+            "one torn frame is not a finished run"
+        );
+
+        // Stopping to ask is louder than working, so it is never delayed by the hold.
+        assert_eq!(
+            settle_state_flicker(detected(DetectedAgentState::Blocked), &mut settled, at(500))
+                .map(|agent| agent.state),
+            Some(DetectedAgentState::Blocked)
+        );
+
+        // And a run that really ends still ends, a beat later.
+        let done = at(500 + STATE_SETTLE_GRACE.as_millis() as u64 + 1);
+        assert_eq!(
+            settle_state_flicker(detected(DetectedAgentState::Idle), &mut settled, done)
+                .map(|agent| agent.state),
+            Some(DetectedAgentState::Idle)
+        );
     }
 
     #[test]

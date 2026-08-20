@@ -263,15 +263,23 @@ pub struct AgentProbe {
 pub struct AgentScratch {
     /// Foreground identity at the last sweep, so an unchanged pane can skip the next one.
     ///
-    /// Detection sweeps every process on the host to find this pane's process-group members, which
-    /// at the 250 ms poll rate cost ~2% of a core per pane while nothing was happening. The
-    /// foreground program and command phase are both already computed cheaply, so an unchanged
-    /// pair means the sweep would rediscover exactly what is cached. See
+    /// Naming the agent sweeps every process on the host to find this pane's process-group
+    /// members, which at the 250 ms poll rate cost ~2% of a core per pane while nothing was
+    /// happening. The foreground program and command phase are both already computed cheaply, so
+    /// an unchanged pair means the sweep would rediscover exactly what is cached. See
     /// [`AGENT_DETECT_REFRESH`](super::runtime::AGENT_DETECT_REFRESH) for the safety net that
     /// still catches a wrapped process appearing without either changing.
     pub probe: Option<AgentProbe>,
-    /// When detection last actually swept, for the periodic refresh.
+    /// When the process sweep last actually ran, for the periodic refresh.
     pub detected_at: Option<std::time::Instant>,
+    /// The agent that sweep named, held so the pane's *state* can be re-read on every poll without
+    /// repeating the walk that found it. Only the identity is expensive; see
+    /// [`read_agent_state`](super::runtime::read_agent_state).
+    pub identity: Option<String>,
+    /// The screen and title the last state read looked at. Text that has not moved cannot say
+    /// anything new, so a quiet pane costs a pointer comparison instead of a rule pass - and the
+    /// held state's age keeps measuring from real evidence.
+    pub read: Option<(std::sync::Arc<str>, Option<String>)>,
     /// The last state a sweep positively observed, retained while later sweeps see no evidence.
     pub hold: Option<AgentHold>,
 }

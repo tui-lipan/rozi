@@ -35,13 +35,28 @@ pub(crate) struct AgentObservation {
     pub state: Option<DetectedAgentState>,
 }
 
-pub(crate) fn detect(
-    catalog: &AgentCatalog,
+/// Which agent is running behind a pane.
+///
+/// The expensive half of detection: naming the program means walking the host's process table for
+/// this pane's process-group members, so callers cache the answer rather than asking every poll.
+pub(crate) fn identify<'a>(
+    catalog: &'a AgentCatalog,
     job: Option<&ForegroundJob>,
+) -> Option<&'a AgentDefinition> {
+    identify_job(catalog, job?)
+}
+
+/// What an already-identified agent is doing right now.
+///
+/// The cheap half: a lowercase and a handful of patterns over text the pane already keeps
+/// rendered, with no process table involved. Reading a run's *state* therefore costs nothing like
+/// finding out *whose* run it is, which is why the two are separately paced.
+pub(crate) fn observe(
+    catalog: &AgentCatalog,
+    definition: &AgentDefinition,
     screen: &str,
     title: &str,
-) -> Option<AgentObservation> {
-    let definition = identify_job(catalog, job?)?;
+) -> AgentObservation {
     let state = evaluate(
         definition,
         catalog.base(),
@@ -50,10 +65,10 @@ pub(crate) fn detect(
             title: &title.to_lowercase(),
         },
     );
-    Some(AgentObservation {
+    AgentObservation {
         agent: definition.identity.clone(),
         state,
-    })
+    }
 }
 
 /// Whether a Claude Code CLI is on `PATH`, using the same name vocabulary as pane detection.
@@ -100,6 +115,17 @@ mod tests {
     fn identify_group(job: &ForegroundJob) -> Option<String> {
         let catalog = catalog();
         identify_job(&catalog, job).map(|definition| definition.id().to_string())
+    }
+
+    /// Both halves of detection in one call, the way a pane's first poll runs them.
+    fn detect(
+        catalog: &AgentCatalog,
+        job: Option<&ForegroundJob>,
+        screen: &str,
+        title: &str,
+    ) -> Option<AgentObservation> {
+        let definition = super::identify(catalog, job)?;
+        Some(observe(catalog, definition, screen, title))
     }
 
     /// The state the built-in definition for `id` reads out of one screen and title.

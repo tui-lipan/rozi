@@ -20,10 +20,13 @@ use crate::session::protocol::{
 
 const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-/// How often agent detection re-sweeps even when the foreground program and command phase are
+/// How often the process sweep re-runs even when the foreground program and command phase are
 /// unchanged, so a wrapped process that appears inside an unchanged foreground (a package runner
-/// launching an agent, say) is still noticed. Detection is far too expensive to run on every
-/// [`RUNTIME_POLL_INTERVAL`]; see `AgentScratch::probe`.
+/// launching an agent, say) is still noticed. Walking the process table is far too expensive to do
+/// on every [`RUNTIME_POLL_INTERVAL`]; see `AgentScratch::probe`.
+///
+/// This paces *who* the agent is, never what it is doing: [`read_agent_state`] runs every poll, so
+/// a run's elapsed clock starts within [`RUNTIME_POLL_INTERVAL`] of the screen saying so.
 pub(super) const AGENT_DETECT_REFRESH: Duration = Duration::from_secs(2);
 
 /// How often a pane re-reads its project root and branch from disk. Both change without the cwd
@@ -381,17 +384,20 @@ fn compute_runtime_state(
             (None, Vec::new())
         }
     };
-    // Agent detection sweeps every process on the host (it has to, to find this pane's
-    // process-group members), so running it on every poll cost ~2% of a core per idle pane. The
-    // foreground program and command phase above are already known and change whenever the pane
-    // starts running something new, so an unchanged pair means the sweep would rediscover the
+    // Naming the agent behind a pane sweeps every process on the host (it has to, to find this
+    // pane's process-group members), so running it on every poll cost ~2% of a core per idle pane.
+    // The foreground program and command phase above are already known and change whenever the
+    // pane starts running something new, so an unchanged pair means the sweep would rediscover the
     // cached answer. AGENT_DETECT_REFRESH still re-sweeps periodically, catching a wrapped process
-    // that appears inside an unchanged foreground program.
+    // that appears inside an unchanged foreground program. What that named agent is *doing* is not
+    // gated with it: that comes off the pane's own screen, and waiting for the next sweep to read
+    // it would start every run's clock up to AGENT_DETECT_REFRESH late.
     // A pane whose program enumerates its own sessions is authoritative. Screen detection can only
     // ever see the session in view, so scraping such a pane would answer a question the publisher
     // has already answered better - and would answer it about the wrong session.
     let detected_agent = if !pane.runtime.rows.is_empty() {
         pane.agent.hold = None;
+        pane.agent.read = None;
         let aggregate = crate::session::protocol::aggregate_row_state(&pane.runtime.rows);
         // If an agent kind was previously detected, update its aggregate state.
         // If nothing was detected, detected_agent remains None.
@@ -421,14 +427,17 @@ fn compute_runtime_state(
         if stale {
             pane.agent.probe = Some(probe);
             pane.agent.detected_at = Some(Instant::now());
-            let observed =
-                detect_pane_agent(pane, agents, inspector, foreground_program.as_deref(), scan);
-            resolve_detected_agent(observed, &mut pane.agent.hold, Instant::now())
-        } else {
-            // The cached value is already resolved, and a skipped sweep observed nothing, so it
-            // must not refresh the hold's age - the cap measures from real evidence only.
-            pane.runtime.detected_agent.clone()
+            let identity =
+                identify_pane_agent(pane, agents, inspector, foreground_program.as_deref(), scan)
+                    .map(|definition| definition.id().to_string());
+            if identity != pane.agent.identity {
+                // A different agent's rules read a different screen; nothing about the last read
+                // carries over.
+                pane.agent.read = None;
+                pane.agent.identity = identity;
+            }
         }
+        read_agent_state(pane, agents)
     } else {
         pane.runtime.detected_agent.clone()
     };
@@ -737,13 +746,16 @@ fn resolve_detected_agent(
     }
 }
 
-fn detect_pane_agent(
-    pane: &mut ServerPane,
-    agents: &AgentCatalog,
+/// Name the agent behind a pane, walking the process table to do it.
+///
+/// The costly half of detection, and the only half [`AGENT_DETECT_REFRESH`] paces.
+fn identify_pane_agent<'a>(
+    pane: &ServerPane,
+    agents: &'a AgentCatalog,
     inspector: &impl ProcessInspector,
     foreground_program: Option<&str>,
     scan: &mut LazyProcessScan,
-) -> Option<crate::agent_detection::AgentObservation> {
+) -> Option<&'a crate::agent_detection::AgentDefinition> {
     let mut foreground_job = pane
         .pty
         .as_ref()
@@ -786,9 +798,44 @@ fn detect_pane_agent(
             }],
         });
     }
+    crate::agent_detection::identify(agents, foreground_job.as_ref())
+}
+
+/// Re-read the state of the agent the last sweep named, from this pane's own screen and title.
+///
+/// Runs on every poll, which is the point: a run that starts between two sweeps is on screen
+/// immediately, and its clock starts when it started rather than whenever detection next got
+/// around to looking. The pass is a lowercase and a handful of patterns over text the terminal
+/// already keeps rendered, and it is skipped outright while that text has not moved - so a pane
+/// with no agent, or an agent sitting still, pays nothing for the finer cadence.
+fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<DetectedAgent> {
+    let Some(definition) = pane
+        .agent
+        .identity
+        .as_deref()
+        .and_then(|id| agents.by_id(id))
+    else {
+        pane.agent.hold = None;
+        pane.agent.read = None;
+        return None;
+    };
+    let title = pane.effective_title();
     let screen = pane.screen_without_change().snapshot();
-    let title = pane.effective_title().unwrap_or_default();
-    crate::agent_detection::detect(agents, foreground_job.as_ref(), screen.as_ref(), &title)
+    // Unchanged text is not new evidence, so reusing the resolved answer also keeps the hold's age
+    // measuring from the last real observation.
+    if pane.agent.read.as_ref().is_some_and(|(seen, seen_title)| {
+        std::sync::Arc::ptr_eq(seen, &screen) && *seen_title == title
+    }) {
+        return pane.runtime.detected_agent.clone();
+    }
+    let observed = crate::agent_detection::observe(
+        agents,
+        definition,
+        screen.as_ref(),
+        title.as_deref().unwrap_or_default(),
+    );
+    pane.agent.read = Some((screen, title));
+    resolve_detected_agent(Some(observed), &mut pane.agent.hold, Instant::now())
 }
 
 /// Resolve the pane's displayable cwd per [`PaneCwdSource`]'s precedence order: a valid local or
@@ -994,12 +1041,55 @@ mod tests {
         ));
     }
 
-    /// Detection walks every process on the host, so a poll where nothing changed must skip it —
-    /// that walk, repeated per pane at the poll rate, was ~2% of a core per idle pane.
+    /// A run's clock starts when the pane says the run started, not when the process sweep next
+    /// gets around to looking — so the state read runs every poll, off the screen alone, while the
+    /// sweep that named the agent stays on its own slower cadence.
+    #[test]
+    fn a_run_starting_between_sweeps_is_seen_on_the_next_poll() {
+        let mut pane = make_pane();
+        let mut scan = LazyProcessScan::default();
+        let state = |pane: &ServerPane| {
+            pane.runtime
+                .detected_agent
+                .as_ref()
+                .map(|agent| agent.state)
+        };
+
+        pane.terminal
+            .process_bytes(b"\x1b]133;C;rozi_exe=claude\x07waiting for you\r\n");
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        let swept = pane
+            .agent
+            .detected_at
+            .expect("the first poll names the agent");
+        assert_eq!(
+            state(&pane),
+            Some(crate::session::protocol::DetectedAgentState::Idle),
+            "a pane drawing no run evidence is idle"
+        );
+
+        pane.terminal.process_bytes(b"esc to interrupt\r\n");
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        assert_eq!(
+            pane.agent.detected_at,
+            Some(swept),
+            "reading the screen must not cost another process sweep"
+        );
+        assert_eq!(
+            state(&pane),
+            Some(crate::session::protocol::DetectedAgentState::Working),
+            "the screen already says the run started"
+        );
+    }
+
+    /// Naming the agent walks every process on the host, so a poll where nothing changed must skip
+    /// it — that walk, repeated per pane at the poll rate, was ~2% of a core per idle pane.
     ///
-    /// `AgentScratch::detected_at` only advances when detection actually runs, so it is the observable
-    /// for the gate. (Asserting on `LazyProcessScan::captured` would pass vacuously here: the test
-    /// pane has no PTY, so the walk is unreachable either way.)
+    /// `AgentScratch::detected_at` only advances when the sweep actually runs, so it is the
+    /// observable for the gate. (Asserting on `LazyProcessScan::captured` would pass vacuously
+    /// here: the test pane has no PTY, so the walk is unreachable either way.)
     #[test]
     fn an_unchanged_pane_skips_detection() {
         let mut pane = make_pane();

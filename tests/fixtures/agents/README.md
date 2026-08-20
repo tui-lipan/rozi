@@ -8,6 +8,17 @@ fails when an agent ships rules with no evidence behind them.
 The point is that a detection rule is a claim about somebody else's UI. Nothing in this repository
 can check that claim - only a capture of the real program can.
 
+Which screens are still missing is derived, not written down:
+
+```bash
+python3 .agents/skills/agent-screens/scripts/gaps.py --ready
+```
+
+The `agent-screens` skill in `.agents/skills/` carries the whole workflow - the gap report, a lab
+that launches the installed agents, and a capture step that records what detection reads. Fixtures
+whose header credits `scripts/capture-agents.sh` predate it; that script drove the agents itself,
+which is exactly what the skill replaced.
+
 ## Capturing one
 
 Run the agent under Rozi, get it into the state you want, and ask the pane what it looks like:

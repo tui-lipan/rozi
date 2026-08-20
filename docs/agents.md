@@ -190,9 +190,9 @@ rozi capture-pane --target 3
 ```
 
 That is exactly the text and title the rules run against. The built-in definitions are held to
-captured screens under [`tests/fixtures/agents/`](../tests/fixtures/agents/), and
-`scripts/capture-agents.sh` collects them for every agent installed on the machine - each one run
-through working, blocked, and idle, with detection's current reading recorded beside every screen.
+captured screens under [`tests/fixtures/agents/`](../tests/fixtures/agents/). Collecting one is a
+person putting the agent into a state and an agent reading what it drew; the `agent-screens` skill
+in `.agents/skills/` carries that workflow, including which screens are still missing.
 
 Detection runs in the **session server**, so a rebuilt binary changes nothing until that server
 restarts. A long-lived session keeps reading panes with the rules it started with, which is worth

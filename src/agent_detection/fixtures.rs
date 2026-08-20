@@ -30,6 +30,9 @@ const EVIDENCE_IN_UNIT_TESTS: &[&str] = &["opencode"];
 /// The list is asserted to be exactly the set of agents with no fixture, so it cannot quietly rot
 /// into a list of agents that were covered years ago.
 const AWAITING_EVIDENCE: &[&str] = &[
+    // Unobtainable rather than uncaptured: Gemini CLI no longer signs in for individuals, and
+    // refuses with a notice pointing at Antigravity, which Rozi detects separately. The definition
+    // stays for anyone still running an older build; nobody here can watch one work.
     "gemini",
     "devin",
     "omp",
@@ -39,6 +42,9 @@ const AWAITING_EVIDENCE: &[&str] = &[
     "droid",
     "amp",
     "hermes",
+    // Installed, and still uncaptured for a reason worth writing down: launched into a pane it drew
+    // a blank screen and nothing else. Whether that is its startup or something about a spawned PTY
+    // is unknown, and one pane opened by hand would say which.
     "kilo",
     "qoder-cli",
     "aider",

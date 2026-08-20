@@ -41,3 +41,41 @@ screen = '''
 │ ↑/↓ to navigate · enter to select · esc to cancel                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────╯
 '''
+
+# Copilot gives no spinner at all - its status line spells the state out, and the interrupt hint
+# rides the same line. Both halves are on the last line of the screen, under a boxed transcript
+# whose right-hand border and rule characters make up most of the footer.
+[[case]]
+name = "working"
+state = "working"
+title = "Explain Common Data Structures - GitHub Copilot"
+screen = '''
+   Hash table: A hash table maps keys to values using a hash function to compute      ┃
+   bucket indices, offering average-case O(1) lookup, insertion, and deletion.        ┃
+                                                                                      ┃
+   Binary sear                                                                        ┃
+                                                                                      ┃
+ ~                                                                 Session: 0 AIC used
+╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+┃
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ ○ Working · 4.0 KiB esc interrupt                                   Auto → gpt-5-mini
+'''
+
+# Finished: the whole status line is replaced by key hints. Nothing about the transcript changed,
+# which is the point - the last line is the only line that carries state.
+[[case]]
+name = "idle-after-turn"
+state = "idle"
+title = "Explain Common Data Structures - GitHub Copilot"
+screen = '''
+   tree (a compressed trie of suffixes) provides linear-time construction and pattern ┃
+   search but with higher memory overhead. Both are vital in text indexing,           ┃
+   bioinformatics, and full-text search tasks.                                        ┃
+                                                                                      ┃
+ ~                                                              Session: 0.91 AIC used
+╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+┃
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ ← open sidebar · / commands · ? help · tab next tab                 Auto → gpt-5-mini
+'''

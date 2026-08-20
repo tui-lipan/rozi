@@ -32,3 +32,107 @@ screen = '''
 
  Enter to confirm · Esc to cancel
 '''
+
+# The question tool, and the reason Claude needed no share of the question vocabulary the other
+# agents got: its chooser is drawn with the same `❯ 1.` option cursor as its approval dialogs, so
+# the rule written for one already reads the other. Worth pinning precisely because that was luck
+# rather than design - narrowing the approval regex would silently drop this screen.
+#
+# The right-hand preview panel is Claude's own; the welcome banner above the transcript is cut
+# because it carries the operator's account.
+[[case]]
+name = "asking-a-question"
+state = "blocked"
+title = "✳ Config format approach"
+screen = '''
+❯ Use your question tool to ask me which of two approaches I'd prefer for a config
+  format. (it's a just tool test)
+
+────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Config format
+
+Which config format approach would you prefer?
+
+❯ 1. TOML                         ┌──────────────────────────────────────────┐
+  2. YAML                         │ config.toml                              │
+                                  │                                          │
+                                  │ [server]                                 │
+                                  │ host = "0.0.0.0"                         │
+                                  │ port = 8080                              │
+                                  └──────────────────────────────────────────┘
+
+                                  Notes: press n to add notes
+
+────────────────────────────────────────────────────────────────────────────────────────
+  Chat about this
+
+Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel
+'''
+
+# A real approval prompt, from a read outside the working directory. The equivalent screens in
+# `mod.rs` were written by hand; this one was watched. Note that the transcript above it already
+# says `Reading ~/Projects/rozi/AGENTS.md` as though the read had happened - the agent announces the
+# tool call before the gate, so nothing above the dialog distinguishes a pane that is waiting from
+# one that is working.
+[[case]]
+name = "blocked-on-approval"
+state = "blocked"
+title = "✳ AGENTS.md"
+screen = '''
+❯ try reading ~/Projects/rozi/AGENTS.md
+
+● Reading ~/Projects/rozi/AGENTS.md
+  ⎿  ~/Projects/rozi/AGENTS.md
+
+────────────────────────────────────────────────────────────────────────────────────────
+ Read file
+
+  Read(~/Projects/rozi/AGENTS.md)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, allow reading from ~/Projects/rozi during this session
+   3. No
+
+ Esc to cancel · Tab to amend
+'''
+
+# Claude working, from a long answer. Two things here that a rule could have been written to rely on
+# and must not be: the title animates `◑`/`✳`, which are not the braille frames the shared title
+# spinner rule reads, and the composer line begins `❯` followed by a non-breaking space. What
+# actually carries the state is the last line's `esc to interrupt`.
+[[case]]
+name = "working"
+state = "working"
+title = "◑ 20 common data structures"
+screen = '''
+  Red-Black Tree — A self-balancing binary search tree using color properties (red or
+  black) on nodes to maintain approximate balance with fewer rotations than AVL trees.
+  Red-black trees guarantee O(log n) search, insertion, and deletion and are more
+  flexible than AVL trees for insertion-heavy scenarios. They're used in many standard
+  ❯ again
+─────────────────────────────────────────────────────────────────────────────────────────
+❯ Press up to edit queued messages
+─────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · esc to interrupt · ← for agents
+'''
+
+# Finished. The interrupt hint becomes `? for shortcuts`, and the run's own summary line appears.
+# Kept as the negative half of the pair: the transcript still holds an answer full of prose, and
+# the `❯` composer is still drawn, so nothing above the last line has changed shape.
+[[case]]
+name = "idle-after-turn"
+state = "idle"
+title = "✳ 20 common data structures"
+screen = '''
+  Segment Tree — A binary tree where each node aggregates information (sum, min, max)
+  over a range, enabling O(log n) range queries and point updates. Segment trees solve
+  dynamic range problems efficiently; for a range of n elements, a segment tree uses O(n)
+  space and answers queries in O(log n). They're powerful but require careful
+  implementation to handle edge cases and lazy propagation for range updates.
+✻ Sautéed for 24s
+─────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents
+'''

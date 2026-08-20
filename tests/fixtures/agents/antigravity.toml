@@ -26,3 +26,41 @@ Question 1/1: Which programming language do you enjoy working with the most?
   ↑/↓ Navigate · enter Select · esc Skip
 esc to cancel                                          Gemini 3.7 Flash · high
 '''
+
+# A long answer streaming, captured during the pass that checked whether any other agent draws its
+# spinner where Cline does. Antigravity does not: `⣷  Working...` sits six non-empty lines from the
+# bottom for the whole run, under the transcript and above the composer, and the transcript never
+# pushes it out of the footer. The title is the shell's, not the agent's, which is why the title
+# spinner rule has nothing to read here.
+[[case]]
+name = "working"
+state = "working"
+title = "user@host:~"
+screen = '''
+  ### 8. Hash Table (Hash Map)
+  An associative data structure that stores key-value pairs and provides average-
+  case O(1) time complexity for insertions, lookups, and deletions. It uses a hash
+  functio
+⣷  Working...
+▸ again
+───────────────────────────────────────────────────────────────────────────────────
+>
+───────────────────────────────────────────────────────────────────────────────────
+  Press up to edit queued messages                        Gemini 3.7 Flash · high
+'''
+
+# The same pane once the answer lands: the spinner line is gone and the footer hint changes from
+# the queued-message note to `? for shortcuts`.
+[[case]]
+name = "idle-after-turn"
+state = "idle"
+title = "user@host:~"
+screen = '''
+  Bloom filters are widely used as fast pre-filtering caches in databases,
+  distributed key-value stores (e.g., Cassandra, RocksDB), and web browsers to
+  prevent unnecessary disk or network operations.*
+───────────────────────────────────────────────────────────────────────────────────
+>
+───────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                           Gemini 3.7 Flash · high
+'''

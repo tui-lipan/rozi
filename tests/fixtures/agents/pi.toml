@@ -101,3 +101,23 @@ screen = '''
 ~/.cache/rozi-agent-lab
 ↑3.5k ↓91 R384 CH10.0% $0.008 (sub) 0.8%/500k (auto)           grok-4.5 • medium
 '''
+
+# Pi mid-answer rather than mid-tool-call, with a queued message under the transcript. Same reason
+# as Grok's long-answer case: `⠏ Working...` holds its place near the bottom however long the
+# transcript gets.
+[[case]]
+name = "working-on-a-long-answer"
+state = "working"
+title = "π - user"
+screen = '''
+ (in-order, pre-order, post-order, level-order) systematically visit every node. Without
+ extra constraints, a binary tree can become skewed and behave like a linked list;
+ balanced variants exist to keep height
+ Steering: again
+ ↳ Alt+Up to edit all queued messages
+ ⠏ Working...
+─────────────────────────────────────────────────────────────────────────────────────────
+─────────────────────────────────────────────────────────────────────────────────────────
+~
+$0.000 (sub) 0.0%/500k (auto)                                           grok-4.5 • medium
+'''

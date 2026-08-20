@@ -55,3 +55,18 @@ screen = '''
 ╰───────────────────────────────────────── Enter submit Tab next Esc dismiss ╯
  ⠏ [BUILD]  ~/.cache/rozi-agent-lab  ../gemini-3.5-flash-lite  6.0k/1.0m (0%)
 '''
+
+# Open question, and the reason there is no long-answer working case here.
+#
+# Every other agent was rechecked mid-way through a minute-long streamed answer, because a short run
+# can leave a spinner inside the footer window by luck. Maki's status line during that pass read
+# ` [BUILD] …` with no spinner in front of it, and the screen captured while detection reported
+# `working` was byte-identical to one taken fifteen seconds later that reported `idle`. Two
+# explanations fit and those two screens cannot separate them:
+#
+#   - Maki had genuinely finished, and the finish was noticed late, or
+#   - Maki drops the spinner while streaming prose and animates it only during tool calls, which is
+#     Cline's problem in a different shape.
+#
+# Settling it needs a Maki run watched from the moment it starts, sampling the screen and the
+# reported state together. See the `agent-screens` skill.

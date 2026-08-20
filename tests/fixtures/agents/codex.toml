@@ -44,3 +44,24 @@ screen = '''
     4. None of the above     Optionally, add details in notes (tab).
   tab to add notes | enter to submit answer | esc to interrupt
 '''
+
+# A turn in flight, from a `sleep 300` in the background. Two independent signals agree here, which
+# is worth keeping: the title carries a braille spinner and the status line carries an interrupt
+# hint, so Codex stays readable if either convention changes under it.
+[[case]]
+name = "working"
+state = "working"
+title = "⠼ rozi-agent-lab"
+screen = '''
+› Run bash tool to wait 300secs
+
+
+• I'll start a 300-second bash wait and keep it monitored in shorter intervals.
+
+• Working (24s • esc to interrupt) · 1 background terminal running · /ps to view · /sto…
+
+
+› Ask Codex to do anything
+
+  gpt-5.6-luna medium · ~/.cache/rozi-agent-lab
+'''

@@ -70,3 +70,31 @@ screen = '''
  │ skip                                                                     │
  └──────────────────────────────────────────────────────────────────────────┘
 '''
+
+# A turn in flight. Cursor's title turns into a summary of the task rather than carrying a spinner,
+# and its footer hint is `ctrl+c to stop` - neither of which any rule reads. What catches it is the
+# spinner at the head of the status line, two braille cells wide rather than one.
+[[case]]
+name = "working"
+state = "working"
+title = "Bash Wait Command"
+screen = '''
+  Cursor Agent
+  v2026.08.11-e8db854
+  Tip: Use /run-everything to skip all approvals.
+
+
+  Run bash tool to wait 300secs
+
+
+  $ sleep 300 27s
+    ctrl+b twice to send to background
+
+ ⠘⠣ Running  144 tokens
+ ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+  → Add a follow-up                                                     ctrl+c to stop
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  1 task
+  GPT-5.6 Sol 272K Extra High                                           Run Everything
+  ~/.cache/rozi-agent-lab
+'''

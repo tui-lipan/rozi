@@ -64,3 +64,23 @@ screen = '''
 
   1/3:select  │  Tab:next option  │  Ctrl+o:always-approve  │  Ctrl+c:cancel  │  Esc:scrollback
 '''
+
+# The same working state as above but deep into a long answer, kept because it is the evidence that
+# Grok does not share Cline's problem: `⠧ Responding… 13s` stays five non-empty lines from the
+# bottom no matter how much transcript accumulates above it, and the title spinner animates too.
+[[case]]
+name = "working-on-a-long-answer"
+state = "working"
+title = "⠸ - Responding - Twenty Common Data Structures Paragraph … - grok"
+screen = '''
+     They are a strict generalization of both stacks and queues.
+
+     7. Hash
+
+    #1 again
+    ⠧ Responding… 13s                                               18s ⇣5.29k [stop]
+  ╭─────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                               │
+  ╰─────────────────────────────────────────────────────────────── Grok 4.6 (high) ─╯
+  Enter:send now  │  Shift+Tab:mode  │  Esc:cancel  │  Ctrl+;:queue  │  Ctrl+.:
+'''

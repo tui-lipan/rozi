@@ -14,6 +14,7 @@
 #   scripts/capture-agents.sh                 # every installed agent
 #   scripts/capture-agents.sh pi codex        # just these
 #   scripts/capture-agents.sh --blocked-prompt 'Run `sudo id`.' pi
+#   scripts/capture-agents.sh --workspace 8 pi     # default is workspace 9
 #
 # Requires: jq, a running Rozi (ROZI_SOCKET, or --socket PATH).
 
@@ -23,6 +24,11 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILTIN="$REPO/src/agent_detection/builtin.toml"
 CORPUS="$REPO/tests/fixtures/agents"
 OUT="${ROZI_CAPTURE_OUT:-$REPO/target/agent-captures}"
+
+# One directory, reused across runs, rather than a fresh mktemp each time. Agents ask whether they
+# trust a directory the first time they see it, and this script must not answer that question - so
+# the directory has to be one a human can approve once and be done with.
+WORKDIR="${ROZI_CAPTURE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/rozi-agent-lab}"
 
 # The agent is asked to look at a file and then to do something it should want permission for,
 # because those are the two moments worth a fixture: a turn in flight, and a turn stopped on a
@@ -46,6 +52,10 @@ BLOCKED_TIMEOUT=60
 POLL=0.5
 
 SOCKET=""
+# A workspace of the lab's own. Panes spawned where somebody is working re-tile their layout on
+# every agent, and a pane that keeps changing size is a pane whose screen cannot be compared with
+# the last one's - the geometry is part of what a fixture captures.
+WORKSPACE="${ROZI_CAPTURE_WORKSPACE:-9}"
 KEEP=0
 LIST_ONLY=0
 WANTED=()
@@ -59,6 +69,10 @@ while [[ $# -gt 0 ]]; do
         --blocked-prompt)
             PROMPT_BLOCKED="${2:-}"
             [[ -n "$PROMPT_BLOCKED" ]] || die "--blocked-prompt needs text"
+            shift 2 ;;
+        --workspace)
+            WORKSPACE="${2:-}"
+            [[ "$WORKSPACE" =~ ^[1-9]$ ]] || die "--workspace needs a workspace number"
             shift 2 ;;
         --keep) KEEP=1; shift ;;          # leave the panes open to look at afterwards
         --list) LIST_ONLY=1; shift ;;
@@ -127,9 +141,32 @@ title_of() { jq -r '.data.title // ""' <<<"$1"; }
 
 # What the rules make of the pane right now. This is the number the lab exists to produce: a screen
 # with no reading beside it says nothing about whether detection works.
+#
+# Empty means the pane is gone, which is different from `none` (a pane no definition matched).
 read_state() {
     ctl list-panes | jq -r --argjson id "$1" \
         '.data[] | select(.id == $id) | .agent_state // "none"'
+}
+
+pane_alive() { [[ -n "$(read_state "$1")" ]]; }
+
+# Never press Enter at a pane that is asking a question.
+#
+# Enter is submit at a prompt box and *confirm* at a dialog, and an agent's first screen in a new
+# directory is often "do you trust this folder?" with the yes option already selected. Typing a
+# prompt and hitting Enter there does not ask the agent anything - it grants the trust, which this
+# script has no business doing on anyone's behalf.
+#
+# The test cannot be "does detection say blocked". Detection being wrong about a dialog is the
+# whole reason this lab exists, and Codex proves it: its trust prompt reads as idle, so a guard
+# that asked detection would have typed straight through the one screen it most needed to stop at.
+# So the guard reads the screen itself, with a shape crude enough to be independent of any rule -
+# two numbered lines. A false positive costs one skipped capture. Being wrong the other way means
+# answering somebody's trust dialog.
+looks_like_a_dialog() {
+    local screen="$1"
+    (( $(grep -cP '^\s*\S{0,2}\s*[0-9]+\.\s' <<<"$screen" || true) >= 2 )) ||
+        [[ "$(read_state "$2")" == "blocked" ]]
 }
 
 read_agent() {
@@ -146,16 +183,19 @@ read_agent() {
 # exits.
 close_pane() {
     local id="$1" deadline
-    ctl send-keys --target "$id" C-c >/dev/null 2>&1 || true
+    # Two interrupts in one write, because a TUI that treats the first as "clear the line" wants
+    # the second promptly to mean "quit"; then EOF for the ones that read it as exit.
+    ctl send-keys --target "$id" C-c C-c >/dev/null 2>&1 || true
     sleep 1
-    ctl send-keys --target "$id" C-d >/dev/null 2>&1 || true
+    ctl send-keys --target "$id" C-d C-d >/dev/null 2>&1 || true
     deadline=$((SECONDS + 10))
     while (( SECONDS < deadline )); do
-        if [[ "$(read_state "$id")" == "" ]]; then
-            return 0
-        fi
+        pane_alive "$id" || return 0
         sleep "$POLL"
     done
+    # Deliberately not typing `/exit` or the like: that is a guess at another program's command
+    # vocabulary, and typing a guess into a pane that turned out to be showing a dialog is how
+    # this script would answer one by accident.
     note "pane $id would not exit - close it yourself"
 }
 
@@ -219,22 +259,20 @@ emit_case() {
 
 run_agent() {
     local id="$1" program="$2"
-    local workdir file pane reply reading
-    workdir="$(mktemp -d "${TMPDIR:-/tmp}/rozi-agent-lab-XXXXXX")"
-    cat >"$workdir/README.md" <<'SEED'
-# Sample project
-
-One file, so an agent asked to read it has something short and harmless to read.
-SEED
+    local file pane reply reading baseline
     file="$OUT/$id.toml"
 
     printf '%s (%s)\n' "$id" "$program" >&2
-    reply="$(ctl new-pane --cwd "$workdir" --argv "$program")"
+    reply="$(ctl new-pane --workspace "$WORKSPACE" --cwd "$WORKDIR" --argv "$program")"
     ok_or_die "$reply" "spawning $program"
     pane="$(jq -r '.data.id' <<<"$reply")"
 
     if ! wait_quiet "$pane" "$STARTUP_TIMEOUT"; then
         note "never settled after $STARTUP_TIMEOUT s - capturing anyway"
+    fi
+    if ! pane_alive "$pane"; then
+        note "exited during startup - nothing to capture"
+        return 1
     fi
 
     {
@@ -249,6 +287,15 @@ SEED
     reply="$(capture_json "$pane")"
     reading="$(read_state "$pane")"
     note "startup: detection says $(read_agent "$pane")/$reading"
+    if looks_like_a_dialog "$(screen_of "$reply")" "$pane"; then
+        # A first-run question - "do you trust this folder?" and its relatives. Real blocked
+        # evidence, and the end of this agent's run: answering it is the operator's call.
+        emit_case "$file" "startup-dialog" "blocked" "$reply" "$reading"
+        note "starts on a question. Captured it, and stopping here rather than answering it."
+        note "run \`$program\` in $WORKDIR once by hand, answer it, then capture again"
+        finish_agent "$pane"
+        return 0
+    fi
     emit_case "$file" "idle-startup" "idle" "$reply" "$reading"
 
     ctl send-text --target "$pane" "$PROMPT_WORKING" >/dev/null
@@ -263,12 +310,18 @@ SEED
         note "never read as working - kept the screen the turn drew instead ($reading)"
     }
     emit_case "$file" "working" "working" "$reply" "$reading"
+    pane_alive "$pane" || { note "exited mid-turn"; return 1; }
 
     wait_quiet "$pane" "$WORKING_TIMEOUT" || note "still moving; capturing idle anyway"
     reply="$(capture_json "$pane")"
     reading="$(read_state "$pane")"
     emit_case "$file" "idle-after-turn" "idle" "$reply" "$reading"
 
+    if looks_like_a_dialog "$(screen_of "$reply")" "$pane"; then
+        note "still asking something after the first turn - leaving it for a human"
+        finish_agent "$pane"
+        return 0
+    fi
     ctl send-text --target "$pane" "$PROMPT_BLOCKED" >/dev/null
     sleep 1
     baseline="$(screen_of "$(capture_json "$pane")")"
@@ -280,15 +333,20 @@ SEED
     }
     emit_case "$file" "blocked" "blocked" "$reply" "$reading"
 
-    # Decline whatever it asked for rather than leaving a live prompt behind.
+    finish_agent "$pane"
+    printf '  -> %s\n' "$file" >&2
+}
+
+# Leave nothing running. Escape declines whatever was asked rather than leaving a live prompt
+# behind, and it is the one key that answers a dialog with "no".
+finish_agent() {
+    local pane="$1"
     ctl send-keys --target "$pane" Escape >/dev/null 2>&1 || true
     if (( KEEP == 0 )); then
         close_pane "$pane"
-        rm -rf "$workdir"
     else
-        note "pane $pane and $workdir left in place"
+        note "pane $pane left open"
     fi
-    printf '  -> %s\n' "$file" >&2
 }
 
 if (( LIST_ONLY )); then
@@ -315,10 +373,16 @@ if (( LIST_ONLY )); then
     exit 0
 fi
 
-mkdir -p "$OUT"
+mkdir -p "$OUT" "$WORKDIR"
+cat >"$WORKDIR/README.md" <<'SEED'
+# Sample project
+
+One file, so an agent asked to read it has something short and harmless to read.
+SEED
 ok_or_die "$(ctl list-panes)" "talking to rozi"
 
 captured=0
+failed=()
 while IFS=$'\t' read -r id names; do
     if (( ${#WANTED[@]} )); then
         [[ " ${WANTED[*]} " == *" $id "* ]] || continue
@@ -327,10 +391,18 @@ while IFS=$'\t' read -r id names; do
         (( ${#WANTED[@]} )) && note "$id: none of [$names] is installed"
         continue
     fi
-    run_agent "$id" "$program"
-    captured=$((captured + 1))
+    # One agent's bad day is not the batch's. A tool that exits at startup, never comes up, or
+    # stops on a question it will not get past must cost its own slot and nothing more - a run of
+    # fourteen that aborts on the second is worth less than one that reports twelve and two.
+    if run_agent "$id" "$program"; then
+        captured=$((captured + 1))
+    else
+        failed+=("$id")
+        note "$id: incomplete, moving on"
+    fi
 done < <(agent_table)
 
+(( ${#failed[@]} )) && printf '\nincomplete: %s\n' "${failed[*]}" >&2
 (( captured )) || die "nothing captured - is anything installed? try --list"
 printf '\n%d captured in %s. Read them, trim them, then move them into %s.\n' \
     "$captured" "$OUT" "$CORPUS" >&2

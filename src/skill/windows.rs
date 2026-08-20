@@ -86,7 +86,7 @@ fn wide(path: &Path) -> Vec<u16> {
 
 fn nt_path(path: &Path) -> String {
     let displayed = path.to_string_lossy();
-    let stripped = displayed
+    displayed
         .strip_prefix(r"\\?\UNC\")
         .map(|rest| format!(r"\??\UNC\{rest}"))
         .or_else(|| {
@@ -94,8 +94,7 @@ fn nt_path(path: &Path) -> String {
                 .strip_prefix(r"\\?\")
                 .map(|rest| format!(r"\??\{rest}"))
         })
-        .unwrap_or_else(|| format!(r"\??\{displayed}"));
-    stripped
+        .unwrap_or_else(|| format!(r"\??\{displayed}"))
 }
 
 fn mount_point_buffer(nt_target: &[u16]) -> Vec<u8> {

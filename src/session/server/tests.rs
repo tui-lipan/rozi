@@ -461,6 +461,216 @@ fn wait_for_server_events(server: &SessionServer, count: usize) -> Vec<ServerEve
     events
 }
 
+/// The catalog a `[[agents]]` block resolves to, as the controller's config reload would build it.
+fn catalog_from(toml_text: &str) -> Arc<crate::agent_detection::AgentCatalog> {
+    let mut warnings = Vec::new();
+    let specs: Vec<crate::agent_detection::AgentSpec> = toml::from_str::<toml::Table>(toml_text)
+        .expect("agents parse")
+        .remove("agents")
+        .expect("agents array")
+        .try_into()
+        .expect("specs parse");
+    let definitions = crate::agent_detection::build_definitions(
+        specs,
+        crate::agent_detection::AgentOrigin::Config,
+        &[],
+        &mut warnings,
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    Arc::new(crate::agent_detection::AgentCatalog::with_definitions(
+        definitions,
+    ))
+}
+
+/// A pane whose foreground program is declared by `ROZI_AGENT`, showing `screen`.
+fn agent_hinted_pane(generation: u64, hint: &str, screen: &str) -> ServerPane {
+    let mut pane = test_pane(generation);
+    pane.env.push(("ROZI_AGENT".to_string(), hint.to_string()));
+    pane.screen_mut().process_bytes(screen.as_bytes());
+    pane
+}
+
+fn detected_agents(client: &ClientConn) -> Vec<Option<protocol::DetectedAgent>> {
+    decode_outbox_controls(client)
+        .into_iter()
+        .filter_map(|message| match message {
+            ServerMessage::PaneRuntimeChanged { state, .. } => Some(state.detected_agent),
+            _ => None,
+        })
+        .collect()
+}
+
+fn clear_outboxes(server: &mut SessionServer, ids: &[ClientId]) {
+    for id in ids {
+        let client = server.client_mut(*id).unwrap();
+        client.outbox.clear();
+        client.outbox_bytes = 0;
+    }
+}
+
+/// Detection is server-owned, so a definition change reaches every attached client as one
+/// broadcast answer rather than each client reading its own config. Two clients are attached here
+/// precisely so "they converge" is an assertion rather than an assumption.
+#[test]
+fn reloading_agent_definitions_re_detects_and_every_client_converges() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _controller_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    assert_eq!(server.controller, Some(controller));
+    server
+        .panes
+        .insert(1, agent_hinted_pane(1, "mca", "  thinking…"));
+
+    // Nothing ships a definition for `mca`, so the pane is not an agent yet.
+    let mut scan = crate::platform::process::LazyProcessScan::default();
+    server.sync_pane_runtime_inner(None, 1, 1, true, &mut scan);
+    assert_eq!(server.panes[&1].runtime.detected_agent, None);
+    clear_outboxes(&mut server, &[controller, follower]);
+
+    server.apply_agent_definitions(catalog_from(
+        r#"
+        [[agents]]
+        id = "mycoolagent"
+        label = "My Cool Agent"
+        match = { names = ["mca"] }
+
+        [[agents.states]]
+        state = "working"
+        scope = "footer"
+        screen = { any_of = ["thinking…"] }
+        "#,
+    ));
+
+    let expected = protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new("mycoolagent", "My Cool Agent").into(),
+        state: protocol::DetectedAgentState::Working,
+    };
+    assert_eq!(
+        server.panes[&1].runtime.detected_agent.as_ref(),
+        Some(&expected),
+        "the server re-detected the pane against the new definitions"
+    );
+    assert_eq!(
+        detected_agents(server.client_mut(controller).unwrap()),
+        vec![Some(expected.clone())]
+    );
+    assert_eq!(
+        detected_agents(server.client_mut(follower).unwrap()),
+        vec![Some(expected.clone())],
+        "the follower is told the same thing, not left to read its own config"
+    );
+
+    // Re-applying the same catalog is the ordinary reload - a theme edit, a keybinding - and must
+    // not churn a broadcast or restart the pane's run clock.
+    clear_outboxes(&mut server, &[controller, follower]);
+    let sequence = server.panes[&1].runtime.sequence;
+    server.apply_agent_definitions(catalog_from(
+        r#"
+        [[agents]]
+        id = "mycoolagent"
+        label = "My Cool Agent"
+        match = { names = ["mca"] }
+
+        [[agents.states]]
+        state = "working"
+        scope = "footer"
+        screen = { any_of = ["thinking…"] }
+        "#,
+    ));
+    assert_eq!(server.panes[&1].runtime.sequence, sequence);
+    assert!(detected_agents(server.client_mut(controller).unwrap()).is_empty());
+    assert!(detected_agents(server.client_mut(follower).unwrap()).is_empty());
+
+    // Renaming the agent re-detects again, and both clients move together.
+    clear_outboxes(&mut server, &[controller, follower]);
+    server.apply_agent_definitions(catalog_from(
+        r#"
+        [[agents]]
+        id = "mycoolagent"
+        label = "Renamed Agent"
+        match = { names = ["mca"] }
+
+        [[agents.states]]
+        state = "working"
+        scope = "footer"
+        screen = { any_of = ["thinking…"] }
+        "#,
+    ));
+    let renamed = detected_agents(server.client_mut(controller).unwrap());
+    assert_eq!(
+        renamed,
+        detected_agents(server.client_mut(follower).unwrap())
+    );
+    assert_eq!(
+        renamed
+            .first()
+            .and_then(|agent| agent.as_ref())
+            .map(|agent| agent.agent.label.as_str()),
+        Some("Renamed Agent")
+    );
+
+    // Dropping the definition drops the pane's agent, and that clearing is broadcast too rather
+    // than leaving clients showing an identity the server no longer holds.
+    clear_outboxes(&mut server, &[controller, follower]);
+    server.apply_agent_definitions(crate::agent_detection::AgentCatalog::shared_builtin());
+    assert_eq!(server.panes[&1].runtime.detected_agent, None);
+    assert_eq!(
+        detected_agents(server.client_mut(controller).unwrap()),
+        vec![None]
+    );
+    assert_eq!(
+        detected_agents(server.client_mut(follower).unwrap()),
+        vec![None]
+    );
+}
+
+/// Only the controller may change what the session detects with. A follower reloading its own
+/// config must not redefine every other client's view of every pane.
+#[test]
+fn only_the_controller_can_reload_agent_definitions() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _controller_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    let (viewer, _viewer_stream) = attach_read_only_client(&mut server);
+    assert_eq!(server.controller, Some(controller));
+
+    let declared = catalog_from(
+        r#"
+        [[agents]]
+        id = "mycoolagent"
+        match = { names = ["mca"] }
+        "#,
+    );
+    server.apply_agent_definitions(Arc::clone(&declared));
+
+    // A follower's reload is dropped. The session keeps the controller's definitions; the server's
+    // own config (which declares no agents) does not get to replace them.
+    for id in [follower, viewer] {
+        let responses = server.handle_message(id, ClientMessage::ReloadAgents);
+        assert!(responses.is_empty(), "reload is silent, not an error reply");
+        assert!(
+            Arc::ptr_eq(&server.settings.agents, &declared),
+            "client {id} is not the controller and must not swap the catalog"
+        );
+    }
+
+    // The controller's reload is honored: it re-reads config, which declares no agents, so the
+    // session falls back to the built-in catalog.
+    server.handle_message(controller, ClientMessage::ReloadAgents);
+    assert!(
+        !Arc::ptr_eq(&server.settings.agents, &declared),
+        "the controller's reload replaced the catalog"
+    );
+    assert!(
+        server.settings.agents.by_name("mca").is_none(),
+        "the removed definition is gone"
+    );
+    assert!(
+        server.settings.agents.by_name("claude").is_some(),
+        "the built-ins are back"
+    );
+}
+
 fn decode_outbox_controls(client: &ClientConn) -> Vec<ServerMessage> {
     client
         .outbox

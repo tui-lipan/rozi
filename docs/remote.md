@@ -180,7 +180,7 @@ Client and server advertise a max and min protocol version on attach/query. They
 minimum. Within a supported range, wire changes are additive (`#[serde(default)]`); breaking changes
 bump `MIN_SUPPORTED_PROTOCOL`.
 
-This build speaks protocol **1** only (`MIN_SUPPORTED_PROTOCOL` is also 1). Both peers come from
+This build speaks protocol **3** only (`MIN_SUPPORTED_PROTOCOL` is also 3). Both peers come from
 the same tree, so any mismatch is rejected at the handshake rather than shimmed. Restart existing
 session servers after upgrading.
 
@@ -189,6 +189,7 @@ session servers after upgrading.
 | Stays local (client) | Lives on the remote (server) |
 | --- | --- |
 | Theme, keys, config, overlays, copy/search UI | PTYs, pane processes, layout authority |
+| — | [`[[agents]]`](agents.md) definitions and agent detection |
 | Clipboard / OSC52 (paste into the local terminal) | Working directories and spawn `cwd` paths |
 | Hooks (`[[hooks]]` run on the client) | Session discovery endpoints on that host |
 | Control socket for *this* UI process | Resurrect / autosave paths on that host |

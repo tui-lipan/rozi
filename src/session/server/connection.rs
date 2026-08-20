@@ -229,6 +229,12 @@ impl SessionServer {
                     )],
                 }
             }
+            ClientMessage::ReloadAgents => {
+                if self.is_controller(client_id) && !self.client_read_only(client_id) {
+                    self.reload_agent_definitions();
+                }
+                Vec::new()
+            }
             ClientMessage::ReportPaneRows {
                 pane_id,
                 local,

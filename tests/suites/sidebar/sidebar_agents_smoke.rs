@@ -1,5 +1,10 @@
 use rozi::config::SidebarTab;
-use rozi::session::protocol::{AgentKind, DetectedAgent, DetectedAgentState, PaneStatus};
+use rozi::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState, PaneStatus};
+
+/// One detected agent's public identity, as a definition in the built-in catalog declares it.
+fn agent(id: &str, label: &str) -> AgentIdentity {
+    AgentIdentity::new(id, label)
+}
 use rozi::state::{Pane, PaneId};
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
@@ -7,7 +12,7 @@ use tui_lipan::prelude::{FloatRect, Rect};
 
 fn agent_pane(
     id: PaneId,
-    kind: AgentKind,
+    agent: AgentIdentity,
     status: Option<(&str, Option<&str>)>,
     cwd: Option<&str>,
 ) -> Pane {
@@ -22,7 +27,7 @@ fn agent_pane(
         },
     );
     pane.terminal.detected_agent = Some(DetectedAgent {
-        kind,
+        agent: agent.into(),
         state: DetectedAgentState::Idle,
     });
     // Dated now, so the rendered elapsed time is a plausible small value rather than the decades
@@ -79,13 +84,13 @@ fn agents_fill_the_sidebar(state: &mut rozi::state::State) {
 /// The same pane, plus the Git project the session server resolved for its cwd.
 fn agent_pane_in_project(
     id: PaneId,
-    kind: AgentKind,
+    agent: AgentIdentity,
     status: Option<(&str, Option<&str>)>,
     cwd: &str,
     root: &str,
     branch: &str,
 ) -> Pane {
-    let mut pane = agent_pane(id, kind, status, Some(cwd));
+    let mut pane = agent_pane(id, agent, status, Some(cwd));
     pane.terminal.project_root = Some(root.to_string());
     pane.terminal.git_branch = Some(branch.to_string());
     pane
@@ -108,14 +113,14 @@ fn agents_tab_renders_project_groups() {
                 agents_fill_the_sidebar(state);
                 let mut finished = agent_pane(
                     2,
-                    AgentKind::OpenCode,
+                    agent("opencode", "OpenCode"),
                     Some(("idle", None)),
                     Some("/home/x/work/rozi"),
                 );
                 finished.terminal.finished_unseen = true;
                 let mut done = agent_pane(
                     5,
-                    AgentKind::Gemini,
+                    agent("gemini", "Gemini CLI"),
                     Some(("done", None)),
                     Some("/home/x/oss/tools"),
                 );
@@ -123,22 +128,22 @@ fn agents_tab_renders_project_groups() {
                 state.current_mut().workspaces[0].panes = vec![
                     agent_pane(
                         1,
-                        AgentKind::Claude,
+                        agent("claude", "Claude Code"),
                         Some(("blocked", Some("needs approval"))),
                         Some("/home/x/work/rozi"),
                     ),
                     finished,
                     agent_pane(
                         3,
-                        AgentKind::Codex,
+                        agent("codex", "Codex"),
                         Some(("working", None)),
                         Some("/home/x/oss/api"),
                     ),
                     done,
-                    agent_pane(4, AgentKind::Aider, None, None),
+                    agent_pane(4, agent("aider", "Aider"), None, None),
                     agent_pane(
                         6,
-                        AgentKind::OpenCode,
+                        agent("opencode", "OpenCode"),
                         Some(("compacting", None)),
                         Some("/home/x/oss/tools"),
                     ),
@@ -215,7 +220,7 @@ fn agents_tab_heads_projects_with_their_branch() {
                 state.current_mut().workspaces[0].panes = vec![
                     agent_pane_in_project(
                         1,
-                        AgentKind::Claude,
+                        agent("claude", "Claude Code"),
                         Some(("working", Some("wiring the sidebar"))),
                         "/home/x/rozi",
                         "/home/x/rozi",
@@ -223,7 +228,7 @@ fn agents_tab_heads_projects_with_their_branch() {
                     ),
                     agent_pane_in_project(
                         2,
-                        AgentKind::Codex,
+                        agent("codex", "Codex"),
                         Some(("idle", None)),
                         "/home/x/rozi/src/view",
                         "/home/x/rozi",
@@ -232,7 +237,7 @@ fn agents_tab_heads_projects_with_their_branch() {
                     // A second checkout of the same repository: its own directory, its own branch.
                     agent_pane_in_project(
                         3,
-                        AgentKind::OpenCode,
+                        agent("opencode", "OpenCode"),
                         Some(("blocked", Some("needs approval"))),
                         "/home/x/rozi-wt",
                         "/home/x/rozi-wt",
@@ -294,7 +299,7 @@ fn focusing_a_finished_agent_clears_its_pulse() {
                 let state = backend.state_mut();
                 let mut finished = agent_pane(
                     7,
-                    AgentKind::Claude,
+                    agent("claude", "Claude Code"),
                     Some(("idle", None)),
                     Some("/home/x/repo"),
                 );
@@ -329,8 +334,12 @@ fn published_slots_render_one_numbered_row_each() {
             {
                 let state = backend.state_mut();
                 agents_fill_the_sidebar(state);
-                let mut publisher =
-                    agent_pane(1, AgentKind::OpenCode, None, Some("/home/x/work/rozi"));
+                let mut publisher = agent_pane(
+                    1,
+                    agent("opencode", "OpenCode"),
+                    None,
+                    Some("/home/x/work/rozi"),
+                );
                 publisher.terminal.published_rows = vec![
                     published_row("ses_a", "audit the widget layer", "working", None, true),
                     published_row(

@@ -4,7 +4,7 @@
 /// this for any wire change, additive or not; a mismatched peer is rejected at the handshake rather
 /// than shimmed. Per-message capability gates are not worth keeping while that holds — a gate below
 /// the floor is a branch that cannot be taken.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Oldest wire protocol version this build can still speak.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;

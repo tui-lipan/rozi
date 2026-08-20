@@ -153,6 +153,15 @@ pub struct ServerSettings {
     /// originally spawned) does not yet require.
     pub shell: Vec<String>,
     pub command_shell: Vec<String>,
+    /// Agent definitions this session detects with: the built-in catalog merged with whatever
+    /// `config.toml` and installed extensions declared.
+    ///
+    /// Server-owned because detection is: the server holds the PTYs and every attached client
+    /// reads the same `detected_agent` off the shared runtime state. A follower with different
+    /// `[[agents]]` in its own config does not get a different answer - see
+    /// [`ClientMessage::SetAgentDefinitions`](crate::session::protocol::ClientMessage), which is
+    /// how the controller keeps this in step with a config reload.
+    pub agents: std::sync::Arc<crate::agent_detection::AgentCatalog>,
 }
 
 impl Default for ServerSettings {
@@ -168,6 +177,7 @@ impl Default for ServerSettings {
             scrollback: DEFAULT_SCROLLBACK,
             shell: Vec::new(),
             command_shell: Vec::new(),
+            agents: crate::agent_detection::AgentCatalog::shared_builtin(),
         }
     }
 }
@@ -985,6 +995,22 @@ impl ServerPane {
 /// command's exit status into the `exec`, leaving nothing to report. Keep-open is a server-driven
 /// PTY replacement after the command exits instead; see
 /// [`SessionServer::replace_with_keep_open_shell`].
+/// Resolve loaded `[[agents]]` and extension contributions into the catalog detection reads.
+///
+/// A session with no contributions shares the process-wide built-in catalog rather than parsing
+/// its own copy, which is the common case.
+fn agent_catalog(
+    definitions: Vec<crate::agent_detection::AgentDefinition>,
+) -> Arc<crate::agent_detection::AgentCatalog> {
+    if definitions.is_empty() {
+        crate::agent_detection::AgentCatalog::shared_builtin()
+    } else {
+        Arc::new(crate::agent_detection::AgentCatalog::with_definitions(
+            definitions,
+        ))
+    }
+}
+
 fn pty_config(
     launch: Option<&crate::pane_launch::PaneLaunch>,
     shell: &[String],
@@ -1088,6 +1114,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
             scrollback: loaded.config.scrollback,
             shell,
             command_shell,
+            agents: agent_catalog(loaded.config.agents),
             ..ServerSettings::default()
         },
     );

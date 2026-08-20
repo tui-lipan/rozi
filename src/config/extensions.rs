@@ -79,6 +79,8 @@ pub struct ExtensionInfo {
     pub status: ExtensionStatus,
     pub commands: Vec<String>,
     pub services: Vec<String>,
+    /// Public ids of the agent definitions this extension contributes.
+    pub agents: Vec<String>,
     pub command_details: Vec<ExtensionCommandDiagnostic>,
     pub service_details: Vec<ExtensionServiceDiagnostic>,
     pub command_paths: BTreeMap<String, String>,
@@ -142,6 +144,7 @@ pub(crate) struct DiscoveredExtension {
     pub(crate) info: ExtensionInfo,
     commands: Vec<NamedCommand>,
     services: Vec<ServiceConfig>,
+    agents: Vec<crate::agent_detection::AgentDefinition>,
 }
 
 #[derive(Debug, Default)]
@@ -242,6 +245,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         status: ExtensionStatus::Invalid,
         commands: Vec::new(),
         services: Vec::new(),
+        agents: Vec::new(),
         command_details: Vec::new(),
         service_details: Vec::new(),
         command_paths: BTreeMap::new(),
@@ -264,6 +268,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 info,
                 commands: Vec::new(),
                 services: Vec::new(),
+                agents: Vec::new(),
             };
         }
     };
@@ -275,6 +280,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 info,
                 commands: Vec::new(),
                 services: Vec::new(),
+                agents: Vec::new(),
             };
         }
     };
@@ -287,6 +293,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 info,
                 commands: Vec::new(),
                 services: Vec::new(),
+                agents: Vec::new(),
             };
         }
     };
@@ -348,26 +355,43 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut services,
         );
     }
+    // Agent definitions are declarative data rather than a launchable process, so they need no
+    // path resolution or environment - only the same validation `config.toml` entries get. An
+    // invalid one invalidates the extension, matching how a bad command or service is treated.
+    let mut agent_errors = Vec::new();
+    let agents = crate::agent_detection::build_definitions(
+        manifest.agents,
+        crate::agent_detection::AgentOrigin::Extension(&validation_id),
+        &[],
+        &mut agent_errors,
+    );
+    info.errors.extend(agent_errors);
+    info.agents = agents.iter().map(|agent| agent.id().to_string()).collect();
+
     info.command_details = commands.iter().map(command_diagnostic).collect();
     info.service_details = services.iter().map(service_diagnostic).collect();
     if !id_valid {
         info.commands.clear();
         info.services.clear();
+        info.agents.clear();
         info.command_details.clear();
         info.service_details.clear();
         info.command_paths.clear();
         info.service_paths.clear();
     }
 
+    let mut agents = agents;
     if let Some(error) = compatibility_error {
         info.status = ExtensionStatus::Incompatible;
         info.errors.insert(0, error);
         commands.clear();
         services.clear();
+        agents.clear();
     } else if !info.errors.is_empty() {
         info.status = ExtensionStatus::Invalid;
         commands.clear();
         services.clear();
+        agents.clear();
     } else {
         info.status = ExtensionStatus::Loaded;
         info.enabled = true;
@@ -376,6 +400,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         info,
         commands,
         services,
+        agents,
     }
 }
 
@@ -546,7 +571,14 @@ mod tests {
         assert_eq!(entries[0].services, ["git-tools.watch"]);
         assert_eq!(entries[0].path, directory.display().to_string());
 
-        let (commands, services, active, runtime, warnings) = scan.into_contributions(&[]);
+        let contributions = scan.into_contributions(&[]);
+        let (commands, services, active, runtime, warnings) = (
+            contributions.commands,
+            contributions.services,
+            contributions.active_ids,
+            contributions.runtime,
+            contributions.warnings,
+        );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(active.contains("git-tools"));
         assert!(runtime.contains_key("git-tools"));
@@ -619,10 +651,75 @@ mod tests {
             .unwrap();
         assert_eq!(malformed.status, ExtensionStatus::Invalid);
         assert!(malformed.errors[0].contains("invalid extension.toml"));
-        let (commands, services, active, _, _) = scan.into_contributions(&[]);
+        let contributions = scan.into_contributions(&[]);
+        let (commands, services, active) = (
+            contributions.commands,
+            contributions.services,
+            contributions.active_ids,
+        );
         assert!(commands.is_empty());
         assert!(services.is_empty());
         assert!(active.is_empty());
+    }
+
+    #[test]
+    fn extension_agents_are_namespaced_contributions() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "rozi-mytool",
+            &format!(
+                "{}[[agents]]\nid = \"mytool\"\nlabel = \"My Tool\"\n\
+                 match = {{ names = [\"mytool\"] }}\n\
+                 [[agents.states]]\nstate = \"blocked\"\n\
+                 screen = {{ any_of = [\"approve? (a/d)\"] }}\n",
+                manifest("mytool", "1")
+            ),
+        );
+        let scan = scan_extensions_in(temp.path());
+        assert_eq!(scan.entries()[0].status, ExtensionStatus::Loaded);
+        assert_eq!(scan.entries()[0].agents, ["mytool.mytool"]);
+
+        let contributions = scan.into_contributions(&[]);
+        assert_eq!(contributions.agents.len(), 1);
+        assert_eq!(contributions.agents[0].id(), "mytool.mytool");
+        assert_eq!(contributions.agents[0].label(), "My Tool");
+        let catalog = crate::agent_detection::AgentCatalog::with_definitions(contributions.agents);
+        assert_eq!(
+            catalog.by_name("mytool").map(|agent| agent.id()),
+            Some("mytool.mytool")
+        );
+    }
+
+    #[test]
+    fn an_invalid_agent_definition_invalidates_the_whole_extension() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "rozi-broken",
+            &format!(
+                "{}[[commands]]\nid = \"ok\"\nsend = \"hi\"\n\
+                 [[agents]]\nid = \"Bad Id\"\nmatch = {{ names = [\"x\"] }}\n",
+                manifest("broken", "1")
+            ),
+        );
+        let scan = scan_extensions_in(temp.path());
+        let entry = &scan.entries()[0];
+        assert_eq!(entry.status, ExtensionStatus::Invalid);
+        assert!(
+            entry
+                .errors
+                .iter()
+                .any(|error| error.contains("invalid id")),
+            "{:?}",
+            entry.errors
+        );
+        let contributions = scan.into_contributions(&[]);
+        assert!(
+            contributions.commands.is_empty(),
+            "one bad agent invalidates the extension atomically, commands included"
+        );
+        assert!(contributions.agents.is_empty());
     }
 
     #[test]
@@ -654,7 +751,12 @@ mod tests {
                 && entry.errors[0].contains("/one")
                 && entry.errors[0].contains("/two")
         }));
-        let (commands, services, active, _, _) = scan.into_contributions(&[]);
+        let contributions = scan.into_contributions(&[]);
+        let (commands, services, active) = (
+            contributions.commands,
+            contributions.services,
+            contributions.active_ids,
+        );
         assert!(commands.is_empty());
         assert!(services.is_empty());
         assert!(active.is_empty());
@@ -667,12 +769,12 @@ mod tests {
         let mut scan = scan_extensions_in(temp.path());
         scan.apply_disabled(&["docker".to_string()]);
         assert_eq!(scan.entries()[0].status, ExtensionStatus::Disabled);
-        let (commands, services, active, _, warnings) =
-            scan.into_contributions(&["docker".to_string()]);
-        assert!(commands.is_empty());
-        assert!(services.is_empty());
-        assert!(active.is_empty());
-        assert!(warnings.is_empty());
+        let contributions = scan.into_contributions(&["docker".to_string()]);
+        assert!(contributions.commands.is_empty());
+        assert!(contributions.services.is_empty());
+        assert!(contributions.agents.is_empty());
+        assert!(contributions.active_ids.is_empty());
+        assert!(contributions.warnings.is_empty());
     }
 
     #[test]
@@ -958,10 +1060,10 @@ mod tests {
         let changed = scan_extensions_in(temp.path());
         assert_eq!(changed.entries()[0].commands, ["matrix.two"]);
 
-        let (commands, _, active, _, _) =
+        let contributions =
             scan_extensions_in(temp.path()).into_contributions(&["matrix".to_string()]);
-        assert!(commands.is_empty());
-        assert!(active.is_empty());
+        assert!(contributions.commands.is_empty());
+        assert!(contributions.active_ids.is_empty());
 
         std::fs::write(directory.join("extension.toml"), "not toml").unwrap();
         assert_eq!(

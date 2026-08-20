@@ -365,6 +365,54 @@ focus = false
 | `focus` | `true` | Switch to and focus the spawned pane. When false, the target workspace remembers the new pane as its own focus without stealing the current view. |
 | `fullscreen` | `false` | Spawn with fullscreen enabled. |
 
+## `[[agents]]`
+
+Definitions for the coding-agent CLIs rozi detects in panes: which foreground process is a given
+agent, and what its screen looks like in each state. The agents rozi ships are written in this same
+format, so declaring an `id` a built-in already uses replaces that definition outright. Extensions
+contribute definitions too, under `<extension>.<id>`.
+
+```toml
+[[agents]]
+id = "mycoolagent"
+label = "My Cool Agent"
+match = { names = ["mca"], paths = ["@acme/mca"] }
+
+[[agents.states]]
+state = "blocked"
+screen = { all_of = ["esc dismiss"], any_of = ["enter submit"] }
+
+[[agents.states]]
+state = "working"
+scope = "footer"
+screen = { any_of = ["esc to interrupt"] }
+```
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `id` | required | `[a-z0-9_-]+`. Matching a built-in's id replaces it. |
+| `label` | the id | What the Activity sidebar shows. |
+| `match.names` | — | Executable basenames, matched after stripping directories and `.exe`/`.js`/`.py`-style suffixes. |
+| `match.paths` | — | Lowercased `/`-normalized substrings of an executable path or argv token, for an agent launched through a runtime. |
+| `base` | `true` | Apply rozi's shared blocked/working vocabulary. |
+| `states[].state` | required | `blocked`, `working`, `idle`, or `unknown`. |
+| `states[].scope` | `all` | `footer` reads only the last 8 non-empty lines. `screen` rules only. |
+| `states[].screen` / `.title` | — | The needle group. Exactly one per rule. |
+
+A needle group takes `all_of`, `any_of`, and `none_of`, plus `regex = true` to read them as
+`regex-lite` patterns. At least one of `all_of` / `any_of` is required. Needles match against
+already-lowercased text.
+
+At least one of `match.names` / `match.paths` is required, except on an entry replacing a built-in,
+where omitting `match` inherits the built-in's. Rules are evaluated by precedence — blocked, then
+working, then idle, then unknown — not declaration order, and a screen matching nothing is idle.
+`unknown` means "recognized the agent, learned nothing", which holds the previous state rather than
+ending the run. A bad rule is skipped with a warning; a bad definition is dropped whole.
+
+Detection is server-side, so a reload forwards the change to the session server and re-detects every
+pane. See [Agent definitions](agents.md) for the full reference and
+[Sidebar](sidebar.md) for what the states mean on screen.
+
 ## `[[hints]]`
 
 Additive hint patterns for hint mode (`u`). Built-in URL / path / Git-SHA detectors always run

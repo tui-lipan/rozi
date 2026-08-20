@@ -65,6 +65,7 @@ struct FileConfig {
     scratchpad: ScratchpadFileConfig,
     sidebar: SidebarFileConfig,
     workbar: WorkbarFileConfig,
+    agents: Vec<crate::agent_detection::AgentSpec>,
     rules: Vec<RuleFileConfig>,
     hints: Vec<HintFileConfig>,
     hooks: Vec<HookFileConfig>,
@@ -566,13 +567,13 @@ fn load_config_from_text_with_extensions(
     let mut config = Config::default();
 
     let Some(parsed) = parse_file_config(text, path, &mut warnings) else {
-        let (commands, services, active_extensions, extension_runtime, extension_warnings) =
-            extensions.into_contributions(&[]);
-        warnings.extend(extension_warnings);
-        config.commands = commands;
-        config.active_extensions = active_extensions;
-        config.extension_runtime = extension_runtime;
-        config.services = services;
+        let contributions = extensions.into_contributions(&[]);
+        warnings.extend(contributions.warnings);
+        config.commands = contributions.commands;
+        config.active_extensions = contributions.active_ids;
+        config.extension_runtime = contributions.runtime;
+        config.services = contributions.services;
+        config.agents = contributions.agents;
         return LoadedConfig { config, warnings };
     };
 
@@ -886,24 +887,27 @@ fn load_config_from_text_with_extensions(
     config.hints = build_hints(parsed.hints, &mut warnings);
     config.hooks = build_hooks(parsed.hooks, &mut warnings);
     config.commands = build_named_commands(parsed.commands, &mut warnings);
-    let (
-        extension_commands,
-        extension_services,
-        active_extensions,
-        extension_runtime,
-        extension_warnings,
-    ) = extensions.into_contributions(&parsed.extensions.disabled);
-    warnings.extend(extension_warnings);
-    config.active_extensions = active_extensions;
-    config.extension_runtime = extension_runtime;
-    config.commands.extend(extension_commands);
+    let contributions = extensions.into_contributions(&parsed.extensions.disabled);
+    warnings.extend(contributions.warnings);
+    config.active_extensions = contributions.active_ids;
+    config.extension_runtime = contributions.runtime;
+    config.commands.extend(contributions.commands);
+    // Config entries first: an id shared with a built-in replaces it, and an extension's ids are
+    // namespaced so they can only ever add.
+    config.agents = crate::agent_detection::build_definitions(
+        parsed.agents,
+        crate::agent_detection::AgentOrigin::Config,
+        &crate::agent_detection::AgentCatalog::builtin_definitions(),
+        &mut warnings,
+    );
+    config.agents.extend(contributions.agents);
     let named_ids: HashSet<_> = config
         .commands
         .iter()
         .map(|command| command.id.clone())
         .collect();
     config.services = crate::config::services::build_services(parsed.services, &mut warnings);
-    config.services.extend(extension_services);
+    config.services.extend(contributions.services);
     let mut user_commands = Vec::new();
     config.key_overrides = build_key_overrides(
         parsed.keys,
@@ -1358,6 +1362,52 @@ mod file_tests {
         assert!(
             live.is_empty(),
             "reference example must ship inert; these carry live values: {live:?}"
+        );
+    }
+
+    #[test]
+    fn agents_load_from_config_and_can_replace_a_builtin() {
+        let loaded = load_config_from_text(
+            r#"
+            [[agents]]
+            id = "mycoolagent"
+            label = "My Cool Agent"
+            match = { names = ["mca"] }
+
+            [[agents.states]]
+            state = "working"
+            scope = "footer"
+            screen = { any_of = ["thinking…"] }
+
+            [[agents]]
+            id = "claude"
+            label = "Claude (mine)"
+            "#,
+            Path::new("test.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let ids: Vec<_> = loaded.config.agents.iter().map(|a| a.id()).collect();
+        assert_eq!(ids, ["mycoolagent", "claude"]);
+        // The `claude` entry declared no `match`, so it inherited the built-in's process vocabulary
+        // rather than being dropped as unmatchable.
+        let claude = &loaded.config.agents[1];
+        assert!(claude.names.contains(&"claude".to_string()));
+        assert_eq!(claude.label(), "Claude (mine)");
+
+        let catalog = crate::agent_detection::AgentCatalog::with_definitions(loaded.config.agents);
+        assert_eq!(
+            catalog.by_name("mca").map(|agent| agent.label()),
+            Some("My Cool Agent")
+        );
+        assert_eq!(
+            catalog.by_name("claude").map(|agent| agent.label()),
+            Some("Claude (mine)"),
+            "the config entry replaces the built-in rather than sitting behind it"
+        );
+        assert_eq!(
+            catalog.by_name("codex").map(|agent| agent.label()),
+            Some("Codex"),
+            "untouched built-ins survive"
         );
     }
 

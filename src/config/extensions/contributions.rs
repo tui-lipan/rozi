@@ -7,18 +7,22 @@ use super::{
     fingerprint, fingerprints_by_id,
 };
 
-pub(super) type ExtensionContributions = (
-    Vec<NamedCommand>,
-    Vec<ServiceConfig>,
-    HashSet<String>,
-    BTreeMap<String, ExtensionRuntimeFingerprint>,
-    Vec<String>,
-);
+/// Everything a scan of the extension directory contributes to a loaded [`crate::config::Config`].
+#[derive(Debug, Default)]
+pub(crate) struct ExtensionContributions {
+    pub(crate) commands: Vec<NamedCommand>,
+    pub(crate) services: Vec<ServiceConfig>,
+    pub(crate) agents: Vec<crate::agent_detection::AgentDefinition>,
+    pub(crate) active_ids: HashSet<String>,
+    pub(crate) runtime: BTreeMap<String, ExtensionRuntimeFingerprint>,
+    pub(crate) warnings: Vec<String>,
+}
 
 pub(super) fn build(mut scan: ExtensionScan, disabled: &[String]) -> ExtensionContributions {
     scan.apply_disabled(disabled);
     let mut commands = Vec::new();
     let mut services = Vec::new();
+    let mut agents = Vec::new();
     let mut active_ids = HashSet::new();
     let mut runtime = Vec::new();
     let mut warnings = scan.root_errors;
@@ -38,6 +42,7 @@ pub(super) fn build(mut scan: ExtensionScan, disabled: &[String]) -> ExtensionCo
             }
             commands.extend(extension.commands);
             services.extend(extension.services);
+            agents.extend(extension.agents);
         } else if extension.info.status != ExtensionStatus::Disabled {
             warnings.extend(
                 extension
@@ -48,11 +53,12 @@ pub(super) fn build(mut scan: ExtensionScan, disabled: &[String]) -> ExtensionCo
             );
         }
     }
-    (
+    ExtensionContributions {
         commands,
         services,
+        agents,
         active_ids,
-        fingerprints_by_id(runtime),
+        runtime: fingerprints_by_id(runtime),
         warnings,
-    )
+    }
 }

@@ -54,6 +54,16 @@ name = "watch"
 exec = ["python", "{extension_dir}/bin/git_tools.py", "service"]
 cwd = "."
 restart = "on-failure"
+
+# Optional: teach Rozi to recognize a coding-agent CLI in a pane and read its state.
+[[agents]]
+id = "mytool"
+label = "My Tool"
+match = { names = ["mytool"], paths = ["@acme/mytool"] }
+
+[[agents.states]]
+state = "blocked"
+screen = { any_of = ["approve? (a/d)"] }
 ```
 
 - Keep the extension `id` stable. IDs match `[a-z0-9_-]+`; do not derive identity from the
@@ -71,6 +81,12 @@ restart = "on-failure"
 - `./` and `../` executable paths resolve from the extension directory. Commands run in the focused
   pane's live cwd. Services default to the extension directory; a relative service `cwd` resolves
   there.
+- `[[agents]]` is declarative data, not a process: no exec, no environment, no path resolution. Ids
+  are namespaced `<extension>.<id>`, so an extension can add an agent but never replace a built-in
+  one. Rules are evaluated by precedence (blocked, working, idle, unknown), not declaration order;
+  scope a `working` rule to `footer` or a transcript quoting its own hints reads as a live run. Full
+  format in `docs/agents.md`. Publish rows instead when the program knows its own state.
+- Any invalid command, service, or agent invalidates the whole extension atomically.
 - Disable an installed extension with `[extensions] disabled = ["git-tools"]` in `config.toml`.
 
 Manifest command `branches` under extension `git-tools` becomes `git-tools.branches`. Invoke it with:

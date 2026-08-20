@@ -12,6 +12,7 @@ use crate::platform::process::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::agent_detection::AgentCatalog;
 use crate::session::protocol::{
     DetectedAgent, PANE_STATUS_MAX_LEN, PANE_STATUS_REASON_MAX_LEN, PaneCommandPhase,
     PaneCwdSource, PaneRuntimeState, PaneStatus,
@@ -171,6 +172,54 @@ impl SessionServer {
         Ok(Some(pane.runtime.clone()))
     }
 
+    /// Re-read agent definitions from this server's config and re-detect every pane against them.
+    pub(super) fn reload_agent_definitions(&mut self) {
+        let loaded = crate::config::load_config();
+        for warning in loaded.warnings {
+            eprintln!("rozi: {warning}");
+        }
+        self.apply_agent_definitions(super::agent_catalog(loaded.config.agents));
+    }
+
+    /// Adopt a resolved agent catalog and re-detect every live pane against it.
+    ///
+    /// Split from the config read so the swap can be driven directly: reading config under test
+    /// would mean writing into the process-wide scratch root every other test shares.
+    ///
+    /// A no-op when the catalog is unchanged, which is what an ordinary config reload (a theme
+    /// edit, a keybinding) amounts to. When it did change, every pane's detection scratch is
+    /// dropped: the cached answer, the sweep-skipping probe, and the held state all describe panes
+    /// read through the *previous* definitions, and a pane whose agent an edit just renamed or
+    /// stopped recognizing would otherwise keep its stale identity until its foreground program
+    /// happened to change. Re-detection broadcasts, so every attached client converges on the same
+    /// identity and state rather than each reading its own config.
+    pub(super) fn apply_agent_definitions(
+        &mut self,
+        agents: std::sync::Arc<crate::agent_detection::AgentCatalog>,
+    ) {
+        if agents == self.settings.agents {
+            return;
+        }
+        self.settings.agents = agents;
+        for pane in self.panes.values_mut() {
+            pane.agent = AgentScratch::default();
+            pane.runtime.detected_agent = None;
+        }
+        let mut scan = LazyProcessScan::default();
+        // Every pane, not only the ones with a live PTY the way [`Self::poll_pane_runtime`] does.
+        // The loop above already cleared each pane's held agent, so a pane skipped here would keep
+        // that clearing server-side while its clients went on showing the identity it used to have.
+        // A recompute only broadcasts when something actually changed, so the extra panes are free.
+        let panes: Vec<_> = self
+            .panes
+            .iter()
+            .map(|(&id, pane)| (id, pane.generation))
+            .collect();
+        for (id, generation) in panes {
+            self.sync_pane_runtime_inner(None, id, generation, true, &mut scan);
+        }
+    }
+
     pub(super) fn poll_pane_runtime(&mut self) {
         if self.last_runtime_poll.elapsed() < RUNTIME_POLL_INTERVAL {
             return;
@@ -210,7 +259,7 @@ impl SessionServer {
         );
     }
 
-    fn sync_pane_runtime_inner(
+    pub(super) fn sync_pane_runtime_inner(
         &mut self,
         owner: Option<ClientId>,
         pane_id: PaneId,
@@ -218,6 +267,9 @@ impl SessionServer {
         detect_agent: bool,
         scan: &mut LazyProcessScan,
     ) {
+        // Cloned before the pane borrow: detection reads the session's whole agent catalog, which
+        // lives on the server rather than the pane.
+        let agents = self.settings.agents.clone();
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return;
         };
@@ -225,7 +277,12 @@ impl SessionServer {
             return;
         }
         let inspector = PlatformProcessInspector::default();
-        let next = compute_runtime_state(pane, &inspector, detect_agent, scan);
+        let next = compute_runtime_state(
+            pane,
+            &inspector,
+            detect_agent.then(|| agents.as_ref()),
+            scan,
+        );
         if next == pane.runtime {
             return;
         }
@@ -250,7 +307,7 @@ impl SessionServer {
 fn compute_runtime_state(
     pane: &mut ServerPane,
     inspector: &impl ProcessInspector,
-    detect_agent: bool,
+    agents: Option<&AgentCatalog>,
     scan: &mut LazyProcessScan,
 ) -> PaneRuntimeState {
     let semantic = pane.screen().semantic_state();
@@ -343,10 +400,10 @@ fn compute_runtime_state(
             .as_ref()
             .zip(aggregate)
             .map(|(previous, state)| DetectedAgent {
-                kind: previous.kind,
+                agent: previous.agent.clone(),
                 state,
             })
-    } else if detect_agent {
+    } else if let Some(agents) = agents {
         let probe = AgentProbe {
             foreground_program: foreground_program.clone(),
             command_phase,
@@ -364,7 +421,8 @@ fn compute_runtime_state(
         if stale {
             pane.agent.probe = Some(probe);
             pane.agent.detected_at = Some(Instant::now());
-            let observed = detect_pane_agent(pane, inspector, foreground_program.as_deref(), scan);
+            let observed =
+                detect_pane_agent(pane, agents, inspector, foreground_program.as_deref(), scan);
             resolve_detected_agent(observed, &mut pane.agent.hold, Instant::now())
         } else {
             // The cached value is already resolved, and a skipped sweep observed nothing, so it
@@ -656,7 +714,7 @@ fn resolve_detected_agent(
                 observed_at: now,
             });
             Some(DetectedAgent {
-                kind: observed.kind,
+                agent: observed.agent,
                 state,
             })
         }
@@ -665,13 +723,13 @@ fn resolve_detected_agent(
             .map(|held| held.state)
         {
             Some(state) => Some(DetectedAgent {
-                kind: observed.kind,
+                agent: observed.agent,
                 state,
             }),
             None => {
                 *hold = None;
                 Some(DetectedAgent {
-                    kind: observed.kind,
+                    agent: observed.agent,
                     state: crate::session::protocol::DetectedAgentState::Idle,
                 })
             }
@@ -681,6 +739,7 @@ fn resolve_detected_agent(
 
 fn detect_pane_agent(
     pane: &mut ServerPane,
+    agents: &AgentCatalog,
     inspector: &impl ProcessInspector,
     foreground_program: Option<&str>,
     scan: &mut LazyProcessScan,
@@ -729,7 +788,7 @@ fn detect_pane_agent(
     }
     let screen = pane.screen_without_change().snapshot();
     let title = pane.effective_title().unwrap_or_default();
-    crate::agent_detection::detect(foreground_job.as_ref(), screen.as_ref(), &title)
+    crate::agent_detection::detect(agents, foreground_job.as_ref(), screen.as_ref(), &title)
 }
 
 /// Resolve the pane's displayable cwd per [`PaneCwdSource`]'s precedence order: a valid local or
@@ -803,6 +862,10 @@ fn is_local_host(host: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn catalog() -> AgentCatalog {
+        AgentCatalog::builtin()
+    }
 
     fn make_pane() -> ServerPane {
         ServerPane {
@@ -943,11 +1006,13 @@ mod tests {
         let mut scan = LazyProcessScan::default();
 
         // First pass has no cached probe, so detection must run.
-        pane.runtime = compute_runtime_state(&mut pane, &StubInspector, true, &mut scan);
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
         let first = pane.agent.detected_at.expect("first poll must detect");
 
         // Foreground program and command phase unchanged: detection must be skipped.
-        pane.runtime = compute_runtime_state(&mut pane, &StubInspector, true, &mut scan);
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
         assert_eq!(
             pane.agent.detected_at,
             Some(first),
@@ -961,7 +1026,8 @@ mod tests {
             command_phase: pane.runtime.command_phase,
         });
         pane.agent.probe = None;
-        pane.runtime = compute_runtime_state(&mut pane, &StubInspector, true, &mut scan);
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
         assert_ne!(
             pane.agent.detected_at,
             Some(first),
@@ -990,7 +1056,7 @@ mod tests {
         let state = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(state.cwd, Some("/launch/dir".to_string()));
@@ -1025,7 +1091,7 @@ mod tests {
         let state = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(state.cwd, Some(expected));
@@ -1042,7 +1108,7 @@ mod tests {
         let state = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(state.cwd, Some(expected));
@@ -1078,14 +1144,14 @@ mod tests {
         let first = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         pane.runtime = first.clone();
         let second = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(second, first);
@@ -1105,7 +1171,7 @@ mod tests {
         let changed = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(changed.status, pane.runtime.status);
@@ -1115,7 +1181,7 @@ mod tests {
         let unchanged = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(unchanged, changed);
@@ -1129,7 +1195,7 @@ mod tests {
         let state = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(
@@ -1145,7 +1211,7 @@ mod tests {
         let next = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(next.command_phase, PaneCommandPhase::Prompt);
@@ -1161,13 +1227,13 @@ mod tests {
         let detected = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            true,
+            Some(&catalog()),
             &mut LazyProcessScan::default(),
         );
         assert_eq!(
             detected.detected_agent,
             Some(crate::session::protocol::DetectedAgent {
-                kind: crate::session::protocol::AgentKind::OpenCode,
+                agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
                 state: crate::session::protocol::DetectedAgentState::Working,
             })
         );
@@ -1177,25 +1243,88 @@ mod tests {
         let event_update = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(event_update.detected_agent, detected.detected_agent);
         assert_eq!(event_update.sequence, detected.sequence);
     }
 
+    /// The server detects whatever catalog it was given, not a fixed list. This is the whole
+    /// point of the declarative format reaching `ServerSettings`.
+    #[test]
+    fn a_config_declared_agent_is_detected_like_a_builtin() {
+        let mut warnings = Vec::new();
+        let definitions = crate::agent_detection::build_definitions(
+            toml::from_str::<toml::Table>(
+                r#"
+                [[agents]]
+                id = "mycoolagent"
+                label = "My Cool Agent"
+                match = { names = ["mca"] }
+
+                [[agents.states]]
+                state = "working"
+                scope = "footer"
+                screen = { any_of = ["thinking…"] }
+                "#,
+            )
+            .expect("parses")
+            .remove("agents")
+            .expect("agents array")
+            .try_into::<Vec<crate::agent_detection::AgentSpec>>()
+            .expect("specs parse"),
+            crate::agent_detection::AgentOrigin::Config,
+            &[],
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let declared = crate::agent_detection::AgentCatalog::with_definitions(definitions);
+
+        let mut pane = make_pane();
+        pane.env.push(("ROZI_AGENT".into(), "mca".into()));
+        pane.screen_mut().process_bytes("  thinking…".as_bytes());
+        let detected = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            Some(&declared),
+            &mut LazyProcessScan::default(),
+        );
+        assert_eq!(
+            detected.detected_agent,
+            Some(DetectedAgent {
+                agent:
+                    crate::session::protocol::AgentIdentity::new("mycoolagent", "My Cool Agent",)
+                        .into(),
+                state: crate::session::protocol::DetectedAgentState::Working,
+            })
+        );
+
+        // The same pane read through the built-in catalog alone is not an agent at all.
+        let mut pane = make_pane();
+        pane.env.push(("ROZI_AGENT".into(), "mca".into()));
+        pane.screen_mut().process_bytes("  thinking…".as_bytes());
+        let unknown = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            Some(&catalog()),
+            &mut LazyProcessScan::default(),
+        );
+        assert_eq!(unknown.detected_agent, None);
+    }
+
     #[test]
     fn inferred_agent_run_start_survives_block_and_resume() {
         let mut pane = make_pane();
         pane.runtime.detected_agent = Some(crate::session::protocol::DetectedAgent {
-            kind: crate::session::protocol::AgentKind::OpenCode,
+            agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });
 
         let working = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         let started = working
@@ -1208,7 +1337,7 @@ mod tests {
         let blocked = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(blocked.work_started_at, Some(started));
@@ -1219,7 +1348,7 @@ mod tests {
         let resumed = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(resumed.work_started_at, Some(started));
@@ -1231,16 +1360,16 @@ mod tests {
     #[test]
     fn an_observation_with_no_evidence_holds_the_previous_state() {
         use crate::agent_detection::AgentObservation;
-        use crate::session::protocol::{AgentKind, DetectedAgentState};
+        use crate::session::protocol::{AgentIdentity, DetectedAgentState};
 
         let start = Instant::now();
         let mut hold = None;
         let working = AgentObservation {
-            kind: AgentKind::OpenCode,
+            agent: AgentIdentity::new("opencode", "OpenCode").into(),
             state: Some(DetectedAgentState::Working),
         };
         let silent = AgentObservation {
-            kind: AgentKind::OpenCode,
+            agent: AgentIdentity::new("opencode", "OpenCode").into(),
             state: None,
         };
 
@@ -1250,7 +1379,7 @@ mod tests {
 
         // Inside the cap, and far enough in that a naive per-poll refresh would be visible.
         let held = resolve_detected_agent(
-            Some(silent),
+            Some(silent.clone()),
             &mut hold,
             start + AGENT_HOLD_MAX - Duration::from_secs(1),
         )
@@ -1271,13 +1400,13 @@ mod tests {
     #[test]
     fn a_positive_idle_observation_ends_the_run_immediately() {
         use crate::agent_detection::AgentObservation;
-        use crate::session::protocol::{AgentKind, DetectedAgentState};
+        use crate::session::protocol::{AgentIdentity, DetectedAgentState};
 
         let start = Instant::now();
         let mut hold = None;
         resolve_detected_agent(
             Some(AgentObservation {
-                kind: AgentKind::OpenCode,
+                agent: AgentIdentity::new("opencode", "OpenCode").into(),
                 state: Some(DetectedAgentState::Working),
             }),
             &mut hold,
@@ -1287,7 +1416,7 @@ mod tests {
         // finish by anything like `AGENT_HOLD_MAX`.
         let idle = resolve_detected_agent(
             Some(AgentObservation {
-                kind: AgentKind::OpenCode,
+                agent: AgentIdentity::new("opencode", "OpenCode").into(),
                 state: Some(DetectedAgentState::Idle),
             }),
             &mut hold,
@@ -1300,12 +1429,12 @@ mod tests {
     #[test]
     fn losing_the_agent_drops_the_hold() {
         use crate::agent_detection::AgentObservation;
-        use crate::session::protocol::{AgentKind, DetectedAgentState};
+        use crate::session::protocol::{AgentIdentity, DetectedAgentState};
 
         let mut hold = None;
         resolve_detected_agent(
             Some(AgentObservation {
-                kind: AgentKind::OpenCode,
+                agent: AgentIdentity::new("opencode", "OpenCode").into(),
                 state: Some(DetectedAgentState::Working),
             }),
             &mut hold,
@@ -1324,7 +1453,7 @@ mod tests {
     fn the_keep_open_shell_swap_forgets_the_previous_program() {
         let mut pane = make_pane();
         pane.runtime.detected_agent = Some(crate::session::protocol::DetectedAgent {
-            kind: crate::session::protocol::AgentKind::OpenCode,
+            agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });
         pane.agent.hold = Some(AgentHold {
@@ -1344,7 +1473,7 @@ mod tests {
         let next = compute_runtime_state(
             &mut pane,
             &StubInspector,
-            false,
+            None,
             &mut LazyProcessScan::default(),
         );
         assert_eq!(next.detected_agent, None);
@@ -1368,7 +1497,7 @@ mod tests {
             set_at: 2,
         };
         let blocked = DetectedAgent {
-            kind: crate::session::protocol::AgentKind::OpenCode,
+            agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Blocked,
         };
 

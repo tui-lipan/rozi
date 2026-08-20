@@ -159,7 +159,8 @@ fn sidebar_render(c: &mut Criterion) {
                 // Agent rows only exist for panes the server detected an agent in.
                 for pane in &mut state.current_mut().workspaces[0].panes {
                     pane.terminal.detected_agent = Some(rozi::session::protocol::DetectedAgent {
-                        kind: rozi::session::protocol::AgentKind::Claude,
+                        agent: rozi::session::protocol::AgentIdentity::new("claude", "Claude Code")
+                            .into(),
                         state: rozi::session::protocol::DetectedAgentState::Working,
                     });
                 }

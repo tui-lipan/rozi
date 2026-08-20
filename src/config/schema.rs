@@ -827,6 +827,10 @@ pub struct Config {
     pub hooks: Vec<HookConfig>,
     pub commands: Vec<NamedCommand>,
     pub services: Vec<ServiceConfig>,
+    /// Agent definitions from `[[agents]]` and from installed extensions, ahead of the built-in
+    /// catalog. Detection happens in the session server, so this is what the controller hands it;
+    /// see [`crate::agent_detection::AgentCatalog`].
+    pub agents: Vec<crate::agent_detection::AgentDefinition>,
     /// Stable IDs of extensions that are valid, compatible, unique, and enabled for this load.
     pub active_extensions: HashSet<String>,
     /// Process-facing definitions used to preserve or rotate opaque runtime fencing tokens.
@@ -1418,6 +1422,7 @@ impl Default for Config {
             hooks: Vec::new(),
             commands: Vec::new(),
             services: Vec::new(),
+            agents: Vec::new(),
             active_extensions: HashSet::new(),
             extension_runtime: std::collections::BTreeMap::new(),
             logging: LoggingConfig::default(),

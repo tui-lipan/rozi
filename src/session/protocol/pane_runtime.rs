@@ -109,60 +109,25 @@ pub struct PaneStatus {
     pub set_at: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AgentKind {
-    Pi,
-    Claude,
-    Codex,
-    Gemini,
-    Cursor,
-    Devin,
-    Antigravity,
-    Cline,
-    Omp,
-    Mastracode,
-    OpenCode,
-    GithubCopilot,
-    Kimi,
-    Kiro,
-    Droid,
-    Amp,
-    Grok,
-    Hermes,
-    Kilo,
-    QoderCli,
-    Maki,
-    Aider,
-    Goose,
+/// Who a detected agent is.
+///
+/// Open rather than an enum of the tools Rozi happens to know: `id` and `label` both come from the
+/// [`AgentDefinition`](crate::agent_detection::AgentDefinition) that matched, and a definition
+/// declared in `config.toml` or shipped by an extension produces one of these exactly as a built-in
+/// does. Nothing downstream may branch on a known set of ids - the sidebar renders `label`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentIdentity {
+    /// Stable definition id, such as `claude` or `git-tools.mycoolagent`.
+    pub id: String,
+    /// Display name, as the definition declared it.
+    pub label: String,
 }
 
-impl AgentKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Pi => "Pi",
-            Self::Claude => "Claude Code",
-            Self::Codex => "Codex",
-            Self::Gemini => "Gemini CLI",
-            Self::Cursor => "Cursor Agent",
-            Self::Devin => "Devin CLI",
-            Self::Antigravity => "Antigravity",
-            Self::Cline => "Cline",
-            Self::Omp => "OMP",
-            Self::Mastracode => "Mastra Code",
-            Self::OpenCode => "OpenCode",
-            Self::GithubCopilot => "GitHub Copilot",
-            Self::Kimi => "Kimi Code",
-            Self::Kiro => "Kiro CLI",
-            Self::Droid => "Droid",
-            Self::Amp => "Amp",
-            Self::Grok => "Grok",
-            Self::Hermes => "Hermes",
-            Self::Kilo => "Kilo Code",
-            Self::QoderCli => "Qoder CLI",
-            Self::Maki => "Maki",
-            Self::Aider => "Aider",
-            Self::Goose => "Goose",
+impl AgentIdentity {
+    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
         }
     }
 }
@@ -177,7 +142,11 @@ pub enum DetectedAgentState {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DetectedAgent {
-    pub kind: AgentKind,
+    /// Shared rather than owned: one definition's identity describes every pane running that
+    /// agent, and this rides inside [`PaneRuntimeState`], which is recomputed per pane at the
+    /// runtime poll rate and sits in the largest `Msg`/`ServerMessage` variants. Two inline
+    /// `String`s here cost 48 bytes in each of them and an allocation per sweep.
+    pub agent: std::sync::Arc<AgentIdentity>,
     pub state: DetectedAgentState,
 }
 

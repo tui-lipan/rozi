@@ -12,7 +12,7 @@ use tui_lipan::TestBackend;
 fn agent_pane(status: &str) -> crate::pane::TerminalPane {
     let mut pane = crate::pane::TerminalPane::new(100);
     pane.detected_agent = Some(crate::session::protocol::DetectedAgent {
-        kind: crate::session::protocol::AgentKind::Claude,
+        agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
         state: crate::session::protocol::DetectedAgentState::Idle,
     });
     pane.reported_status = Some(crate::session::protocol::PaneStatus {
@@ -344,7 +344,8 @@ fn finished_unseen_survives_background_updates_until_focus_gain() {
                     set_at: 1,
                 });
                 pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
-                    kind: crate::session::protocol::AgentKind::Claude,
+                    agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code")
+                        .into(),
                     state: crate::session::protocol::DetectedAgentState::Idle,
                 });
             }
@@ -366,7 +367,11 @@ fn finished_unseen_survives_background_updates_until_focus_gain() {
                             set_at: 2,
                         }),
                         detected_agent: Some(crate::session::protocol::DetectedAgent {
-                            kind: crate::session::protocol::AgentKind::Claude,
+                            agent: crate::session::protocol::AgentIdentity::new(
+                                "claude",
+                                "Claude Code",
+                            )
+                            .into(),
                             state: crate::session::protocol::DetectedAgentState::Idle,
                         }),
                         ..PaneRuntimeState::default()
@@ -587,7 +592,7 @@ fn detected_blocked_over_stale_idle_does_not_arm_finished_unseen() {
 fn agent_edges_report_detected_only_blocked() {
     let mut pane = crate::pane::TerminalPane::new(100);
     pane.detected_agent = Some(crate::session::protocol::DetectedAgent {
-        kind: crate::session::protocol::AgentKind::Claude,
+        agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
         state: crate::session::protocol::DetectedAgentState::Blocked,
     });
 
@@ -718,7 +723,8 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
             let runtime = PaneRuntimeState {
                 status: Some(status.clone()),
                 detected_agent: Some(crate::session::protocol::DetectedAgent {
-                    kind: crate::session::protocol::AgentKind::OpenCode,
+                    agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode")
+                        .into(),
                     state: crate::session::protocol::DetectedAgentState::Blocked,
                 }),
                 sequence: 1,
@@ -746,8 +752,8 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     .terminal
                     .detected_agent
                     .as_ref()
-                    .map(|agent| agent.kind),
-                Some(crate::session::protocol::AgentKind::OpenCode)
+                    .map(|agent| agent.agent.id.clone()),
+                Some("opencode".to_string())
             );
 
             backend

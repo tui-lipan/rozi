@@ -351,6 +351,41 @@
 #workspace = 9
 #focus = false
 
+# Teach rozi to recognize a coding-agent CLI it does not ship a definition for, and to read
+# its screen. Declaring an `id` that matches a built-in (claude, codex, opencode, aider, …)
+# replaces that definition outright; omitting `match` there keeps the built-in's process
+# vocabulary and retunes only the rules. See docs/agents.md.
+#[[agents]]
+#id = "mycoolagent"
+# What the Activity sidebar shows. Defaults to the id.
+#label = "My Cool Agent"
+# Executable basenames, matched after stripping directories and .exe/.js/.py suffixes.
+#match = { names = ["mca", "mycoolagent"], paths = ["@acme/mca"] }
+# Rozi's shared blocked/working vocabulary ("[y/n]", "esc to interrupt", …) applies unless
+# this is false. Turn it off for an agent whose transcript quotes that prose while working.
+#base = true
+
+# Rules are evaluated by precedence, not declaration order: blocked, then working, then
+# idle, then unknown. A screen matching nothing is idle. `unknown` means "recognized the
+# agent, learned nothing" - rozi holds the previous state instead of ending the run.
+#[[agents.states]]
+#state = "blocked"
+# all_of must all match, any_of needs one, none_of vetoes. Needles are matched against
+# lowercased text, so write them however the agent draws them.
+#screen = { all_of = ["esc dismiss"], any_of = ["enter submit", "enter toggle"] }
+
+#[[agents.states]]
+#state = "working"
+# footer reads only the last 8 non-empty lines, where live status chrome sits - an agent's
+# transcript quotes its own interrupt hints constantly.
+#scope = "footer"
+#screen = { any_of = ["esc to interrupt", "thinking…"] }
+
+#[[agents.states]]
+# Set `regex = true` to read the group as regular expressions instead of literals.
+#state = "working"
+#title = { regex = true, any_of = ["^[\\x{2800}-\\x{28ff}]"] }
+
 # Extra hint-mode patterns, appended to the built-in URL, path, and Git-SHA detectors.
 # Built-ins win on overlap. Invalid patterns warn and are skipped.
 [[hints]]

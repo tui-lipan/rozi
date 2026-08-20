@@ -941,7 +941,7 @@ mod tests {
     fn status_age_uses_the_server_run_start_across_active_statuses() {
         let mut pane = TerminalPane::new(100);
         pane.detected_agent = Some(crate::session::protocol::DetectedAgent {
-            kind: crate::session::protocol::AgentKind::OpenCode,
+            agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });
         pane.work_started_at = Some(
@@ -966,7 +966,7 @@ mod tests {
     fn agent_alert_predicates_prefer_reported_status_and_accept_each_source() {
         let mut pane = TerminalPane::new(100);
         pane.detected_agent = Some(crate::session::protocol::DetectedAgent {
-            kind: crate::session::protocol::AgentKind::OpenCode,
+            agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Blocked,
         });
         assert!(pane.is_blocked());

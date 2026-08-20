@@ -474,6 +474,15 @@ impl SessionClient {
         });
     }
 
+    /// Ask the session server to re-read its agent definitions after a config reload.
+    ///
+    /// Detection is server-side, so a reload that changed `[[agents]]` or an extension's agents
+    /// has no effect on live panes until the server hears about it. Ignored by the server unless
+    /// this client holds the layout-control lease.
+    pub fn reload_agents(&self) {
+        self.send_control(ClientMessage::ReloadAgents);
+    }
+
     /// Replace a pane's published agent slots; an empty list withdraws them.
     pub fn report_pane_rows(
         &self,

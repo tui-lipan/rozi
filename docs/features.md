@@ -335,7 +335,7 @@ Built-in tabs:
 
 | Tab | Contents |
 | --- | --- |
-| `agents` | Detected coding-agent processes running in panes |
+| `activity` | Detected coding-agent processes running in panes. The catalog is declarative: `[[agents]]` in `config.toml` or an extension manifest teaches rozi a new CLI. See [Agent definitions](agents.md). |
 | `panes` | Live pane list for the session, grouped by workspace |
 | `sessions` | Local, attached, and remote sessions |
 | `files` | File tree rooted at the focused pane's working directory |

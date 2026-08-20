@@ -154,6 +154,15 @@ pub enum ClientMessage {
         generation: u64,
         rows: Vec<PublishedRow>,
     },
+    /// Re-read the agent definitions this session detects with.
+    ///
+    /// Carries no payload: the server loads its own config, which is the same file the client
+    /// resolved (`--config` propagates to `--server`) and, over `--remote`, is correctly the
+    /// *remote* host's - where the processes being detected actually run. Accepted only from the
+    /// controller, since `detected_agent` is one shared answer for every attached client rather
+    /// than a per-client view. Sent after a config reload; a session that never reloads gets its
+    /// definitions from the same load at startup.
+    ReloadAgents,
     /// Commit a new shared layout. Accepted only from the controller and only when `base_rev`
     /// equals the server's current revision; otherwise the server replies [`ServerMessage::LayoutRejected`].
     CommitLayout {

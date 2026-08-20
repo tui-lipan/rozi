@@ -240,7 +240,7 @@ Profiles restore layout and launch intent only, while a live session preserves P
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
 share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol negotiated in a supported
-range; this build speaks 2 only). One client holds the
+range; this build speaks 3 only). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state
@@ -269,6 +269,11 @@ Major module map:
   `Action` enum and command ids, the `BUILTIN_COMMANDS` registry and its default chords, and
   `[keys]` override/user-command parsing.
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.
+- `agent_detection/` - Which coding-agent CLI is behind a pane, and what state it is in. Everything
+  it knows is an `AgentDefinition`; the agents rozi ships live in `builtin.toml` in the *public*
+  `[[agents]]` format and go through the same validator (`spec.rs`) a user's config and an
+  extension's manifest do. There is no privileged detector - adding an agent is a table, and
+  `[[agents]]` in `config.toml` can replace a built-in outright. Detection runs server-side.
 - `tiling.rs` / `layout.rs` / `geometry.rs` / `ops/resize_move/` / `anim.rs` - Window-manager
   layout, placement, floating and tiled movement, split dragging, keyboard resizing, and animations.
 - `session/` / `ops/session.rs` - Multi-client session protocol (negotiated version range),
@@ -573,4 +578,5 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - [docs/agent-skill.md](docs/agent-skill.md) - Built-in Agent Skill install location and CLI.
 - [docs/hooks.md](docs/hooks.md) - Hook syntax, event fields, environment, and execution semantics.
 - [docs/benchmarks.md](docs/benchmarks.md) - Benchmarks, baselines, live stress, and profiling.
+- [docs/agents.md](docs/agents.md) - Declarative agent definitions: matching, screen rules, precedence.
 - [docs/themes.md](docs/themes.md) - Themes, hot reload, and terminal color palette.

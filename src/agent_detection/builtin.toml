@@ -1,0 +1,195 @@
+# Built-in agent definitions.
+#
+# This file is embedded in the binary and parsed through the same validator a user's `[[agents]]`
+# entries and an extension's manifest go through. Nothing here is privileged: every rule below can
+# be written in `config.toml`, and any entry can be replaced by declaring its `id` there.
+#
+# Rules match text that has already been lowercased, so needles are written lowercase and regexes
+# never need a case-insensitive flag. See docs/agents.md.
+
+# The shared vocabulary, applied to every agent that does not set `base = false`. It is what makes
+# an agent with no rules of its own - most of them - already worth detecting.
+[[base]]
+state = "blocked"
+screen = { any_of = [
+    "permission required",
+    "action required",
+    "do you want to proceed?",
+    "waiting for permission",
+    "allow command?",
+    "[y/n]",
+    "yes (y)",
+] }
+
+[[base]]
+state = "blocked"
+title = { any_of = ["action required"] }
+
+# An interrupt hint in the live chrome means a run is in flight. Scoped to the footer because an
+# agent's transcript quotes these constantly while writing *about* interrupting.
+[[base]]
+state = "working"
+scope = "footer"
+screen = { any_of = [
+    "esc to interrupt",
+    "esc again to interrupt",
+    "press esc to interrupt",
+    "ctrl+c to interrupt",
+    "esc interrupt",
+] }
+
+# Claude Code opts out of the shared blocked vocabulary: its transcripts quote approval prose
+# verbatim while a run is still in flight, so only the dialog's own structure counts. The footer
+# rule below is the shared working rule, restated because `base = false` drops it too.
+[[agents]]
+id = "claude"
+label = "Claude Code"
+base = false
+match = { names = ["claude", "claude-code"], paths = ["@anthropic-ai/claude-code"] }
+
+# The selection cursor on a numbered option: the stable structure of every approval dialog, and
+# the one thing a transcript discussing approvals does not reproduce.
+[[agents.states]]
+state = "blocked"
+screen = { regex = true, any_of = ["(?m)^\\s*❯\\s*\\d+\\. "] }
+
+[[agents.states]]
+state = "working"
+title = { regex = true, any_of = ["^[\\x{2800}-\\x{28ff}]"] }
+
+[[agents.states]]
+state = "working"
+scope = "footer"
+screen = { any_of = [
+    "esc to interrupt",
+    "esc again to interrupt",
+    "press esc to interrupt",
+    "ctrl+c to interrupt",
+    "esc interrupt",
+] }
+
+[[agents]]
+id = "opencode"
+label = "OpenCode"
+match = { names = ["opencode", "open-code", "opencode-tui"], paths = ["opencode-ai", "/opencode/"] }
+
+[[agents.states]]
+state = "blocked"
+screen = { all_of = ["esc dismiss"], any_of = ["enter submit", "enter toggle", "enter confirm"] }
+
+# The run progress bar. A generic submit hint is not enough on its own - a transcript quoting one
+# footer token is not a live dialog - which is what the `all_of` above is for.
+[[agents.states]]
+state = "working"
+screen = { regex = true, any_of = ["[■⬝]{4,}"] }
+
+# The child-session navigator replaces the composer and the status line, the only places the parent
+# run exposes its state. Nothing on this screen speaks for that run, so it is not idle.
+[[agents.states]]
+state = "unknown"
+screen = { all_of = ["parent up"], any_of = ["prev left", "next right"] }
+
+[[agents]]
+id = "codex"
+label = "Codex"
+match = { names = ["codex", "codex-cli"], paths = ["@openai/codex"] }
+
+[[agents]]
+id = "pi"
+label = "Pi"
+match = { names = ["pi", "pi-coding-agent"], paths = ["pi-coding-agent"] }
+
+[[agents]]
+id = "gemini"
+label = "Gemini CLI"
+match = { names = ["gemini", "gemini-cli"], paths = ["@google/gemini-cli"] }
+
+[[agents]]
+id = "github-copilot"
+label = "GitHub Copilot"
+match = { names = ["copilot", "github-copilot", "ghcs"], paths = ["@github/copilot"] }
+
+[[agents]]
+id = "cursor"
+label = "Cursor Agent"
+match = { names = ["cursor", "cursor-agent"] }
+
+[[agents]]
+id = "devin"
+label = "Devin CLI"
+match = { names = ["devin", "devin-cli"] }
+
+[[agents]]
+id = "antigravity"
+label = "Antigravity"
+match = { names = ["agy", "antigravity", "antigravity-cli"] }
+
+[[agents]]
+id = "cline"
+label = "Cline"
+match = { names = ["cline"] }
+
+[[agents]]
+id = "omp"
+label = "OMP"
+match = { names = ["omp"] }
+
+[[agents]]
+id = "mastracode"
+label = "Mastra Code"
+match = { names = ["mastracode", "mastra-code"] }
+
+[[agents]]
+id = "kimi"
+label = "Kimi Code"
+match = { names = ["kimi", "kimi-code"] }
+
+[[agents]]
+id = "kiro"
+label = "Kiro CLI"
+match = { names = ["kiro", "kiro-cli"] }
+
+[[agents]]
+id = "droid"
+label = "Droid"
+match = { names = ["droid"] }
+
+[[agents]]
+id = "amp"
+label = "Amp"
+match = { names = ["amp", "amp-local"] }
+
+[[agents]]
+id = "grok"
+label = "Grok"
+match = { names = ["grok", "grok-build"] }
+
+[[agents]]
+id = "hermes"
+label = "Hermes"
+match = { names = ["hermes", "hermes-agent"] }
+
+[[agents]]
+id = "kilo"
+label = "Kilo Code"
+match = { names = ["kilo", "kilo-code"] }
+
+[[agents]]
+id = "qoder-cli"
+label = "Qoder CLI"
+match = { names = ["qoder", "qodercn", "qodercli", "qoderclicn"] }
+
+[[agents]]
+id = "maki"
+label = "Maki"
+match = { names = ["maki"] }
+
+[[agents]]
+id = "aider"
+label = "Aider"
+match = { names = ["aider", "aider-chat"] }
+
+[[agents]]
+id = "goose"
+label = "Goose"
+match = { names = ["goose", "goose-cli"] }

@@ -3,7 +3,7 @@
 //! This is not a stable public API.
 
 mod actions;
-mod agent_detection;
+pub mod agent_detection;
 pub mod anim;
 pub mod app;
 pub mod cli;

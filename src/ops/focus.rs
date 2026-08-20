@@ -2403,11 +2403,11 @@ mod tests {
         {
             let panes = &mut state.current_mut().workspaces[0].panes;
             panes[0].terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
-                kind: crate::session::protocol::AgentKind::OpenCode,
+                agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
                 state: crate::session::protocol::DetectedAgentState::Blocked,
             });
             panes[1].terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
-                kind: crate::session::protocol::AgentKind::OpenCode,
+                agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
                 state: crate::session::protocol::DetectedAgentState::Blocked,
             });
             set_reported_status(&mut panes[0], "idle");

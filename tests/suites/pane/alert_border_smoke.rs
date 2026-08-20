@@ -58,7 +58,7 @@ fn detect_second_as_blocked(backend: &mut TestBackend<AppRoot>) {
     backend.state_mut().current_mut().workspaces[0].panes[1]
         .terminal
         .detected_agent = Some(rozi::session::protocol::DetectedAgent {
-        kind: rozi::session::protocol::AgentKind::Codex,
+        agent: rozi::session::protocol::AgentIdentity::new("codex", "Codex").into(),
         state: rozi::session::protocol::DetectedAgentState::Blocked,
     });
 }

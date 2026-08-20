@@ -178,6 +178,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: "Configuration Reference", link: "/configuration" },
+          { text: "Agent Definitions", link: "/agents" },
           { text: "Named Profiles", link: "/profiles" },
           { text: "Project Profiles", link: "/project-profiles" },
         ],

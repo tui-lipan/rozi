@@ -1194,7 +1194,7 @@ mod tests {
             set_at: 0,
         });
         pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
-            kind: crate::session::protocol::AgentKind::OpenCode,
+            agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Blocked,
         });
         let mut workspace = Workspace::new(1);

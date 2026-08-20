@@ -20,6 +20,7 @@ explicitly.
 | [Installation & releases](installation.md) | Bootstrap installers, signed updates, rollback, managed layout, and release signing. |
 | [Keybindings](keybindings.md) | Prefix mode, held modifier, mouse gestures, resize mode, and the full key table. |
 | [Configuration](configuration.md) | The complete `config.toml` reference: shell, input, animations, theme, profile, clipboard. |
+| [Agent definitions](agents.md) | Teaching rozi to recognize a coding-agent CLI and read its state, in `config.toml` or an extension. |
 | [Layouts & panes](layouts-and-panes.md) | Tiled layout kinds, floating, fullscreen, split ratios, focus and movement. |
 | [Sidebar](sidebar.md) | Docked sidebar configuration, built-in tabs, navigation, and shared-session sizing. |
 | [Themes](themes.md) | The 29 selectable presets, the `system` theme and ANSI fallback, custom theme files, live hot-reload, and terminal colors. |

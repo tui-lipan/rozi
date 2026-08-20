@@ -85,7 +85,7 @@ The extension API is intentionally separate from Rozi's internal Rust APIs. Rust
 may change freely without changing the extension API; the generation changes when the external
 contract changes incompatibly.
 
-## Commands and services
+## Commands, services, and agents
 
 ```toml
 [[commands]]
@@ -109,6 +109,27 @@ application config's legacy shell-string `exec`/`run` forms. A command may inste
 `send = "..."`; each command must declare exactly one action, and each service exactly one of
 `exec` or `shell`. A validation error invalidates the extension atomically rather than loading only
 a surprising subset.
+
+An extension may also ship `[[agents]]`, teaching Rozi to recognize a coding-agent CLI in a pane and
+read its screen:
+
+```toml
+[[agents]]
+id = "mytool"
+label = "My Tool"
+match = { names = ["mytool"] }
+
+[[agents.states]]
+state = "blocked"
+screen = { any_of = ["approve? (a/d)"] }
+```
+
+These are declarative data rather than a launchable process, so they need no path resolution and no
+environment — the format and validation are exactly `config.toml`'s, documented in
+[Agent definitions](agents.md). Ids are namespaced like commands and services (`mytool.mytool`),
+which is why an installed extension can add an agent but never displace a built-in one; only your
+own `config.toml` can do that. An invalid definition invalidates the extension atomically, the same
+as an invalid command.
 
 Hooks are intentionally absent. A service holding `rozi subscribe` retains state and avoids one
 process per event. Sidebar/workbar/picker declarations are also absent: runtime UI is expressed
@@ -192,8 +213,8 @@ rozi list-extensions --json
 ```
 
 Normal output shows loaded, disabled, invalid, incompatible, and duplicate candidates. Verbose
-output adds installation and manifest paths, API generation, public command/service ids, resolved
-executable paths, and every validation error. JSON is a tooling contract with its own
+output adds installation and manifest paths, API generation, public command/service/agent ids,
+resolved executable paths, and every validation error. JSON is a tooling contract with its own
 `schema_version` (currently `1`), independent of extension runtime API `1`; `list-extensions`
 returns `{ "schema_version": 1, "extensions": [...] }`, while `check-extension` returns one
 `extension` field. Public ids such as `git-tools.branches` are exposed, never internal registry

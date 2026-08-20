@@ -281,12 +281,17 @@ Docker and SSH independently exposed the same process-model gap, so pane spawnin
 argv rather than another quoting convention. Both examples use it directly; shell command strings
 remain available only when shell syntax is intentional.
 
-Built-in agent detection was split behind provider modules, but not extracted. Its process
-inspection and terminal-screen evidence are privileged core observations that the public extension
-surface deliberately does not expose. The `agent-activity` extension proves that third-party
-publishers can participate in the generic Activity/status model without requiring those privileges.
-Extraction should be reconsidered only if a detector can be implemented completely from the
-existing public streams.
+Built-in agent detection was opened up as data rather than extracted into processes. Detection runs
+in the session server, which owns the PTYs and holds the one `detected_agent` every attached client
+reads; a detector living in an out-of-process extension would run client-side, pull screens back
+across the session protocol, and duplicate itself per attached client. So the detectors stayed put
+and their *knowledge* became a declarative [`[[agents]]` definition](agents.md) instead — the same
+format for a built-in, a `config.toml` entry, and an extension contribution. The test of whether the
+format was real was whether it could express every built-in, including Claude's dialog structure,
+OpenCode's progress bar, and the subagent view's "no evidence" outcome. It can; there is no
+privileged detector left. Extensions still declare agents in their manifest, and the
+`agent-activity` extension remains the answer for a program that knows its own state better than
+any screen can show.
 
 The subsystem is closed for this maturation pass. Package installation may eventually be the next
 ecosystem-sized problem, but it should be driven by author feedback rather than more architecture.

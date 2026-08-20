@@ -215,11 +215,11 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                             pane_id: pane.id,
                             workspace_index,
                             pane_index,
-                            title: detected.kind.label().to_string(),
+                            title: detected.agent.label.clone(),
                             // Always `Some`: `agent_status` returns `None` only when there is no
                             // detected agent, and the filter above already established one.
                             status: pane.terminal.agent_status(),
-                            activity: activity_text(&pane.terminal, detected.kind.label()),
+                            activity: activity_text(&pane.terminal, &detected.agent.label),
                             age: pane.terminal.status_age(),
                             run: pane.terminal.last_run,
                             cwd_host: cwd
@@ -253,11 +253,11 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                     // which belongs on the detail line with every other activity.
                                     title: format!(
                                         "{} #{}",
-                                        detected.kind.label(),
+                                        detected.agent.label,
                                         index.saturating_add(1)
                                     ),
                                     status: Some(published_row.status.clone()),
-                                    activity: row_activity(published_row, detected.kind.label()),
+                                    activity: row_activity(published_row, &detected.agent.label),
                                     age: pane.terminal.row_age(published_row),
                                     run: ui.and_then(|ui| ui.last_run),
                                     finished_unseen: ui.is_some_and(|ui| ui.finished_unseen),
@@ -788,7 +788,7 @@ fn agent_row(ctx: &Context<AppRoot>, row: AgentRow) -> Row {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::protocol::{AgentKind, DetectedAgent, DetectedAgentState, PaneStatus};
+    use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState, PaneStatus};
     use crate::state::Pane;
 
     fn pane(id: PaneId, value: Option<&str>, _exiting: bool) -> Pane {
@@ -807,7 +807,7 @@ mod tests {
             },
         );
         pane.terminal.detected_agent = Some(DetectedAgent {
-            kind: AgentKind::Claude,
+            agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Idle,
         });
         pane.terminal.reported_status = value.map(|value| PaneStatus {
@@ -1145,7 +1145,7 @@ mod tests {
         state.current_mut().workspaces[0].panes[0]
             .terminal
             .detected_agent = Some(DetectedAgent {
-            kind: AgentKind::OpenCode,
+            agent: AgentIdentity::new("opencode", "OpenCode").into(),
             state: DetectedAgentState::Working,
         });
         let rows = agent_rows(&state);
@@ -1529,7 +1529,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.terminal.detected_agent = Some(DetectedAgent {
-            kind: AgentKind::Claude,
+            agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Working,
         });
         pane.terminal.reported_status = Some(PaneStatus {

@@ -145,6 +145,14 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     );
     ctx.state.extension_generations = extension_generations;
     ctx.state.config = new_config;
+    // Agent detection runs in the session server against the server's own config load, so the
+    // reload has to be forwarded rather than applied here. Only the controller may: `detected_agent`
+    // is one answer shared by every attached client, not a per-client view.
+    if ctx.state.is_controller()
+        && let Some(client) = ctx.state.current().session_client.as_ref()
+    {
+        client.reload_agents();
+    }
     let _ = crate::ops::pick::unload_extensions(ctx, &stale_extensions);
     let _ = crate::ops::published_rows::unload_extensions(ctx, &stale_extensions);
     crate::ops::extensions::unload(ctx, &stale_extensions);

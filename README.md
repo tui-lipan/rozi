@@ -169,6 +169,7 @@ with search.
 | [Installation](docs/installation.md) | Installing, updating, rolling back |
 | [Keybindings](docs/keybindings.md) | The full key reference |
 | [Configuration](docs/configuration.md) | Every setting in `config.toml` |
+| [Agent definitions](docs/agents.md) | Teaching rozi about another coding-agent CLI |
 | [Layouts & panes](docs/layouts-and-panes.md) | Tiling, floating, fullscreen, resizing |
 | [Sessions](docs/sessions.md) | Detaching, reattaching, and sharing sessions |
 | [Remote sessions](docs/remote.md) | Working on another machine over SSH |

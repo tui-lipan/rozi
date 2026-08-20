@@ -9,7 +9,7 @@ use tui_lipan::Color;
 #[test]
 fn detected_blocked_elevates_over_quiescent_reports_but_not_working() {
     let detected = DetectedAgent {
-        kind: AgentKind::OpenCode,
+        agent: AgentIdentity::new("opencode", "OpenCode").into(),
         state: DetectedAgentState::Blocked,
     };
     for value in [pane_status::IDLE, pane_status::DONE] {

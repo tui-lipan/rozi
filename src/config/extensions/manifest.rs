@@ -10,6 +10,10 @@ pub(super) struct ExtensionManifestFile {
     pub(super) commands: Vec<ExtensionCommandFile>,
     #[serde(default)]
     pub(super) services: Vec<ExtensionServiceFile>,
+    /// Agent definitions this extension teaches Rozi. Same format as `config.toml`'s
+    /// `[[agents]]`; ids are namespaced `<extension>.<id>` like commands and services are.
+    #[serde(default)]
+    pub(super) agents: Vec<crate::agent_detection::AgentSpec>,
 }
 
 #[derive(Debug, Deserialize)]

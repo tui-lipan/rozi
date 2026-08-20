@@ -45,7 +45,7 @@ Disabling `split` temporarily presents the saved groups as one
 tab bar; it does not merge or erase the `panels` recipe, so enabling it again restores the previous
 groups.
 
-The built-in IDs are `agents`, `panes`, `sessions`, `files`, and `git`. IDs are stable machine
+The built-in IDs are `activity`, `panes`, `sessions`, `files`, and `git`. IDs are stable machine
 identities used for selection and reload reconciliation, while custom `label` values are
 display-only. Duplicate IDs are skipped after the first. See
 [Configuration](configuration.md#sidebar) for file tree options and for custom launcher and
@@ -92,7 +92,9 @@ The session server inspects the foreground process group and its arguments, so a
 shell, and package-manager wrappers are recognized without relying only on the executable name.
 `ROZI_AGENT` or `HERDR_AGENT` can provide an explicit agent-name hint for an unusual launcher.
 The built-in catalog includes Claude Code, OpenCode, Codex, Aider, Gemini CLI, Goose, Amp, and other
-common terminal agents; ordinary shells, editors, and other panes are excluded unless they publish rows. Rows show the
+common terminal agents, and `[[agents]]` in `config.toml` teaches rozi one it does not ship — see
+[Agent definitions](agents.md). Ordinary shells, editors, and other panes are excluded unless they
+publish rows. Rows show the
 normalized agent name and how long its current run has lasted, over a detail line saying what the
 agent is doing; clicking a row switches workspace and focuses it. Closing panes, the scratchpad, and
 popups are excluded.
@@ -189,9 +191,10 @@ drops the pulse. The pulse is cleared as soon as the pane is attended — both i
 pane itself are focused — so selecting it in a background window does not falsely acknowledge it.
 
 Process detection infers `working` and `blocked` from server-owned terminal state where an agent
-exposes recognizable progress or prompt markers. Agent integrations can publish status through the
-control socket; explicit `working` wins, while a detected prompt elevates over stale reported
-`idle` or `done`.
+exposes recognizable progress or prompt markers. Which markers those are is an
+[agent definition](agents.md), the same declarative form for a built-in agent and one you add. Agent
+integrations can publish status through the control socket; explicit `working` wins, while a detected
+prompt elevates over stale reported `idle` or `done`.
 
 A screen that shows no marker either way is not read as idle. Agents draw their progress only for
 the view they are currently showing — OpenCode's subagent view replaces the composer and status

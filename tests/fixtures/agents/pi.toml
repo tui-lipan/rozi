@@ -1,0 +1,36 @@
+# Not captured. The `Working...` literal is second-hand (herdr's `pi` manifest) and nobody has
+# watched Pi draw it, so these screens prove only that the rule beside them is self-consistent.
+# Replace them with a real `rozi capture-pane` of Pi working, blocked, and idle - see README.md -
+# and delete this note with them.
+source = "derived"
+captured_at = "2026-08-20"
+notes = "unverified: the needle is second-hand and the surrounding chrome is a placeholder"
+
+[[case]]
+name = "working"
+state = "working"
+screen = '''
+> summarise the failing test
+
+Working...
+'''
+
+[[case]]
+name = "idle-at-the-prompt"
+state = "idle"
+screen = '''
+The test fails because the fixture is empty.
+
+>
+'''
+
+# Pi has no blocked rules of its own, so an approval prompt has to be caught by the shared
+# vocabulary. If Pi words its prompts differently this case is where that shows up.
+[[case]]
+name = "blocked-on-approval"
+state = "blocked"
+screen = '''
+Run `cargo test --all`?
+
+Continue? [y/n]
+'''

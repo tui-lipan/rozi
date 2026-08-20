@@ -8,6 +8,8 @@
 
 mod catalog;
 mod definition;
+#[cfg(test)]
+mod fixtures;
 mod process;
 mod spec;
 

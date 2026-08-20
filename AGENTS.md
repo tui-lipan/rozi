@@ -352,6 +352,12 @@ under Code Style.
   test: `std::env::set_var` is unsound beside parallel tests, and isolation now outranks it anyway.
 - Prefer targeted tests for layout, geometry, key routing, profile restore, session protocol, and
   terminal behavior when changing those areas.
+- A detection rule in `agent_detection/builtin.toml` is a claim about somebody else's UI, and no
+  amount of testing in this repository can check it. Screens captured from the real tool go in
+  `tests/fixtures/agents/<id>.toml` and are asserted by `src/agent_detection/fixtures.rs`; capture
+  one with `rozi capture-pane` and read it before committing, because it is a real screen. Adding a
+  built-in agent means adding a screen, not just a table - `every_shipped_agent_has_screen_evidence`
+  fails otherwise, and the list excusing an agent from the corpus is where the gap is admitted.
 - To *look* at a screen, capture the real binary headlessly rather than writing a snapshot test with
   no assertion. The rule above forbids an in-process test mutating the environment; a child process
   is a different thing entirely, and isolating one is just its env:

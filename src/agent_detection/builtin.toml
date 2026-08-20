@@ -99,6 +99,13 @@ id = "pi"
 label = "Pi"
 match = { names = ["pi", "pi-coding-agent"], paths = ["pi-coding-agent"] }
 
+# Pi says `Working...` and nothing the shared vocabulary recognizes - no interrupt hint, no
+# spinner in the title - so without this rule a live run reads as idle. Unscoped because the line
+# is not footer chrome; it sits wherever the turn left the cursor.
+[[agents.states]]
+state = "working"
+screen = { any_of = ["working..."] }
+
 [[agents]]
 id = "gemini"
 label = "Gemini CLI"

@@ -695,17 +695,19 @@ fn workspace_tabs_element(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                 };
                 tab = tab.style(
                     Style::new()
-                        .fg(app.chrome_paint(
+                        .fg(app.chrome_paint_with_frame_rate(
                             ctx,
                             format!("rozi-workspace-tab-{idx}-fg"),
                             fg_target,
                             transition,
+                            pulse.then_some(crate::anim::ALERT_PULSE_FRAME_RATE),
                         ))
-                        .bg(app.chrome_paint(
+                        .bg(app.chrome_paint_with_frame_rate(
                             ctx,
                             format!("rozi-workspace-tab-{idx}"),
                             target,
                             transition,
+                            pulse.then_some(crate::anim::ALERT_PULSE_FRAME_RATE),
                         ))
                         .contrast_policy(ContrastPolicy::Off),
                 );

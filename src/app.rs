@@ -650,21 +650,35 @@ impl AppRoot {
         target: Color,
         config: TransitionConfig,
     ) -> Paint {
-        self.chrome_paint(
+        self.chrome_color_with_frame_rate(ctx, pane, slot, target, config, None)
+    }
+
+    pub(crate) fn chrome_color_with_frame_rate(
+        &self,
+        ctx: &Context<Self>,
+        pane: PaneId,
+        slot: &str,
+        target: Color,
+        config: TransitionConfig,
+        frame_rate: Option<u16>,
+    ) -> Paint {
+        self.chrome_paint_with_frame_rate(
             ctx,
             format!("rozi-pane-chrome-{pane}-{slot}"),
             target,
             config,
+            frame_rate,
         )
     }
 
     /// A caller-keyed chrome paint. Palette/indexed colors deliberately snap rather than blend.
-    pub(crate) fn chrome_paint(
+    pub(crate) fn chrome_paint_with_frame_rate(
         &self,
         ctx: &Context<Self>,
         key: String,
         target: Color,
         config: TransitionConfig,
+        frame_rate: Option<u16>,
     ) -> Paint {
         // Only truecolor targets may fade. Named/indexed ANSI colors must be emitted
         // verbatim so the user's terminal palette resolves them; blending them animates
@@ -677,7 +691,10 @@ impl AppRoot {
         } else {
             anim::instant_transition()
         };
-        ctx.animated_color(key, target, config)
+        match frame_rate {
+            Some(frame_rate) => ctx.animated_color_with_frame_rate(key, target, config, frame_rate),
+            None => ctx.animated_color(key, target, config),
+        }
     }
 }
 

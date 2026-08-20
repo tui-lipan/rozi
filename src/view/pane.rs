@@ -665,7 +665,7 @@ pub(crate) fn pane_element(
             ctx.state.config.pane.highlight_focused_border,
         ),
     };
-    let frame_fg = app.chrome_color_with(
+    let frame_fg = app.chrome_color_with_frame_rate(
         ctx,
         pane.id,
         "frame-fg",
@@ -675,6 +675,7 @@ pub(crate) fn pane_element(
         } else {
             app.focus_chrome_transition_config(ctx)
         },
+        alert_pulses.then_some(crate::anim::ALERT_PULSE_FRAME_RATE),
     );
     let frame_bg_target = crate::ops::theme::pane_frame_background(
         theme,

@@ -8,6 +8,9 @@ pub const OPEN_DELAY_MS: u64 = 36;
 pub const FOCUS_CHROME_MS: u64 = 160;
 pub const ALERT_PULSE_MS: u64 = 1600;
 pub const ALERT_PULSE_MIN_HALF_MS: u64 = 400;
+/// A long, subtle breathe needs fewer samples than short focus feedback. Keeping this separate from
+/// the app-wide colour cadence avoids repainting the whole realized tree at 30 fps indefinitely.
+pub const ALERT_PULSE_FRAME_RATE: u16 = 10;
 /// Alert borders remain recognizably alert-colored at the bottom of their breathe.
 pub const ALERT_PULSE_BLEND: f32 = 0.55;
 

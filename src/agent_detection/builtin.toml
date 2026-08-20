@@ -40,6 +40,48 @@ screen = { any_of = [
     "do you trust the files in this folder",
 ] }
 
+# An agent asking a *question* rather than for permission. Same thing for a pane - it is waiting
+# for a person and will wait forever - but the screen looks nothing like an approval prompt, and
+# these six agents were read as idle or working while a chooser sat open in front of them.
+#
+# The most portable tell turned out to be the escape hatch every chooser offers: somewhere under
+# the options, a way to answer in your own words. Antigravity writes `Write-in...`, Maki `Type your
+# own answer`, Cursor `Other: (type to answer)`, Cline `Type a response...`. It appears while the
+# chooser is open and goes away with it.
+[[base]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = [
+    "type your own answer",
+    "type a response",
+    "type to answer",
+    "write-in",
+] }
+
+# A numbered question header, for the ones that count their questions instead: Codex's
+# `Question 1/1 (1 unanswered)`, Antigravity's `Question 1/1:`. Anchored to the start of a line so
+# prose about a question cannot claim it, and allowing a few frame characters in front because
+# Cursor and Copilot draw theirs inside a box.
+[[base]]
+state = "blocked"
+scope = "footer"
+screen = { regex = true, any_of = ["(?m)^\\s*\\W{0,3}\\s*question \\d+\\s*(/|of)\\s*\\d+"] }
+
+# Said outright. Pi keeps its spinner running and its `Working...` line on screen while it waits,
+# so without this a pane that has stopped for you reads as one that is busy.
+[[base]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["waiting for user input"] }
+
+# The chooser chrome OpenCode has always been read by, now shared: Maki's question box closes with
+# `Enter submit Tab next Esc dismiss`. A submit hint alone is not enough - a transcript quoting one
+# footer token is not a live dialog - which is what the `all_of` is for.
+[[base]]
+state = "blocked"
+scope = "footer"
+screen = { all_of = ["esc dismiss"], any_of = ["enter submit", "enter toggle", "enter confirm"] }
+
 # A braille spinner at the front of the terminal title. Agents animate one there while a turn is in
 # flight and drop it the moment they stop, which makes it the only working signal some of them give
 # a pane at all: Grok's footer says `Esc:cancel` whether it is working or not, while its title
@@ -157,7 +199,10 @@ match = { names = ["copilot", "github-copilot", "ghcs"], paths = ["@github/copil
 [[agents]]
 id = "cursor"
 label = "Cursor Agent"
-match = { names = ["cursor", "cursor-agent"] }
+# Neither name finds it in practice. The CLI runs as `~/.local/bin/agent` with the process name
+# `MainThread`, so a pane running Cursor was not recognized as an agent at all - the version path
+# in its argv is the only thing that names it.
+match = { names = ["cursor", "cursor-agent"], paths = ["cursor-agent"] }
 
 [[agents]]
 id = "devin"

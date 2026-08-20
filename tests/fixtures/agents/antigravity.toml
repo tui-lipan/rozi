@@ -1,0 +1,28 @@
+# Captured with scripts/capture-agents.sh and by hand from live panes. Trailing
+# whitespace stripped, home directory replaced by `~`.
+source = "capture"
+captured_at = "2026-08-20"
+notes = "antigravity, question tool open"
+
+# Captured while the agent's question tool held the pane. The transcript above the chooser is cut;
+# trailing whitespace stripped, home directory replaced by `~`.
+[[case]]
+name = "asking-a-question"
+state = "blocked"
+title = "user@host:~/.cache/rozi-agent-lab"
+screen = '''
+> testing purposes: can you use the question tool and ask me any question?
+▸ Thought for 2s, 398 tokens
+  Begin Testing Now
+? Which programming language do you enjoy working with the most?
+Question
+──────────────────────────────────────────────────────────────────────────────
+Question 1/1: Which programming language do you enjoy working with the most?
+> 1. Rust
+  2. Python
+  3. TypeScript / JavaScript
+  4. Go
+  5. Write-in...
+  ↑/↓ Navigate · enter Select · esc Skip
+esc to cancel                                          Gemini 3.7 Flash · high
+'''

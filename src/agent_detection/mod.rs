@@ -753,13 +753,50 @@ mod tests {
                 .is_some_and(|ch| ('\u{2800}'..='\u{28ff}').contains(&ch))
         }
 
+        /// The second: chooser chrome means blocked for every agent, where it used to be read only
+        /// for OpenCode.
+        ///
+        /// An agent asking a question waits exactly as long as one asking permission, and six of
+        /// them were caught mid-question reading as idle or working. See the `[[base]]` blocked
+        /// rules and `tests/fixtures/agents/*.toml`.
+        fn chooser_chrome(screen: &str) -> bool {
+            let footer = footer_text(screen);
+            ["type your own answer", "type a response", "type to answer"]
+                .iter()
+                .any(|hint| footer.contains(hint))
+                || (footer.contains("esc dismiss")
+                    && ["enter submit", "enter toggle", "enter confirm"]
+                        .iter()
+                        .any(|hint| footer.contains(hint)))
+        }
+
+        fn footer_text(screen: &str) -> String {
+            let mut lines: Vec<&str> = screen
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .rev()
+                .take(8)
+                .collect();
+            lines.reverse();
+            lines.join("\n")
+        }
+
         #[test]
         fn declarative_builtins_read_every_screen_the_way_the_old_detectors_did() {
             let catalog = catalog();
             // Every agent that had a named detector, plus one that only ever had the generic one.
             for id in ["claude", "opencode", "codex", "goose"] {
                 for (screen, title) in corpus() {
+                    // Claude opts out of the shared vocabulary, so the shared divergence below is
+                    // not its to inherit - its question dialogs need a rule of its own, which
+                    // nobody has captured a screen for yet.
+                    let shares_base = catalog.by_id(id).is_some_and(|agent| agent.base);
                     let legacy = match legacy_detect_state(id, screen, title) {
+                        Some(DetectedAgentState::Idle)
+                            if shares_base && chooser_chrome(&screen.to_lowercase()) =>
+                        {
+                            Some(DetectedAgentState::Blocked)
+                        }
                         Some(DetectedAgentState::Idle) if title_spinner(&title.to_lowercase()) => {
                             Some(DetectedAgentState::Working)
                         }

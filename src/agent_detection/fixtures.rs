@@ -32,8 +32,6 @@ const EVIDENCE_IN_UNIT_TESTS: &[&str] = &["opencode"];
 const AWAITING_EVIDENCE: &[&str] = &[
     "gemini",
     "devin",
-    "antigravity",
-    "cline",
     "omp",
     "mastracode",
     "kimi",

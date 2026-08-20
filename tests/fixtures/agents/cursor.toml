@@ -45,7 +45,28 @@ Tip: You can start the Cursor CLI with `agent` (same as `cursor-agent`).
   ~/.cache/rozi-agent-lab
 '''
 
-# No working or blocked case yet, and the live trust dialog is not covered either: Cursor keys its
-# options by letter (`[a]`, `[q]`) rather than by number, and the only thing separating the live
-# dialog from the answered one above is the `▶` cursor on the selected option. That is a rule this
-# corpus has one screen for, which is not enough to write it from.
+# No working case yet, and the *live* trust dialog is not covered either: Cursor keys its options
+# by letter (`[a]`, `[q]`), and the only thing separating the live dialog from the answered one
+# above is the `▶` cursor on the selected option. One screen is not enough to write that rule from.
+#
+# The question chooser below is a different shape and is covered - by the free-text escape hatch
+# (`Other: (type to answer)`) rather than by anything numbered.
+[[case]]
+name = "asking-a-question"
+state = "blocked"
+screen = '''
+ │ Quick test                                                               │
+ │                                                                          │
+ │ Question 1 of 1                                                          │
+ │                                                                          │
+ │ 1. Which programming language do you enjoy using most?                   │
+ │                                                                          │
+ │   › [ ] Python                                                           │
+ │     [ ] TypeScript                                                       │
+ │     [ ] Rust                                                             │
+ │     [ ] Other: (type to answer)                                          │
+ │                                                                          │
+ │ ↑/↓ option · ←/→ question · Space select · Enter next/submit · Esc to    │
+ │ skip                                                                     │
+ └──────────────────────────────────────────────────────────────────────────┘
+'''

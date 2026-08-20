@@ -32,3 +32,26 @@ maki> The
 ──────────────────────────────────────────────────────────────────────────────────
  [BUILD]                         ~/.cache/rozi-agent-lab  google/gemini-3.5-flash-lite  6.1k/1.0m (0%)
 '''
+
+# Captured while the agent's question tool held the pane. The transcript above the chooser is cut;
+# trailing whitespace stripped, home directory replaced by `~`.
+[[case]]
+name = "asking-a-question"
+state = "blocked"
+title = "user@host:~/.cache/rozi-agent-lab"
+screen = '''
+⠏ question> 1 question                                              21:30:52
+╭ Question ──────────────────────────────────────────────────────────────────╮
+│ This is a test question for testing purposes. Which option do you prefer?  │
+│  (single answer)                                                           │
+│                                                                            │
+│▸ ○ Option A — Option A description                                         │
+│─────────────────────────────────────────────────────────────────────────── │
+│  ○ Option B — Option B description                                         │
+│─────────────────────────────────────────────────────────────────────────── │
+│  ○ Type your own answer                                                    │
+│                                                                            │
+│                                                                            │
+╰───────────────────────────────────────── Enter submit Tab next Esc dismiss ╯
+ ⠏ [BUILD]  ~/.cache/rozi-agent-lab  ../gemini-3.5-flash-lite  6.0k/1.0m (0%)
+'''

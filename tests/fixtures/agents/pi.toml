@@ -74,7 +74,30 @@ screen = '''
 ↑5.3k ↓90 R768 CH12.4% $0.011 (sub) 0.6%/500k (auto)                        grok-4.5 • medium
 '''
 
-# No blocked case yet. Pi deleted a file when asked, without stopping to confirm, so nothing
-# captured an approval prompt. Whether that is Pi's policy or this machine's approval settings is
-# the open question; until a real prompt is captured, Pi's blocked state rests on the shared
-# vocabulary and is unverified.
+# No *approval* prompt captured: Pi deleted a file when asked, without stopping to confirm, so
+# whether it gates that class of action at all is still open.
+#
+# It does stop for a question, and this is what that looks like - note that the spinner keeps
+# turning and `Working...` stays on screen the whole time it waits, so every working rule Pi has
+# still matches here. `Waiting for user input...` is what has to outrank them, and blocked
+# outranking working is what makes that work.
+[[case]]
+name = "asking-a-question"
+state = "blocked"
+title = "π - rozi-agent-lab"
+screen = '''
+ Th│   3. That was enough, thanks                                          │
+   │     Type something. — Enter a custom response                         │
+ Su│  type filter • PgUp/PgDn prompt • backspace erase • ↑↓ navigate •     │
+   │  alt+o hide • enter select • esc clear/cancel • ctrl+c cancel         │
+   ╰───────────────────────────────────────────────────────────── v0.14.0 ─╯
+ ask_user What would you like to test next?
+   3 option(s): Something coding-related, Something else entirely, That was
+ enough, thanks
+ Waiting for user input...
+ ⠼ Working...
+────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────
+~/.cache/rozi-agent-lab
+↑3.5k ↓91 R384 CH10.0% $0.008 (sub) 0.8%/500k (auto)           grok-4.5 • medium
+'''

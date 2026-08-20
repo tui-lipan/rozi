@@ -21,3 +21,26 @@ screen = '''
 
   Press enter to continue
 '''
+
+# Captured while the agent's question tool held the pane. The transcript above the chooser is cut;
+# trailing whitespace stripped, home directory replaced by `~`.
+[[case]]
+name = "asking-a-question"
+state = "blocked"
+title = "[ . ] Action Required | rozi-agent-lab"
+screen = '''
+╰───────────────────────────────────────────────────╯
+  Tip: Press Tab to queue a message when a task is running; otherwise it sends
+  immediately (except !).
+› testing purposes: can you use the question tool and ask me any question?
+• The question tool is only available in Plan mode, so I can’t invoke it here.
+  Plainly: what’s your favorite color?
+› testing purposes: can you use the question tool and ask me any question?
+  Question 1/1 (1 unanswered)
+  Which drink do you prefer?
+  › 1. Coffee (Recommended)  Choose coffee.
+    2. Tea                   Choose tea.
+    3. Water                 Choose water.
+    4. None of the above     Optionally, add details in notes (tab).
+  tab to add notes | enter to submit answer | esc to interrupt
+'''

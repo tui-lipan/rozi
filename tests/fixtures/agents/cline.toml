@@ -1,0 +1,27 @@
+# Captured with scripts/capture-agents.sh and by hand from live panes. Trailing
+# whitespace stripped, home directory replaced by `~`.
+source = "capture"
+captured_at = "2026-08-20"
+notes = "cline, question tool open"
+
+# Captured while the agent's question tool held the pane. The transcript above the chooser is cut;
+# trailing whitespace stripped, home directory replaced by `~`.
+[[case]]
+name = "asking-a-question"
+state = "blocked"
+title = "> testing purposes: can you use the question tool and ask me any question?"
+screen = '''
+ ❯ testing purposes: can you use the question tool and ask me any question?
+ ▶ Thinking: **Preparing question for tool invocation**
+ ⠙ ask_question(What would you like me to ask about next?)
+ Cline is asking a question
+ What would you like me to ask about next?
+  > A coding task
+    A debugging issue
+    A code review
+    Something else
+    Type a response...
+ GPT-5.4 mini (medium) ██████ (3,844)                        ○ Plan ● Act (Tab)
+ rozi-agent-lab
+ ⏵⏵ Auto-approve all enabled (Shift+Tab)
+'''

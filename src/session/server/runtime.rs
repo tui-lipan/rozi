@@ -36,6 +36,19 @@ pub(super) const AGENT_DETECT_REFRESH: Duration = Duration::from_secs(2);
 /// that it is not worth a finer trigger.
 pub(super) const GIT_REFRESH: Duration = Duration::from_secs(2);
 
+/// How long a blocked reading survives evidence that says otherwise.
+///
+/// An agent asking for attention may *blink* the fact. Grok alternates `⚠ Action Required` into
+/// its terminal title and out again on a ~1.1 s cycle while it waits, which read literally is not
+/// an agent that needs you and then does not: it is one agent, waiting, drawing a flashing sign.
+/// Taken frame by frame it produced two state changes a second, so the badge flickered and every
+/// attention edge behind it fired again on each cycle.
+///
+/// Long enough to bridge the dark half of a blink several times over, short enough that answering
+/// a prompt still clears within a beat. The cost is one-directional by design: a run that stops
+/// being blocked reports it a moment late, which is worth far more than a state that oscillates.
+pub(super) const BLOCKED_BLINK_GRACE: Duration = Duration::from_secs(2);
+
 /// How long a held agent state survives with no confirming evidence.
 ///
 /// Generous on purpose: this is a backstop for a pane whose agent the scraper permanently lost
@@ -835,7 +848,39 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
         title.as_deref().unwrap_or_default(),
     );
     pane.agent.read = Some((screen, title));
-    resolve_detected_agent(Some(observed), &mut pane.agent.hold, Instant::now())
+    let now = Instant::now();
+    let resolved = resolve_detected_agent(Some(observed), &mut pane.agent.hold, now);
+    settle_blocked_blink(resolved, &mut pane.agent.blocked_at, now)
+}
+
+/// Keep a blocked reading steady across the dark half of a blinking attention signal.
+///
+/// Pure in `now`, and deliberately narrow: only blocked is held, and only against evidence
+/// gathered within [`BLOCKED_BLINK_GRACE`]. A pane that has genuinely moved on says so once the
+/// grace runs out, and every other transition is immediate.
+fn settle_blocked_blink(
+    resolved: Option<DetectedAgent>,
+    blocked_at: &mut Option<Instant>,
+    now: Instant,
+) -> Option<DetectedAgent> {
+    let Some(detected) = resolved else {
+        *blocked_at = None;
+        return None;
+    };
+    if detected.state == crate::session::protocol::DetectedAgentState::Blocked {
+        *blocked_at = Some(now);
+        return Some(detected);
+    }
+    match blocked_at {
+        Some(at) if now.duration_since(*at) < BLOCKED_BLINK_GRACE => Some(DetectedAgent {
+            agent: detected.agent,
+            state: crate::session::protocol::DetectedAgentState::Blocked,
+        }),
+        _ => {
+            *blocked_at = None;
+            Some(detected)
+        }
+    }
 }
 
 /// Resolve the pane's displayable cwd per [`PaneCwdSource`]'s precedence order: a valid local or
@@ -1485,6 +1530,63 @@ mod tests {
             .expect("the agent is still recognized");
         assert_eq!(expired.state, DetectedAgentState::Idle);
         assert!(hold.is_none(), "an expired hold is dropped, not renewed");
+    }
+
+    /// Grok blinks `⚠ Action Required` into its title and out again about every 1.1 s while it
+    /// waits for an answer. Read frame by frame that is two state changes a second, forever; read
+    /// as one waiting agent it is one state. Timings here are the measured ones.
+    #[test]
+    fn a_blinking_attention_signal_is_one_blocked_state_not_a_flapping_pair() {
+        use crate::session::protocol::{AgentIdentity, DetectedAgentState};
+
+        let agent: std::sync::Arc<AgentIdentity> = AgentIdentity::new("grok", "Grok").into();
+        let detected = |state| {
+            Some(DetectedAgent {
+                agent: agent.clone(),
+                state,
+            })
+        };
+        let start = Instant::now();
+        let mut blocked_at = None;
+        let at = |offset_ms: u64| start + Duration::from_millis(offset_ms);
+
+        // Half a cycle on, half off, repeatedly: every frame must still read blocked.
+        for cycle in 0..5 {
+            let on = cycle * 1100;
+            assert_eq!(
+                settle_blocked_blink(
+                    detected(DetectedAgentState::Blocked),
+                    &mut blocked_at,
+                    at(on)
+                )
+                .map(|agent| agent.state),
+                Some(DetectedAgentState::Blocked)
+            );
+            assert_eq!(
+                settle_blocked_blink(
+                    detected(DetectedAgentState::Idle),
+                    &mut blocked_at,
+                    at(on + 550)
+                )
+                .map(|agent| agent.state),
+                Some(DetectedAgentState::Blocked),
+                "the dark half of a blink is not an answered prompt"
+            );
+        }
+
+        // Once the sign really is gone, the pane says so - a beat late, and once.
+        let quiet = at(5 * 1100 + BLOCKED_BLINK_GRACE.as_millis() as u64 + 1);
+        assert_eq!(
+            settle_blocked_blink(detected(DetectedAgentState::Idle), &mut blocked_at, quiet)
+                .map(|agent| agent.state),
+            Some(DetectedAgentState::Idle)
+        );
+        assert!(blocked_at.is_none(), "an expired grace is dropped");
+
+        // Losing the agent entirely carries nothing forward.
+        blocked_at = Some(start);
+        assert!(settle_blocked_blink(None, &mut blocked_at, start).is_none());
+        assert!(blocked_at.is_none());
     }
 
     #[test]

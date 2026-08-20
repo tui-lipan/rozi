@@ -906,10 +906,19 @@ mod tests {
                 backend.state().current().session_name.as_deref(),
                 Some("eph-123")
             );
-            assert!(
-                rx.try_recv().is_err(),
-                "capture must not send Rename to the live session"
-            );
+            // Only a `Rename` would be wrong here. Unrelated outbound traffic is not: the pane
+            // widget reports its viewport during setup, and that debounced resize flush lands
+            // whenever its timer happens to fire, so asserting the channel is *empty* would make
+            // this test a race against a timer thread.
+            let renamed = rx.try_iter().any(|message| {
+                matches!(
+                    message,
+                    crate::session::client::ClientOutbound::Control(
+                        crate::session::protocol::ClientMessage::Rename { .. }
+                    )
+                )
+            });
+            assert!(!renamed, "capture must not send Rename to the live session");
             let path = crate::config::profile_path_for_name(&name);
             assert!(path.exists(), "profile file should be written");
             let _ = std::fs::remove_file(&path);

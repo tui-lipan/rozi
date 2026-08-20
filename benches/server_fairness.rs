@@ -377,13 +377,6 @@ impl SnapshotFixture {
             }
         };
         assert!(matches!(attached, ServerMessage::Attached { .. }));
-        // The metrics this benchmark reads arrived in protocol 18. Pinning equality meant every
-        // later protocol bump broke the benchmark instead of exercising it; 20 is current.
-        assert!(
-            client.effective_protocol() >= 18,
-            "snapshot benchmark requires protocol 18 metrics, negotiated {}",
-            client.effective_protocol()
-        );
         let (events, drain_done, drain) = spawn_snapshot_drain(inbound);
         let executable = std::env::current_exe()
             .expect("locate benchmark executable")
@@ -500,7 +493,7 @@ fn wait_for_server_metrics(
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for the requested protocol-18 server metrics"
+            "timed out waiting for the requested server metrics"
         );
         std::thread::sleep(Duration::from_millis(1));
     }

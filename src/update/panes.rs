@@ -252,6 +252,16 @@ pub(super) fn pane_key(ctx: &mut Context<AppRoot>, id: PaneId, key: KeyEvent) ->
     update
 }
 
+pub(super) fn pane_link_activate(ctx: &mut Context<AppRoot>, event: TerminalLinkEvent) -> Update {
+    match tui_lipan::utils::open_url(&event.uri) {
+        Ok(()) => Update::none(),
+        Err(error) => {
+            crate::pty_events::notify_error(ctx, "Link failed", error.to_string());
+            Update::full()
+        }
+    }
+}
+
 pub(super) fn forward_prefix(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Update {
     let Some(id) = ctx.state.focused_pane() else {
         return Update::none();

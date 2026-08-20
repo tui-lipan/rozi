@@ -922,6 +922,7 @@ pub(crate) fn pane_element(
             );
         if !hinting {
             terminal_widget = terminal_widget
+                .on_link_activate(ctx.link().callback(Msg::PaneLinkActivate))
                 .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
         }
     }

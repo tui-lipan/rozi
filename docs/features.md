@@ -146,8 +146,8 @@ regex and can set `float`, `width`, `height`, `position`, `workspace`, `focus`, 
 
 **Scratchpad** — a toggleable drop-down pane that overlays the current workspace.
 
-**Popups and hints** — `[[hints]]` defines contextual popup actions; hint mode overlays selectable
-targets.
+**Links, popups, and hints** — Ctrl+click opens plain-text URLs and explicit OSC 8 links;
+`[[hints]]` defines contextual popup actions, and hint mode overlays selectable targets.
 
 See [Layouts & panes](layouts-and-panes.md) and [Terminal features](terminal.md).
 

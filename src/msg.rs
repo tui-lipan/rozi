@@ -269,6 +269,7 @@ pub enum Msg {
     CopyFeedbackExpired(u64, PaneId, u64),
     PaneInput(PaneId, TerminalInputEvent),
     PaneKey(PaneId, KeyEvent),
+    PaneLinkActivate(TerminalLinkEvent),
     /// Forward one configured prefix key after the hidden `<prefix> <prefix>` chord matches.
     ForwardPrefix(KeyEvent),
     PaneMouse(PaneId, Vec<u8>),

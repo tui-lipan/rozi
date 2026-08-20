@@ -239,6 +239,7 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         }
         Msg::PaneInput(id, input) => panes::pane_input(ctx, id, input),
         Msg::PaneKey(id, key) => panes::pane_key(ctx, id, key),
+        Msg::PaneLinkActivate(event) => panes::pane_link_activate(ctx, event),
         Msg::ForwardPrefix(key) => panes::forward_prefix(ctx, key),
         Msg::PaneMouse(id, bytes) => panes::pane_mouse(ctx, id, bytes),
         Msg::PaneResize(id, cols, rows) => panes::pane_resize(ctx, id, cols, rows),

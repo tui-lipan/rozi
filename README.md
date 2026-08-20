@@ -104,10 +104,10 @@ switch a theme or flip a setting from the command palette and rozi writes the ch
 your config file, so what you tried out is what you keep. Custom theme files reload the instant
 you save them, so you can tune a color and watch it land.
 
-**A real terminal, not an approximation.** Mouse support, text selection, images, scrollback with
-search, copy mode with vi-style motions, clipboard paste, and true color. 29 built-in themes ship
-with it, plus a `system` theme that follows your desktop and drop-in theme files of your own — and
-the colors inside your panes follow whichever one is active.
+**A real terminal, not an approximation.** Mouse support, Ctrl-click links, text selection, images,
+scrollback with search, copy mode with vi-style motions, clipboard paste, and true color. 29
+built-in themes ship with it, plus a `system` theme that follows your desktop and drop-in theme
+files of your own — and the colors inside your panes follow whichever one is active.
 
 **The same everywhere.** Linux, macOS, and Windows, natively — same keys, same config file, same
 behavior. Nothing to emulate, nothing to install underneath it.

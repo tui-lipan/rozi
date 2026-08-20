@@ -148,6 +148,18 @@ SSH via OSC52 when enabled.
 action and as `rozi capture-pane --last-output` for automation. Without shell
 integration marks the action shows a status hint rather than an error.
 
+## Link activation
+
+Hold Ctrl over a visible URL to underline it, then left-click to open it with the system handler.
+Explicit OSC 8 links work too, including labels whose visible text is not itself a URL; they take
+precedence over plain-text URL detection. Unsupported destinations raise an error instead of being
+passed to the operating system.
+
+On terminals supporting Kitty keyboard enhancements, pressing or releasing Ctrl refreshes the link
+under an already stationary pointer. Older terminals update the underline on the next pointer
+movement. Link activation is disabled while hint mode is open, where a mouse click dismisses the
+labels without opening or forwarding anything.
+
 ## Hint mode
 
 Press `u` (or *Hint mode* in the palette) to detect URLs, filesystem paths containing `/` (with an

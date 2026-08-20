@@ -824,7 +824,7 @@ fn interactive_command_spawn_applies_configured_rule() {
     state.current_mut().workspaces[2].focused_pane = Some(7);
 
     let (workspace, previous_focused, placement) =
-        interactive_spawn_target(&state, 0, None, Some("exec btop"), None);
+        interactive_spawn_target(&state, 0, None, Some("exec btop"), None, None);
 
     assert_eq!(workspace, 2);
     assert_eq!(previous_focused, Some(7));
@@ -849,7 +849,7 @@ fn interactive_spawn_without_command_keeps_source_and_default_placement() {
     config.rules.push(rule("btop"));
     let state = State::new(config, Theme::default());
 
-    let target = interactive_spawn_target(&state, 0, Some(1), None, None);
+    let target = interactive_spawn_target(&state, 0, Some(1), None, None, None);
 
     assert_eq!(target, (0, Some(1), SpawnPlacement::default()));
 }
@@ -866,7 +866,7 @@ fn focus_override_beats_the_matched_rule_without_touching_placement() {
 
     // The control endpoint's default: never move focus, but keep the rule's placement.
     let (workspace, _, placement) =
-        interactive_spawn_target(&state, 0, None, Some("exec btop"), Some(false));
+        interactive_spawn_target(&state, 0, None, Some("exec btop"), Some(false), None);
     assert_eq!(workspace, 3);
     assert!(!placement.focus);
     assert!(placement.fullscreen);
@@ -878,7 +878,7 @@ fn focus_override_beats_the_matched_rule_without_touching_placement() {
     config.rules.push(configured);
     let state = State::new(config, Theme::default());
     let (_, _, placement) =
-        interactive_spawn_target(&state, 0, None, Some("exec btop"), Some(true));
+        interactive_spawn_target(&state, 0, None, Some("exec btop"), Some(true), None);
     assert!(placement.focus);
 }
 

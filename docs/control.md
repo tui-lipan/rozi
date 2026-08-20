@@ -54,6 +54,7 @@ rozi split 'claude --agent helper'
 rozi split 'cargo watch' --focus
 rozi new-pane --cwd '/repo with spaces' --title Tests --keep-open 'cargo test' --focus
 rozi new-pane --cwd '/repo with spaces' --focus --argv cargo test -- --nocapture
+rozi new-pane --workspace 9 --argv grok
 rozi run-action toggle-float
 rozi capture-pane --target 3
 rozi capture-pane --scrollback full
@@ -91,6 +92,10 @@ self-reported `reported_status`.
 
 `capture-pane` returns the pane's `text` and its terminal `title`. Detection rules match both, so a
 capture kept as evidence needs the title with it.
+
+`--workspace <N>` spawns into another workspace instead of the caller's, overriding a matched
+`[[rules]]` workspace. A script that opens panes where someone is working re-tiles their layout on
+every spawn; a workspace of its own keeps out of the way and gives every pane the same geometry.
 
 `split`/`new-pane` leaves focus alone. The control endpoint is an automation surface, and a pane
 spawned from a script or an agent must not move focus, and the active workspace, away from whoever

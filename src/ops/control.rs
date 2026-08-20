@@ -90,6 +90,7 @@ pub(crate) fn handle_control_request(
             title,
             keep_open,
             focus,
+            workspace,
         } => {
             return new_pane(
                 ctx,
@@ -100,6 +101,7 @@ pub(crate) fn handle_control_request(
                 title,
                 keep_open,
                 focus,
+                workspace,
                 envelope.reply,
             );
         }
@@ -604,8 +606,19 @@ fn new_pane(
     title: Option<String>,
     keep_open: bool,
     focus: bool,
+    workspace: Option<usize>,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
+    let workspace = match workspace {
+        Some(index) => {
+            if let Some(response) = validate_workspace_index(index) {
+                let _ = reply.send(response);
+                return Update::full();
+            }
+            Some(index - 1)
+        }
+        None => None,
+    };
     let launch = match requested_pane_launch(command, argv) {
         Ok(launch) => launch,
         Err(message) => {
@@ -633,6 +646,7 @@ fn new_pane(
             title: title.clone(),
             keep_open,
             focus,
+            workspace,
         },
     ) {
         ctx.state.pending_control_reply = Some(reply);
@@ -672,6 +686,7 @@ fn new_pane(
         title,
         keep_open,
         focus,
+        workspace,
     );
     hold_spawn_reply(ctx, id, reply);
     update
@@ -746,6 +761,10 @@ pub(crate) fn resolve_spawn_reply(
 
 /// Spawn a pane once a session client is available (shared by the live control path and the
 /// deferred launcher replay).
+///
+/// The arguments are one control command's fields, kept flat to match `spawn_new_pane` below and
+/// the `PendingSessionAction::NewPane` variant they arrive in.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn new_pane_after_session(
     ctx: &mut Context<AppRoot>,
     source: Option<PaneId>,
@@ -754,6 +773,7 @@ pub(crate) fn new_pane_after_session(
     title: Option<String>,
     keep_open: bool,
     focus: bool,
+    workspace: Option<usize>,
 ) -> (PaneId, Update) {
     if !ctx.state.is_controller() {
         return (0, Update::full());
@@ -770,6 +790,7 @@ pub(crate) fn new_pane_after_session(
         title,
         keep_open,
         focus,
+        workspace,
     )
 }
 
@@ -783,6 +804,7 @@ fn spawn_new_pane(
     title: Option<String>,
     keep_open: bool,
     focus: bool,
+    workspace: Option<usize>,
 ) -> (PaneId, Update) {
     let mut identity = PaneIdentity {
         launch,
@@ -793,7 +815,14 @@ fn spawn_new_pane(
     if let Some(title) = title {
         identity.set_custom_title(title);
     }
-    spawn_interactive_pane_with_focus(ctx, source_workspace, source, identity, Some(focus))
+    spawn_interactive_pane_with_focus(
+        ctx,
+        source_workspace,
+        source,
+        identity,
+        Some(focus),
+        workspace,
+    )
 }
 
 fn requested_pane_launch(
@@ -1091,6 +1120,7 @@ mod tests {
                         title: None,
                         keep_open: false,
                         focus,
+                        workspace: None,
                     },
                     source_pane: None,
                     extension: None,

@@ -315,7 +315,7 @@ pub(crate) fn spawn_interactive_pane(
     source: Option<PaneId>,
     identity: PaneIdentity,
 ) -> (PaneId, Update) {
-    spawn_interactive_pane_with_focus(ctx, source_workspace, source, identity, None)
+    spawn_interactive_pane_with_focus(ctx, source_workspace, source, identity, None, None)
 }
 
 /// Spawn like [`spawn_interactive_pane`], but let the caller decide whether the new pane takes
@@ -332,6 +332,7 @@ pub(crate) fn spawn_interactive_pane_with_focus(
     source: Option<PaneId>,
     identity: PaneIdentity,
     focus: Option<bool>,
+    workspace: Option<usize>,
 ) -> (PaneId, Update) {
     let rule_command = identity
         .launch
@@ -343,6 +344,7 @@ pub(crate) fn spawn_interactive_pane_with_focus(
         source,
         rule_command.as_deref(),
         focus,
+        workspace,
     );
     spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity, placement)
 }
@@ -353,6 +355,7 @@ pub(crate) fn interactive_spawn_target(
     source: Option<PaneId>,
     command: Option<&str>,
     focus: Option<bool>,
+    workspace: Option<usize>,
 ) -> (usize, Option<PaneId>, SpawnPlacement) {
     let (rule_workspace, mut placement) = command
         .map(|command| crate::rules::placement_for_command(&state.config.rules, command))
@@ -360,7 +363,9 @@ pub(crate) fn interactive_spawn_target(
     if let Some(focus) = focus {
         placement.focus = focus;
     }
-    let workspace_index = rule_workspace.unwrap_or(source_workspace);
+    // A caller that named a workspace means it: `[[rules]]` placement is a default for the panes a
+    // person opens, not an override of an explicit instruction from automation.
+    let workspace_index = workspace.or(rule_workspace).unwrap_or(source_workspace);
     let previous_focused = source.or(state.current().workspaces[workspace_index].focused_pane);
     (workspace_index, previous_focused, placement)
 }

@@ -25,6 +25,8 @@ pub enum PendingSessionAction {
         title: Option<String>,
         keep_open: bool,
         focus: bool,
+        /// Zero-based, already validated by the control command that asked for it.
+        workspace: Option<usize>,
     },
     Popup {
         command: String,

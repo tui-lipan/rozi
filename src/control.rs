@@ -96,6 +96,14 @@ pub enum ControlCommand {
         /// rule still decides workspace, float, and fullscreen.
         #[serde(default)]
         focus: bool,
+        /// One-based workspace to spawn into, instead of the caller's. Overrides a matched
+        /// `[[rules]]` workspace, which is a default for panes a person opens.
+        ///
+        /// What this is for: a script that opens panes into the workspace someone is working in
+        /// re-tiles their layout on every spawn. Naming a workspace of its own keeps the spawn
+        /// entirely out of the way, and gives each pane the same geometry as the last.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<usize>,
     },
     /// Run any keybindable `Action` by its stable id (see `Action::id`/`Action::from_id`).
     RunAction {

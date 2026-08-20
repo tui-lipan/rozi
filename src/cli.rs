@@ -645,6 +645,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut title = None;
                 let mut keep_open = false;
                 let mut focus = false;
+                let mut workspace = None;
                 let mut passthrough = false;
                 while let Some(arg) = iter.next() {
                     match arg.as_str() {
@@ -678,6 +679,18 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         "--title" if !passthrough => {
                             return Err("new-pane --title specified more than once".to_string());
                         }
+                        "--workspace" if !passthrough && workspace.is_none() => {
+                            let value = require_value(
+                                &mut iter,
+                                "new-pane --workspace requires a workspace number",
+                            )?;
+                            workspace = Some(value.parse().map_err(|_| {
+                                "new-pane --workspace requires a workspace number".to_string()
+                            })?);
+                        }
+                        "--workspace" if !passthrough => {
+                            return Err("new-pane --workspace specified more than once".to_string());
+                        }
                         // A mistyped `--focu` must not become the command that gets run; `--` ends
                         // flag parsing for the rare command that really does start with a dash.
                         other if !passthrough && other.starts_with('-') && other != "-" => {
@@ -698,6 +711,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         title,
                         keep_open,
                         focus,
+                        workspace,
                     }),
                 }));
             }
@@ -1855,6 +1869,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "Spawn a pane; new-pane alias",
             ),
             row(
+                "new-pane [--workspace <N>] [--focus] [--cwd <DIR>] [--title <TEXT>]",
+                "Spawn a pane, optionally in another workspace",
+            ),
+            row(
                 "capture-pane [--target <PANE_ID>] [--scrollback <N|full>] [--last-output]",
                 "Print a pane's contents",
             ),
@@ -2365,6 +2383,40 @@ mod tests {
                 literal: false,
             }
         );
+        // A script that spawns into the workspace someone is working in re-tiles their layout on
+        // every pane; naming a workspace keeps it out of the way and keeps the geometry stable.
+        let ParsedCli::Control(elsewhere) = parse_cli_args(vec![
+            "new-pane".into(),
+            "--workspace".into(),
+            "9".into(),
+            "--argv".into(),
+            "grok".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            elsewhere.request.command,
+            control::ControlCommand::NewPane {
+                command: None,
+                argv: Some(vec!["grok".into()]),
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: Some(9),
+            }
+        );
+        assert!(parse_cli_args(vec!["new-pane".into(), "--workspace".into()]).is_err());
+        assert!(
+            parse_cli_args(vec![
+                "new-pane".into(),
+                "--workspace".into(),
+                "later".into()
+            ])
+            .is_err()
+        );
+
         // Order-independent, like every other control command's flags.
         let ParsedCli::Control(trailing_target) = parse_cli_args(vec![
             "send-text".into(),
@@ -2459,6 +2511,7 @@ mod tests {
             title: None,
             keep_open: false,
             focus,
+            workspace: None,
         };
 
         assert_eq!(
@@ -2496,6 +2549,7 @@ mod tests {
                 title: Some("tests".into()),
                 keep_open: true,
                 focus: true,
+                workspace: None,
             }
         );
         assert_eq!(
@@ -2537,6 +2591,7 @@ mod tests {
                 title: None,
                 keep_open: false,
                 focus: true,
+                workspace: None,
             }
         );
         assert!(parse_cli_args(vec!["new-pane".into(), "--argv".into()]).is_err());
@@ -3040,6 +3095,7 @@ mod tests {
                 title: None,
                 keep_open: false,
                 focus: false,
+                workspace: None,
             }
         );
     }

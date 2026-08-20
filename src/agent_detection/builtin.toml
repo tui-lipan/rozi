@@ -99,9 +99,10 @@ id = "pi"
 label = "Pi"
 match = { names = ["pi", "pi-coding-agent"], paths = ["pi-coding-agent"] }
 
-# Pi says `Working...` and nothing the shared vocabulary recognizes - no interrupt hint, no
-# spinner in the title - so without this rule a live run reads as idle. Unscoped because the line
-# is not footer chrome; it sits wherever the turn left the cursor.
+# Pi draws `⠦ Working...` at the end of the transcript and nothing the shared vocabulary
+# recognizes: its footer holds no interrupt hint, its title holds no spinner, and the `escape
+# interrupt` in its startup banner is permanent chrome that says nothing about the current turn.
+# Unscoped because the line follows the transcript rather than sitting in footer chrome.
 [[agents.states]]
 state = "working"
 screen = { any_of = ["working..."] }

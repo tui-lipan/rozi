@@ -221,7 +221,7 @@ fn derived_fixtures_are_named_as_the_placeholders_they_are() {
         .collect::<Vec<_>>();
     assert_eq!(
         derived,
-        vec!["pi".to_string()],
-        "update this list when a derived fixture is replaced by a capture"
+        Vec::<String>::new(),
+        "update this list when a derived fixture is added or replaced by a capture"
     );
 }

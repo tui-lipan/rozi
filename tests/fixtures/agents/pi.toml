@@ -1,36 +1,80 @@
-# Not captured. The `Working...` literal is second-hand (herdr's `pi` manifest) and nobody has
-# watched Pi draw it, so these screens prove only that the rule beside them is self-consistent.
-# Replace them with a real `rozi capture-pane` of Pi working, blocked, and idle - see README.md -
-# and delete this note with them.
-source = "derived"
+# Captured from pi 0.84.2 with scripts/capture-agents.sh, then trimmed: the startup banner's skill
+# and theme lists are the operator's own installed set and carry nothing about state, and the
+# working directory in the title is a scratch path.
+source = "capture"
 captured_at = "2026-08-20"
-notes = "unverified: the needle is second-hand and the surrounding chrome is a placeholder"
+notes = "pi 0.84.2, grok-4.5 backend, 101-column pane"
 
+[[case]]
+name = "idle-startup"
+state = "idle"
+title = "π - sample-project"
+screen = '''
+ pi v0.84.2
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+─────────────────────────────────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/sample-project
+$0.000 (sub) 0.0%/500k (auto)                                               grok-4.5 • medium
+'''
+
+# The one line that says a turn is in flight. Pi draws no interrupt hint in its footer while it
+# works - the header's `escape interrupt` is startup chrome and sits there permanently - so the
+# shared vocabulary sees nothing here and this literal is the whole signal.
 [[case]]
 name = "working"
 state = "working"
+title = "π - sample-project"
 screen = '''
-> summarise the failing test
+ pi v0.84.2
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
 
-Working...
+ Read README.md in this directory and describe it in one sentence.
+
+ ⠦ Working...
+─────────────────────────────────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/sample-project
+$0.000 (sub) 0.0%/500k (auto)                                               grok-4.5 • medium
 '''
 
+# The same pane once the turn is done: the spinner line is gone and nothing replaces it.
 [[case]]
-name = "idle-at-the-prompt"
+name = "idle-after-turn"
 state = "idle"
+title = "π - sample-project"
 screen = '''
-The test fails because the fixture is empty.
+ pi v0.84.2
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
 
->
+ Read README.md in this directory and describe it in one sentence.
+
+ The user wants me to read the README.md file in the current directory and describe it in one
+ sentence.
+
+ I'll read the README.md in the working directory.
+
+ read /tmp/sample-project/README.md
+
+ I have the README content. I'll describe it in one sentence.
+
+ This README describes a minimal sample project meant to give an agent a short, harmless file to
+ read.
+
+─────────────────────────────────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/sample-project
+↑5.3k ↓90 R768 CH12.4% $0.011 (sub) 0.6%/500k (auto)                        grok-4.5 • medium
 '''
 
-# Pi has no blocked rules of its own, so an approval prompt has to be caught by the shared
-# vocabulary. If Pi words its prompts differently this case is where that shows up.
-[[case]]
-name = "blocked-on-approval"
-state = "blocked"
-screen = '''
-Run `cargo test --all`?
-
-Continue? [y/n]
-'''
+# No blocked case yet. Pi deleted a file when asked, without stopping to confirm, so nothing
+# captured an approval prompt. Whether that is Pi's policy or this machine's approval settings is
+# the open question; until a real prompt is captured, Pi's blocked state rests on the shared
+# vocabulary and is unverified.

@@ -186,3 +186,8 @@ That is exactly the text and title the rules run against. The built-in definitio
 captured screens under [`tests/fixtures/agents/`](../tests/fixtures/agents/), and
 `scripts/capture-agents.sh` collects them for every agent installed on the machine - each one run
 through working, blocked, and idle, with detection's current reading recorded beside every screen.
+
+Detection runs in the **session server**, so a rebuilt binary changes nothing until that server
+restarts. A long-lived session keeps reading panes with the rules it started with, which is worth
+remembering before concluding that a new rule does not work: `rozi kill-session <NAME>` and
+reattach, or test in a fresh session.

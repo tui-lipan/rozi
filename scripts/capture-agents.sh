@@ -13,6 +13,7 @@
 #   scripts/capture-agents.sh --list          # what is installed, and what already has evidence
 #   scripts/capture-agents.sh                 # every installed agent
 #   scripts/capture-agents.sh pi codex        # just these
+#   scripts/capture-agents.sh --blocked-prompt 'Run `sudo id`.' pi
 #
 # Requires: jq, a running Rozi (ROZI_SOCKET, or --socket PATH).
 
@@ -23,16 +24,26 @@ BUILTIN="$REPO/src/agent_detection/builtin.toml"
 CORPUS="$REPO/tests/fixtures/agents"
 OUT="${ROZI_CAPTURE_OUT:-$REPO/target/agent-captures}"
 
-# The agent is asked to look at a file and then to run a command, because those are the two moments
-# worth a fixture: a turn in flight, and a turn stopped on a permission prompt. Both are read-only
-# by design - nothing here asks an agent to change anything.
+# The agent is asked to look at a file and then to do something it should want permission for,
+# because those are the two moments worth a fixture: a turn in flight, and a turn stopped on a
+# prompt.
 PROMPT_WORKING="Read README.md in this directory and describe it in one sentence."
-PROMPT_BLOCKED="Run the shell command \`date\` and show me its output."
+
+# Which action stops an agent to ask is not universal - it is that agent's policy, and the
+# operator's own approval settings on top of it. Running a command is a poor probe: several tools
+# treat a plain read-only command as pre-approved and simply run it (Pi runs `date` without a
+# word). Deleting a file is gated far more widely, and this file is a seed in a throwaway directory
+# the script removes anyway, so approving it costs nothing.
+#
+# An agent that does this without asking is not a broken capture - it is telling you it
+# auto-approves that class of action. Override the probe with --blocked-prompt when you know what
+# a particular tool does gate, or start the agent in whatever mode makes it ask.
+PROMPT_BLOCKED="Delete the file README.md in this directory."
 
 STARTUP_TIMEOUT=25
 WORKING_TIMEOUT=45
 BLOCKED_TIMEOUT=60
-POLL=1
+POLL=0.5
 
 SOCKET=""
 KEEP=0
@@ -45,9 +56,13 @@ note() { printf '  %s\n' "$*" >&2; }
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --socket) SOCKET="${2:-}"; [[ -n "$SOCKET" ]] || die "--socket needs a path"; shift 2 ;;
+        --blocked-prompt)
+            PROMPT_BLOCKED="${2:-}"
+            [[ -n "$PROMPT_BLOCKED" ]] || die "--blocked-prompt needs text"
+            shift 2 ;;
         --keep) KEEP=1; shift ;;          # leave the panes open to look at afterwards
         --list) LIST_ONLY=1; shift ;;
-        -h|--help) sed -n '3,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '3,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown flag $1" ;;
         *) WANTED+=("$1"); shift ;;
     esac
@@ -122,12 +137,26 @@ read_agent() {
         '.data[] | select(.id == $id) | .agent // "none"'
 }
 
+# End the agent by talking to its own pane, never by closing "the focused pane".
+#
+# `run-action close` acts on whatever is focused, which is not necessarily what this script
+# spawned - focus moves, a spawn can already have died, and a focus call can fail quietly. Getting
+# that wrong closes the operator's own pane. Sending the program an interrupt and then EOF is
+# addressed to a pane id and cannot land anywhere else; the pane closes itself when its command
+# exits.
 close_pane() {
-    local id="$1"
-    ctl focus "$id" >/dev/null 2>&1 || return 0
-    # Closing a pane with something running arms a confirmation; the second press answers it.
-    ctl run-action close >/dev/null 2>&1 || true
-    ctl run-action close >/dev/null 2>&1 || true
+    local id="$1" deadline
+    ctl send-keys --target "$id" C-c >/dev/null 2>&1 || true
+    sleep 1
+    ctl send-keys --target "$id" C-d >/dev/null 2>&1 || true
+    deadline=$((SECONDS + 10))
+    while (( SECONDS < deadline )); do
+        if [[ "$(read_state "$id")" == "" ]]; then
+            return 0
+        fi
+        sleep "$POLL"
+    done
+    note "pane $id would not exit - close it yourself"
 }
 
 # Wait until the pane stops changing, so a capture is a settled screen rather than a half-drawn one.
@@ -142,20 +171,29 @@ wait_quiet() {
     return 1
 }
 
-# Poll until the rules report `want`, and answer with the screen at that moment. Falling back to the
-# last screen is the interesting case, not a failure: it is what a missing rule looks like, and it
-# is exactly the screen somebody needs to look at to write one.
+# Poll until the rules report `want`, and answer with the screen at that moment.
+#
+# When they never do - the case this whole lab exists for - the answer must still be the screen
+# from *during* the turn, not the one left on the pane at the timeout. A turn that takes four
+# seconds under a forty-five second timeout is over long before the polling is, and returning the
+# final screen would hand back the finished transcript: the exact screen that says nothing about
+# what working looks like. So the first screen that differs from the pre-prompt baseline is kept as
+# the fallback, because that difference *is* the turn starting.
 wait_for_state() {
-    local id="$1" want="$2" deadline=$((SECONDS + $3)) reply
+    local id="$1" want="$2" deadline=$((SECONDS + $3)) baseline="$4" reply changed="" now
     while (( SECONDS < deadline )); do
         reply="$(capture_json "$id")"
         if [[ "$(read_state "$id")" == "$want" ]]; then
             printf '%s' "$reply"
             return 0
         fi
+        if [[ -z "$changed" ]]; then
+            now="$(screen_of "$reply")"
+            [[ -n "$now" && "$now" != "$baseline" ]] && changed="$reply"
+        fi
         sleep "$POLL"
     done
-    printf '%s' "$(capture_json "$id")"
+    printf '%s' "${changed:-$(capture_json "$id")}"
     return 1
 }
 
@@ -215,10 +253,14 @@ SEED
 
     ctl send-text --target "$pane" "$PROMPT_WORKING" >/dev/null
     sleep 1  # a TUI that watches for pasted input needs the newline as its own event
+    # Baseline *after* the text is typed and before it is submitted: typing into the prompt box is
+    # itself a screen change, and a baseline taken before it makes the very first poll look like
+    # the turn starting. What we want is the first change Enter causes.
+    baseline="$(screen_of "$(capture_json "$pane")")"
     ctl send-keys --target "$pane" Enter >/dev/null
-    reply="$(wait_for_state "$pane" "working" "$WORKING_TIMEOUT")" && reading="working" || {
+    reply="$(wait_for_state "$pane" "working" "$WORKING_TIMEOUT" "$baseline")" && reading="working" || {
         reading="$(read_state "$pane")"
-        note "never read as working - captured what it drew instead ($reading)"
+        note "never read as working - kept the screen the turn drew instead ($reading)"
     }
     emit_case "$file" "working" "working" "$reply" "$reading"
 
@@ -229,10 +271,12 @@ SEED
 
     ctl send-text --target "$pane" "$PROMPT_BLOCKED" >/dev/null
     sleep 1
+    baseline="$(screen_of "$(capture_json "$pane")")"
     ctl send-keys --target "$pane" Enter >/dev/null
-    reply="$(wait_for_state "$pane" "blocked" "$BLOCKED_TIMEOUT")" && reading="blocked" || {
+    reply="$(wait_for_state "$pane" "blocked" "$BLOCKED_TIMEOUT" "$baseline")" && reading="blocked" || {
         reading="$(read_state "$pane")"
-        note "never read as blocked - captured what it drew instead ($reading)"
+        note "never read as blocked - kept the screen the turn drew instead ($reading)"
+        note "if it never asked at all, this agent auto-approves; see --blocked-prompt"
     }
     emit_case "$file" "blocked" "blocked" "$reply" "$reading"
 

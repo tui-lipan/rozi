@@ -1531,3 +1531,106 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
         .join()
         .expect("popup teardown test thread panicked");
 }
+
+/// Attaching adopts panes that are already live, so no open/activate timer ever runs to hand one
+/// the keyboard - and the framework's `OnDemand` focus policy has no first-widget fallback. Without
+/// an explicit request the session draws its focused pane as focused while input goes nowhere until
+/// the pane is clicked.
+#[test]
+fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            backend.render();
+            let epoch = backend.state().runtime_epoch;
+            let (client, _rx) = SessionClient::test_channel();
+            backend.state_mut().current_mut().pending_session_attach =
+                Some(crate::state::PendingSessionAttach {
+                    epoch,
+                    name: "dev".to_string(),
+                    client: Some(client),
+                    autostart: false,
+                    read_only: false,
+                    reconnect: false,
+                    remote_host: None,
+                    intent: crate::state::AttachIntent::Plain,
+                    left: None,
+                    parked_epoch: None,
+                });
+
+            backend
+                .dispatch(Msg::SessionAttached {
+                    epoch,
+                    session: "dev".to_string(),
+                    client_id: 1,
+                    panes: Vec::new(),
+                    layout_rev: 1,
+                    layout: Some(attached_layout(&[7, 9])),
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    allow_takeover: true,
+                    read_only: false,
+                    created_from_profile: None,
+                })
+                .expect("attach to a populated session");
+            backend.render();
+
+            assert_eq!(backend.state().current().focused_pane, Some(7));
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::pane_terminal_key(7).as_str()),
+                "the adopted focused pane must own the keyboard without a click"
+            );
+        })
+        .expect("spawn attach focus test thread")
+        .join()
+        .expect("attach focus test thread panicked");
+}
+
+/// A minimal authoritative layout: one workspace of live tiled panes, the shape a server sends on
+/// attach.
+fn attached_layout(panes: &[crate::state::PaneId]) -> crate::shared_layout::SharedLayout {
+    use crate::shared_layout::{
+        SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis,
+        SharedWorkspace,
+    };
+    SharedLayout {
+        version: SHARED_LAYOUT_VERSION,
+        canvas_cols: 100,
+        canvas_rows: 28,
+        workspaces: vec![SharedWorkspace {
+            index: 0,
+            name: None,
+            synchronized: false,
+            layout: SharedLayoutKind::Dwindle,
+            start_axis: SharedSplitAxis::Horizontal,
+            split_ratios: Vec::new(),
+            tree: None,
+            panes: panes
+                .iter()
+                .map(|id| SharedPane {
+                    pane_id: *id,
+                    generation: 0,
+                    title: None,
+                    profile_name: None,
+                    cwd: None,
+                    launch: None,
+                    replay: false,
+                    keep_open: false,
+                    floating: false,
+                    fullscreen: false,
+                    rect: None,
+                    scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                })
+                .collect(),
+        }],
+    }
+}

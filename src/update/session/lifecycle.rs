@@ -248,6 +248,13 @@ pub(crate) fn attached(
         }
     };
 
+    // Adopted panes are born activated, so no open/activate timer ever runs to hand them the
+    // keyboard - and the framework's `OnDemand` policy has no first-widget fallback. Without this
+    // the attached session draws its focused pane as focused while nothing holds framework focus,
+    // and typing goes nowhere until the pane is clicked. Requested before the follow prompt, which
+    // takes the keyboard for itself and restores it to the pane on dismissal.
+    crate::ops::focus::request_current_pane_focus(ctx);
+
     let named = !crate::state::is_ephemeral_session_name(&session);
     if !populated && let crate::state::AttachIntent::ProfileSeed { profile, path } = &pending.intent
     {

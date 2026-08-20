@@ -2,7 +2,7 @@
 
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -22,6 +22,48 @@ use crate::state::PaneId;
 
 const MAX_CLIENT_INBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CLIENT_OUTBOUND_BYTES: usize = 8 * 1024 * 1024;
+/// How long [`SessionClient::shutdown`] waits for the writer thread to put the request on the wire
+/// before giving up on it. Reaching this means the socket is wedged, not that the frame is slow: a
+/// local write is microseconds.
+const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// One-shot "the shutdown request is on the wire" signal, raised by the writer thread.
+///
+/// Killing a session queues a `Shutdown` frame and then immediately drops the client, which tears
+/// the socket down and stops the writer where it stands. Without something to wait on, the frame
+/// the user's kill consists of is discarded before it is ever written, the server sees a plain
+/// client disconnect, and a named session survives the kill that was supposed to end it.
+struct ShutdownFlush {
+    flushed: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl ShutdownFlush {
+    fn new() -> Self {
+        Self {
+            flushed: Mutex::new(false),
+            changed: Condvar::new(),
+        }
+    }
+
+    /// Raised once the frame is written, and again when the writer stops for any other reason, so
+    /// a waiter is never left blocked on a thread that is gone.
+    fn signal(&self) {
+        if let Ok(mut flushed) = self.flushed.lock() {
+            *flushed = true;
+            self.changed.notify_all();
+        }
+    }
+
+    fn wait(&self, timeout: Duration) {
+        let Ok(flushed) = self.flushed.lock() else {
+            return;
+        };
+        let _ = self
+            .changed
+            .wait_timeout_while(flushed, timeout, |flushed| !*flushed);
+    }
+}
 
 /// Explicit transport lifecycle owner. When the final `SessionClient` handle for a session
 /// is dropped, `ClientTransport` shuts down the stream, signals termination to reader/writer
@@ -30,6 +72,7 @@ struct ClientTransport {
     outbound: Arc<ByteQueue<ClientOutbound>>,
     shutdown_stream: Mutex<Option<crate::platform::ipc::IpcConnection>>,
     shutdown_signal: Arc<AtomicBool>,
+    shutdown_flush: Arc<ShutdownFlush>,
 }
 
 impl ClientTransport {
@@ -253,15 +296,18 @@ impl SessionClient {
         // The worker threads may be blocked in platform I/O. Do not construct a transport without
         // the duplicate handle used to interrupt those operations.
         let shutdown_stream = stream.try_clone()?;
+        let shutdown_flush = Arc::new(ShutdownFlush::new());
         let transport = Arc::new(ClientTransport {
             outbound: Arc::clone(&outbound),
             shutdown_stream: Mutex::new(Some(shutdown_stream)),
             shutdown_signal: Arc::clone(&shutdown_signal),
+            shutdown_flush: Arc::clone(&shutdown_flush),
         });
         let client_inbound = inbound.mailbox();
         let writer_outbound = Arc::clone(&outbound);
         let writer_inbound = client_inbound.clone();
         let writer_shutdown_signal = Arc::clone(&shutdown_signal);
+        let writer_shutdown_flush = Arc::clone(&shutdown_flush);
         thread::spawn(move || {
             while let Some(message) = writer_outbound.pop_blocking() {
                 if writer_shutdown_signal.load(Ordering::Relaxed) {
@@ -269,7 +315,12 @@ impl SessionClient {
                 }
                 let result = match message {
                     ClientOutbound::Control(message) => {
-                        protocol::write_frame(&mut stream, &message)
+                        let ends_the_server = matches!(message, ClientMessage::Shutdown);
+                        let result = protocol::write_frame(&mut stream, &message);
+                        if ends_the_server {
+                            writer_shutdown_flush.signal();
+                        }
+                        result
                     }
                     ClientOutbound::PaneInput {
                         pane_id,
@@ -294,6 +345,7 @@ impl SessionClient {
                 }
             }
             writer_outbound.close();
+            writer_shutdown_flush.signal();
         });
         let heartbeat_outbound = Arc::clone(&outbound);
         let reader_outbound = Arc::clone(&outbound);
@@ -539,8 +591,18 @@ impl SessionClient {
         self.send_control(ClientMessage::Detach);
     }
 
+    /// Ask the server to end the session, and block until the request is actually on the wire.
+    ///
+    /// Every caller drops its client immediately afterwards — killing, restarting, discarding a
+    /// parked ephemeral, quitting — and that drop shuts the socket down and stops the writer
+    /// thread. Returning as soon as the frame is queued would therefore lose the race far more
+    /// often than it wins it, leaving the server running and the "killed" session reappearing in
+    /// the picker as soon as the next discovery sweep finds it.
     pub fn shutdown(&self) {
         self.send_control(ClientMessage::Shutdown);
+        if let Some(transport) = &self.transport {
+            transport.shutdown_flush.wait(SHUTDOWN_FLUSH_TIMEOUT);
+        }
     }
 
     /// Explicit local transport teardown: closes the outbound queue, signals reader/writer

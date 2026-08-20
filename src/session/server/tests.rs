@@ -2270,6 +2270,64 @@ fn local_named_shutdown_waits_for_the_real_server_to_retire() {
         .expect("server stopped cleanly");
 }
 
+/// Killing the session you are attached to drops the client on the line after the request is sent,
+/// which shuts the socket down and stops the writer thread. The request must still reach the
+/// server: a lost one leaves a named server running, and the killed session walks back into the
+/// picker on the next discovery sweep.
+#[test]
+fn an_attached_kill_reaches_the_server_before_the_client_is_torn_down() {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let name = format!(
+        "kl-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let (listener, endpoint) = bind_session_socket(&name).expect("bind session endpoint");
+    let thread_endpoint = endpoint.clone();
+    let thread_name = name.clone();
+    let server_thread = std::thread::spawn(move || {
+        let mut server =
+            SessionServer::new_named_with_settings(thread_name, ServerSettings::default());
+        server.endpoint = Some(thread_endpoint);
+        server.run_listener(listener)
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !endpoint.is_live() {
+        assert!(
+            Instant::now() < deadline,
+            "server endpoint never became live"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let (inbound, _inbound_rx) = std::sync::mpsc::channel();
+    let (client, _attached) = crate::session::client::SessionClient::connect_attached(
+        &endpoint,
+        name.clone(),
+        inbound,
+        false,
+    )
+    .expect("attach to the session server");
+    client.shutdown();
+    // Exactly what `kill_current_session` does next: the attachment is replaced, so the last handle
+    // goes away immediately.
+    drop(client);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while endpoint.is_live() {
+        assert!(
+            Instant::now() < deadline,
+            "kill was dropped on the floor: the server outlived it"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    server_thread
+        .join()
+        .expect("server thread joined")
+        .expect("server stopped cleanly");
+}
+
 #[test]
 fn clients_changed_contains_roster_and_lock_state() {
     let mut server = SessionServer::new_named("dev");

@@ -1,0 +1,43 @@
+# Captured with scripts/capture-agents.sh, stripped of trailing whitespace, home directory
+# replaced by `~`. Rules match substrings, so neither edit changes what they read.
+source = "capture"
+captured_at = "2026-08-20"
+notes = "GitHub Copilot CLI v1.0.80, first launch in an unseen directory"
+
+# Read as idle before the shared vocabulary learned this phrasing, exactly like Codex's. The dialog
+# is drawn inside a box, so the `❯ 1.` cursor sits behind a `│` and never starts its line - the
+# option-cursor shape that catches Claude's dialogs cannot see this one.
+[[case]]
+name = "startup-trust-dialog"
+state = "blocked"
+title = "GitHub Copilot"
+screen = '''
+  Current   Sessions   Issues   Pull requests   Gists
+
+  ╭─╮╭─╮
+  ╰─╯╰─╯  Copilot v1.0.80 uses AI.
+  █ ▘▝ █  Check for mistakes.
+   ▔▔▔▔
+
+ ● Tip: /skills
+   └ Manage skills for enhanced capabilities
+
+╭──────────────────────────────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                                                 │
+│ ──────────────────────────────────────────────────────────────────────────────────── │
+│ ╭──────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ ~/.cache/rozi-agent-lab                                                          │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────╯ │
+│                                                                                      │
+│ Copilot can read files in this folder and, with your permission, edit them or run    │
+│ code and shell commands. It will remember your permissions for this session.         │
+│                                                                                      │
+│ Do you trust the files in this folder?                                               │
+│                                                                                      │
+│ ❯ 1. Yes                                                                             │
+│   2. Yes, and remember this folder for future sessions                               │
+│   3. No (Esc)                                                                        │
+│                                                                                      │
+│ ↑/↓ to navigate · enter to select · esc to cancel                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+'''

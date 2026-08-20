@@ -16,10 +16,11 @@ use std::path::{Path, PathBuf};
 
 /// Agents whose real screens predate this corpus and are asserted inline in `mod.rs` instead.
 ///
-/// Both were written from live panes and carry cross-agent assertions a per-agent fixture cannot
-/// express - that Claude's dialog shape must not classify an OpenCode screen, say. Moving them
-/// here would cost those assertions, so they stay where they are and this names them.
-const EVIDENCE_IN_UNIT_TESTS: &[&str] = &["claude", "opencode"];
+/// Those screens were written from live panes and carry cross-agent assertions a per-agent fixture
+/// cannot express - that Claude's dialog shape must not classify an OpenCode screen, say - so they
+/// stay where they are and this names them. An agent listed here may still gain a fixture for
+/// screens the inline tests do not cover; Claude did, and left this list when it did.
+const EVIDENCE_IN_UNIT_TESTS: &[&str] = &["opencode"];
 
 /// Agents that ship without a screen fixture, and why.
 ///
@@ -29,10 +30,7 @@ const EVIDENCE_IN_UNIT_TESTS: &[&str] = &["claude", "opencode"];
 /// The list is asserted to be exactly the set of agents with no fixture, so it cannot quietly rot
 /// into a list of agents that were covered years ago.
 const AWAITING_EVIDENCE: &[&str] = &[
-    "codex",
     "gemini",
-    "github-copilot",
-    "cursor",
     "devin",
     "antigravity",
     "cline",
@@ -42,13 +40,10 @@ const AWAITING_EVIDENCE: &[&str] = &[
     "kiro",
     "droid",
     "amp",
-    "grok",
     "hermes",
     "kilo",
     "qoder-cli",
-    "maki",
     "aider",
-    "goose",
 ];
 
 fn corpus() -> PathBuf {

@@ -123,9 +123,26 @@ agent_table() {
     ' "$BUILTIN"
 }
 
+# A manifest name that means something else on this machine.
+#
+# `match.names` lists what to *recognize* a running process by, not what to launch: `cursor` here
+# is the GUI editor, while the agent CLI is `cursor-agent`. Launching the wrong one of those opens
+# an editor window rather than capturing a screen.
+launch_override() {
+    case "$1" in
+        cursor) printf 'cursor-agent' ;;
+        *) printf '' ;;
+    esac
+}
+
 # The first executable of an agent that is actually installed, if any.
 program_for() {
-    local names="$1" name
+    local names="$1" name override
+    override="$(launch_override "${2:-}")"
+    if [[ -n "$override" ]] && command -v "$override" >/dev/null 2>&1; then
+        printf '%s' "$override"
+        return 0
+    fi
     for name in $names; do
         if command -v "$name" >/dev/null 2>&1; then
             printf '%s' "$name"
@@ -356,7 +373,7 @@ if (( LIST_ONLY )); then
         "$REPO/src/agent_detection/fixtures.rs" | tr -d '" ' | tr ',' ' ')"
     printf '%-16s %-14s %-10s %s\n' AGENT PROGRAM INSTALLED EVIDENCE
     while IFS=$'\t' read -r id names; do
-        program="$(program_for "$names" || true)"
+        program="$(program_for "$names" "$id" || true)"
         evidence="none"
         [[ " $inline " == *" $id "* ]] && evidence="unit tests"
         if [[ -f "$CORPUS/$id.toml" ]]; then
@@ -387,7 +404,7 @@ while IFS=$'\t' read -r id names; do
     if (( ${#WANTED[@]} )); then
         [[ " ${WANTED[*]} " == *" $id "* ]] || continue
     fi
-    if ! program="$(program_for "$names")"; then
+    if ! program="$(program_for "$names" "$id")"; then
         (( ${#WANTED[@]} )) && note "$id: none of [$names] is installed"
         continue
     fi

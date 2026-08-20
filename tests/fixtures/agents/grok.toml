@@ -1,0 +1,66 @@
+# Captured from Grok 4.6 with scripts/capture-agents.sh. Trimmed to the chrome that carries the
+# state (the transcript above it is cut) and stripped of trailing whitespace; nothing else is
+# changed. Rules match substrings, so neither trim can alter what they read.
+source = "capture"
+captured_at = "2026-08-20"
+notes = "grok 4.6 (high), 105-column pane"
+
+[[case]]
+name = "idle-at-the-prompt"
+state = "idle"
+title = "grok"
+screen = '''
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                                                  │
+  ╰────────────────────────────────────────────────────────────────────────────────── Grok 4.6 (high) ─╯
+
+                                                                                                [stable]
+'''
+
+# The title is the whole signal. `Esc:cancel` sits in Grok's footer whether a turn is in flight or
+# not, and `Waiting for response…` is drawn in the transcript rather than the footer, so the shared
+# interrupt-hint rule sees nothing here. Under the old vocabulary this pane read idle for the whole
+# of every run; the leading braille spinner in the title is what now says otherwise.
+[[case]]
+name = "working"
+state = "working"
+title = "⠧ - Waiting for response… - grok"
+screen = '''
+     ❯ Read README.md in this directory and describe it in one sentence.                       6:59 PM
+
+    ⠸ Waiting for response… 0.5s                                                      0.5s ⇣3.55k [stop]
+
+  Tight on space? Try /compact-mode
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                                                  │
+  ╰────────────────────────────────────────────────────────────────────────────────── Grok 4.6 (high) ─╯
+
+  Shift+Tab:mode  │  Esc:cancel  │  Ctrl+.:shortcuts
+'''
+
+# `⚠ Action Required` rides in the title while Grok waits for an answer, and blinks in and out on a
+# ~1.1 s cycle once the pane is unfocused inside a visible workspace. Reading each frame literally
+# made the state oscillate twice a second, which is what `BLOCKED_BLINK_GRACE` now absorbs.
+#
+# Note what the screen alone offers: numbered options written `1 (●)` rather than `1.`, and no
+# question anywhere. Nothing in the shared blocked vocabulary matches it - the title carries this
+# state on its own.
+[[case]]
+name = "blocked-on-approval"
+state = "blocked"
+title = "⚠ Action Required - ⠸ - Delete README.md and confirm it's gone… - grok"
+screen = '''
+    ◆ Delete README.md and confirm it's gone… 0.5s                                 2.1s ⇣14.3k [↓][stop]
+
+  ┃
+  ┃  Delete README.md and confirm it's gone
+  ┃  rm -f README.md && ls -la README.md 2>&1 || true
+  ┃
+  ┃  1 (●) Yes, and don't ask again for anything (always-approve mode)
+  ┃  2 (○) Yes, proceed
+  ┃  3 (○) No, reject (type to add feedback)
+  ┃
+
+  1/3:select  │  Tab:next option  │  Ctrl+o:always-approve  │  Ctrl+c:cancel  │  Esc:scrollback
+'''

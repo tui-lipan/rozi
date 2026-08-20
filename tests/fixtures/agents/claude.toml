@@ -1,0 +1,34 @@
+# Captured with scripts/capture-agents.sh, stripped of trailing whitespace, home directory
+# replaced by `~`. Claude's other screens - approval dialogs, transcripts that merely discuss
+# approvals, footer versus transcript interrupt hints - are asserted inline in
+# `src/agent_detection/mod.rs`, where they can also be run against another agent's rules.
+source = "capture"
+captured_at = "2026-08-20"
+notes = "Claude Code v2.1.237, first launch in an unseen directory"
+
+# Caught, where Codex's and Copilot's equivalents were not: the option cursor starts its line, which
+# is the shape Claude's own rule looks for. Kept because a first-run dialog is the single screen a
+# capture run is most likely to meet, and because it is the one trust prompt of the three that a
+# rule already handled - a regression here would be silent otherwise.
+[[case]]
+name = "startup-trust-dialog"
+state = "blocked"
+screen = '''
+──────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ ~/.cache/rozi-agent-lab
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own
+ code, a well-known open source project, or work from your team). If not, take a
+ moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ 1. Yes, I trust this folder
+   2. No, exit
+
+ Enter to confirm · Esc to cancel
+'''

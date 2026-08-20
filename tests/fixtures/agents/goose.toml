@@ -1,0 +1,24 @@
+# Captured with scripts/capture-agents.sh, stripped of trailing whitespace, home directory
+# replaced by `~`. Rules match substrings, so neither edit changes what they read.
+source = "capture"
+captured_at = "2026-08-20"
+notes = "goose, inline UI (not `goose tui`), at a fresh session"
+
+# Goose opens straight into its session - no trust prompt to get past - and this is what nothing in
+# particular looks like. Worth pinning: an idle screen that stays idle is the assertion that catches
+# a new shared rule reading attention or work into ordinary chrome.
+[[case]]
+name = "idle-new-session"
+state = "idle"
+title = "🪿 rozi-agent-lab"
+screen = '''
+    __( O)>  ● new session · xai_oauth grok-4.5
+   \____)    20260820_4 · ~/.cache/rozi-agent-lab
+     L L     goose is ready
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ 0% 0/500k
+> Enter to send · Ctrl+J newline
+'''
+
+# No working or blocked case: the capture run was interrupted before Goose took a turn. Its working
+# signal is reportedly the prompt marker disappearing while a turn is in flight - an absence, which
+# no rule here is shaped to match - so that screen is worth capturing deliberately.

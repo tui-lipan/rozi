@@ -739,15 +739,35 @@ mod tests {
             ]
         }
 
+        /// The one rule today's vocabulary has that the old detectors did not: a braille spinner at
+        /// the front of the terminal title means working for *every* agent, where it used to count
+        /// only for Claude.
+        ///
+        /// Grok is why. It animates one there and gives a pane nothing else to go on - its footer
+        /// reads `Esc:cancel` whether a turn is in flight or not - so under the old rule a Grok
+        /// pane read idle for the whole of every run. See `tests/fixtures/agents/grok.toml`.
+        fn title_spinner(title: &str) -> bool {
+            title
+                .chars()
+                .next()
+                .is_some_and(|ch| ('\u{2800}'..='\u{28ff}').contains(&ch))
+        }
+
         #[test]
         fn declarative_builtins_read_every_screen_the_way_the_old_detectors_did() {
             let catalog = catalog();
             // Every agent that had a named detector, plus one that only ever had the generic one.
             for id in ["claude", "opencode", "codex", "goose"] {
                 for (screen, title) in corpus() {
+                    let legacy = match legacy_detect_state(id, screen, title) {
+                        Some(DetectedAgentState::Idle) if title_spinner(&title.to_lowercase()) => {
+                            Some(DetectedAgentState::Working)
+                        }
+                        other => other,
+                    };
                     assert_eq!(
                         detect_state(id, screen, title),
-                        legacy_detect_state(id, screen, title),
+                        legacy,
                         "{id} disagrees on screen {screen:?} title {title:?}"
                     );
                 }

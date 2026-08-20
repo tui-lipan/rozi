@@ -1,0 +1,23 @@
+# Captured with scripts/capture-agents.sh, stripped of trailing whitespace, home directory
+# replaced by `~`. Rules match substrings, so neither edit changes what they read.
+source = "capture"
+captured_at = "2026-08-20"
+notes = "codex CLI, first launch in an unseen directory"
+
+# A pane waiting for permission looks perfectly quiet, which is the worst way for detection to be
+# wrong: nothing on this screen said "blocked" before the shared vocabulary learned the phrasing.
+# Note what does *not* catch it - the option cursor is `›`, not Claude's `❯`, and the question is
+# about trust rather than proceeding.
+[[case]]
+name = "startup-trust-dialog"
+state = "blocked"
+screen = '''
+> You are in ~/.cache/rozi-agent-lab
+
+  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue
+'''

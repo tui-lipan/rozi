@@ -25,6 +25,43 @@ screen = { any_of = [
 state = "blocked"
 title = { any_of = ["action required"] }
 
+# Asking to trust a directory is asking. Both of these read as idle before they were captured - a
+# pane waiting for permission looks perfectly quiet, which is the worst way for this to be wrong.
+#
+# Scoped to the footer, and that scope is doing real work rather than being a precaution: Cursor
+# leaves its answered trust dialog on screen for the rest of the session, so an unscoped needle
+# marks a Cursor pane blocked forever. The question sits within the last few non-empty lines while
+# it is live, and scrolls above them once the agent moves on.
+[[base]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = [
+    "do you trust the contents of this directory",
+    "do you trust the files in this folder",
+] }
+
+# A braille spinner at the front of the terminal title. Agents animate one there while a turn is in
+# flight and drop it the moment they stop, which makes it the only working signal some of them give
+# a pane at all: Grok's footer says `Esc:cancel` whether it is working or not, while its title
+# cycles `⠧ - Waiting for response…`, `⠼ - Thinking`, `⠙ - Responding`. Anchored at the start so a
+# spinner quoted inside a transcript-derived title cannot claim it.
+[[base]]
+state = "working"
+title = { regex = true, any_of = ["^[\\x{2800}-\\x{28ff}]"] }
+
+# The same spinner, animating at the head of a line in the live chrome rather than in the title:
+# Maki's `⠋ [BUILD]` status line, Pi's `⠦ Working...`, Grok's `⠸ Waiting for response… 0.5s`. Every
+# captured screen carrying one is a pane mid-turn, and no idle screen in the corpus has one - an
+# agent that stops animating when it stops working is the whole convention this reads.
+#
+# Footer-scoped because a transcript quotes spinner frames constantly: an agent describing its own
+# output, or a log pasted into the conversation, puts braille anywhere on screen but not in the
+# chrome under it.
+[[base]]
+state = "working"
+scope = "footer"
+screen = { regex = true, any_of = ["(?m)^\\s*[\\x{2800}-\\x{28ff}]"] }
+
 # An interrupt hint in the live chrome means a run is in flight. Scoped to the footer because an
 # agent's transcript quotes these constantly while writing *about* interrupting.
 [[base]]

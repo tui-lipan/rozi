@@ -177,12 +177,17 @@ pane_alive() { [[ -n "$(read_state "$1")" ]]; }
 # The test cannot be "does detection say blocked". Detection being wrong about a dialog is the
 # whole reason this lab exists, and Codex proves it: its trust prompt reads as idle, so a guard
 # that asked detection would have typed straight through the one screen it most needed to stop at.
-# So the guard reads the screen itself, with a shape crude enough to be independent of any rule -
-# two numbered lines. A false positive costs one skipped capture. Being wrong the other way means
-# answering somebody's trust dialog.
+# So the guard reads the screen itself, with a shape crude enough to be independent of any rule.
+#
+# Two lines carrying an option marker anywhere in them. Not anchored at the start, because Copilot
+# and Cursor draw their dialogs inside a box and every line begins with the frame; and not numbers
+# only, because Cursor keys its options `[a]` and `[q]` - the first version of this guard knew only
+# `1.` and duly trusted a workspace on somebody's behalf.
+#
+# A false positive costs one skipped capture. Being wrong the other way answers a dialog.
 looks_like_a_dialog() {
     local screen="$1"
-    (( $(grep -cP '^\s*\S{0,2}\s*[0-9]+\.\s' <<<"$screen" || true) >= 2 )) ||
+    (( $(grep -cP '(^|\s)(\[[0-9a-z]\]|[0-9]+[.)])\s' <<<"$screen" || true) >= 2 )) ||
         [[ "$(read_state "$2")" == "blocked" ]]
 }
 
@@ -289,6 +294,13 @@ run_agent() {
     fi
     if ! pane_alive "$pane"; then
         note "exited during startup - nothing to capture"
+        return 1
+    fi
+    # A blank screen is not evidence of anything, and writing it as a case puts an empty `state =
+    # idle` claim in front of the next reader as though somebody had looked.
+    if (( $(grep -c '[^[:space:]]' <<<"$(screen_of "$(capture_json "$pane")")" || true) < 3 )); then
+        note "drew nothing at all - look at this one by hand"
+        finish_agent "$pane"
         return 1
     fi
 

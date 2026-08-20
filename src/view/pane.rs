@@ -78,8 +78,7 @@ pub(crate) fn pane_alert(
     focused: bool,
     config: &PaneConfig,
 ) -> Option<(crate::state::PaneAlert, BadgeColor)> {
-    if focused
-        || pane.closing
+    if pane.closing
         || matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_))
         || config.alert_border == AlertMode::Off
     {
@@ -87,8 +86,16 @@ pub(crate) fn pane_alert(
     }
     use crate::state::PaneAlert;
     let colors = config.alert_colors;
+    // Blocked/working/idle are live conditions the focused pane already shows in its own content,
+    // so marking its border would only ever restate what is on screen and would never clear on its
+    // own. Finished is the exception: it is a latch, raised for news the user has not read yet, and
+    // it stays lit on the focused pane until an input answers it (`acknowledge_pane_if_attended`).
     [
-        (PaneAlert::Blocked, pane.awaits_input(), colors.blocked),
+        (
+            PaneAlert::Blocked,
+            !focused && pane.awaits_input(),
+            colors.blocked,
+        ),
         (
             PaneAlert::Finished,
             pane.terminal.finished_unseen,
@@ -96,19 +103,21 @@ pub(crate) fn pane_alert(
         ),
         (
             PaneAlert::Working,
-            pane.terminal.is_working(),
+            !focused && pane.terminal.is_working(),
             colors.working,
         ),
         (
             PaneAlert::Idle,
-            pane.terminal
-                .agent_status()
-                .as_deref()
-                .is_some_and(|status| {
-                    status
-                        .trim()
-                        .eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
-                }),
+            !focused
+                && pane
+                    .terminal
+                    .agent_status()
+                    .as_deref()
+                    .is_some_and(|status| {
+                        status
+                            .trim()
+                            .eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
+                    }),
             colors.idle,
         ),
     ]

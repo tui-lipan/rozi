@@ -268,7 +268,7 @@ fn bell_events_include_focused_for_current_panes() {
 }
 
 #[test]
-fn focused_pane_bell_raises_background_attention_and_focus_gain_clears_it() {
+fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
@@ -312,6 +312,19 @@ fn focused_pane_bell_raises_background_attention_and_focus_gain_clears_it() {
                 .set_window_focused(true)
                 .expect("gain host-window focus");
             let pane = crate::pane_lifecycle::find_pane(backend.state(), pane_id).unwrap();
+            assert!(pane.activity.has_unseen_output);
+            assert!(pane.activity.bell);
+
+            backend
+                .dispatch(Msg::PaneKey(
+                    pane_id,
+                    tui_lipan::KeyEvent {
+                        code: tui_lipan::KeyCode::Char('x'),
+                        mods: tui_lipan::KeyMods::NONE,
+                    },
+                ))
+                .expect("type into the focused pane");
+            let pane = crate::pane_lifecycle::find_pane(backend.state(), pane_id).unwrap();
             assert!(!pane.activity.has_unseen_output);
             assert!(!pane.activity.bell);
         })
@@ -321,7 +334,7 @@ fn focused_pane_bell_raises_background_attention_and_focus_gain_clears_it() {
 }
 
 #[test]
-fn finished_unseen_survives_background_updates_until_focus_gain() {
+fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
@@ -388,9 +401,30 @@ fn finished_unseen_survives_background_updates_until_focus_gain() {
                     .finished_unseen
             );
 
+            // The run finished while the user was away, in the pane they were already sitting in.
+            // Coming back must not silently swallow that: the mark waits for an actual keystroke.
             backend
                 .set_window_focused(true)
                 .expect("gain host-window focus");
+            backend
+                .dispatch(Msg::WorkbarTick)
+                .expect("ordinary post-update pass");
+            assert!(
+                crate::pane_lifecycle::find_pane(backend.state(), pane_id)
+                    .expect("finished pane")
+                    .terminal
+                    .finished_unseen
+            );
+
+            backend
+                .dispatch(Msg::PaneKey(
+                    pane_id,
+                    tui_lipan::KeyEvent {
+                        code: tui_lipan::KeyCode::Char('x'),
+                        mods: tui_lipan::KeyMods::NONE,
+                    },
+                ))
+                .expect("type into the focused pane");
             assert!(
                 !crate::pane_lifecycle::find_pane(backend.state(), pane_id)
                     .expect("finished pane")

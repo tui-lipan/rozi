@@ -173,3 +173,57 @@ fn focusing_finished_alert_clears_it_and_focus_keeps_the_active_border() {
         );
     });
 }
+
+/// The pane the user is already sitting in still marks a finished run: the run ended while they
+/// were elsewhere, and nothing on screen says so. Its live states stay suppressed there, because a
+/// blocked or working agent is already legible in the pane's own content.
+#[test]
+fn the_focused_pane_marks_a_finished_run_but_not_its_live_states() {
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let finished_color = Color::rgb(0, 255, 1);
+        let blocked_color = Color::rgb(255, 0, 1);
+
+        let mut finished = backend(PaneBorderMode::Separate);
+        {
+            let state = finished.state_mut();
+            state.theme.status.success = finished_color;
+            state.theme.status.error = blocked_color;
+            state.current_mut().workspaces[0].panes[0]
+                .terminal
+                .finished_unseen = true;
+        }
+        finished.render();
+        assert!(
+            finished
+                .capture_frame()
+                .cells
+                .iter()
+                .any(|cell| cell.fg == finished_color),
+            "a finished run must mark the focused pane's own border"
+        );
+
+        let mut blocked = backend(PaneBorderMode::Separate);
+        {
+            let state = blocked.state_mut();
+            state.theme.status.success = finished_color;
+            state.theme.status.error = blocked_color;
+            state.current_mut().workspaces[0].panes[0]
+                .terminal
+                .reported_status = Some(rozi::session::protocol::PaneStatus {
+                value: "blocked".into(),
+                reason: None,
+                set_at: 0,
+            });
+        }
+        blocked.render();
+        assert!(
+            !blocked
+                .capture_frame()
+                .cells
+                .iter()
+                .any(|cell| cell.fg == blocked_color),
+            "a blocked focused pane says so in its own content; its border must not"
+        );
+    });
+}

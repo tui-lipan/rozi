@@ -254,7 +254,7 @@ Pane focus and chrome behavior.
 | `titlebar` | `bar` | Pane title layout: `bar`, `border`, `integrated`, or `inset`. See [Titlebar layouts](#titlebar-layouts). |
 | `border_mode` | `separate` | Pane border presentation: `separate` (one frame per pane), `merged` (shared junctions), `none` (no frames), or `dividers` (lines along internal tiled splits only). |
 | `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. Does not affect `dividers`. The Settings row is disabled when the selected mode has no pane frames. |
-| `alert_border` | `pulse` | `off`, `static`, or `pulse` for unfocused attention borders. The Alerts action is `cycle-alert-border`; it is disabled in `none` mode. |
+| `alert_border` | `pulse` | `off`, `static`, or `pulse` for attention borders. The Alerts action is `cycle-alert-border`; it is disabled in `none` mode. See [`[pane.alert]`](#panealert) for which states mark which panes. |
 | `keep_special_borders` | `true` | Keep double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes. Set `false` to let those panes go frameless. Fullscreen panes follow the selected global mode. |
 | `padding` | `0` | Blank cells between each pane's border and its terminal grid. A single number, `[vertical, horizontal]`, or `[top, right, bottom, left]`. Each side is clamped to `8`. |
 | `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded`, `half`, `round`, or `arrow`. See [End-cap styles](#end-cap-styles). |
@@ -326,8 +326,17 @@ See also [In-app toasts](#in-app-toasts).
 
 `[pane.alert]` assigns badge/theme roles to agent states: `blocked = "error"` and unseen
 `finished = "success"` default on; `working` and `idle` default `off` because they are ambient,
-not normally actionable. Configured-off states fall through to the next applicable state. A finished
-alert clears when you focus its pane; closing and exited panes never alert.
+not normally actionable. Configured-off states fall through to the next applicable state. Closing
+and exited panes never alert.
+
+`blocked`, `working`, and `idle` are live conditions the focused pane already shows in its own
+content, so they only mark *other* panes. `finished` is different: it is news you have not read, so
+it marks the focused pane too and stays up until you answer it.
+
+An alert clears when you act on the pane itself - focus it, type into it, or paste into it. It does
+*not* clear when you merely arrive somewhere: returning to the terminal window and switching to a
+marked workspace are both requests to *see* what happened, and the mark is what says which pane it
+happened in. A run that ends while you are on another workspace is still marked when you get there.
 
 Blocked and finished alerts are visible state, so they do not create success toasts. The shared
 breathe period is [`[animations] alert_pulse_ms`](#animations).

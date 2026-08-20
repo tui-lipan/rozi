@@ -29,20 +29,27 @@ pub(crate) fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
         .any(|pane| pane.id == id && !pane.closing && pane.fullscreen)
 }
 
-/// Record host-window focus and acknowledge the one pane the user can now see.
+/// Record host-window focus.
+///
+/// Deliberately *not* an acknowledgement: coming back to the window is looking, not doing, and a
+/// finished run has to survive that return or the user never sees it. The pane's own attention
+/// marks clear when input reaches it (`acknowledge_pane_if_attended` call sites), not when the
+/// window regains focus around it.
 pub(crate) fn window_focus_changed(ctx: &mut Context<AppRoot>, focused: bool) -> Update {
     ctx.state.window_focused = focused;
-    let pane_id = ctx.state.focused_pane();
-    let changed =
-        focused && pane_id.is_some_and(|id| acknowledge_pane_if_attended(&mut ctx.state, id));
-    if changed {
-        Update::full()
-    } else {
-        Update::none()
-    }
+    Update::none()
 }
 
 /// Acknowledge attention only when the pane is selected in a focused host window.
+///
+/// Callers are the places the user acts *on this pane*: focusing it, typing into it, pasting into
+/// it. Nothing calls this on a timer, on output, or on a redraw, so a mark stays up until it is
+/// answered rather than until the next message happens to pass through.
+///
+/// Arriving somewhere is not acting on anything, so none of the workspace paths call this either.
+/// Switching to a marked workspace, carrying a pane to one, or renumbering one is the user asking to
+/// *see* what happened - and the mark is the only thing that says which pane it happened in. Clearing
+/// it on arrival would delete the answer at the moment it is finally being looked for.
 pub(crate) fn acknowledge_pane_if_attended(state: &mut State, pane_id: PaneId) -> bool {
     if !state.is_pane_attended(pane_id) {
         return false;
@@ -624,7 +631,6 @@ pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     state.current_mut().active_workspace = index;
     state.animation = GeometryAnimation::None;
     choose_fallback_focus(state);
-    clear_focused_activity(state);
     if let Some(focus) = state.current().focused_pane {
         // Normalize Scrollable viewport for the newly active focus (covers inactive reconcile
         // fallback under a surviving foreign anchor, and other stale local viewport state).
@@ -703,7 +709,6 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
     };
     state.current_mut().focused_pane = Some(focused);
     state.current_mut().workspaces[target_index].focused_pane = Some(focused);
-    clear_focused_activity(state);
     if tiled && scrollable {
         apply_scrollable_reveal_decision(
             state,
@@ -764,7 +769,6 @@ pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) 
 
     state.current_mut().active_workspace = target_index;
     state.current_mut().focused_pane = target_focus;
-    clear_focused_activity(state);
     state.animation = GeometryAnimation::None;
     emit_workspace_switched(state, target_index);
 }
@@ -1088,13 +1092,6 @@ fn scrollable_reveal_edge_from_order(
     }
 }
 
-fn clear_focused_activity(state: &mut State) {
-    let Some(id) = state.current().focused_pane else {
-        return;
-    };
-    acknowledge_pane_if_attended(state, id);
-}
-
 pub(crate) fn choose_fallback_focus(state: &mut State) {
     choose_fallback_focus_near(state, state.focused_pane(), None);
 }
@@ -1345,13 +1342,52 @@ mod tests {
         state
     }
 
+    /// Switching to a marked workspace is the user asking which pane it was. The mark is the answer,
+    /// so arriving must not consume it - only focusing the pane there does.
     #[test]
-    fn window_focus_gain_acknowledges_only_the_selected_pane() {
+    fn switching_to_a_marked_workspace_shows_the_mark_without_answering_it() {
+        let mut state = state_with_tiled(&[1]);
+        let marked = 2;
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        };
+        let mut pane = Pane::new(marked, 100, rect);
+        pane.activity.has_unseen_output = true;
+        pane.activity.bell = true;
+        pane.terminal.finished_unseen = true;
+        state.current_mut().workspaces[1].panes.push(pane);
+        append_tiled_window(&mut state.current_mut().workspaces[1], marked);
+        state.current_mut().workspaces[1].focused_pane = Some(marked);
+
+        switch_workspace(&mut state, 1);
+        assert_eq!(state.focused_pane(), Some(marked));
+        let pane = &state.current().workspaces[1].panes[0];
+        assert!(pane.activity.has_unseen_output);
+        assert!(pane.activity.bell);
+        assert!(
+            pane.terminal.finished_unseen,
+            "arriving on the workspace must leave the mark that identifies the pane"
+        );
+
+        focus_pane(&mut state, marked);
+        let pane = &state.current().workspaces[1].panes[0];
+        assert!(!pane.activity.has_unseen_output);
+        assert!(!pane.activity.bell);
+        assert!(!pane.terminal.finished_unseen);
+    }
+
+    /// Returning to the window is looking, not answering: the mark has to survive it and wait for a
+    /// key, which is the whole point of showing it on the pane the user was already sitting in.
+    #[test]
+    fn window_focus_gain_preserves_attention_until_a_key_answers_it() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 use crate::AppRoot;
-                use tui_lipan::TestBackend;
+                use tui_lipan::{KeyCode, KeyEvent, KeyMods, TestBackend};
 
                 let mut backend = TestBackend::new(AppRoot::default());
                 let pane_id = backend
@@ -1377,6 +1413,27 @@ mod tests {
                     .set_window_focused(true)
                     .expect("gain host-window focus");
 
+                {
+                    let selected = backend.state().current().workspaces[0]
+                        .panes
+                        .iter()
+                        .find(|pane| pane.id == pane_id)
+                        .expect("selected pane");
+                    assert!(selected.activity.has_unseen_output);
+                    assert!(selected.activity.bell);
+                    assert!(selected.terminal.finished_unseen);
+                }
+
+                backend
+                    .dispatch(crate::Msg::PaneKey(
+                        pane_id,
+                        KeyEvent {
+                            code: KeyCode::Char('x'),
+                            mods: KeyMods::NONE,
+                        },
+                    ))
+                    .expect("type into the focused pane");
+
                 let panes = &backend.state().current().workspaces[0].panes;
                 let selected = panes
                     .iter()
@@ -1398,8 +1455,11 @@ mod tests {
             .expect("focus lifecycle test completes");
     }
 
+    /// A focus change driven from off-screen (control socket, layout reconciliation) is not the user
+    /// looking, so it acknowledges nothing while the window is away — and still nothing when the
+    /// window comes back. Only focusing the pane with the window present answers it.
     #[test]
-    fn background_programmatic_focus_preserves_attention_until_window_focus_returns() {
+    fn background_programmatic_focus_preserves_attention_until_the_pane_is_focused_in_view() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
@@ -1441,6 +1501,20 @@ mod tests {
                 backend
                     .set_window_focused(true)
                     .expect("gain host-window focus");
+                {
+                    let target_pane = backend.state().current().workspaces[0]
+                        .panes
+                        .iter()
+                        .find(|pane| pane.id == target)
+                        .expect("target pane");
+                    assert!(target_pane.activity.has_unseen_output);
+                    assert!(target_pane.activity.bell);
+                    assert!(target_pane.terminal.finished_unseen);
+                }
+
+                // Clicking or navigating to the pane while the window is present: the deliberate
+                // focus act that does answer it.
+                focus_pane(backend.state_mut(), target);
                 let target_pane = backend.state().current().workspaces[0]
                     .panes
                     .iter()

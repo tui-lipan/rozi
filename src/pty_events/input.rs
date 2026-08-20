@@ -118,6 +118,10 @@ pub(crate) fn handle_pane_input(
     // worked-in for having been looked at, which is the opposite of what engagement means.
     if matches!(input.kind, TerminalInputKind::Paste) {
         ctx.state.current_mut().engaged = true;
+        // Same distinction, applied to attention: a paste is the user acting in this pane, so it
+        // answers an alert the way a keystroke does. The focus notifications that also arrive here
+        // are the terminal reporting on itself and answer nothing.
+        crate::ops::focus::acknowledge_pane_if_attended(&mut ctx.state, id);
     }
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {

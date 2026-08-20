@@ -494,7 +494,6 @@ fn post_update_sync(
         let command = update.command.take();
         update = Update::with_command(command);
     }
-    acknowledge_attended_pane(ctx);
     panes::arm_alert_pulse(ctx);
     sidebar::sync_tree_roots(ctx);
     sidebar::ensure_tree_refresh_armed(ctx);
@@ -534,16 +533,6 @@ fn runtime_metrics_update(epoch: u64, current_epoch: u64, devtools_visible: bool
     } else {
         Update::none()
     }
-}
-
-/// Attention chokepoint after every message: acknowledge the current pane only while the host window
-/// and pane are both focused. This keeps unseen output, BEL, and finished-run attention on one rule
-/// across clicks, keyboard focus, workspace switches, and layout reconciliation.
-fn acknowledge_attended_pane(ctx: &mut Context<AppRoot>) {
-    let Some(focused) = ctx.state.focused_pane() else {
-        return;
-    };
-    crate::ops::focus::acknowledge_pane_if_attended(&mut ctx.state, focused);
 }
 
 #[cfg(test)]

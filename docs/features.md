@@ -114,7 +114,8 @@ with the mouse and remember their geometry.
 
 **Focus** — directional (`focus-<dir>`), directional-without-wrap, cycle next/previous, and
 `focus-next-blocked-pane` to jump to a pane waiting on input (reported and screen-detected blocked
-states agree). Unfocused blocked and finished-unseen agents can mark pane borders and workspace tabs;
+states agree). Blocked agents mark unfocused pane borders and workspace tabs, and a finished-unseen
+agent marks the focused pane too until an input answers it;
 `cycle-alert-border` and `cycle-workbar-alert` each select off/static/pulse in **Settings**.
 **Focus-on-hover** is a Settings preference. Focus survives layout changes.
 

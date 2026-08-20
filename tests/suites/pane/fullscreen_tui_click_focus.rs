@@ -1,15 +1,14 @@
-//! A pane running a full-screen TUI enables mouse tracking, and the framework then forwards mouse
-//! events straight to that terminal — consuming them before the pane's own `MouseRegion`, whose
-//! `on_mouse_down` is what normally raises `Msg::FocusPane`. Clicking such a pane must still focus
-//! it; with `focus_on_hover` disabled there is otherwise no path that moves focus there at all, so
-//! the pane becomes unfocusable by mouse.
+//! A pane running a full-screen TUI enables mouse tracking, which normally forwards mouse events
+//! straight to that terminal before the pane's own `MouseRegion`. The left press that first focuses
+//! it is the exception: the framework consumes that gesture and bubbles the press so the pane can
+//! reconcile logical focus without also activating whatever the child drew under the pointer.
 
 use rozi::AppRoot;
 use rozi::state::{Pane, PaneId};
 use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
-use tui_lipan::prelude::{FloatRect, MouseEvent, Rect};
+use tui_lipan::prelude::{FloatRect, ManagedTerminalStatus, MouseEvent, Rect};
 
 const VIEWPORT: Rect = Rect {
     x: 0,
@@ -117,6 +116,15 @@ fn clicking_a_mouse_tracking_pane_focuses_it_with_hover_focus_disabled() {
             backend.state().current().focused_pane,
             Some(11),
             "clicking a full-screen TUI pane must focus it even with focus_on_hover disabled"
+        );
+        assert!(
+            !matches!(
+                backend.state().current().workspaces[0].panes[1]
+                    .terminal
+                    .status,
+                ManagedTerminalStatus::Error(_)
+            ),
+            "the gesture that only focused the pane must not be forwarded to its disconnected child"
         );
     });
 }

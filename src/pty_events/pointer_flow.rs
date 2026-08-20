@@ -1,45 +1,28 @@
 //! Flow control for pointer motion forwarded to a pane.
 //!
-//! Coalescing decides *how many* positions leave the client: a burst of pointer reports collapses
-//! to the newest one before it is dispatched. What it cannot decide is how many the child can take.
-//! Those are different questions, and the second one has no answer anywhere in the pipeline - so a
-//! child is handed a position per loop iteration whether or not it has finished the last one.
+//! A pixel-reporting host can produce hundreds or thousands of positions a second. Handing every
+//! one to the child makes pointer motion drive the child's render loop above rozi's configured
+//! frame rate: a fast hover can force 180 paints per second, and dragging a Chromium application
+//! can saturate its main thread.
 //!
-//! For a child that draws a frame per position that is the difference between tracking the hand and
-//! trailing it. Handed 38 positions during a 150 ms drag, one costing 16 ms to answer, it spends
-//! 600 ms working through them and draws 30 of its frames *after* the hand has stopped - each at a
-//! position the pointer left long ago. The gap grows with the speed and the length of the drag and
-//! closes only when the drag ends, which is exactly what "the grip ends up above the pointer and
-//! stays there" describes.
+//! Motion therefore shares the frame cadence. The first report goes immediately; until one frame
+//! interval has elapsed, the newest position replaces whatever was waiting. A clock releases that
+//! position, independently of child output. Output is not an acknowledgement: graphics programs
+//! can write one visual frame in several PTY chunks, and treating each chunk as permission to send
+//! another position defeats the cap.
 //!
-//! So motion waits its turn: one report is in flight at a time, the newest arrival replaces
-//! whatever was waiting, and the child's own output releases the next one. The child's output is
-//! the only honest signal that it has moved on - it announces nothing else, and asking it would be
-//! a protocol it does not speak.
-//!
-//! Two things are deliberately not held back:
+//! One thing is deliberately not held back:
 //!
 //! - **Anything that is not motion.** A press, a release and a wheel notch each mean something on
 //!   their own and cannot be superseded by a later report. They go immediately, behind whatever
 //!   motion was waiting, so the child still learns where the pointer was when the button moved.
-//! - **Motion from a child that answers nothing.** A pane that ignores mouse reports entirely would
-//!   otherwise hold the first one forever and never see another. After [`STALL`] the gate opens
-//!   regardless, which degrades to forwarding everything - the behavior this replaces.
-//!
-//! That last one needs a clock of its own. The gate is otherwise only consulted when something
-//! happens - a new report arrives, or the child writes - and the case it exists for is the one
-//! where neither does: the pointer comes to rest over a page that draws nothing, and the position
-//! it came to rest at is the one still waiting. [`PointerFlow::arm`] asks for a wakeup when a
-//! report is first held and [`PointerFlow::stalled`] answers it, so the last position of a gesture
-//! is delivered late rather than never.
 
 use std::time::{Duration, Instant};
 
-/// How long a forwarded report waits for an answer before motion is let through anyway.
-///
-/// Long enough that a child drawing an ordinary frame is never rushed, short enough that a child
-/// which answers nothing is not left with a frozen pointer for a visible interval.
-const STALL: Duration = Duration::from_millis(100);
+/// Match `tui-lipan`'s frame interval calculation without exposing framework runner internals.
+pub(crate) fn interval_for_frame_rate(frame_rate: u16) -> Duration {
+    Duration::from_micros(1_000_000 / u64::from(frame_rate.max(1))).max(Duration::from_millis(1))
+}
 
 /// Whether an outgoing mouse report describes pointer *motion* rather than a state change.
 ///
@@ -63,24 +46,23 @@ fn is_motion_report(bytes: &[u8]) -> bool {
     any && code & 0x20 != 0
 }
 
-/// What a wakeup found for a pane whose motion was held.
+/// What a cadence wakeup found for a pane whose motion was held.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Stalled {
-    /// The child has had its turn; forward this now.
+pub(crate) enum Paced {
+    /// The next frame interval has begun; forward this now.
     Send(Vec<u8>),
-    /// Something answered in the meantime and the report waiting now is younger than it looks.
-    /// Ask again after this long.
+    /// The wakeup arrived early or the cadence changed. Ask again after this long.
     Retry(Duration),
-    /// Nothing is waiting; the wakeup was overtaken by the child's own output.
+    /// Nothing is waiting; a newer report or a state change overtook the wakeup.
     Idle,
 }
 
-/// Per-pane gate on forwarded pointer motion. See the module comment.
+/// Per-pane frame-rate gate on forwarded pointer motion. See the module comment.
 #[derive(Debug, Default)]
 pub(crate) struct PointerFlow {
-    /// A motion report has gone to the child, which has not produced output since.
-    in_flight: Option<Instant>,
-    /// The newest motion report, waiting for the child to answer the one before it.
+    /// When the most recent motion report left the client.
+    last_sent: Option<Instant>,
+    /// The newest motion report waiting for the next frame interval.
     waiting: Option<Vec<u8>>,
     /// A wakeup is already scheduled, so holding another report does not ask for a second one.
     armed: bool,
@@ -88,66 +70,65 @@ pub(crate) struct PointerFlow {
 
 impl PointerFlow {
     /// What to forward now for a report the client wants to send, if anything.
-    pub(crate) fn admit(&mut self, bytes: Vec<u8>) -> Option<Vec<u8>> {
+    pub(crate) fn admit(&mut self, bytes: Vec<u8>, interval: Duration) -> Option<Vec<u8>> {
         if !is_motion_report(&bytes) {
             let mut out = self.waiting.take().unwrap_or_default();
             out.extend_from_slice(&bytes);
-            self.in_flight = None;
+            // State changes begin a new gesture. Let its first motion report through immediately;
+            // the press/release itself is the ordering boundary, not part of the motion budget.
+            self.last_sent = None;
             return Some(out);
         }
-        if self.in_flight.is_some_and(|at| at.elapsed() < STALL) {
-            // Replaced rather than queued: the child wants where the pointer is, not everywhere it
-            // has been. This is the position that must survive, so it is the one kept.
+        if self.last_sent.is_some_and(|at| at.elapsed() < interval) {
+            // Replaced rather than queued: the child wants where the pointer is, not everywhere
+            // it has been.
             self.waiting = Some(bytes);
             return None;
         }
-        self.in_flight = Some(Instant::now());
+        // A timer can arrive after a newer report has already opened this interval. Clear the old
+        // waiting position so that stale wakeup becomes inert.
+        self.waiting = None;
+        self.last_sent = Some(Instant::now());
         Some(bytes)
-    }
-
-    /// The child produced output, so it has moved on from whatever it was given.
-    pub(crate) fn answered(&mut self) -> Option<Vec<u8>> {
-        self.in_flight = None;
-        let waiting = self.waiting.take()?;
-        self.in_flight = Some(Instant::now());
-        Some(waiting)
     }
 
     /// How long to wait before asking this pane again, for a report that was just held.
     ///
     /// `None` when nothing is waiting or a wakeup is already outstanding, so a burst of motion
     /// asks for one timer rather than one per report.
-    pub(crate) fn arm(&mut self) -> Option<Duration> {
+    pub(crate) fn arm(&mut self, interval: Duration) -> Option<Duration> {
         if self.armed || self.waiting.is_none() {
             return None;
         }
         self.armed = true;
-        Some(STALL)
+        Some(
+            self.last_sent
+                .map(|at| interval.saturating_sub(at.elapsed()))
+                .unwrap_or_default(),
+        )
     }
 
-    /// Answer a wakeup: forward the held report if the child has had its turn.
-    pub(crate) fn stalled(&mut self) -> Stalled {
+    /// Answer a wakeup: forward the held report when its frame interval begins.
+    pub(crate) fn paced(&mut self, interval: Duration) -> Paced {
         self.armed = false;
         if self.waiting.is_none() {
-            return Stalled::Idle;
+            return Paced::Idle;
         }
-        // The report waiting now may not be the one this wakeup was armed for - the child may have
-        // answered since, taking the old one and starting a fresh turn for a newer arrival.
-        if let Some(at) = self.in_flight {
+        if let Some(at) = self.last_sent {
             let waited = at.elapsed();
-            if waited < STALL {
+            if waited < interval {
                 self.armed = true;
-                return Stalled::Retry(STALL - waited);
+                return Paced::Retry(interval - waited);
             }
         }
         let bytes = self.waiting.take().expect("checked above");
-        self.in_flight = Some(Instant::now());
-        Stalled::Send(bytes)
+        self.last_sent = Some(Instant::now());
+        Paced::Send(bytes)
     }
 
     /// Drop anything held for a pane that is going away or being re-bound.
     pub(crate) fn reset(&mut self) {
-        self.in_flight = None;
+        self.last_sent = None;
         self.waiting = None;
         self.armed = false;
     }
@@ -156,6 +137,8 @@ impl PointerFlow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const FRAME: Duration = Duration::from_millis(8);
 
     fn drag(y: u16) -> Vec<u8> {
         format!("\x1b[<32;10;{y}M").into_bytes()
@@ -177,78 +160,76 @@ mod tests {
     }
 
     #[test]
-    fn one_position_is_in_flight_and_the_newest_waits() {
+    fn motion_is_capped_to_one_position_per_frame_and_the_newest_waits() {
         let mut flow = PointerFlow::default();
-        assert_eq!(flow.admit(drag(1)), Some(drag(1)), "nothing outstanding");
-        assert_eq!(flow.admit(drag(2)), None, "held behind the first");
-        assert_eq!(flow.admit(drag(3)), None, "supersedes the held one");
-        // The newest is what the child gets next: the positions in between are where the pointer
-        // was, and drawing them is the lag this exists to remove.
-        assert_eq!(flow.answered(), Some(drag(3)));
-        assert_eq!(flow.answered(), None, "nothing left waiting");
+        assert_eq!(
+            flow.admit(drag(1), FRAME),
+            Some(drag(1)),
+            "first position is immediate"
+        );
+        assert_eq!(flow.admit(drag(2), FRAME), None, "held until next frame");
+        assert_eq!(flow.admit(drag(3), FRAME), None, "supersedes the held one");
+        flow.last_sent = Some(Instant::now() - FRAME - Duration::from_millis(1));
+        assert_eq!(flow.paced(FRAME), Paced::Send(drag(3)));
+        assert_eq!(flow.paced(FRAME), Paced::Idle, "nothing left waiting");
     }
 
     #[test]
     fn a_button_report_goes_immediately_and_carries_held_motion_with_it() {
         let mut flow = PointerFlow::default();
-        flow.admit(drag(1));
-        assert_eq!(flow.admit(drag(2)), None);
+        flow.admit(drag(1), FRAME);
+        assert_eq!(flow.admit(drag(2), FRAME), None);
         let release = b"\x1b[<0;10;9m".to_vec();
         let mut expected = drag(2);
         expected.extend_from_slice(&release);
         assert_eq!(
-            flow.admit(release),
+            flow.admit(release, FRAME),
             Some(expected),
             "the release must not overtake the position it happened at"
         );
-        assert_eq!(flow.answered(), None, "nothing is still waiting");
+        assert_eq!(flow.paced(FRAME), Paced::Idle, "nothing is still waiting");
     }
 
-    /// The hole a wakeup exists to close: the pointer stops, and the child - a page that draws
-    /// nothing until something changes - never produces the output that would release the last
-    /// position. Without this the child's idea of the pointer stays one report behind for as long
-    /// as the pane is quiet.
     #[test]
-    fn the_last_position_of_a_gesture_is_delivered_even_if_the_child_stays_quiet() {
+    fn the_last_position_is_delivered_on_the_next_frame_interval() {
         let mut flow = PointerFlow::default();
-        assert_eq!(flow.admit(drag(1)), Some(drag(1)));
-        assert_eq!(flow.admit(drag(2)), None, "held, and nothing else arrives");
-        assert_eq!(flow.arm(), Some(STALL), "the hold asks for a wakeup");
-        assert_eq!(flow.arm(), None, "one timer covers a whole burst");
+        assert_eq!(flow.admit(drag(1), FRAME), Some(drag(1)));
+        assert_eq!(flow.admit(drag(2), FRAME), None, "held behind first");
+        assert!(
+            flow.arm(FRAME).is_some_and(|after| after <= FRAME),
+            "the hold asks for a wakeup within one frame"
+        );
+        assert_eq!(flow.arm(FRAME), None, "one timer covers a whole burst");
 
-        // Too early: the child is still inside its turn.
-        match flow.stalled() {
-            Stalled::Retry(after) => assert!(after <= STALL),
+        match flow.paced(FRAME) {
+            Paced::Retry(after) => assert!(after <= FRAME),
             other => panic!("expected a retry, got {other:?}"),
         }
-        assert_eq!(flow.arm(), None, "the retry re-armed it");
+        assert_eq!(flow.arm(FRAME), None, "the retry re-armed it");
 
-        flow.in_flight = Some(Instant::now() - STALL - Duration::from_millis(1));
-        assert_eq!(flow.stalled(), Stalled::Send(drag(2)));
-        assert_eq!(flow.stalled(), Stalled::Idle, "and nothing is left over");
-    }
-
-    /// A wakeup that arrives after the child has already answered must not resend anything.
-    #[test]
-    fn a_wakeup_overtaken_by_the_childs_own_output_does_nothing() {
-        let mut flow = PointerFlow::default();
-        flow.admit(drag(1));
-        assert_eq!(flow.admit(drag(2)), None);
-        assert_eq!(flow.arm(), Some(STALL));
-        assert_eq!(flow.answered(), Some(drag(2)), "output released it first");
-        assert_eq!(flow.stalled(), Stalled::Idle);
+        flow.last_sent = Some(Instant::now() - FRAME - Duration::from_millis(1));
+        assert_eq!(flow.paced(FRAME), Paced::Send(drag(2)));
+        assert_eq!(flow.paced(FRAME), Paced::Idle, "and nothing is left over");
     }
 
     #[test]
-    fn a_child_that_answers_nothing_stops_holding_the_pointer() {
+    fn a_wakeup_overtaken_by_a_new_frame_interval_does_nothing() {
         let mut flow = PointerFlow::default();
-        assert_eq!(flow.admit(drag(1)), Some(drag(1)));
-        assert_eq!(flow.admit(drag(2)), None);
-        flow.in_flight = Some(Instant::now() - STALL - Duration::from_millis(1));
+        flow.admit(drag(1), FRAME);
+        assert_eq!(flow.admit(drag(2), FRAME), None);
+        assert!(flow.arm(FRAME).is_some());
+        flow.last_sent = Some(Instant::now() - FRAME - Duration::from_millis(1));
         assert_eq!(
-            flow.admit(drag(3)),
+            flow.admit(drag(3), FRAME),
             Some(drag(3)),
-            "the gate opens rather than freezing a pane that never answers"
+            "new arrival opens the interval first"
         );
+        assert_eq!(flow.paced(FRAME), Paced::Idle);
+    }
+
+    #[test]
+    fn configured_frame_rate_sets_the_motion_cap() {
+        assert_eq!(interval_for_frame_rate(120), Duration::from_micros(8_333));
+        assert_eq!(interval_for_frame_rate(1_500), Duration::from_millis(1));
     }
 }

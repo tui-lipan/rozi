@@ -47,7 +47,7 @@ pub enum Msg {
     AgentTick,
     /// Advance the shared alert-border/workspace-marker breathe phase.
     AlertPulseTick,
-    /// Let a pane's held pointer motion through when the child has gone quiet without answering it.
+    /// Forward a pane's newest held pointer position when its next frame interval begins.
     /// See [`crate::pty_events::pointer_flow`].
     PointerFlowTick(crate::state::PaneId),
     /// The config watcher saw `config.toml` change on disk; reload it if the content differs.

@@ -54,12 +54,24 @@ pub(crate) fn acknowledge_pane_if_attended(state: &mut State, pane_id: PaneId) -
     if !state.is_pane_attended(pane_id) {
         return false;
     }
-    let Some(pane) = state
-        .active_workspace_mut()
-        .panes
-        .iter_mut()
-        .find(|pane| pane.id == pane_id)
-    else {
+    acknowledge_pane(state, pane_id)
+}
+
+/// Acknowledge a pane because input just reached it.
+///
+/// Input is stronger evidence than any focus flag: a key or a paste landing in this pane *is* the
+/// user sitting at it, so this deliberately skips the [`State::is_pane_attended`] test that the
+/// focus-driven path needs. Asking `window_focused` on top of a keystroke can only produce false
+/// negatives - a host terminal that never reports focus, or a missed focus-in, would otherwise leave
+/// a mark that no amount of typing could clear.
+pub(crate) fn acknowledge_pane_input(state: &mut State, pane_id: PaneId) -> bool {
+    acknowledge_pane(state, pane_id)
+}
+
+/// Clear one pane's attention marks. Resolved across every namespace, so a popup or scratchpad pane
+/// answers input the same way a workspace pane does.
+fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
+    let Some(pane) = crate::pane_lifecycle::find_pane_mut(state, pane_id) else {
         return false;
     };
 
@@ -1340,6 +1352,56 @@ mod tests {
         }
         state.current_mut().next_pane_id = ids.iter().copied().max().unwrap_or(0) + 1;
         state
+    }
+
+    /// Input outranks the focus flags. A keystroke landing in a pane is the user sitting at it, so it
+    /// answers the mark even when the host window never reported focus - otherwise a terminal that
+    /// does not send focus events leaves a mark no amount of typing can clear.
+    #[test]
+    fn input_acknowledges_a_pane_the_window_focus_gate_would_refuse() {
+        let mut state = state_with_tiled(&[1]);
+        state.current_mut().focused_pane = Some(1);
+        state.current_mut().workspaces[0].focused_pane = Some(1);
+        state.window_focused = false;
+        {
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.activity.has_unseen_output = true;
+            pane.terminal.finished_unseen = true;
+        }
+
+        assert!(!acknowledge_pane_if_attended(&mut state, 1));
+        assert!(
+            state.current().workspaces[0].panes[0]
+                .terminal
+                .finished_unseen
+        );
+
+        assert!(acknowledge_pane_input(&mut state, 1));
+        let pane = &state.current().workspaces[0].panes[0];
+        assert!(!pane.terminal.finished_unseen);
+        assert!(!pane.activity.has_unseen_output);
+    }
+
+    /// Resolved across namespaces, so a popup or scratchpad pane answers input like any other. A
+    /// lookup restricted to the active workspace refuses those panes without saying so.
+    #[test]
+    fn input_acknowledges_a_pane_outside_the_active_workspace() {
+        let mut state = state_with_tiled(&[1]);
+        let mut pane = Pane::new(
+            9,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        );
+        pane.terminal.finished_unseen = true;
+        state.scratch.panes.push(pane);
+
+        assert!(acknowledge_pane_input(&mut state, 9));
+        assert!(!state.scratch.panes[0].terminal.finished_unseen);
     }
 
     /// Switching to a marked workspace is the user asking which pane it was. The mark is the answer,

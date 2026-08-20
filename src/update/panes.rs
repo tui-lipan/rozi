@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::anim::GeometryAnimation;
 use crate::key_routing::handle_key_routing;
-use crate::ops::focus::{acknowledge_pane_if_attended, focus_pane as focus, request_pane_focus};
+use crate::ops::focus::{acknowledge_pane_input, focus_pane as focus, request_pane_focus};
 use crate::pane_lifecycle::find_pane_mut;
 use crate::pty_events::{
     handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
@@ -247,7 +247,9 @@ pub(super) fn pane_key(ctx: &mut Context<AppRoot>, id: PaneId, key: KeyEvent) ->
     if logical_focus_pending_activation(&ctx.state).is_none_or(|pending| pending == id) {
         focus(&mut ctx.state, id);
     }
-    acknowledge_pane_if_attended(&mut ctx.state, id);
+    // Held here as well as in the PTY funnel: a key the app consumes as an action never reaches a
+    // PTY, and typing at a pane is presence whether or not the keystroke ends up as pane input.
+    acknowledge_pane_input(&mut ctx.state, id);
     let (_handled, update) = handle_key_routing(ctx, key, Some(id));
     update
 }

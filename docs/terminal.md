@@ -89,20 +89,19 @@ The mouse scroll wheel over a pane scrolls its terminal scrollback.
 ### Pointer motion and slow programs
 
 A host that reports pixel-precise positions reports every pixel of motion, so one drag produces
-hundreds of positions a second - more than a program that redraws on each one can answer. Rozi keeps
-one motion report in flight per pane: while a program has a position it has not answered, a newer
-one replaces whatever was waiting rather than queueing behind it, and the program's own output
-releases the next.
+hundreds of positions a second - more than a program that redraws on each one can answer. Rozi caps
+forwarded motion at the configured `frame_rate`: within each frame interval, a newer position
+replaces whatever was waiting rather than queueing behind it. The last position is released by the
+frame clock even when the program produces no output.
 
 What that buys is a program working on where the pointer *is* rather than on a backlog of where it
-has been. Dragging a scrollbar in a program that needs 16 ms a frame, the grip used to finish about
-half a second behind the hand and catch up only once the drag stopped.
+has been, while pointer motion cannot drive a graphical child above rozi's own render budget.
+Program output does not release held motion: one visual frame can span several PTY writes, so using
+output as an acknowledgement would allow those chunks to defeat the cap.
 
-Presses, releases and wheel notches are never held - each means something on its own - and a program
-that answers nothing at all keeps receiving motion after a short wait, so this can only reduce lag,
-never introduce it. The position the pointer comes to rest at is delivered on that same wait even if
-the program never draws again, so a page that is finished redrawing still learns where the pointer
-finally stopped.
+Presses, releases and wheel notches are never held - each means something on its own. A state change
+also carries the newest held position ahead of it, so a release cannot overtake the final drag
+position.
 
 ## Text selection and clipboard
 

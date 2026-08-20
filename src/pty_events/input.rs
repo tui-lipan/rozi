@@ -11,6 +11,11 @@ pub(crate) fn forward_key_to_pane(ctx: &mut Context<AppRoot>, id: PaneId, key: K
     if let Some(blocked) = input_blocked(ctx) {
         return blocked.notified.update();
     }
+    // The funnel every keystroke passes through on its way to a PTY, whichever route delivered it -
+    // the terminal widget's own handler, app-level key routing, a forwarded prefix. Acknowledging
+    // here rather than at one of those routes is what makes "typing answers the mark" hold for all
+    // of them. Only the pane the key was aimed at counts; synchronized siblings are echoes.
+    crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     let targets = synchronized_key_targets(&ctx.state, id);
     forward_key_to_targets(ctx, &targets, key)
 }
@@ -121,7 +126,7 @@ pub(crate) fn handle_pane_input(
         // Same distinction, applied to attention: a paste is the user acting in this pane, so it
         // answers an alert the way a keystroke does. The focus notifications that also arrive here
         // are the terminal reporting on itself and answer nothing.
-        crate::ops::focus::acknowledge_pane_if_attended(&mut ctx.state, id);
+        crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     }
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
@@ -139,11 +144,11 @@ pub(crate) fn handle_pane_input(
 }
 
 pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {
-    // A pane running mouse tracking consumes the event in the framework before this pane's
-    // `MouseRegion` runs, so the `on_mouse_down` that normally raises `Msg::FocusPane` never fires
-    // for a full-screen TUI. The framework has already moved its *own* focus for clicks, drags and
-    // scrolls (but deliberately not for plain motion), so reconciling from it restores
-    // click-to-focus without reintroducing hover-to-focus against the user's config.
+    // A pane running mouse tracking consumes forwarded events before this pane's `MouseRegion`.
+    // The framework bubbles a left press that only focuses the terminal, but other focus-bearing
+    // reports (right press, drag, scroll) arrive here after it has moved its own focus. Reconciling
+    // from it keeps the two focus models together without turning plain motion into hover-focus
+    // against the user's config.
     // The press half of this click was consumed to dismiss hint mode; the release completes the
     // same click and is consumed with it, rather than reaching the child or pulling focus along.
     if std::mem::take(&mut ctx.state.consumed_pointer_click) {
@@ -166,59 +171,60 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
 
     let client = ctx.state.current().session_client.clone();
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let interval =
+        crate::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);
     let mut hold = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
-            // Motion may be held here until the child answers the position it already has; a report
-            // that is not motion always goes. See `pty_events::pointer_flow`.
-            if let Some(bytes) = pane.terminal.pointer_flow.admit(bytes) {
+            // Motion is sampled at the configured frame cadence; state changes always go. See
+            // `pty_events::pointer_flow`.
+            if let Some(bytes) = pane.terminal.pointer_flow.admit(bytes, interval) {
                 client.send_input(id, pane.pty_generation, local, bytes);
             } else {
-                hold = pane.terminal.pointer_flow.arm();
+                hold = pane.terminal.pointer_flow.arm(interval);
             }
         } else {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             return Update::full();
         }
     }
-    // A held report is released by the child's own output, and a child that draws nothing produces
-    // none - so the position the pointer came to rest at needs a clock rather than an event.
     if let Some(after) = hold {
         arm_pointer_flow(ctx, id, after);
     }
     focus_update
 }
 
-/// Ask to be woken for a pane holding a pointer report nothing else will release.
+/// Ask to be woken when a pane's next pointer-motion interval begins.
 pub(crate) fn arm_pointer_flow(ctx: &mut Context<AppRoot>, id: PaneId, after: Duration) {
     if let Some(link) = ctx.state.command_link.clone() {
         link.send_after(after, crate::Msg::PointerFlowTick(id));
     }
 }
 
-/// A pane's pointer wakeup fired. Forwards the held position if the child has had its turn, and
-/// asks again if something released the report this wakeup was armed for.
+/// A pane's pointer wakeup fired. Forward its newest held position when the cadence permits.
 pub(crate) fn pointer_flow_tick(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
-    use crate::pty_events::pointer_flow::Stalled;
+    use crate::pty_events::pointer_flow::Paced;
 
     let client = ctx.state.current().session_client.clone();
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let interval =
+        crate::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);
     let mut retry = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        match pane.terminal.pointer_flow.stalled() {
-            Stalled::Send(bytes) => {
+        match pane.terminal.pointer_flow.paced(interval) {
+            Paced::Send(bytes) => {
                 if let Some(client) = client {
                     client.send_input(id, pane.pty_generation, local, bytes);
                 }
             }
-            Stalled::Retry(after) => retry = Some(after),
-            Stalled::Idle => {}
+            Paced::Retry(after) => retry = Some(after),
+            Paced::Idle => {}
         }
     }
     if let Some(after) = retry {
         arm_pointer_flow(ctx, id, after);
     }
-    // Nothing here changes what is on screen: the pane's own output is what draws the answer.
+    // Nothing here changes what is on screen: the child may draw in response to the report.
     Update::none()
 }
 

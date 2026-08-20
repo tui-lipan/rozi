@@ -43,6 +43,9 @@ fn paste_from_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
     if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, encode_paste(&text, modes)) {
         crate::pty_events::notify_error(ctx, "Paste failed", err);
     }
+    // The app-level paste action writes straight to the PTY, so it misses the widget input path
+    // that acknowledges an ordinary paste. Same act, same answer.
+    crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     Update::full()
 }
 

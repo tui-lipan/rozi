@@ -146,10 +146,11 @@ pub(super) fn help_blur_filter(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
+/// Esc steps out of the filter before it closes the overlay: the first press only drops focus back
+/// to the list, keeping the query and its results, and the second press closes.
 pub(super) fn help_escape(ctx: &mut Context<AppRoot>) -> Update {
-    if !ctx.state.help_query.text().trim().is_empty() {
-        ctx.state.help_query = TextInput::new("");
-        return Update::full();
+    if ctx.has_focus_within_key(crate::view::help_filter_key()) {
+        return help_blur_filter(ctx);
     }
     close_help(ctx)
 }
@@ -915,10 +916,18 @@ mod tests {
                     code: KeyCode::Esc,
                     mods: KeyMods::NONE,
                 })
-                .expect("esc clears help query");
+                .expect("esc blurs the help filter");
             backend.render();
             assert!(backend.state().show_help);
-            assert!(backend.state().help_query.text().is_empty());
+            assert_eq!(
+                backend.state().help_query.text(),
+                "z",
+                "leaving the filter keeps the query and its results"
+            );
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::help_scroll_key())
+            );
             backend
                 .send_key(KeyEvent {
                     code: KeyCode::Esc,

@@ -351,7 +351,8 @@ manifest changes - see
 [Reloading and editing](configuration.md#reloading-and-editing).
 
 The **help overlay** (`?`) is a keyboard reference, not a command picker. Press `/` to search
-from the top-right border (Enter leaves the search; Esc clears the query, then closes). **Global**
+from the top-right border (Enter or Esc leaves the search with the query intact; Esc from the list
+closes the overlay). **Global**
 (default) lists Prefix/Mod actions, led by the scheme itself (`Ctrl+a` Prefix · then key, `Alt`
 Mod · hold + key); **Modes** lists direct keys that take over in copy mode and while the sidebar
 is focused; **Unbound** lists commands with no key; **All** is exhaustive. Search stays inside the

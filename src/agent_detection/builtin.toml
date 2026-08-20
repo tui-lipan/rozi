@@ -219,6 +219,20 @@ id = "cline"
 label = "Cline"
 match = { names = ["cline"] }
 
+# The same braille spinner the shared vocabulary reads, without the footer scope, because Cline is
+# the one agent whose live spinner is not in its chrome: it rides the head of the line being
+# written and drifts up the screen as text streams under it. Measured at 48 to 51 lines above the
+# bottom during one answer, while Cline's own chrome - a queued-message box, the input box, the
+# model line - filled all eight footer rows. Read through the shared rule, a minute of streaming is
+# a minute of idle.
+#
+# What makes dropping the scope safe here is that the spinner is not decoration on a finished line:
+# once a step completes Cline replaces the braille with `*`, so a screen holding a whole answer
+# carries no braille at all. The needle is anchored to the start of a line, which prose does not do.
+[[agents.states]]
+state = "working"
+screen = { regex = true, any_of = ["(?m)^\\s*[\\x{2800}-\\x{28ff}]"] }
+
 [[agents]]
 id = "omp"
 label = "OMP"
@@ -283,3 +297,20 @@ match = { names = ["aider", "aider-chat"] }
 id = "goose"
 label = "Goose"
 match = { names = ["goose", "goose-cli"] }
+
+# Goose gives a turn in flight nothing to read: no spinner past the first moment, no interrupt
+# hint, and a title that never changes. What changes is its chrome - the context meter that sits
+# above the prompt is redrawn whenever Goose is at rest and absent while it works - so this rule is
+# built around an absence, which is the shape the format deliberately refuses on its own.
+#
+# The positive half is the tool-call marker Goose puts in front of every step. It is weak by itself
+# (it stays in the transcript afterwards, so an idle pane's footer has one too) and is here to keep
+# the veto from claiming a half-drawn startup screen rather than to identify work.
+#
+# The veto is the meter, matched without depending on its bar glyph, which changes as context
+# fills. It is also what keeps a *typed* prompt from reading as work: typing replaces
+# `Enter to send · Ctrl+J newline` with the text, so the input line is no evidence of anything.
+[[agents.states]]
+state = "working"
+scope = "footer"
+screen = { regex = true, any_of = ["▸ "], none_of = ["(?m)^\\s*\\S+\\s+\\d+%\\s+\\S+/\\S+$"] }

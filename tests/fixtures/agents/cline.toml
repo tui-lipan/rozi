@@ -25,3 +25,86 @@ screen = '''
  rozi-agent-lab
  ⏵⏵ Auto-approve all enabled (Shift+Tab)
 '''
+
+# A turn in flight. Cline puts the running tool call on its own line with a spinner in front, the
+# same shape its question tool uses - so the difference between this screen and the blocked one
+# above is entirely in the chooser underneath, not in the spinner. The plan's numbered steps are
+# kept deliberately: they sit two lines above the footer boundary and must not read as options.
+[[case]]
+name = "working"
+state = "working"
+title = "> Run bash tool to wait 300secs"
+screen = '''
+ ❯ Run bash tool to wait 300secs
+
+ ▶ Thinking: ...ng delayed sleep execution****Deciding to run blocking sleep command**
+
+ * Plan:
+
+   1. Run a shell command that waits for 300 seconds.
+   2. Return once the command finishes or report any timeout/error from the environment.
+
+ ⠏ run_commands(sleep 300)
+
+─────────────────────────────────────────────────────────────────────────────────────────
+❯ Ask anything...
+─────────────────────────────────────────────────────────────────────────────────────────
+ GPT-5.4 mini (medium) ██████ (3,837)                                 ○ Plan ● Act (Tab)
+ rozi-agent-lab
+ ⏵⏵ Auto-approve all enabled (Shift+Tab)
+'''
+
+# Streaming an answer, which is the screen that made Cline's unscoped spinner rule necessary. The
+# spinner is at the head of the paragraph being written, and everything below it - eight non-empty
+# lines of queued-message box, input box and status - is chrome. Read through the shared
+# footer-scoped rule this whole minute was idle. Prose lines are truncated; the structure is not.
+[[case]]
+name = "working-while-streaming-an-answer"
+state = "working"
+title = "> Explain 12 sorting algorithms, one long paragraph each. No tools, just write."
+screen = '''
+ ❯ Explain 12 sorting algorithms, one long paragraph each. No tools, just write.
+
+ ▶ Thinking: **Planning detailed paragraphs for sorting algorithms**
+
+ ⠹ 1. Bubble Sort
+      Bubble sort is one of the simplest sorting algorithms to understand because it works by
+      repeatedly comparing adjacent elements and swapping them when they are out of order.
+
+╭──────────────────────────────────────────────────────────────────────────────────────────╮
+│ Queued messages:                                                                         │
+│    Explain 20 common data structures, one short paragraph each. No ...                   │
+│ ↑ steer or edit messages                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+───────────────────────────────────────────────────────────────────────────────────────────
+❯ Ask anything...
+───────────────────────────────────────────────────────────────────────────────────────────
+ GPT-5.4 mini (medium) ██████ (3,846)                                 ○ Plan ● Act (Tab)
+ rozi-agent-lab
+ ⏵⏵ Auto-approve all enabled (Shift+Tab)
+'''
+
+# The same answer, finished, and the reason the spinner rule can lose its scope without pinning the
+# pane working forever: a completed step wears `*`, not braille. There is no braille anywhere on
+# this screen.
+[[case]]
+name = "idle-after-a-long-answer"
+state = "idle"
+title = "> Explain 20 common data structures, one short paragraph each. No tools, just..."
+screen = '''
+   19. Adjacency Matrix
+       An adjacency matrix represents a graph using a two-dimensional table where each cell
+       indicates whether two vertices are connected.
+
+   20. Disjoint Set / Union-Find
+       A disjoint set, also called union-find, keeps track of elements split into separate groups.
+
+   If you want, I can also give you a table of these 20 data structures with typical operations.
+
+───────────────────────────────────────────────────────────────────────────────────────────
+❯ Ask anything...
+───────────────────────────────────────────────────────────────────────────────────────────
+ GPT-5.4 mini (medium) ██████ (7,395)                                 ○ Plan ● Act (Tab)
+ rozi-agent-lab
+ ⏵⏵ Auto-approve all enabled (Shift+Tab)
+'''

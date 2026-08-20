@@ -19,6 +19,73 @@ screen = '''
 > Enter to send · Ctrl+J newline
 '''
 
-# No working or blocked case: the capture run was interrupted before Goose took a turn. Its working
-# signal is reportedly the prompt marker disappearing while a turn is in flight - an absence, which
-# no rule here is shaped to match - so that screen is worth capturing deliberately.
+# No blocked case: Goose has not been watched stopping for anything.
+
+# A turn in flight, from a `sleep 300`. Nothing here says so: no spinner, no interrupt hint, and
+# the title is the same `🪿 rozi-agent-lab` it shows at rest. The context meter that closes every
+# other screen in this file is what is missing, and missing is the whole signal.
+[[case]]
+name = "working"
+state = "working"
+title = "🪿 rozi-agent-lab"
+screen = '''
+    __( O)>  ● new session · xai_oauth grok-4.5
+   \____)    20260820_6 · ~/.cache/rozi-agent-lab
+     L L     goose is ready
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ 0% 0/500k
+> Run bash tool to wait 300secs
+
+I'll update the todo and start a 300-second bash wait.
+  ────────────────────────────────────────
+  ▸ todo_write todo
+    content: - [ ] Run bash wait for 300 seconds
+
+
+  ────────────────────────────────────────
+  ▸ shell
+    command: sleep 300
+    timeout_secs: 310
+'''
+
+# The same pane once the command returns. The meter is back at the bottom, and the tool-call
+# markers the working rule looks for are still on screen - so this screen carries the working rule's
+# positive needle and is idle anyway. That is the veto doing the actual work.
+[[case]]
+name = "idle-after-turn"
+state = "idle"
+title = "🪿 rozi-agent-lab"
+screen = '''
+  ────────────────────────────────────────
+  ▸ shell
+    command: sleep 300
+    timeout_secs: 310
+
+    (no output)
+
+  ────────────────────────────────────────
+  ▸ todo_write todo
+    content: - [x] Run bash wait for 300 seconds
+
+Completed: `sleep 300` finished after 300 seconds.
+  ⏱ 5m 05s
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ 1% 6k/500k
+> Enter to send · Ctrl+J newline
+'''
+
+# Someone typing at the prompt, which is why the working rule cannot simply look for the input hint
+# going away: the hint *is* the input line, and text replaces it. The meter stays, so this reads as
+# what it is - a pane waiting on a person who has not pressed Enter yet.
+[[case]]
+name = "idle-with-a-half-typed-prompt"
+state = "idle"
+title = "🪿 rozi-agent-lab"
+screen = '''
+  ────────────────────────────────────────
+  ▸ todo_write todo
+    content: - [x] Run bash wait for 300 seconds
+
+Completed: `sleep 300` finished after 300 seconds.
+  ⏱ 5m 05s
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ 1% 6k/500k
+> hello there
+'''

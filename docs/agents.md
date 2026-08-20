@@ -92,6 +92,13 @@ rules with the same `state`.
 Needles are matched against text Rozi has already lowercased, so write a literal however the agent
 draws it and a regex without a case-insensitive flag.
 
+A veto is how you read a signal made of an *absence*. Goose, for instance, shows a turn in flight
+nothing at all - no spinner, no interrupt hint, an unchanging title - and the only difference is
+that the context meter above its prompt is gone. Its rule pairs a deliberately weak positive (the
+tool-call marker, which an idle transcript also carries) with `none_of` on the meter. The positive
+is required because a rule that is only a veto matches every screen that happens to lack one
+string, including a pane that has not finished drawing.
+
 ### Precedence, not declaration order
 
 Rules are evaluated by outcome, highest first:

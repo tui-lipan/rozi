@@ -3493,7 +3493,7 @@ dependencies = [
 [[package]]
 name = "tui-lipan"
 version = "0.2.0"
-source = "git+https://github.com/tui-lipan/tui-lipan?rev=419bbf203c595db6d29423cbf14ddfe464c7d0d5#419bbf203c595db6d29423cbf14ddfe464c7d0d5"
+source = "git+https://github.com/tui-lipan/tui-lipan?rev=fda4165f655448d43e7fcaefe160780d6f5af6c7#fda4165f655448d43e7fcaefe160780d6f5af6c7"
 dependencies = [
  "alacritty_terminal",
  "arboard",
@@ -3531,7 +3531,7 @@ dependencies = [
 [[package]]
 name = "tui-lipan-macro"
 version = "0.2.0"
-source = "git+https://github.com/tui-lipan/tui-lipan?rev=419bbf203c595db6d29423cbf14ddfe464c7d0d5#419bbf203c595db6d29423cbf14ddfe464c7d0d5"
+source = "git+https://github.com/tui-lipan/tui-lipan?rev=fda4165f655448d43e7fcaefe160780d6f5af6c7#fda4165f655448d43e7fcaefe160780d6f5af6c7"
 dependencies = [
  "prettyplease",
  "proc-macro-crate",

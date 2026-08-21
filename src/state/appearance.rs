@@ -1,4 +1,6 @@
-use tui_lipan::prelude::{BorderStyle, CapStyle, Theme};
+use tui_lipan::prelude::{BorderStyle, CapStyle};
+use tui_lipan::style::SplitterPalette;
+use tui_lipan::{Color, ScrollbarPalette, Style, SurfacePalette, Theme, ThemePalette};
 
 /// Structural presentation of a visible pane title. `Bar` is the existing separate title row above
 /// the frame; `Border` and `Integrated` reuse the frame's top border row; `Inset` writes the title
@@ -428,6 +430,7 @@ pub(crate) fn prev_badge_cap_style(style: CapStyle) -> CapStyle {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThemePreset {
+    Rozi,
     Lipan,
     OneDark,
     Dracula,
@@ -461,8 +464,9 @@ pub enum ThemePreset {
 }
 
 impl ThemePreset {
-    pub fn all() -> [Self; 30] {
+    pub fn all() -> [Self; 31] {
         [
+            Self::Rozi,
             Self::Lipan,
             Self::OneDark,
             Self::Dracula,
@@ -498,6 +502,7 @@ impl ThemePreset {
 
     pub fn id(self) -> &'static str {
         match self {
+            Self::Rozi => "rozi",
             Self::Lipan => "lipan",
             Self::OneDark => "one-dark",
             Self::Dracula => "dracula",
@@ -533,6 +538,7 @@ impl ThemePreset {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Rozi => "Rozi",
             Self::Lipan => "Lipan",
             Self::OneDark => "One Dark",
             Self::Dracula => "Dracula",
@@ -585,6 +591,7 @@ impl ThemePreset {
             .replace(['_', ' '], "-")
             .as_str()
         {
+            "rozi" => Some(Self::Rozi),
             "lipan" | "tui-lipan" | "tuilipan" | "default" => Some(Self::Lipan),
             "one-dark" | "onedark" => Some(Self::OneDark),
             "dracula" => Some(Self::Dracula),
@@ -621,6 +628,7 @@ impl ThemePreset {
 
     pub fn theme(self) -> Theme {
         match self {
+            Self::Rozi => rozi_theme(),
             Self::Lipan => Theme::lipan(),
             Self::OneDark => Theme::one_dark(),
             Self::Dracula => Theme::dracula(),
@@ -653,6 +661,48 @@ impl ThemePreset {
             Self::Zenburn => Theme::zenburn(),
         }
     }
+}
+
+fn rozi_theme() -> Theme {
+    let background = Color::hex_u24(0x06070F);
+    let text = Color::hex_u24(0xCCD0E6);
+    let rose = Color::hex_u24(0xFD4A80);
+    let violet = Color::hex_u24(0x982BF2);
+    let mut theme = ThemePalette::new(text, background, rose)
+        .selection(violet)
+        .text_selection(rose)
+        .border(Color::hex_u24(0x343858))
+        .muted(Color::hex_u24(0x8E93B4))
+        .scrollbar(Color::hex_u24(0x343858))
+        .success(Color::hex_u24(0x4ADE80))
+        .warning(Color::hex_u24(0xF0A830))
+        .error(Color::hex_u24(0xFF5F57))
+        .info(Color::hex_u24(0x82AAFF))
+        .into_theme();
+
+    theme.surface = SurfacePalette {
+        backdrop: background,
+        panel: Color::hex_u24(0x0B0D1C),
+        element: Color::hex_u24(0x14162A),
+        menu: Color::hex_u24(0x1B1E36),
+    };
+    theme.selection = Style::new().fg(text).bg(violet);
+    theme.text_selection = Style::new()
+        .fg(text)
+        .bg(background.blend_toward(rose, 0.32));
+    theme.hover = Style::new().bg(Color::hex_u24(0x14162A));
+    theme.border_active = rose;
+    theme.focus = Style::new().fg(rose);
+    theme.scrollbar = ScrollbarPalette {
+        track: Some(Color::hex_u24(0x0B0D1C)),
+        thumb: Color::hex_u24(0x343858),
+        thumb_focus: Some(rose),
+    };
+    theme.splitter = SplitterPalette {
+        hover: violet,
+        active: rose,
+    };
+    theme
 }
 
 pub struct ThemePickerPreview {
@@ -711,5 +761,16 @@ mod tests {
             assert_eq!(ThemePreset::parse(preset.id()), Some(preset));
             let _ = preset.theme();
         }
+    }
+
+    #[test]
+    fn rozi_theme_tracks_the_documentation_palette() {
+        let theme = ThemePreset::Rozi.theme();
+
+        assert_eq!(theme.surface.backdrop, Color::hex_u24(0x06070F));
+        assert_eq!(theme.surface.panel, Color::hex_u24(0x0B0D1C));
+        assert_eq!(theme.accent.fg, Some(Color::hex_u24(0xFD4A80).into()));
+        assert_eq!(theme.selection.bg, Some(Color::hex_u24(0x982BF2).into()));
+        assert_eq!(theme.primary.fg, Some(Color::hex_u24(0xCCD0E6).into()));
     }
 }

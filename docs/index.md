@@ -23,7 +23,7 @@ explicitly.
 | [Agent definitions](agents.md) | Teaching rozi to recognize a coding-agent CLI and read its state, in `config.toml` or an extension. |
 | [Layouts & panes](layouts-and-panes.md) | Tiled layout kinds, floating, fullscreen, split ratios, focus and movement. |
 | [Sidebar](sidebar.md) | Docked sidebar configuration, built-in tabs, navigation, and shared-session sizing. |
-| [Themes](themes.md) | The 29 selectable presets, the `system` theme and ANSI fallback, custom theme files, live hot-reload, and terminal colors. |
+| [Themes](themes.md) | The 31 selectable themes, including `system`, plus the ANSI fallback, custom theme files, live hot-reload, and terminal colors. |
 | [Terminal features](terminal.md) | The live terminal: mouse reporting, selection, clipboard (OSC52), titles, and scrollback search. |
 | [Project profiles & pane identity](project-profiles.md) | Saving and restoring named workspace layouts. |
 | [Named profiles](profiles.md) | Profile files, CLI launch/default profile priority, and in-app profile management. |

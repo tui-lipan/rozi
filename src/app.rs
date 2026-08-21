@@ -1460,7 +1460,7 @@ mod tests {
     }
 
     #[test]
-    fn theme_picker_groups_dark_and_light_presets() {
+    fn theme_picker_separates_groups_and_marks_signature_themes() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
@@ -1474,10 +1474,33 @@ mod tests {
                 backend.state_mut().show_theme_picker = true;
                 backend.render();
 
-                let rendered = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                let rendered = lines.join("\n");
                 assert!(rendered.contains("System"));
                 assert!(rendered.contains("Dark"));
                 assert!(rendered.contains("Light"));
+                assert!(
+                    lines
+                        .iter()
+                        .any(|line| line.contains("Rozi") && line.contains("signature")),
+                    "{rendered}"
+                );
+                assert!(
+                    lines
+                        .iter()
+                        .any(|line| line.contains("Lipan") && line.contains("signature")),
+                    "{rendered}"
+                );
+
+                let row = |needle: &str| {
+                    let prefix = format!("│ {needle}");
+                    lines
+                        .iter()
+                        .position(|line| line.contains(&prefix))
+                        .unwrap_or_else(|| panic!("missing {needle}: {rendered}"))
+                };
+                assert!(row("Dark") >= row("System") + 2, "{rendered}");
+                assert!(row("Light") >= row("Zenburn") + 2, "{rendered}");
             })
             .expect("spawn test thread")
             .join()

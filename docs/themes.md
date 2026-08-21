@@ -30,6 +30,7 @@ config.
 
 | Preset id | Label |
 | --- | --- |
+| `rozi` | Rozi |
 | `lipan` (default) | Lipan |
 | `one-dark` | One Dark |
 | `dracula` | Dracula |

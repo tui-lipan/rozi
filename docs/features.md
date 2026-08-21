@@ -381,7 +381,7 @@ plus `text` placeholders and `command:<interval>:<cmdline>` segments.
 
 ## Appearance and themes
 
-**Themes** — 29 built-in presets, a host-derived `system` theme, an `ansi` fallback, and drop-in
+**Themes** — 30 built-in presets, a host-derived `system` theme, an `ansi` fallback, and drop-in
 custom theme files in `~/.config/rozi/themes/` that can `extends` another theme. Themes
 **hot-reload** on file change (`theme-reload`), and the terminal ANSI palette is derived from the
 active theme.

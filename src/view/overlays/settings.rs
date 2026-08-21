@@ -466,14 +466,29 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         };
         if previous_group != group {
             if let Some(group) = group {
+                if !entries.is_empty() {
+                    entries.push(SearchEntry::spacer());
+                }
                 entries.push(SearchEntry::header(group));
             }
             previous_group = group;
         }
 
         let mut entry = SearchEntry::item(choice.label(), index);
-        if Some(index) == current_index {
-            entry = entry.description(ItemDescription::new().right("current"));
+        let signature = matches!(
+            choice,
+            crate::config::ThemeChoice::Builtin(
+                crate::state::ThemePreset::Rozi | crate::state::ThemePreset::Lipan
+            )
+        );
+        let description = match (Some(index) == current_index, signature) {
+            (true, true) => Some("current · signature"),
+            (true, false) => Some("current"),
+            (false, true) => Some("signature"),
+            (false, false) => None,
+        };
+        if let Some(description) = description {
+            entry = entry.description(ItemDescription::new().right(description));
         }
         entries.push(entry);
     }

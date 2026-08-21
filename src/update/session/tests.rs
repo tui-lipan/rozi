@@ -108,7 +108,8 @@ fn pane_output_restarts_partial_search_and_rejects_its_stale_chunk() {
             let restarted_epoch = backend.state().search_scan_epoch;
             assert_ne!(old_epoch, restarted_epoch);
             let search = backend.state().search.as_ref().expect("restarted search");
-            assert!(search.matches.is_empty());
+            assert!(!search.matches.is_empty());
+            assert!(search.refresh_matches.as_ref().is_some_and(Vec::is_empty));
             assert_eq!(search.scan.as_ref().expect("scan").epoch, restarted_epoch);
             assert_eq!(
                 search.scan.as_ref().expect("scan").panes.as_ref(),
@@ -142,7 +143,8 @@ fn pane_output_restarts_partial_search_and_rejects_its_stale_chunk() {
                     .scrollback_offset();
             backend
                 .update_level(Msg::SearchActivate(0))
-                .expect("empty restarted result is not actionable");
+                .expect("refreshing result is not actionable");
+            assert!(backend.state().search.is_some());
             assert_eq!(
                 crate::pane_lifecycle::find_pane(backend.state(), target)
                     .unwrap()
@@ -196,6 +198,12 @@ fn pane_output_restarts_a_completed_search() {
                     .matches
                     .is_empty()
             );
+            {
+                let search = backend.state_mut().search.as_mut().unwrap();
+                search.current = 5;
+                search.refresh_match_status();
+            }
+            let visible_items = Arc::clone(&backend.state().search.as_ref().unwrap().items);
 
             backend
                 .update_level(Msg::SessionOutput {
@@ -209,12 +217,29 @@ fn pane_output_restarts_a_completed_search() {
             let restarted_epoch = backend.state().search_scan_epoch;
             assert_ne!(old_epoch, restarted_epoch);
             let search = backend.state().search.as_ref().expect("restarted search");
-            assert!(search.matches.is_empty());
+            assert!(!search.matches.is_empty());
+            assert!(search.refresh_matches.as_ref().is_some_and(Vec::is_empty));
+            assert_eq!(search.current, 5);
+            assert!(Arc::ptr_eq(&search.items, &visible_items));
             assert_eq!(search.scan.as_ref().expect("scan").epoch, restarted_epoch);
             assert_eq!(
                 backend.state().search_scan_scheduled_epoch,
                 Some(restarted_epoch)
             );
+
+            while backend
+                .state()
+                .search
+                .as_ref()
+                .is_some_and(|search| search.scan.is_some())
+            {
+                let _ = crate::ops::search::advance_search_scan(
+                    backend.state_mut(),
+                    restarted_epoch,
+                    crate::ops::search::SEARCH_LINES_PER_CHUNK,
+                );
+            }
+            assert_eq!(backend.state().search.as_ref().unwrap().current, 5);
         })
         .expect("spawn completed live-output search test")
         .join()

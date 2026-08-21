@@ -2,6 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::ops::focus::{
     request_current_pane_focus, request_rename_focus, request_save_profile_focus,
+    request_search_focus,
 };
 use crate::ops::identity::{apply_rename_pane, close_rename_pane as close_pane_rename};
 use crate::ops::profile::{
@@ -50,6 +51,15 @@ pub(super) fn search_select(ctx: &mut Context<AppRoot>, index: usize) -> Update 
 
 pub(super) fn search_activate(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     select_search_match(ctx, index);
+    if ctx
+        .state
+        .search
+        .as_ref()
+        .is_some_and(|search| search.refresh_matches.is_some())
+    {
+        request_search_focus(ctx);
+        return Update::full();
+    }
     let from_copy_mode = ctx
         .state
         .search

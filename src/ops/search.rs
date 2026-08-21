@@ -142,6 +142,10 @@ fn schedule_search_scan(state: &mut State, epoch: u64) -> Option<Command> {
 }
 
 pub(crate) fn recompute_search(ctx: &mut Context<AppRoot>) -> Update {
+    recompute_search_inner(ctx, false)
+}
+
+fn recompute_search_inner(ctx: &mut Context<AppRoot>, refresh_after_output: bool) -> Update {
     if let Some(search) = ctx.state.search.as_mut()
         && search.from_copy_mode
     {
@@ -169,8 +173,13 @@ pub(crate) fn recompute_search(ctx: &mut Context<AppRoot>) -> Update {
         (panes, pane_ends)
     });
     if let Some(search) = ctx.state.search.as_mut() {
-        search.replace_results(Vec::new(), false);
-        search.current = 0;
+        if refresh_after_output {
+            search.refresh_matches = Some(Vec::new());
+        } else {
+            search.refresh_matches = None;
+            search.replace_results(Vec::new(), false);
+            search.current = 0;
+        }
         let scope_label = search.scope.label();
         if query.is_empty() {
             search.scan = None;
@@ -184,7 +193,7 @@ pub(crate) fn recompute_search(ctx: &mut Context<AppRoot>) -> Update {
                 pane_ends: pane_ends.into(),
                 pane_index: 0,
                 line_cursor: 0,
-                first_jump_done: false,
+                first_jump_done: refresh_after_output,
             });
             search.refresh_match_status();
         }
@@ -226,7 +235,7 @@ pub(crate) fn restart_search_after_pane_output(
         !search.input.text().trim().is_empty()
             && panes_in_scope(&ctx.state, search.target, search.scope).contains(&pane_id)
     });
-    affected.then(|| recompute_search(ctx))
+    affected.then(|| recompute_search_inner(ctx, true))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,12 +290,16 @@ pub fn advance_search_scan(
         };
         let mut consumed = 0;
         for line in (range_start..range_end).rev() {
-            let remaining = MAX_MATCHES.saturating_sub(
-                state
-                    .search
-                    .as_ref()
-                    .map_or(0, |search| search.matches.len() + appended.len()),
-            );
+            let remaining = MAX_MATCHES.saturating_sub(state.search.as_ref().map_or(
+                appended.len(),
+                |search| {
+                    search
+                        .refresh_matches
+                        .as_ref()
+                        .map_or(search.matches.len(), Vec::len)
+                        + appended.len()
+                },
+            ));
             let result =
                 pane.terminal
                     .search_scrollback_range(&scan.query, line, line + 1, remaining);
@@ -320,16 +333,38 @@ pub fn advance_search_scan(
         .search
         .as_mut()
         .expect("search survived synchronous scan");
-    search.append_results(appended);
-    if truncated {
+    if let Some(refresh_matches) = search.refresh_matches.as_mut() {
+        refresh_matches.extend(appended);
+    } else {
+        search.append_results(appended);
+    }
+    if truncated && search.refresh_matches.is_none() {
         search.truncated = true;
     }
-    let first_match = !scan.first_jump_done && !search.matches.is_empty();
+    let result_count = search
+        .refresh_matches
+        .as_ref()
+        .map_or(search.matches.len(), Vec::len);
+    let first_match = !scan.first_jump_done && result_count != 0;
     if first_match {
         scan.first_jump_done = true;
     }
     if complete {
         search.scan = None;
+        if let Some(matches) = search.refresh_matches.take() {
+            let selected = search.matches.get(search.current).cloned();
+            let current = search.current;
+            search.replace_results(matches, truncated);
+            search.current = selected
+                .as_ref()
+                .and_then(|selected| {
+                    search
+                        .matches
+                        .iter()
+                        .position(|matched| matched == selected)
+                })
+                .unwrap_or_else(|| current.min(search.matches.len().saturating_sub(1)));
+        }
     } else {
         search.scan = Some(scan);
     }
@@ -411,6 +446,10 @@ pub(crate) fn select_search_match(ctx: &mut Context<AppRoot>, index: usize) -> U
     }
     search.current = index;
     search.refresh_match_status();
+    if search.refresh_matches.is_some() {
+        request_search_focus(ctx);
+        return Update::full();
+    }
     jump_to_search_match(ctx);
     request_search_focus(ctx);
     Update::full()
@@ -432,6 +471,10 @@ pub(crate) fn search_next(ctx: &mut Context<AppRoot>, backward: bool) -> Update 
         (search.current + 1) % len
     };
     search.refresh_match_status();
+    if search.refresh_matches.is_some() {
+        request_search_focus(ctx);
+        return Update::full();
+    }
     jump_to_search_match(ctx);
     request_search_focus(ctx);
     Update::full()

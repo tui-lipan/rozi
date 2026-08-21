@@ -61,6 +61,9 @@ pub struct ScrollbackSearchState {
     pub scope: SearchScope,
     pub input: TextInput,
     pub matches: Vec<ScrollbackMatch>,
+    /// Replacement results built while live pane output invalidates the current scan. Keeping
+    /// these separate leaves the visible picker rows and selection stable until the rescan ends.
+    pub refresh_matches: Option<Vec<ScrollbackMatch>>,
     /// Stable palette rows rebuilt only when the search result set changes.
     pub items: Arc<[SearchItem<usize>]>,
     pub current: usize,
@@ -78,6 +81,7 @@ impl ScrollbackSearchState {
             scope: SearchScope::FocusedPane,
             input: TextInput::new(""),
             matches: Vec::new(),
+            refresh_matches: None,
             items: Arc::from([]),
             current: 0,
             truncated: false,

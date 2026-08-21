@@ -60,7 +60,8 @@ termina = { git = "https://github.com/helix-editor/termina", rev = "38047a2491f4
 
 [features]
 # Headless PNG/JSON capture for visual review. Opt-in so release builds do not
-# carry the font and image-encoding dependencies. Use `cargo snap`.
+# carry the font and image-encoding dependencies. Rozi captures run the built binary; see the
+# `tui-lipan-visual` skill.
 # JSON export is omitted: it pulls a serde_json newer than this crate's pinned
 # lock. Add "tui-lipan/ui-snapshot-json" plus `cargo update -p serde_json` for it.
 ui-snapshot = ["tui-lipan/ui-snapshot-png"]

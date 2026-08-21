@@ -25,6 +25,11 @@ they share the same skill.
 If this skill conflicts with the current workspace docs or source, follow the
 workspace.
 
+**Capturing Rozi itself? Read "Rozi capture specifics" below before your first
+capture.** Rozi's panes are subprocess-backed and it owns a control socket and
+reveal timers, so it has traps this generic guidance cannot infer — and they
+fail by producing a plausible-looking image rather than an error.
+
 ## The rule that matters most
 
 **Never write a snapshot harness you intend to delete.**
@@ -194,6 +199,67 @@ TUI_LIPAN_SNAPSHOT=/tmp/app.png \
 TUI_LIPAN_SNAPSHOT_VIEWPORTS=80x24,120x30,160x40 \
 cargo snap myapp
 ```
+
+## Rozi capture specifics
+
+Everything above applies. These are the parts of capturing Rozi that generic app
+guidance cannot infer.
+
+Capture the real binary to inspect a screen; never add an assertion-free
+snapshot test just to produce an image. Build with `ui-snapshot`, isolate a
+short-pathed child-process sandbox as above, and give it this config so the
+capture opens a pane instead of stopping at the session picker:
+
+```toml
+[session]
+startup = "ephemeral"
+```
+
+### Real settling is mandatory
+
+Set `TUI_LIPAN_SNAPSHOT_SETTLE_MS`, normally around `1800`. Rozi's panes are
+PTY-backed through the session server. Without real settling, the capture
+happens before the subprocess responds and before the 36 ms reveal timer clears
+`opening`. The image then looks plausible but lies: workbar and pane count
+render while every pane sits at opacity zero. Nothing warns you.
+
+The three waits solve different problems and are not interchangeable:
+
+| Want | Use | Why |
+| --- | --- | --- |
+| App ready, PTYs live, prompts drawn | `SETTLE_MS`, real time | Virtual time cannot make a subprocess answer |
+| Animation or reveal timer advanced | `ADVANCE_MS` or script `wait:` | Advances tui-lipan time without sleeping |
+| Pane spawned by the script ready | Script `sleep:`, real time | `SETTLE_MS` runs before the script only |
+
+For a mid-animation image, let a scripted pane start with `sleep:`, then advance
+partway with `wait:`. A trailing `ADVANCE_MS` runs last and settles whatever is
+still moving, so use it for the settled shot, not the mid-flight one.
+
+### Traps
+
+- Keep the sandbox path short. Rozi's control endpoint is a Unix socket; a long
+  path exceeds `SUN_LEN` and produces a `Control socket unavailable` toast
+  across the capture.
+- Rebuild with `cargo build --features ui-snapshot` before every capture. An
+  ordinary `cargo build`/`test`/`clippy` in between replaces the binary with one
+  lacking PNG capture, after which a `.png` path silently receives Markdown.
+
+### Invisible panes
+
+When a Rozi capture looks wrong, get the diagnostic widget tree before guessing.
+A line such as `Animated key=rozi-pane-<id>-<gen> @ (3,3) 54x13` proves the pane
+has geometry, not that it is visible — the dump does not report opacity, which
+is the attribute that goes wrong here. To confirm an opacity/timing problem,
+capture with:
+
+```toml
+[animations]
+enabled = false
+pane_style = "slide"
+```
+
+That combination forces opacity 1 and zero offset. If the pane appears, geometry
+was never the bug.
 
 ## 2. Sketch a new screen — one kept file
 

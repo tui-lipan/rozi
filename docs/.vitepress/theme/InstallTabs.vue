@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 
 /**
  * Every channel the landing page advertises. `command` is what the clipboard
@@ -41,6 +41,7 @@ const channels: Channel[] = [
 
 const active = ref(channels[0]);
 const copied = ref(false);
+const rippling = ref(false);
 let clear = 0;
 
 function select(channel: Channel) {
@@ -48,7 +49,33 @@ function select(channel: Channel) {
   copied.value = false;
 }
 
-async function copy() {
+/**
+ * The ripple runs on the press, not on the clipboard write: it is feedback for
+ * the click, and a permission failure is not a reason to swallow it. The
+ * `copied` label is the part that reports the outcome.
+ *
+ * Restarting the animation needs the class off for a frame - a keyframe
+ * animation on an element that already carries the class does not replay. A
+ * keyboard press has no coordinates (`detail` is 0), so it ripples from the
+ * middle of the strip rather than from its top-left corner.
+ */
+async function copy(event: MouseEvent) {
+  const strip = event.currentTarget as HTMLElement;
+  const box = strip.getBoundingClientRect();
+  const fromPointer = event.detail > 0;
+  strip.style.setProperty(
+    "--ripple-x",
+    fromPointer ? `${event.clientX - box.left}px` : "50%",
+  );
+  strip.style.setProperty(
+    "--ripple-y",
+    fromPointer ? `${event.clientY - box.top}px` : "50%",
+  );
+
+  rippling.value = false;
+  await nextTick();
+  rippling.value = true;
+
   try {
     await navigator.clipboard.writeText(active.value.command);
     copied.value = true;
@@ -83,7 +110,8 @@ async function copy() {
     <button
       type="button"
       class="lp-install-cmd"
-      :class="{ done: copied }"
+      :class="{ done: copied, rippling }"
+      @animationend="rippling = false"
       :aria-label="`Copy the ${active.id} install command`"
       @click="copy"
     >

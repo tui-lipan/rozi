@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { Content, useData, withBase } from "vitepress";
+import { useData, withBase } from "vitepress";
 import { onMounted, ref } from "vue";
 import RoziStage from "./composition/RoziStage.vue";
+import ConfigTabs from "./ConfigTabs.vue";
 import InstallTabs from "./InstallTabs.vue";
 import RoziIntro from "./RoziIntro.vue";
 import { HERO_CUES, HERO_SCENES } from "./composition/scenes";
+import { highlightToml } from "./toml";
 
 /* The pre-paint script in config.ts has already decided this and hidden the
    page accordingly; reading its class back is what keeps the two in step. */
@@ -19,70 +21,251 @@ const { theme } = useData();
 
 const GITHUB = "https://github.com/tui-lipan/rozi";
 const SPONSOR = "https://github.com/sponsors/Razuer";
+const EXAMPLES = `${GITHUB}/tree/master/examples/extensions`;
 
-const facts = [
-  "7 layouts",
-  "9 workspaces",
-  "29 themes",
-  "Linux · macOS · Windows",
-  "MIT OR Apache-2.0",
+/* Counted out of the source at build time by config.ts, not typed here. The
+   layout count is fixed by the design rather than by a list, so it stays a
+   literal. */
+const stats = theme.value.roziFacts;
+
+/* Split rather than pre-joined: the number carries the weight in the chip and
+   the label sits under it, which is what makes the strip readable at a glance
+   instead of a row of small sentences. */
+const facts: [string, string][] = [
+  ["7", "layouts"],
+  [String(stats.themes), "themes"],
+  [String(stats.commands), "rebindable commands"],
+  [String(stats.agents), "agents detected"],
+  ["3", "native platforms"],
 ];
 
+/* Two sentences each. The card is a claim and a link, not a paragraph - the
+   page under it is where the detail belongs. */
 const features = [
   {
     title: "Panes that arrange themselves",
-    body: "New panes split the pane you are looking at, along whichever side has more room. Seven arrangements are a keypress away — dwindle, master-and-stack, grid, columns, rows, a scrolling strip, and monocle. Any pane can float, go fullscreen, or be dragged and resized with the mouse.",
+    body: "New panes split the one you are looking at, along whichever side has more room. Seven arrangements are a keypress away, and any pane can float, go fullscreen, or be dragged with the mouse.",
     link: "/layouts-and-panes",
     linkText: "Layouts & panes",
   },
   {
     title: "Nothing is lost when you close the window",
-    body: "A background server owns every PTY, so leaving does not kill your work. rozi attach dev brings it all back — same layout, same running programs, same scrollback. Several windows can attach at once, and --remote myserver reaches a session on another machine over SSH.",
+    body: "A background server owns every PTY, so leaving does not kill your work. rozi attach dev brings back the same layout, the same running programs, and the same scrollback — from another window, or another machine over SSH.",
     link: "/sessions",
     linkText: "Sessions",
   },
   {
     title: "Change anything without restarting",
-    body: "Save config.toml and it applies immediately — keys, colors, status bar — with your panes untouched. It works the other way too: flip a setting from the command palette and rozi writes it back into your file, so what you tried out is what you keep.",
+    body: "Save config.toml and it lands immediately, with your panes untouched. It works the other way too: flip a setting from the command palette and rozi writes it back into your file.",
     link: "/configuration",
     linkText: "Configuration",
   },
   {
     title: "A real terminal, not an approximation",
-    body: "Mouse support, text selection, images, scrollback with search, copy mode with vi-style motions, clipboard paste, and true color. 29 built-in themes plus a system theme that follows your desktop — and the colors inside your panes follow whichever one is active.",
+    body: `Mouse reporting, selection, inline images, true color, scrollback search, and a vi-style copy mode. ${stats.themes} themes ship with it, and the colors inside your panes follow whichever one is active.`,
     link: "/terminal",
     linkText: "Terminal features",
   },
+  {
+    title: "It can tell when an agent is waiting on you",
+    body: `rozi reads what a coding-agent CLI is drawing and marks the pane working, blocked, or finished — on its border, its workspace tab, and in the sidebar. ${stats.agents} agents ship recognized, and each one is a table you could have written yourself.`,
+    link: "/agents",
+    linkText: "Agent definitions",
+  },
+  {
+    title: "Native on Windows, not emulated",
+    body: "ConPTY, named pipes, and a SID-protected runtime directory, all behind one platform layer rather than sprinkled through the app. One binary on every platform, with no runtime and no daemon to install alongside it.",
+    link: "/getting-started",
+    linkText: "Platform support",
+  },
 ];
 
+/**
+ * Both paths to the same action, side by side. Every built-in default is
+ * mirrored onto `<modifier>-<key>` as well as `<prefix> <key>`, and the held
+ * modifier is the one that changes how the thing feels to use - so the table
+ * shows it as a column of its own rather than mentioning it in a sentence
+ * above and then listing prefix chords.
+ */
 const firstKeys = [
-  { keys: ["Ctrl-a", "Enter"], what: "Open another pane" },
-  { keys: ["Ctrl-a", "h j k l"], what: "Move focus left / down / up / right" },
-  { keys: ["Ctrl-a", "f"], what: "Make the focused pane fullscreen" },
-  { keys: ["Ctrl-a", "t"], what: "Let the pane float on top" },
-  { keys: ["Ctrl-a", "1…9"], what: "Jump to a workspace" },
-  { keys: ["Ctrl-a", "p"], what: "Search every command by name" },
-  { keys: ["Ctrl-a", "?"], what: "Show all keys" },
-  { keys: ["Ctrl-a", "d"], what: "Leave — a named session keeps running" },
+  { key: "Enter", mod: "Alt-Enter", what: "Open another pane" },
+  { key: "h j k l", mod: "Alt-h…l", what: "Move focus by direction" },
+  { key: "f", mod: "Alt-f", what: "Fullscreen the focused pane" },
+  { key: "t", mod: "Alt-t", what: "Let the pane float on top" },
+  { key: "1…9", mod: "Alt-1…9", what: "Jump to a workspace" },
+  { key: "p", mod: "Alt-p", what: "Search every command" },
+  { key: "?", mod: "Alt-?", what: "Show all keys" },
+  { key: "d", mod: "Alt-d", what: "Leave — a named session lives on" },
 ];
 
-const alsoInBox = [
-  ["Command palette", "Fuzzy-search every command by name"],
-  ["Side panel", "Files, git changes, panes, sessions, coding agents"],
-  ["Saved layouts", "Relaunch a setup with the same panes and commands"],
-  ["Scratchpad", "A pane that drops over your work and hides again"],
-  ["Copy mode & search", "Walk the scrollback with vi motions"],
-  ["Synchronized typing", "Send what you type to every pane at once"],
-  ["Shared control", "Several people attach; one drives the layout"],
-  ["Scripting", "focus, send-text, new-pane, capture-pane"],
-  ["Hooks", "Run your own commands when something happens"],
-  ["Your own shortcuts", "Bind a key to open a pane or send text"],
-  ["Status bar", "Built-in readouts, your text, or a timed command"],
-  ["Placement rules", "Send panes running a command to a chosen spot"],
-  ["Vim/Neovim navigator", "One set of keys for editor splits and panes"],
+/**
+ * The inventory, as names only. It used to carry a line of description under
+ * every entry, which turned the section into six columns of small print; the
+ * group's own doc link is a better place to send anybody who does not
+ * recognize a name than a five-word gloss beside it.
+ */
+const catalog: {
+  title: string;
+  link: string;
+  linkText: string;
+  names: string[];
+}[] = [
+  {
+    title: "Window management",
+    link: "/layouts-and-panes",
+    linkText: "Layouts & panes",
+    names: [
+      "Seven layouts",
+      "aspect-ratio splits",
+      "floating",
+      "fullscreen",
+      "move, swap & promote",
+      "resize mode",
+      "nine workspaces",
+      "merged borders",
+      "gaps & padding",
+      "scratchpad",
+      "animations",
+    ],
+  },
+  {
+    title: "The terminal itself",
+    link: "/terminal",
+    linkText: "Terminal features",
+    names: [
+      "True color",
+      "inline images",
+      "mouse reporting",
+      "scrollback search",
+      "vi copy mode",
+      "clipboard & OSC 52",
+      "hints",
+      "edit scrollback",
+      "shell integration",
+      "pane logging",
+      "synchronized typing",
+    ],
+  },
+  {
+    title: "Sessions & sharing",
+    link: "/sessions",
+    linkText: "Sessions",
+    names: [
+      "Named sessions",
+      "ephemeral sessions",
+      "multi-client",
+      "layout-control lease",
+      "remote over SSH",
+      "resurrect",
+      "autosave",
+      "profiles",
+      "session picker",
+      "launcher",
+    ],
+  },
+  {
+    title: "Look and feel",
+    link: "/themes",
+    linkText: "Themes",
+    names: [
+      `${stats.themes} themes`,
+      "system theme",
+      "hot reload",
+      "terminal palette",
+      "workbar segments",
+      "powerline caps",
+      "titlebar styles",
+      "sidebar tabs",
+      "settings dialog",
+      "alert marks",
+      "notifications & sounds",
+    ],
+  },
+  {
+    title: "Automation",
+    link: "/control",
+    linkText: "Control socket",
+    names: [
+      "Control socket",
+      "pick",
+      "publish",
+      "subscribe",
+      "notify",
+      "run-action",
+      "capture-pane",
+      `${stats.hookEvents} hook events`,
+      "services",
+      "user commands",
+      "extensions",
+      "agent skill",
+      "editor navigator",
+    ],
+  },
+  {
+    title: "How it ships",
+    link: "/installation",
+    linkText: "Installation",
+    names: [
+      "Native on three platforms",
+      "one binary",
+      "signed releases",
+      "managed updates",
+      "rollback",
+      "measured performance",
+      "bounded work",
+      "private endpoints",
+      "MIT OR Apache-2.0",
+    ],
+  },
 ];
 
-const CONFIG_SAMPLE = `[theme]
+/* The public surfaces an extension is written against. These are the CLI
+   spellings on purpose - `rozi pick` is the whole API for a picker. */
+const extensionSurfaces = [
+  ["rozi pick", "A searchable modal — groups, disabled rows, prompts — and the choice back"],
+  ["rozi publish", "Live, actionable rows in the Activity sidebar"],
+  ["rozi subscribe", "The event stream, into a process that stays alive"],
+  ["rozi notify", "A toast for a result that happened off screen"],
+  ["rozi run-action", "Any command: built-in, user-defined, or another extension's"],
+];
+
+const authorLoop = [
+  ["rozi new-extension", "scaffold"],
+  ["rozi check-extension", "validate"],
+  ["rozi reload-config", "install"],
+  ["rozi list-extensions", "confirm"],
+];
+
+const exampleExtensions = [
+  ["git-tools", "Grouped branch and worktree pickers"],
+  ["pr-dashboard", "Supervised gh monitoring, published as rows"],
+  ["docker", "Controls built from a live external process"],
+  ["ssh-tools", "Reads your SSH config and launches panes"],
+  ["agent-activity", "Mirrors pane status into actionable rows"],
+];
+
+/**
+ * The documentation index, read out of the sidebar rather than written here.
+ * The sidebar is already where a new page has to be registered - see
+ * AGENTS.md - so deriving from it means the landing page cannot fall behind
+ * the docs, and there is no second list to remember. "Home" is the landing
+ * itself and carries no items, which is also what filters it out.
+ */
+type DocPage = { text: string; link: string };
+type DocGroup = { text: string; items?: DocPage[] };
+
+/* One dated audit report per audit, forever. They belong in the sidebar, where
+   somebody is reading the performance docs, and not in a directory of the
+   documentation - `Performance Records` is the page that indexes them. */
+const isArchive = (page: DocPage) => page.link.startsWith("/performance/audits/");
+
+const docGroups = (theme.value.sidebar as DocGroup[])
+  .map((group) => ({ ...group, items: (group.items ?? []).filter((p) => !isArchive(p)) }))
+  .filter((group) => group.items.length > 0);
+
+const docPages = docGroups.reduce((total, group) => total + group.items.length, 0);
+
+const CONFIG_SAMPLE = highlightToml(`[theme]
 name = "catppuccin-mocha"
 
 [input]
@@ -93,7 +276,23 @@ modifier = "alt"            # or "super"
 default = "dwindle"         # how new workspaces arrange panes
 
 [pane]
-border_style = "rounded"`;
+border_style = "rounded"`);
+
+const EXTENSION_SAMPLE = highlightToml(`[extension]
+id = "git-tools"
+title = "Git tools"
+version = "0.1.0"
+api = 1
+
+[[commands]]
+id = "branches"                 # invoked as git-tools.branches
+label = "Switch branch"
+exec = ["python", "{extension_dir}/bin/branches.py"]
+
+[[services]]
+name = "watch"
+exec = ["./bin/watch", "--json"]
+restart = "on-failure"`);
 </script>
 
 <template>
@@ -103,6 +302,20 @@ border_style = "rounded"`;
     <Teleport to="body">
       <RoziIntro v-if="introPlaying" @done="introPlaying = false" />
     </Teleport>
+
+    <!-- Decoration only: the mark at a size where it reads as texture rather
+         than as a logo, plus the bloom the hero lockup already sits in. Behind
+         everything, out of the accessibility tree, and untouchable. -->
+    <div class="lp-bg" aria-hidden="true">
+      <span class="lp-bg-bloom b1"></span>
+      <span class="lp-bg-grid"></span>
+      <span class="lp-bg-mark m1"></span>
+      <span class="lp-bg-bloom b2"></span>
+      <span class="lp-bg-mark m2"></span>
+      <span class="lp-bg-glyph"></span>
+      <span class="lp-bg-bloom b3"></span>
+      <span class="lp-bg-mark m3"></span>
+    </div>
 
     <header class="lp-top">
       <a class="lp-brand" :href="withBase('/')">
@@ -173,12 +386,12 @@ border_style = "rounded"`;
           <InstallTabs />
 
           <div class="lp-cta">
-            <a class="lp-btn primary" :href="withBase('/getting-started')"
+            <a class="lp-cta-btn primary" :href="withBase('/getting-started')"
               >Get started →</a
             >
-            <a class="lp-btn" :href="withBase('/features')">What it does</a>
+            <a class="lp-cta-btn" :href="withBase('/features')">What it does</a>
             <a
-              class="lp-btn"
+              class="lp-cta-btn"
               :href="GITHUB"
               target="_blank"
               rel="noopener noreferrer"
@@ -186,7 +399,6 @@ border_style = "rounded"`;
             >
           </div>
         </div>
-
       </section>
 
       <!-- Breaks out past --lp-max: the composition is authored at 1920 wide,
@@ -202,11 +414,16 @@ border_style = "rounded"`;
       </div>
 
       <ul class="lp-facts">
-        <li v-for="fact in facts" :key="fact">{{ fact }}</li>
+        <li v-for="[value, label] in facts" :key="label">
+          <b>{{ value }}</b><span>{{ label }}</span>
+        </li>
       </ul>
 
       <section class="lp-section">
-        <h2 class="lp-h2">What you get</h2>
+        <header class="lp-head">
+          <h2>What you get</h2>
+          <p class="lp-head-note">All of it on by default, nothing to configure first</p>
+        </header>
         <div class="lp-features">
           <article v-for="f in features" :key="f.title" class="lp-feature">
             <h3>{{ f.title }}</h3>
@@ -218,18 +435,29 @@ border_style = "rounded"`;
 
       <section class="lp-section lp-two">
         <div>
-          <h2 class="lp-h2">First five minutes</h2>
+          <header class="lp-head">
+            <h2>First five minutes</h2>
+          </header>
           <p class="lp-lead">
-            Everything happens through the prefix key — hold
-            <kbd>Ctrl-a</kbd>, let go, then press one key. Prefer chords?
-            <kbd>Alt</kbd> + the same key does the same thing. Both are fully
-            rebindable.
+            Two ways to reach the same command, and every default answers to
+            both. Both are fully rebindable, and the modifier can be
+            <kbd>Super</kbd> instead.
           </p>
           <table class="lp-keytable">
+            <thead>
+              <tr>
+                <th>Prefix, then a key</th>
+                <th class="lp-modhead">Or just hold Alt</th>
+                <th></th>
+              </tr>
+            </thead>
             <tbody>
               <tr v-for="row in firstKeys" :key="row.what">
                 <td class="lp-keycell">
-                  <kbd v-for="k in row.keys" :key="k">{{ k }}</kbd>
+                  <kbd>Ctrl-a</kbd><kbd>{{ row.key }}</kbd>
+                </td>
+                <td class="lp-keycell">
+                  <kbd class="mod">{{ row.mod }}</kbd>
                 </td>
                 <td>{{ row.what }}</td>
               </tr>
@@ -241,14 +469,16 @@ border_style = "rounded"`;
         </div>
 
         <div>
-          <h2 class="lp-h2">One file configures it</h2>
+          <header class="lp-head">
+            <h2>One file configures it</h2>
+          </header>
           <p class="lp-lead">
             <code>~/.config/rozi/config.toml</code> on Linux and macOS. Save it and
             the change lands immediately; a file that will not parse falls back to
             the defaults and tells you so.
           </p>
           <div class="lp-code">
-            <pre><code>{{ CONFIG_SAMPLE }}</code></pre>
+            <pre><code v-html="CONFIG_SAMPLE"></code></pre>
           </div>
           <a class="lp-more" :href="withBase('/configuration')"
             >Every setting →</a
@@ -257,22 +487,100 @@ border_style = "rounded"`;
       </section>
 
       <section class="lp-section">
-        <h2 class="lp-h2">Also in the box</h2>
-        <div class="lp-box-grid">
-          <div v-for="[name, desc] in alsoInBox" :key="name" class="lp-box">
-            <span class="lp-box-name">{{ name }}</span>
-            <span class="lp-box-desc">{{ desc }}</span>
+        <header class="lp-head">
+          <h2>Make it yours</h2>
+          <p class="lp-head-note">
+            One file · live reload · {{ stats.commands }} rebindable commands
+          </p>
+        </header>
+        <ConfigTabs />
+      </section>
+
+      <section class="lp-section">
+        <header class="lp-head">
+          <h2>Extensions are ordinary programs</h2>
+          <p class="lp-head-note">Any language · public protocol · api = 1</p>
+        </header>
+
+        <ol class="lp-flow">
+          <li v-for="[cmd, step] in authorLoop" :key="cmd">
+            <code>{{ cmd }}</code><span>{{ step }}</span>
+          </li>
+        </ol>
+
+        <div class="lp-ext">
+          <div class="lp-code">
+            <pre><code v-html="EXTENSION_SAMPLE"></code></pre>
           </div>
+          <div class="lp-ext-api">
+            <h3 class="lp-h3">The whole API</h3>
+            <dl class="lp-defs">
+              <template v-for="[name, desc] in extensionSurfaces" :key="name">
+                <dt><code>{{ name }}</code></dt>
+                <dd>{{ desc }}</dd>
+              </template>
+            </dl>
+          </div>
+        </div>
+
+        <h3 class="lp-h3">Worked examples</h3>
+        <div class="lp-examples">
+          <a
+            v-for="[name, desc] in exampleExtensions"
+            :key="name"
+            class="lp-example"
+            :href="`${EXAMPLES}/${name}`"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <b>{{ name }} ↗</b>
+            <span>{{ desc }}</span>
+          </a>
+        </div>
+        <a class="lp-more" :href="withBase('/extensions')"
+          >Write an extension →</a
+        >
+      </section>
+
+      <section class="lp-section">
+        <header class="lp-head">
+          <h2>Everything in the box</h2>
+          <p class="lp-head-note">Every name here is in the current release</p>
+        </header>
+        <div class="lp-index">
+          <article v-for="group in catalog" :key="group.title" class="lp-area">
+            <div class="lp-area-head">
+              <h3>{{ group.title }}</h3>
+              <a :href="withBase(group.link)">{{ group.linkText }} →</a>
+            </div>
+            <p class="lp-area-names">
+              <template v-for="(name, i) in group.names" :key="name">
+                <span v-if="i" class="lp-dot" aria-hidden="true">·</span>{{ name }}
+              </template>
+            </p>
+          </article>
         </div>
       </section>
 
-      <!-- docs/index.md - the same table of contents GitHub shows for the
-           folder, so the site and the repository never drift apart.
-           The class goes on <Content> rather than a wrapper so the markup
-           matches a doc page exactly (.vp-doc > div > p); a wrapper would add
-           a level and the prose-measure rules in style.css would miss. -->
+      <!-- Read out of the sidebar, so this list cannot fall behind the docs -
+           see the script block. -->
       <section class="lp-section lp-docs">
-        <Content class="vp-doc" />
+        <header class="lp-head">
+          <h2>Documentation</h2>
+          <p class="lp-head-note">
+            {{ docPages }} pages, all in the repository
+          </p>
+        </header>
+        <div class="lp-doc-index">
+          <div v-for="group in docGroups" :key="group.text" class="lp-doc-group">
+            <h3>{{ group.text }}</h3>
+            <ul>
+              <li v-for="page in group.items" :key="page.link">
+                <a :href="withBase(page.link)">{{ page.text }}</a>
+              </li>
+            </ul>
+          </div>
+        </div>
       </section>
     </main>
 

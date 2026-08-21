@@ -20,8 +20,25 @@ const isLanding = computed(
 
 <template>
   <Landing v-if="isLanding" />
-  <DefaultLayout v-else>
-    <template #nav-bar-title-after><NavTitleMeta /></template>
-    <template #nav-bar-content-after><NavGitHubLink /></template>
-  </DefaultLayout>
+  <template v-else>
+    <!-- The landing page's decoration, quieter and kept out of the reading
+         column - see `.doc-bg` in style.css. Fixed, so it costs no layout. -->
+    <div class="doc-bg" aria-hidden="true">
+      <span class="r1"></span>
+      <span class="r2"></span>
+      <span class="r3"></span>
+      <span class="r4"></span>
+      <span class="r5"></span>
+      <span class="r6"></span>
+      <span class="r7"></span>
+      <span class="l1"></span>
+      <span class="l2"></span>
+      <span class="l3"></span>
+      <span class="l4"></span>
+    </div>
+    <DefaultLayout>
+      <template #nav-bar-title-after><NavTitleMeta /></template>
+      <template #nav-bar-content-after><NavGitHubLink /></template>
+    </DefaultLayout>
+  </template>
 </template>

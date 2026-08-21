@@ -65,8 +65,18 @@
     --vp-code-tab-active-text-color: #fd4a80;
     --vp-code-tab-text-color: #8e93b4;
 
-    /* Measure for body copy. ~80 characters at 14px JetBrains Mono. */
-    --rozi-prose: 680px;
+    /* The app mark and, separately, the prompt glyph out of its middle - the
+       paths from `public/logo.svg` with its gradient inlined. Both the landing
+       page and the doc pages paint them as background decoration, so they live
+       here rather than in either file. Regenerate from the SVG rather than
+       editing path data by hand. */
+    --rozi-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='140 110 720 790'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='500' y1='123' x2='500' y2='892' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='.087' stop-color='%23FD4A80'/%3E%3Cstop offset='1' stop-color='%23982BF2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23g)' d='M811.4 599.724C830.509 588.695 846 597.636 846 619.695V660.345C846 682.405 830.509 709.23 811.4 720.26L524.995 885.573C509.528 894.5 490.472 894.5 475.005 885.573L188.6 720.26C169.491 709.23 154 682.405 154 660.345V619.695C154 597.636 169.491 588.695 188.6 599.724L475.005 765.037C490.472 773.965 509.528 773.965 524.995 765.037L811.4 599.724Z'/%3E%3Cpath fill='url(%23g)' d='M484 148C484 125.909 468.491 116.954 449.359 128L188.641 278.526C169.509 289.571 154 316.434 154 338.526V536.652C154 558.744 169.509 567.698 188.641 556.652L449.359 406.127C468.491 395.081 484 368.218 484 346.127V148Z'/%3E%3Cpath fill='url(%23g)' d='M516 148C516 125.909 531.509 116.954 550.641 128L811.359 278.526C830.49 289.571 846 316.434 846 338.526V536.652C846 558.744 830.491 567.698 811.359 556.652L550.641 406.127C531.509 395.081 516 368.218 516 346.127V148Z'/%3E%3Cpath fill='url(%23g)' d='M398.02 482.034C406.047 473.989 419.062 473.989 427.089 482.034L508.725 563.851C517.454 572.599 516.675 586.181 508.713 594.161L427.089 675.966C419.062 684.011 406.047 684.011 398.02 675.966C389.993 667.922 389.993 654.878 398.02 646.833L465.704 579L398.02 511.166C389.993 503.122 389.993 490.078 398.02 482.034ZM586.445 640.8C597.797 640.8 607 650.023 607 661.4C607 672.777 597.797 682 586.445 682H494.772C483.421 682 474.218 672.777 474.218 661.4C474.218 650.023 483.421 640.8 494.772 640.8H586.445Z'/%3E%3C/svg%3E");
+    --rozi-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='380 460 240 235'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='500' y1='123' x2='500' y2='892' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='.087' stop-color='%23FD4A80'/%3E%3Cstop offset='1' stop-color='%23982BF2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23g)' d='M398.02 482.034C406.047 473.989 419.062 473.989 427.089 482.034L508.725 563.851C517.454 572.599 516.675 586.181 508.713 594.161L427.089 675.966C419.062 684.011 406.047 684.011 398.02 675.966C389.993 667.922 389.993 654.878 398.02 646.833L465.704 579L398.02 511.166C389.993 503.122 389.993 490.078 398.02 482.034ZM586.445 640.8C597.797 640.8 607 650.023 607 661.4C607 672.777 597.797 682 586.445 682H494.772C483.421 682 474.218 672.777 474.218 661.4C474.218 650.023 483.421 640.8 494.772 640.8H586.445Z'/%3E%3C/svg%3E");
+
+    /* Leading for body copy. Doc prose runs the full content column rather
+       than a narrower measure - see the block above the heading scale - and a
+       line that long needs the extra air between rows to stay trackable. */
+    --rozi-prose-leading: 1.85;
 
     /* Layout sizing - exact landing values */
     --vp-nav-height: 48px;
@@ -113,6 +123,191 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
     background: var(--vp-c-brand-2);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   BACKGROUND DECORATION - doc pages
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* The landing page's mark, carried onto the doc pages at a fraction of the
+   size and confined to the gutters either side of the reading column.
+
+   Two things keep it off the prose. It is `position: fixed`, so it costs no
+   layout and can never move text; and it is masked to everything outside the
+   reading column, so no paragraph, heading, or table ever has a shape behind
+   it. The outline column on the right *does* - it has no background of its
+   own, and a mark at three percent behind a link is texture, not interference,
+   which is what buys the right side its width.
+
+   The mask is where the measurements live:
+
+     sidebar   268px, fixed, opaque - anything under it is invisible
+     container 1172px, pinned to the sidebar up to 1440px and centred above it
+     gutter    (100vw - 1440px) / 2, one on each side, zero below 1440px
+     aside     the last 288px of the container: a 64px gap plus 224px of
+               outline. Holds at every width the outline is shown at, which is
+               why the right edge is measured from the container rather than
+               from the content box.
+
+   Shapes can be parked anywhere near an edge and the mask trims them to the
+   free space. Guessing at those bands with round numbers instead would go
+   stale the moment one of them changes; a wrong constant shows up as a mark
+   creeping under the text rather than as silence. */
+.doc-bg {
+    --doc-sidebar: var(--vp-sidebar-width);
+    --doc-container: 1172px;
+    --doc-gutter: max(0px, (100vw - var(--doc-sidebar) - var(--doc-container)) / 2);
+    --doc-aside: 288px;
+    --doc-col-left: calc(var(--doc-sidebar) + var(--doc-gutter));
+    --doc-col-right: calc(100vw - var(--doc-gutter));
+    /* Where the prose actually ends - everything right of this is the gap and
+       the outline, both fair game - and the middle of the band that follows. */
+    --doc-text-right: calc(var(--doc-col-right) - var(--doc-aside));
+    --doc-right-mid: calc(
+        var(--doc-text-right) + (100vw - var(--doc-text-right)) / 2
+    );
+
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    /* The two sides are not symmetric, because the layout is not. The doc
+       column carries 32px of padding before its first glyph, so the left fade
+       may start inside the container and still clear the prose. On the right
+       the fade runs out inside the 64px gap, reaching full strength well
+       before the first outline link. */
+    --doc-mask: linear-gradient(
+        to right,
+        #000 0,
+        #000 calc(var(--doc-col-left) + 14px),
+        transparent calc(var(--doc-col-left) + 34px),
+        transparent calc(var(--doc-text-right) + 10px),
+        #000 calc(var(--doc-text-right) + 40px),
+        #000 100%
+    );
+    mask-image: var(--doc-mask);
+    -webkit-mask-image: var(--doc-mask);
+}
+/* The page paints above it. A negative z-index instead would drop the layer
+   behind the canvas background and out of sight. */
+.VPContent {
+    position: relative;
+    z-index: 1;
+}
+.doc-bg span {
+    position: absolute;
+    display: block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    background-image: var(--rozi-mark);
+    /* Fainter than the landing's 4%: a doc page is read rather than browsed,
+       and these sit closer to the text than anything there does. */
+    opacity: 0.03;
+}
+/* Eleven of them, 64px to 200px. The two bands are not the same shape and do
+   not get the same treatment.
+
+   The right one is wide - the gap, the outline, and the gutter - so it takes
+   seven, and each one is anchored to one of *three* columns: where the prose
+   ends, the middle of the band, or the viewport edge. Anchoring only to the
+   two edges leaves a channel of nothing straight down the middle of it, which
+   is what the eye finds first. Vertically they overlap end to end, because an
+   empty middle reads as a mistake in a way an empty corner never does.
+
+   The left one is a gutter and nothing else, so four is already enough; more
+   of them there reads as clutter rather than texture. Every mark is trimmed by
+   the mask, and a partly cut one is the intent - a whole silhouette would read
+   as a logo placed there on purpose. */
+.doc-bg .r1 {
+    top: 2%;
+    right: -46px;
+    width: 200px;
+    height: 220px;
+    transform: rotate(-14deg);
+}
+.doc-bg .r2 {
+    top: 19%;
+    left: calc(var(--doc-right-mid) - 48px);
+    width: 96px;
+    height: 105px;
+    transform: rotate(9deg);
+}
+.doc-bg .r3 {
+    top: 31%;
+    left: calc(var(--doc-text-right) + 26px);
+    width: 150px;
+    height: 165px;
+    transform: rotate(-6deg);
+}
+.doc-bg .r4 {
+    top: 46%;
+    right: 2px;
+    width: 120px;
+    height: 132px;
+    transform: rotate(16deg);
+}
+.doc-bg .r5 {
+    top: 55%;
+    left: calc(var(--doc-right-mid) - 70px);
+    width: 140px;
+    height: 154px;
+    transform: rotate(-9deg);
+}
+.doc-bg .r6 {
+    top: 71%;
+    left: calc(var(--doc-text-right) + 34px);
+    width: 64px;
+    height: 63px;
+    background-image: var(--rozi-glyph);
+    opacity: 0.026;
+    transform: rotate(12deg);
+}
+.doc-bg .r7 {
+    bottom: 1%;
+    left: calc(var(--doc-right-mid) - 80px);
+    width: 162px;
+    height: 178px;
+    transform: rotate(5deg);
+}
+.doc-bg .l1 {
+    top: 15%;
+    left: calc(var(--doc-sidebar) + 4px);
+    width: 98px;
+    height: 108px;
+    transform: rotate(14deg);
+}
+.doc-bg .l2 {
+    top: 40%;
+    left: calc(var(--doc-col-left) - 128px);
+    width: 150px;
+    height: 165px;
+    transform: rotate(-8deg);
+}
+.doc-bg .l3 {
+    top: 66%;
+    left: calc(var(--doc-sidebar) + 22px);
+    width: 70px;
+    height: 68px;
+    background-image: var(--rozi-glyph);
+    opacity: 0.026;
+    transform: rotate(-5deg);
+}
+.doc-bg .l4 {
+    bottom: 5%;
+    left: calc(var(--doc-col-left) - 104px);
+    width: 122px;
+    height: 134px;
+    transform: rotate(18deg);
+}
+
+/* The outline is what the right side is drawn on, and VitePress stops showing
+   it below 1280px. Under that there is no free space on either side, so the
+   layer turns off rather than creeping under the text. */
+@media (max-width: 1279px) {
+    .doc-bg {
+        display: none;
+    }
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -665,18 +860,20 @@ body {
     max-width: 860px !important;
 }
 
-/* Measure. Body copy is capped at --rozi-prose (~80 characters at 14px
-   JetBrains Mono, which advances 0.6em); headings, tables, code blocks, and
-   images keep the full column. Headings are short enough that a wide box costs
-   nothing, and it keeps the h2 rule flush with the tables underneath it -
-   constraining the heading too would stop that line short of the data. */
-.vp-doc > div > p,
-.vp-doc > div > ul,
-.vp-doc > div > ol,
-.vp-doc > div > blockquote,
-.vp-doc > div > .custom-block {
-    max-width: var(--rozi-prose);
-}
+/* Measure. Everything in a doc page shares the content column: one left edge,
+   one right edge, prose included.
+
+   Body copy used to stop at 680px - about eighty characters, a comfortable
+   measure - inside an 860px column. That is the textbook call and it looked
+   wrong here, because the things it does not apply to are boxes: every code
+   block, table, and callout ran 180px past the paragraph above it, so the
+   right side of a page was a ragged alternation between two edges rather than
+   a margin. A measure only reads as a measure when the whole column keeps it.
+
+   The cost is a long line, and the compensation is leading - see
+   --rozi-prose-leading, which every text block below uses. If the column ever
+   grows past ~900px, revisit this: the trade stops paying somewhere.
+   Nothing gets a max-width here on purpose. */
 
 /* Headings - a ~1.22 step per level. The previous scale ran 13/14/17, which
    left h3 a bold recolour of body text and h4 identical to it. */
@@ -732,7 +929,7 @@ body {
 .vp-doc summary {
     font-size: 14px;
     color: var(--vp-c-text-2);
-    line-height: 1.75;
+    line-height: var(--rozi-prose-leading);
     margin-bottom: 24px;
 }
 .vp-doc ul,
@@ -743,7 +940,7 @@ body {
 .vp-doc li {
     font-size: 14px;
     color: var(--vp-c-text-2);
-    line-height: 1.7;
+    line-height: var(--rozi-prose-leading);
     margin-bottom: 8px;
 }
 .vp-doc li > ul,
@@ -789,6 +986,19 @@ body {
     color: #b98cf5;
     font-family: var(--vp-font-family-mono);
     font-weight: inherit;
+    /* An inline code chip is one token and breaks as one. Left to wrap, the
+       hyphen in `tui-lipan` or a slash in a path is a break opportunity, and
+       the chip splits across two lines - box, border, and all - which reads as
+       two different identifiers rather than one name. */
+    white-space: nowrap;
+}
+
+/* Except in a table, where the cell is narrow enough that an unbreakable chip
+   pushes the column wide and puts the whole table behind a horizontal scroll.
+   A split chip in a cell costs less than that. */
+.vp-doc :is(td, th) > code,
+.vp-doc :is(td, th) :not(pre) > code {
+    white-space: normal;
 }
 
 /* A link whose text is inline code - [`tui-lipan`](…) - is still a link.

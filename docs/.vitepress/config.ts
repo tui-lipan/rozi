@@ -25,6 +25,60 @@ const ROZI_VERSION = (() => {
 })();
 
 /**
+ * The counts the landing page advertises, taken from the source instead of
+ * written down. Same reason as the version above: a theme count typed into a
+ * template is a claim nothing checks, and the first person to add a theme has
+ * no way of knowing the site disagrees with the binary.
+ *
+ * Every pattern points at a load-bearing constant, and a miss throws rather
+ * than falling back to a number - a build that fails naming the file that
+ * moved is cheaper than a page quietly advertising last year's totals.
+ */
+const ROZI_FACTS = (() => {
+  const read = (rel: string) =>
+    readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  const many = (source: string, pattern: RegExp, what: string) => {
+    const hits = source.match(pattern)?.length ?? 0;
+    if (hits === 0) throw new Error(`counted no ${what} - the pattern moved`);
+    return hits;
+  };
+
+  const one = (source: string, pattern: RegExp, what: string) => {
+    const found = pattern.exec(source);
+    if (!found) throw new Error(`could not read ${what} - the pattern moved`);
+    return Number(found[1]);
+  };
+
+  return {
+    // The palette, the help overlay, and `[keys]` all render from this list.
+    // Anchored and indented so the struct's own declaration is not an entry.
+    commands: many(
+      read("../../src/commands.rs"),
+      /^ {4}BuiltinCommand \{$/gm,
+      "BUILTIN_COMMANDS entries",
+    ),
+    hookEvents: one(
+      read("../../src/events.rs"),
+      /pub const ALL: \[Self; (\d+)\]/,
+      "the EventKind::ALL length",
+    ),
+    agents: many(
+      read("../../src/agent_detection/builtin.toml"),
+      /^\[\[agents\]\]/gm,
+      "[[agents]] tables",
+    ),
+    // `ThemePreset::all` includes the hidden ANSI fallback but not the selectable
+    // `system` theme, so those two sides cancel in the public theme total.
+    themes: one(
+      read("../../src/state/appearance.rs"),
+      /impl ThemePreset \{\s*pub fn all\(\) -> \[Self; (\d+)\]/,
+      "the ThemePreset::all length",
+    ),
+  };
+})();
+
+/**
  * The one-liner installers advertised on the landing page are served from this
  * site, so `curl -fsSL https://rozi.tui-lipan.dev/install | bash` fetches the
  * very script that lives at the repository root. Copying rather than
@@ -123,11 +177,12 @@ export default defineConfig({
 
   markdown: { theme: { light: "night-owl", dark: "night-owl" } },
 
-  // The landing page takes its title from the <h1> of the docs index it renders
-  // as its closing section, which reads "rozi documentation | rozi". Name it
-  // for what the page is instead. This lives here rather than in `index.md`'s
-  // frontmatter because GitHub renders YAML frontmatter as a table at the top
-  // of the file, and that file is also the repository's documentation index.
+  // `/` is served from `index.md`, so its <h1> would title the tab "rozi
+  // documentation | rozi" even though the landing page renders a hero rather
+  // than that file. Name it for what the page is instead. This lives here
+  // rather than in `index.md`'s frontmatter because GitHub renders YAML
+  // frontmatter as a table at the top of the file, and that file is also the
+  // repository's documentation index.
   transformPageData(pageData) {
     if (pageData.relativePath === "index.md") {
       pageData.title = LANDING_TITLE;
@@ -146,6 +201,7 @@ export default defineConfig({
   themeConfig: {
     logo: "/logo.svg",
     roziVersion: ROZI_VERSION,
+    roziFacts: ROZI_FACTS,
     outline: [2, 3],
     nav: [
       { text: "tui-lipan", link: "https://tui-lipan.dev" },
@@ -225,6 +281,11 @@ export default defineConfig({
         translations: {
           button: { buttonText: "Search...", buttonAriaLabel: "Search" },
         },
+        // `index.md` is the repository's folder index; `/` serves the landing
+        // page instead of rendering it. Indexing it would answer searches with
+        // hits on text that is nowhere on the page they open.
+        _render: (src, env, md) =>
+          env.relativePath === "index.md" ? "" : md.render(src, env),
       },
     },
     footer: { message: "MIT OR Apache-2.0", copyright: "© Adam Mikołajczyk" },

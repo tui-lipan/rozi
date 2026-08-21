@@ -36,9 +36,11 @@ page renamed out from under a cross-reference.
 | `repoLinks.ts` | Rewrites links that leave `docs/` into GitHub URLs (see below) |
 | `theme/style.css` | Doc-page theme; palette derived from the app icon |
 | `theme/landing.css` | Landing page chrome |
-| `theme/Layout.vue` | Sends `/` to the landing, everything else to the default doc layout |
+| `theme/Layout.vue` | Sends `/` to the landing, everything else to the default doc layout plus `.doc-bg` |
 | `theme/Landing.vue` | The landing page, including its own topbar |
 | `theme/InstallTabs.vue` | The hero's tabbed install box — see below |
+| `theme/ConfigTabs.vue` | The landing's tabbed `config.toml` samples — see below |
+| `theme/toml.ts` | Colours the landing's TOML samples, which Shiki never sees |
 | `theme/RoziIntro.vue` | First-visit intro overlay |
 | `theme/composition/` | The animated rozi window — see below |
 | `../public/` | Favicons, `og-image.png`, `CNAME`, web manifest, plus the two generated installer copies |
@@ -121,10 +123,21 @@ Write links the way GitHub wants them. The site adapts.
 
 ### The landing page and `index.md`
 
-`docs/index.md` is left as a plain documentation table of contents so GitHub
-renders it when browsing the folder. The landing page renders it verbatim as its
-closing section through `<Content />`, so the site and the repository cannot
-drift apart.
+`docs/index.md` is the documentation table of contents GitHub renders when
+browsing the folder, and only that. **The landing page does not render it.**
+
+The landing's closing section is a four-column index of grouped links built
+from `themeConfig.sidebar` — the same list a new page has to be added to
+anyway, per AGENTS.md, so the section cannot fall behind the docs and there is
+no second list to maintain. Pages under `performance/audits/` are filtered out:
+there is one per audit, forever, and `Performance Records` is the page that
+indexes them.
+
+It used to render `index.md` through `<Content />` and reflow its table into
+cards, which kept the two in step at the cost of twenty-four cards of
+page-and-sentence — a wall on a landing page, while being exactly right on
+GitHub. The sidebar is the better single source, and the summaries were the
+reference doc's job rather than the landing's.
 
 ## Deploy (Cloudflare Workers Builds)
 
@@ -159,6 +172,106 @@ Nothing to update. `config.ts` reads the version out of `../../Cargo.toml` at
 build time and passes it through `themeConfig.roziVersion`; the chips in
 `theme/NavTitleMeta.vue` and `theme/Landing.vue` render that. Bumping the crate
 is the only step.
+
+## The background
+
+`.lp-bg` is one decorative layer spanning the whole landing page, behind
+everything: three wide colour blooms, the composition's dot grid carried a
+little past the picture's edge, and four pieces of the mark at 3–4% opacity
+bleeding off the sides. It is `aria-hidden`, `pointer-events: none`, and
+positioned in page percentages — at that opacity these are atmosphere, and
+atmosphere does not need to line up with a heading.
+
+The blooms do most of the work. Cards are opaque, so a crisp shape behind one
+is simply gone, while a field that soft still reads in the gutters and in every
+gap between plates.
+
+Doc pages get a quieter version of the same idea: `.doc-bg` in `style.css`,
+rendered by `Layout.vue`, holding eleven much smaller marks at 3%. The two
+bands are not the same shape: the right one is wide — gap, outline, and gutter
+— so it takes seven, anchored to three columns (where the prose ends, the
+middle of the band, the viewport edge) rather than only its two edges, which
+left a channel of nothing straight down it. The left one is a gutter and
+nothing else, and four is already enough there. It is fixed, so
+it costs no layout, and **masked to everything outside the reading column** —
+no paragraph, heading, or table ever has a shape behind it. The outline column
+does: it has no background of its own, and a mark that faint behind a link is
+texture rather than interference, which is what buys the right side its width.
+
+The mask is where the layout measurements live — a `268px` sidebar, a `1172px`
+container, and an `288px` aside band (a 64px gap plus 224px of outline) that
+holds at every width the outline is shown at. The clear zone is asserted
+against the real content box at 1280 / 1366 / 1440 / 1600 / 1920 / 2560; a
+wrong constant shows up as a mark creeping under the text rather than as
+silence. Below 1280px VitePress drops the outline, there is no free space
+either side, and the layer turns off.
+
+The two data URIs are the paths out of `public/logo.svg` with its gradient
+inlined. Regenerate them from that file rather than editing path data by hand.
+
+`.lp-main` and `.lp-footer` carry `position: relative; z-index: 1` so the layer
+stays under them. A negative `z-index` on the layer would not work — it would
+fall behind `.lp`'s own background and disappear.
+
+## Cards and rules
+
+One convention holds the landing page together: **a filled box with a border
+and a radius is a card, and a card is a thing you click.** Feature cards, the
+worked-extension links, and the contents cards are all links. Static data —
+the facts strip, the extension author loop, the index section — is laid out
+with hairline rules instead. The two strips started out as rows of small
+filled boxes and read as keycaps nobody could press, which is unsurprising:
+that is the exact recipe `.lp kbd` uses.
+
+The hero composition is a picture and takes `pointer-events: none`. Its
+negative block margin puts it over the bottom of the CTA row, where its mask
+has already faded it to nothing — so without that line the buttons look
+untouched and quietly stop taking clicks.
+
+## The counted facts
+
+The numbers the landing page advertises — themes, rebindable commands, hook
+events, recognized coding agents — are not written down anywhere on the site.
+`config.ts` counts them out of `src/` at build time and passes them through
+`themeConfig.roziFacts`; the facts strip, two feature cards, and two catalogue
+rows read that. Adding a theme or an agent updates the site by itself.
+
+Each count anchors on a load-bearing constant — `BUILTIN_COMMANDS`,
+`EventKind::ALL`, `ThemePreset::all`, and the `[[agents]]` tables in
+`agent_detection/builtin.toml` — and **a pattern that stops matching throws**
+rather than falling back to a number. A build that fails naming the file that
+moved is cheaper than a page quietly advertising last year's totals, and this
+is the only place a Rust refactor can break the site.
+
+Two counts stay literals in `Landing.vue`: seven layouts and nine workspaces
+are fixed by the design rather than by a list to count.
+
+## The config box
+
+`theme/ConfigTabs.vue` is the "Make it yours" panel: one tab per customization
+surface, each holding a real `config.toml` fragment. The fragments come from
+`examples/config.toml` and `examples/sidebar.toml` rather than being composed
+for the page, because a reader's next move is to paste one.
+
+**Every snippet is exactly thirteen lines.** The tabs sit above the panel, so a
+tab that resized the box would drag the row the reader just clicked out from
+under the pointer — but the fix is equal snippets, not a reserved height. An
+earlier version padded the panel out to the tallest sample and bought the
+stable height with a hundred empty pixels under every shorter one, which is the
+same bargain the install box refuses. Trim a new snippet to thirteen lines.
+
+## Syntax highlighting
+
+Doc pages get Shiki through markdown. The landing page's samples live inside
+Vue components, where the markdown pipeline never reaches them, so `theme/toml.ts`
+colours them instead — a small TOML scanner emitting `tk-*` spans that
+`landing.css` styles in night-owl's colours, the same theme `config.ts` gives
+the fenced blocks. Shipping Shiki to the client to highlight five constant
+strings would cost more than the strings weigh.
+
+Its output is inserted with `v-html`, which is safe **because every input is a
+constant written in this repository**. Do not point it at anything else without
+reading the escaping in that file first.
 
 ## The install box
 

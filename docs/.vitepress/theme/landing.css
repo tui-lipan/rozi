@@ -9,6 +9,8 @@
     display: flex;
     flex-direction: column;
     background: var(--vp-c-bg);
+    /* The anchor for `.lp-bg`, which spans the whole page behind it. */
+    position: relative;
     /* The hero composition is wider than --lp-max and reaches past it. `clip`
        rather than `hidden` so it does not become a scroll container and break
        `position: sticky` on the topbar. */
@@ -28,6 +30,148 @@ html.rozi-intro-pending {
 html.rozi-intro-pending .lp {
     opacity: 0;
     transition: none;
+}
+
+/* ── Background decoration ───────────────────────────────────────────────
+   The page is a column of rules and plates on one flat colour, which reads as
+   thin over seven thousand pixels. This layer gives it depth without giving
+   it pattern: the mark at a size where nobody reads it as a logo, the bloom
+   the hero lockup already sits in, and the composition's own dot grid carried
+   a little way past the picture's edge.
+
+   Everything here is decoration - `aria-hidden` in the markup, untouchable,
+   and behind the page's own stacking. The two shapes come from
+   --rozi-mark / --rozi-glyph in style.css, which the doc pages use too.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.lp-bg {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+.lp-bg span {
+    position: absolute;
+    display: block;
+}
+
+/* Rose-to-violet, the same run as the wordmark, opened up wide enough that no
+   edge of it is findable. Three of them, spaced down the page: cards are
+   opaque, so a crisp shape behind one is simply gone, while a field this soft
+   still reads in the gutters and in every gap between plates. That is what
+   keeps the lower half from going flat. */
+.lp-bg-bloom {
+    left: 50%;
+    width: min(1600px, 140vw);
+    transform: translateX(-50%);
+}
+.lp-bg-bloom.b1 {
+    top: -420px;
+    height: 1100px;
+    background: radial-gradient(
+        50% 50% at 50% 50%,
+        rgba(152, 43, 242, 0.18) 0%,
+        rgba(253, 74, 128, 0.06) 45%,
+        transparent 72%
+    );
+}
+.lp-bg-bloom.b2 {
+    top: 40%;
+    height: 1400px;
+    background: radial-gradient(
+        50% 50% at 50% 50%,
+        rgba(253, 74, 128, 0.075) 0%,
+        rgba(253, 74, 128, 0.03) 40%,
+        transparent 70%
+    );
+}
+.lp-bg-bloom.b3 {
+    top: 76%;
+    height: 1500px;
+    background: radial-gradient(
+        50% 50% at 50% 50%,
+        rgba(152, 43, 242, 0.09) 0%,
+        rgba(152, 43, 242, 0.03) 42%,
+        transparent 72%
+    );
+}
+
+/* The composition paints a dot grid of its own behind the terminal plate.
+   This is the same grid on the page around it, faded out before it reaches
+   the first section so the two read as one surface rather than two. */
+.lp-bg-grid {
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1500px;
+    background-image: radial-gradient(
+        circle,
+        rgba(190, 200, 235, 0.05) 1px,
+        transparent 1px
+    );
+    background-size: 34px 34px;
+    mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+}
+
+.lp-bg-mark,
+.lp-bg-glyph {
+    background-repeat: no-repeat;
+    background-size: contain;
+}
+.lp-bg-mark {
+    background-image: var(--rozi-mark);
+    opacity: 0.042;
+}
+/* The prompt out of the mark, alone. It is the one piece of the logo that is
+   still legible at this opacity, so it gets one appearance and no more. */
+.lp-bg-glyph {
+    background-image: var(--rozi-glyph);
+    opacity: 0.038;
+}
+
+/* Anchored in page percentages rather than to sections: at three percent these
+   are atmosphere, and atmosphere does not need to line up with a heading.
+
+   They alternate down the page - right, left, right, left - and no two are the
+   same shape at the same size. Two full marks of near-identical size both
+   bleeding off the same edge read as one thing repeated rather than as
+   texture, which is what the first pass did.
+
+   The first one has to clear the composition: the stage is the one element on
+   the page that paints an opaque background edge to edge, and it ends around
+   24% of the page at every width, so anything above that gets a corner sliced
+   off. */
+.lp-bg-mark.m1 {
+    top: 26.5%;
+    right: -190px;
+    width: 620px;
+    height: 680px;
+    transform: rotate(-14deg);
+}
+.lp-bg-mark.m2 {
+    top: 44%;
+    left: -230px;
+    width: 560px;
+    height: 615px;
+    transform: rotate(16deg);
+}
+/* The one that does not leave the frame, and the only glyph - two reasons for
+   it not to read as another silhouette. */
+.lp-bg-glyph {
+    top: 58.5%;
+    right: 2%;
+    width: 300px;
+    height: 295px;
+    transform: rotate(10deg);
+}
+.lp-bg-mark.m3 {
+    top: 73%;
+    left: -170px;
+    width: 430px;
+    height: 472px;
+    transform: rotate(-9deg);
 }
 
 /* ── Topbar ──────────────────────────────────────────────────────────── */
@@ -115,7 +259,12 @@ html.rozi-intro-pending .lp {
 
 /* ── Page shell ──────────────────────────────────────────────────────── */
 
+/* Both carry a stacking position so the decoration layer stays under them
+   without a negative z-index, which would put it behind `.lp`'s own
+   background and out of sight entirely. */
 .lp-main {
+    position: relative;
+    z-index: 1;
     flex: 1;
     width: 100%;
     max-width: var(--lp-max);
@@ -123,23 +272,43 @@ html.rozi-intro-pending .lp {
     padding: 0 24px;
 }
 .lp-section {
-    padding: 56px 0 0;
+    padding: 52px 0 0;
 }
-.lp-h2 {
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    color: var(--vp-c-text-1);
-    margin: 0 0 6px;
-    padding-top: 28px;
+
+/* Section heading and its one-line note on the same rule, title left and note
+   right. The note replaced a paragraph under each heading: a lead capped at a
+   prose measure inside a full-width section reads as a column of text that
+   stops for no visible reason, and six of them made the page look like an
+   essay with pictures. Anything that will not fit on this line belongs on the
+   page the section links to. */
+.lp-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 24px;
+    margin: 0 0 20px;
+    padding-top: 26px;
     border-top: 1px solid var(--vp-c-divider);
 }
+.lp-head h2 {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--vp-c-text-1);
+}
+.lp-head-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--vp-c-text-3);
+}
+/* Only inside the two-column band, where the column is already the measure. */
 .lp-lead {
     font-size: 13px;
     line-height: 1.7;
     color: var(--vp-c-text-2);
     margin: 0 0 18px;
-    max-width: 62ch;
 }
 .lp-lead code {
     font-size: 12px;
@@ -148,6 +317,17 @@ html.rozi-intro-pending .lp {
     border: 1px solid var(--vp-c-border);
     border-radius: 2px;
     padding: 1px 5px;
+}
+.lp-h3 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--vp-c-text-3);
+}
+.lp-h3:not(:first-child) {
+    margin-top: 26px;
 }
 .lp-more {
     display: inline-block;
@@ -169,11 +349,29 @@ html.rozi-intro-pending .lp {
     max-width: 880px;
     margin: 0 auto;
     text-align: center;
-    padding: 72px 0 34px;
+    padding: 64px 0 4px;
 }
+/* The composition keeps its own margin inside the 1920x940 crop - the screen
+   plate sits at composition y 170-930 of 1080 - so roughly 70 scaled pixels
+   above and 58 below this box are picture, not page. The negative block
+   margin spends that instead of stacking page space on top of it. Cropping
+   the ratio tighter would do the same thing to the picture, but the mask
+   stops are tied to the plate and would have to move with it; this does not
+   touch the composition at all. */
 .lp-hero-stage {
     width: min(1400px, calc(100vw - 32px));
     margin-inline: calc(50% - min(700px, 50vw - 16px));
+    /* Proportional, because what it is spending is: the picture's own margin
+       scales with the box, so a fixed pull that clears it at 1400 across eats
+       into the picture itself on a phone - which showed up as the composition
+       creeping over the CTA buttons. Roughly 34px at full width. */
+    margin-block: calc(min(1400px, 100vw - 32px) * -0.024);
+    /* The pull puts the box over the bottom of the CTA row, and the box paints
+       nothing there - the mask has already faded it out - so the buttons look
+       untouched while the picture quietly eats their clicks. It is a picture of
+       a terminal, not a terminal (see RoziStage.vue), so it has no business
+       taking a pointer at all. */
+    pointer-events: none;
 }
 .lp-eyebrow {
     margin: 0 0 14px;
@@ -270,6 +468,8 @@ html.rozi-intro-pending .lp {
     border-bottom-color: var(--vp-c-brand-1);
 }
 
+/* Both tab rows glow off the active bar - see the shared rule further down. */
+
 /* The command row is itself the copy button - the whole strip is the target,
    not just the label at its end. */
 .lp-install-cmd {
@@ -288,6 +488,53 @@ html.rozi-intro-pending .lp {
 }
 .lp-install-cmd:hover {
     background: var(--vp-c-bg-alt);
+}
+
+/* A ripple out of the point that was pressed, in the same rose the active tab
+   glows with. It is the only confirmation that lands at the pointer - the
+   `copied` label is at the far end of the strip, which is exactly where nobody
+   is looking after clicking the command. Clipped to the strip, so it reads as
+   light moving under the text rather than a circle drawn over the box. */
+.lp-install-cmd {
+    position: relative;
+    overflow: hidden;
+}
+.lp-install-cmd > * {
+    position: relative;
+}
+.lp-install-cmd::after {
+    content: "";
+    position: absolute;
+    left: var(--ripple-x, 50%);
+    top: var(--ripple-y, 50%);
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(
+        circle,
+        color-mix(in srgb, var(--vp-c-brand-1) 30%, transparent) 0%,
+        color-mix(in srgb, var(--vp-c-brand-1) 10%, transparent) 55%,
+        transparent 72%
+    );
+    opacity: 0;
+    pointer-events: none;
+}
+.lp-install-cmd.rippling::after {
+    animation: lp-ripple 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+@keyframes lp-ripple {
+    from {
+        width: 0;
+        height: 0;
+        opacity: 0.85;
+    }
+    to {
+        /* Wide enough to clear the strip from a press at either end of it. */
+        width: 1400px;
+        height: 1400px;
+        opacity: 0;
+    }
 }
 .lp-install-cmd code {
     flex: 1;
@@ -326,67 +573,139 @@ html.rozi-intro-pending .lp {
     color: var(--vp-c-brand-1);
     border-color: var(--vp-c-brand-1);
 }
+/* Ruled off from the command above it, the same way the config panel's note
+   is - the note is a caption for the box, not a third line of the command. */
 .lp-install-note {
     margin: 0;
-    padding: 0 16px 13px;
+    padding: 11px 16px 12px;
+    border-top: 1px solid var(--vp-c-divider);
     font-size: 12px;
     line-height: 1.5;
     color: var(--vp-c-text-3);
 }
 
 .lp-cta {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 10px;
-    margin-top: 22px;
-}
-.lp-btn {
     display: inline-flex;
-    align-items: center;
-    padding: 9px 16px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--vp-c-text-1);
-    text-decoration: none;
-    background: var(--vp-c-bg-alt);
+    align-items: stretch;
+    max-width: calc(100vw - 32px);
+    margin-top: 26px;
+    padding: 3px;
+    background: var(--vp-code-block-bg);
     border: 1px solid var(--vp-c-border);
     border-radius: 3px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+/* A small action bar uses the same ruled plate and active rose badge as the
+   installer and animated workbar. The moving inset rule keeps the old CTAs'
+   responsiveness without carrying their detached corner-tick motif forward. */
+.lp-cta-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    padding: 9px 18px;
+    overflow: hidden;
+    font-family: var(--vp-font-family-mono);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--vp-c-text-2);
+    background: transparent;
+    border-left: 1px solid var(--vp-c-divider);
+    text-decoration: none;
     transition:
-        border-color 0.15s,
-        background 0.15s,
-        color 0.15s;
+        color 0.18s,
+        background-color 0.18s,
+        filter 0.18s,
+        transform 0.18s ease;
 }
-.lp-btn:hover {
-    background: var(--vp-c-bg-soft);
-    border-color: var(--vp-c-brand-2);
+.lp-cta-btn:first-child {
+    border-left: 0;
 }
-.lp-btn.primary {
-    color: #fff;
+.lp-cta-btn::after {
+    content: "";
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 4px;
+    height: 1px;
+    background: var(--vp-c-brand-1);
+    transform: scaleX(0);
+    transform-origin: 50% 50%;
+    transition: transform 0.2s ease;
+}
+.lp-cta-btn:hover {
+    color: var(--vp-c-text-1);
+    background: color-mix(in srgb, var(--vp-c-brand-1) 8%, transparent);
+    transform: translateY(-1px);
+}
+.lp-cta-btn:hover::after {
+    transform: scaleX(1);
+}
+.lp-cta-btn:focus-visible {
+    outline: 1px solid var(--vp-c-brand-1);
+    outline-offset: -1px;
+    z-index: 1;
+}
+.lp-cta-btn:active {
+    transform: translateY(1px);
+}
+
+.lp-cta-btn.primary {
+    font-weight: 700;
+    color: var(--vp-c-bg);
     background: var(--rozi-gradient);
-    border-color: transparent;
 }
-.lp-btn.primary:hover {
+.lp-cta-btn.primary:hover {
+    color: var(--vp-c-bg);
+    background: var(--rozi-gradient);
     filter: brightness(1.12);
+}
+.lp-cta-btn.primary::after {
+    background: var(--vp-c-bg);
 }
 
 /* ── Facts strip ─────────────────────────────────────────────────────── */
 
+/* Number over label rather than one small sentence per pill. These are the
+   page's only hard numbers and they were being read as fine print.
+   Flat, with hairline separators: a filled box with a border and a radius is
+   this page's card, and a card is a thing you click. Seven of them holding
+   static numbers read as a row of keycaps nobody could press - the same
+   recipe `.lp kbd` uses, which is exactly why. Static data gets rules; only
+   links get cards. */
 .lp-facts {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 8px 10px;
     list-style: none;
-    margin: 32px 0 0;
+    margin: 18px 0 0;
     padding: 0;
 }
 .lp-facts li {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 24px;
+}
+.lp-facts li + li {
+    border-left: 1px solid var(--vp-c-divider);
+}
+.lp-facts b {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    background: var(--rozi-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+.lp-facts span {
     font-size: 11.5px;
     color: var(--vp-c-text-3);
-    border: 1px solid var(--vp-c-divider);
-    border-radius: 999px;
-    padding: 4px 12px;
+    text-align: center;
 }
 
 /* ── Feature cards ───────────────────────────────────────────────────── */
@@ -444,6 +763,23 @@ html.rozi-intro-pending .lp {
     border-collapse: collapse;
     font-size: 12.5px;
 }
+.lp-keytable th {
+    padding: 0 16px 8px 0;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: left;
+    white-space: nowrap;
+    color: var(--vp-c-text-3);
+}
+/* The held modifier is the column worth pointing at: it is the same command
+   in one press instead of two, and it is what makes the thing feel like a
+   window manager rather than a multiplexer. The heading is lit and the keys
+   under it carry the brand colour; the prefix column stays neutral. */
+.lp-keytable th.lp-modhead {
+    color: var(--vp-c-brand-1);
+}
 .lp-keytable td {
     padding: 7px 0;
     border-bottom: 1px solid var(--vp-c-divider);
@@ -454,6 +790,11 @@ html.rozi-intro-pending .lp {
     white-space: nowrap;
     padding-right: 16px !important;
     width: 1%;
+}
+.lp kbd.mod {
+    color: var(--vp-c-brand-1);
+    border-color: color-mix(in srgb, var(--vp-c-brand-1) 40%, transparent);
+    background: color-mix(in srgb, var(--vp-c-brand-1) 9%, var(--vp-c-bg-alt));
 }
 .lp kbd {
     display: inline-block;
@@ -471,6 +812,36 @@ html.rozi-intro-pending .lp {
 }
 .lp-lead kbd {
     font-size: 11px;
+}
+
+/* ── TOML tokens ─────────────────────────────────────────────────────── */
+
+/* The landing page's samples are highlighted by `theme/toml.ts` rather than by
+   Shiki, which never sees them - they live in Vue components, not markdown.
+   These are night-owl's colours, the theme `config.ts` gives the doc pages, so
+   a sample here and a fenced block there read as the same language. */
+.lp code .tk-comment {
+    color: #637777;
+    font-style: italic;
+}
+.lp code .tk-table {
+    color: #c792ea;
+    font-weight: 600;
+}
+.lp code .tk-key {
+    color: #82aaff;
+}
+.lp code .tk-str {
+    color: #ecc48d;
+}
+.lp code .tk-num {
+    color: #f78c6c;
+}
+.lp code .tk-bool {
+    color: #ff5874;
+}
+.lp code .tk-punct {
+    color: #7e8aa3;
 }
 
 .lp-code {
@@ -491,22 +862,199 @@ html.rozi-intro-pending .lp {
     white-space: pre;
 }
 
-/* ── "Also in the box" grid ──────────────────────────────────────────── */
+/* ── Config snippet tabs ─────────────────────────────────────────────── */
 
-/* Bordered cells rather than a gap-grid with a coloured backdrop: the list
-   length is not a multiple of the column count, and empty cells in a backdrop
-   grid read as broken tiles. */
-.lp-box-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
+/* Same shape as the install box, at the width of a code sample rather than a
+   command. The body reserves height for the tallest snippet: the tabs sit at
+   the top, so a shorter one resizing the panel would drag the row the reader
+   just clicked out from under the pointer. */
+.lp-snips {
     margin-top: 22px;
+    background: var(--vp-code-block-bg);
+    border: 1px solid var(--vp-c-border);
+    border-radius: 3px;
 }
-.lp-box {
+.lp-snip-tabs {
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--vp-c-divider);
+}
+.lp-snip-tabs::-webkit-scrollbar {
+    display: none;
+}
+.lp-snip-tab {
+    flex: none;
+    padding: 11px 15px 9px;
+    font-family: var(--vp-font-family-mono);
+    font-size: 12px;
+    color: var(--vp-c-text-3);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition:
+        color 0.15s,
+        border-color 0.15s;
+}
+.lp-snip-tab:hover {
+    color: var(--vp-c-text-2);
+}
+.lp-snip-tab.active {
+    color: var(--vp-c-text-1);
+    border-bottom-color: var(--vp-c-brand-1);
+}
+
+/* The active bar throws a little light up into its own tab, so which tab is
+   selected reads from across the box rather than from a two-pixel line.
+   It rises rather than spills: the tab rows scroll horizontally, which makes
+   them clip vertically too, so anything below the bar would be cut off at the
+   row's edge.
+
+   A band, not a dome: the light source is the whole bar, so it rises evenly
+   across the tab's width rather than blooming out of its centre. */
+.lp-install-tab,
+.lp-snip-tab {
+    position: relative;
+}
+.lp-install-tab.active::after,
+.lp-snip-tab.active::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+        to top,
+        color-mix(in srgb, var(--vp-c-brand-1) 19%, transparent) 0%,
+        color-mix(in srgb, var(--vp-c-brand-1) 6%, transparent) 38%,
+        transparent 74%
+    );
+}
+/* No reserved height: every snippet is exactly thirteen lines, so the panel is
+   already the same size on all seven tabs. Reserving the tallest instead left
+   a hundred empty pixels under the shorter ones, which is the resize traded
+   for a permanent hole - the same bargain the install box refuses. */
+.lp-snip-body pre {
+    margin: 0;
+    padding: 16px;
+    overflow-x: auto;
+}
+.lp-snip-body code {
+    font-family: var(--vp-font-family-mono);
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--vp-c-text-2);
+    white-space: pre;
+}
+.lp-snip-note {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin: 0;
+    padding: 12px 16px 13px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--vp-c-text-3);
+    border-top: 1px solid var(--vp-c-divider);
+}
+.lp-snip-note a {
+    color: var(--vp-c-brand-1);
+    text-decoration: none;
+    white-space: nowrap;
+}
+.lp-snip-note a:hover {
+    text-decoration: underline;
+}
+
+/* ── Extensions band ─────────────────────────────────────────────────── */
+
+/* The author loop as four steps rather than a sentence naming four commands.
+   Ruled rather than boxed, for the reason in the facts strip above: none of
+   these four is a control, and four filled boxes in a row said otherwise. */
+.lp-flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    list-style: none;
+    margin: 0 0 18px;
+    padding: 0;
+    border-block: 1px solid var(--vp-c-divider);
+}
+.lp-flow li {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 13px 15px;
+    gap: 3px;
+    flex: 1 1 190px;
+    padding: 12px 20px;
+}
+.lp-flow li + li {
+    border-left: 1px solid var(--vp-c-divider);
+}
+.lp-flow code {
+    font-family: var(--vp-font-family-mono);
+    font-size: 12px;
+    color: var(--vp-c-text-1);
+}
+.lp-flow span {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--vp-c-text-3);
+}
+
+/* The manifest and the API list side by side, both stretched to the taller of
+   the two. Left aligned to the top with a short code block, the column that
+   ran on left a void beside it the height of the difference. */
+.lp-ext {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: 14px;
+    align-items: stretch;
+}
+.lp-ext .lp-code {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.lp-ext-api {
+    padding: 18px 20px;
+    background: var(--vp-c-bg-alt);
+    border: 1px solid var(--vp-c-divider);
+    border-radius: 4px;
+}
+.lp-defs {
+    margin: 0;
+    font-size: 12.5px;
+}
+.lp-defs dt {
+    margin-top: 12px;
+}
+.lp-defs dt:first-of-type {
+    margin-top: 0;
+}
+.lp-defs dt code {
+    font-family: var(--vp-font-family-mono);
+    font-size: 12px;
+    color: var(--vp-c-brand-1);
+}
+.lp-defs dd {
+    margin: 3px 0 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--vp-c-text-3);
+}
+
+.lp-examples {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+}
+.lp-example {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 13px 14px;
+    text-decoration: none;
     background: var(--vp-c-bg-alt);
     border: 1px solid var(--vp-c-divider);
     border-radius: 4px;
@@ -514,123 +1062,124 @@ html.rozi-intro-pending .lp {
         background 0.15s,
         border-color 0.15s;
 }
-.lp-box:hover {
+.lp-example:hover {
     background: var(--vp-c-bg-soft);
     border-color: var(--vp-c-border);
 }
-.lp-box-name {
-    font-size: 12.5px;
-    font-weight: 600;
+.lp-example b {
+    font-family: var(--vp-font-family-mono);
+    font-size: 12px;
+    font-weight: 500;
     color: var(--vp-c-text-1);
 }
-.lp-box-desc {
+.lp-example span {
     font-size: 11.5px;
-    line-height: 1.6;
+    line-height: 1.5;
     color: var(--vp-c-text-3);
 }
 
-/* ── Documentation index (docs/index.md rendered through <Content/>) ─── */
+/* ── The index section ───────────────────────────────────────────────── */
 
-.lp-docs {
-    padding-bottom: 72px;
-}
-.lp-docs .vp-doc h1 {
-    /* Carries a section rule here, unlike a doc page's h1, so its anchor has
-       padding to clear. Same tie as the h2 block in style.css. */
-    --h1-pad: 28px;
-    font-size: 20px !important;
-    font-weight: 700 !important;
-    letter-spacing: -0.01em;
-    color: var(--vp-c-text-1) !important;
-    margin: 0 0 6px !important;
-    padding-top: var(--h1-pad) !important;
+/* One row per area: the area and its doc link in a fixed left column, the
+   names running as a single dotted line on the right. This replaced six cards
+   of name-and-gloss pairs, which was accurate and unreadable - fifty small
+   two-line entries in a grid is a wall, and nobody reads a wall. */
+.lp-index {
     border-top: 1px solid var(--vp-c-divider);
 }
-.lp-docs .vp-doc h1 > .header-anchor {
-    top: var(--h1-pad);
+.lp-area {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 8px 32px;
+    padding: 18px 0;
+    border-bottom: 1px solid var(--vp-c-divider);
 }
-.lp-docs .vp-doc h2 {
-    /* No rule above the heading here, so no padding for the anchor to clear.
-       See the h2 block in style.css for why the two are tied. */
-    --h2-pad: 0px;
-    font-size: 16px !important;
-    font-weight: 700 !important;
-    color: var(--vp-c-text-1) !important;
-    margin: 28px 0 10px !important;
-    padding-top: 0 !important;
-    border-top: none !important;
-}
-.lp-docs .vp-doc p,
-.lp-docs .vp-doc li {
+.lp-area-head h3 {
+    margin: 0 0 4px;
     font-size: 13.5px;
-    color: var(--vp-c-text-2);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--vp-c-text-1);
 }
-.lp-docs .vp-doc a {
+.lp-area-head a {
+    font-size: 12px;
     color: var(--vp-c-brand-1);
     text-decoration: none;
 }
-.lp-docs .vp-doc a:hover {
+.lp-area-head a:hover {
     text-decoration: underline;
 }
-/* The link colour above outranks style.css's dim anchor rule purely by load
-   order, which left the section markers louder than the headings they mark. */
-.lp-docs .vp-doc a.header-anchor {
+.lp-area-names {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.9;
+    color: var(--vp-c-text-2);
+}
+/* The separator is padded here rather than in the markup so a name never
+   breaks away from the dot that follows it. */
+.lp-dot {
+    padding: 0 7px;
     color: var(--vp-c-text-3);
 }
-/* Doc pages cap prose at --rozi-prose because their column is wider than a
-   comfortable measure. This section is the full page width, where that cap
-   stops looking like a measure and starts looking like an arbitrary break
-   partway across an empty row. Here the container is the measure. */
-.lp-docs .vp-doc > div > :is(p, ul, ol, blockquote, .custom-block) {
-    max-width: none;
-}
-.lp-docs .vp-doc table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-    display: table;
-}
-.lp-docs .vp-doc th {
-    text-align: left;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--vp-c-border);
-    color: var(--vp-c-text-2);
-    font-weight: 600;
-}
-.lp-docs .vp-doc td {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--vp-c-divider);
-    color: var(--vp-c-text-2);
-}
-.lp-docs .vp-doc tr:hover td {
-    background: var(--vp-c-bg-alt);
-}
-.lp-docs .vp-doc :not(pre) > code {
-    background: var(--vp-c-bg);
-    border: 1px solid var(--vp-c-border);
-    border-radius: 2px;
-    padding: 1px 5px;
-    font-size: 12px;
-    color: #b98cf5;
-}
 
-/* Same two exceptions as the doc pages, for the same reasons - see style.css.
-   Both must stay after the inline-code rule above. */
-.lp-docs .vp-doc a code {
-    color: inherit;
+/* ── Documentation index ─────────────────────────────────────────────── */
+
+/* Four columns of grouped links, flowing rather than placed: a group that will
+   not fit moves whole to the next column, which is how Performance ends up
+   under Automation without anybody assigning it there. The groups and their
+   order come from the sidebar, so a new page appears here by being registered
+   where it already has to be registered.
+
+   This replaced the contents table out of `docs/index.md`, rendered through
+   <Content/> and reflowed into cards. Twenty-odd cards of page-and-sentence
+   was the last wall on the page, and the sentences were the reference doc's
+   job, not the landing's. `docs/index.md` still carries the full table for
+   GitHub, which is the only place it reads well. */
+.lp-docs {
+    padding-bottom: 72px;
 }
-.lp-docs .vp-doc :is(h1, h2, h3, h4) > code {
-    font-size: inherit;
-    font-weight: inherit;
-    color: inherit;
-    background: transparent;
-    border: none;
+.lp-doc-index {
+    column-count: 4;
+    column-gap: 32px;
+}
+.lp-doc-group {
+    /* Without this a group splits across the column break and its heading is
+       left behind in the previous column. */
+    break-inside: avoid;
+    margin-bottom: 26px;
+}
+.lp-doc-group h3 {
+    margin: 0 0 10px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--vp-c-text-3);
+}
+.lp-doc-group ul {
+    list-style: none;
+    margin: 0;
     padding: 0;
 }
+.lp-doc-group li + li {
+    margin-top: 8px;
+}
+.lp-doc-group a {
+    font-size: 12.5px;
+    color: var(--vp-c-text-2);
+    text-decoration: none;
+    transition: color 0.15s;
+}
+.lp-doc-group a:hover {
+    color: var(--vp-c-brand-1);
+}
+
 
 /* ── Footer ──────────────────────────────────────────────────────────── */
 
 .lp-footer {
+    position: relative;
+    z-index: 1;
     margin-top: 8px;
     background: var(--vp-c-bg-alt);
     border-top: 1px solid var(--vp-c-divider);
@@ -666,8 +1215,27 @@ html.rozi-intro-pending .lp {
         grid-template-columns: minmax(0, 1fr);
         gap: 40px;
     }
-    .lp-box-grid {
+    .lp-ext {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .lp-examples {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .lp-doc-index {
+        column-count: 3;
+    }
+    /* The names column no longer has room beside a fixed label column. */
+    .lp-area {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+    }
+    .lp-area-head {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+    }
+    .lp-area-head h3 {
+        margin: 0;
     }
 }
 
@@ -705,8 +1273,48 @@ html.rozi-intro-pending .lp {
         margin-inline: calc(50% - min(50vw - 10px, 50vw));
     }
     .lp-features,
-    .lp-box-grid {
+    .lp-examples {
         grid-template-columns: minmax(0, 1fr);
+    }
+    .lp-doc-index {
+        column-count: 2;
+    }
+    /* Separators only survive a single row. Wrapped, the second row's first
+       item keeps a rule with nothing to its left, so drop them and space the
+       items instead. */
+    .lp-facts {
+        gap: 14px 0;
+    }
+    .lp-facts li {
+        flex: 1 1 40%;
+        padding: 2px 8px;
+    }
+    .lp-facts li + li {
+        border-left: none;
+    }
+    .lp-flow {
+        border-bottom: none;
+    }
+    .lp-flow li {
+        flex: 1 1 100%;
+        padding: 11px 0;
+        border-bottom: 1px solid var(--vp-c-divider);
+    }
+    .lp-flow li + li {
+        border-left: none;
+    }
+    /* The snippets are the one place on the page where a horizontal scroll is
+       the right answer: a wrapped TOML line stops being copyable. Let the
+       panel shrink to what a phone can show and scroll inside itself. */
+    .lp-snip-body pre {
+        padding: 14px;
+    }
+    .lp-snip-body code {
+        font-size: 11px;
+    }
+    .lp-snip-tab {
+        padding: 10px 12px 8px;
+        font-size: 11px;
     }
     /* Keep the clone URL on one line inside the copy button's reserved gutter
        rather than scrolling underneath it. */
@@ -722,11 +1330,26 @@ html.rozi-intro-pending .lp {
         font-size: 11px;
     }
     .lp-install-note {
-        padding: 0 14px 11px;
+        padding: 10px 14px 11px;
         font-size: 11px;
     }
     .lp-section {
         padding-top: 40px;
+    }
+}
+
+@media (max-width: 420px) {
+    .lp-cta {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+    .lp-cta-btn {
+        border-top: 1px solid var(--vp-c-divider);
+        border-left: 0;
+    }
+    .lp-cta-btn:first-child {
+        border-top: 0;
     }
 }
 
@@ -735,5 +1358,26 @@ html.rozi-intro-pending .lp {
        RoziStage.vue); this is only about the page around it. */
     .lp {
         transition: none;
+    }
+    .lp-cta-btn,
+    .lp-cta-btn::after {
+        transition: none;
+    }
+    /* The ripple is travel, which is the thing being asked about. Keep the
+       confirmation, drop the movement: a still wash that fades. */
+    .lp-install-cmd.rippling::after {
+        animation: lp-ripple-still 620ms ease-out;
+    }
+    @keyframes lp-ripple-still {
+        from {
+            width: 1400px;
+            height: 1400px;
+            opacity: 0.3;
+        }
+        to {
+            width: 1400px;
+            height: 1400px;
+            opacity: 0;
+        }
     }
 }

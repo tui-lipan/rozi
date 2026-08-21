@@ -57,7 +57,13 @@ getrandom = "0.4.3"
 # Re-pin whenever rozi needs newer framework work. At release time this section goes away: publish
 # tui-lipan, raise the version requirement above, and drop the patch (see AGENTS.md).
 [patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "6c3d51fed4516c67f5101ec7b10282806523b45c" }
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "76e23eedffba3db45f82ccae9d75597bd43c631e" }
+# termina 0.3.3 subtracts the protocol's one-based origin from SGR and rxvt mouse coordinates
+# without a guard, so a report of column or row 0 - which SGR-pixels (mode 1016) makes ordinary,
+# and which terminals also send for a drag that leaves the window - panics the input worker and
+# takes the client down with it. Fixed upstream in 38047a2 and unreleased; drop this once a
+# release carrying it exists and tui-lipan's `=0.3.3` pin moves to it.
+termina = { git = "https://github.com/helix-editor/termina", rev = "38047a2491f4cf65eb4b2a3ed69cca87a98a10fc" }
 
 [features]
 # Headless PNG/JSON capture for visual review. Opt-in so release builds do not

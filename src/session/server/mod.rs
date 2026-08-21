@@ -276,10 +276,10 @@ pub struct AgentScratch {
     /// repeating the walk that found it. Only the identity is expensive; see
     /// [`read_agent_state`](super::runtime::read_agent_state).
     pub identity: Option<String>,
-    /// The screen and title the last state read looked at. Text that has not moved cannot say
-    /// anything new, so a quiet pane costs a pointer comparison instead of a rule pass - and the
-    /// held state's age keeps measuring from real evidence.
-    pub read: Option<(std::sync::Arc<str>, Option<String>)>,
+    /// What the last state read looked at, and what it made of it. Text that has not moved cannot
+    /// say anything new, so a quiet pane costs a pointer comparison instead of a rule pass - and
+    /// the held state's age keeps measuring from real evidence.
+    pub read: Option<AgentRead>,
     /// The last state a sweep positively observed, retained while later sweeps see no evidence.
     pub hold: Option<AgentHold>,
     /// The last state loud enough to hold, and when it was last positively seen, so neither a
@@ -289,6 +289,20 @@ pub struct AgentScratch {
         crate::session::protocol::DetectedAgentState,
         std::time::Instant,
     )>,
+}
+
+/// One state read: the text it was taken from, and what the rules made of it.
+///
+/// The reading kept here is the one *before* the settle grace, which is what lets a pane whose
+/// screen has stopped moving keep re-applying that grace rather than freezing whatever it was
+/// holding. Caching the settled answer instead makes the grace permanent on the last frame a pane
+/// ever draws: an agent that stops redrawing within the grace of a louder state - a dialog
+/// dismissed as the turn ends - would keep reporting that state until the pane is typed into.
+#[derive(Clone, Debug)]
+pub struct AgentRead {
+    pub screen: std::sync::Arc<str>,
+    pub title: Option<String>,
+    pub resolved: Option<protocol::DetectedAgent>,
 }
 
 /// A positively observed agent state, held across sweeps that observe nothing.

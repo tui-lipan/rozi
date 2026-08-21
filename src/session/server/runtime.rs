@@ -839,22 +839,33 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
     };
     let title = pane.effective_title();
     let screen = pane.screen_without_change().snapshot();
-    // Unchanged text is not new evidence, so reusing the resolved answer also keeps the hold's age
-    // measuring from the last real observation.
-    if pane.agent.read.as_ref().is_some_and(|(seen, seen_title)| {
-        std::sync::Arc::ptr_eq(seen, &screen) && *seen_title == title
-    }) {
-        return pane.runtime.detected_agent.clone();
-    }
-    let observed = crate::agent_detection::observe(
-        agents,
-        definition,
-        screen.as_ref(),
-        title.as_deref().unwrap_or_default(),
-    );
-    pane.agent.read = Some((screen, title));
     let now = Instant::now();
-    let resolved = resolve_detected_agent(Some(observed), &mut pane.agent.hold, now);
+    // Unchanged text is not new evidence, so reusing the resolved answer also keeps the hold's age
+    // measuring from the last real observation. The settle still runs on it: the grace has to be
+    // able to expire on a pane that has stopped redrawing, or the last frame before it went quiet
+    // decides the state forever.
+    let cached = pane.agent.read.as_ref().and_then(|last| {
+        (std::sync::Arc::ptr_eq(&last.screen, &screen) && last.title == title)
+            .then(|| last.resolved.clone())
+    });
+    let resolved = match cached {
+        Some(resolved) => resolved,
+        None => {
+            let observed = crate::agent_detection::observe(
+                agents,
+                definition,
+                screen.as_ref(),
+                title.as_deref().unwrap_or_default(),
+            );
+            let resolved = resolve_detected_agent(Some(observed), &mut pane.agent.hold, now);
+            pane.agent.read = Some(super::AgentRead {
+                screen,
+                title,
+                resolved: resolved.clone(),
+            });
+            resolved
+        }
+    };
     settle_state_flicker(resolved, &mut pane.agent.settled, now)
 }
 
@@ -1646,6 +1657,55 @@ mod tests {
             settle_state_flicker(detected(DetectedAgentState::Idle), &mut settled, done)
                 .map(|agent| agent.state),
             Some(DetectedAgentState::Idle)
+        );
+    }
+
+    /// The grace holds a louder state against the *next* frame - but a pane is free to stop drawing
+    /// frames. An agent whose dialog closes as its turn ends draws one quiet screen inside the
+    /// grace and then nothing ever again, and the read cache would hand back the held answer for as
+    /// long as the pane sat there. Kilo and OpenCode were both caught reporting `blocked` minutes
+    /// after the dialog they were blocked on had gone.
+    #[test]
+    fn a_pane_that_stops_redrawing_still_leaves_the_settle_grace() {
+        use crate::session::protocol::DetectedAgentState;
+
+        let mut pane = make_pane();
+        let mut scan = LazyProcessScan::default();
+        let state = |pane: &ServerPane| {
+            pane.runtime
+                .detected_agent
+                .as_ref()
+                .map(|agent| agent.state)
+        };
+
+        pane.terminal
+            .process_bytes("\x1b]133;C;rozi_exe=claude\x07❯ 1. Yes\r\n".as_bytes());
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        assert_eq!(state(&pane), Some(DetectedAgentState::Blocked));
+
+        // The dialog is answered and the pane falls quiet in the same breath.
+        pane.terminal.process_bytes(b"\x1b[2J\x1b[Hall done\r\n");
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        assert_eq!(
+            state(&pane),
+            Some(DetectedAgentState::Blocked),
+            "one frame inside the grace is not an answered prompt"
+        );
+
+        // Nothing is ever drawn again. Age the grace out and poll the identical screen.
+        let (held, _) = pane.agent.settled.expect("the grace is holding blocked");
+        pane.agent.settled = Some((
+            held,
+            Instant::now() - STATE_SETTLE_GRACE - Duration::from_millis(1),
+        ));
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        assert_eq!(
+            state(&pane),
+            Some(DetectedAgentState::Idle),
+            "an expired grace must not outlive the last frame the pane drew"
         );
     }
 

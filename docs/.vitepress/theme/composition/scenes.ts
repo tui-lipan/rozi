@@ -25,10 +25,13 @@ export const HERO_SCENES: Scene[] = [
     { name: "Agents", dur: 4.6, nat: 4.6 },
     // Long enough for the split to travel out, sit for a beat, and come back.
     { name: "Resize", dur: 2.2, nat: 2.2 },
-    { name: "Swap", dur: 2.1, nat: 2.1 },
-    { name: "Hide", dur: 1.5, nat: 1.5 },
-    { name: "Float", dur: 1.6, nat: 1.6 },
-    { name: "Drag", dur: 1.6, nat: 1.6 },
+    { name: "Swap", dur: 1.2, nat: 1.2 },
+    // Keep a quarter-second beat between the compact closing acts. Longer
+    // sections made the loop appear to drop to half speed after the sidebar
+    // left, even though the movement tweens themselves had not changed.
+    { name: "Hide", dur: 0.85, nat: 0.85 },
+    { name: "Float", dur: 1.0, nat: 1.0 },
+    { name: "Drag", dur: 1.05, nat: 1.05 },
     // In, held, and back out.
     { name: "Full", dur: 2.6, nat: 2.6 },
 ];
@@ -64,8 +67,10 @@ export const CINEMATIC_SCENES: Scene[] = [
     { name: "Boot", dur: 1.5, nat: 2.4 },
     { name: "Split", dur: 2.3, nat: 3.2 },
     { name: "Agents", dur: 4.4, nat: 4.4 },
-    { name: "Tile", dur: 1.4, nat: 2.0 },
-    { name: "Mark", dur: 0.7, nat: 1.8 },
+    // Move straight from the folded panes into the wordmark. The old sections
+    // held an almost static logo for over a second between those two moves.
+    { name: "Tile", dur: 1.0, nat: 1.35 },
+    { name: "Mark", dur: 0.1, nat: 0.15 },
     { name: "Name", dur: 1.6, nat: 1.7 },
     { name: "Hold", dur: 0.9, nat: 1.0 },
 ];

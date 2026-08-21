@@ -23,24 +23,28 @@ import { animate, clamp, Easing, px } from "./runtime";
 
 const BG = "#06070f";
 const SCREEN = "#0b0d1c";
-const EDGE = "rgba(255,255,255,0.10)";
-const TEXT = "#C9CBD6";
-const DIM = "#5A5E72";
-const ATT = "#E8A33C";
-const RED = "#F0554C";
+const EDGE = "#343858";
+const TEXT = "#CCD0E6";
+const DIM = "#8E93B4";
+const ATT = "#F0A830";
+const RED = "#FF5F57";
 const MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace";
+// VS15 keeps the mark in the text font so it inherits Claude's title color.
+const CLAUDE_MARK = "\u2733\uFE0E";
 
+// Terminal roles mirror `rozi_theme()` while the composition keeps its own
+// authored content and unchanged background plates.
 const C = {
-    dir: "#4FC3E8",
-    md: "#A7AEC0",
-    toml: "#E8C25C",
-    sh: "#7BD88F",
-    json: "#8B92A6",
-    green: "#7BD88F",
-    run: "#7BD88F",
-    pink: "#F0709A",
-    claude: "#E8916A",
-    cyan: "#4FC3E8",
+    dir: "#82AAFF",
+    md: TEXT,
+    toml: ATT,
+    sh: "#4ADE80",
+    json: DIM,
+    green: "#4ADE80",
+    run: "#4ADE80",
+    pink: "#FD4A80",
+    claude: ATT,
+    cyan: "#82AAFF",
 };
 
 const MOTION = {
@@ -209,7 +213,7 @@ function InputBox(props) {
             >
                 <span>{status}</span>
                 <span style={px({ flex: 1 })}></span>
-                <span style={px({ color: "#3E4256" })}>{right}</span>
+                <span style={px({ color: EDGE })}>{right}</span>
             </div>
             {foot ? (
                 <div
@@ -218,7 +222,7 @@ function InputBox(props) {
                         margin: "0 18px 9px",
                         fontFamily: MONO,
                         fontSize: 14,
-                        color: "#3E4256",
+                        color: EDGE,
                         whiteSpace: "pre",
                     })}
                 >
@@ -306,7 +310,7 @@ Pane.props = ["rect", "boxStyle", "border", "label", "labelColor", "footer"];
 
 function Sidebar(props) {
     const { accent, T, cues, op, dx, attention } = props;
-    const violet = accent[1];
+    const rose = accent[0];
     const tab = (txt, active, key) => (
         <span
             key={key}
@@ -315,7 +319,7 @@ function Sidebar(props) {
                 fontSize: 15,
                 padding: "2px 7px",
                 color: active ? SCREEN : DIM,
-                background: active ? violet : "transparent",
+                background: active ? rose : "transparent",
             })}
         >
             {txt}
@@ -388,7 +392,7 @@ function Sidebar(props) {
                             </span>
                             <span
                                 style={px({
-                                    color: "#B8BCC8",
+                                    color: TEXT,
                                     flex: 1,
                                     whiteSpace: "nowrap",
                                 })}
@@ -452,7 +456,7 @@ function Sidebar(props) {
                         )(T),
                     })}
                 >
-                    <span style={px({ color: f[1] ? "#B8BCC8" : DIM })}>
+                    <span style={px({ color: f[1] ? TEXT : DIM })}>
                         {"› " + f[0]}
                     </span>
                     <span style={px({ color: ATT })}>{f[1]}</span>
@@ -465,7 +469,7 @@ Sidebar.props = ["accent", "T", "cues", "op", "dx", "attention"];
 
 function Workbar(props) {
     const { accent, op, dy, shift } = props;
-    const violet = accent[1];
+    const rose = accent[0];
     const pill = (txt, active, key) => (
         <div
             key={key}
@@ -475,7 +479,7 @@ function Workbar(props) {
                 padding: "3px 12px",
                 borderRadius: 0,
                 color: active ? SCREEN : DIM,
-                background: active ? violet : "transparent",
+                background: active ? rose : "transparent",
                 fontWeight: active ? 600 : 400,
                 whiteSpace: "pre",
             })}
@@ -505,7 +509,7 @@ function Workbar(props) {
                     fontWeight: 600,
                     color: SCREEN,
                     padding: "3px 12px",
-                    background: violet,
+                    background: rose,
                     borderRadius: 0,
                 })}
             >
@@ -524,7 +528,7 @@ function Workbar(props) {
                     fontWeight: 600,
                     color: SCREEN,
                     padding: "3px 12px",
-                    background: violet,
+                    background: rose,
                     whiteSpace: "nowrap",
                 })}
             >
@@ -537,7 +541,7 @@ Workbar.props = ["accent", "op", "dy", "shift"];
 
 function RoziScene(props) {
     const { T, cues, accent, logoSrc, showTagline } = props;
-    const [pink, violet] = accent;
+    const [rose, violet] = accent;
     const S = cues.Split;
     const G = cues.Agents;
 
@@ -706,9 +710,9 @@ function RoziScene(props) {
     const agents = T >= G + 0.2;
     const cBorder =
         attOn > 0.02
-            ? `rgba(240,85,76,${0.4 + 0.6 * attPulse})`
+            ? `rgba(255,95,87,${0.4 + 0.6 * attPulse})`
             : cFocused
-              ? violet
+              ? rose
               : EDGE;
     // A floating window is the only thing here that casts one, and it stops
     // once it is fullscreen and there is nothing left to cast onto.
@@ -802,8 +806,8 @@ function RoziScene(props) {
                                 top: -1,
                                 height: 2,
                                 width: seg[0],
-                                background: violet,
-                                filter: `drop-shadow(0 0 6px ${violet})`,
+                                background: rose,
+                                filter: `drop-shadow(0 0 6px ${rose})`,
                             })}
                         ></div>
                         <div
@@ -813,8 +817,8 @@ function RoziScene(props) {
                                 top: 0,
                                 width: 2,
                                 height: seg[1],
-                                background: violet,
-                                filter: `drop-shadow(0 0 6px ${violet})`,
+                                background: rose,
+                                filter: `drop-shadow(0 0 6px ${rose})`,
                             })}
                         ></div>
                         <div
@@ -824,8 +828,8 @@ function RoziScene(props) {
                                 bottom: -1,
                                 height: 2,
                                 width: seg[2],
-                                background: violet,
-                                filter: `drop-shadow(0 0 6px ${violet})`,
+                                background: rose,
+                                filter: `drop-shadow(0 0 6px ${rose})`,
                             })}
                         ></div>
                         <div
@@ -835,8 +839,8 @@ function RoziScene(props) {
                                 bottom: 0,
                                 width: 2,
                                 height: seg[3],
-                                background: violet,
-                                filter: `drop-shadow(0 0 6px ${violet})`,
+                                background: rose,
+                                filter: `drop-shadow(0 0 6px ${rose})`,
                             })}
                         ></div>
                     </div>
@@ -844,10 +848,14 @@ function RoziScene(props) {
                     {/* left pane: shell → Claude Code session */}
                     <Pane
                         rect={rectA}
-                        border={booted && !cFocused ? violet : EDGE}
-                        labelColor={booted && !cFocused ? violet : DIM}
+                        border={booted && !cFocused ? rose : EDGE}
+                        labelColor={booted && !cFocused ? rose : DIM}
                         label={
-                            agents ? "✳ Claude Code · rozi" : booted ? "rozi" : "zsh"
+                            agents
+                                ? `${CLAUDE_MARK} Claude Code · rozi`
+                                : booted
+                                  ? "rozi"
+                                  : "zsh"
                         }
                         boxStyle={{ transform: xf(rectA, targets[0], inA, 0, 0) }}
                         footer={
@@ -935,7 +943,7 @@ function RoziScene(props) {
                                     fontWeight: 600,
                                 })}
                             >
-                                ✳ Claude Code{" "}
+                                {CLAUDE_MARK} Claude Code{" "}
                                 <span style={px({ color: DIM, fontWeight: 400 })}>
                                     v2.1.228
                                 </span>
@@ -1012,7 +1020,8 @@ function RoziScene(props) {
                             </Out>
                             <div style={px({ height: 10 })}></div>
                             <Out T={T} at={G + 3.9} size={15} color={C.claude}>
-                                ✳ <span style={px({ color: DIM })}>Sautéed for 2m 49s</span>
+                                {CLAUDE_MARK}{" "}
+                                <span style={px({ color: DIM })}>Sautéed for 2m 49s</span>
                             </Out>
                         </div>
                     </Pane>
@@ -1098,7 +1107,7 @@ function RoziScene(props) {
                                             display: "flex",
                                             margin: "7px 16px 8px",
                                             fontSize: 14,
-                                            color: "#3E4256",
+                                            color: DIM,
                                             whiteSpace: "pre",
                                         })}
                                     >
@@ -1189,8 +1198,8 @@ function RoziScene(props) {
                            and the titlebar label follows the frame foreground.
                            It does not relabel itself - the pane keeps its own
                            title, so that is all this says. */
-                        labelColor={attOn > 0.02 ? RED : cFocused ? violet : DIM}
-                        label={agents ? "✳ Claude Code · ~" : "~"}
+                        labelColor={attOn > 0.02 ? RED : cFocused ? rose : DIM}
+                        label={agents ? `${CLAUDE_MARK} Claude Code · ~` : "~"}
                         boxStyle={{
                             opacity: opC,
                             transform: xf(
@@ -1210,7 +1219,7 @@ function RoziScene(props) {
                                           clamp(floatUp, 0, 1),
                                       )})`
                                     : attOn > 0
-                                      ? `rgba(240,85,76,${0.04 * attPulse})`
+                                      ? `rgba(255,95,87,${0.04 * attPulse})`
                                       : "transparent",
                             boxShadow: `0 ${26 * floatLift}px ${70 * floatLift}px rgba(0,0,0,${0.66 * floatLift})`,
                         }}
@@ -1297,7 +1306,7 @@ function RoziScene(props) {
                                     <div
                                         style={px({
                                             fontSize: 14,
-                                            color: "#3E4256",
+                                            color: DIM,
                                             whiteSpace: "nowrap",
                                         })}
                                     >
@@ -1430,7 +1439,7 @@ function RoziScene(props) {
                             fontSize: 150,
                             lineHeight: 1,
                             letterSpacing: "-0.045em",
-                            background: `linear-gradient(100deg, ${pink} 5%, ${violet} 92%)`,
+                            background: `linear-gradient(100deg, ${rose} 5%, ${violet} 92%)`,
                             "-webkit-background-clip": "text",
                             "background-clip": "text",
                             color: "transparent",
@@ -1442,7 +1451,7 @@ function RoziScene(props) {
                         style={px({
                             height: 3,
                             width: ruleW,
-                            background: `linear-gradient(90deg, ${pink}, ${violet})`,
+                            background: `linear-gradient(90deg, ${rose}, ${violet})`,
                             margin: "26px 0 22px",
                         })}
                     ></div>

@@ -683,8 +683,8 @@ fn rozi_theme() -> Theme {
     theme.surface = SurfacePalette {
         backdrop: background,
         panel: Color::hex_u24(0x0B0D1C),
-        element: Color::hex_u24(0x14162A),
-        menu: Color::hex_u24(0x1B1E36),
+        element: Color::hex_u24(0x0B0D1C),
+        menu: Color::hex_u24(0x14162A),
     };
     theme.selection = Style::new().fg(text).bg(violet);
     theme.text_selection = Style::new()
@@ -769,6 +769,7 @@ mod tests {
 
         assert_eq!(theme.surface.backdrop, Color::hex_u24(0x06070F));
         assert_eq!(theme.surface.panel, Color::hex_u24(0x0B0D1C));
+        assert_eq!(theme.surface.element, Color::hex_u24(0x0B0D1C));
         assert_eq!(theme.accent.fg, Some(Color::hex_u24(0xFD4A80).into()));
         assert_eq!(theme.selection.bg, Some(Color::hex_u24(0x982BF2).into()));
         assert_eq!(theme.primary.fg, Some(Color::hex_u24(0xCCD0E6).into()));

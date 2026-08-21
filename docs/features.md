@@ -144,7 +144,8 @@ logging starts. Logging stops automatically on a write error.
 (including control-socket `new-pane` and `[keys] run`). A rule matches the command by substring or
 regex and can set `float`, `width`, `height`, `position`, `workspace`, `focus`, and `fullscreen`.
 
-**Scratchpad** — a toggleable drop-down pane that overlays the current workspace.
+**Scratchpad** — one private, transient drop-down workspace per client. Its live PTYs follow the
+client across sessions and disappear when that client exits.
 
 **Links, popups, and hints** — Ctrl+click opens plain-text URLs and explicit OSC 8 links;
 `[[hints]]` defines contextual popup actions, and hint mode overlays selectable targets.

@@ -213,6 +213,11 @@ pub struct State {
     /// Client-local workspace rendered in the dropdown. It is deliberately outside every
     /// attachment, so profiles and shared-layout commits cannot serialize it.
     pub scratch: Workspace,
+    /// Private PTY host shared by every scratch pane owned by this UI client. It is deliberately
+    /// independent of `attachment` and `background`, so changing sessions cannot drop it.
+    pub(crate) scratch_runtime: Option<crate::scratch_runtime::ScratchRuntime>,
+    pub(crate) next_scratch_pane_id: PaneId,
+    pub(crate) next_scratch_pty_generation: u64,
     pub scratch_visible: bool,
     /// Focus to restore when the scratchpad is hidden again.
     pub scratch_return_focus: Option<PaneId>,
@@ -403,6 +408,9 @@ impl State {
             hint_mode: None,
             consumed_pointer_click: false,
             scratch: Workspace::new(0),
+            scratch_runtime: None,
+            next_scratch_pane_id: 1 << 31,
+            next_scratch_pty_generation: 1,
             scratch_visible: false,
             scratch_return_focus: None,
             scratch_height: None,
@@ -462,6 +470,25 @@ impl State {
     /// Mutable access to the [current attachment](Self::current).
     pub fn current_mut(&mut self) -> &mut Attachment {
         &mut self.attachment
+    }
+
+    pub(crate) fn scratch_client(&self) -> Option<crate::session::client::SessionClient> {
+        self.scratch_runtime
+            .as_ref()
+            .and_then(crate::scratch_runtime::ScratchRuntime::client)
+    }
+
+    /// Transport owning `pane_id`. Scratch panes use the client runtime; popups and attachment
+    /// panes use the active session connection.
+    pub(crate) fn pty_client_for_pane(
+        &self,
+        pane_id: PaneId,
+    ) -> Option<crate::session::client::SessionClient> {
+        if self.scratch.panes.iter().any(|pane| pane.id == pane_id) {
+            self.scratch_client()
+        } else {
+            self.current().session_client.clone()
+        }
     }
 
     pub fn popup_is_present(&self) -> bool {

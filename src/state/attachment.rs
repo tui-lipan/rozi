@@ -204,9 +204,8 @@ impl Attachment {
     }
 
     /// Find a workspace pane by id within this attachment. Unlike [`crate::pane_lifecycle::find_pane_mut`]
-    /// it does not consult the scratchpad/popup, which are client-local overlays on `State` that only
-    /// ever belong to the current attachment - so this is the finder used to apply a *background*
-    /// attachment's server output to its own screens.
+    /// it does not consult the popup or the client-owned scratchpad on `State`, so this is the
+    /// finder used to apply a *background* attachment's server output to its own screens.
     pub fn find_pane_mut(&mut self, id: PaneId) -> Option<&mut Pane> {
         self.workspaces
             .iter_mut()

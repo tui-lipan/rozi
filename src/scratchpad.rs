@@ -116,14 +116,26 @@ pub(crate) fn toggle(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.animation = GeometryAnimation::TileFloat;
 
     if ctx.state.scratch.panes.is_empty() {
-        if let Some(update) = crate::ops::session::ensure_session_for_pty(
-            ctx,
-            crate::state::PendingSessionAction::ToggleScratchpad,
-        ) {
-            // Not visible yet — the deferred open will show it after attach.
+        if ctx.state.scratch_runtime.is_none() {
+            let Some(link) = ctx.state.command_link.clone() else {
+                ctx.state.scratch_visible = false;
+                ctx.state.scratch_return_focus = None;
+                return Update::none();
+            };
+            match crate::scratch_runtime::ScratchRuntime::start(&ctx.state.config, link) {
+                Ok(runtime) => ctx.state.scratch_runtime = Some(runtime),
+                Err(error) => {
+                    crate::pty_events::notify_error(ctx, "Scratchpad failed", error.to_string());
+                    ctx.state.scratch_visible = false;
+                    ctx.state.scratch_return_focus = None;
+                    return Update::full();
+                }
+            }
+        }
+        if ctx.state.scratch_runtime.is_none() {
             ctx.state.scratch_visible = false;
             ctx.state.scratch_return_focus = None;
-            return update;
+            return Update::none();
         }
         ctx.state.scratch.layout_kind = ctx.state.config.layout.default;
         let identity = PaneIdentity {
@@ -134,7 +146,13 @@ pub(crate) fn toggle(ctx: &mut Context<AppRoot>) -> Update {
                 .command
                 .clone()
                 .map(crate::pane_launch::PaneLaunch::shell),
-            cwd: ctx.state.config.scratchpad.cwd.clone(),
+            cwd: ctx
+                .state
+                .config
+                .scratchpad
+                .cwd
+                .clone()
+                .or_else(|| crate::pane_lifecycle::focused_local_cwd(&ctx.state)),
             ..PaneIdentity::default()
         };
         return spawn_pane_in_scratch(ctx, None, identity).1;
@@ -176,21 +194,29 @@ pub(crate) fn after_pane_removed(ctx: &mut Context<AppRoot>) {
     }
 }
 
-/// Scratchpads are current-view overlays rather than attachment state. Tear the server pane down
-/// before switching so no local scratch PTY remains addressed to the old session client.
-pub(crate) fn close_for_session_switch(ctx: &mut Context<AppRoot>) {
-    if let Some(client) = ctx.state.current().session_client.as_ref() {
-        for pane in &ctx.state.scratch.panes {
-            client.kill(pane.id, pane.pty_generation, true);
-        }
+/// Hide the client-owned layer while the attachment under it changes. Its workspace and PTYs stay
+/// untouched and can be reopened over the next session.
+pub(crate) fn hide_for_session_switch(ctx: &mut Context<AppRoot>) {
+    // Both layers share one pointer session. Settle it before changing which attachment is below.
+    crate::ops::resize_move::finish_pointer_layout_interaction(ctx);
+    hide_state_for_session_switch(&mut ctx.state);
+}
+
+fn hide_state_for_session_switch(state: &mut crate::state::State) {
+    state.scratch_visible = false;
+    state.scratch_return_focus = None;
+    state.scratch_resize_start = None;
+    state.moving_pane = None;
+    state.resizing_pane = None;
+    state.split_drag = None;
+}
+
+/// End the private PTY host before the owning UI client exits. `State` dropping is the final
+/// backstop, but doing it explicitly makes clean exits terminate children before the runtime goes.
+pub(crate) fn shutdown_for_client_exit(state: &mut crate::state::State) {
+    if let Some(mut runtime) = state.scratch_runtime.take() {
+        runtime.shutdown();
     }
-    ctx.state.scratch = crate::state::Workspace::new(0);
-    ctx.state.scratch_visible = false;
-    ctx.state.scratch_return_focus = None;
-    ctx.state.scratch_resize_start = None;
-    ctx.state.moving_pane = None;
-    ctx.state.resizing_pane = None;
-    ctx.state.split_drag = None;
 }
 
 /// Grab the scratchpad's top edge: remember the current height fraction so the drag recomputes
@@ -774,5 +800,133 @@ mod tests {
             .expect("spawn close focus test thread")
             .join()
             .expect("close focus test thread panicked");
+    }
+
+    fn state_with_test_runtime() -> (
+        crate::state::State,
+        std::sync::mpsc::Receiver<crate::session::client::ClientOutbound>,
+    ) {
+        let mut state = state_with_scratch(&[1 << 31]);
+        state.scratch.panes[0].pty_generation = 9;
+        state.scratch.panes[0]
+            .terminal
+            .process_server_output(b"client-scratch-marker\r\n");
+        let (client, receiver) = crate::session::client::SessionClient::test_channel();
+        state.scratch_runtime = Some(crate::scratch_runtime::ScratchRuntime::from_test_client(
+            client,
+        ));
+        (state, receiver)
+    }
+
+    #[test]
+    fn session_switches_preserve_the_same_scratch_workspace_and_transport() {
+        let (mut state, receiver) = state_with_test_runtime();
+        let pane_id = state.scratch.panes[0].id;
+        let generation = state.scratch.panes[0].pty_generation;
+
+        hide_state_for_session_switch(&mut state);
+        state.runtime_epoch = state.runtime_epoch.wrapping_add(1);
+        hide_state_for_session_switch(&mut state);
+
+        assert!(!state.scratch_visible);
+        assert_eq!(state.scratch.panes.len(), 1);
+        assert!(
+            state.scratch.panes[0]
+                .terminal
+                .capture_text()
+                .contains("client-scratch-marker")
+        );
+        state
+            .scratch_client()
+            .expect("scratch transport survives the switch")
+            .send_input(pane_id, generation, true, b"after-switch".to_vec());
+        assert!(matches!(
+            receiver.recv().expect("scratch input"),
+            crate::session::client::ClientOutbound::PaneInput {
+                pane_id: id,
+                local: true,
+                generation: 9,
+                bytes,
+            } if id == pane_id && bytes == b"after-switch"
+        ));
+    }
+
+    #[test]
+    fn detach_and_attach_replacement_do_not_replace_the_client_scratchpad() {
+        let (mut state, receiver) = state_with_test_runtime();
+        let pane_id = state.scratch.panes[0].id;
+        let generation = state.scratch.panes[0].pty_generation;
+
+        hide_state_for_session_switch(&mut state);
+        state.attachment = crate::state::Attachment::new();
+        state.runtime_epoch = 42;
+
+        assert_eq!(state.scratch.panes[0].id, pane_id);
+        state
+            .scratch_client()
+            .expect("the original transport survives attachment replacement")
+            .send_input(pane_id, generation, true, b"after-attach".to_vec());
+        assert!(matches!(
+            receiver.recv().expect("input on original transport"),
+            crate::session::client::ClientOutbound::PaneInput {
+                pane_id: id,
+                generation: 9,
+                local: true,
+                bytes,
+            } if id == pane_id && bytes == b"after-attach"
+        ));
+    }
+
+    #[test]
+    fn scratchpads_and_transports_are_private_per_client_state() {
+        let (first, first_rx) = state_with_test_runtime();
+        let (second, second_rx) = state_with_test_runtime();
+        let pane = &first.scratch.panes[0];
+        first
+            .scratch_client()
+            .expect("first client scratch")
+            .send_input(pane.id, pane.pty_generation, true, b"private".to_vec());
+
+        assert!(first_rx.recv().is_ok());
+        assert!(second_rx.try_recv().is_err());
+        assert_eq!(second.scratch.panes.len(), 1);
+    }
+
+    #[test]
+    fn reopening_after_repeated_session_changes_never_spawns_a_duplicate() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+                let (mut scratch, receiver) = state_with_test_runtime();
+                scratch.scratch_visible = true;
+                backend.state_mut().scratch = scratch.scratch;
+                backend.state_mut().scratch_runtime = scratch.scratch_runtime.take();
+
+                for epoch in 1..=4 {
+                    hide_state_for_session_switch(backend.state_mut());
+                    backend.state_mut().runtime_epoch = epoch;
+                    backend
+                        .dispatch(crate::Msg::RunAction(
+                            crate::input::Action::ToggleScratchpad,
+                        ))
+                        .expect("reopen scratchpad");
+                    assert_eq!(backend.state().scratch.panes.len(), 1);
+                }
+                while let Ok(message) = receiver.try_recv() {
+                    assert!(
+                        !matches!(
+                            message,
+                            crate::session::client::ClientOutbound::Control(
+                                crate::session::protocol::ClientMessage::SpawnPane { .. }
+                            )
+                        ),
+                        "reopening an existing scratchpad must not spawn another PTY"
+                    );
+                }
+            })
+            .expect("spawn scratch dedup test thread")
+            .join()
+            .expect("scratch dedup test thread panicked");
     }
 }

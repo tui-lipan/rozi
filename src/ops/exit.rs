@@ -96,6 +96,7 @@ pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool
         }
     }
     crate::ops::session::release_background_for_exit(ctx, close_temporary);
+    crate::scratchpad::shutdown_for_client_exit(&mut ctx.state);
     crate::ops::services::terminate_all(&mut ctx.state);
     // A session whose server goes down with us leaves no other copy of its layout, so mirror it to
     // disk regardless of `[session] autosave`; anything still running is its own record.

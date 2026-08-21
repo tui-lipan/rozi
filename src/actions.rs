@@ -58,7 +58,7 @@ fn toggle_pane_logging(ctx: &mut Context<AppRoot>) -> Update {
     };
     let generation = pane.pty_generation;
     let enabled = !pane.logging;
-    if let Some(client) = &ctx.state.current().session_client {
+    if let Some(client) = ctx.state.pty_client_for_pane(id) {
         client.set_pane_logging(
             id,
             generation,

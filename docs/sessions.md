@@ -211,9 +211,10 @@ normal state - the launcher is also where killing your last session lands you.
 Starting a shell there gives you an ephemeral session with whatever layout the launch had prepared.
 Because no pane is competing for the keyboard in the launcher, a bare `Enter` does it; the ordinary
 `spawn` binding works there too - in either spelling, `<prefix> Enter` or `<mod>+Enter` - and is
-what you keep using once a session is up. Other PTY-creating actions (`open-config`, `[keys]` /
-sidebar `run`/`popup`, scratchpad, control `new-pane`) also start that ephemeral first, then run
-the requested command once the session is attached.
+what you keep using once a session is up. Other session-backed PTY actions (`open-config`, `[keys]`
+/ sidebar `run`/`popup`, control `new-pane`) also start that ephemeral first, then run the requested
+command once the session is attached. The client-owned scratchpad needs no session and can open
+directly from the launcher.
 
 ### Other startup policies
 

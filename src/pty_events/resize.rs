@@ -17,6 +17,19 @@ pub(crate) fn handle_pane_resize(
     if ctx.state.current().shared.is_some() && !ctx.state.is_controller() && !local {
         return Update::none();
     }
+    if crate::scratchpad::contains(&ctx.state, id) {
+        let client = ctx.state.scratch_client();
+        let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
+            return Update::none();
+        };
+        let Some(client) = client else {
+            pane.terminal.status =
+                ManagedTerminalStatus::Error("scratch runtime disconnected".into());
+            return Update::full();
+        };
+        client.resize(id, pane.pty_generation, true, cols.max(1), rows.max(1));
+        return Update::none();
+    }
     // The pane rect updates immediately, but the client-side screen only reshapes on the server's
     // ordered `Resized` broadcast, so both parsers reshape at the same byte position.
     let client = ctx.state.current().session_client.clone();
@@ -101,7 +114,8 @@ pub(crate) fn flush_background_resizes(state: &mut crate::state::State, epoch: u
         return Update::none();
     };
     attachment.resize_flush_scheduled = false;
-    // Client-local overlays are torn down on a switch and never belong to a background attachment.
+    // Popups are torn down on a switch and never belong to a background attachment. Scratch
+    // resizes use the client runtime directly and never enter this map.
     attachment.pending_resizes.retain(|(local, _), _| !*local);
     Update::none()
 }

@@ -354,6 +354,8 @@ pub enum Msg {
         name: String,
         client: session::client::SessionClient,
     },
+    /// The private client-owned scratchpad PTY host stopped unexpectedly.
+    ScratchRuntimeFailed(String),
     SessionDisconnected {
         epoch: u64,
         name: String,

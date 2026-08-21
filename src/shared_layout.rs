@@ -737,6 +737,25 @@ mod tests {
     use crate::state::{Pane, State};
 
     #[test]
+    fn client_scratchpad_is_excluded_from_shared_layout() {
+        let mut state = State::new(Config::default(), Theme::default());
+        let scratch_id = 1 << 31;
+        state
+            .scratch
+            .panes
+            .push(Pane::new(scratch_id, 100, FloatRect::default()));
+        crate::tiling::append_tiled_window(&mut state.scratch, scratch_id);
+
+        let layout = shared_layout_from_state(&state, (100, 30));
+        assert!(layout.workspaces.iter().all(|workspace| {
+            workspace
+                .panes
+                .iter()
+                .all(|pane| pane.pane_id != scratch_id)
+        }));
+    }
+
+    #[test]
     fn shared_pane_without_replay_field_parses_as_non_replay() {
         // `replay` remains defaulted independently of the launch representation.
         let pane: SharedPane = serde_json::from_value(serde_json::json!({

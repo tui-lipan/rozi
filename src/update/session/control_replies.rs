@@ -202,7 +202,7 @@ pub(crate) fn flush_pending_control_input(
     {
         return;
     }
-    if let Some(client) = ctx.state.current().session_client.clone() {
+    if let Some(client) = ctx.state.pty_client_for_pane(pane_id) {
         client.send_input(pane_id, generation, local, bytes);
     }
 }

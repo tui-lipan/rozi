@@ -108,7 +108,7 @@ pub(crate) fn close_pane_inner_with_focus(
             0.0,
             ctx.state.tile_gap(),
         );
-        let client = ctx.state.current().session_client.clone();
+        let client = ctx.state.scratch_client();
         let was_focused = ctx.state.scratch.focused_pane == Some(id);
         let scrollable_neighbor = (ctx.state.scratch.layout_kind
             == crate::state::LayoutKind::Scrollable)

@@ -32,6 +32,7 @@ mod pty_events;
 mod release_app;
 mod rules;
 pub mod runtime_metrics;
+mod scratch_runtime;
 mod scratchpad;
 mod send_keys;
 pub mod session;

@@ -14,8 +14,8 @@ pub(crate) fn output(
     bytes: Vec<u8>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
-        // Local panes are current-view overlays; they are torn down on session switch and never
-        // live in a parked attachment.
+        // A popup is owned by the outgoing attachment and never lives in a parked one. Scratch
+        // frames are retagged with the current epoch when their private mailbox is drained.
         if local {
             return Update::none();
         }
@@ -26,12 +26,16 @@ pub(crate) fn output(
         }
         return Update::none();
     }
-    let focused = ctx.state.current().focused_pane;
+    let focused = ctx.state.focused_pane();
     let attended = ctx.state.is_pane_attended(pane_id);
     let bell_notifications = ctx.state.config.notifications.bell;
     // Reasserted here, on the output path itself, so it holds for every pane however it was
     // created and whichever attachment is feeding it.
-    let policy = ctx.state.current().image_media_policy();
+    let policy = if local && crate::scratchpad::contains(&ctx.state, pane_id) {
+        GraphicsMediaPolicy::SHARED
+    } else {
+        ctx.state.current().image_media_policy()
+    };
     // Activity/bell indicators are workspace-agnostic (the workbar counts them across every
     // workspace), so an off-screen pane still needs a frame on the chunk that first raises one.
     // Both flags only ever go false -> true here, so that is a single frame per quiet period

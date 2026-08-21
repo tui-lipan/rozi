@@ -22,14 +22,17 @@ pub(crate) fn forward_key_to_pane(ctx: &mut Context<AppRoot>, id: PaneId, key: K
 
 fn forward_key_to_targets(ctx: &mut Context<AppRoot>, targets: &[PaneId], key: KeyEvent) -> Update {
     let mut repaint = false;
-    let client = ctx.state.current().session_client.clone();
-    ctx.state.current_mut().engaged = true;
     for id in targets {
         let local = crate::pane_lifecycle::pane_is_local(&ctx.state, *id);
+        let scratch = crate::scratchpad::contains(&ctx.state, *id);
+        let client = ctx.state.pty_client_for_pane(*id);
+        if !scratch {
+            ctx.state.current_mut().engaged = true;
+        }
         let Some(pane) = find_pane_mut(&mut ctx.state, *id) else {
             continue;
         };
-        if let Some(client) = client.clone() {
+        if let Some(client) = client {
             if send_key_to_session_client(
                 &client,
                 *id,
@@ -65,9 +68,12 @@ pub(crate) fn send_pane_bytes(
     if let Some(blocked) = input_blocked(ctx) {
         return Err(blocked.reason);
     }
-    let client = ctx.state.current().session_client.clone();
-    ctx.state.current_mut().engaged = true;
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let scratch = crate::scratchpad::contains(&ctx.state, id);
+    let client = ctx.state.pty_client_for_pane(id);
+    if !scratch {
+        ctx.state.current_mut().engaged = true;
+    }
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
         return Ok(());
     };
@@ -117,12 +123,14 @@ pub(crate) fn handle_pane_input(
         return blocked.notified.update();
     }
 
-    let client = ctx.state.current().session_client.clone();
+    let client = ctx.state.pty_client_for_pane(id);
     // Only a paste is the user putting something into this session. The focus notifications that
     // also arrive here are the terminal reporting on itself — counting those would mark a session
     // worked-in for having been looked at, which is the opposite of what engagement means.
     if matches!(input.kind, TerminalInputKind::Paste) {
-        ctx.state.current_mut().engaged = true;
+        if !crate::scratchpad::contains(&ctx.state, id) {
+            ctx.state.current_mut().engaged = true;
+        }
         // Same distinction, applied to attention: a paste is the user acting in this pane, so it
         // answers an alert the way a keystroke does. The focus notifications that also arrive here
         // are the terminal reporting on itself and answer nothing.
@@ -169,7 +177,7 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
         };
     }
 
-    let client = ctx.state.current().session_client.clone();
+    let client = ctx.state.pty_client_for_pane(id);
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     let interval =
         crate::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);
@@ -205,7 +213,7 @@ pub(crate) fn arm_pointer_flow(ctx: &mut Context<AppRoot>, id: PaneId, after: Du
 pub(crate) fn pointer_flow_tick(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     use crate::pty_events::pointer_flow::Paced;
 
-    let client = ctx.state.current().session_client.clone();
+    let client = ctx.state.pty_client_for_pane(id);
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     let interval =
         crate::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);

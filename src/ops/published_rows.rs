@@ -79,7 +79,7 @@ fn report_rows(
     else {
         return Update::none();
     };
-    if let Some(client) = state.current().session_client.as_ref() {
+    if let Some(client) = state.pty_client_for_pane(pane_id) {
         client.report_pane_rows(
             pane_id,
             generation,

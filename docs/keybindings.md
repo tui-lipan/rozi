@@ -416,9 +416,11 @@ is on.
 
 Press `` ` `` (backtick) to toggle a **dropdown scratch workspace**. It grows into view over the
 current workspace and shrinks back out again with one key, always anchored to the bottom edge - so
-its bottom border holds its row and only the edge it opens along moves. Its panes, PTYs, layouts, and scrollback stay alive while
-hidden, and it follows you across workspace switches. It is not part of any attachment workspace,
-shared layout, or profile. Configure its initial command / cwd / height under
+its bottom border holds its row and only the edge it opens along moves. Its panes, PTYs, layouts,
+and scrollback stay alive while hidden. The same private scratch workspace follows this Rozi client
+across workspace and session switches. It is not part of any attachment workspace, shared layout,
+profile, or resurrection snapshot, and the client discards it on exit. Configure its initial
+command / cwd / height under
 `[scratchpad]` in [Configuration](configuration.md).
 
 While open, ordinary pane actions target scratch panes: create/close, focus, move/swap, layout,

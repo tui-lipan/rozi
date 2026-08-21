@@ -248,6 +248,7 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
     let theme_owned = state.theme.clone();
     let theme = &theme_owned;
     let client = state.current().session_client.clone();
+    let scratch_client = state.scratch_client();
     let highlight_focused_background = state.config.pane.highlight_focused_background;
     let mut changed = false;
     let active_index = state.current().active_workspace;
@@ -280,7 +281,7 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
         );
         let pane_changed = scratch.terminal.set_palette(palette);
         changed |= pane_changed;
-        if pane_changed && let Some(client) = &client {
+        if pane_changed && let Some(client) = &scratch_client {
             client.set_palette(scratch.id, scratch.pty_generation, true, palette);
         }
     }

@@ -656,6 +656,26 @@ mod tests {
     }
 
     #[test]
+    fn client_scratchpad_is_excluded_from_profiles() {
+        let mut state = State::new(Config::default(), Theme::default());
+        let scratch_id = 1 << 31;
+        state.scratch.panes.push(Pane::new(
+            scratch_id,
+            100,
+            tui_lipan::prelude::FloatRect::default(),
+        ));
+        crate::tiling::append_tiled_window(&mut state.scratch, scratch_id);
+
+        let profile = profile_from_state(&state);
+        assert!(
+            profile
+                .workspaces
+                .iter()
+                .all(|workspace| { workspace.panes.iter().all(|pane| pane.id != scratch_id) })
+        );
+    }
+
+    #[test]
     fn profile_tree_toml_shape_is_stable() {
         let profile = Profile {
             version: 1,

@@ -321,10 +321,34 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             name,
             client,
         } => session::connected(ctx, epoch, name, client),
+        Msg::ScratchRuntimeFailed(message) => crate::scratch_runtime::failed(ctx, message),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
         Msg::DrainSessionFrames { epoch, mailbox } => {
             let event = mailbox.pop();
             mailbox.finish_drain();
+            if epoch == crate::scratch_runtime::SCRATCH_RUNTIME_EPOCH {
+                match event {
+                    Some(crate::session::client::InboundEvent::Frame(frame)) => {
+                        if let Some(message) = crate::scratch_runtime::message_for_frame(
+                            ctx.state.runtime_epoch,
+                            *frame,
+                        ) {
+                            return handle_msg(_app, message, ctx);
+                        }
+                        return Update::none();
+                    }
+                    Some(crate::session::client::InboundEvent::Disconnected) => {
+                        return crate::scratch_runtime::failed(
+                            ctx,
+                            "private PTY host disconnected".to_string(),
+                        );
+                    }
+                    Some(crate::session::client::InboundEvent::Failed(message)) => {
+                        return crate::scratch_runtime::failed(ctx, message);
+                    }
+                    None => return Update::none(),
+                }
+            }
             match event {
                 Some(crate::session::client::InboundEvent::Frame(frame)) => {
                     return handle_msg(

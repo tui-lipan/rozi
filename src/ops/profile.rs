@@ -331,11 +331,6 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
     let Some(client) = ctx.state.current().session_client.clone() else {
         return Update::full();
     };
-    for scratch in &ctx.state.scratch.panes {
-        client.kill(scratch.id, scratch.pty_generation, true);
-    }
-    ctx.state.scratch = crate::state::Workspace::new(0);
-    ctx.state.scratch_visible = false;
     ctx.state.current_mut().pending_spawns.clear();
     // Replay inputs queued for panes of the layout being replaced must never reach their
     // (killed) panes' successors; `spawn_state_panes_on_session` re-queues the new layout's own.

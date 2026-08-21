@@ -10,7 +10,7 @@ use crate::ops::session::discovery::immediate_picker_rows;
 pub(crate) fn release_current_session(ctx: &mut Context<AppRoot>) {
     ctx.state.sidebar.invalidate_sessions();
     crate::popup::kill_if_open(ctx);
-    crate::scratchpad::close_for_session_switch(ctx);
+    crate::scratchpad::hide_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     let Some(client) = ctx.state.current().session_client.clone() else {
         return;
@@ -31,10 +31,10 @@ pub(crate) fn release_current_session(ctx: &mut Context<AppRoot>) {
 /// are only torn down on quit (see [`crate::ops::exit`]).
 pub(crate) fn park_current_session(ctx: &mut Context<AppRoot>) {
     ctx.state.sidebar.invalidate_sessions();
-    // The popup is a client-local overlay bound to the current server; it must not linger across a
-    // switch. The scratchpad, likewise client-local, closes with the current view.
+    // The popup is bound to the current server and cannot cross the switch. The client-owned
+    // scratchpad only hides while the attachment under it changes.
     crate::popup::kill_if_open(ctx);
-    crate::scratchpad::close_for_session_switch(ctx);
+    crate::scratchpad::hide_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     let disposition = current_disposition(ctx);
     mark_current_parked(ctx, true);
@@ -112,7 +112,7 @@ pub(crate) fn switch_to_parked(
 ) -> Update {
     ctx.state.sidebar.invalidate_sessions();
     crate::popup::kill_if_open(ctx);
-    crate::scratchpad::close_for_session_switch(ctx);
+    crate::scratchpad::hide_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     let disposition = current_disposition(ctx);
     mark_current_parked(ctx, true);
@@ -256,12 +256,12 @@ pub(crate) fn dismiss_session_pickers(ctx: &mut Context<AppRoot>) {
     ctx.state.profile_picker = None;
 }
 
-/// Shared cleanup when a new current session is installed: close the popup and scratchpad (bound to
-/// the outgoing session) and the session/profile selection overlays that led here, and mark the
+/// Shared cleanup when a new current session is installed: close the outgoing session's popup,
+/// hide the client-owned scratchpad, close the selection overlays that led here, and mark the
 /// Sessions tab stale so the post-update chokepoint re-sweeps for the new current.
 pub(crate) fn prepare_session_install(ctx: &mut Context<AppRoot>) {
     crate::popup::kill_if_open(ctx);
-    crate::scratchpad::close_for_session_switch(ctx);
+    crate::scratchpad::hide_for_session_switch(ctx);
     dismiss_session_pickers(ctx);
     ctx.state.sidebar.invalidate_sessions();
 }
@@ -425,7 +425,7 @@ pub(crate) fn enter_launcher(ctx: &mut Context<AppRoot>) -> Update {
 
 pub(crate) fn enter_sessionless(ctx: &mut Context<AppRoot>) {
     crate::popup::kill_if_open(ctx);
-    crate::scratchpad::close_for_session_switch(ctx);
+    crate::scratchpad::hide_for_session_switch(ctx);
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     clear_pending_session_action(ctx, None);
@@ -754,7 +754,6 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<AppRoot>) -> Update {
         crate::state::PendingSessionAction::OpenConfigFile => {
             crate::ops::config::open_config_file(ctx)
         }
-        crate::state::PendingSessionAction::ToggleScratchpad => crate::scratchpad::toggle(ctx),
         crate::state::PendingSessionAction::UserCommand { action, env } => {
             crate::actions::execute_user_command_action_with_env(ctx, &action, env)
         }

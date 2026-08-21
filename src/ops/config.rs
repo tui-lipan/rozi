@@ -153,6 +153,9 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     {
         client.reload_agents();
     }
+    if let Some(client) = ctx.state.scratch_client() {
+        client.reload_agents();
+    }
     let _ = crate::ops::pick::unload_extensions(ctx, &stale_extensions);
     let _ = crate::ops::published_rows::unload_extensions(ctx, &stale_extensions);
     crate::ops::extensions::unload(ctx, &stale_extensions);

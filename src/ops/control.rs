@@ -180,7 +180,7 @@ pub(crate) fn handle_control_request(
                 .or(ctx.state.focused_pane());
             match id.and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id)) {
                 Some(pane) => {
-                    if let Some(client) = &ctx.state.current().session_client {
+                    if let Some(client) = ctx.state.pty_client_for_pane(pane.id) {
                         client.set_pane_logging(
                             pane.id,
                             pane.pty_generation,
@@ -297,19 +297,21 @@ fn set_status(
     };
     let generation = pane.pty_generation;
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
-    if !ctx.state.current().session_attached {
+    let scratch = crate::scratchpad::contains(&ctx.state, id);
+    if !scratch && !ctx.state.current().session_attached {
         return ControlResponse::error(format!("pane {id} session is not attached"));
     }
-    if ctx
-        .state
-        .current()
-        .shared
-        .as_ref()
-        .is_some_and(|shared| shared.read_only)
+    if !scratch
+        && ctx
+            .state
+            .current()
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.read_only)
     {
         return ControlResponse::error("attached read-only");
     }
-    let Some(client) = ctx.state.current().session_client.clone() else {
+    let Some(client) = ctx.state.pty_client_for_pane(id) else {
         return ControlResponse::error(format!("pane {id} session is not connected"));
     };
     client.set_pane_status(id, generation, local, status, reason);
@@ -361,7 +363,7 @@ fn control_input_target(
     let Some(id) = target.or(ctx.state.focused_pane()) else {
         return Err(ControlResponse::error("no target pane and no focused pane"));
     };
-    let client = ctx.state.current().session_client.clone();
+    let client = ctx.state.pty_client_for_pane(id);
     let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
     let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
         return Err(ControlResponse::error(format!("pane {id} not found")));

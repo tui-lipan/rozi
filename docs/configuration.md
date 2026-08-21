@@ -751,21 +751,24 @@ ssh_args = ["-o", "ProxyJump=bastion"]
 
 ## `[scratchpad]`
 
-The dropdown scratch workspace (toggle: `` ` ``). Its panes and PTYs stay alive while hidden.
+The dropdown scratch workspace (toggle: `` ` ``) is a private, transient terminal owned by the
+Rozi client. It follows that client across sessions, is never shared with collaborators or saved in
+profiles, and is discarded when the client exits. Its panes and PTYs stay alive while hidden and
+through session switches.
 
 | Key | Default | Notes |
 | --- | --- | --- |
 | `command` | the normal shell | Program for the first pane of an empty scratch workspace (e.g. `btop`). |
-| `cwd` | the configured `cwd` | Working directory for that initial pane. |
+| `cwd` | the focused local pane's cwd | Working directory for the initial pane. An explicit value wins; otherwise the cwd is captured only when the scratch workspace is first created. |
 | `height` | `0.4` | Fraction of the viewport height it opens at; clamped to `0.1`–`0.9`. |
 
 Drag the scratchpad's top edge (its title/top-border row) up or down to resize it while it is
 open; a pane against that edge also resizes it by right-drag or in resize mode, since the edge is
 the workspace border and has no split to move. See [Keybindings](keybindings.md#scratchpad). The
-adjusted height overrides `height` for the rest of the session; it resets to `height` on restart.
+adjusted height overrides `height` for the rest of the client run; it resets to `height` on restart.
 
-Additional panes use ordinary pane allocation and layout actions, but the scratch workspace is
-client-local: it is never saved to profiles or `SharedLayout` and is discarded on a session switch.
+Additional panes use ordinary pane allocation and layout actions. The scratch workspace stays
+outside attachments, profiles, resurrection data, and `SharedLayout`.
 
 ## `[sidebar]`
 

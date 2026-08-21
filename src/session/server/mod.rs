@@ -1133,13 +1133,14 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
         loaded.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
     );
+    let client_scratch = crate::scratch_runtime::is_client_scratch_session(name);
     let mut server = SessionServer::new_named_with_settings(
         name,
         ServerSettings {
             log_dir: loaded.config.logging.dir,
             log_max_bytes: loaded.config.logging.max_bytes,
-            resurrect: loaded.config.session.resurrect,
-            allow_takeover: loaded.config.session.allow_takeover,
+            resurrect: !client_scratch && loaded.config.session.resurrect,
+            allow_takeover: !client_scratch && loaded.config.session.allow_takeover,
             scrollback: loaded.config.scrollback,
             shell,
             command_shell,

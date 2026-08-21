@@ -151,10 +151,10 @@ pub(crate) fn spawn_pane_in_scratch(
     let tile_gap = ctx.state.tile_gap();
     let split_width_multiplier = ctx.state.config.layout.split_width_multiplier;
     let rect = crate::scratchpad::deployed_rect(&ctx.state, ctx.viewport());
-    let id = ctx.state.current().next_pane_id;
-    ctx.state.current_mut().next_pane_id = id.saturating_add(1);
-    let generation = ctx.state.current().next_pty_generation;
-    ctx.state.current_mut().next_pty_generation = generation.saturating_add(1);
+    let id = ctx.state.next_scratch_pane_id;
+    ctx.state.next_scratch_pane_id = id.saturating_add(1);
+    let generation = ctx.state.next_scratch_pty_generation;
+    ctx.state.next_scratch_pty_generation = generation.saturating_add(1);
     let mut pane = Pane::new(id, ctx.state.config.scrollback, rect);
     pane.pty_generation = generation;
     pane.identity = identity;
@@ -172,11 +172,7 @@ pub(crate) fn spawn_pane_in_scratch(
     // Additional panes use the ordinary pane open transition inside the deployed workspace.
     pane.opening = !initial_pane;
     pane.terminal_active = initial_pane;
-    let env = pane_env(
-        ctx.state.control_socket_path.as_deref(),
-        &pane,
-        ctx.state.current().remote_host.is_some(),
-    );
+    let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane, false);
     let request = PaneSpawnRequest {
         pane_id: id,
         local: true,
@@ -685,6 +681,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
         env,
         palette,
     } = request;
+    let scratch = local && state.scratch.panes.iter().any(|pane| pane.id == pane_id);
     let PaneIdentity {
         launch,
         cwd,
@@ -697,7 +694,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     // injected as type-ahead input after the spawn succeeds (see `State::pending_replay_inputs`),
     // so aliases/functions/rc-file PATH resolve and the prompt's title integration runs first.
     let launch = match launch {
-        Some(crate::pane_launch::PaneLaunch::Shell { command }) if replay => {
+        Some(crate::pane_launch::PaneLaunch::Shell { command }) if replay && !scratch => {
             state
                 .current_mut()
                 .pending_replay_inputs
@@ -711,7 +708,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     // shell-integration env carry local paths the remote — possibly a different OS — cannot run.
     // Send empty argv so the server resolves its own default shell (`pty_config` falls back when
     // the argv is empty), and drop the local shell-integration env.
-    let (shell, command_shell, extra_env) = if state.current().remote_host.is_some() {
+    let (shell, command_shell, extra_env) = if !scratch && state.current().remote_host.is_some() {
         (Vec::new(), Vec::new(), Vec::new())
     } else {
         resolved_launch_argv(&state.config)
@@ -734,7 +731,19 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
         shell,
         command_shell,
     };
-    if let Some(client) = state.current().session_client.clone() {
+    if scratch {
+        if let Some(client) = state.scratch_client() {
+            client.spawn_pane(request);
+        } else if let Some(pane) = state
+            .scratch
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == pane_id && pane.pty_generation == generation)
+        {
+            pane.terminal.status =
+                ManagedTerminalStatus::Error("scratch runtime disconnected".into());
+        }
+    } else if let Some(client) = state.current().session_client.clone() {
         client.spawn_pane(request);
     } else {
         state.current_mut().pending_spawns.push(request);

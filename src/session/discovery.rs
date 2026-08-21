@@ -84,6 +84,7 @@ pub fn discover_sessions_excluding(
 ) -> std::io::Result<Vec<DiscoveredSession>> {
     let dir = crate::control::runtime_dir()?;
     let mut endpoints = EndpointRegistry::list_session_endpoints(&dir)?;
+    endpoints.retain(|(name, _)| !crate::scratch_runtime::is_client_scratch_session(name));
     if let Some(exclude_name) = exclude_name {
         endpoints.retain(|(name, _)| name != exclude_name);
     }

@@ -319,7 +319,8 @@ sidebar or switching every panel away from Files/Git stops the loop. A focused p
 finishing also refreshes Git immediately, so a build, commit, or checkout does not wait for the next
 poll. Local refreshes preserve expansion and explorer state, while remote refreshes re-fetch every
 directory already loaded from the session server. Change markers are text rather than Nerd Font
-glyphs, and icons are off by default, so neither tab assumes a patched font.
+glyphs, and file-kind icons are off by default. Directory chevrons still use Nerd Font glyphs unless
+`nerd_icons = false`.
 
 With nothing to show, **Git** says which nothing it is: `No changes` in a clean repository,
 `Not a git repository` when the pane's directory has no `.git` above it, and `Loading changes…`

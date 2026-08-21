@@ -14,6 +14,11 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                     ToggleAnimations,
                 ),
                 (
+                    "Nerd icons",
+                    enabled_status(ctx.state.config.nerd_icons),
+                    ToggleNerdIcons,
+                ),
+                (
                     "Which-key",
                     ctx.state.config.input.which_key.label().to_string(),
                     CycleWhichKey,

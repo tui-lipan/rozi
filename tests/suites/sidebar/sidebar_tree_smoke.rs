@@ -109,6 +109,66 @@ fn files_tab_lists_the_focused_pane_directory() {
 }
 
 #[test]
+fn files_tab_uses_ascii_directory_markers_when_nerd_icons_are_off() {
+    let Some(repo) = Repo::new("ascii-icons") else {
+        eprintln!("skipping: git is unavailable");
+        return;
+    };
+    let cwd = repo.0.to_string_lossy().into_owned();
+    let lines = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
+                state.config.nerd_icons = false;
+                let tab = SidebarTab::Tree {
+                    view: SidebarTreeView::Files,
+                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+                };
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
+                state.config.sidebar.tabs = vec![tab];
+                let pane = state.current().workspaces[0].panes[0].id;
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+            }
+            for _ in 0..40 {
+                backend.render();
+                let _ = backend.pump();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .iter()
+                .map(|line| line.chars().take(32).collect())
+                .collect::<Vec<String>>()
+        })
+        .expect("spawn ascii-icon tree smoke thread")
+        .join()
+        .expect("ascii-icon tree smoke completes");
+    let joined = lines.join("\n");
+    assert!(
+        joined.contains('>') || joined.contains('v'),
+        "ascii directory marker renders: {joined}"
+    );
+    assert!(
+        !joined.contains('') && !joined.contains(''),
+        "nerd directory chevrons stay off: {joined}"
+    );
+}
+
+#[test]
 fn files_tab_refresh_tick_reloads_directory_without_remounting() {
     let Some(repo) = Repo::new("refresh") else {
         eprintln!("skipping: git is unavailable");

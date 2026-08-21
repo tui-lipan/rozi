@@ -111,6 +111,9 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "animations",
             "motion",
             "transitions",
+            "nerd icons",
+            "nerd font",
+            "patched font",
             "focused border",
             "focused background",
             "focused titlebar",
@@ -234,6 +237,12 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
         ToggleAnimations => {
             alias_list(&["animation effects", "motion effects", "transitions"])
         }
+        ToggleNerdIcons => alias_list(&[
+            "nerd font",
+            "nerd icons",
+            "patched font",
+            "powerline icons",
+        ]),
         CyclePaneAnimation => alias_list(&[
             "pane open animation",
             "pane close animation",

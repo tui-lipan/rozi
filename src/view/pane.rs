@@ -44,6 +44,26 @@ impl PaneMerge {
     }
 }
 
+fn pane_icon(ctx: &Context<AppRoot>, pane: &Pane) -> &'static str {
+    ctx.state
+        .config
+        .pane_title_icon(pane.fullscreen, pane.floating)
+}
+
+fn titled(icon: &str, title: &str) -> String {
+    if icon.is_empty() {
+        title.to_string()
+    } else {
+        format!("{icon}  {title}")
+    }
+}
+
+fn title_cap_style(ctx: &Context<AppRoot>) -> CapStyle {
+    ctx.state
+        .config
+        .effective_cap_style(ctx.state.config.pane.title_style)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PaneKind {
     Tiled,
@@ -243,13 +263,7 @@ fn title_parts(
     let titlebar = ctx.state.config.pane.titlebar;
     let focused = focused_pane == Some(id);
     let titlebar_focused = focused && ctx.state.config.pane.highlight_focused_titlebar;
-    let icon = if pane.fullscreen {
-        "󰊓"
-    } else if pane.floating {
-        "󰹙"
-    } else {
-        "󰖲"
-    };
+    let icon = pane_icon(ctx, pane);
     let badge = if pane.fullscreen {
         Some("fullscreen")
     } else if pane.floating {
@@ -397,7 +411,7 @@ pub(crate) fn divider_title_element(
 
     match titlebar {
         PaneTitlebarMode::Border => {
-            let mut label = format!("{icon}  {title}");
+            let mut label = titled(icon, &title);
             if let Some(badge) = badge {
                 label.push_str(&format!("  · {badge}"));
             }
@@ -410,7 +424,7 @@ pub(crate) fn divider_title_element(
             )
         }
         PaneTitlebarMode::Integrated => {
-            let title_text: Element = Text::new(format!("{icon}  {title}"))
+            let title_text: Element = Text::new(titled(icon, &title))
                 .style(text_style)
                 .overflow(Overflow::Ellipsis)
                 .width(Length::Flex(1))
@@ -424,7 +438,7 @@ pub(crate) fn divider_title_element(
             });
             let title_row = filled_title_row(
                 title_bar_fill_style,
-                ctx.state.config.pane.title_style.glyphs(),
+                title_cap_style(ctx).glyphs(),
                 title_bar_bg,
                 frame_bg,
                 title_text,
@@ -470,9 +484,9 @@ pub(crate) fn seam_title_element(
         return None;
     }
     let id = pane.id;
-    let title_style = ctx.state.config.pane.title_style;
+    let title_style = title_cap_style(ctx);
     let parts = title_parts(app, ctx, pane, focused_pane);
-    let label = format!("{}  {}", parts.icon, parts.title);
+    let label = titled(parts.icon, &parts.title);
 
     match ctx.state.config.pane.titlebar {
         // The neighbour above redraws the border line itself, so only the label is missing. Place
@@ -611,13 +625,7 @@ pub(crate) fn pane_element(
     let theme = &ctx.state.theme;
     let id = pane.id;
     let focused = effective_focus == Some(id);
-    let icon = if pane.fullscreen {
-        "󰊓"
-    } else if pane.floating {
-        "󰹙"
-    } else {
-        "󰖲"
-    };
+    let icon = pane_icon(ctx, pane);
     let badge = if pane.fullscreen {
         Some("fullscreen")
     } else if pane.floating {
@@ -756,9 +764,9 @@ pub(crate) fn pane_element(
     // row and the body frame each paint their own background, covering the full rect anyway.
     let mut window_stack = VStack::new().align(Align::Stretch);
     if show_titles && titlebar == PaneTitlebarMode::Bar {
-        let title_text: Element = Text::new(format!(
-            "{icon}  {}",
-            title.as_ref().expect("visible titlebar has a title")
+        let title_text: Element = Text::new(titled(
+            icon,
+            title.as_ref().expect("visible titlebar has a title"),
         ))
         .style(title_bar_text_style)
         .overflow(Overflow::Ellipsis)
@@ -775,7 +783,7 @@ pub(crate) fn pane_element(
         // `Padded` keeps the title flush with the frame below, with blank side padding. The cap
         // styles instead draw the titlebar color as end caps over the backdrop, so the row reads
         // as a rounded/pointed pill: the fill (and text) live in a Flex middle between the caps.
-        let title_row: Element = match ctx.state.config.pane.title_style.glyphs() {
+        let title_row: Element = match title_cap_style(ctx).glyphs() {
             None => {
                 let mut row = HStack::new()
                     .style(title_bar_fill_style)
@@ -845,7 +853,7 @@ pub(crate) fn pane_element(
             .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
             .child(title_row)
             .into();
-        if merge.left_seam && ctx.state.config.pane.title_style.glyphs().is_none() {
+        if merge.left_seam && title_cap_style(ctx).glyphs().is_none() {
             // A `Padded` title has no cap to sit on the seam, so keep its row off the shared
             // border column: the spacer is an empty Text that leaves the seam cell untouched for
             // the neighbor's border glyph. (Capped titles instead draw their left cap there, so
@@ -969,7 +977,7 @@ pub(crate) fn pane_element(
         match titlebar {
             PaneTitlebarMode::Border if !merge.title_outside_frame() => {
                 let title = title.as_ref().expect("visible titlebar has a title");
-                let border_title = format!("{icon}  {title}");
+                let border_title = titled(icon, title);
                 let mut labels = BorderLabels::new()
                     .left(border_title)
                     .style(border_title_text_style)
@@ -995,7 +1003,7 @@ pub(crate) fn pane_element(
                         .height(Length::Px(1))
                         .into()
                 });
-                let title_style = ctx.state.config.pane.title_style;
+                let title_style = title_cap_style(ctx);
                 let title_row: Element = match title_style.glyphs() {
                     // The frame's own top-edge decoration draws the half-block caps as its corner
                     // cells, so the header only pads past the left one.
@@ -1045,9 +1053,9 @@ pub(crate) fn pane_element(
             // makes this the quiet layout - so the one cell of left padding is what lines the icon
             // up with where `border` puts it, just a row lower.
             PaneTitlebarMode::Inset => {
-                let title_text: Element = Text::new(format!(
-                    "{icon}  {}",
-                    title.as_ref().expect("visible titlebar has a title")
+                let title_text: Element = Text::new(titled(
+                    icon,
+                    title.as_ref().expect("visible titlebar has a title"),
                 ))
                 .style(border_title_text_style)
                 .overflow(Overflow::Ellipsis)

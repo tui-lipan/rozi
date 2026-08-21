@@ -86,15 +86,22 @@ fn upsert_theme_name(text: &str, name: &str) -> String {
 }
 
 pub fn persist_pane_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    persist_bool("pane", key, value)
+}
+
+/// Persist a top-level bool such as `nerd_icons`. TOML root keys must sit before any table, so
+/// this writes (or replaces) the assignment in the file prefix rather than inventing a section.
+pub fn persist_top_level_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
     };
-
-    let updated = upsert_bool_in_section(&text, "pane", key, value);
-    write_config_text(&path, updated)?;
+    write_config_text(
+        &path,
+        upsert_top_level_value(&text, key, if value { "true" } else { "false" }),
+    )?;
     Ok(path)
 }
 
@@ -293,6 +300,62 @@ fn persist_sidebar_value(key: &str, value: &str) -> std::result::Result<PathBuf,
 
 fn upsert_bool_in_section(text: &str, section: &str, key: &str, value: bool) -> String {
     upsert_value_in_section(text, section, key, if value { "true" } else { "false" })
+}
+
+/// Insert or replace a root-level `key = <line_value>` assignment. Root keys belong before the
+/// first table header; a key already sitting under a table is left alone and a new root copy is
+/// written in the prefix instead.
+fn upsert_top_level_value(text: &str, key: &str, line_value: &str) -> String {
+    let assignment = format!("{key} = {line_value}");
+    let mut output = String::new();
+    let mut wrote_key = false;
+    let mut in_table = false;
+    let mut lines = text.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
+        if section_starts {
+            if !wrote_key {
+                output.push_str(&assignment);
+                output.push('\n');
+                if !output.ends_with("\n\n") {
+                    output.push('\n');
+                }
+                wrote_key = true;
+            }
+            in_table = true;
+        }
+
+        if !in_table
+            && let Some((candidate, old_value)) = trimmed.split_once('=')
+            && candidate.trim() == key
+        {
+            if !wrote_key {
+                output.push_str(&assignment);
+                output.push('\n');
+                wrote_key = true;
+            }
+            consume_toml_value(old_value.trim(), &mut lines);
+            continue;
+        }
+
+        output.push_str(line);
+        output.push('\n');
+    }
+
+    if !wrote_key {
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        if !output.is_empty() && !output.ends_with("\n\n") {
+            output.push('\n');
+        }
+        output.push_str(&assignment);
+        output.push('\n');
+    }
+
+    output
 }
 
 /// Insert or replace `key = <line_value>` inside `[section]`, creating the section at the end
@@ -781,6 +844,33 @@ mod tests {
     fn upsert_bool_in_section_appends_missing_section() {
         let updated = upsert_bool_in_section("", "pane", "show_workbar", true);
         assert_eq!(updated, "[pane]\nshow_workbar = true\n");
+    }
+
+    #[test]
+    fn upsert_top_level_value_writes_before_the_first_table() {
+        assert_eq!(
+            upsert_top_level_value("", "nerd_icons", "false"),
+            "nerd_icons = false\n"
+        );
+        assert_eq!(
+            upsert_top_level_value("[pane]\nshow_titles = true\n", "nerd_icons", "false"),
+            "nerd_icons = false\n\n[pane]\nshow_titles = true\n"
+        );
+        assert_eq!(
+            upsert_top_level_value(
+                "scrollback = 5000\n\n[pane]\nshow_titles = true\n",
+                "nerd_icons",
+                "false"
+            ),
+            "scrollback = 5000\n\nnerd_icons = false\n\n[pane]\nshow_titles = true\n"
+        );
+        assert_eq!(
+            upsert_top_level_value("nerd_icons = true\n[pane]\n", "nerd_icons", "false"),
+            "nerd_icons = false\n[pane]\n"
+        );
+        let nested = upsert_top_level_value("[pane]\nnerd_icons = true\n", "nerd_icons", "false");
+        assert!(nested.starts_with("nerd_icons = false\n"));
+        assert!(nested.contains("[pane]\nnerd_icons = true\n"));
     }
 
     /// `[workbar.alert]` is the first nested section anything persists into, so pin that the

@@ -252,3 +252,67 @@ fn pane_titlebar_layouts_and_visibility_use_the_expected_frame_rows() {
         .join()
         .expect("pane-titlebar smoke test completes");
 }
+
+#[test]
+fn pane_titlebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 48,
+                h: 12,
+            });
+            {
+                let state = backend.state_mut();
+                state.config.nerd_icons = false;
+                state.config.pane.show_workbar = false;
+                state.config.pane.show_titles = true;
+                state.config.pane.titlebar = PaneTitlebarMode::Border;
+                state.config.pane.title_style = CapStyle::Round;
+                state.config.pane.highlight_focused_titlebar = true;
+                state.config.pane.padding = (0, 0, 0, 0);
+                state.config.pane.border_style = rozi::state::PaneBorderStyle::Rounded;
+                state.current_mut().workspaces[0].panes.clear();
+                state.current_mut().workspaces[0].tile_tree = None;
+                let mut pane = Pane::new(
+                    10,
+                    5_000,
+                    FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 48.0,
+                        h: 12.0,
+                    },
+                );
+                pane.opening = false;
+                pane.terminal_active = true;
+                pane.floating = false;
+                pane.set_custom_title(TITLE);
+                pane.terminal.process_server_output(b"body");
+                state.current_mut().workspaces[0].panes.push(pane);
+                let id = 10 as PaneId;
+                let start_axis = state.current().workspaces[0].start_axis;
+                let ratios = state.current().workspaces[0].split_ratios.clone();
+                state.current_mut().workspaces[0].tile_tree =
+                    build_dwindle_tree(&[id], start_axis, &ratios);
+                state.current_mut().focused_pane = Some(id);
+                state.current_mut().workspaces[0].focused_pane = Some(id);
+            }
+            backend.render();
+            let line = backend.capture_frame().to_fixed_grid_lines()[0].clone();
+            assert!(
+                line.contains(TITLE),
+                "title still renders without nerd icons: {line}"
+            );
+            assert!(
+                !line.contains('󰖲') && !line.contains('\u{e0b6}') && !line.contains('\u{e0b4}'),
+                "nerd glyphs stay off when nerd_icons is false: {line}"
+            );
+        })
+        .expect("spawn nerd-icons titlebar smoke")
+        .join()
+        .expect("nerd-icons titlebar smoke completes");
+}

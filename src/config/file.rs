@@ -49,6 +49,7 @@ struct FileConfig {
     cwd: Option<String>,
     scrollback: Option<usize>,
     frame_rate: Option<u16>,
+    nerd_icons: Option<bool>,
     input: InputFileConfig,
     animations: AnimationFileConfig,
     theme: ThemeFileConfig,
@@ -599,6 +600,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(frame_rate) = parsed.frame_rate {
         config.frame_rate = clamp_frame_rate(frame_rate, &mut warnings);
+    }
+    if let Some(nerd_icons) = parsed.nerd_icons {
+        config.nerd_icons = nerd_icons;
     }
     if let Some(dir) = non_empty(parsed.logging.dir) {
         config.logging.dir = Some(expand_path(dir));
@@ -1433,6 +1437,16 @@ mod file_tests {
         let loaded = load_config_from_text("frame_rate = 1000\n", path);
         assert_eq!(loaded.config.frame_rate, MAX_FRAME_RATE);
         assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+    }
+
+    #[test]
+    fn nerd_icons_parses_at_the_top_level_and_defaults_on() {
+        assert!(crate::config::Config::default().nerd_icons);
+        let loaded = load_config_from_text("nerd_icons = false\n", Path::new("config.toml"));
+        assert!(!loaded.config.nerd_icons);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let loaded = load_config_from_text("", Path::new("config.toml"));
+        assert!(loaded.config.nerd_icons);
     }
 
     /// Guards `examples/config.toml` against silent drift. Every struct in the file model denies

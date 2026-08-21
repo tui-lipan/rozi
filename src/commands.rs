@@ -635,6 +635,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::ToggleNerdIcons,
+        label: "Nerd icons",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleFocusOnHover,
         label: "Focus on hover",
         category: "Settings",
@@ -1231,6 +1238,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleAnimations => {
             enable_disable_label("animations", state.config.animations.enabled)
         }
+        Action::ToggleNerdIcons => enable_disable_label("nerd icons", state.config.nerd_icons),
         Action::ToggleDoNotDisturb => enable_disable_label("do not disturb", state.do_not_disturb),
         Action::ToggleInputLock => enable_disable_label(
             "input lock",

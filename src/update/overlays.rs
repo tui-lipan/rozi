@@ -279,6 +279,9 @@ fn settings_activate_dir(
         ToggleAnimations => {
             execute_action(ctx, Action::ToggleAnimations);
         }
+        ToggleNerdIcons => {
+            execute_action(ctx, Action::ToggleNerdIcons);
+        }
         CyclePaneAnimation => {
             let value = if reverse {
                 ctx.state.config.animations.pane_style.prev()

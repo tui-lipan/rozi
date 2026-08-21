@@ -95,6 +95,7 @@ reference for each key.
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
 | `scrollback` | integer | `5000` | Scrollback lines per pane (minimum 1). Existing screens keep their current capacity; restart a named server or create new panes after changing it. |
 | `frame_rate` | integer | `120` | Ceiling in frames per second on redraws nothing asked for: every live pane is polled at this cadence and animations advance on it. Range `15`-`480`; values outside it are clamped with a warning. Read once at startup, so a live reload does not move it - detach and reattach, or relaunch. See [Frame rate](#frame-rate). |
+| `nerd_icons` | bool | `true` | Nerd Font private-use glyphs in UI chrome: pane title icons, sidebar directory chevrons, and `round`/`arrow` end caps. `false` uses font-safe fallbacks (no title icon, ASCII directory markers, padded caps). File-kind icons in the sidebar still need a tab's `icons = true` as well. |
 
 Both `shell` and `command_shell` accept either a bare string (a program with no arguments - the
 historical form) or an argument-preserving array whose first element is the program, e.g.
@@ -295,6 +296,7 @@ four-side asymmetric padding.
 `title_style`, `workbar_badge_style`, `workbar_tab_style`, and `workbar_style` share these values:
 `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow`
 (powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons.
+With `nerd_icons = false` those two styles render as `padded` without rewriting the stored value.
 
 - `title_style` applies to `titlebar = "bar"` or `"integrated"`. Integrated half-block caps replace
   the frame corners; round and arrow caps sit immediately inside them. The Settings row is disabled
@@ -812,7 +814,7 @@ built-ins with launcher and command-backed tabs.
 | --- | --- | --- |
 | `root` | `"cwd"` for `files`, `"repo"` for `git` | `cwd` roots at the focused pane's directory; `repo` roots at the git repository containing it, so changes elsewhere stay visible from a subdirectory. Falls back to `cwd` outside a repository. |
 | `show_hidden` | `true` | Show dot-prefixed entries. Set to `false` to hide them. |
-| `icons` | `false` | Show file-kind icons. Off by default because the glyphs assume a Nerd Font. |
+| `icons` | `false` | Show file-kind icons. Off by default because the glyphs assume a Nerd Font. Also requires `nerd_icons = true`; with that off, this flag has no effect. |
 | `explorer` | `false` | Show a fuzzy-find input above the tree. Respects `.gitignore`/`.ignore`. |
 | `diff_stats` | `false` for `files`, `true` for `git` | Show `+N -M` beside change markers. |
 | `max_entries` | `2000` | Cap entries read per directory (1-10000). |

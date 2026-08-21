@@ -338,6 +338,17 @@ fn persist_animation_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) 
     }
 }
 
+fn persist_nerd_icons_toggle(ctx: &mut Context<AppRoot>, value: bool) {
+    if let Err(err) = crate::config::persist_top_level_flag("nerd_icons", value) {
+        crate::pty_events::notify_on(
+            ctx,
+            ToastChannel::PreferenceSave,
+            Some("Preference not saved".to_string()),
+            err,
+        );
+    }
+}
+
 fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
         crate::pty_events::notify_on(
@@ -689,6 +700,11 @@ fn execute_action_inner(
         Action::ToggleAnimations => {
             ctx.state.config.animations.enabled = !ctx.state.config.animations.enabled;
             persist_animation_toggle(ctx, "enabled", ctx.state.config.animations.enabled);
+            Update::full()
+        }
+        Action::ToggleNerdIcons => {
+            ctx.state.config.nerd_icons = !ctx.state.config.nerd_icons;
+            persist_nerd_icons_toggle(ctx, ctx.state.config.nerd_icons);
             Update::full()
         }
         Action::ToggleFocusOnHover => toggle_pane_flag!(ctx, focus_on_hover),

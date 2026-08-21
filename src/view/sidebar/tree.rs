@@ -35,8 +35,16 @@ pub(super) fn tree_tab(
         .explorer_focus_key(explorer_focus_key)
         // Keep the tree's file rows icon-free, but reserve its icon gutter for directory state.
         .show_icons(true)
-        .directory_icon("")
-        .opened_directory_icon("")
+        .directory_icon(if ctx.state.config.nerd_icons {
+            ""
+        } else {
+            ">"
+        })
+        .opened_directory_icon(if ctx.state.config.nerd_icons {
+            ""
+        } else {
+            "v"
+        })
         .file_icon("")
         .symlink_icon("")
         .other_icon("")
@@ -131,7 +139,7 @@ pub(super) fn tree_tab(
         }))
         .initial_expanded_paths(remembered_expanded(ctx, view));
 
-    if config.icons {
+    if config.icons && ctx.state.config.nerd_icons {
         tree = tree.icon_style(FileIconStyle::NerdFont);
     }
 

@@ -807,6 +807,10 @@ pub struct Config {
     /// client CPU, which is the trade worth making over a slow link or on battery. The server's PTY
     /// reads are unaffected - output is coalesced into fewer repaints, never dropped.
     pub frame_rate: u16,
+    /// Use Nerd Font private-use glyphs for decorative UI chrome: pane title icons, sidebar
+    /// directory chevrons, and `round`/`arrow` end caps. File-kind icons in the sidebar still need
+    /// the per-tab `icons` flag as well. On by default so existing installs keep their current look.
+    pub nerd_icons: bool,
     pub input: InputConfig,
     pub animations: WindowAnimationConfig,
     pub theme: ThemeConfig,
@@ -1182,8 +1186,8 @@ pub const SIDEBAR_TREE_MAX_ENTRIES_LIMIT: usize = 10_000;
 pub struct SidebarTreeConfig {
     pub root: SidebarTreeRoot,
     pub show_hidden: bool,
-    /// Show file-kind icons. Off by default: the glyphs assume a Nerd Font, and the rest of the
-    /// sidebar is text-only.
+    /// Show file-kind icons. Off by default: the glyphs assume a Nerd Font. Also requires the
+    /// global `nerd_icons` switch; with that off, this flag has no effect.
     pub icons: bool,
     /// Show the fuzzy-find input above the tree.
     pub explorer: bool,
@@ -1402,6 +1406,7 @@ impl Default for Config {
                 .map(|path| path.to_string_lossy().to_string()),
             scrollback: 5000,
             frame_rate: DEFAULT_FRAME_RATE,
+            nerd_icons: true,
             input: InputConfig::default(),
             animations: WindowAnimationConfig::default(),
             theme: ThemeConfig::default(),
@@ -1429,6 +1434,32 @@ impl Default for Config {
             workbar: WorkbarConfig::default(),
             key_overrides: HashMap::new(),
             user_commands: Vec::new(),
+        }
+    }
+}
+
+impl Config {
+    /// Round and arrow caps need a Nerd Font; with [`Self::nerd_icons`] off they render as padded.
+    /// Half-block caps stay as they are: they use standard Unicode, not the Nerd Font PUA.
+    pub fn effective_cap_style(&self, style: CapStyle) -> CapStyle {
+        match style {
+            CapStyle::Round | CapStyle::Arrow if !self.nerd_icons => CapStyle::Padded,
+            other => other,
+        }
+    }
+
+    /// Pane title icon for tiled / floating / fullscreen chrome. Empty when nerd icons are off so
+    /// the title does not spend columns on a missing glyph or a substitute badge.
+    pub fn pane_title_icon(&self, fullscreen: bool, floating: bool) -> &'static str {
+        if !self.nerd_icons {
+            return "";
+        }
+        if fullscreen {
+            "󰊓"
+        } else if floating {
+            "󰹙"
+        } else {
+            "󰖲"
         }
     }
 }
@@ -1798,6 +1829,35 @@ mod tests {
         assert_eq!(CapStyle::Padded.glyphs(), None);
         assert!(CapStyle::Round.glyphs().is_some());
         assert_eq!(next_cap_style(CapStyle::Arrow), CapStyle::Padded);
+    }
+
+    #[test]
+    fn nerd_icons_default_on_and_force_round_arrow_caps_to_padded() {
+        let mut config = Config::default();
+        assert!(config.nerd_icons);
+        assert_eq!(config.effective_cap_style(CapStyle::Round), CapStyle::Round);
+        assert_eq!(config.effective_cap_style(CapStyle::Arrow), CapStyle::Arrow);
+        assert_eq!(config.effective_cap_style(CapStyle::Half), CapStyle::Half);
+        assert_eq!(config.pane_title_icon(false, false), "󰖲");
+        assert_eq!(config.pane_title_icon(false, true), "󰹙");
+        assert_eq!(config.pane_title_icon(true, false), "󰊓");
+
+        config.nerd_icons = false;
+        assert_eq!(
+            config.effective_cap_style(CapStyle::Round),
+            CapStyle::Padded
+        );
+        assert_eq!(
+            config.effective_cap_style(CapStyle::Arrow),
+            CapStyle::Padded
+        );
+        assert_eq!(config.effective_cap_style(CapStyle::Half), CapStyle::Half);
+        assert_eq!(
+            config.effective_cap_style(CapStyle::Padded),
+            CapStyle::Padded
+        );
+        assert_eq!(config.pane_title_icon(false, false), "");
+        assert_eq!(config.pane_title_icon(true, true), "");
     }
 
     #[test]

@@ -258,7 +258,12 @@ pub(crate) fn render_workspace_panes(
             && !pane.fullscreen
             && ctx.state.config.pane.show_titles
             && ctx.state.config.pane.titlebar == crate::state::PaneTitlebarMode::Bar
-            && ctx.state.config.pane.title_style.glyphs().is_some()
+            && ctx
+                .state
+                .config
+                .effective_cap_style(ctx.state.config.pane.title_style)
+                .glyphs()
+                .is_some()
         {
             seam_neighbor_title_bgs(app, ctx, &placements, pane.id, base_rect, focused_pane)
         } else {

@@ -99,7 +99,10 @@ pub(crate) fn workbar(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     if let Some(last) = trailing.last() {
         right_cap_color = last.edge_color(panel_bg);
     }
-    let badge_style = ctx.state.config.pane.workbar_badge_style;
+    let badge_style = ctx
+        .state
+        .config
+        .effective_cap_style(ctx.state.config.pane.workbar_badge_style);
     let powerline = ctx.state.config.pane.workbar_powerline;
     if let Some(cluster) = trailing_cluster(ctx, trailing, badge_style, powerline, panel_bg) {
         row = row.child(cluster);
@@ -375,7 +378,12 @@ fn workbar_with_caps(
     left_color: Color,
     right_color: Color,
 ) -> Element {
-    let Some((left, right)) = ctx.state.config.pane.workbar_style.glyphs() else {
+    let Some((left, right)) = ctx
+        .state
+        .config
+        .effective_cap_style(ctx.state.config.pane.workbar_style)
+        .glyphs()
+    else {
         return row.into();
     };
     let backdrop = ctx.state.theme.surface.backdrop;
@@ -585,7 +593,9 @@ fn left_segment_element(
         fg,
         bg,
         ctx.state.theme.surface.panel,
-        ctx.state.config.pane.workbar_badge_style,
+        ctx.state
+            .config
+            .effective_cap_style(ctx.state.config.pane.workbar_badge_style),
         CapSides::Right,
         false,
     );
@@ -725,8 +735,7 @@ fn workspace_tabs_element(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let tab_caps = ctx
         .state
         .config
-        .pane
-        .workbar_tab_style
+        .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
         .glyphs()
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
 

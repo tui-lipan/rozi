@@ -154,6 +154,7 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                     "Theme",
                     "Terminal padding",
                     "Animations",
+                    "Nerd icons",
                     "Which-key",
                     "Focus on hover",
                     "Background follows terminal",

@@ -270,8 +270,7 @@ pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
     let caps = ctx
         .state
         .config
-        .pane
-        .workbar_tab_style
+        .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
         .glyphs()
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
     let tabs = Tabs::new()
@@ -493,6 +492,7 @@ mod palette_alias_tests {
             "workbar style",
             "titlebar style",
             "focused titlebar",
+            "nerd icons",
         ] {
             assert!(
                 aliases.iter().any(|alias| alias.as_ref() == term),

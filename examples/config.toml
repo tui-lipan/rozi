@@ -37,6 +37,10 @@
 # startup, so detach and reattach after changing it.
 #frame_rate = 120
 
+# Nerd Font private-use glyphs in UI chrome: pane title icons, directory chevrons, and
+# round/arrow end caps. File-kind icons in the sidebar still need a tab's icons = true.
+#nerd_icons = true
+
 [shell_integration]
 # "auto" injects bash, zsh, fish, and PowerShell support without editing any dotfile;
 # "off" leaves shell startup completely untouched.

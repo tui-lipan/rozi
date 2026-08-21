@@ -26,7 +26,7 @@ server-backed named sessions for detach/reattach workflows.
 - `README.md` - Public project overview and documentation index.
 - `CLAUDE.md` - A symlink to `AGENTS.md`, not a copy. Edit `AGENTS.md`; there is nothing to sync.
 - `AGENTS.md` - This file: operational guidance for automated coding agents.
-- `LICENSE-APACHE` / `LICENSE-MIT` - Dual-license terms.
+- `LICENSE` - Mozilla Public License 2.0 terms.
 
 ## Build & Development Commands
 
@@ -513,7 +513,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
   intact.
 - Dependency auditing uses RustSec via `cargo audit`; run it after dependency updates and before
   release builds.
-- License is `MIT OR Apache-2.0`; preserve dual-license headers/files.
+- License is `MPL-2.0`; preserve the root license file and licensing documentation.
 
 ## Agent Guardrails
 

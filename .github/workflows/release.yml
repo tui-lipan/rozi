@@ -108,7 +108,7 @@ jobs:
           else
             cp "target/${{ matrix.target }}/release/rozi" "dist/${stem}/rozi"
           fi
-          cp README.md LICENSE-APACHE LICENSE-MIT "dist/${stem}/"
+          cp README.md LICENSE "dist/${stem}/"
           cp -R examples "dist/${stem}/examples"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
             (cd dist && 7z a -tzip "${stem}.zip" "$stem" >/dev/null)

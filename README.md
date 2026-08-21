@@ -16,7 +16,7 @@
 <p align="center">
   <a href="https://github.com/tui-lipan/rozi/actions/workflows/ci.yml"><img src="https://github.com/tui-lipan/rozi/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/platforms-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-blue" alt="Platforms">
-  <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green" alt="License">
+  <img src="https://img.shields.io/badge/license-MPL--2.0-green" alt="License">
 </p>
 
 <p align="center">
@@ -200,4 +200,7 @@ If rozi is useful to you, consider [sponsoring its development](https://github.c
 
 ## License
 
-MIT OR Apache-2.0.
+rozi is licensed under the [Mozilla Public License 2.0](LICENSE).
+
+Extensions run out of process and are not covered by rozi's MPL-2.0 copyleft. Extension authors
+may license their work under any terms they choose.

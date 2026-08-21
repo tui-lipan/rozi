@@ -214,7 +214,7 @@ const catalog: {
       "measured performance",
       "bounded work",
       "private endpoints",
-      "MIT OR Apache-2.0",
+      "MPL-2.0",
     ],
   },
 ];
@@ -593,7 +593,7 @@ restart = "on-failure"`);
           ></span
         >
         <span class="lp-top-spacer" />
-        <span>MIT OR Apache-2.0 · © Adam Mikołajczyk</span>
+        <span>MPL-2.0 · © Adam Mikołajczyk</span>
       </div>
     </footer>
   </div>

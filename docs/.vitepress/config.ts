@@ -288,6 +288,6 @@ export default defineConfig({
           env.relativePath === "index.md" ? "" : md.render(src, env),
       },
     },
-    footer: { message: "MIT OR Apache-2.0", copyright: "© Adam Mikołajczyk" },
+    footer: { message: "MPL-2.0", copyright: "© Adam Mikołajczyk" },
   },
 });

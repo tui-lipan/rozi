@@ -1,3 +1,9 @@
+/// Ctrl plus `letter`, case-insensitive. Overlay interceptors share this so a chord the footer
+/// omitted is the same test the handler uses when it stays silent.
+fn ctrl_letter(key: &KeyEvent, letter: char) -> bool {
+    key.mods.ctrl && matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&letter))
+}
+
 /// A single `label key` footer hint (e.g. `submit enter`), styled like the palette hint bar.
 fn hint_pill(theme: &Theme, label: &str, key: &str) -> Element {
     HStack::new()

@@ -174,7 +174,9 @@ pub(super) fn profile_picker_delete(ctx: &mut Context<AppRoot>) -> Update {
 
 pub(super) fn select_profile(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let update = choose_profile(ctx, index);
-    request_current_pane_focus(ctx);
+    if !ctx.state.show_profile_picker {
+        request_current_pane_focus(ctx);
+    }
     update
 }
 

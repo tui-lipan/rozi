@@ -27,10 +27,7 @@ fn profile_picker_hints(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.profile_picker.as_ref() else {
         return Text::new("").into();
     };
-    let query = picker.input.text().trim().to_ascii_lowercase();
-    let selected = picker.entries.get(picker.selected).filter(|entry| {
-        query.is_empty() || entry.name.to_ascii_lowercase().contains(&query)
-    });
+    let selected = selected_profile(picker);
     if picker.apply_mode {
         let mut hints = hint_row();
         if selected.is_some() && crate::ops::profile::can_replace_session(&ctx.state) {
@@ -191,23 +188,33 @@ fn profile_picker_palette(
 
 fn profile_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
     let can_replace = crate::ops::profile::can_replace_session(&ctx.state);
+    let has_row = ctx
+        .state
+        .profile_picker
+        .as_ref()
+        .is_some_and(|picker| selected_profile(picker).is_some());
     ctx.link().key_handler(move |key| {
-        if key.mods.ctrl && matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O')) {
+        if has_row && ctrl_letter(&key, 'o') {
             Some(Msg::ProfilePickerOpenAs)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
+        } else if ctrl_letter(&key, 'n') {
             Some(Msg::ProfilePickerNew)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
+        } else if has_row && ctrl_letter(&key, 'd') {
             Some(Msg::ProfilePickerDelete)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
+        } else if has_row && ctrl_letter(&key, 'f') {
             Some(Msg::ProfilePickerSetDefault)
-        } else if can_replace
-            && key.mods.ctrl
-            && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
-        {
+        } else if has_row && can_replace && ctrl_letter(&key, 'r') {
             Some(Msg::ProfilePickerApply)
         } else {
             None
         }
+    })
+}
+
+/// The currently highlighted profile, if it is still on screen after filtering.
+fn selected_profile(picker: &ProfilePickerState) -> Option<&crate::config::ProfileEntry> {
+    let query = picker.input.text().trim().to_ascii_lowercase();
+    picker.entries.get(picker.selected).filter(|entry| {
+        query.is_empty() || entry.name.to_ascii_lowercase().contains(&query)
     })
 }
 

@@ -528,6 +528,20 @@ impl State {
             })
     }
 
+    /// Whether the foreground session is already this named target. Overlay actions that would
+    /// attach or switch here must stay inert: the footer does not advertise them, and repeating
+    /// the same destination is not worth a toast.
+    pub fn is_attached_to(
+        &self,
+        name: &str,
+        remote_target: Option<&crate::session::remote::RemoteTarget>,
+    ) -> bool {
+        let current = self.current();
+        current.session_attached
+            && current.session_name.as_deref() == Some(name)
+            && current.remote_target.as_ref() == remote_target
+    }
+
     /// Park the current attachment into the background under `current_epoch`, installing
     /// `replacement` as the new current attachment. The parked attachment keeps its live session
     /// client and screens; it is only torn down on quit (or when explicitly closed).

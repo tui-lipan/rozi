@@ -29,6 +29,8 @@ pub(crate) use lifecycle::{
     kill_selected_session, open_connect_remote_host, open_create_session,
     open_create_session_on_host, open_ephemeral_session, open_leave_prompt, open_rename_session,
     open_session_picker, open_startup_session_picker, restart_selected_session,
+    session_row_can_disconnect, session_row_can_disconnect_host, session_row_can_restart,
+    session_row_is_current, session_row_is_restorable,
 };
 
 #[cfg(test)]

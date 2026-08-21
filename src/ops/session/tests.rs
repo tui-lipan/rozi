@@ -1290,3 +1290,113 @@ fn restart_is_inert_for_a_restorable_session() {
         .join()
         .expect("test thread panicked");
 }
+
+#[test]
+fn activating_the_current_session_is_inert() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use crate::AppRoot;
+            use crate::Msg;
+            use tui_lipan::TestBackend;
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("dev".into());
+                state.current_mut().session_attached = true;
+                state.current_mut().pending_session_attach = None;
+                state.session_picker =
+                    Some(SessionPickerState::new(vec![session_row("dev", None)]));
+                state.show_session_picker = true;
+            }
+
+            backend
+                .update_level(Msg::SessionPickerActivate(0))
+                .expect("activate the current session");
+
+            assert!(
+                backend.state().show_session_picker,
+                "Enter on the current session must leave the picker open"
+            );
+            assert!(
+                backend.state().replaceable_toasts.is_empty(),
+                "already being there must not toast"
+            );
+            assert!(
+                backend.state().current().pending_session_attach.is_none(),
+                "must not start a new attach"
+            );
+        })
+        .expect("spawn test thread")
+        .join()
+        .expect("test thread panicked");
+}
+
+#[test]
+fn disconnecting_the_current_session_is_inert() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use crate::AppRoot;
+            use crate::Msg;
+            use tui_lipan::TestBackend;
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("dev".into());
+                state.current_mut().session_attached = true;
+                state.session_picker =
+                    Some(SessionPickerState::new(vec![session_row("dev", None)]));
+                state.show_session_picker = true;
+            }
+
+            backend
+                .dispatch(Msg::SessionPickerDisconnectAttachment)
+                .expect("disconnect the current session");
+
+            assert!(backend.state().show_session_picker);
+            assert!(
+                backend.state().replaceable_toasts.is_empty(),
+                "a chord the footer omitted must not toast"
+            );
+        })
+        .expect("spawn test thread")
+        .join()
+        .expect("test thread panicked");
+}
+
+#[test]
+fn disconnecting_a_session_we_do_not_hold_is_inert() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use crate::AppRoot;
+            use crate::Msg;
+            use tui_lipan::TestBackend;
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("here".into());
+                state.current_mut().session_attached = true;
+                state.session_picker =
+                    Some(SessionPickerState::new(vec![session_row("there", None)]));
+                state.show_session_picker = true;
+            }
+
+            backend
+                .dispatch(Msg::SessionPickerDisconnectAttachment)
+                .expect("disconnect a session we do not hold");
+
+            assert!(backend.state().show_session_picker);
+            assert!(
+                backend.state().replaceable_toasts.is_empty(),
+                "not-connected must not toast when disconnect is not offered"
+            );
+        })
+        .expect("spawn test thread")
+        .join()
+        .expect("test thread panicked");
+}

@@ -583,13 +583,13 @@ pub(crate) fn open_named_target(
     if !explicit_create && exists {
         return crate::ops::session::attach_session_by_name(ctx, name, None, None, false);
     }
-    if ctx.state.current().session_attached
-        && ctx.state.current().session_name.as_deref() == Some(name.as_str())
-    {
-        crate::pty_events::notify_info(ctx, format!("Already attached to `{name}`"));
-        return Update::full();
+    if ctx.state.is_attached_to(&name, None) {
+        return Update::none();
     }
-    if ctx.state.current().pending_session_attach.is_some() {
+    if let Some(pending) = ctx.state.current().pending_session_attach.as_ref() {
+        if pending.name == name {
+            return Update::none();
+        }
         crate::pty_events::notify_info(ctx, "Attach already in progress");
         return Update::full();
     }
@@ -1289,6 +1289,36 @@ mod tests {
                 .expect("apply-profile from launcher");
             assert!(!backend.state().show_profile_picker);
             assert!(backend.state().profile_picker.is_none());
+        });
+    }
+
+    #[test]
+    fn selecting_the_attached_profile_is_inert() {
+        on_large_stack(|| {
+            let path = temp_profile_path();
+            save_profile(&path, &Profile::default()).expect("write profile");
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().profile_picker =
+                Some(ProfilePickerState::new(vec![entry("dev", path.clone())]));
+            backend.state_mut().show_profile_picker = true;
+            backend.state_mut().current_mut().session_name = Some("dev".into());
+            backend.state_mut().current_mut().session_attached = true;
+            backend.state_mut().current_mut().pending_session_attach = None;
+
+            backend
+                .update_level(Msg::SelectProfile(0))
+                .expect("select the attached profile");
+
+            assert!(
+                backend.state().show_profile_picker,
+                "Enter on the current profile must leave the picker open"
+            );
+            assert!(
+                backend.state().replaceable_toasts.is_empty(),
+                "already being there must not toast"
+            );
+            assert!(backend.state().current().pending_session_attach.is_none());
+            let _ = std::fs::remove_file(path);
         });
     }
 }

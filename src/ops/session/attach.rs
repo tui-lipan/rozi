@@ -527,16 +527,12 @@ pub(crate) fn attach_session_by_name(
         },
         (None, None) => None,
     };
-    if ctx.state.current().session_attached
-        && ctx.state.current().session_name.as_deref() == Some(name.as_str())
-        && ctx.state.current().remote_target == remote_target
-    {
-        crate::pty_events::notify_info(ctx, format!("Already attached to `{name}`"));
-        return Update::full();
+    if ctx.state.is_attached_to(&name, remote_target.as_ref()) {
+        return Update::none();
     }
-    // An attach already running for *this same* target is the double-click case: say so and let it
-    // finish. Aiming somewhere else is the user changing their mind, and must go through — refusing
-    // it would make a pending attach a trap, with no way off a session that never finishes
+    // An attach already running for *this same* target is the double-click case: stay silent and
+    // let it finish. Aiming somewhere else is the user changing their mind, and must go through —
+    // refusing it would make a pending attach a trap, with no way off a session that never finishes
     // connecting. The mid-connect attachment is released rather than parked by the install below
     // (it has no live client to keep), and the abandoned attach thread's reply is discarded by the
     // epoch check in `attach_failed`/`connected`.
@@ -544,8 +540,7 @@ pub(crate) fn attach_session_by_name(
         && pending.name == name
         && ctx.state.current().remote_target == remote_target
     {
-        crate::pty_events::notify_info(ctx, "Attach already in progress");
-        return Update::full();
+        return Update::none();
     }
     // Fast path: the target session is already retained in the background - switch to it instantly
     // (its client and screens are live) instead of reconnecting.

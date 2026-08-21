@@ -92,9 +92,9 @@ fn scrollback_search_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
             Some(Msg::CloseSearch)
         } else if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
             Some(Msg::SearchCycleScope)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
+        } else if ctrl_letter(&key, 'n') {
             Some(Msg::SearchNext(false))
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')) {
+        } else if ctrl_letter(&key, 'p') {
             Some(Msg::SearchNext(true))
         } else {
             None

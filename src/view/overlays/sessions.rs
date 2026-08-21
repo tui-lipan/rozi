@@ -113,13 +113,11 @@ pub(crate) fn collaboration_overlay(ctx: &Context<AppRoot>) -> Element {
         if key_event.is(KeyCode::Esc) {
             Some(Msg::CloseCollaboration)
         } else if let Some(item) = selected_item.filter(|item| item.grantable && item.requesting)
-            && key_event.mods.ctrl
-            && matches!(key_event.code, KeyCode::Char('d') | KeyCode::Char('D'))
+            && ctrl_letter(&key_event, 'd')
         {
             Some(Msg::CollaborationDecline(item.roster_index))
         } else if let Some(item) = selected_item.filter(|item| item.kickable)
-            && key_event.mods.ctrl
-            && matches!(key_event.code, KeyCode::Char('k') | KeyCode::Char('K'))
+            && ctrl_letter(&key_event, 'k')
         {
             Some(Msg::CollaborationKick(item.roster_index))
         } else {
@@ -325,10 +323,8 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Text::new("").into();
     };
-    let current = ctx.state.current().session_name.as_deref();
-    let current_remote = &ctx.state.current().remote_target;
     let selected = selected_session(picker);
-    let restorable = selected.is_some_and(session_is_restorable);
+    let restorable = selected.is_some_and(crate::ops::session::session_row_is_restorable);
 
     let mut row = hint_row();
     if picker_list_is_empty(picker) {
@@ -338,20 +334,16 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
         if restorable {
             row = row.child(hint_pill(theme, "restore", "enter"));
             row = row.child(hint_pill(theme, "forget", "ctrl+k"));
-        } else {
-            let is_current = current == Some(entry.name.as_str())
-                && current_remote == &entry.remote_target;
-            if !is_current {
-                let held = ctx
-                    .state
-                    .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
-                    .map(|attachment| attachment.connection);
-                let label = match held {
-                    Some(crate::state::ConnectionState::Connected) => "switch",
-                    _ => "connect",
-                };
-                row = row.child(hint_pill(theme, label, "enter"));
-            }
+        } else if !crate::ops::session::session_row_is_current(&ctx.state, entry) {
+            let held = ctx
+                .state
+                .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
+                .map(|attachment| attachment.connection);
+            let label = match held {
+                Some(crate::state::ConnectionState::Connected) => "switch",
+                _ => "connect",
+            };
+            row = row.child(hint_pill(theme, label, "enter"));
         }
     }
     row = row.child(hint_pill(theme, "new", "ctrl+n"));
@@ -367,27 +359,15 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
     if let Some(entry) = selected
         && !restorable
     {
-        let is_current =
-            current == Some(entry.name.as_str()) && current_remote == &entry.remote_target;
-        if !is_current
-            && ctx
-                .state
-                .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
-                .is_some()
-        {
+        if crate::ops::session::session_row_can_disconnect(&ctx.state, entry) {
             row = row.child(hint_pill(theme, "disconnect", "ctrl+w"));
         }
         row = row.child(hint_pill(theme, "restart", "ctrl+e"));
         row = row.child(hint_pill(theme, "kill", "ctrl+k"));
     }
-    if let Some(target) = selected.and_then(|entry| entry.remote_target.as_ref())
-        && (ctx.state.current().remote_target.as_ref() == Some(target)
-            || ctx
-                .state
-                .background
-                .values()
-                .any(|attachment| attachment.remote_target.as_ref() == Some(target)))
-    {
+    if selected.is_some_and(|entry| {
+        crate::ops::session::session_row_can_disconnect_host(&ctx.state, entry)
+    }) {
         row = row.child(hint_pill(theme, "disconnect host", "ctrl+x"));
     }
     row.into()
@@ -406,13 +386,6 @@ fn selected_session(
         .entries
         .get(picker.selected)
         .filter(|entry| matches_session_query(entry, &query_lower))
-}
-
-fn session_is_restorable(entry: &crate::session::discovery::DiscoveredSession) -> bool {
-    matches!(
-        entry.status,
-        crate::session::discovery::DiscoveredSessionStatus::Restorable
-    )
 }
 
 /// Whether a session row survives the picker's filter. The list, the footer hints, and the keys
@@ -521,7 +494,7 @@ fn session_picker_palette(
         picker
             .entries
             .get(index)
-            .is_some_and(session_is_restorable)
+            .is_some_and(crate::ops::session::session_row_is_restorable)
     });
     let error_bg = theme.status.error;
     let warn_bg = theme.status.warning;
@@ -647,39 +620,40 @@ fn session_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
         .session_picker
         .as_ref()
         .is_some_and(picker_list_is_empty);
-    let can_restart = ctx
+    let selected = ctx
         .state
         .session_picker
         .as_ref()
         .and_then(selected_session)
-        .is_some_and(|entry| !session_is_restorable(entry));
+        .cloned();
+    let can_kill = selected.is_some();
+    let can_restart = selected
+        .as_ref()
+        .is_some_and(crate::ops::session::session_row_can_restart);
+    let can_disconnect = selected
+        .as_ref()
+        .is_some_and(|entry| crate::ops::session::session_row_can_disconnect(&ctx.state, entry));
+    let can_disconnect_host = selected.as_ref().is_some_and(|entry| {
+        crate::ops::session::session_row_can_disconnect_host(&ctx.state, entry)
+    });
     ctx.link().key_handler(move |key| {
         if key.is(KeyCode::Esc) {
             Some(Msg::CloseSessionPicker)
-        } else if (key.mods.ctrl && matches!(key.code, KeyCode::Char('t') | KeyCode::Char('T')))
-            || (list_is_empty && key.is(KeyCode::Enter))
-        {
+        } else if ctrl_letter(&key, 't') || (list_is_empty && key.is(KeyCode::Enter)) {
             Some(Msg::SessionPickerEphemeral)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
+        } else if ctrl_letter(&key, 'n') {
             Some(Msg::SessionPickerCreateFromQuery)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
-            if is_attached && is_ephemeral {
-                Some(Msg::SessionPickerNameCurrent)
-            } else {
-                None
-            }
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K')) {
+        } else if is_attached && is_ephemeral && ctrl_letter(&key, 's') {
+            Some(Msg::SessionPickerNameCurrent)
+        } else if can_kill && ctrl_letter(&key, 'k') {
             Some(Msg::SessionPickerKillSelected)
-        } else if can_restart
-            && key.mods.ctrl
-            && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E'))
-        {
+        } else if can_restart && ctrl_letter(&key, 'e') {
             Some(Msg::SessionPickerRestartSelected)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W')) {
+        } else if can_disconnect && ctrl_letter(&key, 'w') {
             Some(Msg::SessionPickerDisconnectAttachment)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X')) {
+        } else if can_disconnect_host && ctrl_letter(&key, 'x') {
             Some(Msg::SessionPickerDisconnectHost)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
+        } else if ctrl_letter(&key, 'r') {
             Some(Msg::SessionPickerConnectHost)
         } else {
             None

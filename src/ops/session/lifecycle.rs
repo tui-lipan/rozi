@@ -11,7 +11,48 @@ use crate::ops::session::attach::{
 use crate::ops::session::control_lease::require_attached;
 use crate::ops::session::discovery::{immediate_picker_rows, session_watch_command};
 use crate::session::discovery::DiscoveredSession;
-use crate::state::{NamingMode, SessionPickerState, SessionRenameState};
+use crate::state::{NamingMode, SessionPickerState, SessionRenameState, State};
+
+/// Whether this picker row is the session currently in the foreground. Enter/switch/connect
+/// hide themselves here; activating it must stay silent rather than toasting "already attached".
+pub(crate) fn session_row_is_current(state: &State, entry: &DiscoveredSession) -> bool {
+    state.current().session_name.as_deref() == Some(entry.name.as_str())
+        && state.current().remote_target == entry.remote_target
+}
+
+pub(crate) fn session_row_is_restorable(entry: &DiscoveredSession) -> bool {
+    matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Restorable
+    )
+}
+
+/// Restart recreates a live server. A restorable snapshot has none, so the chord is omitted.
+pub(crate) fn session_row_can_restart(entry: &DiscoveredSession) -> bool {
+    !session_row_is_restorable(entry)
+}
+
+/// Disconnect closes a *background* attachment. The current session is Kill or leave; a row we
+/// do not hold has nothing to drop.
+pub(crate) fn session_row_can_disconnect(state: &State, entry: &DiscoveredSession) -> bool {
+    !state.is_attached_to(&entry.name, entry.remote_target.as_ref())
+        && state
+            .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
+            .is_some()
+}
+
+/// Host-wide disconnect is only offered when this client actually holds a connection to that
+/// remote — the current session, or one parked in the background.
+pub(crate) fn session_row_can_disconnect_host(state: &State, entry: &DiscoveredSession) -> bool {
+    let Some(target) = entry.remote_target.as_ref() else {
+        return false;
+    };
+    state.current().remote_target.as_ref() == Some(target)
+        || state
+            .background
+            .values()
+            .any(|attachment| attachment.remote_target.as_ref() == Some(target))
+}
 
 /// Clear any armed session-picker kill and dismiss its confirmation toast. Called from every path
 /// that abandons or resolves the arming (a confirmed kill, moving off the row, editing the query,
@@ -128,6 +169,11 @@ pub(crate) fn activate_discovered_session(
     ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
+    // The footer omits Enter on the session already in the foreground. Repeating that destination
+    // is not an error, and it is not worth a toast.
+    if session_row_is_current(&ctx.state, &entry) {
+        return Update::none();
+    }
     // Discovery already probed this session; an `Unknown` status means the handshake was refused
     // (an incompatible older server is the usual cause). Attaching would only fail after the connect
     // retry deadline, so reject it up front, keep the picker open, and point at the fix - killing
@@ -570,10 +616,7 @@ pub(crate) fn restart_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
-    if matches!(
-        entry.status,
-        crate::session::discovery::DiscoveredSessionStatus::Restorable
-    ) {
+    if !session_row_can_restart(&entry) {
         return Update::none();
     }
     let armed = picker.pending_restart == Some(index);
@@ -731,27 +774,19 @@ pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<AppRoot>) -> Upda
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
+    if !session_row_can_disconnect(&ctx.state, &entry) {
+        return Update::none();
+    }
     let display = if entry.ephemeral {
         "ephemeral".to_string()
     } else {
         entry.name.clone()
     };
-    let is_current = ctx.state.current().session_attached
-        && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
-        && ctx.state.current().remote_target == entry.remote_target;
-    if is_current {
-        crate::pty_events::notify_info(
-            ctx,
-            "Kill (Ctrl+K) the current session, or leave the client",
-        );
-        return Update::full();
-    }
     let Some(id) = ctx
         .state
         .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
     else {
-        crate::pty_events::notify_info(ctx, format!("Not connected to `{display}`"));
-        return Update::full();
+        return Update::none();
     };
     if let Some(attachment) = ctx.state.background.remove(&id)
         && let Some(client) = attachment.session_client.as_ref()
@@ -778,9 +813,11 @@ pub(crate) fn disconnect_selected_host(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
+    if !session_row_can_disconnect_host(&ctx.state, &entry) {
+        return Update::none();
+    }
     let Some(target) = entry.remote_target.clone() else {
-        crate::pty_events::notify_info(ctx, "Not a remote session");
-        return Update::full();
+        return Update::none();
     };
     disconnect_host(ctx, &target)
 }

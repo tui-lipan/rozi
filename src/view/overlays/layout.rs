@@ -73,7 +73,7 @@ fn layout_picker_palette(ctx: &Context<AppRoot>) -> SearchPalette<usize> {
 
 fn layout_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
     ctx.link().key_handler(|key| {
-        if key.mods.ctrl && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
+        if ctrl_letter(&key, 'f') {
             Some(Msg::LayoutPickerSetDefault)
         } else {
             None

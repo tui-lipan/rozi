@@ -133,8 +133,15 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
 /// builds its own, so a caller-driven one is not visibly a second-class citizen.
 fn pick_hints(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
-    let mut row = hint_row().child(hint_pill(theme, "select", "enter"));
+    let mut row = hint_row();
     if let Some(pick) = ctx.state.pick.as_ref() {
+        if pick
+            .rows
+            .get(pick.selected)
+            .is_some_and(|row| row.disabled.is_none())
+        {
+            row = row.child(hint_pill(theme, "select", "enter"));
+        }
         for action in &pick.actions {
             row = row.child(hint_pill(
                 theme,

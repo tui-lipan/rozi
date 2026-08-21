@@ -136,8 +136,15 @@ rules of their own:
 - `blocked` on `permission required`, `action required`, `do you want to proceed?`,
   `waiting for permission`, `allow command?`, `[y/n]`, `yes (y)` anywhere on screen, or
   `action required` in the title;
-- `working` on `esc to interrupt`, `esc again to interrupt`, `press esc to interrupt`,
-  `ctrl+c to interrupt`, or `esc interrupt` **in the footer**.
+- `blocked` **in the footer** on `requires approval`, `waiting for user input`, a trust prompt
+  (`do you trust the contents of this directory`, `do you trust the files in this folder`), a
+  write-in invitation (`type your own answer`, `type a response`, `type to answer`, `write-in`), a
+  numbered question (`Question 2 of 5`), or a chooser's closing line — `esc dismiss` alongside
+  `enter submit` / `enter toggle` / `enter confirm`, or `esc cancel` alongside `enter select`;
+- `working` on a braille spinner at the start of the terminal title, or at the start of a line
+  **in the footer**;
+- `working` **in the footer** on `esc to interrupt`, `esc again to interrupt`,
+  `press esc to interrupt`, `ctrl+c to interrupt`, or `esc interrupt`.
 
 Set `base = false` to drop it. The built-in `claude` definition does: Claude Code transcripts quote
 approval prose verbatim while a run is still going, so only the dialog's own structure — a

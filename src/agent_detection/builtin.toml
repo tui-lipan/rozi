@@ -82,6 +82,23 @@ state = "blocked"
 scope = "footer"
 screen = { all_of = ["esc dismiss"], any_of = ["enter submit", "enter toggle", "enter confirm"] }
 
+# The same chooser idiom in the other common wording. omp closes its `Allow tool: bash` dialog with
+# `up/down navigate  enter select  esc cancel`, and the dialog title itself sits twelve lines up -
+# outside the footer - so the closing line is the only part of it a scoped rule can reach.
+[[base]]
+state = "blocked"
+scope = "footer"
+screen = { all_of = ["esc cancel"], any_of = ["enter select"] }
+
+# Asking permission to run something, said outright. Kiro writes `shell requires approval` above
+# its choices, six lines up, and read idle for as long as it sat there - which is the reading that
+# matters: an agent stopped for permission is stopped, and a run clock that keeps counting is
+# measuring the wrong thing.
+[[base]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["requires approval"] }
+
 # A braille spinner at the front of the terminal title. Agents animate one there while a turn is in
 # flight and drop it the moment they stop, which makes it the only working signal some of them give
 # a pane at all: Grok's footer says `Esc:cancel` whether it is working or not, while its title
@@ -248,10 +265,33 @@ id = "kimi"
 label = "Kimi Code"
 match = { names = ["kimi", "kimi-code"] }
 
+# Kimi numbers its choices instead of naming a verb, so the words a shared approval rule looks for
+# are in the options rather than the chrome - and `Approve for this session` lands exactly eight
+# non-empty lines from the bottom, which is the last row the footer window reaches. Reading it
+# there would pass today and break on the next line Kimi adds above the prompt, so this keys off
+# the closing line of the chooser instead, which stays four from the bottom whatever it contains.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { all_of = ["↵ confirm"], any_of = ["1/2/3/4 choose"] }
+
 [[agents]]
 id = "kiro"
 label = "Kiro CLI"
 match = { names = ["kiro", "kiro-cli"] }
+
+# Kiro spells its state out instead of animating it: the prompt hint under the transcript reads
+# `Kiro is working · Type to steer · Ctrl+S to queue` for the whole turn and reverts to `ask a
+# question or describe a task` afterwards. There is no spinner and no interrupt hint, so nothing in
+# the shared vocabulary sees the turn at all - a minute of streaming read idle until this rule.
+#
+# The braille on a Kiro screen is its startup logo, not a spinner. It sits well above the footer at
+# rest and drifts further up as the transcript grows, which is the only reason the shared braille
+# rule stays quiet here; `kiro-splash-is-not-a-spinner` in the corpus is what holds that.
+[[agents.states]]
+state = "working"
+scope = "footer"
+screen = { any_of = ["kiro is working"] }
 
 [[agents]]
 id = "droid"

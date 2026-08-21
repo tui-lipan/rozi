@@ -198,6 +198,14 @@ details are Unix-only. Everything else is the same on all three — see the
 
 If rozi is useful to you, consider [sponsoring its development](https://github.com/sponsors/Razuer) ♥
 
+## Contributing
+
+Contributions follow **inbound = outbound**: unless you state otherwise, any contribution you
+intentionally submit is licensed under the same MPL-2.0 as the project, with no additional terms.
+You keep the copyright in your contributions; there is no CLA. We use a
+[Developer Certificate of Origin](DCO) sign-off (`git commit -s`) instead. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 rozi is licensed under the [Mozilla Public License 2.0](LICENSE).

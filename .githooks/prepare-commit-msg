@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+message_file=$1
+signoff='Signed-off-by: Adam Mikołajczyk <adam@tui-lipan.dev>'
+
+if ! grep -Fqx "$signoff" "$message_file"; then
+    git interpret-trailers --in-place --trailer "$signoff" "$message_file"
+fi

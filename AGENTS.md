@@ -517,6 +517,12 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 
 ## Agent Guardrails
 
+- Every commit needs a DCO sign-off: `git commit -s` (see
+  [`CONTRIBUTING.md`](CONTRIBUTING.md) for what the sign-off means and how to fix a missed one).
+- Your commit email is public forever. Use an address you are comfortable exposing, and keep the
+  author identity and `Signed-off-by` identity consistent.
+- AI-assisted contributions are welcome. You remain the author of record: review what you submit,
+  and remember your sign-off attests that you have the right to contribute it under MPL-2.0.
 - Do not edit `target/` or generated build artifacts.
 - Rozi is a case study for the sibling `../tui-lipan` framework, which is owned alongside this
   project. Framework changes are welcome when a missing capability is reusable framework behavior

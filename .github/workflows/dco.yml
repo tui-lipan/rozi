@@ -1,0 +1,51 @@
+name: DCO
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dco-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dco:
+    name: DCO
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check commit signoffs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "DCO check only applies to pull requests."
+            exit 0
+          fi
+
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          head_sha="${{ github.event.pull_request.head.sha }}"
+          missing=0
+
+          while IFS= read -r commit; do
+            if ! git log -1 --format=%B "$commit" | grep -Eiq '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error title=Missing DCO signoff::Commit $commit is missing a Signed-off-by trailer."
+              missing=1
+            fi
+          done < <(git rev-list --reverse --no-merges "${base_sha}..${head_sha}")
+
+          if [[ "$missing" -ne 0 ]]; then
+            echo "Add signoffs with: git commit --amend -s --no-edit"
+            exit 1
+          fi
+
+          echo "All pull request commits include Signed-off-by trailers."

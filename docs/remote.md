@@ -236,6 +236,8 @@ Notes:
   `ssh_args`). rozi does not open a network-facing session port.
 - Runtime endpoints on the remote host stay per-user local IPC; the proxy is just another client of
   that endpoint.
+- Client environment forwarding is disabled for remote panes. Local display sockets are unusable on
+  the other host, and `[environment].forward` may name credentials.
 - Install copies a binary you already run locally onto the remote home directory; set
   `install = "never"` or pin `binary_path` if you do not want that path.
 - Clipboard content from remote panes still lands on the **local** clipboard via OSC52 / selection

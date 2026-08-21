@@ -32,6 +32,11 @@ Every spawned pane receives:
   install. Not set for a pane reached over `--remote`: that PTY runs on the other host, where
   this client's path names nothing.
 
+New local panes also receive the safe desktop/session variables and configured
+`[environment].forward` values from the client that created them. This overlay is sampled for each
+spawn, is not applied to existing panes, and is suppressed under `--remote`. See
+[Pane environment](configuration.md#pane-environment).
+
 ## CLI
 
 Control commands do not mount the UI. Endpoint discovery order is `--socket PATH`, `ROZI_SOCKET`,

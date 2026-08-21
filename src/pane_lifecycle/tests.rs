@@ -886,14 +886,14 @@ fn focus_override_beats_the_matched_rule_without_touching_placement() {
 fn pane_env_skips_control_socket_when_remote_attached() {
     let pane = Pane::new(1, 100, FloatRect::default());
     let path = std::path::Path::new("/tmp/rozi-control.sock");
-    let local = pane_env(Some(path), &pane, false);
+    let local = pane_env(Some(path), &pane, false, &[]);
     assert!(
         local
             .iter()
             .any(|(k, v)| k == "ROZI_SOCKET" && v.contains("rozi-control")),
         "local attach should inject ROZI_SOCKET: {local:?}"
     );
-    let remote = pane_env(Some(path), &pane, true);
+    let remote = pane_env(Some(path), &pane, true, &[]);
     assert!(
         remote.iter().all(|(k, _)| k != "ROZI_SOCKET"),
         "remote attach must not inject client ROZI_SOCKET: {remote:?}"
@@ -907,7 +907,7 @@ fn pane_env_skips_control_socket_when_remote_attached() {
 #[test]
 fn pane_env_advertises_the_binary_locally_but_not_remotely() {
     let pane = Pane::new(1, 100, FloatRect::default());
-    let local = pane_env(None, &pane, false);
+    let local = pane_env(None, &pane, false, &[]);
     let advertised = local
         .iter()
         .find(|(k, _)| k == "ROZI_BIN")
@@ -918,7 +918,7 @@ fn pane_env_advertises_the_binary_locally_but_not_remotely() {
         std::env::current_exe().expect("current exe")
     );
 
-    let remote = pane_env(None, &pane, true);
+    let remote = pane_env(None, &pane, true, &[]);
     assert!(
         remote.iter().all(|(k, _)| k != "ROZI_BIN"),
         "remote attach must not advertise the client binary: {remote:?}"

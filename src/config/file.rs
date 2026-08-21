@@ -46,6 +46,7 @@ struct FileConfig {
     shell: Option<ShellFileValue>,
     command_shell: Option<ShellFileValue>,
     shell_integration: ShellIntegrationFileConfig,
+    environment: EnvironmentFileConfig,
     cwd: Option<String>,
     scrollback: Option<usize>,
     frame_rate: Option<u16>,
@@ -307,6 +308,12 @@ struct ProfileFileConfig {
 #[serde(default, deny_unknown_fields)]
 struct ShellIntegrationFileConfig {
     mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct EnvironmentFileConfig {
+    forward: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -592,6 +599,14 @@ fn load_config_from_text_with_extensions(
             )),
         }
     }
+    let mut forwarded = std::collections::HashSet::new();
+    config.environment.forward = parsed
+        .environment
+        .forward
+        .into_iter()
+        .filter_map(|name| non_empty(Some(name)))
+        .filter(|name| forwarded.insert(name.clone()))
+        .collect();
     if let Some(cwd) = non_empty(parsed.cwd) {
         config.cwd = Some(expand_path(cwd).to_string_lossy().to_string());
     }
@@ -1315,6 +1330,19 @@ mod file_tests {
             parsed.navigation.editors,
             Some(vec!["nvim".into(), "hx".into()])
         );
+    }
+
+    #[test]
+    fn environment_forward_trims_drops_empty_and_deduplicates_names() {
+        let loaded = load_config_from_text(
+            "[environment]\nforward = [\" CURSOR_API_KEY \", \"\", \"CURSOR_API_KEY\", \"SOME_CUSTOM_VAR\"]",
+            Path::new("test.toml"),
+        );
+        assert_eq!(
+            loaded.config.environment.forward,
+            vec!["CURSOR_API_KEY", "SOME_CUSTOM_VAR"]
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }
 
     #[test]

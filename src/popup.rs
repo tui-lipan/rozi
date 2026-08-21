@@ -77,6 +77,7 @@ pub(crate) fn open(
         ctx.state.control_socket_path.as_deref(),
         &pane,
         ctx.state.current().remote_host.is_some(),
+        &ctx.state.config.environment.forward,
     );
     let identity = pane.identity.clone();
     let (cols, rows) = (pane.terminal.cols, pane.terminal.rows);

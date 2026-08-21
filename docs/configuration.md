@@ -92,6 +92,7 @@ reference for each key.
 | `shell` | string or array | see below | Interactive shell launched in each new pane. |
 | `command_shell` | string or array | see below | Shell used to run one-off command lines (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, control-socket run requests). |
 | `shell_integration.mode` | `auto` or `off` | `auto` | Inject OSC cwd/command metadata into supported interactive shells. |
+| `environment.forward` | array of strings | `[]` | Additional client-process variables copied into newly created local panes. |
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
 | `scrollback` | integer | `5000` | Scrollback lines per pane (minimum 1). Existing screens keep their current capacity; restart a named server or create new panes after changing it. |
 | `frame_rate` | integer | `120` | Ceiling in frames per second on redraws nothing asked for: every live pane is polled at this cadence and animations advance on it. Range `15`-`480`; values outside it are clamped with a warning. Read once at startup, so a live reload does not move it - detach and reattach, or relaunch. See [Frame rate](#frame-rate). |
@@ -111,6 +112,39 @@ snippet using it behaves identically regardless of the invoking user's interacti
 Both are resolved by the client (not the session server) at spawn/command-run time, so a
 detached/persistent named-session server never falls back to its own process environment or a
 stale on-disk config after the client-side config hot-reloads.
+
+### Pane environment
+
+A persistent session server provides the base process environment, but the client that creates a
+pane overlays the desktop variables that identify its current graphical session:
+
+```text
+DISPLAY
+WAYLAND_DISPLAY
+XDG_RUNTIME_DIR
+DBUS_SESSION_BUS_ADDRESS
+HYPRLAND_INSTANCE_SIGNATURE
+DESKTOP_SESSION
+XDG_CURRENT_DESKTOP
+XDG_SESSION_TYPE
+```
+
+This means a named session originally created from SSH can gain Wayland, X11, D-Bus, and compositor
+access in panes later created by a desktop client. Existing panes keep the environment they started
+with. If several clients are attached, the client that initiates the pane creation supplies these
+values.
+
+Use `[environment].forward` for additional variables that Rozi should sample from that client:
+
+```toml
+[environment]
+forward = ["CURSOR_API_KEY", "SOME_CUSTOM_VAR"]
+```
+
+Only named variables are read. Values are kept in memory for that pane and are not written to
+session resurrection data. Rozi never sends client-forwarded environment through `--remote`; local
+display endpoints would be invalid there, and configured names may contain credentials. Per-spawn
+environment supplied by a command or integration remains the final override.
 
 ### Frame rate
 

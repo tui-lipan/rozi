@@ -189,6 +189,7 @@ pub(crate) fn spawn_state_panes_on_session(
     // so the loop body cannot touch `ctx.state`: hoist the generation counter and control socket
     // out, and defer replay inserts until after the loop.
     let control_socket = ctx.state.control_socket_path.clone();
+    let forwarded_environment = ctx.state.config.environment.forward.clone();
     let mut next_generation = ctx.state.current().next_pty_generation;
     let mut replay_inserts: Vec<((crate::state::PaneId, u64), String)> = Vec::new();
     for workspace in &mut ctx.state.current_mut().workspaces {
@@ -207,7 +208,12 @@ pub(crate) fn spawn_state_panes_on_session(
             let env = integration_env
                 .iter()
                 .cloned()
-                .chain(pane_env(control_socket.as_deref(), pane, is_remote))
+                .chain(pane_env(
+                    control_socket.as_deref(),
+                    pane,
+                    is_remote,
+                    &forwarded_environment,
+                ))
                 .collect::<Vec<_>>();
             // A replay command is not sent as spawn launch intent: the pane starts as a plain
             // interactive shell and the command is injected as type-ahead input once the spawn

@@ -172,7 +172,12 @@ pub(crate) fn spawn_pane_in_scratch(
     // Additional panes use the ordinary pane open transition inside the deployed workspace.
     pane.opening = !initial_pane;
     pane.terminal_active = initial_pane;
-    let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane, false);
+    let env = pane_env(
+        ctx.state.control_socket_path.as_deref(),
+        &pane,
+        false,
+        &ctx.state.config.environment.forward,
+    );
     let request = PaneSpawnRequest {
         pane_id: id,
         local: true,
@@ -423,6 +428,7 @@ pub(crate) fn spawn_pane_in_workspace(
         ctx.state.control_socket_path.as_deref(),
         &pane,
         ctx.state.current().remote_host.is_some(),
+        &ctx.state.config.environment.forward,
     );
     let identity = pane.identity.clone();
     let command = pane
@@ -609,6 +615,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.current_mut().next_pty_generation = generation.saturating_add(1);
     let control_socket = ctx.state.control_socket_path.clone();
     let remote_attached = ctx.state.current().remote_host.is_some();
+    let forwarded_environment = ctx.state.config.environment.forward.clone();
     let palette = TerminalColorPalette::from_theme(
         &ctx.state.theme,
         pane_frame_background(
@@ -627,7 +634,12 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
         // stop to other clients, this clears the local badge immediately.
         pane.logging = false;
         (
-            pane_env(control_socket.as_deref(), pane, remote_attached),
+            pane_env(
+                control_socket.as_deref(),
+                pane,
+                remote_attached,
+                &forwarded_environment,
+            ),
             pane.identity.clone(),
             pane.terminal.cols,
             pane.terminal.rows,

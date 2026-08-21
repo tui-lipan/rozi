@@ -415,6 +415,7 @@ Top-level tables:
 | --- | --- |
 | `shell`, `command_shell`, `cwd`, `scrollback` | Process and buffer basics |
 | `[shell_integration]` | Per-shell OSC 133 / OSC 7 injection |
+| `[environment]` | Additional client variables forwarded to new local panes |
 | `[input]` | Prefix key, held modifier, timeouts |
 | `[animations]` | Per-transition animation settings |
 | `[theme]` | Theme selection and overrides |
@@ -479,7 +480,9 @@ compatibility symlink or junction when a Claude CLI is on `PATH`. `rozi --skill`
 same file. See [Agent skill](agent-skill.md).
 
 **Injected pane environment** — `ROZI=1`, `ROZI_PANE`, and `ROZI_SOCKET` are set in every
-spawned pane. `PaneIdentity::env` adds never-persisted per-spawn variables.
+spawned pane. New local panes also receive the desktop/session environment from the client that
+created them plus named `[environment].forward` additions. `PaneIdentity::env` adds never-persisted
+per-spawn variables.
 
 **Hooks** — `[[hooks]]` runs client-side commands for 17 UI events, injecting `ROZI_EVENT`, the
 event's fields, `ROZI_SOCKET`, and `ROZI_REMOTE_HOST` when remote:

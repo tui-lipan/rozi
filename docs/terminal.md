@@ -119,9 +119,11 @@ position.
   opt in treat it as one paste instead of simulated keystrokes. Direct `Ctrl+V` is performable:
   plain text follows that path, while file, image, and other non-text clipboard content forwards
   `Ctrl+V` to the pane application so a clipboard-aware TUI can read the richer format itself.
-  Prefix/modifier and palette paste remain explicit text paste commands. Rich pass-through is local:
-  under `--remote`, the pane application can only inspect the remote host's clipboard until a
-  MIME-aware terminal clipboard protocol is available end to end.
+  Prefix/modifier and palette paste remain explicit text paste commands. New local panes inherit
+  the creating client's desktop environment, so rich pass-through still works when the persistent
+  server was originally created from SSH. Under `--remote`, the pane application can only inspect
+  the remote host's clipboard until a MIME-aware terminal clipboard protocol is available end to
+  end.
 
 ## Copy mode
 

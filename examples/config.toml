@@ -46,6 +46,12 @@
 # "off" leaves shell startup completely untouched.
 #mode = "auto"
 
+[environment]
+# Additional variables copied from the client that creates a new local pane. Rozi already forwards
+# the standard desktop/session variables needed for Wayland, X11, D-Bus, and Hyprland. Values are
+# read at pane creation, are not persisted, and are never sent through --remote attachments.
+#forward = []
+
 [input]
 # Held window-manager modifier: "alt" or "super".
 #modifier = "alt"

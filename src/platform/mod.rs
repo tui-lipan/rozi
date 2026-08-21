@@ -20,6 +20,7 @@
 //! - [`command`] - interactive-shell/command-runner resolution (Phase 4), wired into every
 //!   pane/hook/workbar/`[keys] run` spawn path, plus Windows `PATH`/`PATHEXT` program lookup
 //!   (Phase 10).
+//! - [`environment`] - the safe client environment overlay for newly created local panes.
 //! - [`ipc`] - transport-neutral `IpcEndpoint`/`IpcListener`/`IpcConnection`/`BoundEndpoint`/
 //!   `EndpointRegistry` (Phase 5), wired into `control.rs`, `session/client.rs`,
 //!   `session/discovery.rs`, `session/server/*`, `cli.rs`, and `ops/session.rs`. Unix-domain sockets
@@ -49,6 +50,7 @@ pub mod user;
 
 pub mod ansi;
 pub mod command;
+pub mod environment;
 pub mod ipc;
 pub mod notifications;
 pub mod process;

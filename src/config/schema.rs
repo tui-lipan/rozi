@@ -787,6 +787,12 @@ pub struct ShellIntegrationConfig {
     pub mode: ShellIntegrationMode,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct EnvironmentConfig {
+    /// Additional client-process variables to copy into newly created local panes.
+    pub forward: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Interactive-shell override (argument-preserving; first element is the program). `None`
@@ -800,6 +806,7 @@ pub struct Config {
     /// [`crate::platform::command::resolve_command_shell`].
     pub command_shell: Option<Vec<String>>,
     pub shell_integration: ShellIntegrationConfig,
+    pub environment: EnvironmentConfig,
     pub cwd: Option<String>,
     pub scrollback: usize,
     /// Ceiling on frames the client draws for content nothing asked it to redraw: every live pane
@@ -1401,6 +1408,7 @@ impl Default for Config {
             shell: None,
             command_shell: None,
             shell_integration: ShellIntegrationConfig::default(),
+            environment: EnvironmentConfig::default(),
             cwd: std::env::current_dir()
                 .ok()
                 .map(|path| path.to_string_lossy().to_string()),

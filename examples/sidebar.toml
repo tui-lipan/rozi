@@ -13,7 +13,7 @@ tabs = [
   "activity",
   "panes",
   "sessions",
-  { name = "files", label = "", show_hidden = true, explorer = true },
+  { name = "files", label = "", explorer = true },
   "git",
   { name = "dev", label = "Dev", entries = [
     { label = "Run tests", run = "cargo test" },

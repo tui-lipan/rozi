@@ -1203,7 +1203,7 @@ impl SidebarTreeConfig {
                 SidebarTreeView::Files => SidebarTreeRoot::Cwd,
                 SidebarTreeView::Changes => SidebarTreeRoot::Repo,
             },
-            show_hidden: false,
+            show_hidden: true,
             icons: false,
             explorer: false,
             diff_stats: view == SidebarTreeView::Changes,

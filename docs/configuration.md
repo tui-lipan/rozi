@@ -811,7 +811,7 @@ built-ins with launcher and command-backed tabs.
 | Key | Default | Description |
 | --- | --- | --- |
 | `root` | `"cwd"` for `files`, `"repo"` for `git` | `cwd` roots at the focused pane's directory; `repo` roots at the git repository containing it, so changes elsewhere stay visible from a subdirectory. Falls back to `cwd` outside a repository. |
-| `show_hidden` | `false` | Show dot-prefixed entries. |
+| `show_hidden` | `true` | Show dot-prefixed entries. Set to `false` to hide them. |
 | `icons` | `false` | Show file-kind icons. Off by default because the glyphs assume a Nerd Font. |
 | `explorer` | `false` | Show a fuzzy-find input above the tree. Respects `.gitignore`/`.ignore`. |
 | `diff_stats` | `false` for `files`, `true` for `git` | Show `+N -M` beside change markers. |
@@ -832,7 +832,6 @@ tabs = [
   {
     name = "files",
     label = "",
-    show_hidden = true,
     explorer = true,
     on_click = { send = "nvim {path}\n" },
   },

@@ -477,9 +477,11 @@ mod tests {
 
         let files = tree(&config, "files");
         assert_eq!(files.root, SidebarTreeRoot::Cwd);
+        assert!(files.show_hidden);
         assert!(!files.diff_stats);
         let git = tree(&config, "git");
         assert_eq!(git.root, SidebarTreeRoot::Repo);
+        assert!(git.show_hidden);
         assert!(git.diff_stats);
         // Both default to typing the activated path at the prompt.
         assert_eq!(
@@ -498,13 +500,14 @@ mod tests {
     fn file_tree_table_form_overrides_options() {
         let (config, warnings) = parse(
             r#"
-            tabs = [{ name = "files", label = "", show_hidden = true, icons = true, explorer = true, diff_stats = true, max_entries = 50, root = "repo", on_click = { send = "nvim {path}\n" } }]
+            tabs = [{ name = "files", label = "", show_hidden = false, icons = true, explorer = true, diff_stats = true, max_entries = 50, root = "repo", on_click = { send = "nvim {path}\n" } }]
             "#,
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         let files = tree(&config, "files");
         assert_eq!(files.root, SidebarTreeRoot::Repo);
-        assert!(files.show_hidden && files.icons && files.explorer && files.diff_stats);
+        assert!(!files.show_hidden);
+        assert!(files.icons && files.explorer && files.diff_stats);
         assert_eq!(files.max_entries, 50);
         assert_eq!(
             files.on_click,

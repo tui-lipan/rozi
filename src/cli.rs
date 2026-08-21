@@ -33,6 +33,8 @@ pub(crate) enum SessionCommand {
 pub(crate) struct ControlCli {
     socket: Option<PathBuf>,
     request: control::ControlRequest,
+    /// Explicit report format. Without one, a terminal gets human output and a pipe gets JSON.
+    output_format: Option<ListFormat>,
 }
 
 /// `rozi publish`: the stdio bridge a program uses to publish the activity rows running inside its
@@ -191,15 +193,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     match flag.as_str() {
                         "--format" => {
                             let value = require_value(&mut iter, "--format requires text or json")?;
-                            format = match value.as_str() {
-                                "text" => ListFormat::Text,
-                                "json" => ListFormat::Json,
-                                other => {
-                                    return Err(format!(
-                                        "unknown list-sessions --format `{other}` (expected text or json)"
-                                    ));
-                                }
-                            };
+                            format = parse_list_format(&value, "list-sessions")?;
                         }
                         "--remote" => {
                             let target = require_value(
@@ -427,17 +421,19 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
             }
             "list-panes" => {
-                reject_trailing_control_args(&mut iter, "list-panes")?;
+                let output_format = parse_output_format(&mut iter, "list-panes")?;
                 return Ok(ParsedCli::Control(ControlCli {
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::ListPanes),
+                    output_format,
                 }));
             }
             "metrics" => {
-                reject_trailing_control_args(&mut iter, "metrics")?;
+                let output_format = parse_output_format(&mut iter, "metrics")?;
                 return Ok(ParsedCli::Control(ControlCli {
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::Metrics),
+                    output_format,
                 }));
             }
             "focus" => {
@@ -450,6 +446,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 return Ok(ParsedCli::Control(ControlCli {
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::Focus { target }),
+                    output_format: None,
                 }));
             }
             "send-text" => {
@@ -468,6 +465,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 return Ok(ParsedCli::Control(ControlCli {
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::SendText { target, text }),
+                    output_format: None,
                 }));
             }
             "send-keys" => {
@@ -505,6 +503,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         keys,
                         literal,
                     }),
+                    output_format: None,
                 }));
             }
             "notify" => {
@@ -539,6 +538,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         title,
                         level,
                     }),
+                    output_format: None,
                 }));
             }
             "status" => {
@@ -571,6 +571,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         status,
                         reason,
                     }),
+                    output_format: None,
                 }));
             }
             "publish" => {
@@ -713,6 +714,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         focus,
                         workspace,
                     }),
+                    output_format: None,
                 }));
             }
             "run-action" => {
@@ -721,11 +723,13 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 return Ok(ParsedCli::Control(ControlCli {
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::RunAction { action }),
+                    output_format: None,
                 }));
             }
             "capture-pane" => {
                 let mut target = None;
                 let mut scrollback = None;
+                let mut output_format = None;
                 while let Some(next) = iter.next() {
                     match next.as_str() {
                         "--target" => target = Some(parse_target(&mut iter)?),
@@ -740,6 +744,17 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                                 control::CaptureScrollbackNamed::LastOutput,
                             ));
                         }
+                        "--format" => {
+                            let value = require_value(&mut iter, "--format requires text or json")?;
+                            if output_format
+                                .replace(parse_list_format(&value, "capture-pane")?)
+                                .is_some()
+                            {
+                                return Err(
+                                    "capture-pane --format specified more than once".to_string()
+                                );
+                            }
+                        }
                         other => {
                             return Err(format!(
                                 "unexpected argument `{other}` after capture-pane"
@@ -753,6 +768,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         target,
                         scrollback,
                     }),
+                    output_format,
                 }));
             }
             "switch-workspace" => {
@@ -767,6 +783,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 return Ok(ParsedCli::Control(ControlCli {
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::SwitchWorkspace { index }),
+                    output_format: None,
                 }));
             }
             "move-to-workspace" => {
@@ -781,6 +798,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 return Ok(ParsedCli::Control(ControlCli {
                     socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::MoveToWorkspace { index }),
+                    output_format: None,
                 }));
             }
             other if other.starts_with('-') => {
@@ -842,6 +860,38 @@ fn require_value(
         Some(value) => Ok(value),
         None => Err(missing.to_string()),
     }
+}
+
+fn parse_list_format(value: &str, command: &str) -> std::result::Result<ListFormat, String> {
+    match value {
+        "text" => Ok(ListFormat::Text),
+        "json" => Ok(ListFormat::Json),
+        other => Err(format!(
+            "unknown {command} --format `{other}` (expected text or json)"
+        )),
+    }
+}
+
+fn parse_output_format(
+    iter: &mut impl Iterator<Item = String>,
+    command: &str,
+) -> std::result::Result<Option<ListFormat>, String> {
+    let mut output_format = None;
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--format" => {
+                let value = require_value(iter, "--format requires text or json")?;
+                if output_format
+                    .replace(parse_list_format(&value, command)?)
+                    .is_some()
+                {
+                    return Err(format!("{command} --format specified more than once"));
+                }
+            }
+            other => return Err(format!("unexpected argument `{other}` after {command}")),
+        }
+    }
+    Ok(output_format)
 }
 
 /// Pass `socket` through to a control command, rejecting launch-only options.
@@ -1179,6 +1229,8 @@ fn classify_pick_stream_event(value: &serde_json::Value) -> PickStreamEvent<'_> 
 }
 
 pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
+    use std::io::IsTerminal;
+
     let path = match discover_socket(command.socket) {
         Ok(path) => path,
         Err(err) => {
@@ -1204,7 +1256,6 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
         eprintln!("empty response from rozi");
         std::process::exit(2);
     }
-    println!("{}", line.trim_end());
     let value: serde_json::Value = match serde_json::from_str(&line) {
         Ok(value) => value,
         Err(err) => {
@@ -1212,11 +1263,25 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
             std::process::exit(2);
         }
     };
+    let human_output = match command.output_format {
+        Some(ListFormat::Text) => true,
+        Some(ListFormat::Json) => false,
+        None => std::io::stdout().is_terminal(),
+    };
+    if !human_output {
+        println!("{}", line.trim_end());
+    }
     if value.get("ok").and_then(|v| v.as_bool()) == Some(false) {
         if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
             eprintln!("{error}");
         }
         std::process::exit(1);
+    }
+    if human_output {
+        print!(
+            "{}",
+            format_control_text(&command.request.command, &value, OutputStyles::detect())
+        );
     }
     Ok(())
 }
@@ -1238,21 +1303,490 @@ pub(crate) fn recover_managed_installation() -> std::result::Result<(), String> 
         .map_err(|error| format!("managed installation recovery failed: {error}"))
 }
 
+/// ANSI palette for human-facing command output.
+///
+/// JSON forms, publish/subscribe streams, and the version/protocol preamble deliberately bypass
+/// this type: those streams are protocols even when a person sometimes reads them. Reports meant
+/// for a terminal share this palette and fall back to plain text when colour was disabled through
+/// the standard environment variables.
+#[derive(Clone, Copy)]
+struct OutputStyles {
+    accent: &'static str,
+    heading: &'static str,
+    success: &'static str,
+    warning: &'static str,
+    error: &'static str,
+    muted: &'static str,
+    reset: &'static str,
+}
+
+impl OutputStyles {
+    const fn plain() -> Self {
+        Self {
+            accent: "",
+            heading: "",
+            success: "",
+            warning: "",
+            error: "",
+            muted: "",
+            reset: "",
+        }
+    }
+
+    const fn colored() -> Self {
+        Self {
+            accent: "\x1b[1;36m",
+            heading: "\x1b[1;32m",
+            success: "\x1b[1;32m",
+            warning: "\x1b[1;33m",
+            error: "\x1b[1;31m",
+            muted: "\x1b[90m",
+            reset: "\x1b[0m",
+        }
+    }
+
+    fn detect() -> Self {
+        if crate::platform::ansi::stdout_supports_color() {
+            Self::colored()
+        } else {
+            Self::plain()
+        }
+    }
+
+    fn paint(self, text: &str, tone: OutputTone) -> String {
+        let style = match tone {
+            OutputTone::Plain => "",
+            OutputTone::Accent => self.accent,
+            OutputTone::Heading => self.heading,
+            OutputTone::Success => self.success,
+            OutputTone::Warning => self.warning,
+            OutputTone::Error => self.error,
+            OutputTone::Muted => self.muted,
+        };
+        if style.is_empty() {
+            text.to_string()
+        } else {
+            format!("{style}{text}{}", self.reset)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum OutputTone {
+    Plain,
+    Accent,
+    Heading,
+    Success,
+    Warning,
+    Error,
+    Muted,
+}
+
+struct TableCell {
+    text: String,
+    tone: OutputTone,
+}
+
+impl TableCell {
+    fn new(text: impl Into<String>, tone: OutputTone) -> Self {
+        Self {
+            text: text.into(),
+            tone,
+        }
+    }
+
+    fn plain(text: impl Into<String>) -> Self {
+        Self::new(text, OutputTone::Plain)
+    }
+}
+
+/// Format a compact table without tabs, whose terminal tab stops make short rows look ragged.
+///
+/// Widths are measured before SGR is added and with Unicode display width rather than byte length,
+/// so coloured and non-ASCII values align identically. The final column has no trailing padding.
+fn format_table(headers: &[&str], rows: &[Vec<TableCell>], styles: OutputStyles) -> String {
+    use unicode_width::UnicodeWidthStr;
+
+    let mut widths: Vec<usize> = headers.iter().map(|header| header.width()).collect();
+    for row in rows {
+        debug_assert_eq!(row.len(), headers.len());
+        for (index, cell) in row.iter().enumerate() {
+            widths[index] = widths[index].max(cell.text.width());
+        }
+    }
+
+    let mut out = String::new();
+    let append_row = |out: &mut String, cells: Vec<TableCell>| {
+        for (index, cell) in cells.into_iter().enumerate() {
+            let width = cell.text.width();
+            out.push_str(&styles.paint(&cell.text, cell.tone));
+            if index + 1 < headers.len() {
+                out.push_str(&" ".repeat(widths[index] - width + 2));
+            }
+        }
+        out.push('\n');
+    };
+    append_row(
+        &mut out,
+        headers
+            .iter()
+            .map(|header| TableCell::new(*header, OutputTone::Heading))
+            .collect(),
+    );
+    for row in rows {
+        append_row(
+            &mut out,
+            row.iter()
+                .map(|cell| TableCell::new(cell.text.clone(), cell.tone))
+                .collect(),
+        );
+    }
+    out
+}
+
+fn value_string<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(serde_json::Value::as_str)
+}
+
+fn value_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(serde_json::Value::as_u64)
+}
+
+fn pane_status_tone(status: &str) -> OutputTone {
+    match status {
+        "running" | "ready" | "idle" | "done" => OutputTone::Success,
+        "working" | "starting" | "busy" => OutputTone::Warning,
+        "blocked" | "failed" | "exited" | "error" => OutputTone::Error,
+        _ => OutputTone::Plain,
+    }
+}
+
+fn format_panes_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let panes = data
+        .and_then(serde_json::Value::as_array)
+        .map(|panes| panes.as_slice())
+        .unwrap_or_default();
+    if panes.is_empty() {
+        return format!("{}\n", styles.paint("No panes found.", OutputTone::Muted));
+    }
+
+    let session = panes.first().and_then(|pane| value_string(pane, "session"));
+    let rows = panes
+        .iter()
+        .map(|pane| {
+            let reported = value_string(pane, "reported_status");
+            let agent_state = value_string(pane, "agent_state");
+            let state = reported.or(agent_state).unwrap_or("—");
+            let size = value_string(pane, "status").unwrap_or("—");
+            let command = value_string(pane, "foreground_program")
+                .map(str::to_string)
+                .or_else(|| value_string(pane, "command").map(str::to_string))
+                .or_else(|| {
+                    pane.get("argv")
+                        .and_then(serde_json::Value::as_array)
+                        .map(|argv| {
+                            argv.iter()
+                                .filter_map(serde_json::Value::as_str)
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
+                })
+                .filter(|command| !command.is_empty())
+                .unwrap_or_else(|| "—".to_string());
+            vec![
+                TableCell::new(
+                    value_u64(pane, "id")
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "—".to_string()),
+                    OutputTone::Accent,
+                ),
+                TableCell::plain(
+                    value_u64(pane, "workspace")
+                        .map(|workspace| {
+                            if workspace == 0 {
+                                "scratch".to_string()
+                            } else {
+                                workspace.to_string()
+                            }
+                        })
+                        .unwrap_or_else(|| "—".to_string()),
+                ),
+                TableCell::plain(value_string(pane, "title").unwrap_or("—")),
+                TableCell::new(state, pane_status_tone(state)),
+                TableCell::plain(value_string(pane, "agent").unwrap_or("—")),
+                TableCell::plain(size),
+                TableCell::plain(command),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let table = format_table(
+        &[
+            "ID",
+            "WORKSPACE",
+            "TITLE",
+            "STATE",
+            "AGENT",
+            "SIZE",
+            "COMMAND",
+        ],
+        &rows,
+        styles,
+    );
+    match session {
+        Some(session) => format!(
+            "{}  {}\n\n{table}",
+            styles.paint("Session", OutputTone::Muted),
+            styles.paint(session, OutputTone::Accent)
+        ),
+        None => table,
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if value >= 10.0 {
+        format!("{value:.0} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn format_micros(micros: u64) -> String {
+    if micros < 1_000 {
+        format!("{micros} µs")
+    } else if micros < 1_000_000 {
+        format!("{:.1} ms", micros as f64 / 1_000.0)
+    } else {
+        format!("{:.1} s", micros as f64 / 1_000_000.0)
+    }
+}
+
+fn metric_row(label: &str, metric: Option<&serde_json::Value>, detail: String) -> Vec<TableCell> {
+    let bytes = |key| {
+        metric
+            .and_then(|value| value_u64(value, key))
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".to_string())
+    };
+    vec![
+        TableCell::new(label, OutputTone::Accent),
+        TableCell::plain(bytes("current_bytes")),
+        TableCell::plain(bytes("high_water_bytes")),
+        TableCell::plain(bytes("capacity_bytes")),
+        TableCell::plain(detail),
+    ]
+}
+
+fn count_detail(
+    metric: Option<&serde_json::Value>,
+    key: &str,
+    singular: &str,
+    plural: &str,
+) -> String {
+    let Some(count) = metric.and_then(|value| value_u64(value, key)) else {
+        return "—".to_string();
+    };
+    format!("{count} {}", if count == 1 { singular } else { plural })
+}
+
+fn format_metrics_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let Some(metrics) = data else {
+        return format!(
+            "{}\n",
+            styles.paint("Metrics unavailable.", OutputTone::Warning)
+        );
+    };
+    let inbound = metrics
+        .get("client_inbound")
+        .filter(|value| !value.is_null());
+    let outbound = metrics
+        .get("client_outbound")
+        .filter(|value| !value.is_null());
+    let pipe = metrics.get("piped_remote").filter(|value| !value.is_null());
+    let orphan = metrics.get("orphan_output");
+    let server = metrics.get("server").filter(|value| !value.is_null());
+    let pty = server.and_then(|value| value.get("pty_ingress"));
+    let server_out = server.and_then(|value| value.get("client_outboxes"));
+    let resurrection = server.and_then(|value| value.get("resurrection"));
+    let server_age = server
+        .and_then(|value| value_u64(value, "age_ms"))
+        .map(|age| {
+            let stale = server
+                .and_then(|value| value.get("stale"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            format!("{age} ms · {}", if stale { "stale" } else { "fresh" })
+        })
+        .unwrap_or_else(|| "—".to_string());
+
+    let mut rows = vec![
+        metric_row(
+            "Client in",
+            inbound,
+            count_detail(inbound, "queued_items", "item", "items"),
+        ),
+        metric_row(
+            "Client out",
+            outbound,
+            count_detail(outbound, "queued_items", "item", "items"),
+        ),
+        metric_row("Remote pipe", pipe, "—".to_string()),
+        metric_row(
+            "Orphan output",
+            orphan,
+            count_detail(orphan, "keys", "key", "keys"),
+        ),
+        metric_row(
+            "PTY ingress",
+            pty,
+            if server.is_some() {
+                server_age
+            } else {
+                "—".to_string()
+            },
+        ),
+        metric_row(
+            "Server out",
+            server_out,
+            count_detail(server_out, "clients", "client", "clients"),
+        ),
+    ];
+    if let Some(snapshot) = resurrection {
+        let attempts = value_u64(snapshot, "attempts").unwrap_or(0);
+        let successes = value_u64(snapshot, "successes").unwrap_or(0);
+        let failures = value_u64(snapshot, "failures").unwrap_or(0);
+        rows.push(vec![
+            TableCell::new("Snapshot total", OutputTone::Accent),
+            TableCell::plain(format_micros(
+                value_u64(snapshot, "last_duration_us").unwrap_or(0),
+            )),
+            TableCell::plain(format_micros(
+                value_u64(snapshot, "max_duration_us").unwrap_or(0),
+            )),
+            TableCell::plain("—"),
+            TableCell::new(
+                format!("{attempts} runs · {successes} ok · {failures} failed"),
+                if failures == 0 {
+                    OutputTone::Success
+                } else {
+                    OutputTone::Error
+                },
+            ),
+        ]);
+        rows.push(vec![
+            TableCell::new("Snapshot block", OutputTone::Accent),
+            TableCell::plain(format_micros(
+                value_u64(snapshot, "last_blocking_us").unwrap_or(0),
+            )),
+            TableCell::plain(format_micros(
+                value_u64(snapshot, "max_blocking_us").unwrap_or(0),
+            )),
+            TableCell::plain("—"),
+            TableCell::plain(format!(
+                "{} exported · {} reused",
+                value_u64(snapshot, "last_exported_panes").unwrap_or(0),
+                value_u64(snapshot, "last_reused_panes").unwrap_or(0)
+            )),
+        ]);
+    }
+    format_table(
+        &["RESOURCE", "CURRENT", "PEAK", "CAPACITY", "DETAIL"],
+        &rows,
+        styles,
+    )
+}
+
+fn format_capture_text(data: Option<&serde_json::Value>) -> String {
+    let text = data
+        .and_then(|value| value_string(value, "text"))
+        .unwrap_or("");
+    if text.ends_with('\n') {
+        text.to_string()
+    } else {
+        format!("{text}\n")
+    }
+}
+
+fn format_control_text(
+    command: &control::ControlCommand,
+    response: &serde_json::Value,
+    styles: OutputStyles,
+) -> String {
+    let data = response.get("data");
+    match command {
+        control::ControlCommand::ListPanes => format_panes_text(data, styles),
+        control::ControlCommand::Metrics => format_metrics_text(data, styles),
+        control::ControlCommand::CapturePane { .. } => format_capture_text(data),
+        control::ControlCommand::NewPane { .. } => {
+            let id = data.and_then(|value| value_u64(value, "id"));
+            let ready = data
+                .and_then(|value| value.get("pty_ready"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            match id {
+                Some(id) => format!(
+                    "{}  {}\n",
+                    styles.paint(&format!("Pane {id}"), OutputTone::Accent),
+                    styles.paint(
+                        if ready { "ready" } else { "starting" },
+                        if ready {
+                            OutputTone::Success
+                        } else {
+                            OutputTone::Warning
+                        }
+                    )
+                ),
+                None => format!("{}\n", styles.paint("OK", OutputTone::Success)),
+            }
+        }
+        _ => format!("{}\n", styles.paint("OK", OutputTone::Success)),
+    }
+}
+
+fn style_first_line(text: String, tone: OutputTone, styles: OutputStyles) -> String {
+    let Some((first, rest)) = text.split_once('\n') else {
+        return styles.paint(&text, tone);
+    };
+    format!("{}\n{rest}", styles.paint(first, tone))
+}
+
 pub(crate) fn run_install_cli() -> std::result::Result<(), String> {
+    let styles = OutputStyles::detect();
     let installation = crate::platform::install::from_process();
     let result = installation
         .install()
         .map_err(|error| format!("installation failed: {error}"))?;
     if result.changed {
-        println!("Installed rozi v{}", result.version);
+        println!(
+            "{} rozi {}",
+            styles.paint("Installed", OutputTone::Success),
+            styles.paint(&format!("v{}", result.version), OutputTone::Accent)
+        );
     } else {
-        println!("rozi v{} is already installed and verified", result.version);
+        println!(
+            "rozi {} is already installed and verified",
+            styles.paint(&format!("v{}", result.version), OutputTone::Accent)
+        );
     }
-    println!("Command  {}", installation.command_path().display());
+    println!(
+        "{}  {}",
+        styles.paint("Command", OutputTone::Muted),
+        installation.command_path().display()
+    );
     Ok(())
 }
 
 pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), String> {
+    let styles = OutputStyles::detect();
     let installation = crate::platform::install::from_process();
     match command {
         UpdateCommand::Check => {
@@ -1263,39 +1797,60 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
                 .map_err(|error| format!("invalid running version: {error}"))?;
             let current = result.current.as_ref().unwrap_or(&running);
             println!(
-                "Current  v{}{}",
-                current,
+                "{}  {}{}",
+                styles.paint("Current", OutputTone::Muted),
+                styles.paint(&format!("v{current}"), OutputTone::Accent),
                 if result.managed {
                     " (managed)"
                 } else {
                     " (unmanaged)"
                 }
             );
-            println!("Latest   v{}", result.latest);
-            let status = if result.latest > *current {
-                "update available"
+            println!(
+                "{}   {}",
+                styles.paint("Latest", OutputTone::Muted),
+                styles.paint(&format!("v{}", result.latest), OutputTone::Accent)
+            );
+            let (status, tone) = if result.latest > *current {
+                ("update available", OutputTone::Warning)
             } else if result.latest == *current {
-                "up to date"
+                ("up to date", OutputTone::Success)
             } else {
-                "running version is newer"
+                ("running version is newer", OutputTone::Warning)
             };
-            println!("Status   {status}");
+            println!(
+                "{}   {}",
+                styles.paint("Status", OutputTone::Muted),
+                styles.paint(status, tone)
+            );
         }
         UpdateCommand::Apply => {
             let result = installation
                 .update()
                 .map_err(|error| format!("update failed: {error}"))?;
             if result.changed {
-                println!("Updated rozi to v{}", result.version);
+                println!(
+                    "{} rozi to {}",
+                    styles.paint("Updated", OutputTone::Success),
+                    styles.paint(&format!("v{}", result.version), OutputTone::Accent)
+                );
             } else {
-                println!("rozi v{} is up to date", result.version);
+                println!(
+                    "rozi {} is {}",
+                    styles.paint(&format!("v{}", result.version), OutputTone::Accent),
+                    styles.paint("up to date", OutputTone::Success)
+                );
             }
         }
         UpdateCommand::Rollback => {
             let result = installation
                 .rollback()
                 .map_err(|error| format!("rollback failed: {error}"))?;
-            println!("Rolled back rozi to v{}", result.version);
+            println!(
+                "{} rozi to {}",
+                styles.paint("Rolled back", OutputTone::Success),
+                styles.paint(&format!("v{}", result.version), OutputTone::Accent)
+            );
         }
     }
     Ok(())
@@ -1391,6 +1946,7 @@ pub(crate) fn print_skill_help() {
 }
 
 pub(crate) fn run_skill_cli(command: SkillCommand) -> Result<()> {
+    let styles = OutputStyles::detect();
     match command {
         SkillCommand::Print => {
             print_skill();
@@ -1400,22 +1956,117 @@ pub(crate) fn run_skill_cli(command: SkillCommand) -> Result<()> {
             let paths = skill::default_paths(global).map_err(std::io::Error::other)?;
             let report = skill::install(&paths, crate::agent_detection::claude_cli_available())
                 .map_err(std::io::Error::other)?;
-            print!("{}", skill::format_install(&report, &paths));
+            print!(
+                "{}",
+                style_first_line(
+                    skill::format_install(&report, &paths),
+                    OutputTone::Success,
+                    styles
+                )
+            );
             Ok(())
         }
         SkillCommand::Uninstall { global } => {
             let paths = skill::default_paths(global).map_err(std::io::Error::other)?;
             let report = skill::uninstall(&paths).map_err(std::io::Error::other)?;
-            print!("{}", skill::format_uninstall(&report, &paths));
+            let tone = if report.removed.is_empty() {
+                OutputTone::Warning
+            } else {
+                OutputTone::Success
+            };
+            print!(
+                "{}",
+                style_first_line(skill::format_uninstall(&report, &paths), tone, styles)
+            );
             Ok(())
         }
         SkillCommand::Status { global } => {
             let paths = skill::default_paths(global).map_err(std::io::Error::other)?;
             let report = skill::status(&paths, crate::agent_detection::claude_cli_available());
-            print!("{}", skill::format_status(&report, &paths));
+            print!(
+                "{}",
+                style_first_line(
+                    skill::format_status(&report, &paths),
+                    OutputTone::Heading,
+                    styles
+                )
+            );
             Ok(())
         }
     }
+}
+
+fn format_sessions_text(
+    rows: &[session::discovery::DiscoveredSession],
+    styles: OutputStyles,
+) -> String {
+    if rows.is_empty() {
+        return format!(
+            "{}\n",
+            styles.paint("No sessions found.", OutputTone::Muted)
+        );
+    }
+    let show_host = rows.iter().any(|row| row.host.is_some());
+    let headers = if show_host {
+        vec!["NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT", "HOST"]
+    } else {
+        vec!["NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT"]
+    };
+    let table_rows = rows
+        .iter()
+        .map(|session| {
+            let (status, status_tone, panes, clients, layout) = match session.status {
+                session::discovery::DiscoveredSessionStatus::Running {
+                    panes,
+                    clients,
+                    has_layout,
+                    ..
+                } => (
+                    "running",
+                    OutputTone::Success,
+                    panes.to_string(),
+                    clients.to_string(),
+                    if has_layout { "yes" } else { "no" }.to_string(),
+                ),
+                session::discovery::DiscoveredSessionStatus::Restorable => (
+                    "restorable",
+                    OutputTone::Accent,
+                    "—".to_string(),
+                    "0".to_string(),
+                    "—".to_string(),
+                ),
+                session::discovery::DiscoveredSessionStatus::Busy => (
+                    "busy",
+                    OutputTone::Warning,
+                    "—".to_string(),
+                    "—".to_string(),
+                    "—".to_string(),
+                ),
+                session::discovery::DiscoveredSessionStatus::Unknown => (
+                    "unknown",
+                    OutputTone::Error,
+                    "—".to_string(),
+                    "—".to_string(),
+                    "—".to_string(),
+                ),
+            };
+            let mut cells = vec![
+                TableCell::new(&session.name, OutputTone::Accent),
+                TableCell::new(status, status_tone),
+                TableCell::plain(panes),
+                TableCell::plain(clients),
+                TableCell::plain(layout),
+            ];
+            if show_host {
+                cells.push(TableCell::new(
+                    session.host.as_deref().unwrap_or("—"),
+                    OutputTone::Muted,
+                ));
+            }
+            cells
+        })
+        .collect::<Vec<_>>();
+    format_table(&headers, &table_rows, styles)
 }
 
 pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) -> Result<()> {
@@ -1437,55 +2088,136 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
             );
         }
         ListFormat::Text => {
-            for session in rows {
-                let host = session
-                    .host
-                    .as_deref()
-                    .map(|host| format!("\thost={host}"))
-                    .unwrap_or_default();
-                match session.status {
-                    session::discovery::DiscoveredSessionStatus::Running {
-                        panes,
-                        clients,
-                        has_layout,
-                        ..
-                    } => println!(
-                        "{}\trunning\tpanes={}\tclients={}\tlayout={}{host}",
-                        session.name,
-                        panes,
-                        clients,
-                        if has_layout { "yes" } else { "no" }
-                    ),
-                    session::discovery::DiscoveredSessionStatus::Restorable => {
-                        println!(
-                            "{}\trestorable\tpanes=?\tclients=0\tlayout=?{host}",
-                            session.name
-                        )
-                    }
-                    session::discovery::DiscoveredSessionStatus::Busy => {
-                        println!("{}\tbusy\tpanes=?\tclients=?\tlayout=?{host}", session.name)
-                    }
-                    session::discovery::DiscoveredSessionStatus::Unknown => {
-                        println!(
-                            "{}\tunknown\tpanes=?\tclients=?\tlayout=?{host}",
-                            session.name
-                        )
-                    }
-                }
-            }
+            print!("{}", format_sessions_text(&rows, OutputStyles::detect()));
         }
     }
     Ok(())
 }
 
 pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {
+    let styles = OutputStyles::detect();
     let parent = std::env::current_dir()?;
     let destination =
         crate::config::create_extension_scaffold(id, &parent).map_err(std::io::Error::other)?;
-    println!("Created {}", destination.display());
-    println!("Validate: rozi check-extension {}", destination.display());
-    println!("Invoke after installation: rozi run-action {id}.hello");
+    println!(
+        "{} {}",
+        styles.paint("Created", OutputTone::Success),
+        destination.display()
+    );
+    println!(
+        "{}  {}",
+        styles.paint("Validate", OutputTone::Muted),
+        styles.paint(
+            &format!("rozi check-extension {}", destination.display()),
+            OutputTone::Accent
+        )
+    );
+    println!(
+        "{}    {}",
+        styles.paint("Invoke", OutputTone::Muted),
+        styles.paint(&format!("rozi run-action {id}.hello"), OutputTone::Accent)
+    );
     Ok(())
+}
+
+fn extension_status_tone(status: crate::config::ExtensionStatus) -> OutputTone {
+    match status {
+        crate::config::ExtensionStatus::Loaded => OutputTone::Success,
+        crate::config::ExtensionStatus::Disabled => OutputTone::Muted,
+        crate::config::ExtensionStatus::Invalid
+        | crate::config::ExtensionStatus::Incompatible
+        | crate::config::ExtensionStatus::Duplicate => OutputTone::Error,
+    }
+}
+
+fn format_extensions_text(
+    entries: &[crate::config::ExtensionInfo],
+    verbose: bool,
+    styles: OutputStyles,
+) -> String {
+    if entries.is_empty() {
+        return format!(
+            "{}\n",
+            styles.paint("No extensions found.", OutputTone::Muted)
+        );
+    }
+    let rows = entries
+        .iter()
+        .map(|extension| {
+            vec![
+                TableCell::new(extension.display_name(), OutputTone::Accent),
+                TableCell::plain(extension.title.as_deref().unwrap_or("—")),
+                TableCell::plain(extension.version.as_deref().unwrap_or("—")),
+                TableCell::plain(extension.commands.len().to_string()),
+                TableCell::plain(extension.services.len().to_string()),
+                TableCell::new(
+                    extension.status_detail(),
+                    extension_status_tone(extension.status),
+                ),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let mut out = format_table(
+        &["NAME", "TITLE", "VERSION", "COMMANDS", "SERVICES", "STATUS"],
+        &rows,
+        styles,
+    );
+    if !verbose {
+        return out;
+    }
+
+    for extension in entries {
+        out.push('\n');
+        out.push_str(&styles.paint(extension.display_name(), OutputTone::Heading));
+        out.push('\n');
+        let mut field = |label: &str, value: &str| {
+            out.push_str("  ");
+            out.push_str(&format!("{label:<10}"));
+            out.push_str(value);
+            out.push('\n');
+        };
+        field("directory", &extension.path);
+        field("manifest", &extension.manifest_path);
+        field("id", extension.id.as_deref().unwrap_or("<unresolved>"));
+        field("title", extension.title.as_deref().unwrap_or("—"));
+        field(
+            "api",
+            &extension
+                .api
+                .map(|api| api.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+        );
+        if !extension.commands.is_empty() {
+            out.push_str("  commands\n");
+            for id in &extension.commands {
+                out.push_str("    ");
+                out.push_str(id);
+                if let Some(path) = extension.command_paths.get(id) {
+                    out.push_str("  ");
+                    out.push_str(path);
+                }
+                out.push('\n');
+            }
+        }
+        if !extension.services.is_empty() {
+            out.push_str("  services\n");
+            for id in &extension.services {
+                out.push_str("    ");
+                out.push_str(id);
+                if let Some(path) = extension.service_paths.get(id) {
+                    out.push_str("  ");
+                    out.push_str(path);
+                }
+                out.push('\n');
+            }
+        }
+        for error in &extension.errors {
+            out.push_str("  error     ");
+            out.push_str(error);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
@@ -1502,57 +2234,10 @@ pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
         );
         return Ok(());
     }
-    println!("NAME\tTITLE\tVERSION\tCOMMANDS\tSERVICES\tSTATUS");
-    for extension in &entries {
-        let name = extension.display_name();
-        let title = extension.title.as_deref().unwrap_or("-");
-        let version = extension.version.as_deref().unwrap_or("-");
-        println!(
-            "{name}\t{title}\t{version}\t{}\t{}\t{}",
-            extension.commands.len(),
-            extension.services.len(),
-            extension.status_detail()
-        );
-        if verbose {
-            println!("  directory: {}", extension.path);
-            println!("  manifest:  {}", extension.manifest_path);
-            println!(
-                "  id:        {}",
-                extension.id.as_deref().unwrap_or("<unresolved>")
-            );
-            println!("  title:     {}", extension.title.as_deref().unwrap_or("-"));
-            println!(
-                "  api:       {}",
-                extension
-                    .api
-                    .map(|api| api.to_string())
-                    .unwrap_or_else(|| "-".to_string())
-            );
-            if !extension.commands.is_empty() {
-                println!("  commands:");
-                for id in &extension.commands {
-                    if let Some(path) = extension.command_paths.get(id) {
-                        println!("    {id}\t{path}");
-                    } else {
-                        println!("    {id}");
-                    }
-                }
-            }
-            if !extension.services.is_empty() {
-                println!("  services:");
-                for id in &extension.services {
-                    if let Some(path) = extension.service_paths.get(id) {
-                        println!("    {id}\t{path}");
-                    } else {
-                        println!("    {id}");
-                    }
-                }
-            }
-            for error in &extension.errors {
-                println!("  error:     {error}");
-            }
-        }
-    }
+    print!(
+        "{}",
+        format_extensions_text(&entries, verbose, OutputStyles::detect())
+    );
     Ok(())
 }
 
@@ -1567,31 +2252,50 @@ pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Res
         );
         return Ok(info.status == crate::config::ExtensionStatus::Loaded);
     }
-    println!("Extension: {}", info.display_name());
-    println!("Version:   {}", info.version.as_deref().unwrap_or("-"));
+    let styles = OutputStyles::detect();
     println!(
-        "API:       {}",
+        "{}  {}",
+        styles.paint("Extension", OutputTone::Muted),
+        styles.paint(info.display_name(), OutputTone::Accent)
+    );
+    println!(
+        "{}    {}",
+        styles.paint("Version", OutputTone::Muted),
+        info.version.as_deref().unwrap_or("—")
+    );
+    println!(
+        "{}        {}",
+        styles.paint("API", OutputTone::Muted),
         info.api
             .map(|api| api.to_string())
-            .unwrap_or_else(|| "-".to_string())
+            .unwrap_or_else(|| "—".to_string())
     );
     println!();
     if info.status == crate::config::ExtensionStatus::Loaded {
-        println!("✓ manifest valid");
-        println!("✓ extension id valid");
-        println!("✓ {} commands", info.commands.len());
-        println!("✓ {} services", info.services.len());
-        println!("✓ executable paths resolved");
+        println!("{}", styles.paint("CHECKS", OutputTone::Heading));
+        for check in [
+            "manifest valid".to_string(),
+            "extension id valid".to_string(),
+            format!("{} commands", info.commands.len()),
+            format!("{} services", info.services.len()),
+            "executable paths resolved".to_string(),
+        ] {
+            println!("  {} {check}", styles.paint("✓", OutputTone::Success));
+        }
     } else {
-        println!("status: {}", info.status.as_str());
+        println!(
+            "{}  {}",
+            styles.paint("Status", OutputTone::Muted),
+            styles.paint(info.status.as_str(), extension_status_tone(info.status))
+        );
         for error in &info.errors {
             eprintln!("rozi: {error}");
         }
     }
     if !info.command_details.is_empty() {
-        println!("\nCommands:");
+        println!("\n{}", styles.paint("COMMANDS", OutputTone::Heading));
         for command in &info.command_details {
-            println!("  {}", command.id);
+            println!("  {}", styles.paint(&command.id, OutputTone::Accent));
             println!("    launch: {}", format_extension_launch(&command.launch));
             println!("    cwd:    {}", command.cwd);
             println!(
@@ -1601,9 +2305,9 @@ pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Res
         }
     }
     if !info.service_details.is_empty() {
-        println!("\nServices:");
+        println!("\n{}", styles.paint("SERVICES", OutputTone::Heading));
         for service in &info.service_details {
-            println!("  {}", service.id);
+            println!("  {}", styles.paint(&service.id, OutputTone::Accent));
             println!("    launch: {}", format_extension_launch(&service.launch));
             println!("    cwd:    {}", service.cwd);
             println!("    restart: {}", service.restart);
@@ -1854,7 +2558,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("list-panes", "Print live panes as JSON"),
+            row(
+                "list-panes [--format text|json]",
+                "List live panes; JSON when piped",
+            ),
             row("focus <PANE_ID>", "Focus a pane"),
             row(
                 "send-text [--target <PANE_ID>] <TEXT>",
@@ -1872,10 +2579,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "new-pane [--workspace <N>] [--focus] [--cwd <DIR>] [--title <TEXT>]",
                 "Spawn a pane, optionally in another workspace",
             ),
-            row(
-                "capture-pane [--target <PANE_ID>] [--scrollback <N|full>] [--last-output]",
-                "Print a pane's contents",
-            ),
+            row("capture-pane [OPTIONS]", "Print pane text; JSON when piped"),
             row("switch-workspace <1-9>", "Switch the active workspace"),
             row(
                 "move-to-workspace <1-9>",
@@ -1904,7 +2608,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 "pick [--title T] [--placeholder P] [--json]",
                 "Choose a line of stdin in a modal picker",
             ),
-            row("metrics", "Print runtime metrics as JSON"),
+            row(
+                "metrics [--format text|json]",
+                "Show runtime resources; JSON when piped",
+            ),
         ],
     },
     HelpSection {
@@ -2218,6 +2925,43 @@ mod tests {
         let reserved =
             expect_run(parse_cli_args(vec!["--session".into(), "attach".into()]).expect("parses"));
         assert_eq!(reserved.attach_session.as_deref(), Some("attach"));
+    }
+
+    #[test]
+    fn cli_report_commands_accept_an_explicit_text_or_json_format() {
+        for (command, format) in [
+            ("list-panes", ListFormat::Text),
+            ("metrics", ListFormat::Json),
+        ] {
+            let ParsedCli::Control(parsed) = parse_cli_args(vec![
+                command.into(),
+                "--format".into(),
+                match format {
+                    ListFormat::Text => "text",
+                    ListFormat::Json => "json",
+                }
+                .into(),
+            ])
+            .expect("parses") else {
+                panic!("expected control command");
+            };
+            assert_eq!(parsed.output_format, Some(format));
+        }
+
+        let ParsedCli::Control(capture) = parse_cli_args(vec![
+            "capture-pane".into(),
+            "--target".into(),
+            "7".into(),
+            "--format".into(),
+            "text".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected capture command");
+        };
+        assert_eq!(capture.output_format, Some(ListFormat::Text));
+        assert!(
+            parse_cli_args(vec!["list-panes".into(), "--format".into(), "yaml".into()]).is_err()
+        );
     }
 
     #[test]
@@ -3111,6 +3855,168 @@ mod tests {
                 "list-panes".into(),
             ])
             .is_err()
+        );
+    }
+
+    #[test]
+    fn session_report_is_an_aligned_table_with_color_outside_its_widths() {
+        let rows = vec![
+            session::discovery::DiscoveredSession {
+                name: "dev".into(),
+                status: session::discovery::DiscoveredSessionStatus::Running {
+                    panes: 5,
+                    clients: 1,
+                    has_layout: true,
+                    created_from_profile: None,
+                },
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+            },
+            session::discovery::DiscoveredSession {
+                name: "saved-work".into(),
+                status: session::discovery::DiscoveredSessionStatus::Restorable,
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+            },
+        ];
+        let plain = format_sessions_text(&rows, OutputStyles::plain());
+        assert_eq!(
+            plain,
+            "NAME        STATUS      PANES  CLIENTS  LAYOUT\n\
+             dev         running     5      1        yes\n\
+             saved-work  restorable  —      0        —\n"
+        );
+        assert!(plain.lines().all(|line| !line.ends_with(' ')));
+
+        let colored = format_sessions_text(&rows, OutputStyles::colored());
+        assert!(colored.contains("\x1b["));
+        let mut stripped = String::with_capacity(colored.len());
+        let mut rest = colored.as_str();
+        while let Some(start) = rest.find('\x1b') {
+            stripped.push_str(&rest[..start]);
+            let end = rest[start..]
+                .find('m')
+                .expect("every output style ends in `m`");
+            rest = &rest[start + end + 1..];
+        }
+        stripped.push_str(rest);
+        assert_eq!(stripped, plain);
+    }
+
+    #[test]
+    fn control_reports_have_human_tables_text_and_acknowledgements() {
+        let panes = serde_json::json!({
+            "ok": true,
+            "data": [
+                {
+                    "session": "dev",
+                    "id": 3,
+                    "title": "tests",
+                    "workspace": 2,
+                    "command": "cargo test",
+                    "argv": null,
+                    "foreground_program": "cargo",
+                    "foreground_arguments": ["test"],
+                    "cwd": "/repo",
+                    "status": "80×24",
+                    "reported_status": "working",
+                    "status_reason": "suite",
+                    "agent": "cursor",
+                    "agent_state": "idle"
+                }
+            ]
+        });
+        assert_eq!(
+            format_control_text(
+                &control::ControlCommand::ListPanes,
+                &panes,
+                OutputStyles::plain()
+            ),
+            "Session  dev\n\n\
+             ID  WORKSPACE  TITLE  STATE    AGENT   SIZE   COMMAND\n\
+             3   2          tests  working  cursor  80×24  cargo\n"
+        );
+
+        let capture = serde_json::json!({
+            "ok": true,
+            "data": {"id": 3, "text": "one\ntwo", "title": "tests"}
+        });
+        assert_eq!(
+            format_control_text(
+                &control::ControlCommand::CapturePane {
+                    target: Some(3),
+                    scrollback: None
+                },
+                &capture,
+                OutputStyles::plain()
+            ),
+            "one\ntwo\n"
+        );
+
+        let ack = serde_json::json!({"ok": true});
+        assert_eq!(
+            format_control_text(
+                &control::ControlCommand::Focus { target: 3 },
+                &ack,
+                OutputStyles::plain()
+            ),
+            "OK\n"
+        );
+    }
+
+    #[test]
+    fn runtime_metrics_report_summarizes_resources_without_dumping_json() {
+        let response = serde_json::json!({
+            "ok": true,
+            "data": {
+                "sampled_at_unix_ms": 1000,
+                "client_inbound": {
+                    "current_bytes": 0,
+                    "high_water_bytes": 4096,
+                    "capacity_bytes": 8388608,
+                    "queued_items": 0
+                },
+                "client_outbound": null,
+                "piped_remote": null,
+                "orphan_output": {
+                    "current_bytes": 12,
+                    "high_water_bytes": 2048,
+                    "capacity_bytes": 4194304,
+                    "keys": 1,
+                    "capacity_keys": 4096
+                },
+                "server": null
+            }
+        });
+        let rendered = format_control_text(
+            &control::ControlCommand::Metrics,
+            &response,
+            OutputStyles::plain(),
+        );
+        assert!(rendered.starts_with("RESOURCE"));
+        assert!(rendered.contains("Client in"));
+        assert!(rendered.contains("4.0 KiB"));
+        assert!(rendered.contains("Orphan output"));
+        assert!(rendered.contains("1 key"));
+        assert!(!rendered.contains("sampled_at_unix_ms"));
+        assert!(rendered.lines().all(|line| !line.ends_with(' ')));
+    }
+
+    #[test]
+    fn empty_human_reports_say_what_was_not_found() {
+        assert_eq!(
+            format_sessions_text(&[], OutputStyles::plain()),
+            "No sessions found.\n"
+        );
+        assert_eq!(
+            format_panes_text(None, OutputStyles::plain()),
+            "No panes found.\n"
+        );
+        assert_eq!(
+            format_extensions_text(&[], false, OutputStyles::plain()),
+            "No extensions found.\n"
         );
     }
 

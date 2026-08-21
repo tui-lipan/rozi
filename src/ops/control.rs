@@ -17,11 +17,18 @@ use crate::state::{PaneId, PaneIdentity, WORKSPACE_COUNT};
 
 #[derive(Serialize)]
 struct PaneInfo {
+    /// Session shown by the UI whose control endpoint answered this request. Remote sessions are
+    /// qualified with their host so two same-name sessions do not look interchangeable.
+    session: String,
     id: PaneId,
     title: String,
     workspace: usize,
+    /// Initial launch intent, retained for automation and profile diagnostics.
     command: Option<String>,
     argv: Option<Vec<String>>,
+    /// Live foreground process, which is what the pane is running now rather than what launched it.
+    foreground_program: Option<String>,
+    foreground_arguments: Vec<String>,
     cwd: Option<String>,
     status: String,
     reported_status: Option<String>,
@@ -215,11 +222,12 @@ fn runtime_metrics(ctx: &Context<AppRoot>) -> ControlResponse {
 
 impl PaneInfo {
     /// Scratch panes report workspace `0`; a tiled pane reports its one-based workspace number.
-    fn new(pane: &crate::state::Pane, workspace: usize) -> Self {
+    fn new(pane: &crate::state::Pane, workspace: usize, session: &str) -> Self {
         let detected = pane.terminal.detected_agent.as_ref();
         Self {
+            session: session.to_string(),
             id: pane.id,
-            title: pane.display_title(None),
+            title: pane.display_title(pane.terminal.title()),
             workspace,
             command: pane
                 .identity
@@ -233,6 +241,8 @@ impl PaneInfo {
                 .as_ref()
                 .and_then(crate::pane_launch::PaneLaunch::argv)
                 .map(<[String]>::to_vec),
+            foreground_program: pane.terminal.foreground_program.clone(),
+            foreground_arguments: pane.terminal.foreground_arguments.clone(),
             cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
             status: pane.terminal.status_text(),
             reported_status: pane
@@ -255,13 +265,19 @@ impl PaneInfo {
 
 fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
     let mut panes = Vec::new();
-    for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
+    let attachment = ctx.state.current();
+    let name = attachment.session_name.as_deref().unwrap_or("local");
+    let session = attachment
+        .remote_host
+        .as_deref()
+        .map_or_else(|| name.to_string(), |host| format!("{name}@{host}"));
+    for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
-            panes.push(PaneInfo::new(pane, workspace_index + 1));
+            panes.push(PaneInfo::new(pane, workspace_index + 1, &session));
         }
     }
     for pane in ctx.state.scratch.panes.iter().filter(|pane| !pane.closing) {
-        panes.push(PaneInfo::new(pane, 0));
+        panes.push(PaneInfo::new(pane, 0, &session));
     }
     ControlResponse::ok(panes)
 }
@@ -1412,16 +1428,17 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(crate::AppRoot::default());
-                backend.state_mut().current_mut().workspaces[0].panes[0]
-                    .terminal
-                    .reported_status = Some(crate::session::protocol::PaneStatus {
+                backend.state_mut().current_mut().session_name = Some("dev".into());
+                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                pane.terminal.title = Some("build".into());
+                pane.terminal.foreground_program = Some("cargo".into());
+                pane.terminal.foreground_arguments = vec!["test".into()];
+                pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
                     value: "working".into(),
                     reason: Some("building".into()),
                     set_at: 1,
                 });
-                backend.state_mut().current_mut().workspaces[0].panes[0]
-                    .terminal
-                    .status = ManagedTerminalStatus::Ready;
+                pane.terminal.status = ManagedTerminalStatus::Ready;
                 let (reply, response) = mpsc::channel();
                 backend
                     .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
@@ -1438,6 +1455,10 @@ mod tests {
                 assert_ne!(data[0]["status"], "working");
                 assert_eq!(data[0]["reported_status"], "working");
                 assert_eq!(data[0]["status_reason"], "building");
+                assert_eq!(data[0]["session"], "dev");
+                assert_eq!(data[0]["title"], "build");
+                assert_eq!(data[0]["foreground_program"], "cargo");
+                assert_eq!(data[0]["foreground_arguments"][0], "test");
             })
             .expect("spawn list panes test thread")
             .join()

@@ -63,9 +63,9 @@ fn list_extensions_reports_loaded_disabled_and_incompatible_in_all_formats() {
         String::from_utf8_lossy(&text.stderr)
     );
     let stdout = String::from_utf8(text.stdout).unwrap();
-    assert!(stdout.contains("NAME\tTITLE\tVERSION\tCOMMANDS\tSERVICES\tSTATUS"));
-    assert!(stdout.contains("loaded\tloaded title\t1.0.0\t1\t0\tloaded"));
-    assert!(stdout.contains("disabled\tdisabled title\t1.0.0\t1\t0\tdisabled"));
+    assert!(stdout.contains("NAME      TITLE           VERSION  COMMANDS  SERVICES  STATUS"));
+    assert!(stdout.contains("loaded    loaded title    1.0.0    1         0         loaded"));
+    assert!(stdout.contains("disabled  disabled title  1.0.0    1         0         disabled"));
     assert!(stdout.contains("requires extension API 2"));
 
     let verbose = rozi(&temp, &["list-extensions", "--verbose"]);

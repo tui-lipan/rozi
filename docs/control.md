@@ -39,7 +39,9 @@ then exactly one live endpoint in the runtime directory.
 
 ```bash
 rozi list-panes
+rozi list-panes --format json
 rozi metrics
+rozi metrics --format json
 rozi focus 3
 rozi send-text 'cargo test
 '
@@ -60,6 +62,7 @@ rozi capture-pane --target 3
 rozi capture-pane --scrollback full
 rozi capture-pane --last-output
 rozi capture-pane --scrollback 200 --target 3
+rozi capture-pane --target 3 --format json
 rozi run-action copy-last-output
 rozi switch-workspace 2
 rozi move-to-workspace 3
@@ -70,8 +73,12 @@ rozi notify 'tests failed' --title Build --level error
 rozi pick --title "Branch"
 ```
 
-Replies are JSON on stdout. Errors are JSON when returned by the server, or plain stderr for client
-discovery/connect failures.
+Interactive stdout is for people: `list-panes` and `metrics` render compact tables,
+`capture-pane` prints pane text, and successful action commands print a short acknowledgement.
+Redirected stdout keeps the stable JSON response, so existing pipelines such as
+`rozi list-panes | jq ...` do not need a flag. Report commands accept `--format text|json` when the
+caller wants to override terminal detection. Errors use plain stderr in human mode; JSON mode keeps
+the server response on stdout and also prints its message to stderr.
 
 `split`/`new-pane` holds its reply until the new pane's PTY reports ready, so `pty_ready: true`
 means input sent to the returned `id` will reach the shell. A spawn that has not come up after five
@@ -84,14 +91,22 @@ command runner. `--argv PROGRAM [ARG...]` instead launches the executable direct
 those arguments and no shell parsing. Because `--argv` consumes the remaining tokens, put pane
 options before it.
 
-`list-panes` reports a shell launch in `command` and a direct launch in `argv`; the other field is
-`null`. `agent` and `agent_state` carry [agent detection](agents.md)'s own reading of the pane - the
-matched definition's id, and whether its rules see the pane as `working`, `blocked`, or `idle`. Both
-are `null` when no definition matched. This is detection's answer about the screen, not the pane's
+In JSON mode, `list-panes` reports a shell launch in `command` and a direct launch in `argv`; the
+other field is `null`. `foreground_program` and `foreground_arguments` describe what is running
+now, while `title` includes the live OSC terminal title (behind an explicit pane rename).
+`agent` and `agent_state` carry [agent detection](agents.md)'s own reading of the pane - the matched
+definition's id, and whether its rules see the pane as `working`, `blocked`, or `idle`. Both are
+`null` when no definition matched. This is detection's answer about the screen, not the pane's
 self-reported `reported_status`.
 
-`capture-pane` returns the pane's `text` and its terminal `title`. Detection rules match both, so a
-capture kept as evidence needs the title with it.
+The result belongs to the UI control endpoint that answered: it contains that UI's current
+attachment plus its client-local scratch panes. It does not aggregate every named session or a
+background attachment retained for fast switching. `session` identifies that attachment in JSON
+and above the text table; remote sessions are qualified as `name@host`. Choose another live UI with
+`--socket`, or use `list-sessions` to discover session servers.
+
+In JSON mode, `capture-pane` returns the pane's `text` and its terminal `title`. Detection rules
+match both, so a capture kept as evidence needs the title with it.
 
 `--workspace <N>` spawns into another workspace instead of the caller's, overriding a matched
 `[[rules]]` workspace. A script that opens panes where someone is working re-tiles their layout on

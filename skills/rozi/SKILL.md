@@ -37,7 +37,7 @@ runtime directory. `ROZI_SOCKET` is the endpoint path, not a named-session serve
 Use the injected endpoint explicitly when needed:
 
 ```bash
-rozi --socket "$ROZI_SOCKET" list-panes
+rozi --socket "$ROZI_SOCKET" list-panes --format json
 ```
 
 Every pane receives `ROZI_PANE=<numeric live pane id>`. The CLI copies that value into
@@ -55,12 +55,14 @@ initial pane-control check fails there rather than exposing the local UI endpoin
 
 ## Inspect and control panes
 
-Control replies are JSON on stdout, normally `{"ok":true,"data":...}`; server-side failures are
-JSON errors, while local discovery/connect failures are plain stderr. Pane ids are numeric. Read
-live ids from `list-panes` JSON and reuse those ids; do not predict ids from pane order or examples.
+Use `--format json` for report commands that an agent consumes. An interactive terminal otherwise
+gets tables or pane text, while redirected stdout selects JSON automatically. Server-side failures
+are JSON errors in JSON mode; local discovery/connect failures are plain stderr. Pane ids are
+numeric. Read live ids from `list-panes` JSON and reuse those ids; do not predict ids from pane order
+or examples.
 
 ```bash
-rozi list-panes
+rozi list-panes --format json
 rozi focus <PANE_ID>
 rozi send-text 'cargo test
 '
@@ -71,11 +73,11 @@ rozi send-keys -- -n hello
 rozi split [COMMAND]
 rozi split [COMMAND] --focus  # also move focus to the new pane
 rozi new-pane [COMMAND]       # alias of split
-rozi capture-pane
-rozi capture-pane --target <PANE_ID>
-rozi capture-pane --scrollback 200
-rozi capture-pane --scrollback full
-rozi capture-pane --last-output
+rozi capture-pane --format json
+rozi capture-pane --target <PANE_ID> --format json
+rozi capture-pane --scrollback 200 --format json
+rozi capture-pane --scrollback full --format json
+rozi capture-pane --last-output --format json
 rozi status <VALUE> [--reason <TEXT>]
 rozi status --clear
 rozi notify <MESSAGE> [--title <TEXT>] [--level info|error]

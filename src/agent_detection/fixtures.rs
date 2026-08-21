@@ -19,8 +19,9 @@ use std::path::{Path, PathBuf};
 /// Those screens were written from live panes and carry cross-agent assertions a per-agent fixture
 /// cannot express - that Claude's dialog shape must not classify an OpenCode screen, say - so they
 /// stay where they are and this names them. An agent listed here may still gain a fixture for
-/// screens the inline tests do not cover; Claude did, and left this list when it did.
-const EVIDENCE_IN_UNIT_TESTS: &[&str] = &["opencode"];
+/// screens the inline tests do not cover; Claude did, and left this list when it did, and so did
+/// OpenCode - its cross-agent assertions are still in `mod.rs`, its own turn is in the corpus.
+const EVIDENCE_IN_UNIT_TESTS: &[&str] = &[];
 
 /// Agents that ship without a screen fixture, and why.
 ///
@@ -35,17 +36,10 @@ const AWAITING_EVIDENCE: &[&str] = &[
     // stays for anyone still running an older build; nobody here can watch one work.
     "gemini",
     "devin",
-    "omp",
     "mastracode",
-    "kimi",
-    "kiro",
     "droid",
     "amp",
     "hermes",
-    // Installed, and still uncaptured for a reason worth writing down: launched into a pane it drew
-    // a blank screen and nothing else. Whether that is its startup or something about a spawned PTY
-    // is unknown, and one pane opened by hand would say which.
-    "kilo",
     "qoder-cli",
     "aider",
 ];

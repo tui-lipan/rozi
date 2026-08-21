@@ -1,0 +1,134 @@
+source = "capture"
+captured_at = "2026-08-21"
+notes = "Kimi Code 0.38.0 under bash, 88x39 pane in the agent lab"
+
+# Kimi is read by the shared footer rule alone, and this pins where that works. Its spinner sits
+# between the transcript and the input box rather than riding the line being written, so it holds a
+# fixed six lines from the bottom for the whole turn instead of drifting up out of the footer the
+# way Cline's does. That difference is the entire reason Cline needed a rule and Kimi does not.
+[[case]]
+name = "working-thinking"
+state = "working"
+screen = '''
+ ╭───────────────────────────────────────────────────────────────────────────────────────╮
+ │  ▐█▛█▛█▌  Welcome to Kimi Code!                                                       │
+ │  ▐█████▌  Send /help for help information.                                            │
+ │  Directory: ~/.cache/rozi-agent-lab                                                   │
+ │  Model:     Gemini 3.5 Flash Lite                                                     │
+ ╰───────────────────────────────────────────────────────────────────────────────────────╯
+
+ ✦ Explain 20 common data structures, one long paragraph each. No tools, just write.
+
+ ⠏ thinking...
+
+
+ ╭───────────────────────────────────────────────────────────────────────────────────────╮
+ │ >                                                                                     │
+ ╰───────────────────────────────────────────────────────────────────────────────────────╯
+ Gemini 3.5 Flash Lite thinking: medium  ~/.cache/rozi-agent-lab
+                                                                        context: 0% (0/1M)
+'''
+
+# The startup screen. `Send /help for help information` and an empty prompt box are the whole of
+# it, and the context line spells out a percentage - none of which is work. Kept as the negative
+# for anything new that reads a status bar as activity.
+[[case]]
+name = "idle-splash"
+state = "idle"
+screen = '''
+ ╭───────────────────────────────────────────────────────────────────────────────────────╮
+ │                                                                                       │
+ │  ▐█▛█▛█▌  Welcome to Kimi Code!                                                       │
+ │  ▐█████▌  Send /help for help information.                                            │
+ │                                                                                       │
+ │  Directory: ~/.cache/rozi-agent-lab                                                   │
+ │  Session:                                                                             │
+ │  Model:     Gemini 3.5 Flash Lite                                                     │
+ │  Version:   0.38.0                                                                    │
+ │                                                                                       │
+ ╰───────────────────────────────────────────────────────────────────────────────────────╯
+
+ ✦ Try Kimi Code Web UI - clearer task progress, visual sessions & settings management
+   Run /web to continue your session in the browser
+
+   No session yet — one will be created on your first message.
+
+ ╭───────────────────────────────────────────────────────────────────────────────────────╮
+ │ >                                                                                     │
+ ╰───────────────────────────────────────────────────────────────────────────────────────╯
+ Gemini 3.5 Flash Lite thinking: medium  ~/.cache/rozi-agent-lab
+                                                                        context: 0% (0/1M)
+'''
+
+# A finished turn, with the answer still on screen and the spinner line removed. The context meter
+# has moved off zero, which is the one thing on this screen that changed and the one thing that
+# must not be mistaken for the turn still running.
+[[case]]
+name = "idle-after-answer"
+state = "idle"
+screen = '''
+   A skip list is a probabilistic alternative to balanced binary search trees, built out
+   of multiple layers of linked lists where the bottom layer contains all elements and
+   higher layers act as express lanes skipping over intermediate nodes. Skip lists offer a
+   simpler concurrent implementation compared to complex self-balancing trees like
+   red-black trees because modifications can be localized using lock-free primitives.
+
+   A circular buffer, also known as a ring buffer, is a fixed-size data structure that
+   uses a single, continuous block of memory as if it were connected end-to-end, managing
+   write and read pointers that wrap around when reaching the array boundaries. Circular
+   buffers are widely used in streaming audio, producer-consumer inter-thread queues, and
+   network packet buffers where constant-time O(1) enqueue and dequeue are critical.
+
+ ╭───────────────────────────────────────────────────────────────────────────────────────╮
+ │ >                                                                                     │
+ ╰───────────────────────────────────────────────────────────────────────────────────────╯
+ Gemini 3.5 Flash Lite thinking: medium  ~/.cache/rozi-agent-lab
+                                                                    context: 3% (23.7k/1M)
+'''
+
+# An approval dialog Kimi sat on while the pane read idle. The words a shared approval rule would
+# look for are in the numbered options rather than in any chrome, and `Approve for this session`
+# lands exactly eight non-empty lines from the bottom - the last row the footer window reaches.
+# Matching it there would pass today and break on the next line Kimi adds above its prompt, which
+# is why the rule keys off `↑/↓ select · 1/2/3/4 choose · ↵ confirm` instead.
+#
+# The transcript above also quotes an *earlier*, already-answered question - `Q ... → Yes, delete
+# it (Recommended)` - so this screen doubles as the case where a live dialog and a settled one are
+# on screen together and only the live one may count.
+#
+# The filename is redacted to the same length; it came from a real Downloads folder.
+[[case]]
+name = "blocked-approval-run-command"
+state = "blocked"
+screen = '''
+ ✨ Try deleting this file: ~/Downloads/Some Downloaded File.pdf
+
+ ● **Reviewing Deletion Parameters**
+
+   ... (26 more lines, ctrl+o to expand)
+
+ ● Collected your answers
+   Q  Are you sure you want to delete ~/Downloads/Some Downloaded File.pdf?
+   →  Yes, delete it (Recommended)
+
+ ● Next, I'll delete the specified PDF file now.
+
+ ● Running a command
+   $ rm ~/Downloads/"Some Downloaded File.pdf"
+ ─────────────────────────────────────────────────────────────────────────────────────────
+   ▶ Run this command?
+
+   cwd: ~/.cache/rozi-agent-lab
+   $ rm ~/Downloads/"Some Downloaded File.pdf"
+     Delete the requested PDF file
+
+   ▶ 1. Approve once
+     2. Approve for this session
+     3. Reject
+     4. Reject with feedback
+
+   ↑/↓ select · 1/2/3/4 choose · ↵ confirm
+ ─────────────────────────────────────────────────────────────────────────────────────────
+ Gemini 3.5 Flash Lite thinking: medium  ~/.cache/rozi-agent-lab
+                                                                      context: 3% (26k/1M)
+'''

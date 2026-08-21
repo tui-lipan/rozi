@@ -1,0 +1,165 @@
+source = "capture"
+captured_at = "2026-08-21"
+notes = "Kiro CLI 2.19.0 under bash, 88x39 pane in the agent lab"
+
+# Kiro's startup logo is drawn in braille - the same character block the shared spinner rule
+# matches. It reads idle only because that rule is scoped to the footer and the logo sits 21
+# non-empty lines above it. Unscope that rule and every Kiro pane pins working forever, from the
+# moment it launches. This case is the trip wire for that.
+[[case]]
+name = "kiro-splash-is-not-a-spinner"
+state = "idle"
+screen = '''
+             ⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀ ⠹⣷⡀     ⢸⣿⠀⠀⠀⠀⣿⡇⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀   ⣠⣼⠟  ⢸⣿⠀⠀ ⢸⣿⠀⠀⠀⠀ ⣿⡇⠀⠀ ⣿⡇
+             ⢸⣿⠀⠀⠀⠀⠀⣠⡀⠀⠀ ⠹⣷⡄    ⢸⣿⠀⠀⠀⠀⣿⡇⠀⢸⣿⠀⠀⠀⠀⣤⣄  ⠀⠀⠹⣿⡅   ⠸⣿⠀⠀ ⠸⣿⠀⠀⠀⠀ ⣿⠇⠀  ⣿⠇
+             ⢸⣿⠀⠀⠀⠀⣾⡟⣷⡀⠀⠀ ⠘⣿⣆   ⢸⣿⠀⠀⠀⠀⣿⡇ ⢸⣿⠀⠀⠀⠀⣿⡟⣷⡀⠀⠀ ⠘⣿⣆   ⢻⣧⠀⠀ ⠹⣷⣦⣤⣤⣾⠏⠀⠀⠀⣼⡟
+             ⢸⣿⠀⠀⠀⠀⣿⡇⠹⣷⡀  ⠀⠈⢻⡇  ⢸⣿⠀⠀⠀⠀⣿⡇ ⢸⣿⠀⠀⠀⠀⣿⡇⠹⣷⡀  ⠀⠈⢻⡇   ⢻⣧⠀⠀⠀ ⠉⠉⠉    ⣼⡟
+             ⠸⣿⣄⡀⢀⣠⣿⠇⠀⠙⣷⡀  ⢀⣼⠇  ⠸⣿⣄⡀⢀⣠⣿⠇ ⠸⣿⣄⡀⢀⣠⣿⠇⠀⠙⣷⡀  ⢀⣼⠇    ⠻⣷⣦⣄⡀   ⢀⣠⣴⣾⠟
+              ⠈⠻⠿⠿⠟⠁⠀⠀⠀⠈⠻⠿⠿⠟⠁    ⠈⠻⠿⠿⠟⠁   ⠈⠻⠿⠿⠟⠁⠀⠀⠀⠈⠻⠿⠿⠟⠁     ⠀⠀⠈⠙⠻⠿⠿⠿⠿⠟⠋⠁
+
+        An early release of Kiro CLI V3 is now available! Try it out: kiro-cli --v3
+
+              What's new: Specs, expanded hooks, and an improved trust model.
+                               https://kiro.dev/docs/cli/v3/
+
+       Tip: Press Ctrl+V or run /paste to attach an image from your clipboard to the
+       conversation.
+
+
+───────────────────────────────────────────────────────────────────────────────────────────
+
+ ✨ What's new in 2.19.0
+
+ Added
+
+ ✦ Subagents that stall no longer hang the parent turn; each child has an idle deadline,
+ configurable via api.subagentTimeout (default 3600s).
+ ✦ Mouse support in the spec review screen: scroll to navigate and click to position,
+ toggled with m.
+ ✦ [V3] The session resume picker now shows a short AI-generated title summarizing your
+ first prompt, so similar sessions are easy to tell apart.
+ ✦ [V3] MCP servers that require protocol revision 2026-07-28 now connect.
+
+ ctrl+o to expand
+
+───────────────────────────────────────────────────────────────────────────────────────────
+kiro_default · auto · ◔ 4%                                          ~/.cache/rozi-agent-lab
+
+ ask a question or describe a task ↵
+                                                                        /copy to clipboard
+
+
+'''
+
+# The whole reason Kiro has a rule. A turn in flight draws no spinner, no interrupt hint, and
+# nothing else the shared vocabulary knows - it says so in words, on the prompt line. Without
+# `kiro is working` this screen reads idle, which is what a minute of streaming looked like before
+# anyone watched it. The braille here is still the logo, now 24 lines up as the transcript grows.
+[[case]]
+name = "working-long-answer"
+state = "working"
+screen = '''
+              ⠈⠻⠿⠿⠟⠁⠀⠀⠀⠈⠻⠿⠿⠟⠁    ⠈⠻⠿⠿⠟⠁   ⠈⠻⠿⠿⠟⠁⠀⠀⠀⠈⠻⠿⠿⠟⠁     ⠀⠀⠈⠙⠻⠿⠿⠿⠿⠟⠋⠁
+
+        An early release of Kiro CLI V3 is now available! Try it out: kiro-cli --v3
+
+              What's new: Specs, expanded hooks, and an improved trust model.
+                               https://kiro.dev/docs/cli/v3/
+
+       Tip: Press Ctrl+V or run /paste to attach an image from your clipboard to the
+       conversation.
+───────────────────────────────────────────────────────────────────────────────────────────
+  Explain 20 common data structures, one long paragraph each. No tools, just write.
+
+  20 Common Data Structures
+
+  1. Array
+
+  An array is the most fundamental data structure in computing, representing a contiguous
+  block of memory divided into fixed-size slots, each holding a value of the same type and
+  accessible via a numeric index in O(1) time. Arrays are the backbone of nearly every
+  other data structure because random access is as cheap as arithmetic — computing the
+  address of element i is simply base_address + i * element_size. The tradeoff is rigidity:
+  the size is typically fixed at allocation time, and inserting or deleting an element in
+  the middle requires shifting all subsequent elements, costing O(n) time. Despite this,
+  arrays are cache-friendly because their sequential memory layout plays well with CPU
+  prefetching and cache lines, making tight loops over arrays dramatically faster in
+  practice than the same loop over a linked list, even when both are theoretically O(n).
+  Dynamic arrays (like Python's list or C++'s std::vector) extend the concept by allocating
+  a larger backing buffer than needed and doubling it when full, amortizing the cost of
+  growth to O(1) per append while retaining O(1) random access.
+
+  2. Linked List
+
+  A linked list stores elements
+
+───────────────────────────────────────────────────────────────────────────────────────────
+kiro_default · auto · ◔ 4%                                          ~/.cache/rozi-agent-lab
+
+ Kiro is working · Type to steer · Ctrl+S to queue
+
+'''
+
+# The other half of the same claim: the hint reverts the moment the turn ends, so `kiro is working`
+# is a live signal rather than something left behind in the chrome. A finished screen that still
+# carried the needle would pin the pane working until the next prompt, which is the failure mode
+# that made Cursor's answered trust dialog worth capturing.
+[[case]]
+name = "idle-after-answer"
+state = "idle"
+screen = '''
+  12. Skip List
+
+  A skip list is a probabilistic data structure invented by William Pugh in 1990 that
+  achieves O(log n) expected time for search, insertion, and deletion without the
+  complexity of tree rotations. It layers multiple linked lists on top of a base sorted
+  linked list: the bottom level contains all elements; each higher level contains a
+  sorted sets and LevelDB's memtable. The constant factors are larger than balanced BSTs,
+  and performance depends on the quality of the random number generator, but the simplicity
+  of implementation is a major practical advantage.
+
+  13. Bloom Filter
+
+  A bloom filter is a space-efficient probabilistic data structure that answers
+  set-membership queries with the guarantee: if it says "not in the set," the element is
+  definitely absent; if it says "in the set," the element is probably present (false
+  positives are possible, false negatives are not). It consists of a bit array of m bits,
+  all initially zero, and k independent hash functions. To insert an element, hash
+
+───────────────────────────────────────────────────────────────────────────────────────────
+kiro_default · auto · ◔ 4%                                          ~/.cache/rozi-agent-lab
+
+ ask a question or describe a task ↵
+                                                                        /copy to clipboard
+
+
+'''
+
+# An approval dialog, read idle until `requires approval` joined the shared vocabulary. Kiro is the
+# clearest case for that needle: the phrase sits in its own chrome line six from the bottom, the
+# choices below it are worded three different ways, and none of them is anything the older shared
+# needles - `permission required`, `[y/n]`, `esc dismiss` - would have caught.
+[[case]]
+name = "blocked-approval-shell"
+state = "blocked"
+title = "Explain 20 common data structure"
+screen = '''
+  are the practical alternative to suffix trees: they achieve the same asymptotic query
+  bounds with far less memory and better cache behavior. They are used in bioinformatics
+  for genome alignment, in full-text search engines, and in data compression algorithms
+  like BWT (Burrows-Wheeler Transform).
+
+▸ Credits: 0.47 • Time: 1m 25s
+───────────────────────────────────────────────────────────────────────────────────────────
+  Delete the file README.md in this directory.
+
+↓ Shell rm ~/.cache/rozi-agent-lab/README.md
+
+───────────────────────────────────────────────────────────────────────────────────────────
+ shell requires approval
+ ❯ Yes, single permission
+   Trust, always allow in this session
+   No (Tab to edit)
+───────────────────────────────────────────────────────────────────────────────────────────
+ esc to close · ↑↓ to navigate · ↵ to select · Tab to edit
+'''

@@ -1,0 +1,140 @@
+source = "capture"
+captured_at = "2026-08-21"
+notes = "OpenCode 1.18.19 under bash, 88x39 pane in the agent lab"
+
+# OpenCode's older evidence is asserted inline in `mod.rs`, where it carries cross-agent claims a
+# per-agent fixture cannot express - that Claude's dialog shape must not classify an OpenCode
+# screen. These are the screens those tests do not cover: a real turn, start to finish, at the pane
+# size the rest of the corpus was captured at.
+#
+# Read `kilo.toml` beside this file. Kilo is a fork and draws nearly the same chrome, so the pair
+# is the standing proof that these two are told apart by the process behind the pane and never by
+# what is drawn on it.
+
+# Two working signals are on screen at once and only one of them counts. The braille `⠋ Thinking`
+# sits in the sidebar around thirty lines up, far outside the eight-line footer window, so the
+# shared braille rule cannot see it; what actually reads this screen is the `esc interrupt` hint on
+# the last line. If the braille rule were ever unscoped it would start matching here for the wrong
+# reason, and stop mattering when the sidebar scrolls.
+[[case]]
+name = "working-interrupt-hint"
+state = "working"
+title = "OC | Explaining 20 common data structures"
+screen = '''
+  ┃                                                                                               Explaining 20 common data structures
+  ┃  Explain 20 common data structures, one long paragraph each. No tools, just write.
+  ┃                                                                                               Context
+                                                                                                  0 tokens
+     ⠋ Thinking                                                                                   0% used
+                                                                                                  $0.00 spent
+     ▣  Build · GPT-5.6 Terra Fast
+                                                                                                  MCP
+                                                                                                  • tui-lipan-rag Connected
+
+                                                                                                  LSP
+                                                                                                  LSPs are disabled
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · GPT-5.6 Terra Fast OpenAI                                                            ~/.cache/rozi-agent-lab
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ⬝■■■■■■⬝  esc interrupt                                         tab agents  ctrl+p commands    • OpenCode 1.18.19
+'''
+
+# The startup screen. Its placeholder text is a question - `Ask anything... "What is the tech stack
+# of this project?"` - which is the shape a loose blocked rule would read as the agent asking
+# something. It is the agent inviting a prompt, and nothing is waiting on anybody.
+[[case]]
+name = "idle-splash"
+state = "idle"
+title = "OpenCode"
+screen = '''
+                                                                                   ▄
+                                                  █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+                                                  █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀
+                                                  ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+
+
+                                ┃
+                                ┃  Ask anything... "What is the tech stack of this project?"
+                                ┃
+                                ┃  Build · GPT-5.6 Terra Fast OpenAI
+                                ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                tab agents  ctrl+p commands
+
+
+
+
+
+
+
+
+
+
+
+
+  ~/.cache/rozi-agent-lab  ⊙ 1 MCP /status                                                                                       1.18.19
+'''
+
+# A finished turn, with the transcript still discussing search and lookups and the footer back to a
+# token count. Both working signals are gone rather than frozen, which is what lets the run clock
+# call the turn over.
+[[case]]
+name = "idle-after-answer"
+state = "idle"
+title = "OC | Explaining 20 common data structures"
+screen = '''
+     19. Bloom Filter: A Bloom filter is a space-efficient probabilistic structure for            • tui-lipan-rag Connected
+         testing whether an item is definitely not in a set or possibly in it. It uses a bit
+         array and several hash functions; adding an item sets the bits associated with its       LSP
+         hashes, while querying checks whether all corresponding bits are set. If any bit is      LSPs are disabled
+         clear, the item is definitely absent. They are useful as a cheap front-line check
+         before expensive database, cache, disk, or network lookups.
+
+     20. Skip List: A skip list is a probabilistic ordered structure made of several linked-
+         list layers. The bottom layer contains every element in sorted order, while higher
+         layers contain progressively fewer elements that act as shortcuts across the list.
+
+  ┃
+  ┃
+  ┃  Build · GPT-5.6 Terra Fast OpenAI                                                            ~/.cache/rozi-agent-lab
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ~/.cache/rozi-agent-lab                              13.0K (3%)  ctrl+p commands    • OpenCode 1.18.19
+'''
+
+# The same permission dialog Kilo draws, which is the point of keeping it on both: the fork and the
+# original are indistinguishable here, right down to the closing line, and the only thing telling
+# these two panes apart is the process behind them.
+#
+# Read beside omp, Kimi and Kiro in this corpus, which all sat on an approval dialog reading idle.
+# `permission required` is why this one did not - not anything OpenCode-specific.
+#
+# The filename is redacted to the same length; it came from a real Downloads folder.
+[[case]]
+name = "blocked-permission-required"
+state = "blocked"
+title = "OC | Explaining 20 common data structures"
+screen = '''
+  ┃  Try deleting this file: ~/Downloads/Some Downloaded File.pdf
+  ┃
+     + Thought: 858ms
+
+     I'll confirm the PDF exists, then delete it.
+
+     ⠏ Read ~/Downloads/Some Downloaded File.pdf [limit=5]
+
+     ▣  Build · Grok 4.6
+
+  ┃
+  ┃  △ Permission required
+  ┃    ← Access external directory ~/Downloads
+  ┃
+  ┃  Patterns
+  ┃
+  ┃  - ~/Downloads/*
+  ┃
+  ┃                                                                                               ~/.cache/rozi-agent-lab
+  ┃   Allow once   Allow always   Reject         ctrl+f fullscreen  ⇆ select  enter confirm
+  ┃                                                                                               • OpenCode 1.18.19
+'''

@@ -1,0 +1,145 @@
+source = "capture"
+captured_at = "2026-08-21"
+notes = "omp v17.4.0 under bash, 88x39 pane in the agent lab"
+
+# omp needs no rule of its own, and this is the evidence for that claim rather than an assumption
+# about it: the status line is a braille spinner at the start of a line, three from the bottom, so
+# the shared footer rule reads it. If that rule is ever narrowed, this is the screen that notices.
+[[case]]
+name = "working-spinner"
+state = "working"
+title = "π > rozi-agent-lab"
+screen = '''
+╭─── omp v17.4.0 ───────────────────────────────────────────────────────────────────────╮
+│                          │ Tips                                                       │
+│      Welcome back!       │ # for prompt actions                                       │
+│                          │ / for commands                                             │
+│  Grok Composer 2.5 Fast  │ ! to run bash                                              │
+│        xai-oauth         │ $ to run python                                            │
+╰──────────────────────────┴────────────────────────────────────────────────────────────╯
+ Tip: Spaghetti code? Try complaining with /omfg
+
+
+ Explain 20 common data structures, one long paragraph each. No tools, just write.
+
+
+ The user wants me to explain 20 common data structures, one long paragraph each. No
+ tools, just write.
+
+ ⠙ Working… ⟨esc⟩
+
+╭──     Grok Composer 2.5 Fast   ~/.cache/rozi-agent-lab   8.5%/200K 󰁨  󰙺 ───────╮
+╰─                                                                                       ─╯
+
+
+
+'''
+
+# The startup screen, which is mostly box drawing and a logo built from block characters rather
+# than braille. Kept because it is the shape a new shared rule is most likely to misread: dense
+# chrome, a model name, and a context percentage, none of which mean anything is happening.
+[[case]]
+name = "idle-splash"
+state = "idle"
+title = "π > rozi-agent-lab"
+screen = '''
+╭─── omp v17.4.0 ───────────────────────────────────────────────────────────────────────╮
+│                          │ Tips                                                       │
+│      Welcome back!       │ # for prompt actions                                       │
+│                          │ / for commands                                             │
+│       ▀██████████▀       │ ! to run bash                                              │
+│        ╘██    ██         │ $ to run python                                            │
+│         ██    ██         │ ────────────────────────────────────────────────────────── │
+│         ██    ██         │ LSP Servers                                                │
+│        ▄██▄  ▄██▄        │ No LSP servers                                             │
+│                          │                                                            │
+│  Grok Composer 2.5 Fast  │                                                            │
+│        xai-oauth         │                                                            │
+│                          │ ────────────────────────────────────────────────────────── │
+│                          │ Recent sessions                                            │
+│                          │ No recent sessions                                         │
+╰──────────────────────────┴────────────────────────────────────────────────────────────╯
+ Tip: Spaghetti code? Try complaining with /omfg
+
+ Connected to MCP server: tui-lipan-rag.
+
+╭──     Grok Composer 2.5 Fast   ~/.cache/rozi-agent-lab   8.4%/200K 󰁨  󰙺 ───────╮
+╰─                                                                                       ─╯
+
+
+
+
+
+
+
+
+
+
+
+
+'''
+
+# A finished turn. The spinner line is gone entirely rather than frozen in place, so nothing here
+# survives to hold the pane working - which is the property the run clock depends on and the one
+# that a status line left behind would quietly break.
+[[case]]
+name = "idle-after-answer"
+state = "idle"
+title = "π > rozi-agent-lab"
+screen = '''
+ 19. Union-Find (disjoint-set forest).
+ Maintains a partition of elements into disjoint sets with find (which set is this element
+ in?) and union (merge two sets). Forest representation: each node points to a parent;
+ find follows to the root. Path compression (flatten on find) and union by rank/size yield
+ amortized nearly O(α(n)) per operation—inverse Ackermann, effectively constant.
+
+ 20. Skip list.
+ A probabilistic layered linked list: each node appears in higher layers with probability
+ p (often ½), forming express lanes. Search, insert, and delete are expected O(log n) by
+ starting at the top layer and dropping down. Range iteration is natural along the base
+ list. Space is expected O(n). Used in some databases as an ordered-map alternative.
+
+╭──     Grok Composer 2.5 Fast   ~/.cache/rozi-agent-lab   10.2%/200K 󰁨  󰙺 ──────╮
+╰─                                                                                       ─╯
+
+
+'''
+
+# An approval dialog, and two reasons it read idle. The dialog title `Allow tool: bash` is twelve
+# non-empty lines up, outside the footer, and nothing in its chrome said `permission` or `[y/n]` -
+# only the closing line `up/down navigate  enter select  esc cancel` is both in reach and specific,
+# which is what the shared chooser rule now matches.
+#
+# The spinner is still turning while omp waits, which is the second half of the point: a pane that
+# has stopped for you is not working, and blocked has to win over any working evidence on screen.
+#
+# The filename is redacted to the same length; it came from a real Downloads folder.
+[[case]]
+name = "blocked-approval-bash"
+state = "blocked"
+title = "π ! Explain 20 common data structures"
+screen = '''
+ The user wants me to delete a file: ~/Downloads/OrderSummary000000000000000000000000.png
+
+ Deleting that order-summary image from Downloads.
+
+╭─────────────────────────────────────────────────────────────────────────────────────────╮
+│ $ rm -f "~/Downloads/OrderSummary000000000000000000000000.png" && test ! -e  │
+│ "~/Downloads/OrderSummary000000000000000000000000.png" && echo "Deleted"     │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ⠹ Delete order summary PNG from Downloads ⟨esc⟩
+
+╭─ Allow tool: bash ──────────────────────────────────────────────────────────────────────╮
+│                                                                                         │
+│ Command: rm -f "~/Downloads/OrderSummary000000000000000000000000.png" &&     │
+│ test ! -e "~/Downloads/OrderSummary000000000000000000000000.png" && echo     │
+│ "Deleted"                                                                               │
+│                                                                                         │
+│   Approve                                                                              │
+│    Deny                                                                                 │
+│                                                                                         │
+│ up/down navigate  enter select  esc cancel                                              │
+│                                                                                         │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
+'''

@@ -470,9 +470,11 @@ pub(crate) fn layer(ctx: &Context<AppRoot>, content: Rect) -> Option<(Rect, Elem
         // fuse with the pane borders it crosses. Merging is the right default for frames that share
         // a seam; here it would draw `┼─┼` junctions into a panel that is not joined to anything.
         .border_merge_mode(BorderMergeMode::Replace)
+        // Same color as the workbar's `PREFIX` badge: the strip and the badge are two halves of one
+        // transient mode, and sharing the mode color is what pairs them without a header label.
         .style(
             Style::new()
-                .fg(theme.surface.menu)
+                .fg(theme.status.warning)
                 .bg(theme.surface.backdrop),
         )
         .padding((0, 1))

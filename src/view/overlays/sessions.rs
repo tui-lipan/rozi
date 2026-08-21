@@ -306,9 +306,14 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
 }
 
 /// The footer hint row only advertises keys that would actually act on the current state, so a
-/// hint never lies. Enter is **switch** for a background-connected session and **connect** when
-/// establishing a connection; **disconnect** closes this client's attachment; **kill** destroys the
-/// session; **restart** recreates it.
+/// hint never lies. Enter is **switch** for a background-connected session, **restore** for a
+/// resurrection snapshot, and **connect** when establishing a connection; **disconnect** closes
+/// this client's attachment; **kill** destroys a live session and **forget** drops a snapshot;
+/// **restart** recreates a live session.
+///
+/// Row actions for a restorable snapshot lead the bar (`restore`, `forget`) because those are the
+/// verbs that apply to the highlighted recipe. Global picker actions follow. Restart is omitted:
+/// there is no live server to recreate.
 ///
 /// `ephemeral shell` is the exception that is deliberately *under*-advertised: `Ctrl+T` always
 /// reaches this client's scratch session, but saying so is only worth a pill when the list cannot
@@ -320,34 +325,33 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Text::new("").into();
     };
-    let query_lower = picker.input.text().trim().to_ascii_lowercase();
     let current = ctx.state.current().session_name.as_deref();
     let current_remote = &ctx.state.current().remote_target;
-    let visible = |entry: &crate::session::discovery::DiscoveredSession| {
-        matches_session_query(entry, &query_lower)
-    };
-    let selected = picker
-        .entries
-        .get(picker.selected)
-        .filter(|entry| visible(entry));
+    let selected = selected_session(picker);
+    let restorable = selected.is_some_and(session_is_restorable);
 
     let mut row = hint_row();
     if picker_list_is_empty(picker) {
         row = row.child(hint_pill(theme, "ephemeral shell", "enter"));
     }
     if let Some(entry) = selected {
-        let is_current = current == Some(entry.name.as_str())
-            && current_remote == &entry.remote_target;
-        if !is_current {
-            let held = ctx
-                .state
-                .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
-                .map(|attachment| attachment.connection);
-            let label = match held {
-                Some(crate::state::ConnectionState::Connected) => "switch",
-                _ => "connect",
-            };
-            row = row.child(hint_pill(theme, label, "enter"));
+        if restorable {
+            row = row.child(hint_pill(theme, "restore", "enter"));
+            row = row.child(hint_pill(theme, "forget", "ctrl+k"));
+        } else {
+            let is_current = current == Some(entry.name.as_str())
+                && current_remote == &entry.remote_target;
+            if !is_current {
+                let held = ctx
+                    .state
+                    .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
+                    .map(|attachment| attachment.connection);
+                let label = match held {
+                    Some(crate::state::ConnectionState::Connected) => "switch",
+                    _ => "connect",
+                };
+                row = row.child(hint_pill(theme, label, "enter"));
+            }
         }
     }
     row = row.child(hint_pill(theme, "new", "ctrl+n"));
@@ -360,9 +364,11 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
         row = row.child(hint_pill(theme, "name current", "ctrl+s"));
     }
     row = row.child(hint_pill(theme, "connect host", "ctrl+r"));
-    if let Some(entry) = selected {
-        let is_current = current == Some(entry.name.as_str())
-            && current_remote == &entry.remote_target;
+    if let Some(entry) = selected
+        && !restorable
+    {
+        let is_current =
+            current == Some(entry.name.as_str()) && current_remote == &entry.remote_target;
         if !is_current
             && ctx
                 .state
@@ -371,8 +377,6 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
         {
             row = row.child(hint_pill(theme, "disconnect", "ctrl+w"));
         }
-    }
-    if selected.is_some() {
         row = row.child(hint_pill(theme, "restart", "ctrl+e"));
         row = row.child(hint_pill(theme, "kill", "ctrl+k"));
     }
@@ -392,6 +396,24 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
 use crate::view::session_status::{
     SessionConnectionStatus, session_connection_status, session_status_gutter,
 };
+
+/// The currently highlighted session, if it is still on screen after filtering.
+fn selected_session(
+    picker: &SessionPickerState,
+) -> Option<&crate::session::discovery::DiscoveredSession> {
+    let query_lower = picker.input.text().trim().to_ascii_lowercase();
+    picker
+        .entries
+        .get(picker.selected)
+        .filter(|entry| matches_session_query(entry, &query_lower))
+}
+
+fn session_is_restorable(entry: &crate::session::discovery::DiscoveredSession) -> bool {
+    matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Restorable
+    )
+}
 
 /// Whether a session row survives the picker's filter. The list, the footer hints, and the keys
 /// that only apply to a listed row all have to agree on what is on screen, so they share one
@@ -495,6 +517,12 @@ fn session_picker_palette(
 
     let pending_kill = picker.pending_kill;
     let pending_restart = picker.pending_restart;
+    let pending_kill_forgets = pending_kill.is_some_and(|index| {
+        picker
+            .entries
+            .get(index)
+            .is_some_and(session_is_restorable)
+    });
     let error_bg = theme.status.error;
     let warn_bg = theme.status.warning;
     let ephemeral_style = fg_only(&theme.primary).italic();
@@ -544,7 +572,11 @@ fn session_picker_palette(
                 Some(render_pending_confirm_item(
                     item.label.as_ref(),
                     error_bg,
-                    "again to kill",
+                    if pending_kill_forgets {
+                        "again to forget"
+                    } else {
+                        "again to kill"
+                    },
                     true,
                 ))
             } else if pending_restart == Some(item.value) {
@@ -615,6 +647,12 @@ fn session_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
         .session_picker
         .as_ref()
         .is_some_and(picker_list_is_empty);
+    let can_restart = ctx
+        .state
+        .session_picker
+        .as_ref()
+        .and_then(selected_session)
+        .is_some_and(|entry| !session_is_restorable(entry));
     ctx.link().key_handler(move |key| {
         if key.is(KeyCode::Esc) {
             Some(Msg::CloseSessionPicker)
@@ -632,7 +670,10 @@ fn session_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
             }
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K')) {
             Some(Msg::SessionPickerKillSelected)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E')) {
+        } else if can_restart
+            && key.mods.ctrl
+            && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E'))
+        {
             Some(Msg::SessionPickerRestartSelected)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W')) {
             Some(Msg::SessionPickerDisconnectAttachment)

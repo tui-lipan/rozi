@@ -2642,6 +2642,73 @@ mod tests {
     }
 
     #[test]
+    fn session_picker_restorable_hints_lead_with_restore_and_forget() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 96,
+                    h: 18,
+                });
+                backend.state_mut().current_mut().session_name = Some("eph-test".to_string());
+                backend.state_mut().current_mut().session_attached = true;
+                backend.state_mut().show_session_picker = true;
+                backend.state_mut().session_picker =
+                    Some(crate::state::SessionPickerState::new(vec![
+                        crate::session::discovery::DiscoveredSession {
+                            name: "saved".to_string(),
+                            ephemeral: false,
+                            host: None,
+                            remote_target: None,
+                            status: crate::session::discovery::DiscoveredSessionStatus::Restorable,
+                        },
+                    ]));
+                backend.render();
+
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                let joined = lines.join("\n");
+                assert!(
+                    lines.iter().any(|line| line.contains("restore Enter")),
+                    "restorable Enter should restore, not connect\n{joined}"
+                );
+                assert!(
+                    lines.iter().any(|line| line.contains("forget Ctrl+k")),
+                    "restorable Ctrl+K should forget the snapshot\n{joined}"
+                );
+                assert!(
+                    lines.iter().any(|line| line.contains("new Ctrl+n")),
+                    "{joined}"
+                );
+                assert!(
+                    lines
+                        .iter()
+                        .any(|line| line.contains("name current Ctrl+s")),
+                    "{joined}"
+                );
+                assert!(
+                    lines
+                        .iter()
+                        .any(|line| line.contains("connect host Ctrl+r")),
+                    "{joined}"
+                );
+                assert!(
+                    lines.iter().all(|line| !line.contains("restart")),
+                    "a snapshot has no live server to restart\n{joined}"
+                );
+                assert!(
+                    lines.iter().all(|line| !line.contains("kill")),
+                    "forgetting a snapshot is not a live kill\n{joined}"
+                );
+            })
+            .expect("spawn restorable-hint test")
+            .join()
+            .expect("restorable-hint test completes");
+    }
+
+    #[test]
     fn chrome_color_snaps_palette_colors_but_fades_truecolor() {
         // Named/indexed colors must not animate: blending always produces Color::Rgb,
         // which bypasses the terminal palette and flips the hue mid-fade. Truecolor

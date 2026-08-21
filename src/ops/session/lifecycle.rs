@@ -570,6 +570,12 @@ pub(crate) fn restart_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
+    if matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Restorable
+    ) {
+        return Update::none();
+    }
     let armed = picker.pending_restart == Some(index);
     if !armed {
         clear_pending_session_arms(ctx);
@@ -592,7 +598,8 @@ pub(crate) fn restart_discovered_session(
         &entry.status,
         crate::session::discovery::DiscoveredSessionStatus::Restorable
     ) {
-        return activate_discovered_session(ctx, entry);
+        // A snapshot has no live server to recreate. Restore is Enter; restart is omitted.
+        return Update::none();
     }
     let is_current = ctx.state.current().session_attached
         && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())

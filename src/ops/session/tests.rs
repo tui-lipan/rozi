@@ -1247,3 +1247,46 @@ fn activating_restorable_session_autostarts_its_server() {
         .join()
         .expect("test thread panicked");
 }
+
+#[test]
+fn restart_is_inert_for_a_restorable_session() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use crate::AppRoot;
+            use crate::Msg;
+            use tui_lipan::TestBackend;
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            let mut row = session_row("saved", None);
+            row.status = crate::session::discovery::DiscoveredSessionStatus::Restorable;
+            backend.state_mut().session_picker = Some(SessionPickerState::new(vec![row]));
+            backend.state_mut().show_session_picker = true;
+
+            backend
+                .dispatch(Msg::SessionPickerRestartSelected)
+                .expect("restart a restorable row");
+
+            let picker = backend.state().session_picker.as_ref().expect("picker");
+            assert!(
+                picker.pending_restart.is_none(),
+                "restart must not arm against a snapshot"
+            );
+            assert!(
+                backend.state().show_session_picker,
+                "restart must not consume the picker the way a restore would"
+            );
+            assert!(
+                backend
+                    .state()
+                    .current()
+                    .pending_session_attach
+                    .as_ref()
+                    .is_none_or(|pending| pending.name != "saved"),
+                "restart must not restore the snapshot"
+            );
+        })
+        .expect("spawn test thread")
+        .join()
+        .expect("test thread panicked");
+}

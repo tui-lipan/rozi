@@ -115,21 +115,25 @@ rejected with an error toast.
 ## Switching sessions in-app (the picker)
 
 Open the session picker (*Sessions…* in the command palette). The picker always moves you to a
-**separate** session - it never renames the one you're in. Footer hints use connection vocabulary:
+**separate** session - it never renames the one you're in. Footer hints follow the highlighted row:
 
 - **Connect** (`Enter` on a session you are not connected to) — establish the connection and make
   it active immediately.
 - **Switch** (`Enter` on a background-connected session) — make that already-live attachment active.
+- **Restore** (`Enter` on a restorable snapshot) — start that named server from its resurrection
+  snapshot. Restart is not offered: there is no live server to recreate.
 - Type a new name and press `Ctrl+N` to create a fresh empty session under that name. The filter
   text carries into the create prompt, so a search that matched nothing becomes the name of the
   session you make instead — no retyping. Creation is explicit and fails if the name is already
   running.
 - **Disconnect** (`Ctrl+W`) — close this client's connection to a background session; the server
   keeps running for later reconnect. Does not apply to the current session.
-- **Kill** (`Ctrl+K` twice) — destroy the highlighted session for everyone. Ephemeral sessions are
-  removed completely.
-- **Restart** (`Ctrl+E` twice) — shut the highlighted session down and recreate it as the active
-  session, with fresh panes.
+- **Kill** (`Ctrl+K` twice) — destroy the highlighted live session for everyone. Ephemeral sessions
+  are removed completely.
+- **Forget** (`Ctrl+K` twice on a restorable snapshot) — delete the snapshot without starting a
+  server.
+- **Restart** (`Ctrl+E` twice) — shut the highlighted live session down and recreate it as the
+  active session, with fresh panes.
 - **Ephemeral shell** (`Ctrl+T`, or `Enter` when the list is empty) — go to this client's scratch
   session: start it when there is none, switch to it when there already is. The hint borrows the
   word the rows use, so it names the same thing the session becomes once it exists. Started from the
@@ -198,7 +202,7 @@ choose one, so launching rozi never leaves a stray session behind.
 
 The picker opens even when its list is empty. An empty picker still provides useful startup choices:
 `Enter` starts an ephemeral shell and `Ctrl+N` creates a named session. Resurrection snapshots are
-listed as `restorable`; selecting one starts its named server and restores the saved session.
+listed as `restorable`; `Enter` starts its named server from the snapshot, and `Ctrl+K` forgets it.
 
 Dismissing the picker with `Esc` leaves the client in the **launcher**: attached to nothing, with a
 panel saying how to start a shell, reopen the picker, or detach. A client with no session is a

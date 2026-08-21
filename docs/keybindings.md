@@ -238,7 +238,7 @@ name. Names are saved with profiles and session autosave.
 | Quit client / Detach | `q` / `d` | Leave the client. Both run the same behavior; `detach` remains valid for `[keys] detach` and `rozi run-action detach`. Named sessions keep running. |
 | Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Unbound by default; reach it via the command palette or bind `kill-workspace` under `[keys]`. |
 | Kill session | *(palette only)* | Shut down the attached session. Opens the picker when another choice remains, otherwise the launcher. Ephemeral sessions are removed, not recreated. Bound/`run-action` uses `[confirm].kill_session`. |
-| Restart session | *(palette / picker `Ctrl+E`)* | Shut down the selected (or attached) session's server and recreate it as the active session with fresh panes. Distinct from *Kill session*. Picker requires a second `Ctrl+E`. |
+| Restart session | *(palette / picker `Ctrl+E`)* | Shut down the selected (or attached) live session's server and recreate it as the active session with fresh panes. Distinct from *Kill session*. Picker requires a second `Ctrl+E`. Not offered for restorable snapshots. |
 
 An untouched temporary session is closed silently. A temporary session you *worked in* raises
 **Keep this session?**: type a name and `Enter` to keep it running, press `Enter` on an empty name
@@ -273,10 +273,10 @@ While the picker is open:
 
 | Key | Action |
 | --- | --- |
-| `Enter` | **Switch** a background-connected session, **connect** otherwise. Both make it active immediately and retain the current attachment. |
+| `Enter` | **Switch** a background-connected session, **restore** a restorable snapshot, **connect** otherwise. Live attaches make it active immediately and retain the current attachment. |
 | Type a name + `Ctrl+N` | Create and switch to a fresh empty session (fails if that name is already running). |
-| `Ctrl+K` (twice) | Kill the selected session. |
-| `Ctrl+E` (twice) | Restart it as the active session with fresh panes. |
+| `Ctrl+K` (twice) | Kill the selected live session, or **forget** a restorable snapshot. |
+| `Ctrl+E` (twice) | Restart a live session as the active session with fresh panes. Not offered for restorable snapshots. |
 | `Ctrl+W` | Disconnect this client's background attachment (server keeps running). Does not apply to the current session. |
 | `Ctrl+X` | Disconnect a whole remote host. |
 | `Ctrl+R` | Open **Connect remote host…**. |

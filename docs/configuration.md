@@ -690,7 +690,7 @@ is not a usable session name, or nothing to open under that name, it warns and f
 With `startup = "picker"` (the default, also reachable with `--pick`), the picker is always shown at
 launch, including when its list is empty. Opening the picker creates no session: nothing is attached
 until you choose. `Enter` on an empty list starts an ephemeral shell, while `Ctrl+N` creates a named
-session. Resurrection snapshots appear as restorable rows. Dismissing the picker with `Esc` leaves
+session. Resurrection snapshots appear as restorable rows (`Enter` restores, `Ctrl+K` forgets). Dismissing the picker with `Esc` leaves
 the client in the launcher with no session, where `Enter` (or any `spawn` binding) starts a shell and
 the picker can be reopened at any time. See [Sessions](sessions.md).
 

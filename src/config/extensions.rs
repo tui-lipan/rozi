@@ -595,7 +595,7 @@ mod tests {
             other => panic!("unexpected action: {other:?}"),
         };
         assert!(
-            command[0].contains("/rozi-git-tools/bin/branches"),
+            Path::new(&command[0]).ends_with(Path::new("rozi-git-tools/bin/branches")),
             "{command:?}"
         );
         assert_eq!(services[0].name, "git-tools.watch");
@@ -605,7 +605,8 @@ mod tests {
         );
         assert!(matches!(
             &services[0].launch,
-            ServiceLaunch::Direct(argv) if argv[0].contains("/rozi-git-tools/bin/watch")
+            ServiceLaunch::Direct(argv)
+                if Path::new(&argv[0]).ends_with(Path::new("rozi-git-tools/bin/watch"))
         ));
         assert_eq!(
             services[0].env.get("ROZI_EXTENSION").map(String::as_str),
@@ -647,7 +648,7 @@ mod tests {
         assert!(by_id("no-api").errors[0].contains("extension.api"));
         let malformed = entries
             .iter()
-            .find(|entry| entry.path.ends_with("/missing"))
+            .find(|entry| Path::new(&entry.path).ends_with("missing"))
             .unwrap();
         assert_eq!(malformed.status, ExtensionStatus::Invalid);
         assert!(malformed.errors[0].contains("invalid extension.toml"));
@@ -746,10 +747,12 @@ mod tests {
         write_manifest(temp.path(), "one", &manifest("same", "1"));
         write_manifest(temp.path(), "two", &manifest("same", "1"));
         let scan = scan_extensions_in(temp.path());
+        let one = temp.path().join("one").display().to_string();
+        let two = temp.path().join("two").display().to_string();
         assert!(scan.entries().iter().all(|entry| {
             entry.status == ExtensionStatus::Duplicate
-                && entry.errors[0].contains("/one")
-                && entry.errors[0].contains("/two")
+                && entry.errors[0].contains(&one)
+                && entry.errors[0].contains(&two)
         }));
         let contributions = scan.into_contributions(&[]);
         let (commands, services, active) = (
@@ -784,9 +787,9 @@ mod tests {
         write_manifest(temp.path(), "a-broken", "not toml");
         write_manifest(temp.path(), "m-good", &manifest("m-good", "1"));
         let entries = scan_extensions_in(temp.path()).entries();
-        assert!(entries[0].path.ends_with("/a-broken"));
-        assert!(entries[1].path.ends_with("/m-good"));
-        assert!(entries[2].path.ends_with("/z-good"));
+        assert!(Path::new(&entries[0].path).ends_with("a-broken"));
+        assert!(Path::new(&entries[1].path).ends_with("m-good"));
+        assert!(Path::new(&entries[2].path).ends_with("z-good"));
         assert_eq!(entries[0].status, ExtensionStatus::Invalid);
         assert_eq!(entries[1].status, ExtensionStatus::Loaded);
         assert_eq!(entries[2].status, ExtensionStatus::Loaded);
@@ -890,9 +893,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn broken_symlink_and_non_utf8_installation_are_diagnostic_candidates() {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
+    fn broken_symlink_is_a_diagnostic_candidate() {
         use std::os::unix::fs::symlink;
 
         let temp = tempfile::tempdir().unwrap();
@@ -901,6 +902,25 @@ mod tests {
             temp.path().join("broken"),
         )
         .unwrap();
+
+        let entries = scan_extensions_in(temp.path()).entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, ExtensionStatus::Invalid);
+        assert!(
+            entries[0]
+                .errors
+                .iter()
+                .any(|error| error.contains("could not read extension.toml"))
+        );
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn non_utf8_installation_is_a_diagnostic_candidate() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let temp = tempfile::tempdir().unwrap();
         let non_utf8 = temp
             .path()
             .join(OsString::from_vec(b"non-utf8-\xff".to_vec()));
@@ -908,23 +928,13 @@ mod tests {
         std::fs::write(non_utf8.join("extension.toml"), manifest("non-utf8", "1")).unwrap();
 
         let entries = scan_extensions_in(temp.path()).entries();
-        assert_eq!(entries.len(), 2);
-        assert!(
-            entries
-                .iter()
-                .all(|entry| entry.status == ExtensionStatus::Invalid)
-        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, ExtensionStatus::Invalid);
         assert!(
             entries
                 .iter()
                 .flat_map(|entry| &entry.errors)
                 .any(|error| error.contains("not valid UTF-8"))
-        );
-        assert!(
-            entries
-                .iter()
-                .flat_map(|entry| &entry.errors)
-                .any(|error| error.contains("could not read extension.toml"))
         );
     }
 
@@ -1091,7 +1101,7 @@ mod tests {
         std::fs::rename(&directory, &moved).unwrap();
         let moved_entry = scan_extensions_in(temp.path()).entries().remove(0);
         assert_eq!(moved_entry.id.as_deref(), Some("renamed-id"));
-        assert!(moved_entry.path.ends_with("/install-b"));
+        assert!(Path::new(&moved_entry.path).ends_with("install-b"));
 
         write_manifest(temp.path(), "install-c", &manifest("renamed-id", "1"));
         assert!(

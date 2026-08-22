@@ -381,12 +381,16 @@ mod tests {
             .lines()
             .map(str::to_string)
             .collect();
+        let canonical_directory = std::fs::canonicalize(directory.path())
+            .unwrap()
+            .display()
+            .to_string();
         assert_eq!(
             values,
             [
                 "git-tools".to_string(),
                 directory.path().display().to_string(),
-                directory.path().display().to_string(),
+                canonical_directory,
             ]
         );
     }
@@ -745,7 +749,11 @@ mod tests {
         let (mut child, _group) = spawn_service_child(&config, None, None).unwrap();
         assert!(child.wait().unwrap().success());
         let output = std::fs::read_to_string(directory.path().join("probe.txt")).unwrap();
-        assert_eq!(output, format!("{}\n{value}", cwd.display()));
+        #[cfg(target_os = "macos")]
+        let expected_cwd = std::fs::canonicalize(&cwd).unwrap();
+        #[cfg(not(target_os = "macos"))]
+        let expected_cwd = cwd;
+        assert_eq!(output, format!("{}\n{value}", expected_cwd.display()));
     }
 
     #[test]

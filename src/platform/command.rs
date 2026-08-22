@@ -777,7 +777,7 @@ mod tests {
     #[test]
     fn bounded_argv_command_preserves_argument_boundaries() {
         let output = run_bounded_argv_command(
-            "/bin/printf",
+            "/usr/bin/printf",
             &["%s|%s", "a path with spaces", "literal;$(not-a-command)"],
             std::time::Duration::from_secs(2),
             1024,

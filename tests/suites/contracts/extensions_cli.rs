@@ -73,7 +73,12 @@ fn list_extensions_reports_loaded_disabled_and_incompatible_in_all_formats() {
     let verbose = rozi(&temp, &["list-extensions", "--verbose"]);
     assert!(verbose.status.success());
     let stdout = String::from_utf8(verbose.stdout).unwrap();
-    assert!(stdout.contains(&loaded.display().to_string()));
+    let loaded = std::fs::canonicalize(loaded).unwrap();
+    assert!(stdout.lines().any(|line| {
+        line.strip_prefix("  directory ")
+            .and_then(|path| std::fs::canonicalize(path).ok())
+            .is_some_and(|path| path == loaded)
+    }));
     assert!(stdout.contains("loaded.open"));
     assert!(!stdout.contains("command.loaded.open"));
 

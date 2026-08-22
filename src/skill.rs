@@ -678,7 +678,6 @@ mod tests {
         assert!(SKILL_MD.starts_with("---\nname: rozi"));
         assert!(SKILL_MD.contains("ROZI=1"));
         assert!(SKILL_MD.contains("rozi list-panes"));
-        assert!(!SKILL_MD.is_empty());
     }
 
     #[test]

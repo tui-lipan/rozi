@@ -6,8 +6,6 @@
 //! deadline. Filling scrollback portably would mean giving up the one-line generator this needs.
 //!
 //! Windows scrollback behaviour wants its own test with a shell it can actually run.
-#![cfg(unix)]
-
 use rozi::pane::TerminalPane;
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};

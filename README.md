@@ -72,7 +72,7 @@ cargo run
 Start it, and you get a single shell. Everything else happens through the **prefix key** — hold
 `Ctrl-a`, let go, then press one key:
 
-| | |
+| Key | Action |
 | --- | --- |
 | `Ctrl-a` `Enter` | Open another pane |
 | `Ctrl-a` `h` `j` `k` `l` | Move focus left / down / up / right |
@@ -114,7 +114,7 @@ behavior. Nothing to emulate, nothing to install underneath it.
 
 ## Also in the box
 
-| | |
+| Feature | Description |
 | --- | --- |
 | Command palette | Fuzzy-search every command by name; a help overlay lists all keys |
 | Side panel | A dock for your files, git changes, panes, sessions, running coding agents — or tabs you define |
@@ -162,7 +162,7 @@ setting commented out at its default, and [`examples/`](examples/) has ready-mad
 Everything below is also published at [rozi.tui-lipan.dev](https://rozi.tui-lipan.dev),
 with search.
 
-| | |
+| Guide | Contents |
 | --- | --- |
 | [Feature overview](docs/features.md) | Everything rozi does, on one page |
 | [Getting started](docs/getting-started.md) | Requirements, building, running, quitting |

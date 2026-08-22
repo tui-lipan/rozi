@@ -40,6 +40,8 @@ fn rozi_in(temp: &tempfile::TempDir, args: &[&str], cwd: Option<&Path>) -> Outpu
         .env("XDG_STATE_HOME", temp.path().join("state"))
         .env("XDG_CACHE_HOME", temp.path().join("cache"))
         .env("XDG_RUNTIME_DIR", temp.path().join("run"))
+        .env("APPDATA", temp.path().join("config"))
+        .env("LOCALAPPDATA", temp.path().join("data"))
         .env("ROZI_CONFIG", config);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);

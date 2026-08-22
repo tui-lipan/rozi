@@ -59,3 +59,13 @@ jobs:
       # three times over.
       - name: Audit dependencies
         run: cargo install cargo-audit --locked && cargo audit
+
+  licenses:
+    name: licenses and advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check licenses, sources, advisories, and bans
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses sources advisories bans

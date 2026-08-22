@@ -33,8 +33,14 @@ Leave the TUI with `prefix d`.
 
 ## Dependencies and release builds
 
-After dependency changes, run `cargo audit`. Install it with
+After dependency changes, run both policy and vulnerability checks. Install the
+tools with `cargo install cargo-deny --locked` and
 `cargo install cargo-audit --locked` if needed.
+
+```bash
+cargo deny check licenses sources advisories bans
+cargo audit
+```
 
 ```bash
 cargo build --release

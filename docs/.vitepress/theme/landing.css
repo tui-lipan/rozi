@@ -1266,11 +1266,13 @@ html.rozi-intro-pending .lp {
     .lp-tagline {
         font-size: 17px;
     }
-    /* Below this width the composition is a texture, not a readout. Trim the
-       band's inset so it at least uses every pixel it has. */
+    /* The authored scene leaves 260px around its 1400px terminal plate. Scale
+       the scene past the viewport and let .lp clip those decorative margins,
+       so the terminal itself fills roughly 93% of a phone screen. */
     .lp-hero-stage {
-        width: calc(100vw - 20px);
-        margin-inline: calc(50% - min(50vw - 10px, 50vw));
+        width: 128vw;
+        margin-inline: calc(50% - 64vw);
+        margin-block: calc(128vw * -0.024);
     }
     .lp-features,
     .lp-examples {

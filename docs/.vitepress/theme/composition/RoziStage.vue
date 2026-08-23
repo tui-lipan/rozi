@@ -99,9 +99,7 @@ function measure() {
 
 let ro: ResizeObserver | undefined;
 let reduced: MediaQueryList | undefined;
-let narrow: MediaQueryList | undefined;
-const syncStill = () =>
-    (still.value = !!reduced?.matches || !!narrow?.matches);
+const syncStill = () => (still.value = !!reduced?.matches);
 
 onMounted(() => {
     measure();
@@ -109,20 +107,16 @@ onMounted(() => {
     ro = new ResizeObserver(measure);
     if (host.value) ro.observe(host.value);
 
-    // Small screens scale the piece past the point where its text means
-    // anything, so spending a core animating it buys nothing. Same conclusion,
-    // different reason, when the reader has asked for less motion.
+    // Respect the reader's motion preference on every viewport. Mobile screens
+    // still run the hero loop; the responsive crop keeps the composition useful.
     reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-    narrow = window.matchMedia("(max-width: 700px)");
     syncStill();
     reduced.addEventListener("change", syncStill);
-    narrow.addEventListener("change", syncStill);
 });
 
 onBeforeUnmount(() => {
     ro?.disconnect();
     reduced?.removeEventListener("change", syncStill);
-    narrow?.removeEventListener("change", syncStill);
 });
 </script>
 

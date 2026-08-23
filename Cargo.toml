@@ -1,12 +1,12 @@
 [package]
 name = "rozi"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 # Set by the dependency tree, not by this crate's own source: terminal-images reaches
 # ratatui-image -> icy_sixel -> quantette, which requires 1.90.
 rust-version = "1.90"
 license = "MPL-2.0"
-description = "Hyprland-style tiling terminal multiplexer built on tui-lipan"
+description = "Modern tiling terminal multiplexer built on tui-lipan"
 repository = "https://github.com/tui-lipan/rozi"
 homepage = "https://rozi.tui-lipan.dev"
 # The crate is mostly a binary, so docs.rs has little to show; point readers at

@@ -464,3 +464,45 @@ jobs:
             dist/*.sha256 \
             --verify-tag \
             --generate-notes
+
+  # Deliberately last, and deliberately after `publish`. A crates.io version can only be yanked,
+  # never withdrawn, so nothing irreversible runs until the signed GitHub release exists and every
+  # archive has been verified against the manifest. A failure here leaves a complete, usable
+  # release behind; the reverse ordering would leave a permanent crate pointing at nothing.
+  publish_crate:
+    name: publish crates.io
+    needs: publish
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.90
+
+      # The job chain already proved this in `sign_release`, but this is the step that cannot be
+      # undone, so it re-checks rather than trusting an upstream job it does not read outputs from.
+      - name: Check tag matches package version before token use
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          package_version="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          test "$version" = "$package_version" || {
+            echo "tag v$version does not match Cargo.toml package.version $package_version" >&2
+            exit 1
+          }
+
+      # `--locked` so the published crate carries the exact lockfile the signed archives were built
+      # from. rozi ships binaries, so Cargo.lock is part of the published crate.
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CARGO_REGISTRY_TOKEN"
+          cargo publish --locked

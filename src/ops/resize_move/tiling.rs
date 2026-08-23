@@ -5,7 +5,10 @@ use crate::anim::GeometryAnimation;
 use crate::geometry::{
     clamp_float_rect, directional_score, lift_off_float_rect, workspace_tile_bounds,
 };
-use crate::layout::{self, insert_tiled_pane_at_point, placement_for, workspace_target_rects};
+use crate::layout::{
+    self, insert_tiled_pane_at_point, placement_for, workspace_target_rects,
+    workspace_target_rects_excluding,
+};
 use crate::ops::focus::{
     active_pane_is_fullscreen, active_pane_mut, request_pane_focus, sync_scrollable_reveal,
 };
@@ -331,13 +334,17 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
         // `layout::drop_split_for_target` uses for a mouse drop.
         let axis = crate::ops::focus::split_axis_for_direction(direction);
         let moving_first = matches!(direction, Direction::Left | Direction::Up);
-        // Measured before the move, so the pane keeps the extent it is leaving with.
+        // The moving pane's extent comes from the layout it is leaving, so it keeps its size; the
+        // target's comes from the layout with the pane already lifted out, because that is the slot
+        // the new split divides.
+        let after =
+            workspace_target_rects_excluding(workspace, bounds, Some(focused), top_gap, tile_gap);
         let ratio = match (
             placement_for(&placements, focused),
-            placement_for(&placements, target),
+            placement_for(&after, target),
         ) {
-            (Some(moving_rect), Some(target_rect)) => {
-                redock_split_ratio(moving_rect, target_rect, axis, moving_first)
+            (Some(moving_rect), Some(target_slot)) => {
+                redock_split_ratio(moving_rect, target_slot, axis, moving_first, tile_gap)
             }
             _ => EVEN_SPLIT_RATIO,
         };

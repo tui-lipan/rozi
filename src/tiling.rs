@@ -310,17 +310,23 @@ pub fn effective_tile_tree(
     tree
 }
 
-/// Ratio for a re-dock split that leaves both panes the extent they already had.
+/// Ratio for a re-dock split that leaves the moving pane the extent it already had.
 ///
 /// A move lifts a pane out of the tree and puts it back down beside a neighbor, so it brings its
 /// own size along rather than halving whatever it lands on - a deliberate 70/30 survives the trip.
-/// Panes that already span the axis equally, such as a side-by-side pair moved vertically, fall out
-/// of this as an even split on their own, which is what that genuine reshape wants anyway.
+///
+/// `target_slot` is the target's rect *after* the moving pane has been lifted out, because that is
+/// the region the new split actually divides. Reading the target's pre-move rect instead only
+/// agrees when the two are siblings; anywhere else the slot has grown by more than the moving
+/// pane's share, and applying the stale fraction to it shrinks the moving pane a little more on
+/// every hop. When the moving pane can no longer fit alongside the target at a sane proportion the
+/// slot is simply halved, which is the honest answer for a pane that has outgrown where it landed.
 pub fn redock_split_ratio(
     moving: FloatRect,
-    target: FloatRect,
+    target_slot: FloatRect,
     axis: SplitAxis,
     moving_first: bool,
+    gap: TileGap,
 ) -> f32 {
     let extent = |rect: FloatRect| {
         match axis {
@@ -330,13 +336,19 @@ pub fn redock_split_ratio(
         .max(0.0)
     };
     let moving = extent(moving);
-    let target = extent(target);
-    let total = moving + target;
-    if total <= 0.0 {
+    let slot = usable_axis_extent(extent(target_slot), axis, gap);
+    if moving <= 0.0 || slot <= 0.0 {
         return EVEN_SPLIT_RATIO;
     }
-    let leading = if moving_first { moving } else { target };
-    clamp_split_ratio(leading / total)
+    let moving_share = moving / slot;
+    if !(MIN_SPLIT_RATIO..=MAX_SPLIT_RATIO).contains(&moving_share) {
+        return EVEN_SPLIT_RATIO;
+    }
+    if moving_first {
+        moving_share
+    } else {
+        1.0 - moving_share
+    }
 }
 
 /// Lift `moving` out of the tree and re-insert it beside `target`, splitting `target`'s slot along
@@ -1468,6 +1480,151 @@ mod tests {
             panic!("expected pane 2's slot to become a split");
         };
         assert_close(inner, EVEN_SPLIT_RATIO);
+    }
+
+    const NO_GAP: TileGap = TileGap {
+        horizontal: 0.0,
+        vertical: 0.0,
+    };
+
+    fn placements_of(tree: &DwindleTree, rect: FloatRect, gap: TileGap) -> Vec<PanePlacement> {
+        let mut placements = Vec::new();
+        allocate_dwindle(tree, rect, gap, &mut placements);
+        placements
+    }
+
+    fn rect_of(placements: &[PanePlacement], id: PaneId) -> FloatRect {
+        placements
+            .iter()
+            .find(|placement| placement.id == id)
+            .unwrap_or_else(|| panic!("pane {id} is laid out"))
+            .rect
+    }
+
+    /// The whole re-dock the way `move_focused_in_direction` runs it: measure, lift the pane out,
+    /// then split the slot it lands in at the ratio `redock_split_ratio` picks.
+    fn redock(
+        tree: DwindleTree,
+        moving: PaneId,
+        target: PaneId,
+        axis: SplitAxis,
+        moving_first: bool,
+        rect: FloatRect,
+        gap: TileGap,
+    ) -> DwindleTree {
+        let before = placements_of(&tree, rect, gap);
+        let (without_moving, removed) = remove_tree_leaf(tree, moving);
+        assert!(removed, "pane {moving} is in the tree");
+        let without_moving = without_moving.expect("other panes remain");
+        let after = placements_of(&without_moving, rect, gap);
+        let ratio = redock_split_ratio(
+            rect_of(&before, moving),
+            rect_of(&after, target),
+            axis,
+            moving_first,
+            gap,
+        );
+        insert_leaf_around_target(without_moving, target, moving, axis, moving_first, ratio)
+            .expect("target stays in the tree")
+    }
+
+    /// Three panes in a row, each move hopping the middle pane's neighbor along the same axis.
+    /// Reading the target's pre-move rect made the split ratio a fraction of a slot that had since
+    /// grown, so the travelling pane lost width on every hop: 50 -> 33 -> 20 across two moves.
+    #[test]
+    fn repeated_same_axis_moves_do_not_shrink_the_moving_pane() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        // 1 | 2 | 3 at 50 | 25 | 25.
+        let mut tree = DwindleTree::Split {
+            axis: SplitAxis::Horizontal,
+            ratio: EVEN_SPLIT_RATIO,
+            first: Box::new(DwindleTree::Leaf(1)),
+            second: Box::new(DwindleTree::Split {
+                axis: SplitAxis::Horizontal,
+                ratio: EVEN_SPLIT_RATIO,
+                first: Box::new(DwindleTree::Leaf(2)),
+                second: Box::new(DwindleTree::Leaf(3)),
+            }),
+        };
+
+        // Pane 1 is half the canvas and lands in a 50-wide slot, which it cannot keep: halve it.
+        tree = redock(tree, 1, 2, SplitAxis::Horizontal, false, rect, NO_GAP);
+        assert_close(rect_of(&placements_of(&tree, rect, NO_GAP), 1).w, 25.0);
+
+        // From here on it fits, so every further hop leaves it exactly the width it arrived with.
+        for target in [3, 2, 3] {
+            tree = redock(tree, 1, target, SplitAxis::Horizontal, false, rect, NO_GAP);
+            assert_close(rect_of(&placements_of(&tree, rect, NO_GAP), 1).w, 25.0);
+        }
+    }
+
+    /// The sibling case the ratio was originally written for: a resized pair keeps its proportion
+    /// when one of the two is moved to the far side of the other.
+    #[test]
+    fn redock_keeps_a_resized_pair_proportion() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let tree = DwindleTree::Split {
+            axis: SplitAxis::Horizontal,
+            ratio: 0.7,
+            first: Box::new(DwindleTree::Leaf(1)),
+            second: Box::new(DwindleTree::Leaf(2)),
+        };
+        assert_close(rect_of(&placements_of(&tree, rect, NO_GAP), 1).w, 70.0);
+
+        let tree = redock(tree, 1, 2, SplitAxis::Horizontal, false, rect, NO_GAP);
+        assert_close(rect_of(&placements_of(&tree, rect, NO_GAP), 1).w, 70.0);
+        assert_close(rect_of(&placements_of(&tree, rect, NO_GAP), 2).w, 30.0);
+    }
+
+    /// A pane moved onto a slot it fills entirely has no proportion to carry, so the slot is halved
+    /// rather than clamped down to a sliver for whichever pane already lived there.
+    #[test]
+    fn redock_halves_a_slot_the_moving_pane_cannot_share() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let slot = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 50.0,
+            h: 40.0,
+        };
+        let ratio = redock_split_ratio(rect, slot, SplitAxis::Horizontal, true, NO_GAP);
+        assert_close(ratio, EVEN_SPLIT_RATIO);
+    }
+
+    /// The gap between the two sides comes off the slot before the split divides it, so a pane
+    /// keeping its width has to be measured against what is left.
+    #[test]
+    fn redock_measures_the_slot_the_split_actually_divides() {
+        let moving = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 30.0,
+            h: 40.0,
+        };
+        let slot = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 61.0,
+            h: 40.0,
+        };
+        // 61 wide minus the 1-column gap leaves 60 to divide; 30 of that is exactly half.
+        let ratio = redock_split_ratio(moving, slot, SplitAxis::Horizontal, true, TileGap::DEFAULT);
+        assert_close(ratio, 0.5);
     }
 
     #[test]

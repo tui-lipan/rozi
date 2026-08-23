@@ -538,20 +538,17 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
 
     let (axis, moving_first) = layout::drop_split_for_target(target_rect, drop_point);
     // `target_rect` above comes from the layout with the dragged pane already taken out, which is
-    // what the drop edge should be measured against. The proportion the two panes keep is a
-    // different question, so it reads the layout as it stood before the drag.
+    // both what the drop edge is measured against and the slot the new split will divide. Only the
+    // dragged pane's own extent reads the layout as it stood before the drag, so it keeps its size.
     let before = {
         let workspace = state.active_workspace_ref();
         workspace_target_rects(workspace, bounds, top_gap, tile_gap)
     };
-    let ratio = match (
-        placement_for(&before, id),
-        placement_for(&before, target_id),
-    ) {
-        (Some(moving_rect), Some(target_rect)) => {
-            redock_split_ratio(moving_rect, target_rect, axis, moving_first)
+    let ratio = match placement_for(&before, id) {
+        Some(moving_rect) => {
+            redock_split_ratio(moving_rect, target_rect, axis, moving_first, tile_gap)
         }
-        _ => EVEN_SPLIT_RATIO,
+        None => EVEN_SPLIT_RATIO,
     };
     let workspace = state.active_workspace_mut();
     move_tiled_window_around_target(workspace, id, target_id, axis, moving_first, ratio);

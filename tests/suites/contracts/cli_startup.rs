@@ -65,10 +65,22 @@ mod unix {
     #[test]
     fn unmanaged_update_refuses_before_runtime_or_session_startup() {
         let root = isolated_home("unmanaged-update");
-        let output = command(&root).arg("update").output().unwrap();
+        // The refusal names whichever channel owns the binary, so pin the ones that are relocatable
+        // to empty scratch directories. Without this the message would depend on where the
+        // developer's checkout happens to live rather than on the behaviour under test.
+        let output = command(&root)
+            .env("CARGO_HOME", root.join("cargo"))
+            .env("MISE_DATA_DIR", root.join("mise"))
+            .env("HOMEBREW_PREFIX", root.join("brew"))
+            .arg("update")
+            .output()
+            .unwrap();
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("managed installation is not present"));
+        assert!(
+            stderr.contains("was not installed by its managed installer"),
+            "unmanaged refusal should name the channel that owns the install: {stderr}"
+        );
         let runtime_entries = fs::read_dir(root.join("runtime/rozi"))
             .map(|entries| entries.count())
             .unwrap_or(0);

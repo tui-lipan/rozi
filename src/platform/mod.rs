@@ -38,6 +38,8 @@
 //! - [`notifications`] - desktop notifications (Phase 10).
 //! - [`sound`] - best-effort alert cue playback.
 //! - [`install`] - thin rozi path/policy adapter over the `relswap` signed-release engine.
+//! - [`install_source`] - which distribution channel produced the running binary, so an install
+//!   `relswap` does not own can still be told how to update itself.
 //!
 //! Every Windows code path in here type-checks under `cargo check --target x86_64-pc-windows-gnu`
 //! and is exercised by Windows CI, but was **written without a Windows host in the authoring
@@ -45,6 +47,7 @@
 
 pub mod fs_security;
 pub mod install;
+pub mod install_source;
 pub mod paths;
 pub mod user;
 

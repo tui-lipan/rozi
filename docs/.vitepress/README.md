@@ -88,8 +88,7 @@ ratio and the mask stops have to be rechecked against the screen plate, which
 sits at composition y 170–930 of 1080 and must stay at full strength.
 
 The clock idles when the stage is off screen, the tab is hidden, or the intro is
-on top. Under `prefers-reduced-motion` or below 700px the stage holds one frame
-and never starts. Hovering deliberately does *not* pause it, and the stage is
+on top. Under `prefers-reduced-motion` the stage holds one frame and never starts. Hovering deliberately does *not* pause it, and the stage is
 not selectable — it is a picture of a terminal, not a terminal.
 
 ### The first-visit intro

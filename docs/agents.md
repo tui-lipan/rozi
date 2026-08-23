@@ -104,7 +104,7 @@ string, including a pane that has not finished drawing.
 Rules are evaluated by outcome, highest first:
 
 ```text
-blocked  →  working  →  idle  →  unknown  →  (nothing matched: idle)
+unknown  →  blocked  →  working  →  idle  →  (nothing matched: idle)
 ```
 
 An agent drawing a spinner *and* an approval dialog is waiting on you either way, so a `blocked`
@@ -117,6 +117,15 @@ agent's own status chrome — OpenCode's subagent navigator covers the composer 
 the only two places the parent run reports progress. Without it, opening a subagent would end the
 run on screen, restart its elapsed clock, and announce a completion that never happened. A held
 state that goes fifteen minutes with no confirming evidence falls back to `idle`.
+
+It leads the order because it is the one outcome that is a claim about the *screen* rather than
+about the run — this view does not report the agent's state at all — and a rule saying that has to
+outrank whatever the shared vocabulary reads off the same screen. Otherwise it can only fire where
+nothing else matched, which is where it changes nothing. OpenCode's startup splash is the case:
+it centers `⠋ Waiting for opencode server...` on an empty screen, character for character the shape
+of Pi's `⠦ Working...`, so a program that had not started yet read as a run in flight and every
+launch ended in a completion notification. Write `unknown` rules narrowly for the same reason —
+one that matches too much silences everything else on that screen.
 
 A screen that matches nothing at all *is* idle: a definition whose rules all fail has observed its
 agent sitting at a prompt.

@@ -185,6 +185,27 @@ screen = { regex = true, any_of = ["[■⬝]{4,}"] }
 state = "unknown"
 screen = { all_of = ["parent up"], any_of = ["prev left", "next right"] }
 
+# The startup splash, for the same reason and with more at stake. Before the server answers,
+# OpenCode draws its wordmark over an empty screen with one status line under it - and that line is
+# `⠋ Waiting for opencode server...`, a braille spinner at the head of a line, which is character
+# for character the shape the shared working rule reads on Pi's `⠦ Working...`. Centering is the
+# only difference and it is not one a needle can see, so a pane that had not started yet read as a
+# run in flight, and every launch ended with a completion notification for work nobody asked for.
+#
+# `unknown` rather than `idle` because the pane may be reloading rather than booting: the same view
+# comes back for `Reloading startup data...`, and holding whatever the pane was doing is right in
+# both cases. Footer-scoped, because these are ordinary English sentences an agent could write.
+[[agents.states]]
+state = "unknown"
+scope = "footer"
+screen = { any_of = [
+    "starting opencode server",
+    "waiting for opencode server",
+    "server is still starting",
+    "loading startup data",
+    "reloading startup data",
+] }
+
 [[agents]]
 id = "codex"
 label = "Codex"

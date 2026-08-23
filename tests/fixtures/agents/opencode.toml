@@ -138,3 +138,43 @@ screen = '''
   ┃   Allow once   Allow always   Reject         ctrl+f fullscreen  ⇆ select  enter confirm
   ┃                                                                                               • OpenCode 1.18.19
 '''
+
+# Launching, captured from opencode-tui 1.18.21 in the same 88x39 lab pane. This is the screen the
+# `unknown` startup rule exists for, and it read `working` before that rule landed: the status line
+# is a braille spinner at the head of a line, which is the shape the shared working vocabulary reads
+# on Pi's `⠦ Working...`. Centering is the only thing that tells them apart, and a needle cannot see
+# centering. The title stays `OpenCode` throughout, so it does not rescue this either.
+#
+# Read it against `idle-splash` above, which is where this screen goes a second later. Under the old
+# rules that sequence took the pane working -> idle with no agent having done anything - the exact
+# edge Rozi banks a run length on, pulses the finished dot for, and notifies about. Every launch
+# announced a completion.
+[[case]]
+name = "launching-waiting-for-server"
+state = "unknown"
+title = "OpenCode"
+screen = '''
+                                                         ▄
+                        █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+                        ████ ████ █▀▀▀ ████ ████ ████ ████ █▀▀▀
+                        ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+
+                            ⠋ Waiting for opencode server...
+'''
+
+# The same screen a second on. Kept separate because the status text is the whole signal here - one
+# launch walks `Starting opencode server...`, `Waiting for opencode server...`, and this - and a rule
+# that covered only the wording someone happened to capture would let a launch through on a machine
+# fast enough never to draw the middle one.
+[[case]]
+name = "launching-loading-startup-data"
+state = "unknown"
+title = "OpenCode"
+screen = '''
+                                                         ▄
+                        █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+                        ████ ████ █▀▀▀ ████ ████ ████ ████ █▀▀▀
+                        ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+
+                               ⠋ Loading startup data...
+'''

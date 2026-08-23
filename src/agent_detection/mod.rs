@@ -403,6 +403,48 @@ mod tests {
         );
     }
 
+    /// The startup splash is not a run, and the frame after it is not a finished one.
+    ///
+    /// The fixture corpus carries the real screens; this pins the consequence, which is the thing
+    /// anyone actually noticed: a launch used to walk `working` -> `idle` with no agent having done
+    /// anything, and Rozi treats that edge as a completed run - it banks an elapsed time, pulses
+    /// the finished dot, plays a cue and posts a notification. Every launch announced a completion.
+    #[test]
+    fn opencodes_startup_screens_are_not_a_run_that_finished() {
+        for status in [
+            "⠙ Starting opencode server...",
+            "⠋ Waiting for opencode server...",
+            "⠦ Server is still starting, waiting for /global/health...",
+            "⠧ Loading startup data...",
+        ] {
+            let splash = format!("        opencode\n\n            {status}");
+            assert_eq!(
+                detect_state("opencode", &splash, "OpenCode"),
+                None,
+                "a program that has not started yet is not a run in flight: {status:?}"
+            );
+        }
+
+        // Prose is not the splash. The status wording is ordinary English an agent could write, so
+        // the rule is footer-scoped and a transcript quoting it must still read as the pane's own
+        // state - here, a live run.
+        let transcript = "\
+● I am waiting for opencode server logs before retrying, and will report back.
+  line
+  line
+  line
+  line
+  line
+  line
+  line
+  ⬝■■■■■■⬝  esc interrupt";
+        assert_eq!(
+            detect_state("opencode", transcript, ""),
+            Some(DetectedAgentState::Working),
+            "the splash wording quoted in a transcript does not silence the live chrome"
+        );
+    }
+
     #[test]
     fn a_transcript_mentioning_subagents_is_not_the_subagent_view() {
         let transcript = "\

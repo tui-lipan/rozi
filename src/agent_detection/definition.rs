@@ -19,9 +19,8 @@ pub const FOOTER_ROWS: usize = 8;
 
 /// What one matched state rule concludes.
 ///
-/// Variant order is evaluation precedence, and it is the semantic every built-in already had:
-/// a blocked prompt outranks any working evidence beneath it, because an agent drawing a spinner
-/// *and* an approval dialog is waiting on you either way.
+/// Variant order is declaration order for the parser's benefit; evaluation walks
+/// [`Self::PRECEDENCE`], which is not the same thing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AgentStateOutcome {
     Blocked,
@@ -30,14 +29,28 @@ pub enum AgentStateOutcome {
     /// Recognized the agent, learned nothing about its state.
     ///
     /// Not "idle": the caller holds the pane's previous state across this. It is what a view that
-    /// replaces the agent's own status chrome - OpenCode's subagent navigator - has to report,
-    /// since nothing on such a screen speaks for the run behind it.
+    /// replaces the agent's own status chrome - OpenCode's subagent navigator, or its startup
+    /// splash - has to report, since nothing on such a screen speaks for the run behind it.
     Unknown,
 }
 
 impl AgentStateOutcome {
     /// Precedence order, highest first. Evaluation walks this, not declaration order.
-    pub const PRECEDENCE: [Self; 4] = [Self::Blocked, Self::Working, Self::Idle, Self::Unknown];
+    ///
+    /// `Unknown` leads because it is the one outcome that is a claim *about the screen* rather
+    /// than about the run: this view does not report the agent's state at all. That has to
+    /// outrank whatever the shared vocabulary happens to read off the same pixels, or the rule
+    /// can only ever fire where nothing else matched - which is to say, where it changes nothing.
+    ///
+    /// OpenCode's startup splash is the screen that forced it. The splash centers
+    /// `⠋ Waiting for opencode server...` on an otherwise empty screen, which is character for
+    /// character the shape of Pi's `⠦ Working...`, so the shared spinner rule read a program that
+    /// had not started yet as a run in flight - and the moment the app finished loading, the pane
+    /// announced a completion that never happened.
+    ///
+    /// Below that, `blocked` outranks `working` because an agent drawing a spinner *and* an
+    /// approval dialog is waiting on you either way.
+    pub const PRECEDENCE: [Self; 4] = [Self::Unknown, Self::Blocked, Self::Working, Self::Idle];
 
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -364,15 +377,32 @@ mod tests {
         );
     }
 
+    /// A screen that says it does not report the run outranks anything read off that same screen.
+    ///
+    /// The point of the ordering: an `unknown` rule that lost to the shared vocabulary could only
+    /// ever fire where nothing else matched, which is where it would change nothing. OpenCode's
+    /// startup splash is the shipped case - a centered braille status line the working vocabulary
+    /// reads as a spinner, on a program that has not started yet.
     #[test]
-    fn idle_evidence_outranks_no_evidence() {
+    fn no_evidence_outranks_evidence_read_off_the_same_screen() {
         let definition = definition(vec![
-            rule(AgentStateOutcome::Unknown, &["navigator"]),
+            rule(AgentStateOutcome::Unknown, &["splash"]),
             rule(AgentStateOutcome::Idle, &["composer"]),
         ]);
         assert_eq!(
-            evaluate(&definition, &[], input("navigator composer", "")),
-            Some(DetectedAgentState::Idle)
+            evaluate(&definition, &[], input("splash composer", "")),
+            None
+        );
+
+        let base = vec![rule(AgentStateOutcome::Working, &["spinner"])];
+        assert_eq!(
+            evaluate(&definition, &base, input("splash spinner", "")),
+            None
+        );
+        assert_eq!(
+            evaluate(&definition, &base, input("spinner", "")),
+            Some(DetectedAgentState::Working),
+            "the veto is the rule's, not the tier's"
         );
     }
 

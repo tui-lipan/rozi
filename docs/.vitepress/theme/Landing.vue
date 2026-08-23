@@ -36,46 +36,46 @@ const facts: [string, string][] = [
   [String(stats.themes), "themes"],
   [String(stats.commands), "rebindable commands"],
   [String(stats.agents), "agents detected"],
-  ["3", "native platforms"],
+  ["3", "supported platforms"],
 ];
 
 /* Two sentences each. The card is a claim and a link, not a paragraph - the
    page under it is where the detail belongs. */
 const features = [
   {
-    title: "Panes that arrange themselves",
-    body: "New panes split the one you are looking at, along whichever side has more room. Seven arrangements are a keypress away, and any pane can float, go fullscreen, or be dragged with the mouse.",
+    title: "Automatic pane layouts",
+    body: "New panes split the focused pane along the side with more room. Rozi has seven layouts, and panes can float, fill the screen, or move with the mouse.",
     link: "/layouts-and-panes",
-    linkText: "Layouts & panes",
+    linkText: "Layouts and panes",
   },
   {
-    title: "Nothing is lost when you close the window",
-    body: "A background server owns every PTY, so leaving does not kill your work. rozi attach dev brings back the same layout, the same running programs, and the same scrollback — from another window, or another machine over SSH.",
+    title: "Named sessions keep running",
+    body: "A background server owns every PTY in a named session. Detach, then use rozi attach dev to return to its layout, running programs, and scrollback from another window or over SSH.",
     link: "/sessions",
     linkText: "Sessions",
   },
   {
-    title: "Change anything without restarting",
-    body: "Save config.toml and it lands immediately, with your panes untouched. It works the other way too: flip a setting from the command palette and rozi writes it back into your file.",
-    link: "/configuration",
-    linkText: "Configuration",
+    title: "Configuration reloads on save",
+    body: "Rozi reloads config.toml when you save it without closing panes. Changes made in the command palette are written back to the file.",
+    link: "/themes",
+    linkText: "Themes",
   },
   {
-    title: "A real terminal, not an approximation",
-    body: `Mouse reporting, selection, inline images, true color, scrollback search, and a vi-style copy mode. ${stats.themes} themes ship with it, and the colors inside your panes follow whichever one is active.`,
+    title: "Terminal features",
+    body: `Rozi supports mouse reporting, selection, inline images, true color, scrollback search, and a vi-style copy mode. It includes ${stats.themes} themes, and the active theme sets pane colors.`,
     link: "/terminal",
     linkText: "Terminal features",
   },
   {
-    title: "It can tell when an agent is waiting on you",
-    body: `rozi reads what a coding-agent CLI is drawing and marks the pane working, blocked, or finished — on its border, its workspace tab, and in the sidebar. ${stats.agents} agents ship recognized, and each one is a table you could have written yourself.`,
-    link: "/agents",
-    linkText: "Agent definitions",
+    title: "Coding-agent status detection",
+    body: `Rozi reads coding-agent CLI output and marks the pane as working, blocked, or finished. The state appears on the pane border, workspace tab, and sidebar. Definitions for ${stats.agents} agents are included as editable tables.`,
+    link: "/sidebar",
+    linkText: "Agent activity",
   },
   {
-    title: "Native on Windows, not emulated",
-    body: "ConPTY, named pipes, and a SID-protected runtime directory, all behind one platform layer rather than sprinkled through the app. One binary on every platform, with no runtime and no daemon to install alongside it.",
-    link: "/getting-started",
+    title: "Windows support",
+    body: "On Windows, Rozi uses ConPTY for terminals and named pipes for IPC. It stores runtime files in a SID-protected directory. Its native executables require no separate runtime.",
+    link: "/platform-support",
     linkText: "Platform support",
   },
 ];
@@ -95,7 +95,7 @@ const firstKeys = [
   { key: "1…9", mod: "Alt-1…9", what: "Jump to a workspace" },
   { key: "p", mod: "Alt-p", what: "Search every command" },
   { key: "?", mod: "Alt-?", what: "Show all keys" },
-  { key: "d", mod: "Alt-d", what: "Leave — a named session lives on" },
+  { key: "d", mod: "Alt-d", what: "Leave. A named session lives on" },
 ];
 
 /**
@@ -113,17 +113,17 @@ const catalog: {
   {
     title: "Window management",
     link: "/layouts-and-panes",
-    linkText: "Layouts & panes",
+    linkText: "Layouts and panes",
     names: [
       "Seven layouts",
       "aspect-ratio splits",
       "floating",
       "fullscreen",
-      "move, swap & promote",
+      "move, swap, and promote",
       "resize mode",
       "nine workspaces",
       "merged borders",
-      "gaps & padding",
+      "gaps and padding",
       "scratchpad",
       "animations",
     ],
@@ -138,7 +138,7 @@ const catalog: {
       "mouse reporting",
       "scrollback search",
       "vi copy mode",
-      "clipboard & OSC 52",
+      "clipboard and OSC 52",
       "hints",
       "edit scrollback",
       "shell integration",
@@ -147,26 +147,26 @@ const catalog: {
     ],
   },
   {
-    title: "Sessions & sharing",
+    title: "Sessions and sharing",
     link: "/sessions",
     linkText: "Sessions",
     names: [
       "Named sessions",
-      "ephemeral sessions",
+      "temporary sessions with brief recovery",
       "multi-client",
       "layout-control lease",
       "remote over SSH",
       "resurrect",
       "autosave",
       "profiles",
-      "session picker",
-      "launcher",
+      "bare launch opens the session picker",
+      "session launcher",
     ],
   },
   {
     title: "Look and feel",
-    link: "/themes",
-    linkText: "Themes",
+    link: "/configuration",
+    linkText: "Configuration",
     names: [
       `${stats.themes} themes`,
       "system theme",
@@ -178,7 +178,7 @@ const catalog: {
       "sidebar tabs",
       "settings dialog",
       "alert marks",
-      "notifications & sounds",
+      "notifications and sounds",
     ],
   },
   {
@@ -206,14 +206,14 @@ const catalog: {
     link: "/installation",
     linkText: "Installation",
     names: [
-      "Native on three platforms",
-      "one binary",
+      "Linux, macOS, and Windows",
+      "native executables with no separate runtime",
       "signed releases",
       "managed updates",
       "rollback",
-      "measured performance",
-      "bounded work",
-      "private endpoints",
+      "published performance measurements",
+      "bounded work queues",
+      "private IPC endpoints",
       "MPL-2.0",
     ],
   },
@@ -222,11 +222,11 @@ const catalog: {
 /* The public surfaces an extension is written against. These are the CLI
    spellings on purpose - `rozi pick` is the whole API for a picker. */
 const extensionSurfaces = [
-  ["rozi pick", "A searchable modal — groups, disabled rows, prompts — and the choice back"],
-  ["rozi publish", "Live, actionable rows in the Activity sidebar"],
-  ["rozi subscribe", "The event stream, into a process that stays alive"],
-  ["rozi notify", "A toast for a result that happened off screen"],
-  ["rozi run-action", "Any command: built-in, user-defined, or another extension's"],
+  ["rozi pick", "Opens a searchable picker and returns the selected value"],
+  ["rozi publish", "Publishes actionable rows in the Activity sidebar"],
+  ["rozi subscribe", "Streams events to a long-running process"],
+  ["rozi notify", "Shows a toast for a result produced off screen"],
+  ["rozi run-action", "Runs a built-in, user-defined, or extension command"],
 ];
 
 const authorLoop = [
@@ -237,11 +237,11 @@ const authorLoop = [
 ];
 
 const exampleExtensions = [
-  ["git-tools", "Grouped branch and worktree pickers"],
-  ["pr-dashboard", "Supervised gh monitoring, published as rows"],
-  ["docker", "Controls built from a live external process"],
-  ["ssh-tools", "Reads your SSH config and launches panes"],
-  ["agent-activity", "Mirrors pane status into actionable rows"],
+  ["git-tools", "Branch and worktree pickers with groups"],
+  ["pr-dashboard", "Monitors pull requests with gh and publishes rows"],
+  ["docker", "Controls Docker through a supervised process"],
+  ["ssh-tools", "Reads SSH config and opens panes"],
+  ["agent-activity", "Publishes pane status as actionable rows"],
 ];
 
 /**
@@ -376,11 +376,12 @@ restart = "on-failure"`);
             <h1 class="lp-wordmark">rozi</h1>
           </div>
           <p class="lp-tagline">
-            A terminal multiplexer that feels like a modern window manager.
+            A terminal multiplexer with automatic pane layouts.
           </p>
           <p class="lp-sub">
-            Split your terminal into panes, arrange them automatically, and pick up
-            where you left off. Native on Linux, macOS, and Windows.
+            A bare launch opens the session picker. Only named sessions persist.
+            Temporary sessions remain recoverable for a short time after the
+            client exits. Linux, macOS, and Windows are supported.
           </p>
 
           <InstallTabs />
@@ -389,7 +390,7 @@ restart = "on-failure"`);
             <a class="lp-cta-btn primary" :href="withBase('/getting-started')"
               >Get started →</a
             >
-            <a class="lp-cta-btn" :href="withBase('/features')">What it does</a>
+            <a class="lp-cta-btn" :href="withBase('/overview')">What it does</a>
             <a
               class="lp-cta-btn"
               :href="GITHUB"
@@ -421,8 +422,8 @@ restart = "on-failure"`);
 
       <section class="lp-section">
         <header class="lp-head">
-          <h2>What you get</h2>
-          <p class="lp-head-note">All of it on by default, nothing to configure first</p>
+          <h2>Included features</h2>
+          <p class="lp-head-note">Available with the default configuration</p>
         </header>
         <div class="lp-features">
           <article v-for="f in features" :key="f.title" class="lp-feature">
@@ -439,15 +440,14 @@ restart = "on-failure"`);
             <h2>First five minutes</h2>
           </header>
           <p class="lp-lead">
-            Two ways to reach the same command, and every default answers to
-            both. Both are fully rebindable, and the modifier can be
-            <kbd>Super</kbd> instead.
+            Default commands support prefix keys and Alt shortcuts. You can
+            rebind both schemes or use <kbd>Super</kbd> as the modifier.
           </p>
           <table class="lp-keytable">
             <thead>
               <tr>
                 <th>Prefix, then a key</th>
-                <th class="lp-modhead">Or just hold Alt</th>
+                <th class="lp-modhead">Hold Alt</th>
                 <th></th>
               </tr>
             </thead>
@@ -470,12 +470,12 @@ restart = "on-failure"`);
 
         <div>
           <header class="lp-head">
-            <h2>One file configures it</h2>
+            <h2>Configuration file</h2>
           </header>
           <p class="lp-lead">
-            <code>~/.config/rozi/config.toml</code> on Linux and macOS. Save it and
-            the change lands immediately; a file that will not parse falls back to
-            the defaults and tells you so.
+            On Linux and macOS, the path is
+            <code>~/.config/rozi/config.toml</code>. Rozi reloads it on save. If
+            parsing fails, Rozi uses the defaults and reports the error.
           </p>
           <div class="lp-code">
             <pre><code v-html="CONFIG_SAMPLE"></code></pre>
@@ -488,7 +488,7 @@ restart = "on-failure"`);
 
       <section class="lp-section">
         <header class="lp-head">
-          <h2>Make it yours</h2>
+          <h2>Configuration examples</h2>
           <p class="lp-head-note">
             One file · live reload · {{ stats.commands }} rebindable commands
           </p>
@@ -513,7 +513,7 @@ restart = "on-failure"`);
             <pre><code v-html="EXTENSION_SAMPLE"></code></pre>
           </div>
           <div class="lp-ext-api">
-            <h3 class="lp-h3">The whole API</h3>
+            <h3 class="lp-h3">Public commands</h3>
             <dl class="lp-defs">
               <template v-for="[name, desc] in extensionSurfaces" :key="name">
                 <dt><code>{{ name }}</code></dt>
@@ -537,15 +537,15 @@ restart = "on-failure"`);
             <span>{{ desc }}</span>
           </a>
         </div>
-        <a class="lp-more" :href="withBase('/extensions')"
+        <a class="lp-more" :href="withBase('/recipes')"
           >Write an extension →</a
         >
       </section>
 
       <section class="lp-section">
         <header class="lp-head">
-          <h2>Everything in the box</h2>
-          <p class="lp-head-note">Every name here is in the current release</p>
+          <h2>Feature index</h2>
+          <p class="lp-head-note">These entries apply to the current release</p>
         </header>
         <div class="lp-index">
           <article v-for="group in catalog" :key="group.title" class="lp-area">
@@ -587,7 +587,7 @@ restart = "on-failure"`);
     <footer class="lp-footer">
       <div class="lp-footer-inner">
         <span
-          >rozi — built on
+          >rozi, built on
           <a href="https://tui-lipan.dev" target="_blank" rel="noopener noreferrer"
             >tui-lipan</a
           ></span

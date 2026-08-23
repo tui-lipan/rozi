@@ -1,75 +1,89 @@
 # Agent skill
 
-Rozi ships one built-in [Agent Skill](https://github.com/tui-lipan/rozi/blob/master/skills/rozi/SKILL.md)
-that tells a coding agent how to control panes and sessions through the CLI.
+Rozi includes an [Agent Skill](../skills/rozi/SKILL.md) that tells coding agents how to inspect and
+control Rozi panes with the CLI.
 
-Install it once; supported agents then discover it from the provider-neutral location.
+## Install for one project
 
-## Install
+Run this from the project root:
 
-Project-local (from the repository you want the agent to use):
-
-```bash
+```sh
 rozi skill install
 ```
 
-writes:
+Rozi writes:
 
 ```text
 .agents/skills/rozi/SKILL.md
 ```
 
-User-wide:
+Start or restart the coding-agent session from that project so it can discover the file.
 
-```bash
+## Install for your user
+
+```sh
 rozi skill install --global
 ```
 
-writes:
+Rozi writes:
 
 ```text
 ~/.agents/skills/rozi/SKILL.md
 ```
 
-(`%USERPROFILE%\.agents\skills\rozi\SKILL.md` on Windows.)
+On Windows the path is `%USERPROFILE%\.agents\skills\rozi\SKILL.md`.
 
-Re-run `rozi skill install` after upgrading Rozi to refresh an outdated copy. The installed file
-always matches the skill embedded in that binary.
+Use a project install when the instructions should travel with one repository. Use a global install
+when agents should have the instructions in every project.
 
-```bash
-rozi skill status [--global]
-rozi skill uninstall [--global]
+## Check, refresh, or remove
+
+Check the project installation:
+
+```sh
+rozi skill status
 ```
 
-## Claude compatibility
+Check the user installation:
 
-`.agents/skills` is the canonical location. Claude Code currently looks under `.claude/skills`, so
-when a Claude CLI (`claude` or `claude-code`) is on `PATH`, install also creates a compatibility
-entry:
+```sh
+rozi skill status --global
+```
 
-| | Linux / macOS | Windows |
-| --- | --- | --- |
-| Canonical skill | `.agents/skills/rozi` | `.agents/skills/rozi` |
-| Claude entry | directory symlink | directory junction |
-| Fallback | — | managed copy of `SKILL.md` |
+Run the matching install command again after upgrading Rozi. It replaces the managed skill with the
+copy embedded in the current binary.
 
-A project install uses a relative symlink where practical, so moving the project does not break it.
-Failure to create the Claude entry does not roll back the canonical `.agents` install.
+Remove only the managed project or user installation:
 
-`rozi skill uninstall` removes only a Rozi-managed compatibility link or copy. It never deletes an
-unrelated directory at `.claude/skills/rozi`.
+```sh
+rozi skill uninstall
+rozi skill uninstall --global
+```
 
-## Print and `--skill`
+## Print without installing
 
-```bash
+```sh
 rozi skill print
-rozi --skill
 ```
 
-Both write the embedded `SKILL.md` to stdout with no extra heading. `--skill` remains as a
-compatibility alias for `skill print`.
+This writes the embedded `SKILL.md` to stdout. `rozi --skill` is an equivalent compatibility form
+and must be used without other arguments.
 
-The in-repo source is [`skills/rozi/SKILL.md`](../skills/rozi/SKILL.md), which Agent Skills tooling
-can read directly from a checkout.
+## Claude compatibility entry
 
-See [Control socket](control.md) for the commands the skill describes.
+`.agents/skills/rozi` is the canonical installation. If `claude` or `claude-code` is available on
+`PATH`, installation also tries to create `.claude/skills/rozi`:
+
+| Platform | Compatibility entry |
+| --- | --- |
+| Linux and macOS | Directory symlink |
+| Windows | Directory junction, or a managed `SKILL.md` copy when a junction cannot be created |
+
+A project symlink is relative where possible. Failure to create the compatibility entry does not
+remove the canonical installation.
+
+Uninstall removes a compatibility entry only when Rozi manages it. It does not delete an unrelated
+directory already present at `.claude/skills/rozi`.
+
+For the commands described by the skill, see [Control CLI](control.md) and
+[Scripting](scripting.md).

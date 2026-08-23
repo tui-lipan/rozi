@@ -1,18 +1,15 @@
 # Reproducing a performance audit
 
-This playbook reproduces the performance and resource-efficiency audit of rozi. It complements
-[Benchmarks and profiling](../benchmarks.md): that page explains the permanent benchmark targets,
-while this page combines them into a full audit covering CPU, memory, process resources, live
-transport behavior, and measurement limitations.
+This playbook defines a repeatable audit for CPU, latency, memory, process resources, live
+transport behavior, lifecycle cleanup, and profiling. The
+[benchmark guide](../benchmarks.md) defines each permanent harness.
 
-Run timing measurements on an otherwise idle machine in release mode. Keep the exact revision,
-toolchain, terminal size, power profile, and workload generator with every result. Debug-mode
-measurements are useful for developer experience, but they do not represent user-facing
-performance.
+Run release measurements on an idle machine. Keep the source revision, Rust toolchain, terminal
+size, power profile, workload, and sample method fixed during a comparison.
 
-## 1. Record the environment and worktree
+## 1. Record the environment
 
-Capture the state before building:
+Capture the source and host before building:
 
 ```bash
 git rev-parse HEAD
@@ -23,16 +20,10 @@ cargo -V
 lscpu
 ```
 
-Do not silently benchmark only `HEAD` when the worktree is dirty. Record whether the result includes
-uncommitted changes, and rerun an affected benchmark if those files change during the audit.
+Record whether the worktree is dirty and list the changed files that affect a result. Do not report
+a dirty-worktree measurement as a measurement of `HEAD`.
 
-Keep generated output in the ignored build directory:
-
-```bash
-mkdir -p target/perf-audit
-```
-
-Also record available profilers rather than assuming they can run:
+Record available tools:
 
 ```bash
 for tool in perf samply hyperfine valgrind heaptrack smem pidstat strace; do
@@ -40,92 +31,55 @@ for tool in perf samply hyperfine valgrind heaptrack smem pidstat strace; do
 done
 ```
 
-On Linux, Samply and `perf` may be installed but unavailable to an unprivileged process because of
-`/proc/sys/kernel/perf_event_paranoid`. Report that limitation; do not change a host-wide kernel
-setting as part of the audit.
+On Linux, `perf` and Samply may be blocked by `/proc/sys/kernel/perf_event_paranoid`. Record the
+host restriction. Do not change a machine-wide policy as part of an audit.
 
-## 2. Build and record artifact sizes
+Put generated output below the ignored build directory:
+
+```bash
+mkdir -p target/perf-audit
+```
+
+## 2. Build the measured artifacts
 
 Build the shipping profile and the symbolized profiling profile:
 
 ```bash
-cargo build
-cargo build --release
-cargo build --profile release-debug
+cargo build --locked --release
+cargo build --locked --profile release-debug
 ```
 
-Record file and section sizes:
+Record binary and section sizes when size is in scope:
 
 ```bash
-stat --printf='%n %s bytes\n' target/release/rozi target/debug/rozi
+stat --printf='%n %s bytes\n' target/release/rozi
 size target/release/rozi
 ```
 
-The release profile is the runtime baseline. A large debug binary mostly reflects debug information
-and is not evidence of release bloat.
+Use the release binary for user-facing runtime claims. Keep debug-build observations separate.
 
-## 3. Run the deterministic benchmark suite
+## 3. Run deterministic benchmarks
 
-Run the complete Criterion suite:
-
-```bash
-cargo bench 2>&1 | tee target/perf-audit-criterion.log
-```
-
-At minimum, retain these representative rows:
-
-- `app_render/view_layout/{1,8,16}`
-- `sidebar_render/{hidden,panes,agents,files,git}`
-- `snapshot_rebuild/{80x24,200x60,320x90}`
-- `output_burst/{per_message,per_frame}/{1,8,32,128}`
-- every `terminal_ingest` corpus at `200x60`, plus its large-size case
-- `session_pipeline_memory/{4096,65536}`
-- `session_pipeline_unix_socketpair/4096` on Unix
-- `pane_output_frame_roundtrip/{4096,1048576}`
-- `control_frame_serde`
-- `scrollback_search/{sparse,dense,no_match}/{1,8,16}`
-- `server_fairness/key_round_trip/continuous_pty_ingress`
-- the one-shot `server_fairness --saturation-probe` evidence mode
-- `resurrection_snapshot/panes_{1,8,16}/history_{0,1000,5000}`
-
-Use a saved baseline when evaluating a change:
+Run the full suite when the audit covers the whole application:
 
 ```bash
-cargo bench --bench snapshot_rebuild -- --save-baseline before
-# Apply the change.
-cargo bench --bench snapshot_rebuild -- --baseline before
+cargo bench 2>&1 | tee target/perf-audit/criterion.log
 ```
 
-Criterion reports uncertainty around its benchmark estimate, not a latency-distribution
-percentile. Do not describe either confidence-interval bound as p95. Treat small relative changes
-as harmless when the absolute cost remains immaterial.
+For a focused audit, select only affected targets and IDs. Record the exact command and all
+Criterion output needed to identify the estimate and interval.
 
-### Render-specific rerun
+The broad audit set includes:
 
-If view/sidebar code changes during the audit, rerun the affected cases:
+- `terminal_ingest` at the standard viewports and corpus types;
+- `snapshot_rebuild`, including server-output and burst cases;
+- `protocol_framing`;
+- `session_pipeline`, including the Unix socket-pair case where available;
+- `app_render` for populated, empty, and sidebar states;
+- `scrollback_search` for complete scans and cooperative slices;
+- `server_fairness` for paced ingress, saturation, and resurrection snapshots.
 
-```bash
-cargo bench --bench app_render -- 'app_render/view_layout/(8|16)|sidebar_render'
-```
-
-`app_render` measures view expansion and layout, not backend draw/diff time. TestBackend frame
-capture allocates per cell and is not a valid draw benchmark. Use the interactive devtools metrics
-or a sampling profile for real draw costs.
-
-## 4. Measure scrollback search
-
-Run the permanent deterministic target:
-
-```bash
-cargo bench --bench scrollback_search
-```
-
-The fixture is 250x60 with 5,000 retained lines in each of 1, 8, or 16 panes. It measures sparse
-(`styled-search-needle`, one match per hundred lines), dense (`line-`, every generated line), and
-no-match (`absent-search-token`) cases. `tests/bench_setup_sanity.rs` pins the dimensions, corpus
-line count, and expected match counts so a fixture drift cannot silently redefine the benchmark.
-
-Also retain the public-surface server fairness and resurrection rows:
+Run the target-specific server evidence separately:
 
 ```bash
 cargo bench --bench server_fairness -- continuous_pty_ingress
@@ -133,123 +87,60 @@ cargo bench --bench server_fairness -- --saturation-probe
 cargo bench --bench server_fairness -- resurrection_snapshot
 ```
 
-It measures key input through `SessionClient` to an acknowledgement from a self-helper running in a
-real server-owned PTY while sustainably paced output flows continuously. Keep that latency row
-separate from the one-shot saturation probe: two unpaced concurrent producers must put the public
-protocol-18 PTY ingress high-water within one 64 KiB coalescing chunk of the 4 MiB queue cap, after
-which the expected bounded downstream overflow disconnects the attached client. The probe reports
-time to disconnect, not a key RTT. No saturated key-latency number exists because the disconnect is
-the measured boundary; server-loop or overflow-policy redesign remains Phase 5 work.
+The paced key-acknowledgement result, one-shot saturation result, whole snapshot duration, and
+server-loop blocking time measure different boundaries. Report them separately.
 
-The resurrection matrix holds 1/8/16 real 250x60 panes with 0/1,000/5,000 retained history rows in
-an isolated snapshot directory. Each iteration makes one in-place terminal update, waits for the
-server's attempt counter to advance exactly once, and contributes only the server-reported
-`last_duration_us` to Criterion. Trigger and metrics-polling delay are excluded; the reported value
-covers export, writes, file syncs, directory syncs, atomic rename, and old-snapshot cleanup.
-
-### Picker-filter scaling
-
-There is no permanent picker-filter benchmark yet. Keep this independent diagnostic when an audit
-needs to cover palette filtering; do not infer it from scrollback search, which exercises unrelated
-terminal export and match construction. Create `tests/perf_audit_picker_temp.rs`:
-
-```rust
-use std::time::{Duration, Instant};
-
-use tui_lipan::prelude::SearchItem;
-use tui_lipan::rank_search_palette_indices;
-
-fn median(mut values: Vec<Duration>) -> Duration {
-    values.sort_unstable();
-    values[values.len() / 2]
-}
-
-#[test]
-fn measure_picker_filter_scaling() {
-    for count in [100usize, 1_000, 10_000] {
-        let items: Vec<_> = (0..count)
-            .map(|index| {
-                SearchItem::new(
-                    format!("session-{index:05}-project-alpha-worker"),
-                    index,
-                )
-            })
-            .collect();
-        let mut samples = Vec::new();
-        let mut matches = 0;
-        for _ in 0..31 {
-            let started = Instant::now();
-            matches = rank_search_palette_indices(&items, "prjalph").len();
-            samples.push(started.elapsed());
-        }
-        eprintln!(
-            "picker_filter items={count} matches={matches} median_us={}",
-            median(samples).as_micros()
-        );
-    }
-}
-```
-
-Run it in both profiles, retain the source with the audit record, then remove it:
+When evaluating a change, save a baseline before editing and compare with the same filter after the
+edit:
 
 ```bash
-cargo test --release --test perf_audit_picker_temp -- --nocapture
-cargo test --test perf_audit_picker_temp -- --nocapture
-rm tests/perf_audit_picker_temp.rs
+cargo bench --bench snapshot_rebuild -- --save-baseline before
+cargo bench --bench snapshot_rebuild -- --baseline before
 ```
 
-## 5. Measure process memory with PSS
+Do not compare results across changed generators, viewports, pane counts, history counts,
+toolchains, or power settings. Criterion intervals are estimate uncertainty, not p95 latency.
 
-Use the Linux memory matrix. It isolates `HOME`, all XDG directories, session endpoints, and
-control sockets, so it cannot attach to a normal user session.
+## 4. Measure process memory
 
-Smoke-test the harness first:
+The Linux memory matrix isolates user directories, endpoints, and sockets. Smoke-test it before a
+long run:
 
 ```bash
 tools/memory-matrix.sh --smoke
 ```
 
-Run the broad matrix when time permits:
+Run the standard matrices:
 
 ```bash
+tools/memory-matrix.sh --quick --output target/perf-audit/memory-quick
 tools/memory-matrix.sh --full --output target/perf-audit/memory-full
 tools/memory-matrix.sh --lifecycle --output target/perf-audit/memory-lifecycle
 ```
 
-The reference audit used these focused large-viewport cases:
+Use a fixed case to repeat a noisy or failed scenario:
 
 ```bash
-tools/memory-matrix.sh --case 60 250 1 1 plain 1 \
-  --output target/perf-audit/memory-idle
-tools/memory-matrix.sh --case 60 250 1 5000 styled 1 \
-  --output target/perf-audit/memory-large-1pane
-tools/memory-matrix.sh --case 60 250 8 5000 styled 1 \
-  --output target/perf-audit/memory-large-8pane
-tools/memory-matrix.sh --case 60 250 8 5000 styled 2 \
-  --output target/perf-audit/memory-large-8pane-2client
-tools/memory-matrix.sh --case 60 250 8 5000 images 2 \
-  --output target/perf-audit/memory-images
-tools/memory-matrix.sh --case 60 250 8 5000 images 2 reconnected \
-  --output target/perf-audit/memory-images-reconnected
+tools/memory-matrix.sh --case 60 250 8 5000 styled 2 reconnected \
+  --output target/perf-audit/memory-case
 ```
 
-Read `results.json` for the exact sample metadata and `results.md` for the table.
+Read `results.json` for sample metadata and `results.md` for the summary. Report these groups
+separately:
 
-Report these groups separately:
+- client PSS;
+- session-server PSS;
+- application PSS, which is client plus server;
+- child shell and workload PSS.
 
-- client process PSS
-- session server PSS
-- application PSS: clients plus server
-- child shell/process PSS
+Prefer PSS for process comparisons because RSS counts shared mappings in each process. Use current
+PSS and RSS after quiescence for cleanup. `VmHWM` cannot show cleanup. A single drop or retained
+allocator arena is not enough to prove a leak. Leak claims need repeated cycles or a long soak that
+shows continuing growth.
 
-Never include child processes in application memory. Prefer PSS for comparisons; RSS double-counts
-shared mappings. Cleanup comparisons use current PSS and current RSS after the two-second
-quiescence period, never `VmHWM`. Allocator-retained anonymous memory requires a steady-state or
-repeated-cycle test before it is called a leak.
+## 5. Measure idle CPU and resources
 
-## 6. Measure idle CPU and process resources
-
-For a known PID, sample process CPU directly from `/proc` rather than using a lifetime average:
+On Linux, sample a known client or server PID over a fixed interval:
 
 ```bash
 PID=<client-or-server-pid>
@@ -262,9 +153,9 @@ awk -v a="$BEFORE" -v b="$AFTER" -v hz="$HZ" -v seconds="$DURATION" \
   'BEGIN { printf "%.3f%% of one core\n", 100*(b-a)/(hz*seconds) }'
 ```
 
-Measure the client and server over the same interval. Repeat at least twice and report a range.
-Record whether a terminal pane is focused, whether a clock or animated widget is visible, and how
-many sessions are retained in the background.
+Measure the client and server over the same interval. Repeat each sample. Record pane count,
+attached-client count, focused pane, visible animated content, terminal dimensions, and retained
+background sessions.
 
 Record process resources:
 
@@ -273,16 +164,25 @@ awk '/^Threads:|^VmRSS:|^VmHWM:/{print}' "/proc/$PID/status"
 printf 'fds=%s\n' "$(printf '%s\n' /proc/$PID/fd/* | wc -l)"
 ```
 
-Thread count is not CPU usage. Most rozi transport, PTY, watcher, and command-worker threads block
-while idle.
+Thread count is not CPU usage. Identify whether each sampled process belongs to Rozi or to the
+workload.
 
-## 7. Exercise live output and client fan-out
+## 6. Exercise live output and fan-out
 
-Build once, attach release clients at the same dimensions, and run each producer inside a pane:
+Start a named release session and attach a second client at the same terminal dimensions:
+
+```bash
+target/release/rozi perf-audit
+target/release/rozi attach perf-audit --read-only
+```
+
+Run a bounded plain-output producer inside a pane:
 
 ```bash
 timeout 10 yes 'plain output payload 0123456789'
 ```
+
+Run a bounded styled-output producer:
 
 ```bash
 timeout 10 sh -c '
@@ -294,137 +194,92 @@ timeout 10 sh -c '
 '
 ```
 
-For fan-out, attach a second release client to the same named session, preferably read-only:
+Sample the server and every client over the same interval. An uncounted producer is a stress case,
+not a throughput measurement. Use `terminal_ingest` and `session_pipeline` for byte-throughput
+claims.
 
-```bash
-target/release/rozi attach perf-audit
-target/release/rozi attach perf-audit --read-only
-```
-
-Sample the server and every client concurrently. CPU from an uncounted `yes`/shell loop is only a
-stress indicator: without a byte count, do not turn it into a throughput claim. Use
-`terminal_ingest` and `session_pipeline` for measured throughput.
-
-Also test a slow client. The expected behavior is bounded backlog followed by that client's
-disconnection, never an unbounded queue or a broadcast stall. The relevant deterministic tests can
-be run by substring:
-
-```bash
-cargo test slow_client_is_disconnected_at_exact_backlog_boundary
-cargo test two_client_broadcast_shares_one_encoded_allocation
-cargo test large_paste_counts_bytes_and_overflow_fails_transport_explicitly
-cargo test congested_flood_has_the_same_transcript_as_the_producer
-```
-
-Sample the live resource high-water marks through the running client's control endpoint:
+Query bounded resource counters before, during, and after the workload:
 
 ```bash
 ROZI_SOCKET=/path/to/control.sock target/release/rozi metrics | jq .
 ```
 
-The JSON response contains current/high-water/capacity values for client inbound/outbound queues,
-the remote pipe buffer when present, orphan output, and the latest server PTY ingress/outbox and
-resurrection sample. Server data is cached: `age_ms` and `stale` describe that sample, and the
-control request never waits for the session server. Run it before, during, and after a workload to
-distinguish a bounded peak from retained current bytes.
+Record current bytes, high-water marks, capacities, sample age, and stale state. A high-water mark
+shows a peak. Current bytes after quiescence show whether the queue drained.
 
-## 8. Exercise lifecycle and cleanup
+## 7. Exercise lifecycle cleanup
 
-The full memory matrix includes explicit pane-close, client-disconnect, reconnect, and session-kill
-states. `--lifecycle` runs the same state set with deterministic image-heavy panes. Also exercise
-longer cycles manually or with an isolated diagnostic:
+Use the full and lifecycle memory matrices for standard states. Add longer isolated cycles when
+making cleanup or leak claims:
 
-1. Fill scrollback, record PSS, close half the panes, settle, record PSS again.
+1. Fill scrollback, close half the panes, settle, and sample again.
 2. Disconnect one of two clients.
-3. Kill a named session and verify its server, PTYs, descriptors, and endpoint disappear.
-4. Reconnect repeatedly while output continues.
-5. Create and destroy sessions in a loop.
-6. Leave the application idle for at least one hour; use 24 hours for leak claims.
+3. Reconnect while output continues.
+4. Kill a named session and check its server, PTYs, descriptors, and endpoint.
+5. Create and destroy sessions repeatedly.
+6. Leave the isolated application idle for a declared duration.
 
-Record current PSS and current RSS after quiescence. Memory need not return to its initial RSS for
-cleanup to be correct; the important evidence is that live objects, processes, descriptors, and
-current PSS/RSS reach a stable plateau across repeated cycles. `VmHWM` cannot demonstrate cleanup
-because it cannot decrease.
+Record live objects, processes, file descriptors, current PSS, and current RSS after every settle
+period. State the duration and number of cycles.
 
-## 9. Profile CPU when permitted
+Remote performance needs a real SSH host. Record both ends, the network conditions, disconnect and
+reconnect behavior, and a deliberately slow consumer. Do not describe local IPC measurements as
+remote results.
 
-Use the symbolized optimized profile:
+## 8. Profile CPU
+
+Use the symbolized optimized binary:
 
 ```bash
-cargo build --profile release-debug
 samply record --save-only --output target/perf-audit/profile.json.gz \
   ./target/release-debug/rozi perf-audit
 ```
 
-Generate one controlled workload, then detach or quit. Summarize the relevant application thread;
-do not attribute child shell CPU to rozi.
+Generate one controlled workload and stop the recording cleanly. Report the sampled thread and
+process. Keep client, server, and child-shell CPU separate.
 
-Useful profile questions:
+Use profiles to answer a stated question, such as which function dominates a measured workload or
+whether cost grows with pane or client count. If host policy blocks sampling, report that and rely
+on deterministic benchmarks and direct process measurements.
 
-- Is terminal parsing or snapshot rebuilding dominant?
-- How much time is backend drawing and buffer diffing?
-- Does server CPU land in PTY parsing, process inspection, queueing, or polling?
-- Does cost grow with pane count or attached-client count?
-- Are config/filesystem watchers waking while unchanged?
+## 9. Interpret and report
 
-If profiling is denied by host policy, report that and rely on Criterion plus targeted timings. Do
-not invent hotspot percentages from source inspection.
+Classify each observation as one of:
 
-## 10. Remote, reconnect, and long-running cases
+- confirmed bottleneck, supported by repeated measurements or demonstrated scaling;
+- plausible risk, with the missing experiment stated;
+- harmless measured cost at the tested scale;
+- deliberate trade-off tied to a documented behavior.
 
-Remote testing requires a real SSH host; do not substitute local IPC numbers and call them remote.
-When a host is available, repeat:
+Keep these distinctions in the report:
 
-- idle and output CPU
-- one and two clients
-- temporary network interruption
-- reconnect with queued output
-- a deliberately stalled local consumer
-- process and RSS cleanup after disconnect
+- throughput is not latency;
+- debug time is not release time;
+- RSS is not PSS;
+- allocator retention is not automatically a leak;
+- child-process resources are not Rozi resources;
+- relative change needs absolute context;
+- view and layout time is not backend draw and diff time.
 
-Watch the pipe-backed transport separately from the bounded session mailbox. A memory plateau must
-be demonstrated before declaring remote backpressure bounded. `rozi metrics` reports these as
-separate `piped_remote` and `client_inbound` resources.
+Create `audits/YYYY-MM-DD.md` and record:
 
-## 11. Interpret results
+1. exact revision and dirty-worktree state;
+2. OS, CPU, Rust version, build profile, power settings, and unavailable tools;
+3. exact commands, workloads, dimensions, durations, and sample counts;
+4. statistics with their correct boundaries;
+5. application and child-process resources separately;
+6. confirmed findings, trade-offs, harmless details, and unverified risks;
+7. follow-up measurements needed to confirm any proposed change;
+8. one verdict: `ready`, `ready with minor improvements`, `needs optimization before release`, or
+   `insufficient evidence`.
 
-Classify each observation:
+Link the new report from the [performance archive](README.md). Do not rewrite an older report with
+new measurements.
 
-- **Confirmed bottleneck:** repeated measurement or a specific demonstrated scaling failure.
-- **Plausible risk:** a suspicious path with the exact missing experiment stated.
-- **Harmless detail:** measurable but immaterial at realistic scale.
-- **Deliberate trade-off:** a real cost that buys an explicit property, such as instant switching or
-  independent client scrollback.
+## 10. Clean up
 
-Keep these distinctions:
-
-- throughput is not latency
-- debug time is not release time
-- RSS is not PSS
-- allocator retention is not automatically a leak
-- child memory and CPU are not application memory and CPU
-- relative regressions need absolute context
-- TestBackend view/layout cost is not backend draw cost
-
-For every proposed optimization, record:
-
-1. workload and affected scale
-2. before measurement
-3. relevant file and symbol
-4. expected user-visible effect
-5. implementation and regression risk
-6. exact after-measurement that would validate it
-
-If those fields cannot be filled, keep the item as an unverified risk rather than an optimization
-task.
-
-## 12. Cleanup and repository hygiene
-
-Put generated reports below `target/`; never commit Criterion output, profiles, terminal captures,
-private configs, socket paths, or logs. Delete temporary tests and scripts after recording enough
-detail to reproduce them.
-
-Finish by confirming that only intended source/documentation changes remain:
+Keep raw reports, profiles, logs, sockets, private configuration, and captures below `target/`.
+Remove temporary sessions and workload files. Finish with:
 
 ```bash
 git status --short

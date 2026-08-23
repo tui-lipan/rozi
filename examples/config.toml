@@ -375,8 +375,8 @@
 # this is false. Turn it off for an agent whose transcript quotes that prose while working.
 #base = true
 
-# Rules are evaluated by precedence, not declaration order: blocked, then working, then
-# idle, then unknown. A screen matching nothing is idle. `unknown` means "recognized the
+# Rules are evaluated by precedence, not declaration order: unknown, then blocked, then
+# working, then idle. A screen matching nothing is idle. `unknown` means "recognized the
 # agent, learned nothing" - rozi holds the previous state instead of ending the run.
 #[[agents.states]]
 #state = "blocked"
@@ -430,7 +430,7 @@
 #exec = "~/.config/rozi/branch-pick.sh"
 #keep_open = true
 
-# User extensions are discovered under the platform data directory. Disable one by directory id
+# User extensions are discovered under the platform data directory. Disable one by manifest id
 # without deleting it; see docs/extensions.md.
 [extensions]
 #disabled = ["docker"]

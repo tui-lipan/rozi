@@ -5,210 +5,92 @@
 <h1 align="center">rozi</h1>
 
 <p align="center">
-  <b>A tiling terminal multiplexer that feels like a modern window manager.</b><br>
-  Split your terminal into panes, arrange them automatically, and pick up where you left off.
+  A modern tiling terminal multiplexer for Linux, macOS, and Windows.
 </p>
 
 <p align="center">
-  <a href="https://rozi.tui-lipan.dev"><b>rozi.tui-lipan.dev</b></a>
+  <a href="https://rozi.tui-lipan.dev">Website</a>
+  ·
+  <a href="https://github.com/tui-lipan/rozi/actions/workflows/ci.yml">CI</a>
+  ·
+  <a href="LICENSE">MPL-2.0</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/tui-lipan/rozi/actions/workflows/ci.yml"><img src="https://github.com/tui-lipan/rozi/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/platforms-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-blue" alt="Platforms">
-  <img src="https://img.shields.io/badge/license-MPL--2.0-green" alt="License">
+  <img src="assets/demo.gif" alt="A rozi session opening, splitting, resizing, and arranging terminal panes" width="860">
 </p>
 
-<p align="center">
-  <img src="assets/demo.gif" alt="A rozi session opening a pane, splitting it, filling both with work, then resizing, swapping, floating and fullscreening panes" width="860">
-</p>
-
----
-
-## What it is
-
-rozi turns one terminal window into many. Open a new pane and it takes its place next to the
-others automatically — no dragging, no manual sizing. Panes can float on top, go fullscreen, and
-spread across nine workspaces. Close the window and everything keeps running, ready to be picked
-up again from anywhere.
-
-It runs natively on Linux, macOS, and Windows, borrows its layout and keyboard flow from the
-[Hyprland](https://hypr.land) window manager, and gets its terminal from
-[`tui-lipan`](https://crates.io/crates/tui-lipan).
+rozi arranges terminal panes with tiling layouts, floating panes, fullscreen panes, and nine
+workspaces. A prefix key controls panes without taking ordinary input away from the programs
+inside them. Named sessions keep running when the client detaches, so you can return to the same
+processes and scrollback later. Tiling behavior and keyboard flow take their cues from the
+[Hyprland](https://hypr.land) window manager.
 
 ## Install
 
-The bootstrap script fetches the release built for your machine, checks it, and installs it — no
-shell files are touched. Both scripts are served from the site and live at the root of this
-repository, so a clone can run them directly instead.
-
 ```bash
-curl -fsSL https://rozi.tui-lipan.dev/install | bash      # Linux and macOS
+curl -fsSL https://rozi.tui-lipan.dev/install | bash
 ```
 
 ```powershell
-irm https://rozi.tui-lipan.dev/install.ps1 | iex          # Windows
+irm https://rozi.tui-lipan.dev/install.ps1 | iex
 ```
 
-Or build it yourself:
+You can also install with Cargo:
 
 ```bash
 cargo install rozi
 ```
 
-Later on, `rozi update` moves you to a newer version and `rozi update --rollback` puts the
-previous one back. See [Installation](docs/installation.md).
-
-Building from source needs Rust 1.90 or newer and nothing else;
-[`tui-lipan`](https://crates.io/crates/tui-lipan) comes from crates.io like any other dependency —
-see [Getting started](docs/getting-started.md).
-
-```bash
-cargo run
-```
+Building from source requires Rust 1.90 or newer. See [Installation](docs/installation.md) for
+PATH setup, updates, rollback, and source builds.
 
 ## First five minutes
 
-Start it, and you get a single shell. Everything else happens through the **prefix key** — hold
-`Ctrl-a`, let go, then press one key:
+Run `rozi`. The session picker opens without creating or attaching to a session.
 
-| Key | Action |
+For a shell you can discard, press `Enter` or `Ctrl+T`. For work you want to return to, type a
+session name such as `dev` and press `Ctrl+N`.
+
+The default prefix is `Ctrl+A`. Press it, release it, then press the command key:
+
+| Keys | Action |
 | --- | --- |
-| `Ctrl-a` `Enter` | Open another pane |
-| `Ctrl-a` `h` `j` `k` `l` | Move focus left / down / up / right |
-| `Ctrl-a` `f` | Make the focused pane fullscreen |
-| `Ctrl-a` `t` | Let the pane float on top |
-| `Ctrl-a` `1`…`9` | Jump to a workspace |
-| `Ctrl-a` `p` | Search every command by name |
-| `Ctrl-a` `?` | Show all keys |
-| `Ctrl-a` `d` | Leave (a named session keeps running without you) |
+| `Ctrl+A`, `Enter` | Split the focused pane |
+| `Ctrl+A`, `h` / `j` / `k` / `l` | Move focus |
+| `Ctrl+A`, `p` | Open the command palette |
+| `Ctrl+A`, `?` | Show active keybindings |
+| `Ctrl+A`, `d` | Detach from a named session |
 
-Prefer chords? `Alt+<key>` does the same thing without the prefix. Both are fully rebindable.
+Attach to the named session again with:
 
-## What you get
-
-**Panes that arrange themselves.** New panes split the pane you are looking at, along whichever
-side has more room. Seven arrangements are a keypress away — the default *dwindle*, a
-master-and-stack, a grid, even columns, even rows, a horizontally scrolling strip, and
-one-at-a-time monocle. Any pane can float, go fullscreen, or be dragged and resized with the
-mouse, and panes glide into place rather than jumping — turn that off if you'd rather they didn't.
-
-**Nothing is lost when you close the window.** Your panes live on in the background, so leaving
-does not kill your work. `rozi attach dev` brings it all back — same layout, same running
-programs, same scrollback. Several windows can attach to one session at once, and
-`--remote myserver` reaches a session on another machine over SSH.
-
-**Change anything without restarting.** Save `config.toml` and it applies immediately — keys,
-colors, status bar, everything — with your panes untouched. It works in the other direction too:
-switch a theme or flip a setting from the command palette and rozi writes the change back into
-your config file, so what you tried out is what you keep. Custom theme files reload the instant
-you save them, so you can tune a color and watch it land.
-
-**A real terminal, not an approximation.** Mouse support, Ctrl-click links, text selection, images,
-scrollback with search, copy mode with vi-style motions, clipboard paste, and true color. 29
-built-in themes ship with it, plus a `system` theme that follows your desktop and drop-in theme
-files of your own — and the colors inside your panes follow whichever one is active.
-
-**The same everywhere.** Linux, macOS, and Windows, natively — same keys, same config file, same
-behavior. Nothing to emulate, nothing to install underneath it.
-
-## Also in the box
-
-| Feature | Description |
-| --- | --- |
-| Command palette | Fuzzy-search every command by name; a help overlay lists all keys |
-| Side panel | A dock for your files, git changes, panes, sessions, running coding agents — or tabs you define |
-| Saved layouts | Capture a working setup and relaunch it with the same panes running the same commands |
-| Scratchpad | A pane that drops down over your work and hides again on the same key |
-| Copy mode & search | Walk the scrollback with vi motions, search it, copy without the mouse |
-| Synchronized typing | Send what you type to every pane in the workspace at once |
-| Shared control | When several people attach, one drives the layout and can hand control over |
-| Scripting | `rozi focus`, `send-text`, `new-pane`, `capture-pane` work from any script |
-| Hooks | Run your own commands when something happens |
-| Your own shortcuts | Bind a key to open a pane or send text, not just to rebind what exists |
-| Status bar | Built-in readouts, your own text, or a command that refreshes on a timer |
-| Placement rules | Send panes running a given command to a chosen spot automatically |
-| Vim/Neovim navigator | One set of keys for editor splits and rozi panes |
-
-## Configure it
-
-Everything lives in one file — `~/.config/rozi/config.toml` on Linux and macOS:
-
-```toml
-[theme]
-name = "catppuccin-mocha"
-
-[input]
-prefix = "ctrl-a"           # the key that starts a command
-modifier = "alt"            # or "super"
-
-[layout]
-default = "dwindle"         # how new workspaces arrange panes
-
-[pane]
-border_style = "rounded"
+```bash
+rozi attach dev
 ```
-
-You never have to leave the app to edit it: *Open config file* in the command palette opens it in
-your editor, in a pane, and the moment you save, rozi picks the changes up. A file that won't
-parse falls back to the defaults and tells you so — fix it, save again, and you are back.
-
-The [configuration reference](docs/configuration.md) covers every option,
-[`examples/config.toml`](examples/config.toml) is the same thing as a copyable file with every
-setting commented out at its default, and [`examples/`](examples/) has ready-made snippets.
 
 ## Documentation
 
-Everything below is also published at [rozi.tui-lipan.dev](https://rozi.tui-lipan.dev),
-with search.
+- [Overview](docs/overview.md)
+- [Getting started](docs/getting-started.md)
+- [Feature map](docs/features.md)
+- [Core concepts](docs/core-concepts.md)
+- [Keybindings](docs/keybindings.md)
+- [Configuration](docs/configuration.md)
+- [Platform support](docs/platform-support.md)
 
-| Guide | Contents |
-| --- | --- |
-| [Feature overview](docs/features.md) | Everything rozi does, on one page |
-| [Getting started](docs/getting-started.md) | Requirements, building, running, quitting |
-| [Installation](docs/installation.md) | Installing, updating, rolling back |
-| [Keybindings](docs/keybindings.md) | The full key reference |
-| [Configuration](docs/configuration.md) | Every setting in `config.toml` |
-| [Agent definitions](docs/agents.md) | Teaching rozi about another coding-agent CLI |
-| [Layouts & panes](docs/layouts-and-panes.md) | Tiling, floating, fullscreen, resizing |
-| [Sessions](docs/sessions.md) | Detaching, reattaching, and sharing sessions |
-| [Remote sessions](docs/remote.md) | Working on another machine over SSH |
-| [Terminal features](docs/terminal.md) | Mouse, selection, clipboard, scrollback |
-| [Themes](docs/themes.md) | Presets, custom themes, hot reload |
-| [Sidebar](docs/sidebar.md) | The dockable side panel and its tabs |
-| [Profiles](docs/profiles.md) | Saving and relaunching layouts |
-| [Project profiles](docs/project-profiles.md) | Profile files and pane identity |
-| [Control socket](docs/control.md) | Driving rozi from scripts |
-| [Agent skill](docs/agent-skill.md) | Install the built-in skill for coding agents |
-| [Hooks](docs/hooks.md) | Running commands when events happen |
-| [Extensions](docs/extensions.md) | Authoring, validating, debugging, and installing extensions |
-| [Extension recipes](docs/recipes.md) | Worked examples built on the control socket |
-| [Vim/Neovim navigator](integrations/vim-rozi-navigator/) | One set of keys for editor splits and panes |
-| [Benchmarks](docs/benchmarks.md) | Performance suites and profiling |
-
-Working on rozi itself? [AGENTS.md](AGENTS.md) has the architecture notes.
+The [documentation index](docs/index.md) links to every guide.
 
 ## Platforms
 
-Windows needs version 1809 or newer, and a couple of conveniences that read other programs'
-details are Unix-only. Everything else is the same on all three — see the
-[platform support matrix](docs/getting-started.md#platform-support).
-
-## Sponsor
-
-If rozi is useful to you, consider [sponsoring its development](https://github.com/sponsors/Razuer) ♥
+rozi supports Linux, macOS, and Windows. Windows requires Windows 10 version 1809 or newer.
+Some process inspection and shell integration details differ by platform. See
+[Platform support](docs/platform-support.md).
 
 ## Contributing
 
-Contributions follow **inbound = outbound**: unless you state otherwise, any contribution you
-intentionally submit is licensed under the same MPL-2.0 as the project, with no additional terms.
-You keep the copyright in your contributions; there is no CLA. We use a
-[Developer Certificate of Origin](DCO) sign-off (`git commit -s`) instead. See
+Contributions require a Developer Certificate of Origin sign-off. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
 rozi is licensed under the [Mozilla Public License 2.0](LICENSE).
-
-Extensions run out of process and are not covered by rozi's MPL-2.0 copyleft. Extension authors
-may license their work under any terms they choose.

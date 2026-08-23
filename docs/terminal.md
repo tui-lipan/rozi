@@ -1,339 +1,162 @@
 # Terminal features
 
-Every `rozi` pane is a **real terminal**: a live PTY shell rendered by a full VT emulator.
-The terminal primitives come from [`tui-lipan`](../../tui-lipan)'s `terminal` feature
-(`portable-pty` + `alacritty_terminal`); `rozi` drives them and adds window management,
-identity, and scrollback search on top.
+Every pane is a PTY owned by a session server. Programs receive normal terminal input, output,
+resize, mouse, title, clipboard, and shell-metadata sequences. A client can detach while a named
+server keeps its PTYs running. See [Sessions](sessions.md).
 
-## A pane is a live shell
+## Choose the shell and starting directory
 
-`rozi` runs an [always-server](sessions.md) model: a background session server owns every PTY,
-and the UI client parses the raw PTY byte stream into its own `TerminalScreen`.
+The `[shell]` and `cwd` settings choose the interactive shell and fallback working directory. When
+they are unset, Rozi uses the platform's default shell and the directory where it was launched.
 
-- The server spawns each PTY and broadcasts its raw output as pane frames; the client feeds those
-  bytes into a `TerminalScreen` (the VT emulator) and re-renders a snapshot the UI displays.
-- Query responses (DA/DSR/OSC) are answered by the server's own screen; the client parses the same
-  bytes and discards its responses so the two screens stay in lockstep.
-- Resizing a pane sends a resize request to the server; the client resizes its emulator only when
-  the server acknowledges it, so both parsers resize at the same byte position and wrap state stays
-  identical. Size changes are snapped rather than animated (see
-  [Layouts & panes](layouts-and-panes.md#animation-policy)).
-- When the shell process exits, its pane closes (keep-open panes can respawn). The app keeps running
-  until you detach or quit.
+Remote panes use the remote server's shell and filesystem, not the client's `[shell]` value. See
+[Remote sessions](remote.md#understand-the-client-and-server-boundary).
 
-The shell and starting directory come from the [config](configuration.md) (`shell`, `cwd`),
-falling back to the system `$SHELL` and the launch directory.
+## Working directories and shell metadata
 
-## Shell metadata
+Rozi uses shell metadata for pane titles, new-pane directory inheritance, prompt navigation, last
+command output, and foreground-program detection.
 
-The server tracks runtime metadata independently from terminal rendering and shares it with every
-attached client. It recognizes OSC 7 `file://` current-directory reports, OSC 9;9 Windows-style
-directory reports, and OSC 133 prompt/input/execution/completion boundaries. Valid local OSC cwd
-reports take precedence over native process inspection; remote OSC 7 hosts are shown as metadata
-but are never used as spawn directories.
+With `[shell_integration] mode = "auto"`, Rozi configures bash, zsh, fish, and PowerShell for the
+pane process without editing shell startup files. It does not edit the Windows `AutoRun` registry
+key. `cmd.exe` can report its directory and prompt boundaries but cannot report a command before it
+runs.
 
-In the default `[shell_integration]` `auto` mode, bash, zsh, fish, and PowerShell panes emit these
-markers without modifying dotfiles, registry keys, or `$PROFILE`. Their execution marker includes a
-rozi-namespaced executable basename only, never a command line — treat everything a terminal
-tells you as untrusted, including your own shell's report of what you just typed. See
-[Configuration](configuration.md#shell_integration) for the per-shell setup and opt-out.
+Directory lookup follows this order:
 
-cmd.exe is the exception: it reports its working directory and prompt boundaries but nothing about
-the command it is running, because it offers no pre-execution hook and rozi will not install an
-`AutoRun` registry key.
+1. A valid local OSC 7 or OSC 9;9 directory report.
+2. Native process inspection on Linux or macOS.
+3. The pane's launch directory.
+4. Configured `cwd`.
 
-### Smart focus and cwd inheritance
+Windows has no native process-inspection fallback. Shell integration is therefore needed for live
+directory and foreground-program updates there.
 
-A new pane opens in the **focused pane's current working directory** when it can be discovered,
-falling back to the configured `cwd`. Likewise, smart focus needs to know what program a pane is
-running. Both resolve through the same precedence:
+A directory report for another host may be shown as metadata but is not used as a local spawn path.
+A new local pane never tries to start in a path that belongs to an SSH host.
 
-| | cwd | Foreground program |
-| --- | --- | --- |
-| 1 | A valid **local** OSC 7 / OSC 9;9 report | The shell's own OSC 133 execution marker |
-| 2 | Linux `/proc` / macOS `libproc` inspection of the PTY's process | Linux `/proc` / macOS foreground process group |
-| 3 | The pane's launch directory | — (treated as unknown) |
-| 4 | The configured `cwd` | — |
+See [Configuration](configuration.md#shell_integration) for modes and per-shell behavior.
 
-A path that decodes to something not absolute — a Windows drive-relative `C:foo`, a rooted-but-
-driveless `\foo`, a bare `foo` — falls through to the next tier rather than being repaired. A path
-we would have to guess at is a path we should not be handing to a new pane.
+## Use the mouse
 
-**Windows has no tier 2.** Process inspection is deliberately unsupported: rozi never probes a
-PEB or walks a process tree. Shell integration is therefore the only source of this metadata on
-Windows, which is why the PowerShell integration is worth having and why cmd.exe panes will not do
-smart focus.
+Without a pending prefix or the WM modifier, mouse events go to the program in the pane. This keeps
+mouse-aware editors and TUIs working normally.
 
-An OSC 7 report carrying a *remote* host (an SSH session with the integration installed on the far
-side) is displayed but never used as a spawn directory — the path is real, but not on this machine.
-A host rozi cannot resolve is treated as remote, which is the safe direction to be wrong in.
+| Gesture | Action |
+| --- | --- |
+| Drag over terminal text | Select text |
+| Wheel over a pane | Scroll history |
+| `Ctrl` plus click a visible link | Open it |
+| WM modifier plus left-drag | Move a pane |
+| WM modifier plus right-drag | Resize a pane |
+| Prefix, then left-drag | Move a pane |
+| Prefix, then right-drag | Resize a pane |
+| Drag a tiled split boundary | Resize the split |
 
-The live cwd is also what *Capture session as profile* records (see [Project profiles](project-profiles.md)).
+Rozi limits forwarded pointer-motion events to the configured frame rate so a mouse-tracking
+program does not build an input backlog. Presses, releases, and wheel events are not coalesced.
 
-## Mouse support
+## Select, copy, and paste
 
-With neither the configured WM modifier held nor a prefix active, mouse events go to the program in
-the pane - so mouse-aware TUIs (vim, htop, tmux-in-a-pane, etc.) work normally. Mouse event bytes
-are forwarded to the PTY.
+Drag to select text, then press `Ctrl+C` to copy it. Selection anchors remain attached to scrollback
+lines while you scroll.
 
-Hold the WM modifier, or press the prefix first, to address the window manager instead. A prefix
-stays active for the mouse gesture and is cleared when the button is released:
+The `v` command key and direct `Ctrl+V` send text from the system clipboard with bracketed-paste
+markers. Direct `Ctrl+V` passes through when the clipboard contains a non-text format, allowing a
+pane program to handle it. Prefix, modifier, and palette paste commands remain text-only.
 
-- `modifier` + left-drag moves the pane.
-- `modifier` + right-drag resizes it from the nearest corner.
-- `prefix` + left-drag moves the pane.
-- `prefix` + right-drag resizes it from the nearest corner.
+Programs can write to the system clipboard with OSC52 when
+`[clipboard].enable_osc52 = true`, the default. Disable it if pane programs should not control the
+clipboard. Restart Rozi after changing this setting.
 
-The mouse scroll wheel over a pane scrolls its terminal scrollback.
+For a remote attachment, OSC52 targets the local client's clipboard. A pane program that directly
+opens a clipboard API sees the remote host's clipboard.
 
-### Pointer motion and slow programs
+## Copy, search, and hints
 
-A host that reports pixel-precise positions reports every pixel of motion, so one drag produces
-hundreds of positions a second - more than a program that redraws on each one can answer. Rozi caps
-forwarded motion at the configured `frame_rate`: within each frame interval, a newer position
-replaces whatever was waiting rather than queueing behind it. The last position is released by the
-frame clock even when the program produces no output.
+Press the `[` command key to enter copy mode. It provides keyboard cursor movement, selection,
+prompt jumps, and last-output copying. Press `/` to search the focused pane from copy mode.
+The complete local key table is in [Keybindings](keybindings.md#copy-mode).
 
-What that buys is a program working on where the pointer *is* rather than on a backlog of where it
-has been, while pointer motion cannot drive a graphical child above rozi's own render budget.
-Program output does not release held motion: one visual frame can span several PTY writes, so using
-output as an acknowledgement would allow those chunks to defeat the cap.
+Press the `/` command key outside copy mode to search retained history. `Tab` changes the scope
+among the focused pane, workspace, and all panes. `Ctrl+N` and `Ctrl+P` move among results. Search
+retains at most 2000 matches for navigation and marks the count with `+` only when more exist.
 
-Presses, releases and wheel notches are never held - each means something on its own. A state change
-also carries the newest held position ahead of it, so a release cannot overtake the final drag
-position.
+ASCII letters match without case. Other text remains case-sensitive. New pane output restarts an
+open search so result positions remain valid.
 
-## Text selection and clipboard
+Press the `u` command key for hint mode. It recognizes visible URLs, paths with optional line
+numbers, Git commit ids, and configured `[[hints]]` patterns. A lowercase label copies the target.
+An uppercase final label character opens eligible targets. Soft-wrapped targets are rejoined before
+matching.
 
-- **Selection** - drag to select terminal text; the selection is styled with the theme's
-  selection color. Anchors are absolute scrollback lines (not viewport rows), so the highlight
-  stays on its text while you wheel-scroll, and dragging past the top/bottom edge autoscrolls
-  into history. Ctrl+C copies the full absolute range, including lines that scrolled out of view.
-- **OSC52 clipboard** - programs running in a pane can set the system clipboard via the OSC52
-  escape sequence. This is enabled by default and can be turned off with
-  `[clipboard].enable_osc52 = false` in the [config](configuration.md#clipboard); changing it
-  requires restarting rozi. Under
-  [`--remote`](remote.md), OSC52 still targets the **local** client clipboard.
-- **Paste** (`v`, `Ctrl+V`, or *Paste from clipboard* in the palette) reads the system clipboard
-  and sends it to the focused pane's PTY, wrapped in bracketed-paste markers so shells/editors that
-  opt in treat it as one paste instead of simulated keystrokes. Direct `Ctrl+V` is performable:
-  plain text follows that path, while file, image, and other non-text clipboard content forwards
-  `Ctrl+V` to the pane application so a clipboard-aware TUI can read the richer format itself.
-  Prefix/modifier and palette paste remain explicit text paste commands. New local panes inherit
-  the creating client's desktop environment, so rich pass-through still works when the persistent
-  server was originally created from SSH. Under `--remote`, the pane application can only inspect
-  the remote host's clipboard until a MIME-aware terminal clipboard protocol is available end to
-  end.
+**Copy last command output** and copy-mode prompt jumps require shell-integration prompt markers.
+`rozi capture-pane --last-output` provides the same last-output capture for automation.
 
-## Copy mode
+## Open links
 
-Press `[` (or *Copy mode* in the palette) for a keyboard-driven way to review scrollback and
-yank text without the mouse. A cursor moves with `h/j/k/l`/arrows (scrolling into history or
-toward the live view at the top/bottom edges); `w`/`b`/`e` and `W`/`B`/`E` move by word/WORD
-(forward, backward, to word end), `0`/`^`/`$` jump to the line start, first non-blank, or line
-end (these row-local motions reuse `tui-lipan`'s vim-mode `TextArea` motion algorithms);
-`Ctrl-u`/`Ctrl-d` page by half a screen; and `g`/`G` jump to the top of history / the live
-bottom. Press `/` to search within the focused pane (same overlay as scrollback search, scoped
-to this pane); `Enter` parks the copy cursor on the match and returns to copy mode, `Esc`
-cancels back to the prior copy position, and `n`/`N` cycle the retained matches while keeping any
-selection anchor. Copy-mode search never changes scope. At most 2000 matches are retained for
-cycling; a `+` in the search count indicates that later matches were omitted.
-With shell integration, `[`/`]` jump between prompt marks and `o` copies the last command's
-output. Press `v` (or `Space`) to start a selection, then `y` (or `Enter`) to copy it to the
-system clipboard and exit, or `Esc`/`q` to leave without copying. The workbar shows a **COPY**
-indicator while active. The navigation cursor is painted with the theme accent color; an active
-selection uses the theme's selection color. Yank uses the system clipboard, reaching it over
-SSH via OSC52 when enabled.
-
-*Copy last command output* is also available from the command palette / `copy-last-output`
-action and as `rozi capture-pane --last-output` for automation. Without shell
-integration marks the action shows a status hint rather than an error.
-
-## Link activation
-
-Hold Ctrl over a visible URL to underline it, then left-click to open it with the system handler.
-Explicit OSC 8 links work too, including labels whose visible text is not itself a URL; they take
-precedence over plain-text URL detection. Unsupported destinations raise an error instead of being
-passed to the operating system.
-
-On terminals supporting Kitty keyboard enhancements, pressing or releasing Ctrl refreshes the link
-under an already stationary pointer. Older terminals update the underline on the next pointer
-movement. Link activation is disabled while hint mode is open, where a mouse click dismisses the
-labels without opening or forwarding anything.
-
-## Hint mode
-
-Press `u` (or *Hint mode* in the palette) to detect URLs, filesystem paths containing `/` (with an
-optional `:line` suffix), and 7-40 character Git SHAs in the visible terminal snapshot, plus any
-additive `[[hints]]` patterns from config. Built-ins run first and win on overlap; trailing
-`.,;:!?)]}` characters are trimmed from custom matches too. Each match receives a home-row label,
-painted just past its last character - or over that character when the row ends there, so a match
-reaching the pane's right edge still shows one.
-
-Rows the terminal soft-wrapped are rejoined before scanning, so a URL or path longer than the pane
-is wide is a single hint spanning those rows rather than fragments that match nothing. Copying or
-opening it uses the rejoined text.
-
-A lowercase label copies the match; an uppercase final label character opens URL matches (and
-custom hints with `open = true`) and copies other kinds. `Esc`/`q` exits, as does a mouse click -
-hint mode belongs to one pane, so the whole click is spent dismissing it: focus stays put, and
-nothing reaches the program under the pointer. The wheel is inert for the same reason, since
-scrolling would move the rows the labels sit on. Scroll first to hint older output.
-
-## Bell urgency
-
-With `[notifications].bell = true` (the default), BEL from an unattended pane marks its workspace
-tab with `!`. A pane is attended only when both its host window and the pane itself are focused;
-returning to that focused window clears the marker. Attach replay and BEL used to terminate an OSC
-sequence do not create false urgency.
-
-## Window / program titles
-
-Programs set their title via the OSC 0/2 escape sequence (shells often set it to `$PWD`,
-editors to the open filename). `rozi` reads that title and shows it in the pane's titlebar,
-unless you've set a custom title by renaming the pane. See
-[Layouts & panes › Titlebars](layouts-and-panes.md#titlebars).
+Hold `Ctrl` over a visible URL and click it to open with the system handler. Explicit OSC 8 links
+also work and take precedence over plain-text URL detection. Unsupported destinations produce an
+error instead of being passed to the operating system.
 
 ## Scrollback
 
-Each pane keeps a scrollback buffer (`scrollback` lines, default 5000 - see
-[Configuration](configuration.md)). Scroll it with the mouse wheel. Typing a key snaps the
-view back to the live bottom of the buffer.
+Each terminal screen retains the configured `scrollback` number of lines, which defaults to 5000.
+Typing returns the view to live output.
 
-The session server retains a terminal screen for detach/reattach, and each attached client retains
-its own screen for rendering. Memory therefore scales with pane width, populated history, and the
-number of attached clients. Set `scrollback = 1000` (or another smaller limit) when memory matters
-more than deep history.
+The server retains history for reattachment, and each attached client keeps its own screen. Memory
+use grows with pane width, populated history, and attached-client count. Use a smaller scrollback
+limit when memory matters more than deep history.
 
-The limit is fixed when each terminal screen is created. Reloading configuration does not resize
-existing history in place: new client panes use the new value, while a named server must be
-restarted for its existing screens to be reconstructed with that value. Server and client screens
-apply the same config independently, so clients started from different configs may retain different
-local depths without changing the server's retained replay.
+The limit is set when a terminal screen is created. Reloading config changes new screens, not
+existing ones. Restart a named server to rebuild its retained screens with a new limit.
 
-Transport buffering is separately bounded: PTY readers apply backpressure after 4 MiB is waiting
-for the server, and each client's steady-state inbound and outbound backlog is capped at 8 MiB.
-Terminal output is never discarded. A full client inbound mailbox backpressures its socket reader;
-a child producing faster than the server can consume blocks in the kernel PTY path; and a client or
-remote writer that remains unable to keep up is disconnected by the server instead of losing output
-or input. Initial attach replay uses a separate 64 MiB server-side seed cap because it may
-legitimately exceed the steady-state backlog.
+**Edit scrollback** writes the focused pane's retained text to a private file under the state
+directory and opens it with `$EDITOR`, then `$VISUAL`, then `vi`. Rozi keeps the directory near 20
+files. Scrollback files may contain passwords, tokens, and private output.
 
-## Scrollback search
+## Titles and urgency
 
-Press `/` (or *Search scrollback* in the palette) to search the focused pane's scrollback:
+Programs set terminal titles with OSC 0 or OSC 2. A custom title set with the `Shift+N` command key
+takes precedence. See [Layouts and panes](layouts-and-panes.md#titles-and-exited-panes).
 
-- Type to search; the modal header shows the match count (`1 / N matches`) and active scope. An
-  ellipsis (`…`) means scanning is still in progress. The first discovered match is selected and
-  shown immediately while later results continue to append.
-- `Ctrl-n` and `Ctrl-p` select the next or previous retained match. `Enter` closes search at the
-  selected match.
-- `Tab` cycles the **scope**: the focused pane, the whole workspace, or all panes. Jumping to a
-  match in another pane (or workspace) switches focus there before scrolling to it.
-- Selecting a result row scrolls the pane to that position; `Esc` closes the search.
-- Results run newest-to-oldest within each pane; multi-pane searches keep the focused target pane
-  first, followed by the stable scope order.
-- Search scans cooperatively in slices of at most 512 retained lines so large histories do not
-  block input or rendering. `Ctrl-n` / `Ctrl-p` can navigate matches already discovered.
-- Search retains at most 2000 matches across the whole active scope. `2000+` appears only after an
-  additional valid match is found; exactly 2000 matches are shown without the `+`. Leaving an
-  incomplete copy-mode search hands its discovered pane matches back to copy mode immediately and
-  marks that retained set as truncated.
-
-Search is **app-side**: `rozi` streams retained plain-text lines from `TerminalScreen` without
-mutating the scrollback offset, then maps matching absolute lines back to viewport coordinates for
-jumping. ASCII letters match case-insensitively; non-ASCII text remains case-sensitive. This works
-regardless of the program running in the pane, because it reads rendered terminal lines rather
-than relying on an in-terminal highlight search.
-
-The scan reads a live terminal view rather than copying or locking history. When new output reaches
-any pane in the active scope, rozi cancels the current scan, clears its coordinates, and restarts
-the same query with the focused target first. This also applies after a scan has completed while
-the search remains open, so a result can never jump to text shifted by live scrollback eviction.
-
-## Edit scrollback
-
-*Edit scrollback* (palette / `edit-scrollback` action) dumps the focused pane's full
-retained scrollback to a private file under the state directory
-(`~/.local/state/rozi/scrollback/pane-<id>-<timestamp>.txt`, mode `0600`) and opens it in
-`$EDITOR` (then `$VISUAL`, then `vi`) as a tiled pane — the same pattern as opening the config
-file. Older dumps are pruned so the directory stays near 20 files.
-
-**Credentials caveat:** like pane logging, scrollback dumps can contain secrets typed or printed
-in the terminal (tokens, passwords, private URLs). Treat the dump directory as sensitive local
-data; do not share those files.
+With `[notifications] bell = true`, BEL from an unattended pane marks its workspace. A pane is
+attended only when its window and the pane itself are focused.
 
 ## Images
 
-Programs in a pane can draw pictures with the
-[Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) — `kitty +kitten
-icat file.png`, `timg -pk file.png`, `chafa -f kitty file.png`, and anything else that probes for
-graphics support before drawing.
+Pane programs can use the Kitty graphics protocol. Rozi displays images through a format supported
+by the host terminal, including Kitty, iTerm2, sixel, or text-cell fallback.
 
-**Your terminal does not have to speak Kitty.** The pane decodes what the child sends and re-encodes
-it for whatever your host supports — Kitty, iTerm2, sixel, or half-blocks. Images scroll with the
-text they were drawn against, come back when you scroll back, and disappear with the alternate
-screen a full-screen program drew them on.
+Images follow terminal scrolling and alternate-screen lifetime. These limits apply:
 
-The controller reports its cell size to the server, which passes it to every PTY in
-`TIOCGWINSZ`, so a program sizing a picture for itself reserves the same rows the pane draws.
-Attached clients on terminals with different cell sizes render against the controller's value, the
-same rule the canonical pane size already follows.
-
-**A program can hand over a frame by naming it rather than sending it** (`t=f`). Instead of
-compressing every pixel and base64-ing it through the PTY, the child writes the frame where it likes
-and puts the path in a hundred-byte escape. This is the difference between a stuttering picture and a
-smooth one for anything drawing at video rates, such as a browser or a video player in a pane.
-
-The two media that are *claimed* by being read — a temporary file (`t=t`) and a shared-memory object
-(`t=s`) — are refused, because a session can have several clients attached and the first reader would
-take the frame from the others. A program that probes for them falls back to `t=f` on its own.
-Attached over [`--remote`](remote.md), no medium is offered at all: a path written on the server
-means nothing on the machine drawing the picture, so those panes use inline transmission.
-
-Limits worth knowing:
-
-- **Reattaching loses images drawn before the attach.** Attach seeding replays VT text, not image
-  payloads.
-- **The protocol's own animation frames are not supported.** A program that animates by
-  re-drawing the image — which is what most do — works fine.
-- Decoded pixels are capped per pane and evicted least-recently-used.
-
-## Runtime persistence boundaries
-
-- **The server owns live state.** PTYs live in the session server, not the UI process. A bare
-  launch attaches to a disposable ephemeral session (`eph-<pid>`). Leaving closes it when untouched
-  or asks whether to keep it when it contains work; a UI crash leaves it running so you can recover
-  scrollback. See [Sessions](sessions.md).
-- **Attach seeding replays real VT bytes.** When a client attaches, the server serializes each live
-  pane's full screen state (scrollback + primary + alt + modes + cursor + title) to a synthesized VT
-  byte stream (`TerminalScreen::export_replay_bytes`) and streams it to the client, which replays it
-  through the same parser it uses for live output - one code path, exact reconstruction.
-- **Named sessions persist across detach.** `rozi <name>` connects to a named server
-  whose PTYs survive client detach/quit and can be reattached later.
-- **Profiles restore layout and launch intent, not live state.** Restoring a
-  [project profile](project-profiles.md) starts fresh shells/commands - it does not resurrect
-  previous processes, scrollback, or environment.
+- Images drawn before a client attaches are not replayed.
+- Kitty protocol animation frames are not supported. Programs that redraw an image can still
+  animate.
+- Decoded pixels are capped per pane and old images are evicted when needed.
+- Remote panes cannot use a server-side file path as an image handoff to the local client, so they
+  use inline image data.
+- Temporary-file and shared-memory handoff forms that can only be consumed once are refused in a
+  session that may have several clients.
 
 ## Pane logging
 
-Use the `toggle-pane-logging` action to append a pane's raw PTY output to a log file. Active
-logging is shown by a `[log]` title badge and is shared with every client, including clients that
-attach after logging starts. Raw logs may contain terminal escape sequences and credentials; view
-them with `less -R` and protect them as sensitive data. Logging stops automatically after a write
-error, or on reaching [`[logging] max_bytes`](configuration.md#logging).
+Run **Pane logging** from the command palette, or bind `toggle-pane-logging`, to append raw PTY
+output from the focused pane to a log file. The titlebar shows a `log` badge while logging.
 
-The stream is otherwise unmodified - escape sequences, CR line endings, and colour intact - because
-that is the only lossless form and the only one that replays. Two things are added or removed:
+Logging belongs to the server, so all clients see its state. It stops after a write error or after
+reaching `[logging] max_bytes`.
 
-- **Each run opens with a header line** naming the session, pane id and generation, pane size, and
-  start time, so a file appended to across several logging runs stays self-describing.
-- **rozi's own `OSC 133 ; C ; rozi_exe=` parameter is stripped**, leaving the bare
-  `OSC 133 ; C` marker that any shell integration writes. That parameter is how
-  [shell integration](configuration.md#shell_integration) reports the foreground program to
-  rozi; it is not the pane's output and does not belong in a log of it. Every other escape
-  sequence the shell or program emitted, OSC 133 `A`/`B`/`D` included, is left alone.
+Logs keep escape sequences and carriage returns. Each logging run begins with a header containing
+the session, pane, generation, size, and start time. Raw logs can contain credentials and private
+terminal output. Store and share them accordingly.
 
-To strip the remaining escape sequences for a plain-text record, pipe the file through a filter such
-as `ansifilter` or `sed -e 's/\x1b\[[0-9;]*m//g'` - rozi writes the faithful stream and leaves
-that choice to you.
+## Persistence boundaries
+
+- Named sessions retain live PTYs while their server runs.
+- Profiles restore layout and launch intent with fresh PTYs.
+- Resurrection restarts commands and replays saved text history.
+- Scratch panes live on a private client-lifetime server and are not saved or shared.
+- Images drawn before attach are not reconstructed from text replay.
+
+See [Profiles](profiles.md) and [Shared sessions](shared-sessions.md) for those workflows.

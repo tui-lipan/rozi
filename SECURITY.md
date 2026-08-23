@@ -1,55 +1,80 @@
-# Security Policy
+# Security policy
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-If you believe you have found a security vulnerability in **rozi**, please do
-not open a public GitHub issue. Report it privately so the issue can be triaged
-and patched before disclosure.
+Do not open a public issue for a suspected vulnerability. Email
+[security@tui-lipan.dev](mailto:security@tui-lipan.dev) so maintainers can investigate before
+public disclosure.
 
-**Email:** [security@tui-lipan.dev](mailto:security@tui-lipan.dev)
+A working exploit is not required. Include enough detail to investigate:
 
-Please include:
+- the plausible attack path and required attacker access;
+- the trust boundary that the behavior crosses;
+- the credible impact on confidentiality, integrity, or availability;
+- the affected Rozi version, operating system, and installation method;
+- steps, commands, configuration, logs, or a minimal proof of concept when available;
+- mitigations you have already identified.
 
-- A description of the vulnerability and its potential impact
-- Steps to reproduce, ideally with a minimal configuration or command sequence
-- The rozi version, operating system, and installation method where you observed it
-- Any suggested mitigations, if you have them
+State assumptions and missing evidence. A source-level report is useful when it identifies a
+reachable path and concrete impact, even if you stopped before exploitation.
 
 You can expect:
 
-- An acknowledgement within **72 hours**
-- A first assessment and triage within **7 days**
-- A fix or mitigation plan communicated within **30 days** for confirmed issues
-- Credit in the release notes, unless you prefer to remain anonymous
+- acknowledgement within 72 hours;
+- an initial assessment within 7 days;
+- a fix or mitigation plan within 30 days for a confirmed issue;
+- release-note credit unless you ask to remain anonymous.
+
+## Safe testing
+
+Test only systems, accounts, sessions, and data you own or have permission to use. Use isolated
+test sessions and synthetic data. Stop after demonstrating the minimum access or effect needed to
+support the report.
+
+Do not:
+
+- access, retain, or disclose another person's data;
+- disrupt shared services or run denial-of-service tests against public infrastructure;
+- publish a payload or details that would expose users before a fix is available;
+- modify repository releases, tags, signing configuration, update metadata, or public installer
+  endpoints;
+- leave persistence, active credentials, or a modified installation behind.
+
+Contact the security address before testing when the only available path would affect a third party
+or production service.
 
 ## Scope
 
-This policy covers rozi, its launcher, bundled shell and editor integrations,
-the session and control protocols, and the signed update path published from
-this repository.
+This policy covers Rozi, its launcher, bundled shell and editor integrations, session and control
+protocols, extension integration, and the signed update path published from this repository.
 
-In-scope examples include:
+Examples include:
 
-- Cross-user access to session or control endpoints
-- Authentication, endpoint-discovery, or filesystem-validation bypasses
-- Command injection through pane launch, remote sessions, shell integration, or extensions
-- Release signature, manifest verification, update, or rollback bypasses
-- Crafted terminal or protocol input that causes code execution, data disclosure, or denial of service
-- Clipboard or OSC52 behavior that bypasses its configured controls
+- cross-user access to session or control endpoints;
+- authentication, endpoint discovery, or filesystem validation bypasses;
+- command injection through pane launch, remote sessions, shell integration, or extension
+  execution;
+- release signature, manifest verification, update, or rollback bypasses;
+- crafted terminal or protocol input that causes code execution, data disclosure, or denial of
+  service;
+- clipboard or OSC52 behavior that bypasses configured controls.
 
-Out of scope:
+An extension, hook, command, or configuration deliberately installed by the user is trusted code.
+Malicious behavior contained in that code is outside this policy. A Rozi injection flaw remains in
+scope when untrusted paths, terminal output, protocol data, manifest fields, or other external input
+can alter an extension command, arguments, environment, executable selection, or supervised
+service without the user's informed intent.
 
-- Malicious commands, extensions, hooks, or configuration deliberately installed by the user
-- Issues in upstream dependencies that do not manifest through rozi
-- Theoretical issues without a working proof of concept
+Upstream dependency issues are in scope only when they are reachable through Rozi and affect a Rozi
+trust boundary. Reports that lack a complete proof of concept are welcome when they describe a
+plausible reachable path and credible impact.
 
-## Supported Versions
+## Supported versions
 
-Before the first public release, security fixes land on `master`. While rozi is
-on `0.x.y`, security fixes are released against the latest minor version only.
-This policy will be updated with explicit backporting support after `1.0.0`.
+Before the first public release, security fixes land on `master`. While Rozi is on `0.x.y`,
+security fixes target the latest minor version only. This policy will state explicit backport
+support after `1.0.0`.
 
-## GPG / Signed Reports
+## Encrypted reports
 
-If you would like to encrypt your report, mention this in your initial email
-and we will exchange a public key.
+To encrypt a report, ask for a public key in the initial email.

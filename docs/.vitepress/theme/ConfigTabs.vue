@@ -24,7 +24,7 @@ type Surface = {
 const surfaces: Surface[] = [
   {
     id: "theme",
-    note: "Presets, custom theme files, frames, titlebars, per-transition animation.",
+    note: "Configure presets, custom theme files, borders, titlebars, and animation timing.",
     doc: "/themes",
     code: `[theme]
 name = "catppuccin-mocha"   # a preset, "system", or your own file
@@ -42,7 +42,7 @@ geometry_ms = 220`,
   },
   {
     id: "keys",
-    note: "Rebind a built-in by its command id, or map a trigger to a table and it becomes a command of your own.",
+    note: "Bind built-in command IDs or map a key trigger to a user command.",
     doc: "/keybindings",
     code: `# Every command id is in the help overlay, on <prefix> ?
 [keys]
@@ -60,7 +60,7 @@ f = { popup = "fzf", label = "Find" }`,
   },
   {
     id: "workbar",
-    note: "Built-in readouts, your own text, or a command polled on an interval — each a badge that tracks the theme.",
+    note: "Add built-in readouts, static text, or commands that Rozi polls on an interval.",
     doc: "/configuration#workbar",
     code: `[workbar]
 left = ["title", "workspaces"]
@@ -74,11 +74,11 @@ clock_format = "%H:%M"
 
 [workbar.alert]
 blocked = true
-mode = "pulse"   # the workspace tab breathes while a pane waits`,
+mode = "pulse"   # the workspace tab pulses while a pane waits`,
   },
   {
     id: "sidebar",
-    note: "Five built-in tabs, plus launcher lists and command tabs of your own, in one or two docked panels.",
+    note: "Add built-in tabs, launcher lists, and command tabs to one or two docked panels.",
     doc: "/sidebar",
     code: `[sidebar]
 width = 38
@@ -96,7 +96,7 @@ panels = [["activity", "panes", "files"], ["git", "dev", "branches"]]`,
   },
   {
     id: "rules",
-    note: "First-match placement for command-carrying spawns: float it, size it, or send it to a workspace.",
+    note: "Rules place command spawns by first match. They can float or size a pane or choose its workspace.",
     doc: "/configuration#rules",
     code: `[[rules]]
 match = "btop"
@@ -114,7 +114,7 @@ focus = false`,
   },
   {
     id: "hooks",
-    note: "Run something on any of the events rozi emits, or supervise a process that stays alive for them.",
+    note: "Hooks run on emitted events. Services can subscribe to events in a long-running process.",
     doc: "/hooks",
     code: `[[hooks]]
 event = "pane-status-changed"
@@ -124,7 +124,7 @@ run = "notify-send \\"pane $ROZI_PANE is now $ROZI_STATUS\\""
 event = "config-reloaded"
 run = "logger rozi reloaded $ROZI_PATH"
 
-# Or hold the event stream open instead of spawning per event
+# Keep the event stream open instead of spawning per event
 [[services]]
 name = "pr-watch"
 run = "~/.config/rozi/pr-watch.sh"   # calls rozi subscribe
@@ -132,7 +132,7 @@ restart = "on-failure"`,
   },
   {
     id: "agents",
-    note: "Every agent rozi ships is one of these tables. Reuse an id and yours replaces the built-in.",
+    note: "Bundled agent definitions use these tables. A user definition with the same ID replaces the bundled one.",
     doc: "/agents",
     code: `[[agents]]
 id = "mytool"

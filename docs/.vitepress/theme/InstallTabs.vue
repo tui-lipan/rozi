@@ -20,22 +20,22 @@ const channels: Channel[] = [
   {
     id: "curl",
     command: "curl -fsSL https://rozi.tui-lipan.dev/install | bash",
-    note: "Linux and macOS · installs the current release, links ~/.local/bin/rozi",
+    note: "For Linux and macOS. Installs the current release and links ~/.local/bin/rozi.",
   },
   {
     id: "powershell",
     command: "irm https://rozi.tui-lipan.dev/install.ps1 | iex",
-    note: "Windows · installs under %LOCALAPPDATA%\\rozi",
+    note: "For Windows. Installs under %LOCALAPPDATA%\\rozi.",
   },
   {
     id: "cargo",
     command: "cargo install rozi",
-    note: "Builds from crates.io · needs Rust 1.90 or newer",
+    note: "Builds from crates.io and requires Rust 1.90 or newer.",
   },
   {
     id: "source",
     command: "cargo install --git https://github.com/tui-lipan/rozi",
-    note: "Builds the master branch · needs Rust 1.90 or newer",
+    note: "Builds the master branch and requires Rust 1.90 or newer.",
   },
 ];
 

@@ -13,13 +13,16 @@
 
 Existing pages are grouped by subject rather than nested directories:
 
-- Getting started and installation: `getting-started.md`, `installation.md`
+- Orientation: `overview.md`, `getting-started.md`, `installation.md`, `core-concepts.md`,
+  `platform-support.md`, `features.md`
 - Configuration and interaction: `configuration.md`, `keybindings.md`, `themes.md`
-- Runtime behavior: `layouts-and-panes.md`, `terminal.md`, `sessions.md`, `remote.md`
-- Profiles and sidebar: `profiles.md`, `project-profiles.md`, `sidebar.md`
-- Automation: `control.md`, `hooks.md`, `extensions.md`, `recipes.md`
+- Runtime behavior: `layouts-and-panes.md`, `terminal.md`, `sessions.md`, `shared-sessions.md`,
+  `remote.md`
+- Profiles and sidebar: `profiles.md`, `sidebar.md`
+- Automation: `scripting.md`, `control.md`, `control-protocol.md`, `hooks.md`, `extensions.md`,
+  `extension-testing.md`, `recipes.md`
 - Agent integration: `agents.md`, `agent-skill.md`
-- Development evidence: `benchmarks.md`, `performance/`
+- Development: `release-process.md`, `benchmarks.md`, `performance/`
 
 Keep that flat layout until a section has enough pages to justify a directory. If it does, move the
 whole subject together and update VitePress navigation and inbound links in the same change.

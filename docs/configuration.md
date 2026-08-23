@@ -1,1171 +1,501 @@
 # Configuration
 
-`rozi` reads a single TOML config file at startup. All keys are optional; anything you
-omit keeps its default. A read or parse failure does **not** crash the app - it loads
-defaults and reports the problem as a startup toast. Unknown keys are parse failures, so a
-misspelled setting is reported rather than silently ignored; the message lists the keys the
-table accepts.
+Rozi reads one TOML file. Every key is optional. Unknown keys and invalid TOML reject the whole
+file, load defaults, and produce a warning toast.
 
-[`examples/config.toml`](../examples/config.toml) is the copyable version of this page: every
-setting, commented out at its default value, so the file as shipped behaves exactly like having
-no config at all.
+The complete inert example is [`examples/config.toml`](../examples/config.toml). Uncomment only the
+settings you need.
 
-## Config file location
+## File location
 
-`rozi` resolves the config path in this order:
+Rozi chooses the file in this order:
 
-1. `--config <PATH>`, which sets `$ROZI_CONFIG` for the run.
-2. `$ROZI_CONFIG` (a full path; `~` and `~/...` expand to `$HOME`).
-3. `$XDG_CONFIG_HOME/rozi/config.toml`, else `~/.config/rozi/config.toml` — on Windows,
-   `%APPDATA%\rozi\config.toml`.
+1. `--config <PATH>`, which also sets `ROZI_CONFIG` for the process.
+2. `ROZI_CONFIG`. `~` and `~/...` expand to the home directory.
+3. `$XDG_CONFIG_HOME/rozi/config.toml`, or `~/.config/rozi/config.toml`.
+4. `%APPDATA%\rozi\config.toml` on Windows.
 
-`--config` applies to every command that reads config — a launch, `--server`, and the remote forms
-of `list-sessions` / `kill-session`. Control commands never load config and reject it.
+`--config` applies to launches, session servers, extension inspection, and session lifecycle
+commands that load configuration. Control commands do not load configuration and reject
+`--config`.
 
-On startup a toast reports any warning raised while reading or parsing the file. A config that
-loads cleanly is silent - the settings taking effect is the confirmation.
+## User directories
 
-### Where rozi keeps its files
-
-Every path below is the *base* directory; profiles, themes, session snapshots, and pane logs live
-under it. macOS follows the XDG convention rather than `~/Library`, matching tmux, neovim, and
-alacritty. A relative `XDG_*` override is rejected outright rather than being resolved against the
-working directory, which would make the config directory move every time you `cd`.
-
-| | Linux/macOS | Windows |
+| Purpose | Linux and macOS | Windows |
 | --- | --- | --- |
-| Config (`config.toml`, `themes/`, `profiles/`) | `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi` | `%APPDATA%\rozi` |
-| State (session autosave, resurrection snapshots, pane logs) | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi` |
-| Cache (generated shell-integration scripts) | `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
-| Runtime (control and session endpoints) | `$XDG_RUNTIME_DIR/rozi`, else a private per-uid temp directory | `%LOCALAPPDATA%\rozi\run` |
+| Config | `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi` | `%APPDATA%\rozi` |
+| Data, including extensions | `$XDG_DATA_HOME/rozi`, else `~/.local/share/rozi` | `%LOCALAPPDATA%\rozi` |
+| State | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi` |
+| Cache | `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
+| Runtime endpoints | `$XDG_RUNTIME_DIR/rozi`, else a private per-user temporary directory | `%LOCALAPPDATA%\rozi\run` |
 
-### Live reload and editing
+Relative `XDG_*` values are ignored. Rozi requires absolute roots.
 
-rozi watches the config file and applies every save live - config fields, `[keys]`
-bindings/user commands, theme (including switching which file the theme watcher follows), and
-workbar segments - without touching running panes, workspaces, or the active session. A parse
-failure reloads to defaults and reports it as a toast, same as at startup; fix the file and
-save again.
+## Reloading and editing
 
-Toggles and cycles in Settings, Appearance, and Alerts write the new value back to this file.
-Those writes, along with theme selection and the default profile, are already applied and don't
-trigger a reload.
+Rozi watches the config file and applies changes without replacing panes or workspaces. The
+`reload-config` action also reloads the file and rescans extensions:
 
-The **Open config file** command-palette entry (`open-config`) opens the file in `$EDITOR`
-(falling back to `$VISUAL`, then `vi`) in a new pane. From the sessionless launcher it starts an
-ephemeral session first so the editor has a live PTY. It is an ordinary action, so it also
-works as `rozi run-action open-config` over the control socket (see `docs/control.md`).
+```bash
+rozi run-action reload-config
+```
 
-## Full example
+Most settings apply immediately. These settings have narrower behavior:
 
-The copyable file is [`examples/config.toml`](../examples/config.toml): every setting, commented
-out at its default. Uncomment only the lines you want to change. The rest of this page is the
-reference for each key.
+| Setting | When it takes effect |
+| --- | --- |
+| `shell`, `shell_integration.mode`, `cwd`, `environment.forward` | New panes only. |
+| `command_shell` | New command, hook, service, sidebar, and workbar executions. |
+| `scrollback` | New terminal screens. Restart an existing session server before creating panes that should use the new capacity. Existing screens never resize. |
+| `frame_rate` | Next client launch or reattach. |
+| `clipboard.enable_osc52` | Next client launch. |
+| `sidebar.visible` | Client startup only. Reload never opens or closes the sidebar. |
+| `session.startup` | Next bare launch. |
+| `session.resurrect`, `session.allow_takeover` | Session servers started after the change. |
+| `logging.*` | Session servers started after the change. |
+| `remote.*` | New SSH connections. |
+| `rules` | New command-carrying pane spawns. |
+| `services` | Reload reconciles definitions. Changed services restart, removed services stop, and unchanged services continue. |
+| `agents` | Reload updates detection in the controlled session server and the local scratch session. |
+| `extensions.disabled` and extension manifests | Explicit reload. Rozi does not watch extension directories. |
+
+Settings changed in Rozi's own Settings, Appearance, Profiles, or Themes UI are written to the file
+and are already active.
+
+The `open-config` action opens the selected file with `EDITOR`, then `VISUAL`, then `vi`:
+
+```bash
+rozi run-action open-config
+```
+
+## Minimal example
 
 ```toml
-#shell = "/bin/sh"
-#cwd = "~/code"
-#scrollback = 5000
+cwd = "~/code"
 
 [input]
-#modifier = "alt"
-#prefix = "ctrl-a"
+modifier = "super"
+modifier_shortcuts = false
 
 [layout]
-#default = "dwindle"
-
-[pane]
-#show_workbar = true
-#titlebar = "bar"
+default = "columns"
 
 [theme]
-#name = "lipan"
-
-[session]
-#startup = "picker"
+name = "lipan"
 ```
 
 ## Top-level keys
 
-| Key | Type | Default | Meaning |
+| Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `shell` | string or array | see below | Interactive shell launched in each new pane. |
-| `command_shell` | string or array | see below | Shell used to run one-off command lines (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, control-socket run requests). |
-| `shell_integration.mode` | `auto` or `off` | `auto` | Inject OSC cwd/command metadata into supported interactive shells. |
-| `environment.forward` | array of strings | `[]` | Additional client-process variables copied into newly created local panes. |
-| `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
-| `scrollback` | integer | `5000` | Scrollback lines per pane (minimum 1). Existing screens keep their current capacity; restart a named server or create new panes after changing it. |
-| `frame_rate` | integer | `120` | Ceiling in frames per second on redraws nothing asked for: every live pane is polled at this cadence and animations advance on it. Range `15`-`480`; values outside it are clamped with a warning. Read once at startup, so a live reload does not move it - detach and reattach, or relaunch. See [Frame rate](#frame-rate). |
-| `nerd_icons` | bool | `true` | Nerd Font private-use glyphs in UI chrome: pane title icons, sidebar directory chevrons, and `round`/`arrow` end caps. `false` uses font-safe fallbacks (no title icon, ASCII directory markers, padded caps). File-kind icons in the sidebar still need a tab's `icons = true` as well. |
+| `shell` | string or string array | Platform shell | A string is one program with no arguments. An array preserves argv. Unix uses `SHELL`, then `/bin/sh`. Windows tries `pwsh.exe`, `powershell.exe`, `COMSPEC`, then `cmd.exe`. |
+| `command_shell` | string or string array | `["/bin/sh", "-c"]` on Unix, `[COMSPEC, "/D", "/S", "/C"]` on Windows | Runs command strings for panes, popups, hooks, services, workbar and sidebar commands, and config commands. |
+| `cwd` | path string | Launch directory | `~` expands. Used by new panes. |
+| `scrollback` | integer | `5000` | Minimum `1`. |
+| `frame_rate` | integer | `120` | Clamped to `15..=480` with a warning. |
+| `nerd_icons` | bool | `true` | Enables private-use glyphs in chrome. File icons also require a sidebar tree tab with `icons = true`. |
 
-Both `shell` and `command_shell` accept either a bare string (a program with no arguments - the
-historical form) or an argument-preserving array whose first element is the program, e.g.
-`shell = ["pwsh.exe", "-NoLogo"]`. Resolution order when unset:
-
-| Purpose | Linux/macOS | Windows |
-| --- | --- | --- |
-| `shell` | `$SHELL`, else `/bin/sh` | `pwsh.exe`, else `powershell.exe`, else `%COMSPEC%`, else `cmd.exe` (found via `PATH` + `PATHEXT`) |
-| `command_shell` | `["/bin/sh", "-c"]` (fixed, never probes `$SHELL`) | `[%COMSPEC%, "/D", "/S", "/C"]` (fixed) |
-
-`command_shell` is deliberately never detection-based, so a `[keys] run`/hook/workbar-command
-snippet using it behaves identically regardless of the invoking user's interactive shell choice.
-Both are resolved by the client (not the session server) at spawn/command-run time, so a
-detached/persistent named-session server never falls back to its own process environment or a
-stale on-disk config after the client-side config hot-reloads.
-
-### Pane environment
-
-A persistent session server provides the base process environment, but the client that creates a
-pane overlays the desktop variables that identify its current graphical session:
-
-```text
-DISPLAY
-WAYLAND_DISPLAY
-XDG_RUNTIME_DIR
-DBUS_SESSION_BUS_ADDRESS
-HYPRLAND_INSTANCE_SIGNATURE
-DESKTOP_SESSION
-XDG_CURRENT_DESKTOP
-XDG_SESSION_TYPE
-```
-
-This means a named session originally created from SSH can gain Wayland, X11, D-Bus, and compositor
-access in panes later created by a desktop client. Existing panes keep the environment they started
-with. If several clients are attached, the client that initiates the pane creation supplies these
-values.
-
-Use `[environment].forward` for additional variables that Rozi should sample from that client:
-
-```toml
-[environment]
-forward = ["CURSOR_API_KEY", "SOME_CUSTOM_VAR"]
-```
-
-Only named variables are read. Values are kept in memory for that pane and are not written to
-session resurrection data. Rozi never sends client-forwarded environment through `--remote`; local
-display endpoints would be invalid there, and configured names may contain credentials. Per-spawn
-environment supplied by a command or integration remains the final override.
-
-### Frame rate
-
-Most redraws come from something happening: a key, a message, a pane exiting. `frame_rate` is the
-ceiling on the rest - the content that changes without telling anyone. Two things live there. A
-pane's child program writes whenever it likes and announces nothing, so **every live pane in the
-window** is looked at on this cadence, not only the focused one. Animations advance on it too.
-
-The default of `120` keeps up with a 120 Hz display. Lower it when drawing is the expensive part
-rather than when rozi is busy:
-
-| Situation | Try |
-| --- | --- |
-| Attached over a slow link with `--remote`, or a very large viewport | `60`, or `30` |
-| Laptop on battery, many live panes | `60` |
-| 60 Hz display, want the CPU back | `60` |
-
-Raising it past what the terminal can present buys nothing.
-
-Lowering it costs smoothness, not output. The frame rate belongs to the *client*: the session
-server keeps reading its PTYs at full speed regardless, so a burst of output is coalesced into
-fewer repaints rather than truncated. Style-only color fades (focus chrome) are already paced
-separately at 30fps by `tui-lipan` and stay there unless `frame_rate` drops below it, in which case
-they follow it down.
-
-The value is read once when the client starts. A live reload cannot move it, because the runner has
-already turned it into its poll interval - detach and reattach, or relaunch, to apply a change.
+New local panes receive `ROZI=1`, `ROZI_PANE`, and, when available, `ROZI_SOCKET` and `ROZI_BIN`.
+See [Scripting](scripting.md) and [Control CLI](control.md).
 
 ## `[shell_integration]`
 
-With `mode = "auto"` (the default), rozi injects its shell integration into supported
-**interactive** shell panes only. It never changes dotfiles, registry settings, or the
-noninteractive `command_shell` runner. The integration emits OSC 7 current-directory updates and
-OSC 133 prompt/command lifecycle markers; it sends only the executable basename for smart focus,
-never a full command line.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `mode` | string | `"auto"` | `"auto"` or `"off"`. Auto-injects OSC 7 and OSC 133 support into recognized interactive shells without editing shell startup files. |
 
-| Shell | Injection mechanism | What you get |
-| --- | --- | --- |
-| bash | Generated `--rcfile` wrapper | Everything. Chains `/etc/bash.bashrc` and `~/.bashrc`, then the integration. Login-shell configurations are intentionally left untouched, because bash ignores `--rcfile` for login shells. |
-| zsh | Temporary `ZDOTDIR` shim | Everything. Chains the original `ZDOTDIR` (or `$HOME`) `.zshenv`/`.zshrc`, then the integration. |
-| fish | Temporary `XDG_DATA_DIRS` vendor `conf.d` entry | Everything. Composes with Fish event hooks; prompt frameworks loaded later can replace its final prompt marker. |
-| PowerShell | `-NoExit -Command . <script>` | Everything. Runs *after* `$PROFILE`, wrapping your prompt and PSReadLine rather than replacing them. A pane whose `shell` already carries `-Command`/`-File` is left alone. |
-| cmd.exe | `PROMPT` environment variable | Working directory and prompt boundaries only. cmd has no pre-execution hook; rozi will not touch the `AutoRun` registry key. Install [Clink](https://chrisant996.github.io/clink/) for the rest. |
+See [Terminal features](terminal.md#working-directories-and-shell-metadata).
 
-Set `mode = "off"` if your shell already emits suitable OSC metadata or if you want rozi to
-leave shell startup completely unchanged.
+## `[environment]`
 
-### PowerShell sessions rozi did not launch
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `forward` | array of strings | `[]` | Names of extra client environment variables copied to new local panes. Empty names are removed and duplicates are collapsed. Values are not persisted or forwarded through remote attachments. |
 
-A pane whose `shell` already carries `-Command`/`-File` is a "run this and exit" launch, not an
-interactive session, so injection is skipped.
-
-The `-NoExit -Command` injection above only applies to panes rozi starts. For a PowerShell
-reached some other way — nested inside a pane, or launched through a `command =` pane — add one
-line to your `$PROFILE` instead:
-
-```powershell
-. "$env:LOCALAPPDATA\rozi\cache\shell-integration\rozi.ps1"
-```
-
-(On Linux/macOS the script lives under `~/.cache/rozi/shell-integration/`.) The script is
-idempotent, so having both the `$PROFILE` line and the automatic injection is harmless. The
-equivalent for cmd.exe is `rozi.cmd` in the same directory, which just sets `PROMPT`.
+Rozi already forwards the current desktop session variables needed by Wayland, X11, D-Bus, and
+Hyprland. Existing panes keep their original environment.
 
 ## `[input]`
 
-| Key | Type | Default | Meaning |
+| Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `modifier` | string | `alt` | Held WM modifier for generated direct command keys and mouse gestures; `alt`/`mod` or `super`/`meta`/`logo`/`win`. |
-| `prefix` | string | `ctrl-a` | Prefix key used by generated leader chords, e.g. `ctrl-a`, `ctrl-b`. |
-| `modifier_shortcuts` | bool | `true` | Also bind every built-in default as a held `<modifier>+<key>` chord (e.g. `Alt+q`) alongside its `<prefix> <key>` leader. Set `false` so held `Alt`/`Super` chords reach the focused pane. |
-| `which_key` | string | `short` | The which-key strip - a compact table of what the prefix can do next - beside the workbar while a prefix chord is pending, and how long the prefix is held before it appears: `off` (never), `instant` (no wait), `short` (300ms), or `long` (750ms). |
+| `modifier` | string | `"alt"` | `"alt"` or `"super"`. `mod` aliases Alt. `meta`, `logo`, `win`, and `windows` alias Super. |
+| `prefix` | string | `"ctrl-a"` | One valid tui-lipan key step. |
+| `modifier_shortcuts` | bool | `true` | Mirrors generated prefix bindings onto held modifier chords. |
+| `which_key` | string | `"short"` | `"off"`, `"instant"`, `"short"` at 300 ms, or `"long"` at 750 ms. |
+
+See [Keybindings](keybindings.md).
 
 ### The which-key strip
 
-Pressing the prefix leaves rozi waiting for a second key, and while it waits the strip lists the
-chords that second key can be. It is drawn from the live command registry, so `[keys]` overrides and
-unbound commands are reflected without any separate table to keep in sync, and only commands that
-can act right now are listed.
-
-Unless `which_key` is `instant`, it waits out that delay first, so a chord you finish from muscle
-memory never flashes it - the strip is for the moment you hesitate. The workbar's `PREFIX` badge
-and the withheld pane caret are not delayed: those confirm the keystroke landed, which has to be
-immediate.
-
-Three things keep it small enough to sit over live panes:
-
-- Directional families collapse into one row (`hjkl Focus pane`, `HJKL Swap pane`,
-  `Ctrl+hjkl Move pane`, `1-9 Workspace`). Rebinding any member of a family expands it back into
-  individual rows, so a customized binding is never misreported.
-- Commands that need a second tile - focus, swap, move, split resize, promote - are left out in a
-  workspace that only has one pane.
-- The strip is capped at a fifth of the viewport height. Anything that does not fit is counted in
-  the top-right corner (`+12 · ? all`) rather than paged, and the listed key opens the full
-  keybindings overlay.
-
-Held `<modifier>+<key>` chords resolve on a single keypress and never leave a chord pending, so the
-strip only ever appears for the leader scheme. The workbar's `PREFIX` badge is independent of this
-setting and stays either way.
-
-The key is also reachable from Settings (command palette, `prefix p`, then **Settings…**) under
-General, as **Which-key**, which cycles `Off` / `Instant` / `Short` / `Long`.
-
-The `modifier_shortcuts` switch is all-or-nothing. To drop the mirror for a single command only, override it in
-`[keys]` with a literal leader-only binding, e.g. `detach = "ctrl-a d"`. Bare-key replacements
-and generated defaults follow `modifier_shortcuts`; literal bindings and additive literal bindings
-are used exactly as specified.
-
-### Prefix syntax
-
-Prefix strings use tui-lipan keybinding syntax. Modifiers include `ctrl`/`control`, `alt`,
-`shift`, and `super`/`cmd`/`command`/`meta`/`win`. Named keys include `enter`/`return`,
-`esc`/`escape`, `space`, `tab`, `backspace`, arrows, navigation keys, and function keys.
-Examples: `ctrl-a`, `ctrl-b`, `alt-space`, `f12`. The prefix must be one key; an unparseable
-prefix is reported as a warning and the default is kept.
+The strip is documented in [Keybindings](keybindings.md#prefix-and-held-modifier).
 
 ## `[layout]`
 
-| Key | Type | Default | Meaning |
+| Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `split_width_multiplier` | float | `2.3` | Terminal cell height divided by cell width. Dwindle uses this to choose the next split axis. Must be positive. Increase it when panes that look taller than wide split side-by-side. |
-| `default` | string | `"dwindle"` | Layout every fresh workspace starts in: `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. Profiles override this per workspace. |
+| `split_width_multiplier` | float | `2.3` | Must be finite and greater than zero. |
+| `default` | string | `"dwindle"` | `"dwindle"`, `"master"`, `"grid"`, `"columns"`, `"rows"`, `"scrollable"`, or `"monocle"`. Profiles may override it per workspace. |
 
-The *Choose layout…* picker can persist `default` with `ctrl+f` on a mode.
+See [Layouts and panes](layouts-and-panes.md).
 
 ## `[pane]`
 
-Pane focus and chrome behavior.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `resize_debounce_ms` | integer | `16` | Minimum delay between PTY resize batches. `0` forwards each report. |
+| `focus_on_hover` | bool | `true` | Focuses a pane when the pointer enters it. |
+| `hold_on_exit` | bool | `false` | Retains naturally exited shell panes. Command panes use their `keep_open` value. |
+| `highlight_focused_background` | bool | `false` | Uses the panel background for the focused pane. |
+| `highlight_focused_border` | bool | `true` | Uses the active border color for the focused pane. |
+| `highlight_focused_titlebar` | bool | `true` | Uses focused titlebar styling. |
+| `show_workbar` | bool | `true` | Shows the workbar. |
+| `workbar_gap` | bool | `true` | Keeps one row between the workbar and panes. |
+| `workbar_at_bottom` | bool | `false` | Places the workbar below panes. |
+| `show_titles` | bool | `true` | Shows pane titles without changing `titlebar`. |
+| `titlebar` | string | `"bar"` | `"bar"`, `"border"`, `"integrated"`, or `"inset"`. |
+| `border_mode` | string | `"separate"` | `"separate"`, `"merged"`, `"none"`, or `"dividers"`. |
+| `alert_border` | string | `"pulse"` | `"off"`, `"static"`, or `"pulse"`. |
+| `border_style` | string | `"rounded"` | `"rounded"`, `"plain"`, `"double"`, or `"thick"`. Applies to framed modes. |
+| `keep_special_borders` | bool | `true` | Keeps frames on floating panes, popups, and scratchpads in borderless modes. |
+| `padding` | integer or integer array | `0` | One value, `[vertical, horizontal]`, or `[top, right, bottom, left]`. Each side is clamped to `0..=8`. |
+| `title_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, or `"arrow"`. |
+| `workbar_badge_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. If `workbar_tab_style` is absent, this also sets tab style. |
+| `workbar_tab_style` | string | `workbar_badge_style` | `"padded"`, `"round"`, or `"arrow"`. |
+| `workbar_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, or `"arrow"`. |
+| `workbar_powerline` | bool | `true` | Joins trailing workbar badges. |
+| `toast_opacity` | float | `0.8` | Finite value in `0.0..=1.0`. Invalid values are ignored. |
+| `background_follows_terminal` | bool | `false` | Uses the host terminal background for the canvas backdrop. |
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `resize_debounce_ms` | `16` | Minimum interval between live PTY resize batches. `16` tracks a typical 60 Hz render loop; `0` forwards every geometry report immediately. Increase it only when reflowing very long scrollback during resize costs too much CPU. |
-| `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. |
-| `hold_on_exit` | `false` | Keep naturally exited panes in the layout. Their title shows the exit code; `respawn-pane` restarts the retained command and cwd in place. |
-| `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus does not change the pane background. |
-| `highlight_focused_border` | `true` | Give the focused pane the theme's active border color. In `separate`/`merged` this accents the frame; in `dividers` it accents only the internal seams that touch the focused pane. |
-| `highlight_focused_titlebar` | `true` | Use focused titlebar colors and emphasis in every titlebar layout. |
-| `show_workbar` | `true` | Show the workbar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
-| `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |
-| `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first. The gap, when enabled, moves with it. |
-| `show_titles` | `true` | Show the selected pane titlebar layout. Toggling this does not change the selected `titlebar` layout. |
-| `titlebar` | `bar` | Pane title layout: `bar`, `border`, `integrated`, or `inset`. See [Titlebar layouts](#titlebar-layouts). |
-| `border_mode` | `separate` | Pane border presentation: `separate` (one frame per pane), `merged` (shared junctions), `none` (no frames), or `dividers` (lines along internal tiled splits only). |
-| `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. Does not affect `dividers`. The Settings row is disabled when the selected mode has no pane frames. |
-| `alert_border` | `pulse` | `off`, `static`, or `pulse` for attention borders. The Alerts action is `cycle-alert-border`; it is disabled in `none` mode. See [`[pane.alert]`](#panealert) for which states mark which panes. |
-| `keep_special_borders` | `true` | Keep double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes. Set `false` to let those panes go frameless. Fullscreen panes follow the selected global mode. |
-| `padding` | `0` | Blank cells between each pane's border and its terminal grid. A single number, `[vertical, horizontal]`, or `[top, right, bottom, left]`. Each side is clamped to `8`. |
-| `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded`, `half`, `round`, or `arrow`. See [End-cap styles](#end-cap-styles). |
-| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges: `padded`, `round`, or `arrow` (`half` is not available). See [End-cap styles](#end-cap-styles). |
-| `workbar_powerline` | `true` | Chain trailing badges into a powerline: gaps collapse and each cap blends into its left neighbor. Independent of `workbar_badge_style`. |
-| `toast_opacity` | `0.8` | Toast background opacity over the pane it covers, in `[0.0, 1.0]`. `1.0` is solid; below that the panel blends with whatever is behind. Raise it if toasts read poorly. |
-| `workbar_tab_style` | `padded` | End-cap style for workspace and sidebar tabs. Same values as `workbar_badge_style`. When unset, `workbar_badge_style` is used. |
-| `workbar_style` | `padded` | End-cap style for the workbar itself, so the panel reads as a pill/point over the backdrop. Same values as `title_style`. |
-| `background_follows_terminal` | `false` | Pin `surface.backdrop` (canvas gaps, unfocused pane frames) to the host terminal's background, overriding the active theme. |
-
-`hold_on_exit` governs panes with no launch command of their own (a plain shell you typed `exit`
-in). A pane launched with a command follows that command's `keep_open` instead, which replaces the
-dead PTY with a live shell rather than retaining a husk.
-
-See [Matching the host terminal's background](themes.md#matching-the-host-terminals-background)
-for `background_follows_terminal`.
-
-### Titlebar layouts
-
-- `bar` — a separate full-width title row above the frame (default).
-- `border` — icon and title in the top frame border.
-- `integrated` — fills the top border row as a compact title strip.
-- `inset` — top border unbroken; title on the first row inside the frame, with no background of its own.
-
-`border` and `integrated` each retain the terminal row that `bar` and `inset` consume.
-
-### Padding
-
-Accepts CSS-style shorthand: one number for all sides, two for vertical/horizontal, or four for
-top/right/bottom/left. Other lengths are ignored with a warning. Each cell costs a column or row of
-usable terminal space, painted with the pane's frame background.
-
-Settings → Terminal padding writes the two-value `[vertical, horizontal]` form and normalizes any
-four-side asymmetric padding.
-
-### End-cap styles
-
-`title_style`, `workbar_badge_style`, `workbar_tab_style`, and `workbar_style` share these values:
-`padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow`
-(powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons.
-With `nerd_icons = false` those two styles render as `padded` without rewriting the stored value.
-
-- `title_style` applies to `titlebar = "bar"` or `"integrated"`. Integrated half-block caps replace
-  the frame corners; round and arrow caps sit immediately inside them. The Settings row is disabled
-  under `border` and `inset`, which draw plain text with no strip to cap.
-- `workbar_badge_style` is the same except `half` is not available. The `rozi` title chip caps on
-  its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off
-  toward the workbar's edge. Existing configs without `workbar_tab_style` also apply this value to
-  workspace and sidebar tabs.
-- `workbar_tab_style` caps only the active and hovered tab (tabs are peers, so they do not chain).
-  When unset, `workbar_badge_style` is used.
-- `workbar_style` caps the workbar itself so the panel reads as a pill/point over the backdrop.
-  Caps replace the bar's outer side padding rather than widening it.
-
-When `workbar_powerline` is `false`, trailing badges keep a 1-cell gap and each cap is drawn over
-the panel bar. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps,
-`▏` for round and padded badges). The `[workbar]` section covers the same chaining for mode chips
-and right-region badges.
-
-### Toast opacity
-
-The default reads as tinted glass: the theme's `surface.panel` blended per cell with the content
-underneath. Contrast then depends on what the toast covers and how much headroom the theme's
-panel/text pair has. Raise the value if your theme's toasts are hard to read. Values outside
-`[0.0, 1.0]` warn and are ignored.
-
-See also [In-app toasts](#in-app-toasts).
+See [Layouts and panes](layouts-and-panes.md), [Sidebar](sidebar.md), and [Themes](themes.md).
 
 ### `[pane.alert]`
 
-`[pane.alert]` assigns badge/theme roles to agent states: `blocked = "error"` and unseen
-`finished = "success"` default on; `working` and `idle` default `off` because they are ambient,
-not normally actionable. Configured-off states fall through to the next applicable state. Closing
-and exited panes never alert.
+Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `success`, `warning`,
+`error`, `neutral`, and `panel`.
 
-`blocked`, `working`, and `idle` are live conditions the focused pane already shows in its own
-content, so they only mark *other* panes. `finished` is different: it is news you have not read, so
-it marks the focused pane too and stays up until you answer it.
-
-An alert clears when you act on the pane itself - focus it, type into it, or paste into it. It does
-*not* clear when you merely arrive somewhere: returning to the terminal window and switching to a
-marked workspace are both requests to *see* what happened, and the mark is what says which pane it
-happened in. A run that ends while you are on another workspace is still marked when you get there.
-
-Blocked and finished alerts are visible state, so they do not create success toasts. The shared
-breathe period is [`[animations] alert_pulse_ms`](#animations).
-
-## `[[rules]]`
-
-Window rules apply to ordinary workspace panes spawned with an explicit command, including control
-`new-pane`, `[keys]` `run`, and other interactive command-spawn paths. Matching is either a
-case-sensitive command substring (`match`) or a regex (`match_regex`); set exactly one. The first
-matching rule wins. Plain shell-pane spawns, profile restoration, scratchpads, and popups do not
-use rules. Rules are command-based only; OSC titles arrive after spawn and are never matched.
-
-```toml
-[[rules]]
-match = "btop"
-float = true
-width = 0.7
-height = 0.7
-position = "cursor"
-
-[[rules]]
-match_regex = "^cargo\\s"
-workspace = 9
-focus = false
-```
-
-| Key | Default | Notes |
+| Key | Type | Default |
 | --- | --- | --- |
-| `match` | — | Non-empty command substring. Exactly one of `match` / `match_regex` is required. |
-| `match_regex` | — | Regex matched against the full command line (`regex-lite`). Invalid patterns warn-and-skip. |
-| `float` | `false` | Spawn as a floating pane. |
-| `width`, `height` | `0.6` when floating | Fractions of the pane canvas, clamped to `0.1..=1.0`. |
-| `position` | `center` | Float-only. Where the pane sits: `center`, `cursor` (centered on the mouse pointer), `top-left`, `top`, `top-right`, `left`, `right`, `bottom-left`, `bottom`, `bottom-right`. Corners flush that corner of the pane to the canvas; sides center it on that edge. Ignored (with a load warning) unless `float = true`. |
-| `workspace` | current | 1-based target workspace (`1..=9`). |
-| `focus` | `true` | Switch to and focus the spawned pane. When false, the target workspace remembers the new pane as its own focus without stealing the current view. |
-| `fullscreen` | `false` | Spawn with fullscreen enabled. |
-
-## `[[agents]]`
-
-Definitions for the coding-agent CLIs rozi detects in panes: which foreground process is a given
-agent, and what its screen looks like in each state. The agents rozi ships are written in this same
-format, so declaring an `id` a built-in already uses replaces that definition outright. Extensions
-contribute definitions too, under `<extension>.<id>`.
-
-```toml
-[[agents]]
-id = "mycoolagent"
-label = "My Cool Agent"
-match = { names = ["mca"], paths = ["@acme/mca"] }
-
-[[agents.states]]
-state = "blocked"
-screen = { all_of = ["esc dismiss"], any_of = ["enter submit"] }
-
-[[agents.states]]
-state = "working"
-scope = "footer"
-screen = { any_of = ["esc to interrupt"] }
-```
-
-| Key | Default | Notes |
-| --- | --- | --- |
-| `id` | required | `[a-z0-9_-]+`. Matching a built-in's id replaces it. |
-| `label` | the id | What the Activity sidebar shows. |
-| `match.names` | — | Executable basenames, matched after stripping directories and `.exe`/`.js`/`.py`-style suffixes. |
-| `match.paths` | — | Lowercased `/`-normalized substrings of an executable path or argv token, for an agent launched through a runtime. |
-| `base` | `true` | Apply rozi's shared blocked/working vocabulary. |
-| `states[].state` | required | `blocked`, `working`, `idle`, or `unknown`. |
-| `states[].scope` | `all` | `footer` reads only the last 8 non-empty lines. `screen` rules only. |
-| `states[].screen` / `.title` | — | The needle group. Exactly one per rule. |
-
-A needle group takes `all_of`, `any_of`, and `none_of`, plus `regex = true` to read them as
-`regex-lite` patterns. At least one of `all_of` / `any_of` is required. Needles match against
-already-lowercased text.
-
-At least one of `match.names` / `match.paths` is required, except on an entry replacing a built-in,
-where omitting `match` inherits the built-in's. Rules are evaluated by precedence — blocked, then
-working, then idle, then unknown — not declaration order, and a screen matching nothing is idle.
-`unknown` means "recognized the agent, learned nothing", which holds the previous state rather than
-ending the run. A bad rule is skipped with a warning; a bad definition is dropped whole.
-
-Detection is server-side, so a reload forwards the change to the session server and re-detects every
-pane. See [Agent definitions](agents.md) for the full reference and
-[Sidebar](sidebar.md) for what the states mean on screen.
-
-## `[[hints]]`
-
-Additive hint patterns for hint mode (`u`). Built-in URL / path / Git-SHA detectors always run
-first; each `[[hints]]` entry appends another regex over the visible snapshot. Invalid patterns
-warn-and-skip on load/reload. There is no disable/override syntax for built-ins.
-
-Built-ins win on overlap: a custom match that intersects an existing URL/path/SHA on the same row
-is dropped (including its `open = true` behavior). Trailing `.,;:!?)]}` characters are trimmed from
-**custom** matches as well as built-ins, so a pattern that deliberately ends in `)` will not keep
-that character in the captured text.
-
-```toml
-[[hints]]
-pattern = '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
-open = false
-
-[[hints]]
-pattern = '\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
-```
-
-| Key | Default | Notes |
-| --- | --- | --- |
-| `pattern` | required | Non-empty `regex-lite` pattern. |
-| `open` | `false` | When true, an uppercase final label character opens the match (same path as URLs). |
+| `blocked` | string | `"error"` |
+| `finished` | string | `"success"` |
+| `working` | string | `"off"` |
+| `idle` | string | `"off"` |
 
 ## `[animations]`
 
-Geometry animation is entirely app-side. The master switch is `enabled`; each animation
-category can also be toggled individually, and the durations are configurable in
-milliseconds.
-
-| Key | Default | Notes |
-| --- | --- | --- |
-| `enabled` | `true` | Master switch. When `false`, all transitions are instant. |
-| `spawn` | `true` | New panes fade in; surrounding panes animate to make room. |
-| `close` | `true` | Closing panes fade and animate out. |
-| `fullscreen` | `true` | Fullscreen enter/exit geometry animation. |
-| `tile_float` | `true` | Tiling ⇄ floating geometry animation. |
-| `axis_change` | `true` | Split-axis flip animation. |
-| `sidebar` | `true` | Sidebar slide. The pane column is resized as the panel arrives, so its near edge is pushed while its far edge stays put. Like every geometry animation, the panes resize as they move. |
-| `focus_chrome` | `true` | Border/titlebar color transitions when focus moves. |
-| `pane_style` | `"scale"` | Shape of the pane open/close animation: `scale` or `slide`. See below. |
-| `geometry_ms` | `220` | Base geometry transition duration; the scratchpad's deploy and the sidebar slide use two-thirds of this. |
-| `close_ms` | `120` | Close transition duration. Ignored by `pane_style = "slide"`, which uses `geometry_ms`. |
-| `focus_chrome_ms` | `160` | Focus-chrome transition duration. |
-| `alert_pulse_ms` | `1600` | Shared breathe period for `alert_border = "pulse"` and inactive workspace-tab breathing. Half-period is floored at 400 ms. |
-| `open_delay_ms` | `36` | Delay before a spawned pane begins fading in. |
-
-Pulse needs both `enabled` and `focus_chrome`. No pulse timer runs until an eligible alert is
-visible.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `enabled` | bool | `true` | Master switch. |
+| `spawn` | bool | `true` | Animates pane creation. |
+| `close` | bool | `true` | Animates pane close. |
+| `fullscreen` | bool | `true` | Animates fullscreen transitions. |
+| `tile_float` | bool | `true` | Animates tile and float transitions. |
+| `axis_change` | bool | `true` | Animates split-axis changes. |
+| `sidebar` | bool | `true` | Animates sidebar movement. |
+| `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
+| `pane_style` | string | `"scale"` | `"scale"` or `"slide"`. |
+| `geometry_ms` | integer | `220` | Base geometry duration in milliseconds. |
+| `close_ms` | integer | `120` | Scale close duration in milliseconds. |
+| `focus_chrome_ms` | integer | `160` | Focus color duration in milliseconds. |
+| `alert_pulse_ms` | integer | `1600` | Alert pulse period. Half-period is floored at 400 ms. |
+| `open_delay_ms` | integer | `36` | Spawn animation delay in milliseconds. |
 
 ### Pane open/close style
 
-`pane_style` picks what an arriving or leaving pane does. Both styles honour `spawn` and `close`, so
-either can still be turned off one direction at a time.
-
-`"scale"` (the default) scales the pane toward the centre of its own rectangle with a fade riding on
-top, and the surrounding tiles glide into their new sizes.
-
-`"slide"` instead slides the pane in from the edge it was split off — right for a side-by-side split,
-below for a stacked one — clipped to its destination tile, so it emerges from behind the seam rather
-than flying across its neighbour. There is no fade: the clip is what reveals it. The pane keeps its
-final size for the whole slide, so the terminal grid never reflows part-way. The **springy** part is
-the tile that gave up the space: it overshoots its new size slightly and settles, rather than gliding.
-A closing pane slides back out toward the same edge it arrived from.
-
-Only tiled panes slide. A floating pane has no tile edge to emerge from and no neighbour to take
-space from, so it keeps the scale whatever `pane_style` says; the same goes for popups. Panes that
-never went through a split — the first pane in a workspace, a restored layout, a session you attach
-to — slide up from the bottom, matching the scratchpad.
-
-**The spring scales with the pane, the timing does not.** The overshoot is a fraction of the distance
-the tile travels, so a fixed amplitude throws a big tile proportionally further — a pane halving from
-240 columns would spring 24 of them. The amplitude is sized from the tile instead, so the nudge stays
-about three cells whether the tile is 30 columns or 240. Arrival runs for `geometry_ms` at every size:
-stretching it to match the distance covered makes a large pane crawl, which reads worse than the extra
-speed ever did.
-
-A closing pane leaves toward the same edge it arrived from, and the tile taking its place expands in
-that direction by that distance — so both run for `geometry_ms` and their shared edge is a single
-moving boundary, which is what makes the pane read as *pushed* out rather than dragged behind. That is
-also why `close_ms` does not apply to a slide: it is tuned for the scale, where the close is a short
-pop the fade rides on, and a slide has a whole tile to cross in step with its replacement.
-
-> **Size changes are snapped, not animated.** During an active move/resize or a viewport
-> change, transitions become instant for the affected pane. This is deliberate: animating a
-> pane's *size* would spam `pty.resize` / SIGWINCH and reflow the shell on every frame.
-> Position and opacity animate; size lands in one step.
+See [Layouts and panes](layouts-and-panes.md).
 
 ## `[theme]`
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `name` | `lipan` | The active theme: a built-in preset id, `system` (host-derived colors), or the stem of a file in `~/.config/rozi/themes/`. A custom file shadows a built-in of the same name. |
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `name` | string | `"lipan"` | Built-in theme ID, `"system"`, or a file stem from the themes directory. Custom themes reload while active. |
 
-Custom themes are **hot-reloaded** on change while active. If the name matches nothing, or a
-custom file fails to load, `rozi` falls back to `lipan` and reports a warning. See
-[Themes](themes.md) for the preset list and how terminal ANSI colors are derived from the
-active theme.
+See [Themes](themes.md).
 
 ## `[profile]`
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `default` | _none_ | Profile seeding every session opened without a recipe. Explicit named targets, `--profile`, and `startup = "last"` take precedence. Also writable via **Ctrl+f** in **Profiles**. |
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `default` | string | none | Default profile used when no explicit recipe has higher precedence. |
 
-It seeds the launch, each new temporary session, and each named session created without a recipe.
-With `[session] startup = "profile"` it also names the session a bare launch opens. Clearing the
-default while startup is `"profile"` resets startup to `"picker"` so that mode is not left pointing
-at nothing.
-
-See [Named profiles](profiles.md) and [Project profiles & pane identity](project-profiles.md) for the profile format.
+See [Profiles](profiles.md).
 
 ## `[clipboard]`
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `enable_osc52` | `true` | Allow programs running in a pane to set the system clipboard via the OSC52 escape sequence. Requires restart after changing. |
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `enable_osc52` | bool | `true` | Allows pane programs to set the system clipboard with OSC 52. Requires a client restart. |
 
-See [Terminal features](terminal.md) for clipboard and selection behavior.
+See [Terminal features](terminal.md#select-copy-and-paste).
 
 ## `[notifications]`
 
-Desktop notifications are disabled by default. When enabled, rozi sends natural pane-exit
-notifications (not user-initiated pane closes) and selected pane-status notifications via
-`notify-send` if it is available. Status notifications run only on the current session controller
-and are suppressed while that pane is attended, avoiding duplicate or distracting notices. A pane is
-attended only when both its host window and the pane itself are focused.
-Failures are ignored and never block the UI.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Master desktop notification switch. |
+| `pane_exit` | bool | `false` | Notifies on clean natural pane exits. |
+| `pane_exit_error` | bool | `true` | Notifies on nonzero natural pane exits. |
+| `pane_blocked` | bool | `true` | Notifies when an unattended pane becomes blocked. |
+| `pane_done` | bool | `false` | Notifies on an unseen working-to-finished transition. |
+| `bell` | bool | `true` | Marks an unattended pane urgent on BEL. Independent of `enabled`. |
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `enabled` | `false` | Master switch for desktop notifications. |
-| `pane_exit` | `false` | Notify when a pane exits naturally with code `0`. Off by default because this edge cannot be attendance-gated — the pane is gone. |
-| `pane_exit_error` | `true` | Notify when a naturally exiting pane returns a non-zero code. `pane_exit` now covers clean exits only. |
-| `pane_blocked` | `true` | Notify when an unattended pane effectively becomes blocked, including detected-only agents. |
-| `pane_done` | `false` | Notify on the unseen working→quiescent finished edge. Reported-only transitions without a detected agent do not arm this existing edge. |
-| `bell` | `true` | Mark an unattended pane urgent on BEL; returning to its focused host window clears urgency. Independent of desktop notifications. |
+Desktop notifications use the platform notification implementation and are best effort.
 
 ## `[sounds]`
 
-Built-in WAV cues are extracted into rozi's cache and played best-effort. `player`, when set,
- receives the cue path as its final argument. Settings persists its sound rows; do-not-disturb is a
-separate in-memory command for this client lifetime and mutes desktop and sound cues only. BEL and pane-status
-cues use the attended rule; non-zero exit cues play regardless of pane attendance.
-
-| Key | Default | Notes |
-| --- | --- | --- |
-| `enabled` | `false` | Master sound switch. |
-| `bell`, `blocked`, `done`, `error` | `true` | Per-cue switches. |
-| `throttle_ms` | `2000` | Per-cue repeat suppression; clamped to 100–60000. |
-| `bell_file`, `blocked_file`, `done_file`, `error_file` | empty | Optional WAV override. |
-| `player` | empty | Optional executable override; the file path is appended as its final argument. |
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Master sound switch. |
+| `bell` | bool | `true` | Enables the bell cue. |
+| `blocked` | bool | `true` | Enables the blocked cue. |
+| `done` | bool | `true` | Enables the done cue. |
+| `error` | bool | `true` | Enables the error cue. |
+| `throttle_ms` | integer | `2000` | Clamped to `100..=60000` with a warning. |
+| `bell_file` | path string | empty | WAV override. `~` expands. |
+| `blocked_file` | path string | empty | WAV override. `~` expands. |
+| `done_file` | path string | empty | WAV override. `~` expands. |
+| `error_file` | path string | empty | WAV override. `~` expands. |
+| `player` | string | empty | Player executable. Rozi appends the cue path as the final argument. |
 
 ## `[navigation]`
 
-Controls the vim-aware `smart-focus-left` / `-down` / `-up` / `-right` actions, which power
-seamless `Ctrl-h/j/k/l` navigation across both rozi panes and editor splits (see
-[Seamless vim / neovim navigation](keybindings.md#seamless-vim--neovim-navigation) for the full
-wiring). These actions are unbound by default.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `editors` | array of strings | vim family, Helix, Kakoune, Emacs, and fzf | Replaces the process-name list used by `smart-focus-*`. Empty names are removed. Matching is case-insensitive. |
 
-When a smart-focus action runs, rozi checks the focused pane's **foreground process name**. If
-it matches one of the `editors`, the matching `Ctrl-h/j/k/l` is forwarded to that program so it can
-move its own split; otherwise rozi moves pane focus in that direction.
-
-| Key | Default | Notes |
-| --- | --- | --- |
-| `editors` | vim family + `hx`/`helix`/`kak`/`emacs`/`emacsclient`/`fzf` | Foreground process names that should receive `Ctrl-h/j/k/l` themselves. Setting this **replaces** the default list. Names match the executable basename (e.g. `nvim`). |
-
-Foreground detection prefers what the shell itself reports (see
-[`[shell_integration]`](#shell_integration)), and falls back to `/proc` on Linux and `libproc` on
-macOS. Windows has no fallback — process inspection is deliberately unsupported — so a Windows pane
-whose shell is not reporting metadata is treated as running an unknown program, and smart-focus
-simply moves pane focus.
-
-## In-app toasts
-
-Distinct from the desktop notifications above: these are the transient messages rozi draws
-inside its own window. There is no verbosity setting, because it aims not to need one. A toast
-appears only when something happened that you cannot already see:
-
-- **State you can read off the screen is never toasted.** Attaching, switching, renaming, taking or
-  losing layout control, and locking input all show in the workbar badges (`󰛤 name`,
-  `CTRL`/`FOLLOW`/`READ ONLY`, `SYNC`). Deleting a profile or killing a session from a list removes
-  the row you acted on. Applying a profile rebuilds the panes.
-- **Lossless normalization is silent.** If rozi can safely make a config value usable without
-  dropping data, the resulting visible state is the feedback; it does not produce a warning toast.
-- **Off-screen results are toasted.** Where a profile was written, what log file a pane is recording
-  to, what a copy put on the clipboard, what a detach left running, and every failure.
-- **Rejections say why.** An action that cannot run (not attached, read-only, nothing to copy, no
-  hints in this pane) reports its reason rather than doing nothing.
-- **Repeats never stack.** An identical message that is still on screen has its timer restarted in
-  place: it does not blink, move, or pile up a column of copies. Holding a key against a read-only
-  pane keeps one toast alive instead of drawing a new one per repeat.
-- **Progress is superseded, not buried.** `Reconnecting to X…` is replaced by its outcome in the
-  same slot, and cycling the layout replaces the mode name rather than stacking one per press.
-
-Validation errors from a prompt render *inside* the prompt, under the field they are about, and
-clear as soon as you edit it.
-
-Toasts render as tinted glass: the theme's panel color blended per cell with the pane content they
-cover. [`[pane] toast_opacity`](#toast-opacity) controls how far, up to `1.0` for a solid panel.
-Raise it if your theme's toasts are hard to read.
+See [Commands without default keys](keybindings.md#commands-without-default-keys).
 
 ## `[confirm]`
 
-`[confirm]` governs **one** confirmation layer: the destructive *shortcuts* - the actions that
-happen the instant you press a key, hold a modifier chord, or send a control-socket `run-action`.
-Each key below toggles whether that shortcut asks first. An armed confirmation shows a red-bordered
-toast and expires with it, after the shared
-[confirmation window](sidebar.md#confirmation-window) of 3 seconds; the next press within that
-window fires, otherwise it arms again. Running the same command from the **command palette** always
-skips the confirmation - picking it from a searchable list is already a deliberate choice.
+These switches apply to shortcuts and `run-action`. Commands chosen from the command palette use
+their own deliberate selection path.
 
-| Key | Default | Confirms before… |
+| Key | Type | Default |
 | --- | --- | --- |
-| `close_pane` | `false` | Closing a pane whose process is still running. |
-| `kill_workspace` | `true` | Closing every pane on the active workspace. |
-| `kill_session` | `true` | Shutting down the attached named session. |
-| `quit_ephemeral` | `true` | Closing a temporary session from the leave prompt: `Enter` on an empty name arms, a second `Enter` closes it. With this off, the first press closes. Named sessions are never closed by leaving. |
-| `new_temporary_session` | `true` | Discarding the current ephemeral session to start a fresh one (its panes are killed). Named sessions are detached and left running, so switching from one does not require confirmation. |
-| `load_profile` | `true` | Replacing a live disposable session by opening a profile-backed named target. |
-
-**Not covered by `[confirm]`:** the session picker, the session-naming prompt, and the sidebar carry
-their own built-in confirmations that are **always on** and cannot be disabled here, because they
-read off the affected UI element rather than a toast (a second `Enter`/`Ctrl+K`/click after a visible
-cue). These are: killing a session in the picker (`Ctrl+K` twice), attaching away from an ephemeral
-session (`Enter` turns the target row amber), creating a named session from an ephemeral one (`Enter`
-turns the name prompt's border red), and the sidebar's `✕` and host disconnect rows (see
-[sidebar.md](sidebar.md#closing-from-a-row)). They run on the same 3-second window.
-See [sessions.md](sessions.md#switching-sessions-in-app-the-picker).
+| `close_pane` | bool | `false` |
+| `kill_workspace` | bool | `true` |
+| `kill_session` | bool | `true` |
+| `quit_ephemeral` | bool | `true` |
+| `new_temporary_session` | bool | `true` |
+| `load_profile` | bool | `true` |
 
 ## `[session]`
 
-Optional **local** session auto-save: persist the live layout when a local `rozi` client exits
-and restore it on the next local launch. Like profiles, this restores *layout and launch intent*,
-not live PTY state.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `autosave` | bool | `false` | Saves and restores local layout intent, not live PTYs. |
+| `resurrect` | bool | `true` | Saves named-session layout, command, scrollback, and restart intent. |
+| `startup` | string | `"picker"` | `"picker"`, `"ephemeral"`, `"last"`, or `"profile"`. |
+| `path` | path string | State directory `session.toml` | Autosave file. `~` expands. |
+| `allow_takeover` | bool | `true` | Lets a writable follower take layout control immediately. |
 
-This is separate from named sessions (`rozi <name>`), which run PTYs in a
-background session server and can be detached/reattached with live terminal state intact.
-
-| Key | Default | Notes |
-| --- | --- | --- |
-| `autosave` | `false` | Write the layout on quit and restore it on startup. Also **Settings → Sessions → Layout autosave**. |
-| `resurrect` | `true` | Snapshot named sessions so layout, commands, and scrollback can be restored after the server exits. Also **Settings → Sessions → Resurrect named sessions**. |
-| `startup` | `"picker"` | What a bare launch does: `"picker"`, `"ephemeral"`, `"last"`, or `"profile"`. Also **Settings → Sessions → Startup mode**. |
-| `path` | `$XDG_STATE_HOME/rozi/session.toml` | Session file location (falls back to `~/.local/state/...`). |
-| `allow_takeover` | `true` | Let a writable follower take the layout-control lease immediately with `request-control`. Set `false` to wait for the controller to grant it. Read-only and parked clients can never take control. |
-
-Each mode has exactly one spelling; an unknown value warns and leaves `"picker"` in place.
-**Settings → Sessions → Startup mode** cycles the four in this order but offers `"profile"` only
-while a default profile is set. `resurrect` applies to servers started after the change; a running
-server already read this value.
-
-An explicit target takes precedence over startup configuration. `startup = "last"` and `startup =
-"profile"` choose a *named session*, so they take precedence over `[profile] default` and autosave;
-those two remain ephemeral-layout seeders. `--remote` bypasses startup policy entirely — the remote
-host owns its sessions.
-
-`startup = "profile"` makes a bare launch behave exactly like `rozi <the default profile's name>`:
-it attaches to that session when it is running, and otherwise creates it from
-`profiles/<name>.toml` (or its resurrection snapshot). With no `[profile] default` set, a name that
-is not a usable session name, or nothing to open under that name, it warns and falls back to the
-`picker` path rather than attaching something else.
-
-With `startup = "picker"` (the default, also reachable with `--pick`), the picker is always shown at
-launch, including when its list is empty. Opening the picker creates no session: nothing is attached
-until you choose. `Enter` on an empty list starts an ephemeral shell, while `Ctrl+N` creates a named
-session. Resurrection snapshots appear as restorable rows (`Enter` restores, `Ctrl+K` forgets). Dismissing the picker with `Esc` leaves
-the client in the launcher with no session, where `Enter` (or any `spawn` binding) starts a shell and
-the picker can be reopened at any time. See [Sessions](sessions.md).
-
-When several clients attach to one session they share a live, server-authoritative layout with a
-single controlling client. By default `request-control` (`g`) transfers the lease immediately: every
-client that can attach is already the same OS account, and the usual second client is the same
-person on another machine, for whom waiting to be granted the lease means walking back to the first
-keyboard. Taking control is symmetric — the other client takes it back the same way — and destroys
-nothing; it moves the lease and the canonical PTY size.
-
-Set `allow_takeover = false` for a session shared with another *person*, where a silent takeover
-would reflow their panes mid-thought; `request-control` then waits to be granted or declined. For a
-person who should only watch, `rozi attach <name> --read-only` is stronger than either setting:
-a read-only client can never take or be granted control. The current controller can change the
-running session's policy with `toggle-control-takeover`; that runtime change does not rewrite the
-config file. See [Shared live layouts](sessions.md#shared-live-layouts).
+See [Sessions](sessions.md).
 
 ## `[remote]`
 
-SSH attach for session servers on another host (`rozi --remote <alias-or-url>`). The client and
-config stay local; PTYs run on the remote. See [Remote SSH sessions](remote.md).
-
-| Key | Default | Notes |
-| --- | --- | --- |
-| `default_host` | _none_ | Host used when `--remote` is passed without an argument; also a fallback `[remote.hosts.*]` profile for identity/`ssh_args`/`binary_path`. |
-| `connection_timeout_secs` | `15` | Passed to ssh as `ConnectTimeout`. |
-| `server_alive_interval_secs` | `15` | ssh `ServerAliveInterval` for the proxy connection. |
-| `server_alive_count_max` | `3` | ssh `ServerAliveCountMax`. |
-| `install` | `"prompt"` | `"prompt"`, `"always"`, or `"never"`. Interactive TTYs may copy a compatible binary to `~/.local/bin/rozi` on the remote when missing; non-interactive runs never mutate the remote. |
-| `batch_mode` | `true` | Pass ssh `BatchMode=yes`, refusing every interactive prompt. Set `false` to allow password/passphrase prompts — see the caveat in [Remote SSH sessions](remote.md#authentication). |
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `default_host` | string | none | Host used by `--remote` without a value. |
+| `connection_timeout_secs` | integer | `15` | SSH `ConnectTimeout`. |
+| `server_alive_interval_secs` | integer | `15` | Minimum `1`. |
+| `server_alive_count_max` | integer | `3` | Minimum `1`. |
+| `install` | string | `"prompt"` | `"prompt"`, `"always"`, or `"never"`. Noninteractive runs never install. |
+| `batch_mode` | bool | `true` | Sets SSH `BatchMode=yes`. |
 
 ### `[remote.hosts.<alias>]`
 
-Optional per-alias overrides. The alias matches a bare `--remote <alias>` argument.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `host` | string | Alias | SSH hostname. |
+| `user` | string | SSH default | Login user. |
+| `port` | integer | SSH default | `0` is ignored. |
+| `identity_file` | path string | none | SSH identity path. |
+| `ssh_args` | array of strings | `[]` | Extra SSH argv. |
+| `binary_path` | string | none | Absolute remote Rozi path. Skips probing and installation. |
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `host` | alias name | SSH hostname when different from the alias. |
-| `user` | ssh_config / current user | Remote login user. |
-| `port` | ssh default | Remote SSH port. |
-| `identity_file` | _none_ | Path to an identity file (`~` expands). |
-| `ssh_args` | `[]` | Extra arguments inserted into the ssh command line. |
-| `binary_path` | _none_ | Absolute path to rozi on the remote; skips probe/install. |
-
-```toml
-[remote]
-install = "prompt"
-connection_timeout_secs = 15
-# batch_mode = false   # allow ssh to prompt for a password or key passphrase
-
-[remote.hosts.workbox]
-user = "raz"
-port = 22
-identity_file = "~/.ssh/id_ed25519"
-# binary_path = "/usr/local/bin/rozi"
-ssh_args = ["-o", "ProxyJump=bastion"]
-```
+See [Remote sessions](remote.md).
 
 ## `[scratchpad]`
 
-The dropdown scratch workspace (toggle: `` ` ``) is a private, transient terminal owned by the
-Rozi client. It follows that client across sessions, is never shared with collaborators or saved in
-profiles, and is discarded when the client exits. Its panes and PTYs stay alive while hidden and
-through session switches.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `command` | string | Normal shell | Command for the first scratch pane. |
+| `cwd` | path string | Focused local pane cwd, then configured `cwd` | `~` expands. Captured when the scratchpad is first created. |
+| `height` | float | `0.4` | Clamped to `0.1..=0.9` with a warning. |
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `command` | the normal shell | Program for the first pane of an empty scratch workspace (e.g. `btop`). |
-| `cwd` | the focused local pane's cwd | Working directory for the initial pane. An explicit value wins; otherwise the cwd is captured only when the scratch workspace is first created. |
-| `height` | `0.4` | Fraction of the viewport height it opens at; clamped to `0.1`–`0.9`. |
-
-Drag the scratchpad's top edge (its title/top-border row) up or down to resize it while it is
-open; a pane against that edge also resizes it by right-drag or in resize mode, since the edge is
-the workspace border and has no split to move. See [Keybindings](keybindings.md#scratchpad). The
-adjusted height overrides `height` for the rest of the client run; it resets to `height` on restart.
-
-Additional panes use ordinary pane allocation and layout actions. The scratch workspace stays
-outside attachments, profiles, resurrection data, and `SharedLayout`.
+See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 
 ## `[sidebar]`
 
-The optional sidebar is a resizable local navigation surface docked beside the app content.
-See [Sidebar](sidebar.md) for how the built-in tabs behave, interaction, and shared session sizing.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `visible` | bool | `false` | Startup visibility only. |
+| `width` | integer | `32` | Clamped to `16..=80`. |
+| `position` | string | `"left"` | `"left"` or `"right"`. |
+| `tabs` | array | `["activity", "panes", "sessions", "files", "git"]` | Replaces the tab catalog. IDs must be unique. |
+| `panels` | array of one or two string arrays | `[["activity", "panes", "sessions"], ["files", "git"]]` | Orders tab IDs. Unknown and duplicate IDs are skipped. Omitted configured tabs are appended to the first panel. |
+| `split` | bool | Inferred from panel count, `true` by default | Shows two saved panel groups. |
+| `split_ratio` | float | `0.4` | Finite value clamped to `0.15..=0.85`. |
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `visible` | `false` | Startup visibility only. `toggle-sidebar` is client-local: it is never written back here, and a reload never reapplies this key to a running client. |
-| `width` | `32` | Requested width in columns (`16..=80`). On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
-| `position` | `left` | Dock side: `left` or `right`. |
-| `tabs` | `["activity", "panes", "sessions", "files", "git"]` | Catalog of available tab definitions. Built-in names are `activity`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
-| `panels` | `[["activity", "panes", "sessions"], ["files", "git"]]` | Durable placement: one or two ordered arrays of IDs from `tabs`. Missing configured tabs are appended to the first panel so they cannot become inaccessible. |
-| `split` | inferred from `panels` (`true` by default) | Render two saved panel groups vertically. Turning it off shows all tabs in one bar without changing `panels`; turning it back on restores the saved assignment. |
-| `split_ratio` | `0.4` | Fraction of split-sidebar height assigned to the top panel, clamped to `0.15..=0.85`. Dragging the panel divider updates and persists it. |
+A table in `tabs` can configure `files` or `git`, or define a custom launcher or command tab.
 
-Naming `tabs` replaces the built-in catalog and its two-panel placement together, so those configs
-get one panel unless they also name `panels`. When `split` is omitted, it is true for two panel
-arrays and false for one. Reordering tabs updates only `panels`; custom tab definitions in `tabs`
-are never rewritten. Drag, persist, and live-reload behavior is in [Sidebar](sidebar.md#configure).
+| Tab key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `name` | string | required | Unique tab ID. `activity`, `panes`, and `sessions` are reserved. |
+| `label` | string | required for custom tabs | Built-in tree labels are fixed. |
+| `entries` | array of tables | none | Launcher rows. Exactly one of `entries` or `command` is required for a custom tab. |
+| `command` | string | none | Command-tab producer. |
+| `interval` | integer seconds | `30` | Minimum `5`. Command tabs only. |
+| `on_click` | action table | none, except tree tabs type `{path}` | Action for a command or tree row. |
+| `root` | string | `"cwd"` for files, `"repo"` for git | `"cwd"` or `"repo"`. Tree tabs only. |
+| `show_hidden` | bool | `true` | Tree tabs only. |
+| `icons` | bool | `false` | Tree tabs only. Also requires `nerd_icons`. |
+| `explorer` | bool | `false` | Tree tabs only. |
+| `diff_stats` | bool | `false` for files, `true` for git | Tree tabs only. |
+| `max_entries` | integer | `2000` | Clamped to `1..=10000`. Tree tabs only. |
 
-```toml
-[sidebar]
-visible = true
-tabs = ["activity", "panes", "sessions", "files"]
-panels = [["activity", "files"], ["panes", "sessions"]]
-split = true
-split_ratio = 0.6
-```
+Launcher entries use `label`, exactly one of `run`, `send`, or `popup`, and optional `keep_open`
+which defaults to `true`. An `on_click` action accepts `label`, exactly one of `run`, `send`,
+`popup`, or `exec`, and optional `keep_open`. `label` only affects command presentation.
 
-See [`examples/sidebar.toml`](../examples/sidebar.toml) for a larger two-panel setup combining all
-built-ins with launcher and command-backed tabs.
+### Opening a diff viewer or editor from a row
 
-### File tree tabs
+Tree `send` actions may substitute `{path}` because the result is literal PTY input. Never append a
+newline unless you intend to execute the selected text.
 
-`files` and `git` are two projections of one tree; option defaults differ by view (`root`,
-`diff_stats`). How they re-root, when they load, and git refresh are in
-[Sidebar](sidebar.md#built-in-tabs).
-
-| Key | Default | Description |
-| --- | --- | --- |
-| `root` | `"cwd"` for `files`, `"repo"` for `git` | `cwd` roots at the focused pane's directory; `repo` roots at the git repository containing it, so changes elsewhere stay visible from a subdirectory. Falls back to `cwd` outside a repository. |
-| `show_hidden` | `true` | Show dot-prefixed entries. Set to `false` to hide them. |
-| `icons` | `false` | Show file-kind icons. Off by default because the glyphs assume a Nerd Font. Also requires `nerd_icons = true`; with that off, this flag has no effect. |
-| `explorer` | `false` | Show a fuzzy-find input above the tree. Respects `.gitignore`/`.ignore`. |
-| `diff_stats` | `false` for `files`, `true` for `git` | Show `+N -M` beside change markers. |
-| `max_entries` | `2000` | Cap entries read per directory (1-10000). |
-| `on_click` | `{ send = "{path}" }` | What activating a row does; `{path}` is the activated path. |
+Tree `run`, `popup`, and `exec` actions receive the selected path in `ROZI_FILE`. `run` and `popup`
+reject `{path}`, and `exec` does not expand it. Quote the environment expansion for the configured
+command shell:
 
 ```toml
 [sidebar]
-visible = true
-tabs = ["activity", "files", "git"]
-```
-
-Both take the same table form as custom tabs when you want options:
-
-```toml
 tabs = [
   "activity",
-  {
-    name = "files",
-    label = "",
-    explorer = true,
-    on_click = { send = "nvim {path}\n" },
-  },
-  "git",
+  { name = "files", label = "", on_click = { run = '''"${EDITOR:-vi}" "$ROZI_FILE"''' } },
+  { name = "git", label = "", on_click = { popup = '''git diff -- "$ROZI_FILE"''', keep_open = false } },
 ]
 ```
 
-`label` is ignored for a built-in, which keeps its own name. The default `on_click` types the path
-at the prompt without a newline, so nothing executes until you press Enter.
-
-#### Opening a diff viewer or editor from a row
-
-A `run` action opens the command in a new pane and `popup` opens it in a centered floating pane, so
-a row click can launch a full-screen TUI. The activated path is **not** substituted into those
-commands — a repository can contain a file named `; rm -rf ~`, and a command line assembled from a
-filename would execute it. Instead the path arrives as the `ROZI_FILE` environment variable, so
-the command references it as `"$ROZI_FILE"`: a quoted expansion is one word, never re-parsed for
-command syntax.
-
-```toml
-# lazygit scoped to the clicked file
-{ name = "git", label = "", on_click = { run = "lazygit -f \"$ROZI_FILE\"" } }
-
-# the file's diff in a floating popup, closing when the pager quits
-{ name = "git", label = "", on_click = { popup = "git diff -- \"$ROZI_FILE\"", keep_open = false } }
-
-# open the clicked file in an editor pane
-{ name = "files", label = "", on_click = { run = "$EDITOR \"$ROZI_FILE\"" } }
-```
-
-Quote the expansion (`"$ROZI_FILE"`, or `"%ROZI_FILE%"` under `cmd.exe`) so paths containing
-spaces arrive as one argument. `send` is unaffected: it starts no process, and its `{path}`
-substitution is plain typed text — see [the sidebar security notes](sidebar.md#security) before
-adding a trailing newline to a `send` action.
-
-Each custom table needs a unique non-empty `name`, a non-empty display `label`, and exactly one of
-`entries` or `command`. Launcher entries require exactly one of `run`, `send`, or `popup` and execute
-with the same behavior as user-defined `[keys]` commands, including `keep_open` (default `true`, so a
-launcher entry's output survives the command exiting). Command tabs may provide an `on_click`
-action with the same shape. They poll only while active and visible, run immediately on activation,
-and have a five-second minimum interval. Output, runtime, rows, and row lengths are bounded; see the
-[Sidebar security policy](sidebar.md#security).
-
-```toml
-[sidebar]
-visible = true
-width = 32
-position = "right"
-tabs = [
-  "panes",
-  { name = "deploy", label = "Deploy", entries = [
-    { label = "Build", run = "cargo build" },
-    { label = "Test", send = "cargo test\n" },
-    { label = "Logs", popup = "journalctl -f", keep_open = false },
-  ] },
-  {
-    name = "todos",
-    label = "Todos",
-    command = "task list --plain",
-    interval = 30,
-    on_click = { send = "task view {line}\n" },
-  },
-]
-```
-
-Unknown built-ins, duplicate/reserved/empty names, tables with both or neither content form, and
-invalid launcher entries produce warnings and skip only the invalid item. Unknown table fields are
-strict parse errors. `{line}` is replaced only for command-tab `on_click.send` actions and is sent
-as literal PTY text. It is rejected in sidebar `run` and `popup` actions; those commands are never
-constructed from command output.
+No selected path is inserted into a command string. See [Sidebar files](sidebar.md#files).
 
 ## `[workbar]`
 
-Customize the workbar. By default the `rozi` badge and workspace tabs are on the left, while the
-remote `location` and named `session` badges are on the right. Every configured segment renders as
-a colored badge; each kind has a curated default color that you can override by theme role (see
-below). The `PREFIX`/`RESIZE`/`COPY`/`HINT`/`SIDEBAR`/`SYNC`/`DND` mode chips render only while `show_workbar` is
-enabled, and sit to the left of the right-region segments so a `session` badge stays pinned to the
-trailing edge. `SYNC` marks a workspace where [pane synchronization](layouts-and-panes.md) is on, so
-the state that multiplies every keystroke across panes is always visible rather than announced once.
-With `workbar_powerline` on (the default) the mode chips and right-region badges lose the gap
-between them and interlock into a powerline: each chip's cap blends into its left neighbor's color.
-`workbar_badge_style` controls the pill shape (rounded/pointed vs flush) independently. Workspace
-and sidebar tab caps are controlled separately with `workbar_tab_style`.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `left` | segment array | `["title", "workspaces"]` | Ordered left region. |
+| `right` | segment array | `["location", "session"]` | Ordered right region. |
+| `clock_format` | string | `"%H:%M"` | Valid strftime format. Invalid formats are ignored. |
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `left` | `["title", "workspaces"]` | Ordered left-region segments. |
-| `right` | `["location", "session"]` | Ordered right-region segments. |
-| `clock_format` | `"%H:%M"` | strftime format, used by a `clock` segment. |
+A segment is a string or `{ segment = "...", color = "..." }`. Colors are `accent`, `info`,
+`success`, `warning`, `error`, `neutral`, or `panel`.
 
-`[workbar.alert]` controls workspace-tab alerts independently of `[pane.alert]`. A marked tab is
-tinted toward its state's color - error for a bell or blocked agent, success for an unseen finished
-one, info while working - and its label stays plain identity text, so a workspace never changes
-width when an agent blocks and the tabs beside it never shift. The flags enable bell, blocked, and
-finished only, and say *which* states mark a tab.
+Segment names are `title`, `workspaces`, `location`, `session`, `clock`, `layout`, `activity`,
+`text:<literal>`, `command:<shell command>`, and `command:<interval seconds>:<shell command>`.
+Text segments support `{host}`, `{workspace}`, `{layout}`, and `{session}`. Command segments refresh
+every 60 seconds by default, use a minimum interval of 1 second, time out after 5 seconds, and
+capture at most 64 KiB per output stream.
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `mode` | `pulse` | How a marked tab is drawn: `off`, `static` (color only), or `pulse` (also breathes). Mirrors `pane.alert_border`. Settings: **Alerts → Workspace tab effect**. |
-| `paint` | `background` | What a marked tab colors. `background` fills it with the same end caps as the active tab; `text` colors the label only. Settings: **Alerts → Workspace tab highlight**. |
+### `[workbar.alert]`
 
-The Settings actions are `cycle-workbar-alert` and `cycle-workbar-alert-paint`. The effect row is
-disabled while the workbar is hidden.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `bell` | bool | `true` | Marks workspaces with a bell. |
+| `blocked` | bool | `true` | Marks blocked workspaces. |
+| `finished` | bool | `true` | Marks unseen finished workspaces. |
+| `working` | bool | `false` | Marks working workspaces. |
+| `idle` | bool | `false` | Marks idle workspaces. |
+| `mode` | string | `"pulse"` | `"off"`, `"static"`, or `"pulse"`. |
+| `paint` | string | `"background"` | `"background"` or `"text"`. |
 
-Only **inactive** marked tabs are colored or breathed — the active workspace keeps its solid tab pill,
-and its pane border already carries the alert. Several marked tabs share one phase, so they breathe in
-unison rather than to separate rhythms, while still using their own state's color. Breathing uses the
-shared `alert_pulse_ms` period. Markers stay visible when pane borders or colors are off, including
-`alert_border = "off"` and `border_mode = "none"`.
+## `[logging]`
 
-Segment kinds: `title` (the badge), `workspaces` (the tabs), `location` (the active remote host, or
-the number of retained remote connections while local), `session` (the active profile/session
-name), `clock`, `layout` (active workspace layout name), `activity` (panes with unseen output, shown as
-`●N` for the current session and `+M` for retained background sessions when they have unread),
-`text:<literal>` with `{host}`, `{workspace}`, `{layout}`, `{session}`
-placeholders, and `command:<shell command>` / `command:<interval_secs>:<shell command>` to run a
-shell command on a timer and show the first line of its stdout. Unknown segment names emit a warning
-and are skipped. A `clock` segment enables a once-a-second repaint; without one the workbar never
-wakes an idle app.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `dir` | path string | State directory `logs` | `~` expands. |
+| `max_bytes` | integer | `67108864` | Per-file limit. `0` allows unbounded growth. |
 
-Each segment can be written either as a bare name (`"clock"`) or as a table that overrides its
-badge color by theme role: `{ segment = "clock", color = "info" }`. Colors are named theme roles,
-not literal values, so a badge tracks the active theme. Valid roles: `accent`, `info`, `success`,
-`warning`, `error`, `neutral`, `panel` (`panel` blends into the bar, i.e. no visible pill). An
-unknown role name warns and falls back to the segment's curated default. Curated defaults:
-`title`/`session` = `accent`, `location`/`clock` = `info`, `activity` = `warning`, and `layout`/`text`/
-`command` = `neutral`.
+See [Pane logging](terminal.md#pane-logging).
 
-The `location` badge uses the same shape and powerline path as `session`: `󰒍 workbox` for an active
-remote attachment and `󰒍 2` for two retained remote attachments while the current session is local.
-Connecting/reconnecting uses the warning role; an offline active remote uses the error role. The
-`location` and `session` badges are clickable and open the Sessions picker.
+## `[[rules]]`
 
-A `command` segment runs through the current resolved `command_shell` on a scheduled worker (never
-the UI thread) and refreshes every `interval_secs` (default `60`, minimum `1`). Each run has a
-5-second timeout and captures at most 64 KiB from each output stream. The first stdout line is
-trimmed for display; a timeout, spawn error, non-zero exit, or missing output renders as blank
-without a toast. The same command string shares one scheduled run even if it appears in multiple
-segments. Runs reschedule themselves only while the command remains configured, so config reloads
-apply command, interval, and `command_shell` changes without leaving persistent polling threads.
+Rules apply in declaration order to new ordinary panes with an explicit command. The first match
+wins.
 
-```toml
-[workbar]
-right = [
-    { segment = "command:30:uptime -p", color = "success" },
-    "session",
-]
-```
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `match` | string | none | Case-sensitive substring. Set exactly one matcher. |
+| `match_regex` | string | none | `regex-lite` pattern. Set exactly one matcher. |
+| `float` | bool | `false` | Opens a floating pane. |
+| `width` | float | `0.6` when floating | Clamped to `0.1..=1.0`. |
+| `height` | float | `0.6` when floating | Clamped to `0.1..=1.0`. |
+| `position` | string | `"center"` | `center`, `cursor`, `top-left`, `top`, `top-right`, `left`, `right`, `bottom-left`, `bottom`, or `bottom-right`. Ignored unless floating. |
+| `workspace` | integer | Current workspace | `1..=9`. Invalid values are ignored. |
+| `focus` | bool | `true` | Focuses the pane and its workspace. |
+| `fullscreen` | bool | `false` | Starts fullscreen. |
 
-Workspaces can be given a custom name with `prefix n` (*Rename workspace*; action id
-`rename-workspace`). Once set, the `workspaces` tabs show `<number>:<name>` (e.g. `1:code`) and the
-`{workspace}` placeholder resolves to the name instead of the number. Names are saved with profiles
-and the session autosave (`[[workspaces]] name` in the profile TOML - see
-[Project profiles](project-profiles.md)).
+Control `new-pane --workspace` and `--focus` override those two rule fields. See
+[Layouts and panes](layouts-and-panes.md).
 
-## `[keys]`
+## `[[agents]]`
 
-Rebind window-management actions. Each entry maps an **action id** to one binding string or a
-list of them; comma-separated alternatives also work inside one string. Each binding candidate
-takes one of three forms:
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `id` | string | required | Lowercase letters, digits, `_`, and `-`. A config entry with a built-in ID replaces that built-in. |
+| `label` | string | ID | Activity label. |
+| `base` | bool | `true` | Enables shared state patterns. |
+| `match.names` | array of strings | `[]` | Executable basenames. |
+| `match.paths` | array of strings | `[]` | Lowercase path or argv substrings. |
+| `states` | array of state tables | `[]` | State rules. |
 
-- **Bare key** - a single key carrying at most `shift` (e.g. `"b"`, `"shift-w"`, `"tab"`):
-  replaces the action's default key and keeps following the `[input]` scheme, so
-  `copy-mode = "b"` binds `<prefix> b` plus `<modifier>-b` while `modifier_shortcuts` is on.
-  This is the recommended form - change `[input]` later and these bindings follow.
-- **Scheme-marked key** - `scheme:` followed by exactly one key step carrying any modifiers
-  (e.g. `"scheme:ctrl-t"`): explicitly expands through the same `[input]` scheme. This covers
-  modified command keys that should follow later prefix/modifier changes, producing
-  `<prefix> Ctrl+T` plus `<modifier>+Ctrl+T` in this example.
-- **Literal binding** - a native tui-lipan `KeyBinding` string with a real modifier or several
-  chord steps (e.g. `"ctrl-a c"`, `"alt-c"`, `"ctrl-b q"`): bound verbatim, never mirrored or
-  rewritten when `[input]` changes. Use this to control each side exactly, for example
-  `spawn = ["ctrl-b c", "super-enter"]`, or to make one action prefix-only by listing just its
-  leader chord.
+A new definition needs at least one match name or path. A config definition that replaces a
+built-in may omit `match` and inherit the built-in process match.
 
-Configuring an action **replaces** all of its default keys. Empty values intentionally clear an
-action's defaults, for example `scratchpad = []` or `scratchpad = ""`. If every binding for an
-action fails to parse, that action keeps its default keys rather than becoming unbound; invalid
-bindings are warned and skipped either way. Workspace digits (`1`–`9`) are not individually
-rebindable.
+| State key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `state` | string | required | `"unknown"`, `"blocked"`, `"working"`, or `"idle"`. Evaluation uses that precedence, not declaration order. |
+| `scope` | string | `"all"` | `"all"` or `"footer"`. Footer reads the last eight nonempty screen lines. |
+| `screen` | pattern table | none | Set exactly one of `screen` or `title`. |
+| `title` | pattern table | none | Set exactly one of `screen` or `title`. `scope` does not apply. |
 
-To keep an action's generated defaults and only add shortcuts, use an additive table. `add` accepts
-one binding or a list and applies the same bare, `scheme:`, and literal rules:
+Pattern tables accept `all_of`, `any_of`, and `none_of` string arrays plus `regex`, a bool that
+defaults to `false`. At least one of `all_of` or `any_of` is required. Matching reads lowercase
+text. Invalid rules are skipped. An invalid definition is dropped.
 
-```toml
-[keys]
-spawn = { add = "super-enter" }
-copy-mode = { add = ["b", "ctrl-shift-y"] }
-```
+See [Agent definitions](agents.md).
 
-Here `spawn` retains all of its normal prefix/modifier bindings and gains literal `Super+Enter`.
-`copy-mode` retains its defaults, gains scheme-generated `<prefix> b` and `<modifier>-b`, and gains
-literal `Ctrl+Shift+Y`. Bindings already present in the defaults are deduplicated.
-Use `scheme:` inside the same list when a modified addition should follow `[input]`, for example
-`copy-mode = { add = "scheme:ctrl-t" }`.
+## `[[hints]]`
 
-Because a bare key always expands through the `[input]` scheme, a built-in action can never be
-bound to a plain unmodified key - by design, since such a binding would steal ordinary typing
-from the focused terminal. User-defined commands (below) still accept any literal trigger.
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `pattern` | string | required | Nonempty `regex-lite` pattern. Invalid patterns are skipped. |
+| `open` | bool | `false` | Lets the uppercase hint label open the match. |
 
-rozi disables tui-lipan's built-in global `Ctrl-q` (`App::global_quit(None)`) so it never
-conflicts with app routing. Use rozi `[keys]` actions (`detach`, `quit`, …) instead; for
-example `quit = "ctrl-q"` restores a direct quit shortcut through rozi routing.
+Built-in URL, path, and Git SHA hints run first and win overlaps. See [Terminal features](terminal.md).
 
-The help overlay (`?`) is a filterable reference: **Global** (Prefix/Mod, led by the scheme rows),
-**Modes** (direct keys), **Unbound**, and **All**. Press `/` to search within the active tab.
+## `[[hooks]]`
 
-Examples:
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `event` | string | required | Public event ID. Unknown IDs are skipped. |
+| `run` | string | required | Nonempty command string run through `command_shell`. |
 
-```toml
-[keys]
-copy-mode = "b"                      # bare key: <prefix> b + <modifier>-b
-toggle-pane-synchronization = { add = "ctrl-a y" }
-search = "scheme:ctrl-f"             # <prefix> Ctrl+F + <modifier>+Ctrl+F
-save-profile = ["ctrl-a z", "alt-z"] # literal replacement
-scratchpad = []
-```
-
-The parser is tui-lipan's `KeyBinding` parser. A bare `+` works as a chord step for the plus
-key (also accept the name `plus`), but `+` inside a mixed step is still a modifier separator
-(`ctrl+c`).
-
-Action ids: `spawn`, `spawn-float`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
-`focus-down-no-wrap`, `focus-up-no-wrap`, `focus-right-no-wrap`,
-`move-left/down/up/right`, `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
-`toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
-`grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `choose-layout`, `copy-mode`, `scratchpad`, `search`,
-`save-profile`, `open-profile`, `sessions`, `rename-session`, `collaborators`, `request-control`, `grant-control`, `toggle-input-lock`, `toggle-control-takeover`, `detach`, `quit`, `kill-workspace`, `kill-session`, `restart-session`,
-`choose-theme`, `settings`, `change-appearance`, `command-palette`, `alerts`, `toggle-do-not-disturb`,
-`help`, `toggle-devtools`, `toggle-titles`, `cycle-titlebar`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
-`toggle-workbar-powerline`, `toggle-sidebar`, `toggle-sidebar-split`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
-`toggle-animations`, `toggle-focus-on-hover`,
-`toggle-highlight-focused-background`, `toggle-highlight-focused-border`,
-`toggle-highlight-focused-titlebar`, `cycle-border-mode`, `cycle-border-style`, `cycle-alert-border`, `cycle-workbar-alert`, `cycle-title-style`,
-`cycle-workbar-badge-style`, `cycle-workbar-tab-style`, `cycle-workbar-style`,
-`toggle-pane-synchronization`, `open-config`. These same ids also work with `rozi run-action <id>` over the control socket
-(see `docs/control.md`).
-
-`paste` (default `v` or direct `Ctrl+V`) reads the system clipboard and sends it to the focused
-pane's PTY, wrapped in bracketed-paste markers so shells/editors that opt in treat it as one paste
-instead of simulated keystrokes.
-
-### User-defined command keybindings
-
-Instead of an action id, a `[keys]` entry can map a **literal trigger binding** to a table
-defining a new command that doesn't otherwise exist as an `Action`:
-
-```toml
-[keys]
-g = { run = "lazygit", label = "Git UI" }
-alt-t = { run = "btop" }
-"ctrl-a e" = { send = "ls -la\n" }
-i = { exec = "git branch --format='%(refname:short)' | rozi pick --title Branch | xargs -r git switch", label = "Switch branch" }
-```
-
-- `run = "<command>"` opens a new pane running that shell command (the same mechanism as the
-  scratchpad's `command`), so full-screen interactive programs like `lazygit` or `btop` work.
-- `send = "<text>"` writes the literal text straight to the focused pane's PTY - TOML escapes
-  like `\n` work as usual, so a binding can submit a ready-to-run command.
-- `popup = "<command>"` runs the command in a centered transient popup instead of a workspace pane.
-- `exec = "<command>"` runs the command detached, with no pane and no popup, and discards its
-  output. Use it when the whole result is a side effect - the command drives rozi over the control
-  socket, or hands off to another program - because a pane there is pure cost: the layout opens and
-  closes around output nobody reads. A non-zero exit still raises an error toast, so a broken
-  binding is quiet rather than silent. `keep_open` does not apply.
-- Exactly one of `run`/`send`/`popup`/`exec` must be set; a table with multiple values or none is
-  warned about and skipped.
-- `keep_open` (default `true`, `run` and `popup` only) preserves command output after exit. A `run`
-  pane prints the exit status and replaces the dead PTY with a shell. A `popup` prints the status
-  and retains its final screen as a read-only result; Enter, Escape, or Space dismisses it. Set
-  `keep_open = false` for a program that owns the pane for its whole life and should take the pane
-  down with it:
-
-```toml
-[keys]
-"ctrl-a g" = { run = "lazygit", keep_open = false }
-"ctrl-a b" = { run = "cargo build" }               # holds, so build errors stay on screen
-```
-- `label = "<text>"` names the command in the help overlay and command palette. Without it the
-  label is generated from the command (`Run: lazygit`, `Send: ls -la\n`), which truncates a
-  pipeline into something unreadable.
-- The map key here is the trigger itself (`g`, `alt-t`, `"ctrl-a e"`, ...), parsed by the same
-  rules as a binding value elsewhere in `[keys]` - it is *not* an action id, so it can't collide
-  with one. A **bare key** expands through the `[input]` scheme exactly as it does for a built-in
-  action, so `g = { run = ... }` answers to both `<prefix> g` and `<modifier>-g` and follows a
-  later `[input]` change. A **literal** chord (`"ctrl-a e"`, `alt-t`) binds only itself, which is
-  how a command is pinned to the prefix alone.
-- Each command shows up in the help overlay (under "Custom") and the command palette, so its
-  trigger stays discoverable even though it has no stable action id. A scheme-expanded command
-  shows the bare key there, the way a built-in does. It still can't be rebound elsewhere or invoked
-  via `rozi run-action` - only the trigger you configured runs it.
+Multiple hooks may use the same event. See [Hooks](hooks.md).
 
 ## `[[commands]]`
 
-Named commands exist independently of a key. They have a stable id, appear in the command palette,
-can be invoked with `rozi run-action <id>`, and can optionally be bound with any existing `[keys]`
-form:
+Named commands have stable IDs and can be invoked with `rozi run-action`.
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `id` | string | required | Lowercase letters, digits, `_`, and `-`. Dots, built-in IDs, and reserved prefixes are rejected. |
+| `label` | string | Generated | Palette and help label. |
+| `run` | string | none | Opens a pane through `command_shell`. |
+| `send` | string | none | Sends literal text to the focused PTY. |
+| `popup` | string | none | Opens a centered popup through `command_shell`. |
+| `exec` | string | none | Runs detached through `command_shell`, discarding output. |
+| `keep_open` | bool | `true` | Applies to `run` and `popup`. |
+
+Exactly one of `run`, `send`, `popup`, or `exec` is required.
 
 ```toml
 [[commands]]
@@ -1177,122 +507,69 @@ exec = "~/.config/rozi/branch-pick.sh"
 branches = "i"
 ```
 
-Exactly one of `run`, `send`, `popup`, or `exec` is required. `keep_open` and generated labels have
-the same behavior as the inline table form above. Ids use lowercase letters, digits, `_`, and `-`;
-built-in ids and reserved namespaces are rejected.
-
-| Inline action — `[keys] g = { run = … }` | Named command — `[[commands]]` |
-| --- | --- |
-| exists only at its binding site | exists independently |
-| no stable id | stable id |
-| in the palette, labelled | in the palette, labelled |
-| reachable only by its chord | also `run-action`, also `[keys] <id> = …` |
-| must have a key | may have no key |
-| a one-off shortcut | reusable behavior |
-
-> If it needs an id, it is a `[[commands]]` command. If it only needs this key, inline it.
-
 ## `[extensions]`
 
-Extensions are discovered under the platform data directory and may contribute namespaced named
-commands and supervised services. Disable an installed extension by stable manifest id without deleting
-it:
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `disabled` | array of strings | `[]` | Stable manifest IDs to disable. Directory names are not extension IDs. |
 
-```toml
-[extensions]
-disabled = ["docker"]
-```
-
-The disabled value is the stable manifest `extension.id`, not the installation directory name. A
-`[keys]` override for a missing/disabled/incompatible extension command is preserved inactive and
-activates automatically after a successful reload when that command becomes available.
-
-See [Extensions](extensions.md) for API compatibility, validation, diagnostics, paths,
-environment, lifecycle, and the trust boundary.
-
-## `[[hooks]]`
-
-> **Breaking change:** the former flat `[hooks]` table is no longer supported. Convert every old
-> key/value pair to a structured entry with `event` and `run`. A leftover `[hooks]` table prevents
-> the config from loading and produces a migration warning.
-
-```toml
-[[hooks]]
-event = "pane-exited"
-run = "notify-send 'pane exited'"
-
-[[hooks]]
-event = "workspace-switched"
-run = "logger workspace=$ROZI_WORKSPACE"
-```
-
-Multiple entries may target the same event; each command is launched asynchronously through
-`command_shell`. Hooks receive `ROZI_EVENT`, event-specific `ROZI_*` fields, and
-`ROZI_SOCKET` when the client control endpoint is available. Unknown event ids and empty commands
-are warned and ignored.
-
-See [Hooks](hooks.md) for all 17 events and fields, the complete environment contract, command
-lifecycle and client-side semantics, migration examples, and control-socket callbacks.
+See [Extensions](extensions.md).
 
 ## `[[services]]`
 
-Supervised background services started alongside rozi and restarted if they exit. Services inherit `ROZI_SOCKET` and standard environment, with stdio discarded.
-
-| Key | Type | Default | Meaning |
+| Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `name` | string | **required** | Unique identifier for the service. |
-| `run` | string | **required** | Command to execute, launched via `command_shell`. |
-| `cwd` | path | launch directory | Working directory for the service (`~` expands to `$HOME`). |
-| `restart` | `on-failure`, `always`, or `never` | `on-failure` | Restart policy. `on-failure` restarts on non-zero exit; `always` restarts on any exit; `never` runs once. |
-| `env` | table | `{}` | Key-value environment variables passed to the child process. |
+| `name` | string | required | Nonempty and unique. |
+| `run` | string | required | Nonempty command string run through `command_shell`. |
+| `cwd` | path string | Launch directory | `~` expands when the service starts. |
+| `restart` | string | `"on-failure"` | `"on-failure"`, `"always"`, or `"never"`. |
+| `env` | string table | `{}` | Child environment overrides. |
+
+Services receive `ROZI=1`, `ROZI_SERVICE`, `ROZI_BIN`, and `ROZI_SOCKET` when control is available.
+They use a 1, 2, 4, 8, 16, then 30 second restart backoff. Five consecutive failures inside 60
+seconds make a service dormant until its definition changes. Rozi terminates service process groups
+when the client exits.
+
+Use extension services for packaged automation. See [Extensions](extensions.md).
+
+## `[keys]`
+
+The key is either a built-in action ID, a named command ID, an extension command ID, or a trigger
+for an inline command.
+
+### Action and named-command bindings
+
+| Value form | Behavior |
+| --- | --- |
+| `"b"` or `["b", "super-enter"]` | Replaces defaults. A bare key expands through the prefix and modifier scheme. A literal chord stays literal. |
+| `"scheme:ctrl-t"` | Expands one modified key through the prefix and modifier scheme. |
+| `{ add = "super-enter" }` | Adds one binding without removing defaults. `add` also accepts an array. |
+| `""` or `[]` | Removes all bindings for that action. |
+
+Comma-separated alternatives are accepted inside strings. If every nonempty replacement candidate
+is invalid, Rozi keeps the action defaults.
+
+See [Keybindings](keybindings.md) for action IDs and key syntax.
+
+### User-defined command keybindings
+
+An inline command table uses these keys:
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `label` | string | Generated | Palette and help label. |
+| `run` | string | none | Opens a pane. |
+| `send` | string | none | Sends literal PTY text. |
+| `popup` | string | none | Opens a popup. |
+| `exec` | string | none | Runs detached and discards output. |
+| `keep_open` | bool | `true` | Applies to `run` and `popup`. |
+
+Exactly one action is required. Inline commands do not have stable action IDs and cannot be called
+with `run-action`.
 
 ```toml
-[[services]]
-name = "git-watcher"
-run = "cargo-watch -x check"
-cwd = "~"
-restart = "on-failure"
-env = { RUST_LOG = "info" }
+[keys]
+g = { run = "lazygit", label = "Git UI", keep_open = false }
+"ctrl-a e" = { send = "ls -la\n" }
+u = { exec = "rozi run-action toggle-float", label = "Float pane" }
 ```
-
-### Restart backoff
-
-Services use fixed exponential backoff on failure: 1s → 2s → 4s → 8s → 16s → 30s (capped).
-The backoff delay and consecutive failure counter reset after 60 seconds of continuous uptime.
-If a service fails 5 consecutive times inside 60 seconds, an error toast is shown and the service goes dormant until the next config reload.
-All running services are cleanly terminated on session exit or detach.
-
-## Pane synchronization
-
-The *Toggle pane synchronization* palette command toggles synchronized input for the active
-workspace. When enabled, normal key events sent to the focused/source tiled pane are also sent to
-every tiled, non-floating, non-closing pane in that workspace. Prefix/held window-management
-commands still intercept first; mouse input, paste/raw non-key input, focus reports, floating panes,
-and the scratchpad are not broadcast. The workspace flag is saved in profiles and session autosaves.
-While it is on, a `SYNC` chip stays in the workbar - the mode is not announced and then left
-unmarked, because what it changes (every keystroke reaching several panes) is worth seeing at the
-moment you type, not three seconds after you enabled it.
-
-## `[logging]`
-
-`[logging]` configures the files written by [`toggle-pane-logging`](terminal.md#pane-logging).
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `dir` | `$XDG_STATE_HOME/rozi/logs` (else `~/.local/state/rozi/logs`) | Where session log directories are created. |
-| `max_bytes` | `67108864` (64 MiB) | Size ceiling for one pane log file. `0` disables the cap. |
-
-Session directories use mode `0700` and log files use mode `0600`.
-
-```toml
-[logging]
-dir = "~/.local/state/rozi/logs"
-max_bytes = 67108864
-```
-
-A pane log that reaches `max_bytes` stops, records why in its last line, and reports the stop the
-same way a write error does. The limit is enforced per file, and a chunk that would cross it is
-refused whole rather than half-written, so a log never ends mid-escape-sequence.
-
-An ephemeral session's log directory is deleted when its server exits: `eph-*` sessions are
-disposable and nothing can reattach to read them later. Named sessions keep their logs.

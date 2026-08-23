@@ -1,299 +1,287 @@
 # Extensions
 
-Extensions are ordinary out-of-process programs with a small discovery and launch manifest. They
-use Rozi's public CLI/control protocol at runtime; they do not link to Rozi's Rust internals.
+Rozi extensions are directories containing `extension.toml` and out-of-process programs. They add
+commands, supervised services, and agent definitions. Runtime interaction uses the same
+[`rozi` control commands](control.md) available to scripts.
 
-The mental model is deliberately narrow:
+## Inspect before installing
 
-```text
-extension.toml = identity + commands/services Rozi launches
-control protocol = runtime behavior and UI interaction
-```
+Extension programs run with your user account's permissions. Rozi does not sandbox them. Installing
+an extension is equivalent to installing other software from that source.
 
-The manifest is not a declarative UI framework. Pickers, published rows, notifications, and event
-handling come from `rozi pick`, `publish`, `notify`, and `subscribe`.
+Before installation:
 
-## Author journey
+1. Obtain the source in a temporary or project directory.
+2. Review `extension.toml` and every executable it references.
+3. Check direct dependencies and network access.
+4. Validate the unpacked directory.
 
-Create a working extension before designing its final behavior:
-
-```bash
-rozi new-extension my-extension
-cd my-extension
-rozi check-extension .
-```
-
-The generated command is intentionally small but real. Its README is the shortest complete loop:
-
-```text
-create → validate → copy/clone into the user extension directory
-       → reload-config → list-extensions --verbose → invoke
-```
-
-Once that works, add interaction with `pick`, add durable activity with `publish`, and add a
-supervised `[[services]]` process only for behavior that must remain alive. Validate after every
-manifest edit; reload only when the installed copy should change. The repository-local
-[`rozi-extension` agent skill](../.agents/skills/rozi-extension/SKILL.md) is the compressed public
-contract for coding agents.
-
-## Structure and identity
-
-```text
-rozi-git-tools/
-├── extension.toml
-├── bin/
-│   ├── branches
-│   └── watch
-└── README.md
-```
-
-The stable identity is declared in the manifest, not inferred from the installation directory:
-
-```toml
-[extension]
-id = "git-tools"
-title = "Git tools"
-description = "Branches, worktrees, and stashes"
-version = "0.1.0"
-api = 1
-```
-
-An id must match `[a-z0-9_-]+`; dots, whitespace, uppercase, path separators, and Rozi's internal
-namespaces are rejected. Moving `rozi-git-tools/` or cloning it under another directory does not
-change the public namespace:
-
-| Declaration | Local id | Public id |
-| --- | --- | --- |
-| extension | `git-tools` | `git-tools` |
-| command | `branches` | `git-tools.branches` |
-| service | `watch` | `git-tools.watch` |
-
-Two installation directories declaring the same id are both rejected as ambiguous. Rozi never
-picks whichever happened to be scanned first.
-
-## Extension API compatibility
-
-`api` is the integer generation of the complete supported extension contract: manifest semantics,
-environment, command/service behavior, extension-facing control commands, and lifecycle
-guarantees. This release supports API `1`.
-
-Missing, malformed, older, and newer generations are incompatible and contribute nothing. Rozi
-does not guess at compatibility. `list-extensions` retains the failed candidate and explains the
-generation mismatch.
-
-The extension API is intentionally separate from Rozi's internal Rust APIs. Rust modules and types
-may change freely without changing the extension API; the generation changes when the external
-contract changes incompatibly.
-
-## Commands, services, and agents
-
-```toml
-[[commands]]
-id = "branches"
-label = "Switch branch"
-exec = ["python", "{extension_dir}/bin/branches.py", "--all"]
-
-[[services]]
-name = "watch"
-exec = ["./bin/watch", "--json"]
-restart = "on-failure"
-```
-
-A command is invoked behavior: it may be keyless, bound under `[keys]`, selected from the palette,
-or called with `rozi run-action git-tools.branches`. A service is a long-lived helper supervised
-with restart policy and backoff.
-
-`exec` is an argv array and launches directly without a command shell. Use `shell = "..."` only
-when shell syntax such as a pipeline is intentional. Extension manifests do not accept the
-application config's legacy shell-string `exec`/`run` forms. A command may instead declare
-`send = "..."`; each command must declare exactly one action, and each service exactly one of
-`exec` or `shell`. A validation error invalidates the extension atomically rather than loading only
-a surprising subset.
-
-An extension may also ship `[[agents]]`, teaching Rozi to recognize a coding-agent CLI in a pane and
-read its screen:
-
-```toml
-[[agents]]
-id = "mytool"
-label = "My Tool"
-match = { names = ["mytool"] }
-
-[[agents.states]]
-state = "blocked"
-screen = { any_of = ["approve? (a/d)"] }
-```
-
-These are declarative data rather than a launchable process, so they need no path resolution and no
-environment — the format and validation are exactly `config.toml`'s, documented in
-[Agent definitions](agents.md). Ids are namespaced like commands and services (`mytool.mytool`),
-which is why an installed extension can add an agent but never displace a built-in one; only your
-own `config.toml` can do that. An invalid definition invalidates the extension atomically, the same
-as an invalid command.
-
-Hooks are intentionally absent. A service holding `rozi subscribe` retains state and avoids one
-process per event. Sidebar/workbar/picker declarations are also absent: runtime UI is expressed
-through the protocol.
-
-## Runtime surfaces
-
-Extension programs can compose:
-
-- [`rozi pick`](control.md) — searchable rows, groups, disabled reasons, actions, and text prompts;
-- [`rozi publish`](sidebar.md) — live actionable activity rows;
-- [`rozi notify`](control.md) — useful off-screen results and failures;
-- [`rozi subscribe`](control.md) — a stream of application events;
-- [`rozi run-action`](control.md) — built-in, named, and namespaced extension commands.
-
-Use `ROZI_BIN` when launching the matching running binary instead of assuming `rozi` is on `PATH`.
-Canonical third-party-style examples exercise distinct surfaces without internal APIs:
-
-- [Git tools](../examples/extensions/git-tools/) — grouped/actionable branch and worktree pickers;
-- [PR dashboard](../examples/extensions/pr-dashboard/) — supervised `gh` monitoring with
-  subscribe/publish/notify/pick;
-- [Docker](../examples/extensions/docker/) — dynamic external-process controls and refresh;
-- [SSH tools](../examples/extensions/ssh-tools/) — standard SSH config discovery and pane launch;
-- [Agent activity](../examples/extensions/agent-activity/) — generalized pane status mirrored into
-  actionable Activity rows.
-
-## Environment and paths
-
-Every extension command and service receives:
-
-| Variable | Value |
-| --- | --- |
-| `ROZI_EXTENSION` | Stable manifest id, such as `git-tools` |
-| `ROZI_EXTENSION_DIR` | Absolute lexical installation directory |
-| `ROZI_EXTENSION_GENERATION` | Opaque runtime fencing token |
-
-These names are owned by Rozi. A service manifest attempting to override one is invalid.
-
-`ROZI_EXTENSION_GENERATION` is not authentication. The CLI automatically attaches the id and token
-to extension-originated control traffic, and Rozi rejects a retired generation. Its purpose is to
-fence a stale process after reload even if process-tree termination fails; another process running
-as the same user remains inside the same trust boundary.
-
-`ROZI_EXTENSION_DIR` is lexical rather than canonicalized. A symlink installed as
-`extensions/git-tools` therefore reports that installation path, not a surprising target elsewhere.
-Moving the directory updates the value on reload while preserving the manifest id.
-
-Relative executable paths beginning `./` or `../` are resolved against the installation directory
-at load time. Explicit absolute and `~` paths are normalized too. A command still executes with the
-focused pane/project as its working directory. A service defaults its cwd to the installation
-directory; its explicit relative `cwd` is resolved there.
-
-Direct argv supports one platform-independent substitution:
-`{extension_dir}`. Generic `$VAR`, `${VAR}`, and `%VAR%` expansion is deliberately absent from
-direct execution. An explicit `shell` command may use that shell's normal environment syntax.
-
-Symlinked installation directories are supported. Broken links, missing manifests or executable
-targets, inaccessible files, and non-UTF-8 installation paths that cannot be represented in the
-public environment remain visible as invalid diagnostics.
-
-## Validate and debug
-
-Validate a checkout without installing it:
-
-```bash
+```sh
 rozi check-extension ./rozi-git-tools
-rozi check-extension ./rozi-git-tools --json
 ```
 
-Validation reports all independent manifest, id, API, command, service, environment, and obvious
-path errors it can find. For every valid process it also prints the resolved direct argv or explicit
-shell command, cwd policy, injected extension environment, restart policy, and configured
-environment keys with their values redacted. Failure exits non-zero.
+Validation checks the manifest, API, IDs, launch declarations, environment, and executable paths.
+It does not make untrusted code safe.
 
-`list-extensions` is the authoritative discovery report:
+Rozi does not discover project-local `.rozi/extensions` directories. Merely opening a checkout does
+not authorize its code.
 
-```bash
+## Install
+
+There is no extension registry or automatic installer. Copy or clone the reviewed directory into
+the user data directory:
+
+| Platform | Extension directory |
+| --- | --- |
+| Linux and macOS | `${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/` |
+| Windows | `%LOCALAPPDATA%\rozi\extensions\` |
+
+Linux example:
+
+```sh
+install_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions"
+mkdir -p "$install_root"
+cp -R ./rozi-git-tools "$install_root/git-tools"
+rozi check-extension "$install_root/git-tools"
+rozi run-action reload-config
+```
+
+The installation directory name is not the extension identity. Identity comes from
+`extension.id`. Two installed directories declaring the same ID are both rejected.
+
+## List and inspect installed extensions
+
+```sh
 rozi list-extensions
 rozi list-extensions --verbose
 rozi list-extensions --json
 ```
 
-Normal output shows loaded, disabled, invalid, incompatible, and duplicate candidates. Verbose
-output adds installation and manifest paths, API generation, public command/service/agent ids,
-resolved executable paths, and every validation error. JSON is a tooling contract with its own
-`schema_version` (currently `1`), independent of extension runtime API `1`; `list-extensions`
-returns `{ "schema_version": 1, "extensions": [...] }`, while `check-extension` returns one
-`extension` field. Public ids such as `git-tools.branches` are exposed, never internal registry
-ids. The manifest JSON Schema is [`schemas/extension.schema.json`](../schemas/extension.schema.json).
+The report includes loaded, disabled, invalid, incompatible, and duplicate candidates. Verbose
+output adds paths, public command, service, and agent IDs, resolved executables, and validation
+errors.
 
-## Author workflow and reload
+`check-extension --json` and `list-extensions --json` are available for tooling:
 
-```bash
-rozi new-extension my-extension
-cd my-extension
-rozi check-extension .
-# edit
-rozi run-action reload-config
-rozi list-extensions --verbose
+```sh
+rozi check-extension ./git-tools --json
+rozi list-extensions --json
 ```
 
-Rozi deliberately does not watch extension trees because extensions may write their own state
-there. A successful explicit reload makes commands, bindings, palette entries, services, open
-extension pickers, published rows, and subscriptions agree with the newly valid/enabled set.
-Removed services terminate, materially changed services restart once, and unchanged services keep
-running. Presentation-only edits such as title, label, description, or package version do not
-rotate the runtime generation; process-facing command, service, API, environment, or path changes
-do. Returning from revision A to B and back to A creates a new opaque token rather than reviving the
-original A generation.
+## Disable or remove
 
-Disable without deleting:
+Disable an extension by stable ID:
 
 ```toml
 [extensions]
 disabled = ["git-tools"]
 ```
 
-A portable dotfiles binding may refer to an unavailable extension:
+Run `rozi run-action reload-config` after changing the setting. Rozi removes the extension's
+commands and agents, stops its services, and closes its owned picker, publisher, and subscription
+streams.
+
+To remove an extension, delete its installed directory and reload. Disable it first if you want the
+running client to stop its processes before deleting files.
+
+Bindings may refer to an unavailable extension:
 
 ```toml
 [keys]
-"git-tools.branches" = "g"
+"ctrl-a b" = { run = "git-tools.branches" }
 ```
 
-Rozi preserves the override, warns that it is inactive, and activates it automatically when a
-valid compatible extension appears. Disabling or removing the extension deactivates the binding
-without rewriting the config.
+The binding becomes active when that compatible extension is loaded and inactive when it is
+disabled or absent.
 
-## Manual installation
+## Update
 
-There is no package manager or registry. Installing is an explicit clone/copy into the user data
-directory:
+Rozi does not update extensions automatically. Review incoming changes before replacing installed
+files. For a Git checkout:
 
-| Platform | Directory |
-| --- | --- |
-| Linux/macOS | `$XDG_DATA_HOME/rozi/extensions`, else `~/.local/share/rozi/extensions` |
-| Windows | `%LOCALAPPDATA%\rozi\extensions` |
-
-```bash
-git clone https://example.com/rozi-git-tools \
-  "${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/rozi-git-tools"
-rozi check-extension \
-  "${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/rozi-git-tools"
+```sh
+install_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions"
+git -C "$install_root/git-tools" fetch --all
+git -C "$install_root/git-tools" diff HEAD..origin/main
+git -C "$install_root/git-tools" pull --ff-only
+rozi check-extension "$install_root/git-tools"
 rozi run-action reload-config
+rozi list-extensions --verbose
 ```
 
-On Windows, clone below `%LOCALAPPDATA%\rozi\extensions` and pass that directory to
-`check-extension`.
+An explicit reload is required because Rozi does not watch extension directories. Process-facing
+changes rotate the extension's opaque generation and retire old control streams. Metadata-only
+changes such as title, description, and package version keep the generation.
 
-For local development, an explicit symlink from that user extension directory to a checkout is
-supported on platforms where the user can create one. Rozi does not provide `link-extension`:
-portable Windows junction/symlink creation and safe removal need materially more platform machinery
-than an authoring convenience justifies. Merely entering a project directory never discovers or
-executes project-local code.
+## Create an extension
 
-Use the [manual extension test lab](extension-testing.md) to exercise the canonical Git, PR/CI,
-Docker, SSH, and agent-activity extensions plus adversarial reload and fencing cases.
+Create and validate a scaffold:
 
-## Trust boundary
+```sh
+rozi new-extension my-extension
+cd my-extension
+rozi check-extension .
+```
 
-Extension code runs with your user account's permissions. Installing an extension is equivalent to
-installing software. Rozi validates its public declarations but does not sandbox it and does not
-pretend a permissions list would provide isolation.
+An extension normally has this structure:
 
-Project-local `.rozi/extensions/` discovery remains intentionally unsupported: opening an
-untrusted checkout must not authorize its code. There is no automatic installer, updater,
-dependency resolver, signature system, registry, or trust store.
+```text
+my-extension/
+├── extension.toml
+├── bin/
+│   └── command
+└── README.md
+```
+
+Keep generated state outside the installed extension directory unless it is immutable package
+data. Use normal user state, cache, or runtime directories for mutable files.
+
+## Write the manifest
+
+The manifest starts with metadata:
+
+```toml
+[extension]
+id = "my-extension"
+title = "My extension"
+description = "Project commands"
+version = "0.1.0"
+api = 1
+```
+
+`id` is required, must match `[a-z0-9_-]+`, and must not use a reserved ID. `api = 1` is required.
+`title`, `description`, and `version` are optional metadata.
+
+The schema is [`schemas/extension.schema.json`](../schemas/extension.schema.json).
+
+### Commands
+
+```toml
+[[commands]]
+id = "choose"
+label = "Choose item"
+exec = ["python", "{extension_dir}/bin/choose.py"]
+```
+
+A command ID must match `[a-z0-9_-]+`. Rozi exposes it as
+`<extension-id>.<command-id>`, such as `my-extension.choose`.
+
+Each command declares exactly one action:
+
+| Field | Meaning |
+| --- | --- |
+| `exec = ["program", "arg"]` | Direct argv execution without a command shell. |
+| `shell = "command"` | Execution through `command_shell`. Use only when shell syntax is needed. |
+| `send = "text"` | Send text to the target pane. |
+
+Prefer `exec`. It preserves argument boundaries and avoids shell interpretation.
+
+Commands run with the focused pane's working directory. Relative executable paths beginning with
+`./` or `../` resolve from the extension directory when the manifest loads. Direct argv also
+supports `{extension_dir}` inside an argument. It does not expand `$VAR`, `${VAR}`, or `%VAR%`.
+
+Invoke a command from the palette, a key binding, or the CLI:
+
+```sh
+rozi run-action my-extension.choose
+```
+
+### Services
+
+```toml
+[[services]]
+name = "watch"
+exec = ["python", "{extension_dir}/bin/watch.py"]
+restart = "on-failure"
+
+[services.env]
+POLL_SECONDS = "30"
+```
+
+A service declares exactly one of `exec` or `shell`. Its name must match `[a-z0-9_-]+` and is
+exposed as `<extension-id>.<service-name>`.
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `name` | string | required |
+| `exec` | string array | mutually exclusive with `shell` |
+| `shell` | string | mutually exclusive with `exec` |
+| `cwd` | path string | extension directory |
+| `restart` | `on-failure`, `always`, or `never` | `on-failure` |
+| `env` | string map | empty |
+
+Services are client-side. They start while a UI with the extension is attached, receive the UI
+control environment, and stop when that client detaches or the extension retires. They do not run
+in a detached session server.
+
+Use a service for long-lived work such as [`rozi subscribe`](control.md#subscriptions) or
+[`rozi publish`](control.md#published-activity). Hooks are not part of an extension manifest.
+
+### Agent definitions
+
+An extension may include `[[agents]]` entries in the same format as
+[user agent definitions](agents.md). Rozi namespaces each local ID under the extension ID. An
+extension cannot replace a built-in agent. One invalid command, service, or agent definition makes
+the whole extension invalid.
+
+## Runtime environment
+
+Every extension command and service receives:
+
+| Variable | Value |
+| --- | --- |
+| `ROZI_EXTENSION` | Stable manifest ID. |
+| `ROZI_EXTENSION_DIR` | Absolute lexical installation directory. |
+| `ROZI_EXTENSION_GENERATION` | Opaque token for the currently loaded process contract. |
+| `ROZI_BIN` | Running Rozi executable when available. |
+| `ROZI_SOCKET` | Current UI endpoint when available. |
+
+Services may not override the three `ROZI_EXTENSION*` variables.
+
+Use `ROZI_BIN` instead of assuming `rozi` is on `PATH`, and pass `ROZI_SOCKET` back to it:
+
+```sh
+"$ROZI_BIN" --socket "$ROZI_SOCKET" notify "extension task finished"
+```
+
+The CLI attaches extension identity and generation to control traffic. A retired generation is
+rejected. The generation is lifecycle fencing, not authentication from other processes running as
+the same user.
+
+See [Scripting](scripting.md) for portable command examples and
+[Control protocol](control-protocol.md#stream-ownership) for stream ownership.
+
+## Test and debug
+
+Validate after each manifest edit:
+
+```sh
+rozi check-extension .
+```
+
+Then use the isolated procedure in [Extension testing](extension-testing.md). Do not test by first
+copying unfinished code into the normal extension directory.
+
+For an installed extension:
+
+```sh
+rozi run-action reload-config
+rozi list-extensions --verbose
+```
+
+If a command fails, run its resolved argv from the verbose validation output with an isolated test
+environment. Extension process stdout and stderr are not an interactive debugging channel. Have
+the process write deliberate diagnostics to a test-owned file or run it in a test pane.
+
+## Examples
+
+The repository has six canonical examples:
+
+- [Git tools](../examples/extensions/git-tools/) for grouped branch and worktree pickers
+- [PR dashboard](../examples/extensions/pr-dashboard/) for a supervised PR monitor
+- [Docker](../examples/extensions/docker/) for external process controls
+- [SSH tools](../examples/extensions/ssh-tools/) for SSH host discovery and pane launch
+- [Agent activity](../examples/extensions/agent-activity/) for mirroring pane status
+- [Activity dashboard](../examples/extensions/activity-dashboard/) for general published activity
+
+See [Automation recipes](recipes.md) for smaller building blocks.

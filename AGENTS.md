@@ -1,6 +1,7 @@
 # Rozi agent guide
 
-Rozi is a cross-platform, Hyprland-style tiling terminal multiplexer built in Rust on `tui-lipan`.
+Rozi is a cross-platform, modern tiling terminal multiplexer built in Rust on `tui-lipan`. Its
+tiling layout and keyboard flow take their cues from the Hyprland window manager.
 
 ## Always
 

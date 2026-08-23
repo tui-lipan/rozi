@@ -1,238 +1,258 @@
-# Extension recipes
+# Automation recipes
 
-Worked examples that combine the [control socket](control.md), [published rows](sidebar.md),
-[services](configuration.md#services), and [hooks](hooks.md) into things rozi does not ship.
+These recipes use Rozi's public CLI, hooks, services, pickers, and published activity.
 
-None of these need a plugin runtime. A supervised service that subscribes to events, publishes
-sidebar rows, and raises a picker when it needs a decision *is* a plugin — written in whatever
-language you like, running out of process, unable to take the UI down with it.
+Scripts launched by Rozi should use `ROZI_BIN` and `ROZI_SOCKET`:
 
-Everything below assumes `ROZI_SOCKET` is set, which it is inside any rozi pane and supervised
-service.
-
-## Four things that will bite you first
-
-**Call rozi through `$ROZI_BIN`, not `PATH`.** Panes, hooks, and services all receive `ROZI_BIN`
-holding the path of the running binary, precisely so a recipe does not have to assume an install on
-`PATH` — a build started with `cargo run` is not on it, and neither is a binary installed under
-another name. Prefer it, and fall back for the case where it is genuinely absent (a remote pane,
-where this client's path means nothing on the other host):
-
-```bash
-if ! command -v "${ROZI_BIN:-rozi}" >/dev/null 2>&1; then
-  echo "rozi is not on PATH (and ROZI_BIN is unset)" >&2
-  exit 127
+```sh
+ROZI=${ROZI_BIN:-rozi}
+if [ -n "${ROZI_SOCKET:-}" ]; then
+    set -- "$ROZI" --socket "$ROZI_SOCKET"
+else
+    set -- "$ROZI"
 fi
-rozi() { command "${ROZI_BIN:-rozi}" "$@"; }   # must come *after* the check,
-                                               # or `command -v` finds this function
 ```
 
-**Cancelling exits 1, and that is not an error.** `rozi pick` reports a cancellation with status 1
-so a `&&` chain stops rather than acting on an empty choice. A script must not propagate it: an
-`exec` binding toasts on any non-zero exit, so pressing Esc would look like a broken command.
+The examples below use `"$@"` after this setup.
 
-```bash
-chosen=$(… | rozi pick …) || true   # a cancel is a decision, not a failure
-[ -n "$chosen" ] || exit 0
+## Pick and switch a Git branch
+
+```sh
+#!/bin/sh
+set -eu
+
+ROZI=${ROZI_BIN:-rozi}
+if [ -n "${ROZI_SOCKET:-}" ]; then
+    set -- "$ROZI" --socket "$ROZI_SOCKET"
+else
+    set -- "$ROZI"
+fi
+
+branch=$(git branch --format='%(refname:short)' | "$@" pick --title "Git branches") || exit 0
+[ -n "$branch" ] || exit 0
+git switch "$branch"
+"$@" notify "switched to $branch"
 ```
 
-**A closing action is silent unless you say something.** An `exec` binding has no pane and toasts
-only on failure, so a script that succeeds and exits reports nothing at all. Use `rozi notify` when
-the result is off screen:
+Plain picker input is one row per line. Output is the selected row. See
+[Control CLI](control.md#pickers) for grouped, disabled, and actionable JSON rows.
 
-```bash
-git switch "$branch" && rozi notify "switched to $branch"
+## Open a worktree in a pane
+
+```sh
+#!/bin/sh
+set -eu
+
+ROZI=${ROZI_BIN:-rozi}
+if [ -n "${ROZI_SOCKET:-}" ]; then
+    set -- "$ROZI" --socket "$ROZI_SOCKET"
+else
+    set -- "$ROZI"
+fi
+
+worktree=$(
+    git worktree list --porcelain |
+        awk '$1 == "worktree" { sub(/^worktree /, ""); print }' |
+        "$@" pick --title "Git worktrees"
+) || exit 0
+[ -n "$worktree" ] || exit 0
+"$@" new-pane --cwd "$worktree" --focus
 ```
 
-**A pipeline reports its last stage, not the failed one.** `git branch | rozi pick | xargs -r git
-switch` exits `0` even when `rozi` is missing entirely, because `xargs -r` with no input succeeds —
-so a `keep_open` pane cheerfully prints `exited with status 0` over the error. `set -o pipefail`
-fixes it in bash but is not POSIX, so prefer a command substitution and let `&&` carry the status:
+Quoting `"$worktree"` is required because picker output is untrusted text and paths may contain
+spaces.
 
-```bash
-branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) && git switch "$branch"
+## Use Yazi as a file router
+
+Create `~/.config/rozi/scripts/yazi-router`:
+
+```sh
+#!/bin/sh
+set -eu
+
+ROZI=${ROZI_BIN:-rozi}
+choice=$(mktemp "${TMPDIR:-/tmp}/rozi-yazi.XXXXXX")
+trap 'rm -f "$choice"' EXIT HUP INT TERM
+
+yazi --chooser-file="$choice"
+IFS= read -r selected < "$choice" || exit 0
+[ -n "$selected" ] || exit 0
+
+if [ -n "${ROZI_SOCKET:-}" ]; then
+    "$ROZI" --socket "$ROZI_SOCKET" new-pane --focus --argv "${EDITOR:-vi}" "$selected"
+else
+    "$ROZI" new-pane --focus --argv "${EDITOR:-vi}" "$selected"
+fi
 ```
 
-## Pick a branch, worktree, or file
-
-`rozi pick` renders rozi's own palette. In its default mode stdin is one label per line and stdout
-is the chosen line, so it drops into a pipeline with no `jq`:
-
-```bash
-branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) && git switch "$branch"
-```
-
-Straight from a shell that is fine — a cancelled `&&` chain just does nothing. From a keybinding,
-guard it as shown above so Esc does not toast.
-
-That plain list cannot say which branch you are already on. `--json` can, and the convention to
-follow is the layout picker's: a right-aligned `current` badge, plus `active` to tint the row -
-the colour alone is too quiet to rely on. Ordering by commit date beats alphabetical here too:
-
-```bash
-branch=$(git for-each-ref refs/heads/ --sort=-committerdate \
-      --format='%(HEAD)%09%(refname:short)%09%(committerdate:relative)' \
-  | jq -Rc 'split("\t") | {
-      id: .[1], label: .[1], active: (.[0] == "*"),
-      description: (if .[0] == "*" then "current · " + .[2] else .[2] end)
-    }' \
-  | jq -sc '{rows: .}' \
-  | rozi pick --json --title "Switch branch" \
-  | jq -r '.selected // empty') && git switch "$branch"
-```
-
-`description` is one right-aligned string, so a marker and a detail share that column rather than
-occupying separate slots.
-
-Bind it to a chord so it works from anywhere:
+Make it executable, then bind the helper:
 
 ```toml
 [keys]
-i = { exec = "~/.config/rozi/branch-pick.sh", label = "Switch branch" }
+"ctrl-a shift-e" = { popup = "~/.config/rozi/scripts/yazi-router", keep_open = false }
 ```
 
-`--json` buys what a plain list cannot express — sections, right-aligned badges, and rows that stay
-visible while explaining why they are unavailable:
+The helper creates a private temporary chooser file, removes it on exit, and passes the selected
+path as a direct argument. It does not share a predictable file or insert the path into shell
+source.
 
-```bash
-#!/usr/bin/env bash
-# Worktrees, with the ones already open in a pane greyed out rather than hidden.
-open=$(rozi list-panes | jq -r '.data[].cwd // empty')
-chosen=$(git worktree list --porcelain \
-  | awk '/^worktree /{print $2}' \
-  | jq -R --arg open "$open" --arg here "$PWD" '{
-      id: ., label: (split("/") | last), description: .,
-      group: (if . == $here then "Current" else "Other worktrees" end),
-      disabled: (if ($open | split("\n") | index(.)) then "Already open" else null end)
-    }' \
-  | jq -sc '{rows: .}' \
-  | rozi pick --json --title Worktree \
-  | jq -r '.selected // empty') || true
-[ -n "$chosen" ] || exit 0
-rozi new-pane --cwd "$chosen" --focus
-```
-
-The `disabled` field is the part a generic fuzzy finder cannot do: the row stays on screen with the
-reason attached instead of silently vanishing from the list.
-
-## Publish live rows into the sidebar
-
-`rozi publish` is a two-way stream: it reads `{"rows":[…]}` on stdin and writes `{"activate":"<id>"}`
-on stdout when someone clicks a row. Rows carry a status the sidebar renders as a badge, and rozi
-keeps an elapsed clock per row for as long as its status is not quiescent.
-
-```bash
-#!/usr/bin/env bash
-# One row per cargo target, with a live clock while it builds.
-while :; do
-  status=$(pgrep -q cargo && echo working || echo idle)
-  printf '{"rows":[{"id":"build","title":"cargo build","status":"%s"}]}\n' "$status"
-  sleep 2
-done | rozi publish
-```
-
-A publisher no longer has to be a recognized AI agent — that gate was lifted, so a build watcher, a
-job runner, or a deploy script publishes exactly the rows an agent does. Publishing rows and
-claiming the pane's *agent* state are separate concerns; a publisher that is not the pane's agent
-does not take over its detection.
-
-## A PR dashboard that survives the night
-
-Combining `[[services]]` with `publish` gives a supervised poller whose rows are clickable. The
-service starts with the client, restarts up a backoff ladder if it crashes, and dies on detach.
+For file-tree activation, Rozi supplies the selected path in `ROZI_FILE`. Read that variable instead
+of inserting the path into a command:
 
 ```toml
-[[services]]
-name = "pr-watch"
-run = "~/.config/rozi/pr-watch.sh"
-restart = "on-failure"
+[sidebar]
+tabs = [
+  { name = "files", label = "", on_click = { run = '''"${EDITOR:-vi}" "$ROZI_FILE"''' } },
+]
 ```
 
-```bash
-#!/usr/bin/env bash
-# ~/.config/rozi/pr-watch.sh - a row per open PR, coloured by its checks.
-poll() {
-  while :; do
-    gh pr list --json number,title,statusCheckRollup --jq '{rows: [.[] | {
-        id: ("pr-" + (.number|tostring)),
-        title: .title,
-        badge: ("#" + (.number|tostring)),
-        status: (if   .statusCheckRollup[0].conclusion == "FAILURE"   then "blocked"
-                 elif .statusCheckRollup[0].status     == "IN_PROGRESS" then "working"
-                 else "idle" end)
-      }]}'
-    sleep 30
-  done
-}
-poll | rozi publish | while read -r line; do
-  number=$(jq -r '.activate' <<<"$line" | sed 's/^pr-//')
-  rozi new-pane "gh pr checkout $number" --focus
-done
-```
+## Watch events
 
-A failing check shows as `blocked` with an elapsed clock; clicking the row checks the branch out.
-
-## Notifications that are not stupid
-
-A hook runs one process per event and remembers nothing, so it cannot coalesce a burst or skip the
-pane you are already looking at. A service holding a `subscribe` stream can:
-
-```toml
-[[services]]
-name = "notify"
-run = "~/.config/rozi/notify.py"
-```
+This Python service ignores bells from the focused pane and debounces notifications:
 
 ```python
 #!/usr/bin/env python3
-# Debounce bells and ignore the focused pane. `subscribe` streams one JSON event per line.
-import json, os, socket, time
+import json
+import os
+import subprocess
+import time
 
-focused, last = None, 0.0
-sock = socket.socket(socket.AF_UNIX)
-sock.connect(os.environ["ROZI_SOCKET"])
-sock.sendall(b'{"cmd":"subscribe"}\n')
-for line in sock.makefile():
-    event = json.loads(line)
-    if event.get("event") == "focus-changed":
-        focused = event.get("pane")
-    elif event.get("event") == "bell" and event.get("pane") != focused:
-        if time.monotonic() - last > 5.0:
-            os.system("notify-send 'rozi' 'a background pane rang'")
-            last = time.monotonic()
+rozi = os.environ.get("ROZI_BIN", "rozi")
+command = [rozi]
+if socket_path := os.environ.get("ROZI_SOCKET"):
+    command += ["--socket", socket_path]
+command += ["subscribe", "focus-changed", "bell"]
+
+focused = None
+last_notification = 0.0
+with subprocess.Popen(
+    command,
+    stdout=subprocess.PIPE,
+    text=True,
+) as process:
+    assert process.stdout is not None
+    for line in process.stdout:
+        event = json.loads(line)
+        data = event.get("data", {})
+        if event.get("event") == "focus-changed":
+            focused = data.get("pane")
+        elif event.get("event") == "bell" and data.get("pane") != focused:
+            now = time.monotonic()
+            if now - last_notification >= 5:
+                subprocess.run(
+                    ["notify-send", "Rozi", "A background pane rang"],
+                    check=False,
+                )
+                last_notification = now
 ```
 
-## Use yazi as rozi's file router
-
-[yazi](https://github.com/sxyazi/yazi)'s chooser mode makes it a front end for the whole
-multiplexer. Open it in a popup, and route whatever it returns into a pane:
+Configure it as a supervised service:
 
 ```toml
-[keys]
-"ctrl-a shift-e" = { popup = "yazi --chooser-file=/tmp/rozi-chosen && rozi new-pane \"$EDITOR $(cat /tmp/rozi-chosen)\" --focus", keep_open = false }
+[[services]]
+name = "bell-watch"
+run = "~/.config/rozi/scripts/bell-watch.py"
+restart = "on-failure"
 ```
 
-The file tree in the sidebar already passes an activated path as `ROZI_FILE`, so a `[keys] run`
-entry never needs a filename spliced into its command line.
+Unlike a hook, a subscriber can keep state and coalesce related events. Event fields are under
+`event.data`. See [Hooks](hooks.md#events-and-fields) for the event list.
 
-## Search your command history and re-send it
+## Publish a build row
 
-Shell integration records each command's output, so `capture-pane --last-output` plus `pick` gives a
-searchable history that types the winner back into the pane:
+`rozi publish` reads complete JSON row snapshots. This publisher reports whether Cargo is running:
 
-```bash
-cmd=$(history | sed 's/^ *[0-9]* *//' | rozi pick --title History) \
-  && rozi send-text "$cmd"
+```sh
+#!/bin/sh
+set -eu
+
+ROZI=${ROZI_BIN:-rozi}
+if [ -n "${ROZI_SOCKET:-}" ]; then
+    set -- "$ROZI" --socket "$ROZI_SOCKET"
+else
+    set -- "$ROZI"
+fi
+
+publish_rows() {
+    while :; do
+        if pgrep -x cargo >/dev/null 2>&1; then
+            status=working
+        else
+            status=idle
+        fi
+        printf '{"rows":[{"id":"build","title":"Cargo build","status":"%s"}]}\n' "$status"
+        sleep 2
+    done
+}
+
+publish_rows | "$@" publish
 ```
 
-## Package the branch picker as an extension
+The row belongs to the source pane. A publisher launched in a pane uses `ROZI_PANE`; a supervised
+service resolves the focused live pane when its stream opens. A service that needs stable ownership
+can start a separate publisher subprocess with `ROZI_PANE` set to a pane ID from `list-panes`.
 
-The branch picker above becomes distributable by giving it a manifest and stable namespaced id:
+Nonempty published rows are authoritative for the activity state of an already recognized agent in
+that pane, so screen-derived state is not used until the publisher sends an empty snapshot or
+disconnects. Publishing from an unrecognized program creates an Activity row but does not invent an
+agent identity.
+
+## Make published rows clickable
+
+The publish stream writes activation objects to stdout. This example checks out an activated pull
+request in a new pane:
+
+```sh
+#!/bin/sh
+set -eu
+
+ROZI=${ROZI_BIN:-rozi}
+if [ -n "${ROZI_SOCKET:-}" ]; then
+    set -- "$ROZI" --socket "$ROZI_SOCKET"
+else
+    set -- "$ROZI"
+fi
+
+produce_rows() {
+    while :; do
+        gh pr list --json number,title,statusCheckRollup |
+            jq -c '{
+                rows: map({
+                    id: ("pr-" + (.number | tostring)),
+                    title: ("#" + (.number | tostring) + " " + .title),
+                    status: (
+                        if any(.statusCheckRollup[]?; .conclusion == "FAILURE")
+                        then "blocked"
+                        else "idle"
+                        end
+                    )
+                })
+            }'
+        sleep 30
+    done
+}
+
+produce_rows |
+    "$@" publish |
+    while IFS= read -r message; do
+        number=$(printf '%s\n' "$message" | jq -r '.activate // empty' | awk -F- '{print $2}')
+        [ -n "$number" ] || continue
+        "$@" new-pane --focus --argv gh pr checkout "$number"
+    done
+```
+
+Keep reading stdout for the lifetime of a publisher. An unread activation backlog causes Rozi to
+close the stream and withdraw its rows.
+
+## Package a script as an extension
+
+An extension gives scripts stable command IDs, lifecycle management, and a distributable manifest:
 
 ```text
-~/.local/share/rozi/extensions/git-tools/
+git-tools/
 ├── extension.toml
-└── bin/branch-pick
+└── scripts/
+    └── branch-picker
 ```
 
 ```toml
@@ -243,32 +263,16 @@ version = "0.1.0"
 api = 1
 
 [[commands]]
-id = "branches"
-label = "Switch branch"
-exec = ["./bin/branch-pick"]
+id = "pick-branch"
+label = "Pick Git branch"
+exec = ["{extension_dir}/scripts/branch-picker"]
 ```
 
-Rozi registers it as `git-tools.branches`. It is immediately available in the **Git tools**
-palette group and through `rozi run-action git-tools.branches`; a key is optional:
+The command is available as `git-tools.pick-branch`:
 
 ```toml
 [keys]
-"git-tools.branches" = "i"
+"ctrl-a b" = { run = "git-tools.pick-branch" }
 ```
 
-The command receives `ROZI_EXTENSION_DIR` and an opaque generation token while its working
-directory remains the focused pane's repository. See [Extensions](extensions.md) for the full
-manifest and trust model. The repository's
-[canonical Git tools extension](../examples/extensions/git-tools/) expands this recipe into branch
-creation/deletion/refresh actions and a worktree picker.
-
-## What is still out of scope
-
-- **Rows without a pane.** `publish` is pane-scoped: its rows belong to the pane whose program
-  opened the stream, and they go away with it. A daemon with no pane cannot publish. Poll-based
-  [command tabs](sidebar.md) cover part of that gap.
-- **Services on the server.** Services are client-side, like hooks. They cannot react while nothing
-  is attached, and they have no `ROZI_SOCKET` to talk to when detached — the control endpoint
-  belongs to the UI process.
-- **Two pickers at once.** A second `pick` while one is open is refused rather than queued, so a
-  caller never blocks on an unbounded human delay.
+See [Extensions](extensions.md) for installation, trust, manifests, services, and testing.

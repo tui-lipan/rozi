@@ -1,22 +1,28 @@
 # Benchmarks and profiling
 
-rozi uses Criterion 0.8 benchmarks to measure terminal parsing, snapshot rebuilding, protocol
-framing, scrollback search, the client session-output path, server input fairness under sustainable
-continuous PTY ingress, saturation boundedness, and durable resurrection snapshots. Run timing
-benchmarks on an otherwise idle machine; CI compiles them through `cargo check --all-targets` but
-does not use shared runners for timing.
-For the broader CPU, memory, lifecycle, scaling, and interpretation procedure, see
-[Reproducing a performance audit](performance/audit-playbook.md).
+Rozi keeps repeatable benchmark definitions in `benches/` and the Linux process-memory runner in
+`tools/memory-matrix.sh`. Timing results belong in dated
+[performance audit reports](performance/README.md), not on this page.
 
-## Running benchmarks
+CI compiles every benchmark with `cargo check --locked --all-targets`. It does not use shared
+runners for timing decisions. Run timing and memory measurements on an idle machine with a stable
+power profile.
 
-Run the complete suite:
+## Criterion commands
+
+Compile all benchmark targets:
+
+```bash
+cargo check --all-targets
+```
+
+Run the complete Criterion suite:
 
 ```bash
 cargo bench
 ```
 
-Run one Cargo benchmark target:
+Run one target:
 
 ```bash
 cargo bench --bench terminal_ingest
@@ -28,85 +34,69 @@ cargo bench --bench scrollback_search
 cargo bench --bench server_fairness
 ```
 
-Arguments after `--` go to Criterion. Use a benchmark ID substring or regular expression to select
-one group, corpus, size, or case:
+Arguments after `--` select Criterion benchmark IDs or target-specific evidence modes:
 
 ```bash
 cargo bench --bench terminal_ingest -- 'sgr_heavy/200x60'
 cargo bench --bench snapshot_rebuild -- terminal_pane_process_server_output
 cargo bench --bench protocol_framing -- control_frame_serde
 cargo bench --bench session_pipeline -- session_pipeline_memory/4096
-cargo bench --bench scrollback_search -- 'sparse/(1|8|16)'
-cargo bench --bench scrollback_search -- 'slice'
+cargo bench --bench app_render -- 'app_render/view_layout/(8|16)|sidebar_render'
+cargo bench --bench scrollback_search -- 'full_slice|sparse/(1|8|16)'
 cargo bench --bench server_fairness -- continuous_pty_ingress
-cargo bench --bench server_fairness -- --saturation-probe
 cargo bench --bench server_fairness -- resurrection_snapshot
+cargo bench --bench server_fairness -- --saturation-probe
 ```
 
-List the benchmark IDs in a target without measuring them:
+List IDs without measuring them:
 
 ```bash
 cargo bench --bench terminal_ingest -- --list
 ```
 
-Criterion writes reports and measurements below `target/criterion/`. Do not commit them.
+Criterion writes generated measurements and reports below `target/criterion/`. Do not commit them.
 
-## Linux process memory matrix
+## Target definitions
 
-`tools/memory-matrix.sh` is an opt-in process benchmark for release builds on Linux. It measures
-proportional set size (PSS) rather than attributing every shared mapping to every process. The quick
-matrix covers 80x24 and 253x64 viewports, 1/4/8 panes, empty or 1000-line histories, and plain or
-styled output. The full matrix adds 16 panes, 5000-line histories, two clients, and explicit
-pane-close, client-disconnect, reconnect, and session-kill cleanup states. It also runs an
-image-heavy lifecycle using eight deterministic 384x256 Kitty images per pane:
+| Target | Definition |
+| --- | --- |
+| `terminal_ingest` | Measures `TerminalScreen::process_bytes` throughput for generated plain lines, SGR-heavy output, scroll regions and cursor movement, wide Unicode, and long sparse-escape lines at fixed viewport sizes. |
+| `snapshot_rebuild` | Measures `render_snapshot()` by viewport, server-output processing by message size, and the difference between rebuilding after every message and once per output burst. |
+| `protocol_framing` | Measures pane-output frame encode/decode round trips and serde for generated large control frames. |
+| `session_pipeline` | Measures in-memory frame encode, decode, client terminal processing, and snapshot rebuilding. Unix also includes a socket-pair case. |
+| `app_render` | Measures whole-application view expansion and layout by pane count, with empty and populated terminals. It also measures fixed sidebar states and repository-size fixtures. It does not measure backend drawing or terminal buffer diffing. |
+| `scrollback_search` | Measures complete searches across fixed pane and history counts, scanner slices, and full production mapping for one cooperative slice. Cases cover sparse, dense, and absent matches. |
+| `server_fairness` | Measures key acknowledgement through a real server-owned PTY under paced continuous ingress, durable resurrection snapshot attempts, and a one-shot bounded saturation probe. |
 
-```bash
-tools/memory-matrix.sh --quick
-tools/memory-matrix.sh --full --output target/memory-matrix/full
-tools/memory-matrix.sh --lifecycle --output target/memory-matrix/lifecycle
-```
+The saturation probe is not a Criterion latency statistic. It checks the configured PTY ingress
+high-water behavior under unpaced producers and reports whether the bounded downstream policy
+activates. Keep its result separate from the paced key-acknowledgement benchmark.
 
-Use `--smoke` before a long run to check local PTY, control-socket, `/proc`, image parsing,
-disconnect, replay-complete reconnect, and session shutdown paths with a bounded two-pane workload.
-Use `--case ROWS COLS PANES HISTORY CONTENT CLIENTS [STATE]` to reproduce one failed or noisy
-scenario. `CONTENT` is `plain`, `styled`, or `images`; `STATE` is `steady` by default, or `closed`,
-`disconnected`, `reconnected`, or `killed`:
+The resurrection cases report the server's complete durable snapshot attempt. Trigger and polling
+delay stay outside the sample. The benchmark also emits server-loop blocking data, which has a
+different boundary from whole-attempt duration.
 
-```bash
-tools/memory-matrix.sh --case 60 250 8 5000 images 2 reconnected \
-  --output target/memory-matrix/reconnected
-```
-The runner requires `bash`, `python3`, util-linux `script`, and Linux `smaps_rollup`. It builds
-`target/release/rozi`, creates private temporary `HOME` and XDG config/state/cache/runtime
-directories per scenario, and passes every control command an explicit isolated socket. It never
-discovers or connects to the user's normal sessions.
+Criterion estimate intervals describe uncertainty around an estimate. They are not request-latency
+percentiles. Do not label an interval bound as p95.
 
-Each pane emits deterministic output and a final marker. After the marker appears, the runner waits
-two seconds, takes five `/proc/<pid>/smaps_rollup` and `/proc/<pid>/status` samples 200 ms apart, and
-reports the median. Results include separate client, server, and child-process groups; current RSS,
-PSS, anonymous, private, and file-backed memory; active-client and thread/process counts; and
-per-pane application-PSS deltas. The client group includes live probe UI processes even after a
-session kill; `active_clients` separately counts current session attachments. Cleanup evidence uses
-current RSS and PSS after quiescence, never `VmHWM`. It writes both `results.json` and `results.md`
-below the selected output directory. Before a killed scenario shuts down, the runner captures every
-server/PTY descendant PID and process start time, then fails if any same process survives; this
-detects reparented leaks without mistaking PID reuse for survival. Probe clients detach and the
-server receives a protocol shutdown before the private directory is removed; a trap targets only
-the PIDs owned by the runner if normal shutdown fails.
+## Deterministic corpora
 
-Memory numbers vary with the kernel, allocator, linked libraries, terminal dimensions, and host
-load. Compare two runs made from the same build on an otherwise idle machine. Scenario PSS within
-the larger of 5% or 2 MiB is considered comparable; investigate larger movement, but do not turn
-that tolerance into a CI threshold. The matrix is never run by CI.
+Benchmark corpora must be generated from fixed inputs. Do not add captured terminal sessions,
+machine-specific paths, wall-clock values, random seeds, network responses, or developer state.
 
-The harness changes no memory behavior by itself. Empty panes allocate history lazily, so the
-scrollback cases matter only after output fills history. Queue limits likewise should not lower
-normal idle RSS; their expected result is a plateau when a writer or client is stalled.
+Shared terminal, protocol, search, and resurrection generators live in `benches/support/mod.rs`.
+`server_fairness` uses deterministic helpers in its benchmark executable because it needs live PTY
+traffic and acknowledgements. A corpus generator must produce the same bytes and expected match
+counts on every run.
 
-## Comparing a baseline
+When a generator, viewport, pane count, retained-history count, message size, or acceptance boundary
+changes, treat the result as a new benchmark definition. Save a new baseline. Do not compare the
+new corpus with measurements from the old definition.
 
-Criterion 0.8 can save a named baseline and compare a later run against it. Keep the toolchain,
-power settings, machine load, and benchmark filter the same between both runs.
+## Baseline comparisons
+
+Keep the Rust toolchain, source revision, benchmark filter, terminal dimensions, power settings,
+and host load stable between runs.
 
 ```bash
 # Before the change
@@ -116,292 +106,66 @@ cargo bench -- --save-baseline before
 cargo bench -- --baseline before
 ```
 
-The same options work with an individual target or filter:
+The same options work for one target and filter:
 
 ```bash
 cargo bench --bench terminal_ingest -- 'sgr_heavy' --save-baseline before-sgr
-# Make the change.
 cargo bench --bench terminal_ingest -- 'sgr_heavy' --baseline before-sgr
 ```
 
-`--save-baseline` replaces an existing baseline with the same name. Use a distinct name when the
-old measurement must remain available.
+`--save-baseline` replaces an existing baseline with the same name. Use a new name when the earlier
+measurement must remain available. Record the exact revision and dirty-worktree state with any
+reported result.
 
-Criterion's reported interval expresses uncertainty around its benchmark estimate. It is not a
-latency-distribution percentile: do not label either bound as p95 or infer tail latency from it.
+## Linux process-memory harness
 
-## Deterministic suites
+`tools/memory-matrix.sh` is an opt-in Linux harness for release builds. It reads PSS and RSS from
+`/proc` and reports client, server, application, and child-process groups separately. It isolates
+`HOME`, XDG directories, session endpoints, and control sockets for every scenario.
 
-Terminal, protocol, and scrollback-search corpora are generated in `benches/support/mod.rs`; no
-terminal capture is checked in. `server_fairness` has its own deterministic self-helper because it
-must generate live PTY output and acknowledge input. Every generator produces the same bytes on
-every run:
-
-| Suite | What it measures |
-| --- | --- |
-| `terminal_ingest` | `TerminalScreen::process_bytes` throughput for plain log lines, SGR-heavy output, scroll regions and cursor movement, wide Unicode, and long sparse-escape lines at 80x24, 200x60, and 320x90. |
-| `snapshot_rebuild` | `render_snapshot()` by screen size, `TerminalPane::process_server_output` at 64 B, 1 KiB, and 64 KiB message sizes, and `output_burst` rebuild-per-message vs rebuild-per-frame. |
-| `protocol_framing` | Pane-output encode/decode round trips at 64 B, 4 KiB, and 1 MiB, plus serde of large `Attached` and `LayoutCommitted` control frames. |
-| `session_pipeline` | In-memory frame encode, decode, client terminal processing, and snapshot rebuild; Unix also measures a 4 KiB socket-pair path. |
-| `app_render` | Whole-app view + expand + layout at 1/2/4/8/16 tiled panes, with and without terminal content. This is the work `Update::full()` adds over `Update::paint()`. |
-| `scrollback_search` | `TerminalPane::search_scrollback` across 1/8/16 panes at 250x60 with 5,000 retained lines per pane, plus 512-line cooperative slices for sparse, dense, and no-match queries. |
-| `server_fairness` | Key-to-helper acknowledgement latency under paced continuous ingress, plus a saturation probe of the 4 MiB PTY ingress high-water, and resurrection snapshot duration for 1/8/16 panes. |
-
-When changing a generator, treat it as a benchmark-definition change: save a fresh baseline rather
-than comparing incompatible corpora.
-
-`scrollback_search` `slice_*` isolates the range scanner; `full_slice_*` is the acceptance row and
-includes the production update-thread mapping, accumulated item-cache cloning, and description
-formatting. Sparse queries match once per 100 lines; dense queries match every line.
-`server_fairness` helpers and owned, bounded-lifecycle servers are modes of the benchmark
-executable itself.
-
-`server_fairness/key_round_trip/continuous_pty_ingress` retains a 1 ms producer interval so the
-attached client can sustainably drain output while Criterion measures key-to-helper
-acknowledgement latency. It is continuous-ingress fairness evidence, not a saturated-queue result.
-
-`cargo bench --bench server_fairness -- --saturation-probe` is a one-shot evidence mode rather than
-a Criterion statistic. Two concurrent unpaced real PTY producers must drive the protocol-18 PTY
-ingress high-water to within one maximum 64 KiB coalesced event of the 4 MiB cap. Sustained
-saturation then reaches the designed bounded downstream overflow behavior and disconnects the
-attached client before a key round trip can be sampled. The probe succeeds only after both
-saturation and that disconnect occur, prints the high-water/capacity and time to disconnect, and
-tears down its owned server and helpers with bounded fallbacks. No saturated key-latency number is
-claimed; changing server-loop fairness or downstream overflow policy belongs to the Phase 5
-redesign.
-
-`resurrection_snapshot/panes_{1,8,16}/history_{0,1000,5000}` uses an isolated snapshot directory,
-`resurrect = true`, and a zero snapshot interval. Each stable fixture contains real live 250x60
-PTY panes and validates the saved pane count, dimensions, and retained replay history before
-measurement. One in-place terminal update creates one dirty generation per iteration. Polling and
-trigger overhead stay outside the reported value: Criterion's `iter_custom` sums protocol-18
-`last_duration_us`, measured by the server around the complete export/write/fsync/rename attempt.
-The matrix uses ten flat samples with a short warm-up and measurement window to keep the 16-pane,
-5,000-row case practical without changing its fixture.
-
-One in-place update dirties exactly one pane, so the matrix measures the common shape - one busy
-pane among idle ones - now that a snapshot reuses unchanged panes' replay files. It is therefore not
-the cost of a session where every pane is producing output; that case still exports every pane.
-
-Because the durable write runs on a snapshot worker, the Criterion figure is *throughput* of a whole
-attempt, not the stall it imposes on the session. Each case also prints
-`max_server_loop_blocking_us` to stderr, taken from `last_blocking_us`: that is the part the server
-loop is actually held for, and it is the number to compare against key round-trip latency. The
-benchmark waits on `successes + failures` rather than `attempts`, since attempts are counted at
-dispatch and a duration only exists once the worker reports back.
-
-## Live stress recipes
-
-Microbenchmarks isolate costs; live runs expose scheduling, PTY, rendering, and broadcast behavior.
-Build or run in release mode, enlarge the terminal if relevant, and watch CPU and responsiveness
-while executing these commands inside a rozi pane. Stop unbounded output with `Ctrl-c`.
-
-Continuous line flood:
+The quick matrix covers fixed viewport, pane, history, and content combinations. The full matrix
+adds larger pane and history counts, a second client, pane close, client disconnect, reconnect, and
+session kill. The lifecycle matrix uses deterministic image content.
 
 ```bash
-yes 'rozi output flood 0123456789'
+tools/memory-matrix.sh --smoke
+tools/memory-matrix.sh --quick
+tools/memory-matrix.sh --full --output target/memory-matrix/full
+tools/memory-matrix.sh --lifecycle --output target/memory-matrix/lifecycle
 ```
 
-Generate and print a 100 MB file:
+Reproduce one scenario with:
 
 ```bash
-yes 'rozi 100 MB cat corpus' | head -c 100000000 > /tmp/rozi-100mb.txt
-cat /tmp/rozi-100mb.txt
-rm /tmp/rozi-100mb.txt
+tools/memory-matrix.sh --case ROWS COLS PANES HISTORY CONTENT CLIENTS STATE \
+  --output target/memory-matrix/case
 ```
 
-One million numbered lines:
+`CONTENT` is `plain`, `styled`, or `images`. `STATE` is `steady`, `closed`, `disconnected`,
+`reconnected`, or `killed`.
 
-```bash
-seq 1 1000000
-```
+The runner requires Bash, Python 3, util-linux `script`, and Linux `smaps_rollup`. It takes five
+samples after a fixed settle period and reports the median in `results.json` and `results.md`.
+Generated output stays below `target/` and must not be committed.
 
-To measure broadcast amplification, attach two release clients to the same named session, then run
-one of the output producers in a pane. Both clients receive and parse the pane output.
+Compare PSS from the same machine and build. Keep child shell and workload processes separate from
+Rozi application memory. Current RSS and PSS after quiescence can show cleanup. `VmHWM` cannot,
+because it never decreases.
 
-```bash
-# Terminal 1
-cargo run --release -- stress
+## Profiling
 
-# Terminal 2
-cargo run --release -- stress
-```
-
-Use the same terminal dimensions for controlled comparisons. A follower may be read-only, but it
-still receives output:
-
-```bash
-cargo run --release -- stress --read-only
-```
-
-In another shell, query the client-local and cached server resource sample without pausing the UI:
-
-```bash
-ROZI_SOCKET=/path/to/control.sock target/release/rozi metrics | jq .
-```
-
-The server section includes `age_ms` and `stale`; compare current bytes with high-water and capacity
-before, during, and after the producer.
-
-## Profiling with Samply
-
-The `release-debug` profile keeps release optimizations and debug symbols while disabling symbol
-stripping. Install Samply separately, build once, then record the binary directly:
+The `release-debug` profile keeps release optimization and debug symbols:
 
 ```bash
 cargo build --profile release-debug
 samply record ./target/release-debug/rozi profile
 ```
 
-Generate a representative workload in the recorded session, then detach or quit to finish the
-recording. For a self-contained ephemeral session, omit the `profile` target.
+Record one controlled workload, then detach or quit to finish the profile. Attribute client,
+server, and child-process samples separately. If host policy blocks profiling, report the
+limitation instead of inferring percentages from source.
 
-## Known hot-path shape
+## Related records
 
-The current output path deliberately favors a simple authoritative model over minimum parsing:
-
-1. The session server parses each PTY byte stream into its `TerminalScreen` for terminal state,
-   metadata, replay, and resurrection behavior.
-2. The server broadcasts the raw pane bytes to every attached client.
-3. Every client parses those bytes again in `TerminalPane::process_server_output` and rebuilds a
-   full render snapshot for each delivered message.
-
-This creates dual parsing with one client, additional parsing for every attached client, and a
-full-snapshot cost that depends on message chunking as well as screen size. Compare
-`terminal_ingest`, `snapshot_rebuild`, and `session_pipeline` before optimizing this path; batching
-or coalescing can improve results without changing parser throughput itself.
-
-## Idle server cost is per pane, and agent detection drives it
-
-An idle pane should cost nothing, so measure the *server* process (not the client) when it does not.
-Sample it directly rather than trusting `ps` averages:
-
-```bash
-SRV=<server pid>
-t0=$(awk '{print $14+$15}' /proc/$SRV/stat); sleep 6
-t1=$(awk '{print $14+$15}' /proc/$SRV/stat)
-awk -v a=$t0 -v b=$t1 'BEGIN{printf "%.2f%%\n", (b-a)/6}'
-```
-
-Add panes over the control socket (`ROZI_SOCKET=… rozi new-pane`) and check the slope: a
-cost that scales with pane count is per-pane polling, while a flat cost is the server's own loop.
-
-Measured at idle, server process:
-
-| Panes | Detect every poll | Detect on change | Plus shared walk |
-| --- | --- | --- | --- |
-| 2 | 4.33% | 1.17% | 1.33% |
-| 3 | 6.33% | 1.33% | 1.33% |
-| 5 | 10.17% | 2.00% | 1.50% |
-
-Marginal cost per pane: **~1.95% → ~0.06%**.
-
-The cause was `foreground_job`, which must examine every process on the host to find a pane's
-process-group members, running once per pane at the 250 ms `RUNTIME_POLL_INTERVAL` — so every pane
-independently walked the same process table four times a second. Two changes fixed it:
-
-- Detection runs only when the cheaply known foreground program or command phase changes, with
-  `AGENT_DETECT_REFRESH` as a periodic re-sweep for a wrapped process appearing inside an unchanged
-  foreground.
-- When a sweep is needed, [`ProcessScan`] captures the walk once and every pane in that cycle reads
-  it, so cost no longer scales with pane count. Capture is lazy: a cycle where nothing is stale
-  never walks at all.
-
-Keep both properties when touching this path. The unit tests assert the gate via
-`last_agent_detect` rather than via `LazyProcessScan::captured`, because the test pane has no PTY
-and the walk is unreachable there either way — a `captured()` assertion would pass vacuously.
-
-[`ProcessScan`]: ../src/platform/process/mod.rs
-
-## Snapshot rebuilds dominate output cost
-
-The expensive part of receiving output is not rendering it — it is rebuilding the render snapshot.
-The isolated 2026-08-04 Phase 1 comparison held Rozi at `c07b6be` on the same Ryzen machine and
-changed only tui-lipan. Detached temporary worktrees and separate `CARGO_TARGET_DIR`s kept the two
-builds independent:
-
-| Screen | Before (`934d7b1`) | After (`f951197`) | Improvement |
-| --- | ---: | ---: | ---: |
-| 80x24 | 64.074 µs | 39.631 µs | 38.1% |
-| 200x60 | 374.72 µs | 229.10 µs | 38.9% |
-| 320x90 | 879.19 µs | 539.27 µs | 38.7% |
-
-This genuine framework-only before/after attributes the roughly 38-39% reduction to allocation-free
-cell text append. A later post-fix run measured 39.226 µs, 230.89 µs, and 536.07 µs at the same
-dimensions; normal run-to-run movement does not change the conclusion. For comparison, the whole
-app's view and layout is 219.41 µs for eight tiled panes and 380.29 µs for sixteen. The framework
-change removes per-cell text allocation from snapshot construction; it does not alter the burst
-shape below.
-
-`terminal_pane_process_server_output` shows the shape of the problem: 64 B and 1 KiB messages cost
-almost the same, because the cost is per *message* (one full rebuild) rather than per byte.
-
-`TerminalPane` therefore rebuilds on read rather than on write (`TerminalPane::snapshot`), leaning
-on `TerminalScreen`'s own dirty flag. Since the runtime coalesces a burst of server messages into a
-single frame, only the last snapshot is ever rendered, and `output_burst` measures what that saves:
-`per_message` rebuilds after every message (the old behavior), `per_frame` rebuilds once at the end
-(the current one).
-
-| Messages in burst | Rebuild per message | Rebuild per frame | Saved |
-| --- | --- | --- | --- |
-| 1 | 130 µs | 127 µs | — |
-| 8 | 977 µs | 130 µs | 7.5x |
-| 32 | 3.92 ms | 143 µs | 27x |
-| 128 | 15.9 ms | 417 µs | 38x |
-
-The single-message row matters as much as the others: it shows the work was genuinely removed
-rather than relocated. One message has no redundant rebuild to drop, so the two shapes agree.
-
-Two consequences worth preserving:
-
-- Do not reintroduce an eager `render_snapshot()` call on a write path. It reads as harmless
-  bookkeeping and silently reinstates one full rebuild per message.
-- Prefer `scrollback_offset()` / `total_scrollback_rows()` over reading the same fields off
-  `snapshot()`. `process_bytes` keeps those current on its own, so going through the snapshot
-  forces a rebuild to read one integer.
-
-## What a full render actually costs
-
-`AppRoot` is the only `Component` in the crate, so every `Update::full()` re-runs `view()` for
-every pane, the workbar, and the overlays — there is no smaller subtree to refresh. `app_render`
-measures that on a 200x60 viewport with styled terminal content and dwindle-tiled panes (2026-08-04
-Ryzen release build):
-
-| Panes | View + expand + layout |
-| --- | ---: |
-| 8 | 219.41 µs |
-| 16 | 380.29 µs |
-
-The current evidence still argues against a large scoped-render refactor:
-
-- Even at 16 panes, the whole avoidable view/layout slice remains below 0.4 ms.
-- At 8 panes, an `Update::full()` costs about 219 µs of view/layout more than an `Update::paint()`.
-  Sustained at the default 120fps ceiling, that is about 2.6% of one core - halved by the
-  `frame_rate` config key, which is the knob a user on a slow link reaches for.
-
-So splitting panes into child `Component`s with `memo_key()` has a hard ceiling of a few percent of
-a core, against a large refactor of `view/pane.rs` and real visual-regression risk. Prefer
-eliminating whole frames instead: a frame that never runs saves view, layout, draw, and terminal
-I/O, rather than just the view/layout slice measured here.
-
-Pane focus chrome uses `ctx.animated_color`, whose late-bound paint is resolved by the renderer.
-Those fades need only `Update::paint()` frames — no view, expand, or layout — but each paint still
-walks the realized terminal-sized tree. tui-lipan therefore paces an isolated style-color fade at
-30fps instead of the 120fps geometry/video ceiling. A 160 ms focus transition costs about five
-paints rather than nineteen; if a geometry or concrete-value transition overlaps it, both advance
-on the higher-rate frame.
-
-Draw cost is deliberately not benchmarked here: `TestBackend::capture_frame()` allocates a heap
-`String` per cell, so it measures the harness, not the real buffer write and frame diff. Read the
-devtools metrics panel's `Draw` row for that.
-
-## Local framework dependency
-
-`Cargo.toml` currently points directly to the sibling `../tui-lipan/` checkout, so benchmark and
-profile builds require that checkout. The corresponding `Cargo.lock` entry has no registry source
-or checksum, which is correct for the current path dependency.
-
-Before a standalone clone, CI job, or release build can resolve `tui-lipan` from crates.io, publish
-the required framework version, replace the path dependency with its registry version requirement,
-and regenerate `Cargo.lock` without a path override. Do not describe a registry release as active
-until that manifest change has landed.
+- [Performance archive](performance/README.md)
+- [Performance audit playbook](performance/audit-playbook.md)

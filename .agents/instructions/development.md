@@ -60,4 +60,5 @@ cargo build --profile release-debug
 samply record ./target/release-debug/rozi profile
 ```
 
-See `docs/benchmarks.md` for current targets, baselines, stress recipes, and profiling notes.
+See `docs/benchmarks.md` for benchmark targets, comparison rules, stress recipes, and profiling
+commands. Dated results live under `docs/performance/audits/`.

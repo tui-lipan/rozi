@@ -1,6 +1,6 @@
 ---
 name: rozi
-description: "Control rozi, a Hyprland-style tiling terminal multiplexer for coding agents. Use only when the user explicitly asks to control rozi panes or sessions, or asks to use rozi. Pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
+description: "Control rozi, a modern tiling terminal multiplexer for coding agents. Use only when the user explicitly asks to control rozi panes or sessions, or asks to use rozi. Pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
 ---
 
 # Rozi

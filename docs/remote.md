@@ -1,252 +1,180 @@
-# Remote SSH sessions (`--remote`)
+# Remote sessions
 
-`--remote` attaches a **local** rozi client to a session server that runs on another host over
-SSH. The remote host owns every PTY and its filesystem; your local config (theme, keybindings,
-clipboard, hooks) stays on this machine.
+`--remote` keeps the Rozi UI on your machine and runs the session server, PTYs, and pane processes
+on another host over SSH.
 
-The workbar identifies the active location with a `󰒍 <host>` badge before the named-session badge.
-Switching to a local or another remote session retains this attachment and its SSH transport in the
-background; switching back restores its live screens immediately. If a retained link drops, it is
-marked offline and reconnects in place when selected again.
-
-This is the inverse of “ssh in and run rozi there”: the UI and config stay local, while the
-session server stays remote.
-
-## Quick start
+## Connect
 
 ```bash
-rozi --remote workbox                  # ephemeral session on workbox
-rozi --remote workbox dev              # attach/launch named session "dev"
-rozi --remote ssh://user@host:2222     # explicit user, host, port
-rozi --remote workbox attach dev       # attach-only
-rozi --remote workbox new review       # create-only
+rozi --remote workbox
+rozi --remote workbox dev
+rozi --remote ssh://user@host:2222
+rozi --remote workbox attach dev
+rozi --remote workbox new review
 rozi list-sessions --remote workbox
 rozi kill-session dev --remote workbox
 ```
 
-`--remote` composes with the same session surface as a local launch (`attach`, `new`, `--session`,
-`--profile`, `--read-only`). It cannot be combined with `--server` or `--fresh-server`.
+The session commands behave like local commands. A bare remote launch starts a temporary session.
+A named target attaches to its running session or launches its same-name profile. See
+[Sessions](sessions.md#open-a-session-from-the-command-line).
 
-## Supported platforms
+Rozi supports Linux, macOS, and Windows as either client or remote server hosts. The local machine
+needs `ssh` and `curl` on `PATH`. Automatic installation also needs `tar` for a Linux or macOS
+target, or `unzip` and `scp` for a Windows target.
 
-| Client (local) | Remote (server) | Status |
-| --- | --- | --- |
-| Linux / macOS | Linux / macOS | Supported. |
-| Windows | Linux / macOS | Supported. |
-| any | **Windows** | **Supported** — verified live against Windows 11 + OpenSSH; see below. |
+## Set up SSH authentication
 
-rozi itself runs on Windows, and the session server and `--remote-serve` proxy are
-platform-neutral. A Windows host works as the *remote* end of `--remote`, verified end to end
-against a real Windows 11 + OpenSSH host (stock `cmd.exe` default shell): probe, install, attach,
-detach/reattach, a concurrent second client, and — the previous hard blocker — a session that
-survives the SSH link dropping.
+Rozi uses your OpenSSH configuration, keys, agent, `known_hosts`, jump hosts, and other SSH policy.
+It does not manage credentials.
 
-What the client does for a Windows remote:
+Batch mode is enabled by default, so authentication must complete without an interactive prompt.
+Load a key into your SSH agent or set an identity file:
 
-- **Shell family detection.** The probe first runs one fixed, shell-agnostic command
-  (`echo rozi_family=%OS%`, which only `cmd.exe` expands to `Windows_NT`), then dispatches a
-  POSIX (`sh -s`) or PowerShell probe accordingly. Probe output is still parsed by fixed keys and
-  never treated as argv.
-- **Platform detection.** `MINGW*`/`MSYS*`/`CYGWIN*` `uname -s` output is matched by family prefix,
-  and the PowerShell probe reports `platform=windows` directly (`PROCESSOR_ARCHITECTURE` gives the
-  machine — `AMD64` normalises to `x86_64`).
-- **`.exe`-aware install.** The Windows install writes `%USERPROFILE%\.local\bin\rozi.exe` (no
-  `chmod`). `connect.rs` then invokes `--remote-serve` with the returned `.exe` path verbatim.
-- **Server lifetime (the former hard blocker, now solved).** Windows OpenSSH runs each session
-  inside a Job Object and terminates it on disconnect; a plain `DETACHED_PROCESS` does not escape a
-  job. `spawn_detached_server` adds `CREATE_BREAKAWAY_FROM_JOB`, falling back to a plain detached
-  spawn if the job refuses the flag (`ACCESS_DENIED`). Verified live: breakaway *is* permitted by
-  OpenSSH's job on Windows 11, so a session started over `--remote` keeps `running` after the SSH
-  link is dropped. (The fallback stays as insurance for a differently-configured host; it was not
-  needed here.)
-
-Two OpenSSH-for-Windows quirks that live testing surfaced, both handled in the client:
-
-- **Large command stdin deadlocks.** Piping more than the channel's stdin buffer (~64 KB) to a
-  remote command over win32-OpenSSH stalls hard — a real ~11 MB binary never finishes. So the
-  Windows install uploads the binary with `scp` (the sftp subsystem has real flow control) and then
-  runs a small no-stdin finalize step, rather than streaming it through a command's stdin the way
-  the POSIX install does.
-- **`powershell -Command -` truncates a stdin script.** A multi-line script fed to
-  `powershell -Command -` on stdin runs only its first statements. So both the PowerShell probe and
-  the install finalize are delivered as a base64 `-EncodedCommand` (also quoting-proof through
-  cmd.exe), which runs the whole script and needs no stdin.
-
-Measured against a real Windows 11 host over OpenSSH:
-
-- **Line endings are not a problem.** Non-pty stdio under the stock `cmd.exe` shell is byte-clean in
-  both directions — `0x0A` stays `0x0A`, and the framed preamble arrives intact. No `DefaultShell`
-  change is required. (An earlier revision of this page warned otherwise; that warning was wrong.)
-- The Windows session server runs correctly, binds its named pipe, and is discoverable by
-  `list-sessions` on that host.
-- `--remote-serve` emits a valid preamble reporting `platform: windows`.
-- The proxy's stdout pump must set the named pipe non-blocking on its **reader clone only**; a
-  blocking `ReadFile` on a duplicated pipe handle stalls `WriteFile` on its sibling, and setting
-  `PIPE_NOWAIT` on the writer breaks `write_all`. See `session::remote::proxy`.
-
-Cross-platform install between *supported* platforms downloads the matching release archive and
-needs `tar` on the client (`tar.exe` ships with Windows 10 and later). Checksum verification is done
-in-process, so it needs no external tool anywhere.
-
-## Authentication
-
-Requires `ssh` on `PATH`. By default rozi passes `BatchMode=yes`, so auth must succeed without a
-prompt — typically a loaded agent or an `identity_file` under `[remote.hosts.*]`.
-
-Set `[remote] batch_mode = false` to let ssh prompt. One switch governs every remote invocation
-(probe, install, attach, `list-sessions --remote`, `kill-session --remote`), deliberately: a mix
-would give you a host that lists fine and then hangs on attach.
-
-The caveat: on the **attach** path ssh's stdin carries the session protocol, so ssh falls back to
-prompting on the controlling terminal — which is the terminal rozi is drawing in. Expect the
-prompt to land on top of the UI. `batch_mode = false` is most useful for the CLI helpers, or with a
-passphrase-protected key you unlock once before attaching.
-
-## How it works
-
-The remote side does **not** teach the session server to speak stdio. Local rozi runs:
-
-```text
-ssh <host> -- <remote-rozi> --remote-serve <NAME>
+```toml
+[remote.hosts.workbox]
+host = "workbox.example.com"
+user = "dev"
+identity_file = "~/.ssh/id_ed25519"
 ```
 
-That hidden `--remote-serve` process connects to the **normal** session endpoint on the remote host
-(Unix socket or named pipe) and pumps framed bytes between that connection and its own stdin/stdout.
-The local client treats those pipes as an `IpcConnection::Piped` transport and speaks the usual
-session protocol over them. Remote attach does not reuse the local connect retry/backoff loop —
-autostart lives inside `--remote-serve` on the far side — but it does kill+retry once when a running
-remote server's protocol cannot be negotiated.
+Set `[remote] batch_mode = false` to allow SSH prompts. This applies to probing, installing,
+attaching, listing, and killing sessions. An attach uses SSH standard input for the live session, so
+a prompt may appear over the TUI. Prefer a loaded agent for regular use.
 
-Consequences:
+Test authentication directly when setup fails:
 
-- Multi-client still works on the remote host: a local client on that box and your `--remote`
-  client can share one session and the layout-control lease.
-- Discovery, resurrect, and `kill-session` on the remote host keep using the existing local
-  endpoints; `--remote` only tunnels a client.
-- `peer_pid` is unset for piped connections, so a failed graceful shutdown never falls back to
-  terminating a local `ssh` process.
+```bash
+ssh workbox
+```
 
-## Target syntax
+## Configure aliases and defaults
 
-`--remote` accepts:
+`--remote` accepts an SSH config alias, a bare hostname, or an
+`ssh://[user@]host[:port]` URL.
 
-| Form | Meaning |
-| --- | --- |
-| `workbox` | ssh_config `Host` alias, bare hostname, or `[remote.hosts.workbox]` alias |
-| `ssh://host` | Host only |
-| `ssh://user@host` | User and host |
-| `ssh://user@host:2222` | User, host, and port |
+```toml
+[remote]
+default_host = "workbox"
+install = "prompt"
 
-CLI values merge with `[remote]` / `[remote.hosts.<alias>]` (see [Configuration](configuration.md#remote)).
-Per-host `binary_path`, `identity_file`, and `ssh_args` override the defaults for that alias.
+[remote.hosts.workbox]
+host = "workbox.example.com"
+user = "dev"
+port = 2222
+identity_file = "~/.ssh/id_ed25519"
+ssh_args = ["-J", "bastion"]
 
-## Bootstrap and install
+[remote.hosts.staging]
+host = "staging.example.com"
+```
 
-Before connect, rozi probes the remote for a compatible `rozi` binary (one that speaks
-`--remote-serve` and overlaps the client's protocol range).
+With `default_host` set, `rozi --remote` uses that target. Its host entry also supplies inherited
+`user`, `port`, `identity_file`, `ssh_args`, and `binary_path` values to aliases that do not set
+their own values. An alias-specific value wins. A non-empty alias-specific `ssh_args` list replaces
+the inherited list.
 
-| `[remote] install` | Interactive TTY (before the TUI starts) | Non-interactive / CI |
+For an `ssh://` URL, the URL's user and port win. Settings may come from a host entry with the same
+hostname, then from the default host entry.
+
+Use `binary_path` when Rozi already exists at a fixed remote path:
+
+```toml
+[remote.hosts.workbox]
+binary_path = "/opt/rozi/bin/rozi"
+```
+
+## Choose an install policy
+
+Before connecting, Rozi checks for a compatible remote binary.
+
+| `[remote] install` | Interactive terminal | Non-interactive run |
 | --- | --- | --- |
-| `prompt` (default) | Asks `[y/N]` on stdin; installs only after an explicit yes | Never mutates; fails with a clear message |
-| `always` | Installs without asking when missing/incompatible | Never mutates |
-| `never` | Fail if missing | Fail if missing |
+| `prompt` | Ask before installing. This is the default. | Fail without changing the host. |
+| `always` | Install when needed without asking. | Fail without changing the host. |
+| `never` | Fail when no compatible binary is found. | Fail without changing the host. |
 
-When the local and remote platforms match, install copies `current_exe()`. When they differ, rozi
-downloads the matching GitHub release asset for this version, verifies its `.sha256`, then uploads
-that binary. Override the download base with `ROZI_RELEASE_BASE_URL` for mirrors/tests.
+On Linux and macOS, automatic installation writes `$HOME/.local/bin/rozi`. On Windows it writes
+`%USERPROFILE%\.local\bin\rozi.exe`.
 
-Checksums are computed in-process rather than via `sha256sum`/`shasum`, so verification works
-identically on every client platform and can never be skipped because a tool is missing.
+When client and server platforms match, Rozi can copy the running executable. For a different
+platform, it downloads the matching release archive, verifies its checksum, and uploads the binary.
+Set `ROZI_REMOTE_BINARY` to upload a specific local binary, or `ROZI_RELEASE_BASE_URL` to use a
+release mirror.
 
-Overrides:
+Rozi refuses to overwrite a non-regular install target. Set `install = "never"` or pin
+`binary_path` if remote installation is not acceptable.
 
-- `[remote.hosts.<alias>] binary_path` — use that path; skip probe/install.
-- `ROZI_REMOTE_BINARY=/path/to/rozi` — stream that local file onto the remote (same install
-  location), regardless of platform match — you are responsible for architecture fit.
-- `[remote] default_host` — used when `--remote` is passed without a host argument; also supplies
-  shared `identity_file` / `ssh_args` / `binary_path` defaults for other aliases.
+The current remote protocol supports one version. Update both ends together. If a running named
+server is incompatible after an update, restart that server. A configured or discovered binary
+mismatch may be rejected before attachment when Rozi can detect it.
 
-Install writes atomically under `$HOME/.local/bin/rozi` on the remote and refuses to overwrite a
-non-regular file. Non-interactive runs never issue a mutating install command.
+## Understand the client and server boundary
 
-If attach finds a running remote server whose protocol range does not overlap this client, rozi
-kills that session once over ssh and retries attach (so a fresh `--remote-serve` can autostart a
-compatible server).
-
-## Protocol negotiation
-
-Client and server advertise a max and min protocol version on attach/query. They negotiate
-`effective = min(client_max, server_max)` and reject only when that value falls below either side's
-minimum. Within a supported range, wire changes are additive (`#[serde(default)]`); breaking changes
-bump `MIN_SUPPORTED_PROTOCOL`.
-
-This build speaks protocol **3** only (`MIN_SUPPORTED_PROTOCOL` is also 3). Both peers come from
-the same tree, so any mismatch is rejected at the handshake rather than shimmed. Restart existing
-session servers after upgrading.
-
-## Local vs remote feature split
-
-| Stays local (client) | Lives on the remote (server) |
+| Local client | Remote server |
 | --- | --- |
-| Theme, keys, config, overlays, copy/search UI | PTYs, pane processes, layout authority |
-| — | [`[[agents]]`](agents.md) definitions and agent detection |
-| Clipboard / OSC52 (paste into the local terminal) | Working directories and spawn `cwd` paths |
-| Hooks (`[[hooks]]` run on the client) | Session discovery endpoints on that host |
-| Control socket for *this* UI process | Resurrect / autosave paths on that host |
-| File tree rendering, icons, search | The pane shell and its resolution |
+| Theme, keybindings, overlays, and sidebar UI | PTYs and pane processes |
+| Copy, search, and hint interfaces | Shared layout authority |
+| Local control socket | Session discovery and resurrection |
+| Hooks and desktop notifications | Pane working directories |
+| Local clipboard access | Agent definitions and agent detection |
+| File-tree rendering | Remote directory and Git data |
 
-Notes:
+The remote server chooses the shell. Local `[shell]` and local shell-integration files are not sent
+to it. A remote shell that emits OSC 7 can still report its current directory. Without that signal,
+directory tracking may remain at the pane's launch directory.
 
-- **The shell of a remote pane is resolved on the server, not the client.** A pane spawned under
-  `--remote` is sent with an empty shell argv, so the remote session server picks its own platform
-  default (`$SHELL` on Unix, `cmd.exe`/PowerShell on Windows) — the local `[shell]` setting and the
-  client's shell-integration rc-file (a local path a different-OS server cannot run) do not travel.
-  A consequence is that rozi's shell integration (OSC 133 prompt markers, OSC 7 cwd reporting,
-  agent-status detection) is **not** injected into remote panes, so those features are limited there
-  until the server grows its own shell-integration path. A remote pane still shows the directory it
-  was **launched** in — the server reports the cwd it spawned the pane in — but that display does not
-  track live `cd`s without OSC 7 (or native process inspection, which is Linux/macOS only). A shell
-  that already emits OSC 7 reports its live cwd as normal.
-- Pane `cwd` reports are **server-relative**. New splits and popups still inherit them so the remote
-  server can spawn correctly; local filesystem helpers (for example opening a path on this machine)
-  skip those paths while `--remote` is attached.
-- Hooks receive `ROZI_REMOTE_HOST` when attached remotely. See [Hooks](hooks.md).
-- **Out-of-band graphics are off.** Locally a program can hand a picture over by writing it
-  somewhere and naming the path (`t=f`), which is what keeps a browser or a video player in a pane
-  smooth. Attached remotely there is no shared filesystem to name into, so panes fall back to inline
-  transmission, and one remote client withdraws the offer for every client on that session. See
-  [Terminal](terminal.md#images).
-- The sidebar **Files** / **Git** tabs browse the **remote** filesystem. The client asks the session
-  server to read each directory (`ListDirectory`) and to scan the repository for changes
-  (`ListChanges`), then renders the replies locally, so expansion, icons, search, and theming stay
-  client-side while the data comes from the server's host. `git` must be on the remote server's
-  `PATH` for change markers; without it the tree still browses, just without decorations. A remote
-  server older than protocol 13 cannot answer, and the tab says so rather than spinning.
-  - **File-tree search is scoped to already-fetched directories.** Search runs over the listings the
-    client currently holds, and under `--remote` those are only the directories that have been
-    expanded (each expansion triggers one `ListDirectory`). Collapsed subtrees are not fetched, so
-    matches inside them do not appear until they are expanded. This is a known limitation, not a bug.
-- The UI control socket remains on the client machine. Automating a remote-attached UI still uses
-  that local control endpoint; `list-sessions --remote` / `kill-session --remote` are separate SSH
-  CLI helpers, not control-socket commands.
+The Files and Git sidebar tabs read the remote filesystem while attached remotely. `git` must be on
+the remote server's `PATH` for change markers. File search only includes directories the client has
+already expanded.
 
-## Security model
+Hooks run locally and receive `ROZI_REMOTE_HOST`. The UI control socket also remains local.
+`list-sessions --remote` and `kill-session --remote` are separate SSH commands.
 
-- Transport is whatever your `ssh` config already trusts (keys, known_hosts, jump hosts via
-  `ssh_args`). rozi does not open a network-facing session port.
-- Runtime endpoints on the remote host stay per-user local IPC; the proxy is just another client of
-  that endpoint.
-- Client environment forwarding is disabled for remote panes. Local display sockets are unusable on
-  the other host, and `[environment].forward` may name credentials.
-- Install copies a binary you already run locally onto the remote home directory; set
-  `install = "never"` or pin `binary_path` if you do not want that path.
-- Clipboard content from remote panes still lands on the **local** clipboard via OSC52 / selection
-  when enabled — same exposure as a local session.
+Clipboard reads and writes happen on the client where the UI runs. OSC52 from a remote pane can
+therefore update the local clipboard when enabled. Direct rich-clipboard access by the pane still
+refers to the remote host.
 
-## Related
+See [Terminal features](terminal.md) for shell metadata, clipboard behavior, and image limits.
 
-- [Sessions](sessions.md) — attach/detach, ephemeral vs named, multi-client.
-- [Configuration](configuration.md#remote) — `[remote]` keys.
-- [Control](control.md) — local control socket vs remote list/kill CLI.
-- [Hooks](hooks.md) — `ROZI_REMOTE_HOST`.
-- [Sidebar](sidebar.md) — file tree behavior under `--remote`.
+## Reconnection and switching
+
+Switching to another local or remote session parks the current attachment in the background.
+Returning to it reuses its live terminal screens.
+
+If a retained SSH connection drops, Rozi marks it offline. Selecting that attachment attempts to
+reconnect in place. The remote named server keeps running independently of the SSH connection.
+Temporary servers still follow their no-client recovery timer.
+
+Disconnecting a remote host closes this client's attachments to that host. It does not kill named
+servers there. Use the session picker or Sessions sidebar to reconnect.
+
+## Troubleshooting
+
+| Message | Check |
+| --- | --- |
+| `ssh not installed here` | Install OpenSSH on the client and check `PATH`. |
+| `Unknown host name` | Check DNS, SSH config, and the host alias. |
+| `Host not responding` | Check power, network, VPN, routing, and firewalls. |
+| `SSH port closed` | Check `sshd`, the configured port, and port forwarding. |
+| `SSH login rejected` | Check the user, key, agent, and server authorization. |
+| `Host key not trusted` | Connect with `ssh` and inspect `known_hosts`. |
+| `No rozi on host` | Allow installation or set `binary_path`. |
+| Incompatible version | Update both ends and restart the named server. |
+| Git markers missing | Install `git` on the remote server and check its `PATH`. |
+
+Run `rozi --remote <host>` from a shell to see the underlying SSH error when a sidebar summary is
+not enough.
+
+## Security
+
+- SSH provides transport authentication and encryption. Rozi opens no network session port.
+- Session endpoints on the remote host remain private local IPC for that user.
+- Rozi does not forward the client's environment into remote panes. This avoids copying local
+  display endpoints and configured credentials.
+- `ssh_args` and `binary_path` are trusted configuration. Keep executable paths to one
+  shell-safe token.
+- OSC52 lets a remote pane write to the local clipboard when enabled. Disable it with
+  `[clipboard].enable_osc52 = false` if the remote programs should not have that access.
+- A writable remote client has the same session authority described in
+  [Shared sessions](shared-sessions.md#security-and-caveats).

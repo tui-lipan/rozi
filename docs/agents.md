@@ -1,216 +1,175 @@
 # Agent definitions
 
-Rozi recognizes coding-agent CLIs running inside panes, and reads their screens to tell a run in
-flight from one waiting on you. Both halves are data: an **agent definition** says which foreground
-process is a given agent, and what its screen looks like in each state.
+Rozi detects coding-agent CLIs in panes and shows their state in the sidebar's
+[Activity tab](sidebar.md#activity). Add a `[[agents]]` entry when Rozi does not recognize a tool,
+or override a built-in entry when its screen rules do not match the installed version.
 
-Nothing about the agents Rozi ships is privileged. The built-in catalog is
-[`src/agent_detection/builtin.toml`](../src/agent_detection/builtin.toml), written in the format
-below and parsed by the same validator your `config.toml` goes through. Teaching Rozi about a tool
-it has never heard of is a table, not a plugin process.
+Start with a process match:
 
 ```toml
 [[agents]]
 id = "mycoolagent"
 label = "My Cool Agent"
 match = { names = ["mca"], paths = ["@acme/mca"] }
+```
 
+This is enough to list the process as an agent. Add state rules only when its screen has stable text
+that distinguishes working, blocked, idle, or unknown views.
+
+## Match the process
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | Lowercase letters, digits, `-`, and `_`. |
+| `label` | no | Display name. Defaults to `id`. |
+| `base` | no | Use Rozi's common state rules. Defaults to `true`. |
+| `match.names` | one match field | Executable basenames. |
+| `match.paths` | one match field | Substrings found in executable paths or argument tokens. |
+| `states` | no | Screen or title rules. |
+
+Names are matched without a directory, without case, and without these launcher suffixes:
+`.exe`, `.cmd`, `.bat`, `.ps1`, `.js`, `.mjs`, and `.py`.
+
+Use `paths` for tools launched through Node, Python, a package manager, or another generic
+executable. Path matching lowercases the value and normalizes backslashes to slashes:
+
+```toml
+match = {
+  names = ["mca", "mycoolagent"],
+  paths = ["@acme/mca"]
+}
+```
+
+Rozi inspects the foreground process group and unwraps common shell, language-runtime, and package
+launchers. Set `ROZI_AGENT` or `HERDR_AGENT` in the pane environment to provide an explicit name
+hint when the launcher cannot otherwise be identified.
+
+At least one name or path is required for a new definition. An override of an existing built-in id
+may omit `match` to retain that built-in's process match while replacing its label or state rules.
+
+## Add state rules
+
+```toml
 [[agents.states]]
 state = "working"
 scope = "footer"
 screen = { any_of = ["esc to interrupt"] }
-```
 
-The rows appear in the sidebar's [Activity tab](sidebar.md); what a detected state means for
-elapsed time, alerts, and grouping is documented there.
-
-## Where definitions come from
-
-| Source | Ids | Can replace a built-in |
-| --- | --- | --- |
-| Built-in catalog | `claude`, `opencode`, … | — |
-| `config.toml` `[[agents]]` | as declared | yes |
-| An extension's `extension.toml` `[[agents]]` | `<extension>.<id>` | no |
-
-Config entries are consulted first, then extension entries, then the built-ins. A config entry
-declaring an id a built-in already uses **replaces** it rather than competing with it; an entry
-with a new id is simply added ahead of them, so it can claim an executable name a built-in also
-lists. An extension's ids are namespaced the way its commands and services are, which is what
-stops an installed extension from quietly taking over `claude`.
-
-Detection runs in the session server, which owns the PTYs, so one session has one answer that every
-attached client sees. A follower with different `[[agents]]` in its own config does not get a
-different reading. Editing definitions and running `reload-config` re-reads them and re-detects
-every pane; only the controller's reload does this.
-
-## Recognizing the process
-
-```toml
-match = { names = ["mca", "mycoolagent"], paths = ["@acme/mca"] }
-```
-
-`names` are executable basenames. They match after the directory is stripped and a launcher suffix
-(`.exe`, `.cmd`, `.bat`, `.ps1`, `.js`, `.mjs`, `.py`) is removed, so `names = ["mca"]` covers
-`/usr/local/bin/mca` and `mca.exe`.
-
-`paths` are substrings of an executable path or an argv token, lowercased with `\` normalized to
-`/`. They are what recognizes an agent whose binary name says nothing — an npm package launched
-through `node`, where the only evidence is the script path. This is why `claude` lists
-`@anthropic-ai/claude-code`.
-
-Rozi looks at the pane's whole foreground process group, not just the leader, and unwraps common
-launchers (`node`, `python`, `bun`, `deno`, `sh`/`bash`/`zsh`/`fish`, `cmd`/`pwsh`, `npx`, `uvx`,
-`env`, and friends). An explicit `ROZI_AGENT` environment variable in the pane overrides all of it
-and is matched against `names`, which is the escape hatch for a launcher nothing else can see
-through.
-
-At least one of `names` or `paths` is required — a definition nothing can match is dropped with a
-warning. The exception is an entry replacing a built-in: omit `match` entirely there and it keeps
-the built-in's process vocabulary, so you can retune only the screen rules.
-
-## Reading the screen
-
-A definition's `[[agents.states]]` rules each say what a match concludes.
-
-```toml
 [[agents.states]]
 state = "blocked"
-screen = { all_of = ["esc dismiss"], any_of = ["enter submit", "enter toggle"] }
+screen = {
+  all_of = ["esc dismiss"],
+  any_of = ["enter submit", "enter toggle"]
+}
 ```
 
-| Key | Notes |
+Each rule accepts:
+
+| Field | Values |
 | --- | --- |
-| `state` | `blocked`, `working`, `idle`, or `unknown`. Required. |
-| `scope` | `all` (default) or `footer`. `screen` rules only. |
-| `screen` / `title` | The needles, over one observation. Exactly one per rule. |
+| `state` | `blocked`, `working`, `idle`, or `unknown` |
+| `scope` | `all`, the default, or `footer` for screen rules |
+| `screen` | Pattern group matched against visible terminal text |
+| `title` | Pattern group matched against the terminal title |
 
-A pattern group takes `all_of` (every needle matches), `any_of` (at least one), and `none_of`
-(nothing matches, a veto). At least one of `all_of` or `any_of` is required. Set `regex = true` to
-read the group as `regex-lite` regular expressions rather than literals; mix the two by writing two
-rules with the same `state`.
+Set exactly one of `screen` or `title`.
 
-Needles are matched against text Rozi has already lowercased, so write a literal however the agent
-draws it and a regex without a case-insensitive flag.
+A pattern group accepts:
 
-A veto is how you read a signal made of an *absence*. Goose, for instance, shows a turn in flight
-nothing at all - no spinner, no interrupt hint, an unchanging title - and the only difference is
-that the context meter above its prompt is gone. Its rule pairs a deliberately weak positive (the
-tool-call marker, which an idle transcript also carries) with `none_of` on the meter. The positive
-is required because a rule that is only a veto matches every screen that happens to lack one
-string, including a pane that has not finished drawing.
+| Field | Meaning |
+| --- | --- |
+| `all_of` | Every pattern must match. |
+| `any_of` | At least one pattern must match. |
+| `none_of` | No listed pattern may match. |
+| `regex` | Treat all patterns in this group as regex-lite expressions. Defaults to `false`. |
 
-### Precedence, not declaration order
+At least one `all_of` or `any_of` pattern is required. A group containing only `none_of` is
+rejected because it would match unrelated screens that merely lack a string.
 
-Rules are evaluated by outcome, highest first:
+Matching ignores case. Write literal patterns as the tool displays them. Regex patterns also run
+against lowercased text, so they do not need a case-insensitive flag.
 
-```text
-unknown  →  blocked  →  working  →  idle  →  (nothing matched: idle)
-```
+`scope = "footer"` reads the last eight non-empty screen lines. Use it for spinners, interrupt
+hints, and prompt controls that may also appear in transcript text. It does not apply to title
+rules.
 
-An agent drawing a spinner *and* an approval dialog is waiting on you either way, so a `blocked`
-rule outranks any `working` evidence beneath it no matter where the two sit in the file. This is
-also why adding a `working` rule to an agent never demotes the shared `blocked` vocabulary.
+## Understand state precedence
 
-`unknown` is not idle. It means *recognized the agent, learned nothing about its state*, and Rozi
-holds the pane's previous state instead of ending the run. It exists for a view that replaces the
-agent's own status chrome — OpenCode's subagent navigator covers the composer and the status line,
-the only two places the parent run reports progress. Without it, opening a subagent would end the
-run on screen, restart its elapsed clock, and announce a completion that never happened. A held
-state that goes fifteen minutes with no confirming evidence falls back to `idle`.
-
-It leads the order because it is the one outcome that is a claim about the *screen* rather than
-about the run — this view does not report the agent's state at all — and a rule saying that has to
-outrank whatever the shared vocabulary reads off the same screen. Otherwise it can only fire where
-nothing else matched, which is where it changes nothing. OpenCode's startup splash is the case:
-it centers `⠋ Waiting for opencode server...` on an empty screen, character for character the shape
-of Pi's `⠦ Working...`, so a program that had not started yet read as a run in flight and every
-launch ended in a completion notification. Write `unknown` rules narrowly for the same reason —
-one that matches too much silences everything else on that screen.
-
-A screen that matches nothing at all *is* idle: a definition whose rules all fail has observed its
-agent sitting at a prompt.
-
-### `scope = "footer"`
-
-Footer scope reads only the last eight non-empty lines — where live status chrome sits. It matters
-more than it sounds: an agent's transcript quotes its own footer hints constantly, writing *about*
-interrupting a run while no run is in flight. An unscoped `"esc to interrupt"` rule reads such a
-pane as working forever.
-
-### The shared vocabulary
-
-Every definition also gets Rozi's base rules unless it opts out, which is why most agents need no
-rules of their own:
-
-- `blocked` on `permission required`, `action required`, `do you want to proceed?`,
-  `waiting for permission`, `allow command?`, `[y/n]`, `yes (y)` anywhere on screen, or
-  `action required` in the title;
-- `blocked` **in the footer** on `requires approval`, `waiting for user input`, a trust prompt
-  (`do you trust the contents of this directory`, `do you trust the files in this folder`), a
-  write-in invitation (`type your own answer`, `type a response`, `type to answer`, `write-in`), a
-  numbered question (`Question 2 of 5`), or a chooser's closing line — `esc dismiss` alongside
-  `enter submit` / `enter toggle` / `enter confirm`, or `esc cancel` alongside `enter select`;
-- `working` on a braille spinner at the start of the terminal title, or at the start of a line
-  **in the footer**;
-- `working` **in the footer** on `esc to interrupt`, `esc again to interrupt`,
-  `press esc to interrupt`, `ctrl+c to interrupt`, or `esc interrupt`.
-
-Set `base = false` to drop it. The built-in `claude` definition does: Claude Code transcripts quote
-approval prose verbatim while a run is still going, so only the dialog's own structure — a
-selection cursor on a numbered option — counts as blocked there. Turning the base off drops its
-`working` rule too, which is why `claude` restates the interrupt hints.
-
-Base rules are deliberately not user-extensible. One bad needle there would misread every pane at
-once; a definition wanting a shared vocabulary of its own restates it.
-
-## When a definition is not enough
-
-Screen scraping is a guess, and there are things it structurally cannot do. A program running
-several agents behind one terminal — a client with its own tab bar, a parent session and its
-subagents — can only ever be seen one at a time, and a state that lives in a log file or an API
-rather than on screen is not there to read.
-
-Such a program reports for itself instead, through
-[`rozi status`](control.md) or [`rozi publish`](control.md#agent-slots). While a pane publishes
-rows, Rozi stops scraping it entirely and takes the pane's state from them. That path needs no
-definition and no extension — any program that can run a command can use it — and an extension can
-publish on another pane's behalf by setting `ROZI_PANE`, which is what the
-[agent-activity example](../examples/extensions/agent-activity/) does.
-
-Reach for a definition when a tool you did not write draws its state on screen. Reach for
-publishing when the program is yours, or when one pane holds more than one run.
-
-## Validating a definition
-
-Config warnings surface as toasts on load and reload, and a rejected definition always says why:
+When several rules match, Rozi uses this order:
 
 ```text
-Ignored agent `mytool` with no `match.names` or `match.paths`: nothing could ever match it
-Ignored agent `mytool` `working` rule with invalid regex `(`: unclosed group
+unknown, blocked, working, idle
 ```
 
-A bad *rule* costs only that rule; a bad definition is dropped whole rather than loaded in a
-surprising partial form. In an `extension.toml` the same errors invalidate the whole extension,
-matching how a bad command or service is treated there — check it with
-`rozi check-extension .` before installing.
+Declaration order does not change that precedence. A blocked approval prompt wins over a working
+spinner on the same screen.
 
-To see what Rozi currently makes of a pane, `rozi list-panes --format json` reports the matched
-definition in `agent` and detection's own reading in `agent_state`, alongside the pane's
-self-reported status. The Activity sidebar shows the same resolved label and state.
+`unknown` means the current view does not reveal the run state. Rozi keeps the prior observed state
+instead of reporting idle. Use it for a navigator, help page, or subagent view that hides the
+tool's normal status area. A held state eventually returns to idle if no confirming evidence appears.
 
-Writing a rule from memory does not work: a rule is a claim about a program's chrome, and only that
-program can settle it. Get the tool into the state you care about and read the screen it drew:
+If no rule matches, the detected agent is idle.
+
+With `base = true`, Rozi also applies common rules for approval text, yes/no questions, trust
+prompts, choice dialogs, braille spinners, and interrupt hints. These common blocked rules share the
+same precedence as your own rules. Set `base = false` when the tool's transcript routinely quotes
+that text and creates false states, then define the needed working and blocked rules explicitly.
+
+## Override and extension behavior
+
+Definitions are loaded in this order:
+
+1. `config.toml` entries
+2. extension entries
+3. built-in entries
+
+A `config.toml` definition with a built-in id replaces that built-in. A config definition with a new
+id can claim a process before a built-in definition does.
+
+Extension agent ids are namespaced as `<extension>.<id>`. An extension cannot replace a built-in.
+Extension definitions use the same fields in `extension.toml`. See
+[Extensions](extensions.md).
+
+Detection runs in the session server. All clients attached to one session therefore see the same
+agent label and state. Reloading config re-runs detection, but only the controlling client's reload
+updates a shared running server. Restart a long-lived server after rebuilding Rozi with changed
+built-in definitions.
+
+## Publish state instead of reading the screen
+
+Screen matching only sees the view currently drawn in one terminal. It cannot reliably represent a
+program with several hidden tabs, parent and child agents, or state kept only in an API.
+
+Use `rozi status` for one pane-level state or `rozi publish` for several activity rows. While a
+pane publishes rows, Rozi uses those values instead of screen detection. A published row can also
+bring its corresponding in-program activity into view when selected.
+
+See [Control](control.md#published-activity) for fields and lifecycle.
+
+## Test a definition
+
+Reload config and inspect:
+
+```bash
+rozi list-panes --format json
+```
+
+The `agent` field reports the matched definition. `agent_state` reports screen detection separately
+from status published by the program.
+
+Capture the actual screen and title before writing a rule:
 
 ```bash
 rozi capture-pane --target 3 --format json
 ```
 
-That is exactly the text and title the rules run against. The built-in definitions are held to
-captured screens under [`tests/fixtures/agents/`](../tests/fixtures/agents/). Collecting one is a
-person putting the agent into a state and an agent reading what it drew; the `agent-screens` skill
-in `.agents/skills/` carries that workflow, including which screens are still missing.
+Use text that belongs to the tool's current controls, not content that can appear in its transcript.
+Footer scope is usually safer for live status text.
 
-Detection runs in the **session server**, so a rebuilt binary changes nothing until that server
-restarts. A long-lived session keeps reading panes with the rules it started with, which is worth
-remembering before concluding that a new rule does not work: `rozi kill-session <NAME>` and
-reattach, or test in a fresh session.
+Config warnings explain invalid ids, missing process matches, unknown states, empty pattern groups,
+invalid regular expressions, and rules that set both `screen` and `title`. An invalid rule is
+discarded without removing the rest of the definition. An invalid definition is dropped as a whole.
+
+The built-in definitions are in
+[`src/agent_detection/builtin.toml`](../src/agent_detection/builtin.toml). Use them as examples, but
+verify patterns against the version of the agent CLI you run.

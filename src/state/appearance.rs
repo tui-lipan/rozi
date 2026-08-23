@@ -690,7 +690,9 @@ fn rozi_theme() -> Theme {
     theme.text_selection = Style::new()
         .fg(text)
         .bg(background.blend_toward(rose, 0.32));
-    theme.hover = Style::new().bg(Color::hex_u24(0x14162A));
+    // `theme.hover` stays empty, as it is in every other preset. The role is inherited by every
+    // widget-level hover slot, so filling it makes whole lists, tab bars, and click-only
+    // `MouseRegion`s paint on hover. Rozi's views style hover per element instead.
     theme.border_active = rose;
     theme.focus = Style::new().fg(rose);
     theme.scrollbar = ScrollbarPalette {
@@ -773,5 +775,18 @@ mod tests {
         assert_eq!(theme.accent.fg, Some(Color::hex_u24(0xFD4A80).into()));
         assert_eq!(theme.selection.bg, Some(Color::hex_u24(0x982BF2).into()));
         assert_eq!(theme.primary.fg, Some(Color::hex_u24(0xCCD0E6).into()));
+    }
+
+    #[test]
+    fn no_builtin_theme_enables_the_generic_hover_role() {
+        // Widget hover slots inherit this role, so a non-empty value paints whole lists, tab bars,
+        // and click-only `MouseRegion`s. Hover belongs on the element, not on the theme.
+        for preset in ThemePreset::all() {
+            assert!(
+                preset.theme().hover.is_empty(),
+                "{} sets a generic hover style",
+                preset.id()
+            );
+        }
     }
 }

@@ -200,7 +200,20 @@ fn xdg_style_dir(
 /// Unix/macOS: `$XDG_RUNTIME_DIR/rozi`, falling back to [`fallback_runtime_dir_path`] when
 /// `XDG_RUNTIME_DIR` is unset. Windows: `%LOCALAPPDATA%\rozi\run`.
 pub fn runtime_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
-    let dir = if cfg!(windows) {
+    let dir = runtime_dir_path(env);
+    fs_security::ensure_private_dir(&dir)?;
+    Ok(dir)
+}
+
+/// Where [`runtime_dir`] resolves to, without creating or validating anything.
+///
+/// For callers that only need to *name* the directory - help text, diagnostics, an error message.
+/// Creating it as a side effect of printing its path is not free: on Windows the runtime directory
+/// is `%LOCALAPPDATA%\rozi\run`, so making it also creates `%LOCALAPPDATA%\rozi`, which is the
+/// managed installation root. `rozi --help` therefore established the install root before
+/// `rozi install` ever ran, and the installer's own `--help` probe was enough to do it.
+pub fn runtime_dir_path(env: &PlatformEnv) -> PathBuf {
+    if cfg!(windows) {
         if let Some(local_appdata) = &env.local_appdata {
             local_appdata.join(APP_DIR).join("run")
         } else {
@@ -211,9 +224,7 @@ pub fn runtime_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
             Some(base) => base.join(APP_DIR),
             None => fallback_runtime_dir_path(),
         }
-    };
-    fs_security::ensure_private_dir(&dir)?;
-    Ok(dir)
+    }
 }
 
 /// Per-user private fallback runtime directory when `$XDG_RUNTIME_DIR` is unavailable.

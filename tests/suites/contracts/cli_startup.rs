@@ -62,6 +62,42 @@ mod unix {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Printing help must not create the runtime directory it names.
+    ///
+    /// `endpoint_help()` resolved the path by calling the constructor, which creates and validates
+    /// it. On Windows the runtime directory is `%LOCALAPPDATA%\rozi\run`, so that also created
+    /// `%LOCALAPPDATA%\rozi` - the managed installation root - with whatever permissions its parent
+    /// hands down. `install.ps1` probes the payload with `--help` before running `install`, so the
+    /// installer established the install root itself, unprotected, immediately before failing on it.
+    #[test]
+    fn printing_help_does_not_create_the_runtime_directory() {
+        let root = isolated_home("help-no-side-effects");
+        let runtime = root.join("runtime/rozi");
+        for argument in ["--help", "--version"] {
+            let output = command(&root).arg(argument).output().unwrap();
+            assert!(output.status.success(), "{argument} failed");
+            assert!(
+                !runtime.exists(),
+                "{argument} created the runtime directory: {}",
+                runtime.display()
+            );
+        }
+        // The path is still named in the advanced help; resolving it must be all that happens.
+        let output = command(&root)
+            .args(["--help", "--advanced"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(&runtime.display().to_string()),
+            "advanced help stopped naming the runtime directory"
+        );
+        assert!(
+            !runtime.exists(),
+            "advanced help created the runtime directory"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// `--version` and `--help` must survive a managed layout that will not validate.
     ///
     /// A Windows CI runner caught the original: startup recovery rejected the configuration and

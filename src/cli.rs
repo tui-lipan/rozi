@@ -2831,9 +2831,11 @@ fn append_help_sections(
 /// path on Linux/macOS, a named-pipe registry entry on Windows (see `platform::ipc::windows` for
 /// why the *entry*, not the pipe name, is what a user points at).
 fn endpoint_help() -> String {
-    let runtime_dir = crate::control::runtime_dir()
-        .map(|dir| dir.display().to_string())
-        .unwrap_or_else(|_| "the rozi runtime directory".to_string());
+    // Resolved, never created: this only names the directory in help text, and creating it here
+    // would establish the managed installation root on Windows as a side effect of `--help`.
+    let runtime_dir = paths::runtime_dir_path(&PlatformEnv::from_process())
+        .display()
+        .to_string();
     if cfg!(windows) {
         format!(
             "Control endpoints live one per running rozi, named by pid, in\n        \

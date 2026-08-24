@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 0.0.2 - 2026-08-24
+
+Makes the Windows installer work, and continues the pipeline exercise begun in 0.0.1 by testing an
+update between two real releases.
+
+### Fixed
+
+- `rozi --help` and `rozi --version` no longer create the runtime directory they name. On Windows
+  that directory is `%LOCALAPPDATA%\rozi\run`, so creating it also created `%LOCALAPPDATA%\rozi` -
+  the managed installation root - with inherited permissions. `install.ps1` probes the payload with
+  `--help` before running `install`, so the installer established an unprotected install root
+  itself, immediately before failing on it. Deleting the directory beforehand could not help.
+- Windows endpoint tests place their socket in a private directory rather than in the shared
+  temporary directory, which can never satisfy the privacy an endpoint parent requires.
+
+### Changed
+
+- Updated `relswap` to 0.0.6, which creates the ancestors of a private directory privately instead
+  of leaving them with inherited permissions, and treats a directory it did not create at the
+  managed root as unmanaged rather than as a fatal error.
+
 ## 0.0.1 - 2026-08-24
 
 First release built and signed by the full release pipeline: every archive is verified against a

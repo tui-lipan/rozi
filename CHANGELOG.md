@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.0.3 - 2026-08-24
+
+### Added
+
+- The install scripts now show what they are doing. Each step is named, the release archive shows
+  download progress instead of several silent megabytes, and the run ends with where to go next.
+  Colour and progress appear only when stdout is a terminal that wants them - `curl … | sh` and
+  `irm … | iex` still qualify, a redirected install stays plain - and `NO_COLOR` is honoured.
+- AUR packaging under `packaging/aur`: `rozi-bin` repackages the signed release archive, `rozi`
+  builds from the tag.
+
+### Fixed
+
+- A service whose executable reports as busy is retried rather than failing. Rozi writes extension
+  payloads and then runs them, so a fork inheriting a write handle to the file being executed is a
+  race the design invites; it is not a broken service.
+
+### Changed
+
+- **Windows only, and a breaking change for existing installs:** the state directory moves from
+  `%LOCALAPPDATA%\rozi` to `%LOCALAPPDATA%\rozi\state`. It previously resolved to the same directory
+  as the managed installation root, so session autosaves and persisted preferences were written
+  beside `versions\`, `bin\`, `active`, `install.json`, and the mutation lock. Existing state is not
+  migrated: sessions and preferences saved before this version are not read after it. Move
+  `session.toml` and any sibling state files into the new `state\` directory to keep them. The
+  managed root, the command path, and the `PATH` entry are unchanged.
+
 ## 0.0.2 - 2026-08-24
 
 Makes the Windows installer work, and continues the pipeline exercise begun in 0.0.1 by testing an

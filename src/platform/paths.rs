@@ -9,7 +9,7 @@
 //! | Purpose | Linux/macOS | Windows |
 //! |---|---|---|
 //! | Config  | `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi` | `%APPDATA%\rozi` |
-//! | State   | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi` |
+//! | State   | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi\state` |
 //! | Cache   | `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
 //! | Runtime | `$XDG_RUNTIME_DIR/rozi`, else a private per-uid temp dir | `%LOCALAPPDATA%\rozi\run`, else `%TEMP%\rozi-<user-sid>` |
 //!
@@ -126,12 +126,18 @@ pub fn config_dir(env: &PlatformEnv) -> PathBuf {
 }
 
 /// Base state directory: `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi`;
-/// `%LOCALAPPDATA%\rozi` on Windows.
+/// `%LOCALAPPDATA%\rozi\state` on Windows.
 pub fn state_dir(env: &PlatformEnv) -> PathBuf {
     if cfg!(windows)
         && let Some(local_appdata) = &env.local_appdata
     {
-        return local_appdata.join(APP_DIR);
+        // `state` rather than the bare root. On Windows [`data_dir`] is also `%LOCALAPPDATA%\rozi`,
+        // and that root is the managed installation's own: it holds `versions/`, `bin/`, `active`,
+        // `install.json`, and the mutation lock. Writing session autosaves and preferences directly
+        // into it put ordinary user state in the same directory as the installer's authoritative
+        // metadata, where a stray name could collide with a reserved one and where routine writes
+        // touched a tree the installer expects to own.
+        return local_appdata.join(APP_DIR).join("state");
     }
     xdg_style_dir(env.xdg_state_home.as_ref(), &env.home, ".local/state")
 }

@@ -1,6 +1,6 @@
 pkgbase = rozi
 	pkgdesc = Hyprland-style tiling terminal multiplexer built on tui-lipan
-	pkgver = 0.0.2
+	pkgver = 0.0.3
 	pkgrel = 1
 	url = https://github.com/tui-lipan/rozi
 	arch = x86_64
@@ -10,11 +10,11 @@ pkgbase = rozi
 	makedepends = git
 	depends = gcc-libs
 	depends = glibc
-	provides = rozi=0.0.2
+	provides = rozi=0.0.3
 	conflicts = rozi-bin
 	options = !lto
 	options = !debug
-	source = rozi-0.0.2.tar.gz::https://github.com/tui-lipan/rozi/archive/refs/tags/v0.0.2.tar.gz
-	sha256sums = 5e35376c7d2148638a175740e9739ef7ae6756d7cc04f664c6e7a5e4eb7d3c1a
+	source = rozi-0.0.3.tar.gz::https://github.com/tui-lipan/rozi/archive/refs/tags/v0.0.3.tar.gz
+	sha256sums = 53ea6beda427f176e3a8e2c35fc7ee33c746f8e1a3392fc74109846a744566ec
 
 pkgname = rozi

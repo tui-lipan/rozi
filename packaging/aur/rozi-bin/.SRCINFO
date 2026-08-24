@@ -1,6 +1,6 @@
 pkgbase = rozi-bin
 	pkgdesc = Hyprland-style tiling terminal multiplexer built on tui-lipan (prebuilt binary)
-	pkgver = 0.0.2
+	pkgver = 0.0.3
 	pkgrel = 1
 	url = https://github.com/tui-lipan/rozi
 	arch = x86_64
@@ -8,13 +8,13 @@ pkgbase = rozi-bin
 	license = MPL-2.0
 	depends = gcc-libs
 	depends = glibc
-	provides = rozi=0.0.2
+	provides = rozi=0.0.3
 	conflicts = rozi
 	options = !strip
 	options = !debug
-	source_x86_64 = rozi-0.0.2-x86_64.tar.gz::https://github.com/tui-lipan/rozi/releases/download/v0.0.2/rozi-0.0.2-x86_64-unknown-linux-gnu.tar.gz
-	sha256sums_x86_64 = 2241053d05bb36503aedbc50a878e47406adc2e5e6df4f510ff92cf9ba3d42e7
-	source_aarch64 = rozi-0.0.2-aarch64.tar.gz::https://github.com/tui-lipan/rozi/releases/download/v0.0.2/rozi-0.0.2-aarch64-unknown-linux-gnu.tar.gz
-	sha256sums_aarch64 = ff0c30c7c97ab9891c06643888eb18508739e0a9b1bc84da9046bc640ff9f9c2
+	source_x86_64 = rozi-0.0.3-x86_64.tar.gz::https://github.com/tui-lipan/rozi/releases/download/v0.0.3/rozi-0.0.3-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = 01b06967dcd79fa5d6a89c2cdf68967d4d9d23d7581b7995e20740ff6f637940
+	source_aarch64 = rozi-0.0.3-aarch64.tar.gz::https://github.com/tui-lipan/rozi/releases/download/v0.0.3/rozi-0.0.3-aarch64-unknown-linux-gnu.tar.gz
+	sha256sums_aarch64 = b72af6b2f8e4947518d05fc609229b7dddb65d32716985d1dbf333a7fa66bc43
 
 pkgname = rozi-bin

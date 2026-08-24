@@ -34,7 +34,10 @@ use.
 - Version 0.0.0 and all earlier distributions were published under `MIT OR Apache-2.0`.
   `MPL-2.0` applies beginning with this version. Existing grants for earlier versions remain
   valid under their original terms.
-- Updated `tui-lipan` to 0.3.1, `relswap` to 0.0.5, and `notify` to 8. `relswap` 0.0.4 fixes a
+- Updated `tui-lipan` to 0.3.1, `relswap` to 0.0.6, and `notify` to 8. `relswap` 0.0.4 fixes a
   validation error that rejected every Windows managed install whose command was not named
   `rozi-launcher.exe`; 0.0.5 stops the release tool requiring a Unix executable bit inside the
-  Windows ZIP, which no archive built on Windows can carry.
+  Windows ZIP, which no archive built on Windows can carry; 0.0.6 creates the ancestors of a
+  private directory privately, so `%LOCALAPPDATA%\rozi` is no longer left unprotected by the first
+  runtime directory created inside it, and treats a directory it did not create at the managed root
+  as unmanaged rather than as a fatal error.

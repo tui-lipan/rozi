@@ -34,6 +34,7 @@ use.
 - Version 0.0.0 and all earlier distributions were published under `MIT OR Apache-2.0`.
   `MPL-2.0` applies beginning with this version. Existing grants for earlier versions remain
   valid under their original terms.
-- Updated `tui-lipan` to 0.3.1, `relswap` to 0.0.4, and `notify` to 8. `relswap` 0.0.4 fixes a
+- Updated `tui-lipan` to 0.3.1, `relswap` to 0.0.5, and `notify` to 8. `relswap` 0.0.4 fixes a
   validation error that rejected every Windows managed install whose command was not named
-  `rozi-launcher.exe`.
+  `rozi-launcher.exe`; 0.0.5 stops the release tool requiring a Unix executable bit inside the
+  Windows ZIP, which no archive built on Windows can carry.

@@ -65,6 +65,28 @@ pub fn isolate_user_dirs() -> &'static Path {
     scratch_root()
 }
 
+/// A per-test directory carrying the private permissions an endpoint parent must have.
+///
+/// Endpoints live in a directory the platform layer requires to be private to the current user -
+/// mode `0700` on Unix, a protected DACL on Windows. `std::env::temp_dir()` is none of those: it is
+/// shared, and on Windows it carries the inheritable ACEs of its container rather than a protected
+/// DACL of its own. So neither an endpoint placed directly in the temp directory nor one under a
+/// plain `create_dir_all` child of it can pass that check - the child inherits the same permissive
+/// ACEs. Creating the directory through the same helper the runtime uses is what makes a test
+/// endpoint resemble a real one.
+///
+/// `label` and the pid keep parallel tests and repeated runs from colliding on the derived name.
+///
+/// `cfg(test)` because every caller is a unit test in this crate. The rest of this module is
+/// compiled into normal builds for integration tests to link against; this has no such caller.
+#[cfg(test)]
+pub(crate) fn private_temp_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("rozi-{label}-{}", std::process::id()));
+    crate::platform::fs_security::ensure_private_dir(&dir)
+        .expect("private scratch directory for a test endpoint");
+    dir
+}
+
 /// Build the real configured root with a live control endpoint inside the isolated test
 /// environment. Integration tests use this when `AppRoot::default()` would intentionally be too
 /// inert: the default root has no filesystem config, startup tasks, or listener.

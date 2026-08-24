@@ -436,10 +436,10 @@ mod tests {
 
     /// A private endpoint for one test, named so parallel tests and repeated runs never collide.
     fn test_endpoint(label: &str) -> IpcEndpoint {
-        let endpoint = IpcEndpoint::at_path(std::env::temp_dir().join(format!(
-            "rozi-discovery-{label}-{}.sock",
-            std::process::id()
-        )));
+        let endpoint = IpcEndpoint::at_path(
+            crate::test_support::private_temp_dir("discovery")
+                .join(format!("{label}-{}.sock", std::process::id())),
+        );
         endpoint.remove_stale();
         endpoint
     }

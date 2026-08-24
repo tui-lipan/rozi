@@ -23,9 +23,17 @@ use.
   instead of reporting only that no managed installation is present.
 - Publication to crates.io as part of the tagged release pipeline.
 
+### Fixed
+
+- `rozi --version` and `rozi --help` no longer abort when the managed installation cannot be
+  reconciled. Startup recovery ran ahead of both, so a layout that failed to validate silenced the
+  two commands most useful for diagnosing it.
+
 ### Changed
 
 - Version 0.0.0 and all earlier distributions were published under `MIT OR Apache-2.0`.
   `MPL-2.0` applies beginning with this version. Existing grants for earlier versions remain
   valid under their original terms.
-- Updated `tui-lipan` to 0.3.1, `relswap` to 0.0.3, and `notify` to 8.
+- Updated `tui-lipan` to 0.3.1, `relswap` to 0.0.4, and `notify` to 8. `relswap` 0.0.4 fixes a
+  validation error that rejected every Windows managed install whose command was not named
+  `rozi-launcher.exe`.

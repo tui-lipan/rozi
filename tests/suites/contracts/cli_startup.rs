@@ -62,6 +62,32 @@ mod unix {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// `--version` and `--help` must survive a managed layout that will not validate.
+    ///
+    /// A Windows CI runner caught the original: startup recovery rejected the configuration and
+    /// aborted before either could print, so the two commands you would reach for to diagnose the
+    /// installation were the two the installation could silence.
+    #[test]
+    fn version_and_help_survive_an_unusable_managed_layout() {
+        let root = isolated_home("diagnostics");
+        // A file where the managed data root must be a directory: recovery cannot read this layout
+        // under any configuration.
+        fs::write(root.join("data").join("rozi"), b"not a directory").unwrap();
+        for argument in ["--version", "--help"] {
+            let output = command(&root).arg(argument).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{argument} failed on a broken layout: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                !String::from_utf8_lossy(&output.stdout).trim().is_empty(),
+                "{argument} printed nothing"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn unmanaged_update_refuses_before_runtime_or_session_startup() {
         let root = isolated_home("unmanaged-update");

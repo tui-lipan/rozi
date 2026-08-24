@@ -806,6 +806,17 @@ pub fn run() -> Result<()> {
             }
             return Ok(());
         }
+        // Ahead of recovery on purpose. Both print and exit without consulting the managed layout,
+        // and they are what someone runs to work out why an installation is unhappy - a misconfigured
+        // one must not be able to take them down with it.
+        cli::ParsedCli::Help { advanced } => {
+            cli::print_help(advanced);
+            return Ok(());
+        }
+        cli::ParsedCli::Version => {
+            cli::print_version();
+            return Ok(());
+        }
         parsed => parsed,
     };
 
@@ -817,14 +828,6 @@ pub fn run() -> Result<()> {
     }
 
     let parsed = match parsed {
-        cli::ParsedCli::Help { advanced } => {
-            cli::print_help(advanced);
-            return Ok(());
-        }
-        cli::ParsedCli::Version => {
-            cli::print_version();
-            return Ok(());
-        }
         cli::ParsedCli::Install => {
             if let Err(message) = cli::run_install_cli() {
                 eprintln!("rozi: {message}");

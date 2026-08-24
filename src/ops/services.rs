@@ -122,7 +122,7 @@ pub(crate) fn spawn_service_child(
     command.stderr(std::process::Stdio::null());
     configure_command_group(&mut command);
 
-    let mut child = command.spawn()?;
+    let mut child = spawn_retrying_on_busy(&mut command)?;
     let group = match CommandGroup::new(&child) {
         Ok(g) => g,
         Err(e) => {
@@ -132,6 +132,32 @@ pub(crate) fn spawn_service_child(
         }
     };
     Ok((child, group))
+}
+
+/// Spawn, retrying briefly while the executable reports as busy.
+///
+/// `ETXTBSY` on exec is a race rather than a broken service: a fork in one thread inherits a write
+/// handle another thread still holds on the file being executed, and the exec fails until that
+/// handle closes. Rozi writes extension payloads and then runs them, so the write and the spawn are
+/// close together by design, and a multi-threaded runtime makes the overlap easy to hit. The window
+/// is microseconds; anything still busy after the full backoff is a real failure and is returned.
+fn spawn_retrying_on_busy(
+    command: &mut std::process::Command,
+) -> std::io::Result<std::process::Child> {
+    const ATTEMPTS: u32 = 10;
+    let mut attempt = 0;
+    loop {
+        match command.spawn() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && attempt + 1 < ATTEMPTS =>
+            {
+                attempt += 1;
+                std::thread::sleep(Duration::from_millis(10 * u64::from(attempt)));
+            }
+            result => return result,
+        }
+    }
 }
 
 pub(crate) fn terminate_service(mut running: RunningService) {

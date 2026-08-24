@@ -1,0 +1,65 @@
+# Maintainer: Adam Mikołajczyk <adam@tui-lipan.dev>
+
+pkgname=rozi
+pkgver=0.0.2
+pkgrel=1
+pkgdesc='Hyprland-style tiling terminal multiplexer built on tui-lipan'
+arch=('x86_64' 'aarch64')
+url='https://github.com/tui-lipan/rozi'
+license=('MPL-2.0')
+depends=('gcc-libs' 'glibc')
+makedepends=('cargo' 'git')
+provides=("$pkgname=$pkgver")
+conflicts=("$pkgname-bin")
+# !lto: makepkg's LTO adds `-flto` to the C flags, and `ring` - reached through the release
+# verification path - then compiles its C sources to LLVM bitcode that the Rust link cannot resolve,
+# failing on every `ring_core_*` symbol. Nothing is lost by disabling it here: the release profile
+# already performs thin LTO across the Rust side, which is where rozi's code actually is.
+# !debug: the release profile strips, so a debug package would be built and shipped empty.
+options=('!lto' '!debug')
+
+# The repository tarball, deliberately, and not the crates.io crate. rozi carries a
+# `[patch.crates-io]` for termina - upstream panics the input worker on a mouse report at column or
+# row 0, which SGR-pixel mode makes ordinary - and cargo strips `[patch]` when publishing. Building
+# from the crate would silently produce a rozi with that panic in it; building from the repository
+# applies the patch, because a patch section takes effect for the workspace it is written in.
+#
+# `git` is a makedepend for the same reason: the patched termina is a git dependency, fetched in
+# prepare() so that build() can stay offline.
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('5e35376c7d2148638a175740e9739ef7ae6756d7cc04f664c6e7a5e4eb7d3c1a')
+
+prepare() {
+	cd "$pkgname-$pkgver"
+	export RUSTUP_TOOLCHAIN=stable
+	cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+	cd "$pkgname-$pkgver"
+	export RUSTUP_TOOLCHAIN=stable
+	export CARGO_TARGET_DIR=target
+	# `--bin rozi` only: the second binary in the manifest is the Windows activation launcher, which
+	# builds on any host but means nothing on Linux, where the managed command is a symlink.
+	cargo build --frozen --release --bin rozi
+}
+
+# No check(). The suite is an integration suite: it opens PTYs, spawns service children and
+# grandchildren, and binds IPC endpoints in a runtime directory. A clean chroot has no session to
+# provide those, so a check() here would fail for reasons unrelated to the package. Upstream CI runs
+# the full suite on Linux, macOS, and Windows for every commit.
+
+package() {
+	cd "$pkgname-$pkgver"
+	install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+	install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+	# Sample configuration and the bundled example extensions, installed non-executable: nothing
+	# under /usr/share/doc should carry the execute bit the extension payloads have in the tree.
+	local _docs="$pkgdir/usr/share/doc/$pkgname/examples"
+	(
+		cd examples || exit 1
+		find . -type f -exec install -Dm644 '{}' "$_docs/{}" \;
+	)
+}

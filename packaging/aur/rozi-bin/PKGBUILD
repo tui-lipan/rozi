@@ -1,0 +1,49 @@
+# Maintainer: Adam Mikołajczyk <adam@tui-lipan.dev>
+
+pkgname=rozi-bin
+_pkgname=rozi
+pkgver=0.0.2
+pkgrel=1
+pkgdesc='Hyprland-style tiling terminal multiplexer built on tui-lipan (prebuilt binary)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/tui-lipan/rozi'
+license=('MPL-2.0')
+# The release binary links nothing beyond the C runtime: clipboard access goes through OSC 52 or a
+# dlopened backend rather than a link-time X11/Wayland dependency.
+depends=('gcc-libs' 'glibc')
+provides=("$_pkgname=$pkgver")
+conflicts=("$_pkgname")
+# Already stripped by the release profile, and there are no sources to build a debug package from.
+options=('!strip' '!debug')
+
+_url_base="$url/releases/download/v$pkgver"
+source_x86_64=("$_pkgname-$pkgver-x86_64.tar.gz::$_url_base/$_pkgname-$pkgver-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("$_pkgname-$pkgver-aarch64.tar.gz::$_url_base/$_pkgname-$pkgver-aarch64-unknown-linux-gnu.tar.gz")
+sha256sums_x86_64=('2241053d05bb36503aedbc50a878e47406adc2e5e6df4f510ff92cf9ba3d42e7')
+sha256sums_aarch64=('ff0c30c7c97ab9891c06643888eb18508739e0a9b1bc84da9046bc640ff9f9c2')
+
+package() {
+	local _target
+	case "$CARCH" in
+		x86_64) _target='x86_64-unknown-linux-gnu' ;;
+		aarch64) _target='aarch64-unknown-linux-gnu' ;;
+		*) return 1 ;;
+	esac
+	local _root="$srcdir/$_pkgname-$pkgver-$_target"
+
+	install -Dm755 "$_root/rozi" "$pkgdir/usr/bin/rozi"
+	# Licence under $pkgname, which is where pacman and namcap expect to find it. Documentation
+	# under the *product* name instead, so the two packages - which conflict, so only one is ever
+	# installed - put their docs at the same path.
+	install -Dm644 "$_root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+	install -Dm644 "$_root/README.md" "$pkgdir/usr/share/doc/$_pkgname/README.md"
+
+	# Sample configuration and the bundled example extensions. Installed file by file rather than
+	# with `cp -r` so the archive's own modes cannot carry through: the extension payloads are
+	# executable in the tarball, and nothing under /usr/share/doc should be.
+	local _docs="$pkgdir/usr/share/doc/$_pkgname/examples"
+	(
+		cd "$_root/examples" || exit 1
+		find . -type f -exec install -Dm644 '{}' "$_docs/{}" \;
+	)
+}

@@ -57,10 +57,59 @@ Managed installations use these locations:
 | Linux and macOS | `${XDG_DATA_HOME:-$HOME/.local/share}/rozi` | `$HOME/.local/bin/rozi` |
 | Windows | `%LOCALAPPDATA%\rozi` | `%LOCALAPPDATA%\rozi\bin\rozi.exe` |
 
+On Windows the managed root also contains `state\`, `cache\`, `run\`, and `extensions\`. It is
+private to your user account, and rozi creates it that way whichever of those it makes first.
+
 The installer refuses to replace a command it does not own. It retains installed versions and does
 not currently provide automatic pruning. Update checks are explicit. Updating a local client does
 not restart or change sessions on a remote host. On Windows, rerun the bootstrap installer when an
 update needs to replace the stable launcher itself.
+
+## Installs rozi does not manage
+
+`rozi update` only acts on an installation the managed installer created. That is deliberate: the
+managed layout owns version retention, activation, and rollback, and none of it exists for a binary
+another tool placed on your `PATH`.
+
+Rather than refusing and leaving it there, rozi names the channel that *does* own the install and
+prints the command that updates it:
+
+```console
+$ rozi update
+rozi: this rozi was installed with cargo, which owns its updates - run: cargo install rozi --locked
+```
+
+The channel is recognised from where the binary sits: `cargo`, `mise`, Homebrew, Scoop, WinGet, or a
+system package manager. A layout rozi does not recognise points back at this page instead of
+guessing a command. `rozi update --check` names the channel too, and shows the command as an
+`Update` row when a newer version exists:
+
+```console
+$ rozi update --check
+Current  v0.0.2 (cargo)
+Latest   v0.1.0
+Status   update available
+Update   cargo install rozi --locked
+```
+
+rozi never runs a package manager on your behalf. A distribution package in particular is updated
+through your distribution, and rozi will say so rather than invoking anything itself.
+
+## Install with mise
+
+[mise](https://mise.jdx.dev) installs rozi straight from the GitHub releases, with no plugin and no
+registry entry:
+
+```bash
+mise use -g github:tui-lipan/rozi
+```
+
+It picks the archive for your platform, checks the published checksum, and verifies the release's
+GitHub artifact attestations and SLSA provenance before extracting.
+
+An install made this way is **not** a managed installation: mise owns the binary and its versions,
+so `rozi update` will decline and point you back at `mise upgrade rozi`. Use whichever owns your
+install, not both.
 
 ## Build from source
 

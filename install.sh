@@ -13,6 +13,70 @@ readonly MAX_LISTING_BYTES=16777216
 readonly MAX_ARCHIVE_MEMBERS=10000
 readonly CAVEAT='Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised.'
 
+# Colour and progress only when stdout is a terminal that wants them. `curl … | sh` still qualifies
+# - the pipe is stdin, not stdout - which is the case worth styling. A redirected install writes a
+# transcript someone reads later, so it gets plain text and no progress bar.
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+  INTERACTIVE=1
+  C_RESET=$'\033[0m'
+  C_DIM=$'\033[90m'
+  C_ACCENT=$'\033[1;36m'
+  C_OK=$'\033[1;32m'
+  C_BOLD=$'\033[1m'
+else
+  INTERACTIVE=0
+  C_RESET=''
+  C_DIM=''
+  C_ACCENT=''
+  C_OK=''
+  C_BOLD=''
+fi
+readonly INTERACTIVE C_RESET C_DIM C_ACCENT C_OK C_BOLD
+
+# Deliberately ASCII. A Windows console under a non-UTF-8 code page mangles box-drawing and block
+# characters, and this wordmark has a PowerShell twin that must look identical.
+banner() {
+  ((INTERACTIVE)) || return 0
+  printf '\n'
+  printf '%s                _ %s\n' "$C_ACCENT" "$C_RESET"
+  printf '%s  _ __ ___ ___ (_)%s\n' "$C_ACCENT" "$C_RESET"
+  printf '%s | %s__/ _ \\_  /| |%s\n' "$C_ACCENT" "'" "$C_RESET"
+  printf '%s | | | (_) / / | |%s\n' "$C_ACCENT" "$C_RESET"
+  printf '%s |_|  \\___/___||_|%s\n' "$C_ACCENT" "$C_RESET"
+  printf '\n'
+}
+
+# A step that is about to take time. No trailing newline dance: the outcome prints on its own line,
+# so an interrupted install leaves the unfinished step visible rather than a half-erased one.
+step() {
+  printf '  %s->%s  %s\n' "$C_DIM" "$C_RESET" "$1"
+}
+
+ok() {
+  printf '  %sok%s  %s\n' "$C_OK" "$C_RESET" "$1"
+}
+
+# Wrap to a readable measure without depending on `fold`, which is one more command to require for
+# one paragraph. Word-splitting is exactly what is wanted here, so the unquoted expansion is
+# deliberate; the only caller passes a fixed constant.
+print_wrapped() {
+  local prefix="$1" text="$2" width=74 line='' word
+  # Each line closes its own styling. A run interrupted midway then leaves the terminal in the
+  # state it was found in rather than dim.
+  # shellcheck disable=SC2086
+  for word in $text; do
+    if [[ -z "$line" ]]; then
+      line="$word"
+    elif ((${#line} + 1 + ${#word} <= width)); then
+      line="$line $word"
+    else
+      printf '  %s%s%s\n' "$prefix" "$line" "$C_RESET"
+      line="$word"
+    fi
+  done
+  [[ -n "$line" ]] && printf '  %s%s%s\n' "$prefix" "$line" "$C_RESET"
+}
+
 fail() {
   printf 'rozi install: %s\n' "$1" >&2
   exit 1
@@ -70,9 +134,16 @@ file_size() {
   fi
 }
 
+# `show_progress` is for the one download worth watching: the release archive is several megabytes
+# and was previously silent long enough to look hung. The checksum beside it is under a kilobyte and
+# would only flash a bar on and off.
 download_file() {
-  local url="$1" destination="$2" max_bytes="$3" label="$4" size
-  curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+  local url="$1" destination="$2" max_bytes="$3" label="$4" show_progress="${5:-0}" size
+  local -a progress=(--silent)
+  if ((INTERACTIVE && show_progress)); then
+    progress=(--progress-bar)
+  fi
+  curl --fail "${progress[@]}" --show-error --location --proto '=https' --proto-redir '=https' \
     --max-redirs 5 --max-filesize "$max_bytes" --output "$destination" "$url" ||
     fail "could not download $label"
   size="$(file_size "$destination")" || fail "could not stat downloaded $label"
@@ -234,13 +305,16 @@ install_version() {
   trap 'rm -rf -- "${temp_extract:-}"' EXIT
   archive="$temp_extract/$archive_name"
   checksum="$archive.sha256"
-  download_file "$base/$archive_name" "$archive" "$MAX_ARCHIVE_BYTES" "$archive_name"
+  step "downloading $archive_name"
+  download_file "$base/$archive_name" "$archive" "$MAX_ARCHIVE_BYTES" "$archive_name" 1
   download_file "$base/$archive_name.sha256" "$checksum" "$MAX_CHECKSUM_BYTES" \
     "adjacent checksum for $archive_name"
 
   # The checksum detects corruption, not authenticity.  The extracted payload performs signed
   # metadata verification before activation, but the bootstrap payload is already executing.
+  step 'verifying checksum'
   verify_checksum "$archive" "$checksum" "$(awk 'NF { print $1; exit }' "$checksum")"
+  ok 'archive matches its published checksum'
   validate_tar_members "$archive" "$stem" "$temp_extract"
   local payload_size
   payload="$(mktemp "$temp_extract/payload.XXXXXX")" ||
@@ -262,10 +336,25 @@ install_version() {
   version_line="${version_output%%$'\n'*}"
   [[ "$version_line" == "rozi $version" ]] ||
     fail "archive payload version line is not exactly: rozi $version"
+  ok "payload reports $version_line"
 
+  # The payload prints its own "Installed"/"Command" lines: it is the authority on where the command
+  # landed and whether anything changed, and repeating that here would only risk disagreeing with it.
+  step 'verifying the signed release and activating it'
+  printf '\n'
   managed_cli "$payload"
-  printf 'installed rozi %s for %s through the extracted release payload\n' "$version" "$target"
-  printf 'bootstrap caveat: %s\n' "$CAVEAT"
+
+  printf '\n'
+  printf '  %sStart%s    rozi\n' "$C_BOLD" "$C_RESET"
+  printf '  %sHelp%s     rozi --help\n' "$C_BOLD" "$C_RESET"
+  if [[ ":${PATH}:" != *":$HOME/.local/bin:"* ]]; then
+    printf '\n'
+    printf '  %s%s/.local/bin is not on your PATH; add it to run rozi by name.%s\n' \
+      "$C_DIM" "$HOME" "$C_RESET"
+  fi
+  printf '\n'
+  print_wrapped "$C_DIM" "$CAVEAT"
+  printf '\n'
   trap - EXIT
   rm -rf "$temp_extract"
 }
@@ -294,11 +383,15 @@ main() {
   require_command mktemp
   require_command sort
   require_command uniq
+  banner
   if [[ -z "$version" ]]; then
+    step 'resolving the current release'
     version="$(resolve_latest_version)"
+    ok "latest is $version"
   fi
   validate_version "$version"
   target="$(target_triple)"
+  printf '  %shost%s  %s\n' "$C_DIM" "$C_RESET" "$target"
   base="${ROZI_RELEASE_BASE_URL:-https://github.com/${RELEASE_REPO}/releases/download/v${version}}"
   install_version "$version" "$target" "$base"
 }

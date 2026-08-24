@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+
+# Refuse a Cargo.lock whose entries have lost their registry source.
+#
+# A `[patch.crates-io]` in a local, gitignored `.cargo/config.toml` - the usual way to develop
+# against a checkout of tui-lipan next door - rewrites Cargo.lock so the patched packages carry
+# neither `source` nor `checksum`. Every CI job runs `--locked`, and a lockfile entry with no
+# registry source fails there immediately, for reasons that look nothing like the change being
+# committed. The release pipeline is worse: it builds and signs against whatever the lockfile says.
+#
+# Only the workspace's own package legitimately lacks a source.
+
+git diff --cached --name-only --diff-filter=ACM | grep -qx 'Cargo.lock' || exit 0
+
+unsourced=$(
+    git show :Cargo.lock | awk '
+        function flush() {
+            if (name != "" && name != "rozi" && !sourced) print "  " name
+            name = ""; sourced = 0
+        }
+        /^\[\[package\]\]/ { flush(); next }
+        /^name = "/        { name = substr($0, 9, length($0) - 9) }
+        /^source = "/      { sourced = 1 }
+        END                { flush() }
+    '
+)
+
+[ -z "$unsourced" ] && exit 0
+
+cat >&2 <<EOF
+pre-commit: Cargo.lock has entries with no registry source:
+
+$unsourced
+
+This is what a local [patch.crates-io] does to the lockfile, and it breaks every
+--locked build in CI. Regenerate it with the override out of the way:
+
+    mv .cargo/config.toml .cargo/config.toml.off
+    cargo metadata --format-version 1 >/dev/null
+    mv .cargo/config.toml.off .cargo/config.toml
+    git add Cargo.lock
+
+Passing --no-verify commits it anyway, if a path dependency is genuinely intended.
+EOF
+exit 1

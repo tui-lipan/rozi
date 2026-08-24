@@ -26,10 +26,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      # `--features windows-launcher` so the gated Windows launcher binary is still type-checked and
+      # linted here. Only the release build below leaves it out, which is the point of the gate.
       - name: Check
-        run: cargo check --locked --all-targets
+        run: cargo check --locked --all-targets --features windows-launcher
       - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets --features windows-launcher -- -D warnings
       # This includes extension argv/path probes and service child/grandchild termination tests;
       # keep it native rather than replacing the matrix with cross-compilation.
       - name: Test (including native process integration)

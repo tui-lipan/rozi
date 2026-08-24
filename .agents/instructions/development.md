@@ -46,6 +46,15 @@ cargo audit
 cargo build --release
 ```
 
+The `rozi-launcher` binary is behind the non-default `windows-launcher` feature, because Cargo
+cannot attach a target to a `[[bin]]` and it means nothing outside Windows. `cargo build --release`
+therefore does not produce it; the release workflow asks for it when packaging the Windows zip, and
+CI's check and lint steps pass the feature so it stays type-checked everywhere. To build it by hand:
+
+```bash
+cargo build --release --features windows-launcher --bin rozi-launcher
+```
+
 CI is defined in `.github/workflows/ci.yml`. Dependency-resolving build, check, Clippy, and test
 commands use `--locked`; manifest and lockfile sources must agree. CI runs on Linux, macOS, and
 Windows. The release matrix lives in `.github/workflows/release.yml`.

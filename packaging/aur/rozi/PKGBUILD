@@ -39,8 +39,9 @@ build() {
 	cd "$pkgname-$pkgver"
 	export RUSTUP_TOOLCHAIN=stable
 	export CARGO_TARGET_DIR=target
-	# `--bin rozi` only: the second binary in the manifest is the Windows activation launcher, which
-	# builds on any host but means nothing on Linux, where the managed command is a symlink.
+	# `--bin rozi` for explicitness. The manifest's other binary is the Windows activation launcher,
+	# which is gated behind the non-default `windows-launcher` feature and so would not be built
+	# here in any case.
 	cargo build --frozen --release --bin rozi
 }
 

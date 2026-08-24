@@ -66,10 +66,17 @@ termina = { git = "https://github.com/helix-editor/termina", rev = "38047a2491f4
 # lock. Add "tui-lipan/ui-snapshot-json" plus `cargo update -p serde_json` for it.
 ui-snapshot = ["tui-lipan/ui-snapshot-png"]
 
+# The Windows activation launcher. Gated because a plain `cargo build --release` would otherwise
+# link it on every platform, and it means nothing outside Windows: relswap activates a managed
+# install through a symlink everywhere else. Cargo has no way to attach a target to a `[[bin]]`, so
+# the callers that need it ask for it - `.github/workflows/release.yml` when packaging the zip, and
+# CI's check and lint steps, which keep type-checking it on all three hosts.
+windows-launcher = []
 
 [[bin]]
 name = "rozi-launcher"
 path = "src/bin/rozi-launcher.rs"
+required-features = ["windows-launcher"]
 test = false
 
 [dev-dependencies]

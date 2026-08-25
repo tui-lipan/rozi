@@ -84,6 +84,12 @@ git push origin "v$VERSION"
 Pushing the tag starts the Release workflow. Do not move or reuse a release tag. Pull-request and
 manual workflow runs test packaging but cannot sign or publish.
 
+When a maintainer has GitHub website access but no local Git client, the new-release form may create
+the same tag on the reviewed release commit. Publish it as a **prerelease**: this keeps the incomplete
+release out of `/releases/latest`. The workflow detects that placeholder, uploads only the verified
+signed bundle, and promotes it to the latest stable release after publication succeeds. Never publish
+an empty stable release before the signing workflow completes.
+
 The workflow performs these gates:
 
 1. `cargo test --locked` and `cargo check --locked --all-targets` run on Linux.

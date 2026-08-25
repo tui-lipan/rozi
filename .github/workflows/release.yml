@@ -515,15 +515,34 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          gh release create "v$version" \
-            --repo "$GITHUB_REPOSITORY" \
-            dist/rozi-release.json \
-            dist/rozi-release.signatures.json \
-            dist/*.tar.gz \
-            dist/*.zip \
-            dist/*.sha256 \
-            --verify-tag \
-            --generate-notes
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # The GitHub website creates a tag only when its release is published. Maintainers
+            # without a local Git client can therefore publish a prerelease to start this workflow.
+            # Keep it out of /releases/latest until every signed asset has arrived, then promote it.
+            gh release upload "v$version" \
+              --repo "$GITHUB_REPOSITORY" \
+              dist/rozi-release.json \
+              dist/rozi-release.signatures.json \
+              dist/*.tar.gz \
+              dist/*.zip \
+              dist/*.sha256 \
+              --clobber
+            gh release edit "v$version" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --prerelease=false \
+              --latest
+          else
+            gh release create "v$version" \
+              --repo "$GITHUB_REPOSITORY" \
+              dist/rozi-release.json \
+              dist/rozi-release.signatures.json \
+              dist/*.tar.gz \
+              dist/*.zip \
+              dist/*.sha256 \
+              --verify-tag \
+              --generate-notes
+          fi
 
   # Deliberately last, and deliberately after `publish`. A crates.io version can only be yanked,
   # never withdrawn, so nothing irreversible runs until the signed GitHub release exists and every

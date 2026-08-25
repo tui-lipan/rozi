@@ -13,72 +13,74 @@ readonly MAX_LISTING_BYTES=16777216
 readonly MAX_ARCHIVE_MEMBERS=10000
 readonly CAVEAT='Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised.'
 
-# Colour and progress only when stdout is a terminal that wants them. `curl … | sh` still qualifies
-# - the pipe is stdin, not stdout - which is the case worth styling. A redirected install writes a
-# transcript someone reads later, so it gets plain text and no progress bar.
-if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+# A terminal gets one rewritten active row. Colour is a separate choice so NO_COLOR keeps the
+# compact interaction without escape-coded styling. Redirected and CI output remains a normal,
+# append-only transcript.
+if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
   INTERACTIVE=1
-  C_RESET=$'\033[0m'
-  C_DIM=$'\033[90m'
-  C_ACCENT=$'\033[1;36m'
-  C_OK=$'\033[1;32m'
-  C_BOLD=$'\033[1m'
 else
   INTERACTIVE=0
+fi
+if ((INTERACTIVE)) && [[ -z "${NO_COLOR:-}" ]]; then
+  C_RESET=$'\033[0m'
+  C_DIM=$'\033[38;2;142;147;180m'
+  C_ACCENT=$'\033[38;2;253;74;128m'
+  C_OK=$'\033[38;2;74;222;128m'
+  C_ERROR=$'\033[38;2;255;95;87m'
+else
   C_RESET=''
   C_DIM=''
   C_ACCENT=''
   C_OK=''
-  C_BOLD=''
+  C_ERROR=''
 fi
-readonly INTERACTIVE C_RESET C_DIM C_ACCENT C_OK C_BOLD
+readonly INTERACTIVE C_RESET C_DIM C_ACCENT C_OK C_ERROR
+CURRENT_OPERATION=''
 
 # Deliberately ASCII. A Windows console under a non-UTF-8 code page mangles box-drawing and block
 # characters, and this wordmark has a PowerShell twin that must look identical.
 banner() {
-  ((INTERACTIVE)) || return 0
   printf '\n'
-  printf '%s                _ %s\n' "$C_ACCENT" "$C_RESET"
-  printf '%s  _ __ ___ ___ (_)%s\n' "$C_ACCENT" "$C_RESET"
-  printf '%s | %s__/ _ \\_  /| |%s\n' "$C_ACCENT" "'" "$C_RESET"
-  printf '%s | | | (_) / / | |%s\n' "$C_ACCENT" "$C_RESET"
-  printf '%s |_|  \\___/___||_|%s\n' "$C_ACCENT" "$C_RESET"
+  printf '%s                _ %s\n' "$C_DIM" "$C_RESET"
+  printf '%s  _ __ ___ ___ (_)%s\n' "$C_DIM" "$C_RESET"
+  printf '%s | %s__/ _ \\_  /| |%s\n' "$C_DIM" "'" "$C_RESET"
+  printf '%s | | | (_) / / | |%s\n' "$C_DIM" "$C_RESET"
+  printf '%s |_|  \\___/___||_|%s\n' "$C_DIM" "$C_RESET"
   printf '\n'
 }
 
-# A step that is about to take time. No trailing newline dance: the outcome prints on its own line,
-# so an interrupted install leaves the unfinished step visible rather than a half-erased one.
-step() {
-  printf '  %s->%s  %s\n' "$C_DIM" "$C_RESET" "$1"
+status_row() {
+  local symbol="$1" color="$2" operation="$3" detail="$4"
+  if ((INTERACTIVE)); then
+    printf '\r\033[2K  %s%s%s %-12s%s' "$color" "$symbol" "$C_RESET" "$operation" "$detail"
+  else
+    printf '  %s %-12s%s\n' "$symbol" "$operation" "$detail"
+  fi
 }
 
-ok() {
-  printf '  %sok%s  %s\n' "$C_OK" "$C_RESET" "$1"
+status_active() {
+  CURRENT_OPERATION="$1"
+  status_row '●' "$C_ACCENT" "$1" "$2"
 }
 
-# Wrap to a readable measure without depending on `fold`, which is one more command to require for
-# one paragraph. Word-splitting is exactly what is wanted here, so the unquoted expansion is
-# deliberate; the only caller passes a fixed constant.
-print_wrapped() {
-  local prefix="$1" text="$2" width=74 line='' word
-  # Each line closes its own styling. A run interrupted midway then leaves the terminal in the
-  # state it was found in rather than dim.
-  # shellcheck disable=SC2086
-  for word in $text; do
-    if [[ -z "$line" ]]; then
-      line="$word"
-    elif ((${#line} + 1 + ${#word} <= width)); then
-      line="$line $word"
-    else
-      printf '  %s%s%s\n' "$prefix" "$line" "$C_RESET"
-      line="$word"
-    fi
-  done
-  [[ -n "$line" ]] && printf '  %s%s%s\n' "$prefix" "$line" "$C_RESET"
+status_done() {
+  status_row '✓' "$C_OK" "$1" "$2"
+  ((INTERACTIVE)) && printf '\n'
+  CURRENT_OPERATION=''
+}
+
+status_failed() {
+  status_row '✗' "$C_ERROR" "$1" "$2"
+  ((INTERACTIVE)) && printf '\n'
+  CURRENT_OPERATION=''
 }
 
 fail() {
-  printf 'rozi install: %s\n' "$1" >&2
+  if [[ -n "$CURRENT_OPERATION" ]]; then
+    status_failed "$CURRENT_OPERATION" 'failed'
+  fi
+  printf '\ninstallation failed\n' >&2
+  printf '%s\n' "$1" >&2
   exit 1
 }
 
@@ -139,16 +141,52 @@ file_size() {
 # would only flash a bar on and off.
 download_file() {
   local url="$1" destination="$2" max_bytes="$3" label="$4" show_progress="${5:-0}" size
-  local -a progress=(--silent)
+  local expected=0 curl_error="${destination}.curl-error" curl_pid rc=0
   if ((INTERACTIVE && show_progress)); then
-    progress=(--progress-bar)
+    expected="$(curl --fail --silent --location --head --proto '=https' --proto-redir '=https' \
+      --max-redirs 5 "$url" 2>/dev/null | awk 'tolower($1)=="content-length:" { value=$2 } END { gsub("\r", "", value); print value+0 }')"
   fi
-  curl --fail "${progress[@]}" --show-error --location --proto '=https' --proto-redir '=https' \
-    --max-redirs 5 --max-filesize "$max_bytes" --output "$destination" "$url" ||
-    fail "could not download $label"
+  curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+    --max-redirs 5 --max-filesize "$max_bytes" --output "$destination" "$url" 2>"$curl_error" &
+  curl_pid=$!
+  if ((INTERACTIVE && show_progress)); then
+    while kill -0 "$curl_pid" 2>/dev/null; do
+      if ((expected > 0)) && [[ -f "$destination" ]]; then
+        render_download_progress "$(file_size "$destination" 2>/dev/null || printf 0)" "$expected"
+      fi
+      sleep 0.1
+    done
+  fi
+  wait "$curl_pid" || rc=$?
+  if ((rc != 0)); then
+    local detail
+    detail="$(tr '\n' ' ' <"$curl_error")"
+    fail "could not download $label${detail:+: $detail}"
+  fi
+  rm -f "$curl_error"
   size="$(file_size "$destination")" || fail "could not stat downloaded $label"
   [[ "$size" =~ ^[0-9]+$ && "$size" -le "$max_bytes" ]] ||
     fail "downloaded $label exceeds its size limit"
+}
+
+render_download_progress() {
+  local current="$1" total="$2" width=36 percent filled empty bar=''
+  ((total > 0)) || return 0
+  percent=$((current * 100 / total))
+  ((percent > 100)) && percent=100
+  filled=$((percent * width / 100))
+  empty=$((width - filled))
+  ((filled > 0)) && printf -v bar '%*s' "$filled" '' && bar="${bar// /━}"
+  if ((empty > 0)); then
+    bar+='╺'
+    empty=$((empty - 1))
+    if ((empty > 0)); then
+      local tail
+      printf -v tail '%*s' "$empty" ''
+      bar+="${tail// /━}"
+    fi
+  fi
+  status_row '●' "$C_ACCENT" 'Download' "${C_ACCENT}${bar}${C_RESET} ${percent}%"
 }
 
 resolve_latest_version() {
@@ -284,13 +322,26 @@ validate_tar_members() {
 }
 
 managed_cli() {
-  local payload="$1" help
+  local payload="$1" help output
   [[ -x "$payload" ]] || fail "archive payload is not executable: $payload"
   help="$("$payload" --help 2>&1)" ||
     fail "verified archive payload could not print --help: $payload"
   grep -Eq '(^|[[:space:]])install([[:space:]]|$)' <<<"$help" ||
     fail "verified archive payload has no 'install' command; no managed files were changed"
-  "$payload" install || fail "managed installation failed; no bootstrap layout was created by this script"
+  if ! output="$("$payload" install 2>&1)"; then
+    output="${output#rozi: installation failed: }"
+    if [[ "$output" == *'release verification error'* || "$output" == *certificate* || "$output" == *signature* ]]; then
+      status_failed 'Signature' 'verification failed'
+    else
+      status_failed 'Install' 'activation failed'
+    fi
+    printf '\ninstallation failed\n' >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  fi
+  status_done 'Signature' 'Ed25519 verified'
+  status_active 'Install' 'activating command'
+  status_done 'Install' '~/.local/bin/rozi'
 }
 
 install_version() {
@@ -305,16 +356,17 @@ install_version() {
   trap 'rm -rf -- "${temp_extract:-}"' EXIT
   archive="$temp_extract/$archive_name"
   checksum="$archive.sha256"
-  step "downloading $archive_name"
+  status_active 'Download' "$archive_name"
   download_file "$base/$archive_name" "$archive" "$MAX_ARCHIVE_BYTES" "$archive_name" 1
   download_file "$base/$archive_name.sha256" "$checksum" "$MAX_CHECKSUM_BYTES" \
     "adjacent checksum for $archive_name"
+  status_done 'Download' "$archive_name"
 
   # The checksum detects corruption, not authenticity.  The extracted payload performs signed
   # metadata verification before activation, but the bootstrap payload is already executing.
-  step 'verifying checksum'
+  status_active 'Checksum' 'verifying SHA-256'
   verify_checksum "$archive" "$checksum" "$(awk 'NF { print $1; exit }' "$checksum")"
-  ok 'archive matches its published checksum'
+  status_done 'Checksum' 'SHA-256 verified'
   validate_tar_members "$archive" "$stem" "$temp_extract"
   local payload_size
   payload="$(mktemp "$temp_extract/payload.XXXXXX")" ||
@@ -331,36 +383,26 @@ install_version() {
   [[ "$payload_size" =~ ^[0-9]+$ && "$payload_size" -le "$MAX_ARCHIVE_BYTES" ]] ||
     fail "extracted payload exceeds its size limit: $payload"
   local version_output version_line
-  version_output="$("$payload" --version 2>&1)" ||
-    fail "archive payload could not report its version"
+  status_active 'Signature' 'verifying signed release'
+  if ! version_output="$("$payload" --version 2>&1)"; then
+    fail "archive payload could not report its version${version_output:+: $version_output}"
+  fi
   version_line="${version_output%%$'\n'*}"
   [[ "$version_line" == "rozi $version" ]] ||
     fail "archive payload version line is not exactly: rozi $version"
-  ok "payload reports $version_line"
-
-  # The payload prints its own "Installed"/"Command" lines: it is the authority on where the command
-  # landed and whether anything changed, and repeating that here would only risk disagreeing with it.
-  step 'verifying the signed release and activating it'
-  printf '\n'
   managed_cli "$payload"
 
   printf '\n'
-  printf '  %sStart%s    rozi\n' "$C_BOLD" "$C_RESET"
-  printf '  %sHelp%s     rozi --help\n' "$C_BOLD" "$C_RESET"
-  if [[ ":${PATH}:" != *":$HOME/.local/bin:"* ]]; then
-    printf '\n'
-    printf '  %s%s/.local/bin is not on your PATH; add it to run rozi by name.%s\n' \
-      "$C_DIM" "$HOME" "$C_RESET"
-  fi
+  printf '  rozi %s installed successfully\n' "$version"
   printf '\n'
-  print_wrapped "$C_DIM" "$CAVEAT"
+  printf '  %s$ rozi%s\n' "$C_DIM" "$C_RESET"
   printf '\n'
   trap - EXIT
   rm -rf "$temp_extract"
 }
 
 main() {
-  local version='' target base
+  local version='' target base resolved_detail
   while (($#)); do
     case "$1" in
       --version)
@@ -385,13 +427,19 @@ main() {
   require_command uniq
   banner
   if [[ -z "$version" ]]; then
-    step 'resolving the current release'
+    status_active 'Resolve' 'latest release'
     version="$(resolve_latest_version)"
-    ok "latest is $version"
+    resolved_detail="latest release $version"
+  else
+    resolved_detail="release $version"
   fi
   validate_version "$version"
   target="$(target_triple)"
-  printf '  %shost%s  %s\n' "$C_DIM" "$C_RESET" "$target"
+  if ((INTERACTIVE)); then
+    printf '\r\033[2K'
+  fi
+  printf '  %srozi %s  ·  %s%s\n\n' "$C_DIM" "$version" "$target" "$C_RESET"
+  status_done 'Resolve' "$resolved_detail"
   base="${ROZI_RELEASE_BASE_URL:-https://github.com/${RELEASE_REPO}/releases/download/v${version}}"
   install_version "$version" "$target" "$base"
 }

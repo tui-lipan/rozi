@@ -18,29 +18,28 @@ $script:MaxZipMemberBytes = [int64]268435456
 $script:MaxZipTotalBytes = [int64]268435456
 $script:Caveat = 'Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised.'
 
-# Colour and progress only when the console is really a console. `irm … | iex` still qualifies: the
-# pipeline is inside PowerShell, not on stdout. A redirected install writes a transcript someone
-# reads later, so it gets plain text and no progress line.
-$script:Interactive = (-not [Console]::IsOutputRedirected) -and (-not $env:NO_COLOR)
-if ($script:Interactive) {
-    $script:Esc = [char]27
+# A console gets one rewritten active row. NO_COLOR disables styling, not the compact interaction.
+# Redirected and CI output remains a normal, append-only transcript.
+$script:Interactive = -not [Console]::IsOutputRedirected
+$script:Esc = if ($script:Interactive) { [char]27 } else { '' }
+if ($script:Interactive -and -not $env:NO_COLOR) {
     $script:CReset = "$($script:Esc)[0m"
-    $script:CDim = "$($script:Esc)[90m"
-    $script:CAccent = "$($script:Esc)[1;36m"
-    $script:COk = "$($script:Esc)[1;32m"
-    $script:CBold = "$($script:Esc)[1m"
+    $script:CDim = "$($script:Esc)[38;2;142;147;180m"
+    $script:CAccent = "$($script:Esc)[38;2;253;74;128m"
+    $script:COk = "$($script:Esc)[38;2;74;222;128m"
+    $script:CError = "$($script:Esc)[38;2;255;95;87m"
 } else {
     $script:CReset = ''
     $script:CDim = ''
     $script:CAccent = ''
     $script:COk = ''
-    $script:CBold = ''
+    $script:CError = ''
 }
+$script:CurrentOperation = ''
 
 # Deliberately ASCII, and character-for-character the same wordmark install.sh prints. A Windows
 # console under a non-UTF-8 code page mangles box-drawing and block characters.
 function Show-Banner {
-    if (-not $script:Interactive) { return }
     $art = @(
         '                _ ',
         '  _ __ ___ ___ (_)',
@@ -49,35 +48,34 @@ function Show-Banner {
         ' |_|  \___/___||_|'
     )
     Write-Host ''
-    foreach ($line in $art) { Write-Host "$($script:CAccent)$line$($script:CReset)" }
+    foreach ($line in $art) { Write-Host "$($script:CDim)$line$($script:CReset)" }
     Write-Host ''
 }
 
-function Write-Step([string]$Message) {
-    Write-Host "  $($script:CDim)->$($script:CReset)  $Message"
-}
-
-function Write-Ok([string]$Message) {
-    Write-Host "  $($script:COk)ok$($script:CReset)  $Message"
-}
-
-# Wrap to a readable measure rather than emitting one long paragraph the console hard-wraps at an
-# arbitrary column. Each line closes its own styling, so an interrupted run leaves the console as it
-# was found.
-function Write-Wrapped([string]$Prefix, [string]$Text) {
-    $width = 74
-    $line = ''
-    foreach ($word in ($Text -split '\s+' | Where-Object { $_ })) {
-        if (-not $line) {
-            $line = $word
-        } elseif (($line.Length + 1 + $word.Length) -le $width) {
-            $line = "$line $word"
-        } else {
-            Write-Host "  $Prefix$line$($script:CReset)"
-            $line = $word
-        }
+function Write-StatusRow([string]$Symbol, [string]$Color, [string]$Operation, [string]$Detail) {
+    $row = "  $Color$Symbol$($script:CReset) $($Operation.PadRight(12))$Detail"
+    if ($script:Interactive) {
+        Write-Host -NoNewline "`r$($script:Esc)[2K$row"
+    } else {
+        Write-Host $row
     }
-    if ($line) { Write-Host "  $Prefix$line$($script:CReset)" }
+}
+
+function Write-Active([string]$Operation, [string]$Detail) {
+    $script:CurrentOperation = $Operation
+    Write-StatusRow '●' $script:CAccent $Operation $Detail
+}
+
+function Write-Done([string]$Operation, [string]$Detail) {
+    Write-StatusRow '✓' $script:COk $Operation $Detail
+    if ($script:Interactive) { Write-Host '' }
+    $script:CurrentOperation = ''
+}
+
+function Write-Failed([string]$Operation, [string]$Detail) {
+    Write-StatusRow '✗' $script:CError $Operation $Detail
+    if ($script:Interactive) { Write-Host '' }
+    $script:CurrentOperation = ''
 }
 
 function Show-Usage {
@@ -248,13 +246,18 @@ function Download-HttpsFile([string]$Url, [string]$Destination, [int64]$MaxBytes
                         $percent = [int](100 * $total / $response.ContentLength)
                         if ($percent -ne $lastPercent) {
                             $lastPercent = $percent
-                            $filled = [int]($percent / 2)
-                            $bar = ('#' * $filled).PadRight(50)
-                            Write-Host -NoNewline "`r  $($script:CDim)$bar$($script:CReset) $percent%"
+                            $width = 36
+                            $filled = [int]($percent * $width / 100)
+                            $remaining = $width - $filled
+                            $bar = '━' * $filled
+                            if ($remaining -gt 0) {
+                                $bar += '╺'
+                                if ($remaining -gt 1) { $bar += '━' * ($remaining - 1) }
+                            }
+                            Write-StatusRow '●' $script:CAccent 'Download' "$($script:CAccent)$bar$($script:CReset) $percent%"
                         }
                     }
                 }
-                if ($showProgress) { Write-Host "`r$(' ' * 62)`r" -NoNewline }
                 if ($response.ContentLength -ge 0 -and $total -ne $response.ContentLength) {
                     Fail "download ended before its declared length: $current"
                 }
@@ -463,10 +466,20 @@ function Invoke-ManagedCli([string]$Payload) {
     if ($LASTEXITCODE -ne 0 -or $help -notmatch '(?m)(^|\s)install(?:\s|$)') {
         Fail "verified archive payload has no 'install' command; no managed files were changed"
     }
-    & $Payload install
+    Write-Active 'Signature' 'verifying signed release'
+    $output = (& $Payload install 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
-        Fail 'managed installation failed; no bootstrap layout was created by this script'
+        $output = $output -replace '^rozi: installation failed:\s*', ''
+        if ($output -match '(?i)release verification error|certificate|signature') {
+            Write-Failed 'Signature' 'verification failed'
+        } else {
+            Write-Failed 'Install' 'activation failed'
+        }
+        Fail $output
     }
+    Write-Done 'Signature' 'Ed25519 verified'
+    Write-Active 'Install' 'activating command'
+    Write-Done 'Install' '%LOCALAPPDATA%\rozi\bin\rozi.exe'
 }
 
 function Add-ManagedBinToPath {
@@ -511,7 +524,6 @@ function Add-ManagedBinToPath {
             "$processPath;$managedBin"
         }
     }
-    Write-Host "Added managed command directory to the user PATH: $managedBin"
 }
 
 function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
@@ -526,14 +538,15 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
         $checksum = "$archive.sha256"
         Assert-Https "$base/$archiveName"
         Assert-Https "$base/$archiveName.sha256"
-        Write-Step "downloading $archiveName"
+        Write-Active 'Download' $archiveName
         Download-HttpsFile "$base/$archiveName" $archive $script:MaxArchiveBytes $true
         Download-HttpsFile "$base/$archiveName.sha256" $checksum $script:MaxChecksumBytes
+        Write-Done 'Download' $archiveName
         Assert-Size $archive $script:MaxArchiveBytes 'release archive'
         Assert-Size $checksum $script:MaxChecksumBytes 'checksum'
-        Write-Step 'verifying checksum'
+        Write-Active 'Checksum' 'verifying SHA-256'
         Verify-Checksum $archive $checksum
-        Write-Ok 'archive matches its published checksum'
+        Write-Done 'Checksum' 'SHA-256 verified'
         $payload = Join-Path $temporaryRoot 'payload.exe'
         $launcher = Join-Path $temporaryRoot 'launcher.exe'
         Inspect-And-ExtractZip $archive $stem $payload $launcher
@@ -541,36 +554,22 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
         Assert-RegularFile $launcher 'archive launcher'
         Assert-Size $payload $script:MaxZipMemberBytes 'archive payload'
         Assert-Size $launcher $script:MaxZipMemberBytes 'archive launcher'
+        Write-Active 'Signature' 'verifying signed release'
         $reportedVersion = (& $payload --version 2>&1 | Out-String)
         $versionLine = ($reportedVersion -split "`r?`n", 2)[0]
-        if ($LASTEXITCODE -ne 0 -or $versionLine -cne "rozi $ResolvedVersion") {
+        if ($LASTEXITCODE -ne 0) {
+            Fail "archive payload could not report its version: $($reportedVersion.Trim())"
+        }
+        if ($versionLine -cne "rozi $ResolvedVersion") {
             Fail "archive payload version does not match requested release $ResolvedVersion"
         }
-        Write-Ok "payload reports $versionLine"
-
-        # The payload prints its own "Installed"/"Command" lines: it is the authority on where the
-        # command landed, and repeating it here would only risk disagreeing with it.
-        Write-Step 'verifying the signed release and activating it'
-        Write-Host ''
         Invoke-ManagedCli $payload
         if ($AddPath) { Add-ManagedBinToPath }
 
         Write-Host ''
-        Write-Host "  $($script:CBold)Start$($script:CReset)    rozi"
-        Write-Host "  $($script:CBold)Help$($script:CReset)     rozi --help"
-        if (-not $AddPath) {
-            $managedBin = Join-Path $env:LOCALAPPDATA 'rozi\bin'
-            $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-            $onPath = $userPath -and (($userPath -split ';') | Where-Object {
-                $_.Trim().TrimEnd([char]'\') -ieq $managedBin.TrimEnd([char]'\')
-            })
-            if (-not $onPath) {
-                Write-Host ''
-                Write-Host "  $($script:CDim)$managedBin is not on your PATH; rerun with -AddToPath to add it.$($script:CReset)"
-            }
-        }
+        Write-Host "  rozi $ResolvedVersion installed successfully"
         Write-Host ''
-        Write-Wrapped $script:CDim $script:Caveat
+        Write-Host "  $($script:CDim)`$ rozi$($script:CReset)"
         Write-Host ''
     } finally {
         if (Test-Path -LiteralPath $temporaryRoot) {
@@ -586,16 +585,29 @@ if ($Help) {
 
 try {
     Show-Banner
+    $resolvedDetail = ''
     if (-not $Version) {
-        Write-Step 'resolving the current release'
+        Write-Active 'Resolve' 'latest release'
         $Version = Resolve-LatestVersion
-        Write-Ok "latest is $Version"
+        $resolvedDetail = "latest release $Version"
+    } else {
+        $resolvedDetail = "release $Version"
     }
     Assert-Version $Version
+    $target = Get-Target
+    if ($script:Interactive) { Write-Host -NoNewline "`r$($script:Esc)[2K" }
+    Write-Host "  $($script:CDim)rozi $Version  ·  $target$($script:CReset)"
+    Write-Host ''
+    Write-Done 'Resolve' $resolvedDetail
     Install-Version $Version ([bool]$AddToPath)
     $script:ExitCode = 0
 } catch {
-    Write-Error ("rozi install: " + $_.Exception.Message)
+    if ($script:CurrentOperation) {
+        Write-Failed $script:CurrentOperation 'failed'
+    }
+    [Console]::Error.WriteLine('')
+    [Console]::Error.WriteLine('installation failed')
+    [Console]::Error.WriteLine($_.Exception.Message)
 }
 
 exit $script:ExitCode

@@ -28,6 +28,8 @@ jobs:
       # Keep the compile coverage `--all-targets` was there for, without executing anything.
       - name: Check every target compiles
         run: cargo check --locked --all-targets
+      - name: Check Unix installer syntax
+        run: bash -n install.sh
 
   package:
     name: package ${{ matrix.target }}
@@ -40,9 +42,13 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
+            glibc: "2.28"
+            linux_builder: quay.io/pypa/manylinux_2_28_x86_64@sha256:4dc41da7df20400310c80d162a2fe2d2c2f3d9734d8dec20f6b9843711618deb
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             archive: tar.gz
+            glibc: "2.28"
+            linux_builder: quay.io/pypa/manylinux_2_28_aarch64@sha256:29a6ceb78de5b00494e6e7456a72782a4cb54238de102e7491d15fe47789b4d1
           # Cross-compiled from Apple Silicon rather than built on macos-13. The Intel runner class
           # is being retired and this job sat unscheduled for hours, which would stall every
           # release: `package` is fail-fast: false, but `sign_release` needs all of it, so one
@@ -78,7 +84,28 @@ jobs:
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
       - name: Build payload
-        run: cargo build --locked --release --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ matrix.glibc }}" ]]; then
+            docker run --rm \
+              --env CARGO_TERM_COLOR=always \
+              --env BUILD_UID="$(id -u)" \
+              --env BUILD_GID="$(id -g)" \
+              --volume "$GITHUB_WORKSPACE:/work" \
+              --workdir /work \
+              "${{ matrix.linux_builder }}" \
+              bash -c '
+                set -euo pipefail
+                curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs \
+                  | sh -s -- -y --profile minimal --default-toolchain 1.90.0 --no-modify-path
+                export PATH=/root/.cargo/bin:$PATH
+                cargo build --locked --release --target "${{ matrix.target }}"
+                chown -R "$BUILD_UID:$BUILD_GID" target
+              '
+          else
+            cargo build --locked --release --target "${{ matrix.target }}"
+          fi
 
       - name: Build Windows launcher
         if: matrix.archive == 'zip'
@@ -94,6 +121,21 @@ jobs:
           if [[ "${{ matrix.archive }}" == "zip" ]]; then binary="$binary.exe"; fi
           "$binary" --version | grep -F "${{ steps.version.outputs.version }}"
           "$binary" --help >/dev/null
+
+      - name: Enforce Linux glibc compatibility ceiling
+        if: matrix.glibc
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/rozi"
+          newest="$(readelf --version-info "$binary" \
+            | sed -n 's/.*Name: GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+            | sort -V | tail -n 1)"
+          test -n "$newest"
+          test "$(printf '%s\n%s\n' "$newest" "${{ matrix.glibc }}" | sort -V | tail -n 1)" = "${{ matrix.glibc }}" || {
+            echo "payload requires GLIBC_$newest; release ceiling is GLIBC_${{ matrix.glibc }}" >&2
+            exit 1
+          }
 
       - name: Package canonical archive
         id: package
@@ -247,6 +289,22 @@ jobs:
           }
           Write-Host "smoke: done LASTEXITCODE=$LASTEXITCODE"
           exit 0
+
+      - name: Check PowerShell installer syntax
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path install.ps1),
+              [ref]$tokens,
+              [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              exit 1
+          }
 
       - name: Upload immutable final archive
         uses: actions/upload-artifact@v4

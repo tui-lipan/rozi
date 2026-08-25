@@ -14,6 +14,9 @@ rozi supports Linux, macOS, and Windows with native PTYs and local session serve
 
 All platforms need a terminal emulator that can run a full-screen terminal application.
 
+The prebuilt Linux releases require glibc 2.28 or newer. Building from source may inherit a newer
+glibc requirement from the build host unless an equivalent compatibility environment is used.
+
 Windows requires Windows 10 version 1809, build 17763, or newer because rozi uses ConPTY. Windows
 Terminal is recommended but not required.
 

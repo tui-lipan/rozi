@@ -88,6 +88,8 @@ The workflow performs these gates:
 
 1. `cargo test --locked` and `cargo check --locked --all-targets` run on Linux.
 2. Release archives build for Linux x86_64 and arm64, macOS x86_64 and arm64, and Windows x86_64.
+   Linux payloads build in pinned manylinux 2.28 containers, and the workflow rejects binaries whose
+   ELF version requirements exceed `GLIBC_2.28`.
 3. Each payload reports the tag version and prints help.
 4. Each final archive is extracted and smoke-tested. Windows also tests launcher version selection,
    argument and environment forwarding, working-directory forwarding, and exit-code propagation.

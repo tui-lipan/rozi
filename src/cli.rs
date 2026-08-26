@@ -1883,8 +1883,8 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
             // The archive is several megabytes and used to arrive in silence. A streaming
             // downloader draws one rewritten row while it lands, then erases it so the outcome
             // below is what stays in the scrollback.
-            let row = crate::platform::progress::StatusRow::new("Downloading");
-            let result = crate::platform::install::from_process_with_progress(&row)
+            let row = std::sync::Arc::new(crate::platform::progress::StatusRow::new("Downloading"));
+            let result = crate::platform::install::from_process_with_progress(row.clone())
                 .update()
                 .inspect(|_| row.finish())
                 .inspect_err(|_| row.finish())

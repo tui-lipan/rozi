@@ -2,10 +2,11 @@
 //!
 //! Path policy (`PlatformEnv` / XDG) stays here; the durable activation engine lives in `relswap`.
 
-use crate::platform::download::{ProgressDownloader, ProgressSink};
+use std::sync::Arc;
+
 use crate::platform::paths::{self, PlatformEnv};
 use crate::release_app::ROZI;
-use relswap::{Installation, NoFaultInjector, UreqDownloader};
+use relswap::{Installation, NoFaultInjector, ProgressObserver, UreqDownloader};
 
 /// Production constructor using the platform's managed data and command paths.
 pub fn from_platform_env(env: &PlatformEnv) -> Installation<UreqDownloader> {
@@ -23,27 +24,31 @@ pub fn from_process() -> Installation<UreqDownloader> {
     from_platform_env(&PlatformEnv::from_process())
 }
 
-/// A managed installation whose downloads report progress to `sink`.
+/// A managed installation whose downloads report progress to `observer`.
 ///
-/// The engine is identical; only the transport differs. `relswap`'s own downloader returns a body
-/// in one call and so cannot say anything while several megabytes arrive, which left
-/// `rozi update --apply` silent for the whole download.
-pub fn from_platform_env_with_progress<S: ProgressSink>(
+/// Same engine and same transport as [`from_platform_env`] - only the reporting differs. That is
+/// the point of taking this from `relswap` rather than implementing `Downloader` here: a local
+/// implementation would also own a copy of relswap's TLS, redirect, and timeout policy, and
+/// getting `RootCerts::PlatformVerifier` wrong in such a copy is what broke every managed install
+/// in 0.0.3.
+pub fn from_platform_env_with_progress(
     env: &PlatformEnv,
-    sink: S,
-) -> Installation<ProgressDownloader<S>> {
+    observer: Arc<dyn ProgressObserver>,
+) -> Installation<UreqDownloader> {
     Installation::new(
         &ROZI,
         paths::data_dir(env),
         paths::managed_command_path(env),
-        ProgressDownloader::new(sink),
+        UreqDownloader::with_progress(observer),
         NoFaultInjector,
     )
 }
 
 /// Progress-reporting constructor using the process environment snapshot.
-pub fn from_process_with_progress<S: ProgressSink>(sink: S) -> Installation<ProgressDownloader<S>> {
-    from_platform_env_with_progress(&PlatformEnv::from_process(), sink)
+pub fn from_process_with_progress(
+    observer: Arc<dyn ProgressObserver>,
+) -> Installation<UreqDownloader> {
+    from_platform_env_with_progress(&PlatformEnv::from_process(), observer)
 }
 
 pub use relswap::{

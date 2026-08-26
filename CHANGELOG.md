@@ -4,11 +4,12 @@
 
 ### Added
 
-- `rozi update` draws a progress meter while it downloads. `relswap`'s own downloader returns a
+- `rozi update` draws a progress meter while it downloads. `relswap`'s downloader returned a
   response body in a single call, so a multi-megabyte archive arrived in silence and the command
-  printed nothing until it had finished. Rozi now supplies its own `relswap::Downloader` that
-  streams the body and reports bytes as they land. The meter goes to stderr, so redirecting stdout
-  keeps a clean stream, and it is suppressed when stderr is not a terminal or `NO_COLOR` is set.
+  printed nothing until it had finished. `relswap` 0.0.8 adds `UreqDownloader::with_progress`,
+  which streams the body and reports bytes as they land; rozi supplies the observer that draws
+  them. The meter goes to stderr, so redirecting stdout keeps a clean stream, and it is suppressed
+  when stderr is not a terminal or `NO_COLOR` is set.
 
 ### Changed
 

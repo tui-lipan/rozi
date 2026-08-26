@@ -14,7 +14,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::ansi::{self, Rgb, palette};
-use super::download::{Progress, ProgressSink};
 
 /// How wide the meter's track is, in cells. Sized to sit comfortably inside an 80-column row
 /// alongside its label and readout.
@@ -148,6 +147,30 @@ pub struct StatusRow {
     painted: AtomicBool,
 }
 
+/// Bodies at or below this are not drawn. Metadata and signature files are well under a kilobyte;
+/// only the release archive is worth a meter.
+const MIN_REPORTABLE: u64 = 1024 * 1024;
+
+/// Whether a body of this declared size deserves a meter.
+///
+/// An unknown total draws: it could be the archive arriving chunked, and showing bytes climb beats
+/// showing nothing. A small known total does not - relswap reports the sub-kilobyte manifest and
+/// signature too, and a bar that flashes on and off for those is noise.
+fn worth_drawing(total: Option<u64>) -> bool {
+    total.is_none_or(|total| total > MIN_REPORTABLE)
+}
+
+/// How far along a transfer is, or `None` when the total is unknown or nonsensical.
+///
+/// A chunked response carries no `Content-Length`, and a server can declare zero while sending a
+/// body, so neither case may reach the renderer as a fraction.
+fn fraction_of(downloaded: u64, total: Option<u64>) -> Option<f64> {
+    match total {
+        Some(total) if total > 0 => Some(downloaded as f64 / total as f64),
+        _ => None,
+    }
+}
+
 /// The label column, wide enough for the longest label a row uses ("Downloading") plus a space,
 /// so the meter starts at the same column on every row rather than shifting with the verb.
 const LABEL_WIDTH: usize = 12;
@@ -209,12 +232,15 @@ impl StatusRow {
     }
 }
 
-impl ProgressSink for StatusRow {
-    fn advance(&self, progress: Progress) {
-        if !self.color {
+impl relswap::ProgressObserver for StatusRow {
+    fn advance(&self, downloaded: u64, total: Option<u64>) {
+        // relswap reports every fetch, including the sub-kilobyte manifest and signature. Deciding
+        // what is worth drawing is the consumer's call, not the transport's: a bar that flashes on
+        // and off for a 600-byte file is noise.
+        if !self.color || !worth_drawing(total) {
             return;
         }
-        let fraction = progress.fraction();
+        let fraction = fraction_of(downloaded, total);
         let complete = fraction.is_some_and(|fraction| fraction >= 1.0);
         if !self.should_paint(complete) {
             return;
@@ -230,15 +256,13 @@ impl ProgressSink for StatusRow {
                 } else {
                     MeterStyle::brand(true, self.truecolor)
                 };
-                let readout = match progress.total {
+                let readout = match total {
                     // One lavender run over the whole readout: nesting a reset inside it would end
                     // the colour early and leave the total unstyled.
-                    Some(total) => format!(
-                        "{lavender}{} of {}{reset}",
-                        bytes(progress.downloaded),
-                        bytes(total)
-                    ),
-                    None => format!("{lavender}{}{reset}", bytes(progress.downloaded)),
+                    Some(total) => {
+                        format!("{lavender}{} of {}{reset}", bytes(downloaded), bytes(total))
+                    }
+                    None => format!("{lavender}{}{reset}", bytes(downloaded)),
                 };
                 // The percentage is truncated, not rounded, for the same reason the meter reserves
                 // its last cell: 99.6% must not print as 100% beside a bar that is still short.
@@ -254,7 +278,7 @@ impl ProgressSink for StatusRow {
             None => format!(
                 "  {accent}●{reset} {lavender}{:<LABEL_WIDTH$}{reset} {lavender}{}{reset}",
                 self.label,
-                bytes(progress.downloaded)
+                bytes(downloaded)
             ),
         };
 
@@ -353,6 +377,27 @@ mod tests {
     fn a_full_meter_emits_no_track_colour() {
         let styled = meter(1.0, 8, MeterStyle::brand(true, true));
         assert!(!styled.contains(&ansi::fg(palette::TRACK, true)));
+    }
+
+    #[test]
+    fn a_known_total_yields_a_fraction_and_an_unknown_one_does_not() {
+        assert_eq!(fraction_of(5, Some(10)), Some(0.5));
+        // A chunked response has no Content-Length; the renderer must not divide by it.
+        assert_eq!(fraction_of(5, None), None);
+        // A server declaring zero while sending a body must not produce infinity.
+        assert_eq!(fraction_of(5, Some(0)), None);
+    }
+
+    #[test]
+    fn only_bodies_worth_watching_are_drawn() {
+        // relswap reports every fetch, the sub-kilobyte manifest and signature included.
+        assert!(
+            !worth_drawing(Some(600)),
+            "a signature file is not a download"
+        );
+        assert!(worth_drawing(Some(18 * 1024 * 1024)), "the archive is");
+        // Unknown means possibly the archive, arriving chunked: draw it.
+        assert!(worth_drawing(None));
     }
 
     #[test]

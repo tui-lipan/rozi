@@ -2739,9 +2739,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "relswap"
-version = "0.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "912bb6b3909c707f454afa57cfa9b15183b786852a2d136384bef114ff949e25"
+version = "0.0.8"
+source = "git+https://github.com/tui-lipan/relswap?rev=899eb57#899eb574a4c7f969693155c62f20c4ec00759431"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2801,8 +2800,6 @@ dependencies = [
  "tui-lipan",
  "unicode-segmentation",
  "unicode-width",
- "ureq",
- "url",
  "windows-sys 0.59.0",
 ]
 

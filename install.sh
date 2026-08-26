@@ -22,15 +22,22 @@ else
   INTERACTIVE=0
 fi
 if ((INTERACTIVE)) && [[ -z "${NO_COLOR:-}" ]]; then
+  # The rozi palette, matching `platform::ansi::palette` and the logo's rose-to-violet gradient.
   C_RESET=$'\033[0m'
   C_DIM=$'\033[38;2;142;147;180m'
   C_ACCENT=$'\033[38;2;253;74;128m'
+  C_VIOLET=$'\033[38;2;152;43;242m'
+  # The unfilled remainder of the meter. Near the app's border colour so a track reads as chrome
+  # rather than as data - painting it in the accent hides where the fill actually ends.
+  C_TRACK=$'\033[38;2;52;56;88m'
   C_OK=$'\033[38;2;74;222;128m'
   C_ERROR=$'\033[38;2;255;95;87m'
 else
   C_RESET=''
   C_DIM=''
   C_ACCENT=''
+  C_VIOLET=''
+  C_TRACK=''
   C_OK=''
   C_ERROR=''
 fi
@@ -169,24 +176,45 @@ download_file() {
     fail "downloaded $label exceeds its size limit"
 }
 
+# The meter draws its filled run and its track in different weights *and* different colours: a
+# heavy glyph for what has arrived, a light one for what has not. The weight difference is what
+# survives NO_COLOR, and the colour difference is what makes the boundary obvious at a glance.
+#
+# The filled run carries the logo gradient, stepped from rose to violet across the track. Bash
+# cannot interpolate per cell cheaply, so it is sampled in bands - close enough at this width to
+# read as a gradient, and it costs one escape per band rather than one per cell.
 render_download_progress() {
-  local current="$1" total="$2" width=36 percent filled empty bar=''
+  local current="$1" total="$2" width=32 percent filled empty bar='' cell band
   ((total > 0)) || return 0
   percent=$((current * 100 / total))
   ((percent > 100)) && percent=100
+  # Reserve the last cell until the download is actually complete: a meter that reads full while
+  # bytes are still arriving is worse than one that reaches the end a moment late.
   filled=$((percent * width / 100))
+  ((percent < 100 && filled >= width)) && filled=$((width - 1))
   empty=$((width - filled))
-  ((filled > 0)) && printf -v bar '%*s' "$filled" '' && bar="${bar// /━}"
-  if ((empty > 0)); then
-    bar+='╺'
-    empty=$((empty - 1))
-    if ((empty > 0)); then
-      local tail
-      printf -v tail '%*s' "$empty" ''
-      bar+="${tail// /━}"
+  if ((filled > 0)); then
+    if [[ -n "$C_ACCENT" ]]; then
+      for ((cell = 0; cell < filled; cell++)); do
+        # Four bands across the track, stepping rose -> violet.
+        band=$((cell * 4 / width))
+        case "$band" in
+          0) bar+=$'\033[38;2;253;74;128m━' ;;
+          1) bar+=$'\033[38;2;228;66;156m━' ;;
+          2) bar+=$'\033[38;2;203;58;185m━' ;;
+          *) bar+=$'\033[38;2;178;51;213m━' ;;
+        esac
+      done
+    else
+      printf -v bar '%*s' "$filled" '' && bar="${bar// /━}"
     fi
   fi
-  status_row '●' "$C_ACCENT" 'Download' "${C_ACCENT}${bar}${C_RESET} ${percent}%"
+  if ((empty > 0)); then
+    local tail
+    printf -v tail '%*s' "$empty" ''
+    bar+="${C_TRACK}${tail// /─}"
+  fi
+  status_row '●' "$C_ACCENT" 'Download' "${bar}${C_RESET} ${percent}%"
 }
 
 resolve_latest_version() {

@@ -2,6 +2,7 @@
 //!
 //! Path policy (`PlatformEnv` / XDG) stays here; the durable activation engine lives in `relswap`.
 
+use crate::platform::download::{ProgressDownloader, ProgressSink};
 use crate::platform::paths::{self, PlatformEnv};
 use crate::release_app::ROZI;
 use relswap::{Installation, NoFaultInjector, UreqDownloader};
@@ -20,6 +21,29 @@ pub fn from_platform_env(env: &PlatformEnv) -> Installation<UreqDownloader> {
 /// Production constructor using the process environment snapshot.
 pub fn from_process() -> Installation<UreqDownloader> {
     from_platform_env(&PlatformEnv::from_process())
+}
+
+/// A managed installation whose downloads report progress to `sink`.
+///
+/// The engine is identical; only the transport differs. `relswap`'s own downloader returns a body
+/// in one call and so cannot say anything while several megabytes arrive, which left
+/// `rozi update --apply` silent for the whole download.
+pub fn from_platform_env_with_progress<S: ProgressSink>(
+    env: &PlatformEnv,
+    sink: S,
+) -> Installation<ProgressDownloader<S>> {
+    Installation::new(
+        &ROZI,
+        paths::data_dir(env),
+        paths::managed_command_path(env),
+        ProgressDownloader::new(sink),
+        NoFaultInjector,
+    )
+}
+
+/// Progress-reporting constructor using the process environment snapshot.
+pub fn from_process_with_progress<S: ProgressSink>(sink: S) -> Installation<ProgressDownloader<S>> {
+    from_platform_env_with_progress(&PlatformEnv::from_process(), sink)
 }
 
 pub use relswap::{

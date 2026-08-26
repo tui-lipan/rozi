@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- `rozi update` draws a progress meter while it downloads. `relswap`'s own downloader returns a
+  response body in a single call, so a multi-megabyte archive arrived in silence and the command
+  printed nothing until it had finished. Rozi now supplies its own `relswap::Downloader` that
+  streams the body and reports bytes as they land. The meter goes to stderr, so redirecting stdout
+  keeps a clean stream, and it is suppressed when stderr is not a terminal or `NO_COLOR` is set.
+
+### Changed
+
+- CLI output and both install scripts now use the rozi palette - the rose-to-violet gradient the
+  logo and the app's own theme carry - instead of the basic ANSI colours the CLI had been using.
+  Terminals that do not advertise 24-bit colour through `COLORTERM` get the nearest 256-colour cube
+  entry rather than losing the styling.
+- Progress meters style their filled run and their track separately. Both were previously painted
+  in the accent, which made the meter read as one solid shape and hid where the fill actually
+  ended. The filled run now carries the brand gradient in a heavy glyph and the track is a light
+  glyph in the app's border colour, so the boundary survives `NO_COLOR` on glyph weight alone. A
+  meter also reserves its last cell until the work is genuinely complete, rather than rounding up
+  to a full bar at 99%.
+
 ## 0.0.5 - 2026-08-26
 
 Follows 0.0.4's installation fixes with the one that was still left: a Windows install that

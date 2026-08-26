@@ -47,8 +47,12 @@ rozi update --rollback
 ```
 
 `rozi update --check` checks for a newer release without installing it. `rozi update` downloads
-and activates the current release. `rozi update --rollback` activates the previously installed
-version without another download.
+and activates the current release, drawing a progress meter on stderr while the archive arrives.
+`rozi update --rollback` activates the previously installed version without another download.
+
+The meter is written to stderr, so redirecting stdout keeps a clean stream while the row still
+reaches a watching terminal. It is suppressed entirely when stderr is not a terminal, or when
+`NO_COLOR` is set - a redirected or scripted update stays quiet.
 
 Managed installations use these locations:
 

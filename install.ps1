@@ -24,14 +24,24 @@ $script:Interactive = -not [Console]::IsOutputRedirected
 $script:Esc = if ($script:Interactive) { [char]27 } else { '' }
 if ($script:Interactive -and -not $env:NO_COLOR) {
     $script:CReset = "$($script:Esc)[0m"
+    # The rozi palette, matching `platform::ansi::palette` and the logo's rose-to-violet gradient.
     $script:CDim = "$($script:Esc)[38;2;142;147;180m"
     $script:CAccent = "$($script:Esc)[38;2;253;74;128m"
+    $script:CBand2 = "$($script:Esc)[38;2;228;66;156m"
+    $script:CBand3 = "$($script:Esc)[38;2;203;58;185m"
+    $script:CViolet = "$($script:Esc)[38;2;178;51;213m"
+    # The unfilled remainder of the meter, near the app's border colour so a track reads as chrome.
+    $script:CTrack = "$($script:Esc)[38;2;52;56;88m"
     $script:COk = "$($script:Esc)[38;2;74;222;128m"
     $script:CError = "$($script:Esc)[38;2;255;95;87m"
 } else {
     $script:CReset = ''
     $script:CDim = ''
     $script:CAccent = ''
+    $script:CBand2 = ''
+    $script:CBand3 = ''
+    $script:CViolet = ''
+    $script:CTrack = ''
     $script:COk = ''
     $script:CError = ''
 }
@@ -246,15 +256,28 @@ function Download-HttpsFile([string]$Url, [string]$Destination, [int64]$MaxBytes
                         $percent = [int](100 * $total / $response.ContentLength)
                         if ($percent -ne $lastPercent) {
                             $lastPercent = $percent
-                            $width = 36
+                            # Filled run and track differ in weight *and* colour: the weight
+                            # survives NO_COLOR, the colour makes the boundary obvious. The filled
+                            # run steps through the logo's rose-to-violet gradient in four bands.
+                            $width = 32
                             $filled = [int]($percent * $width / 100)
+                            # Reserve the last cell until the download is actually complete, so the
+                            # meter never reads full while bytes are still arriving.
+                            if ($percent -lt 100 -and $filled -ge $width) { $filled = $width - 1 }
                             $remaining = $width - $filled
-                            $bar = '━' * $filled
-                            if ($remaining -gt 0) {
-                                $bar += '╺'
-                                if ($remaining -gt 1) { $bar += '━' * ($remaining - 1) }
+                            $bar = ''
+                            if ($filled -gt 0) {
+                                if ($script:CAccent) {
+                                    $bands = @($script:CAccent, $script:CBand2, $script:CBand3, $script:CViolet)
+                                    for ($cell = 0; $cell -lt $filled; $cell++) {
+                                        $bar += $bands[[int]($cell * 4 / $width)] + '━'
+                                    }
+                                } else {
+                                    $bar = '━' * $filled
+                                }
                             }
-                            Write-StatusRow '●' $script:CAccent 'Download' "$($script:CAccent)$bar$($script:CReset) $percent%"
+                            if ($remaining -gt 0) { $bar += $script:CTrack + ('─' * $remaining) }
+                            Write-StatusRow '●' $script:CAccent 'Download' "$bar$($script:CReset) $percent%"
                         }
                     }
                 }

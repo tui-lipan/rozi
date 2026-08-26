@@ -1314,62 +1314,65 @@ pub(crate) fn recover_managed_installation() -> std::result::Result<(), String> 
 /// the standard environment variables.
 #[derive(Clone, Copy)]
 struct OutputStyles {
-    accent: &'static str,
-    heading: &'static str,
-    success: &'static str,
-    warning: &'static str,
-    error: &'static str,
-    muted: &'static str,
-    reset: &'static str,
+    /// Whether to emit any styling at all.
+    color: bool,
+    /// Whether the terminal advertised 24-bit colour, so the palette can be sent exactly rather
+    /// than approximated into the 256-colour cube.
+    truecolor: bool,
 }
 
 impl OutputStyles {
     const fn plain() -> Self {
         Self {
-            accent: "",
-            heading: "",
-            success: "",
-            warning: "",
-            error: "",
-            muted: "",
-            reset: "",
+            color: false,
+            truecolor: false,
         }
     }
 
+    /// A fully styled instance, for tests that assert the coloured form directly rather than
+    /// depending on the ambient terminal.
+    #[cfg(test)]
     const fn colored() -> Self {
         Self {
-            accent: "\x1b[1;36m",
-            heading: "\x1b[1;32m",
-            success: "\x1b[1;32m",
-            warning: "\x1b[1;33m",
-            error: "\x1b[1;31m",
-            muted: "\x1b[90m",
-            reset: "\x1b[0m",
+            color: true,
+            truecolor: true,
         }
     }
 
     fn detect() -> Self {
         if crate::platform::ansi::stdout_supports_color() {
-            Self::colored()
+            Self {
+                color: true,
+                truecolor: crate::platform::ansi::supports_truecolor(),
+            }
         } else {
             Self::plain()
         }
     }
 
+    /// The rozi palette colour for a tone, so `--help`, `update`, and the install scripts all
+    /// describe rozi with the colours the app and the logo use.
+    fn color_for(tone: OutputTone) -> Option<crate::platform::ansi::Rgb> {
+        use crate::platform::ansi::palette;
+        match tone {
+            OutputTone::Plain => None,
+            OutputTone::Accent => Some(palette::ROSE),
+            OutputTone::Heading => Some(palette::VIOLET),
+            OutputTone::Success => Some(palette::SUCCESS),
+            OutputTone::Warning => Some(palette::WARNING),
+            OutputTone::Error => Some(palette::ERROR),
+            OutputTone::Muted => Some(palette::LAVENDER),
+        }
+    }
+
     fn paint(self, text: &str, tone: OutputTone) -> String {
-        let style = match tone {
-            OutputTone::Plain => "",
-            OutputTone::Accent => self.accent,
-            OutputTone::Heading => self.heading,
-            OutputTone::Success => self.success,
-            OutputTone::Warning => self.warning,
-            OutputTone::Error => self.error,
-            OutputTone::Muted => self.muted,
-        };
-        if style.is_empty() {
-            text.to_string()
-        } else {
-            format!("{style}{text}{}", self.reset)
+        match Self::color_for(tone).filter(|_| self.color) {
+            Some(color) => format!(
+                "{}{text}{}",
+                crate::platform::ansi::fg(color, self.truecolor),
+                crate::platform::ansi::RESET
+            ),
+            None => text.to_string(),
         }
     }
 }
@@ -1877,10 +1880,18 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
             }
         }
         UpdateCommand::Apply => {
-            let result = installation.update().map_err(|error| match error {
-                InstallError::Unmanaged => unmanaged_channel_clause(),
-                error => format!("update failed: {error}"),
-            })?;
+            // The archive is several megabytes and used to arrive in silence. A streaming
+            // downloader draws one rewritten row while it lands, then erases it so the outcome
+            // below is what stays in the scrollback.
+            let row = crate::platform::progress::StatusRow::new("Downloading");
+            let result = crate::platform::install::from_process_with_progress(&row)
+                .update()
+                .inspect(|_| row.finish())
+                .inspect_err(|_| row.finish())
+                .map_err(|error| match error {
+                    InstallError::Unmanaged => unmanaged_channel_clause(),
+                    error => format!("update failed: {error}"),
+                })?;
             if result.changed {
                 println!(
                     "{} rozi to {}",

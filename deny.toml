@@ -38,4 +38,11 @@ ignore = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/helix-editor/termina"]
+allow-git = [
+    "https://github.com/helix-editor/termina",
+    # Temporary, exactly as long as `relswap` in Cargo.toml is a git revision: 0.0.8 adds
+    # `UreqDownloader::with_progress` and is not yet on crates.io. Remove this entry in the same
+    # change that restores `relswap = "0.0.8"` - an allow-listed git source for the crate that
+    # verifies and activates signed releases is not something to leave standing by accident.
+    "https://github.com/tui-lipan/relswap",
+]

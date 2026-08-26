@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.0.5 - 2026-08-26
+
+Follows 0.0.4's installation fixes with the one that was still left: a Windows install that
+downloaded, verified, and staged the payload correctly, then failed its own self-test because
+Defender was still reading the file.
+
 ### Fixed
 
 - A healthy Windows install no longer fails with `installation failed: self-test timed out`. The

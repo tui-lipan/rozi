@@ -193,6 +193,51 @@ fn cube_index(color: Rgb) -> u8 {
     (16 + 36 * axis(color.0) + 6 * axis(color.1) + axis(color.2)) as u8
 }
 
+/// The width of the terminal attached to stderr, in cells, or `None` when there is not one.
+///
+/// A rewritten status row has to fit on one line. `\r` and the erase-line escape only reach the
+/// row the cursor is on, so a row that wrapped leaves its earlier fragments behind on every
+/// redraw - a stack of orphaned half-bars instead of one animating line.
+pub fn stderr_width() -> Option<u16> {
+    terminal_width()
+}
+
+#[cfg(unix)]
+fn terminal_width() -> Option<u16> {
+    // SAFETY: `winsize` is a plain C struct that the ioctl fully initialises on success, and
+    // STDERR_FILENO is valid for the lifetime of the process.
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    let result = unsafe { libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut size) };
+    // A width of zero is what a terminal that does not know its own size reports; treat it as
+    // unknown rather than as a zero-column screen.
+    (result == 0 && size.ws_col > 0).then_some(size.ws_col)
+}
+
+#[cfg(windows)]
+fn terminal_width() -> Option<u16> {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{
+        CONSOLE_SCREEN_BUFFER_INFO, GetConsoleScreenBufferInfo, GetStdHandle, STD_ERROR_HANDLE,
+    };
+
+    // SAFETY: the handle is checked before use and `CONSOLE_SCREEN_BUFFER_INFO` is fully written
+    // by the call when it reports success.
+    unsafe {
+        let handle = GetStdHandle(STD_ERROR_HANDLE);
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let mut info: CONSOLE_SCREEN_BUFFER_INFO = std::mem::zeroed();
+        if GetConsoleScreenBufferInfo(handle, &mut info) == 0 {
+            return None;
+        }
+        // The window, not the buffer: a console buffer is usually far wider than the visible
+        // window, and wrapping is decided by what is visible.
+        let width = info.srWindow.Right - info.srWindow.Left + 1;
+        (width > 0).then_some(width as u16)
+    }
+}
+
 fn non_empty(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|value| !value.is_empty())
 }

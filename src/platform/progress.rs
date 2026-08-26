@@ -147,6 +147,64 @@ pub struct StatusRow {
     painted: AtomicBool,
 }
 
+/// The narrowest meter worth drawing. Below this a bar carries no information a percentage does
+/// not already give, so a cramped terminal gets the readout alone rather than a four-cell stub.
+const MIN_METER_WIDTH: usize = 8;
+
+/// The columns the row spends on everything except the meter: two of indent, the dot and its
+/// space, the label column, a space, ` 100%`, and two before the readout.
+const ROW_CHROME: usize = 2 + 2 + LABEL_WIDTH + 1 + 5 + 2;
+
+/// What fits on one row, widest form first.
+///
+/// A status row must stay on one line: `\r` and the erase-line escape only clear the row the
+/// cursor is on, so a wrapped row leaves its earlier fragments on screen for every redraw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowLayout {
+    /// Label, meter of this width, percentage, and byte readout.
+    Full(usize),
+    /// Label, percentage, and byte readout. A meter this narrow would say nothing the percentage
+    /// does not already say.
+    Compact,
+    /// The percentage alone. What is left when even the label column will not fit.
+    Minimal,
+}
+
+/// The widest row that fits in `columns`.
+fn layout_for(columns: Option<u16>, readout: usize) -> RowLayout {
+    // No terminal to measure means the caller has already decided the row is worth drawing;
+    // assume the conventional 80 rather than refusing to draw at all.
+    let columns = columns.map_or(80usize, usize::from);
+    let available = columns.saturating_sub(ROW_CHROME + readout);
+    if available >= MIN_METER_WIDTH {
+        RowLayout::Full(available.min(METER_WIDTH))
+    } else if ROW_CHROME + readout <= columns {
+        RowLayout::Compact
+    } else {
+        RowLayout::Minimal
+    }
+}
+
+impl RowLayout {
+    /// The columns this layout occupies, for a readout of `readout` cells.
+    ///
+    /// Only the fit test needs this: the renderer formats a row rather than measuring one. It
+    /// exists so the one-line invariant is stated as code that can be checked, not as a comment.
+    #[cfg(test)]
+    fn width(self, readout: usize) -> usize {
+        match self {
+            Self::Full(meter) => ROW_CHROME + readout + meter,
+            Self::Compact => ROW_CHROME + readout,
+            // Two of indent, the dot and its space, and ` 100%`.
+            Self::Minimal => MINIMAL_ROW_WIDTH,
+        }
+    }
+}
+
+/// Two of indent, the dot and its space, and ` 100%`.
+#[cfg(test)]
+const MINIMAL_ROW_WIDTH: usize = 2 + 2 + 5;
+
 /// Bodies at or below this are not drawn. Metadata and signature files are well under a kilobyte;
 /// only the release archive is worth a meter.
 const MIN_REPORTABLE: u64 = 1024 * 1024;
@@ -264,14 +322,33 @@ impl relswap::ProgressObserver for StatusRow {
                     }
                     None => format!("{lavender}{}{reset}", bytes(downloaded)),
                 };
+                // The escapes in `readout` are zero-width on screen but not in the string, so the
+                // budget has to be computed from the visible text rather than from its length.
+                let readout_width = match total {
+                    Some(total) => {
+                        bytes(downloaded).chars().count() + 4 + bytes(total).chars().count()
+                    }
+                    None => bytes(downloaded).chars().count(),
+                };
                 // The percentage is truncated, not rounded, for the same reason the meter reserves
                 // its last cell: 99.6% must not print as 100% beside a bar that is still short.
-                format!(
-                    "  {accent}●{reset} {lavender}{:<LABEL_WIDTH$}{reset} {} {:>3}%  {readout}",
-                    self.label,
-                    meter(fraction, METER_WIDTH, style),
-                    (fraction * 100.0) as u32,
-                )
+                // Measured per redraw rather than cached: a terminal resized mid-download must not
+                // keep drawing to the width it had when the transfer started.
+                let percent = (fraction * 100.0) as u32;
+                match layout_for(ansi::stderr_width(), readout_width) {
+                    RowLayout::Full(width) => format!(
+                        "  {accent}●{reset} {lavender}{:<LABEL_WIDTH$}{reset} {} {percent:>3}%  {readout}",
+                        self.label,
+                        meter(fraction, width, style),
+                    ),
+                    // Too narrow for a bar: the percentage and the readout still say everything a
+                    // meter would, and they fit.
+                    RowLayout::Compact => format!(
+                        "  {accent}●{reset} {lavender}{:<LABEL_WIDTH$}{reset} {percent:>3}%  {readout}",
+                        self.label,
+                    ),
+                    RowLayout::Minimal => format!("  {accent}●{reset} {percent:>3}%"),
+                }
             }
             // No Content-Length: there is no fraction to draw, so report what has arrived rather
             // than inventing a position on a track.
@@ -398,6 +475,50 @@ mod tests {
         assert!(worth_drawing(Some(18 * 1024 * 1024)), "the archive is");
         // Unknown means possibly the archive, arriving chunked: draw it.
         assert!(worth_drawing(None));
+    }
+
+    #[test]
+    fn a_row_never_asks_for_more_columns_than_the_terminal_has() {
+        // The invariant that matters, and the reason the layout has three tiers rather than two:
+        // a wrapped row leaves orphaned fragments behind on every redraw, because the erase escape
+        // only reaches the row the cursor is on.
+        let readout = "18.0 MB of 18.0 MB".chars().count();
+        for columns in MINIMAL_ROW_WIDTH as u16..=200 {
+            let layout = layout_for(Some(columns), readout);
+            assert!(
+                layout.width(readout) <= usize::from(columns),
+                "{layout:?} takes {} columns, terminal has {columns}",
+                layout.width(readout)
+            );
+        }
+    }
+
+    #[test]
+    fn the_layout_degrades_one_tier_at_a_time_as_the_terminal_narrows() {
+        let readout = "18.0 MB of 18.0 MB".chars().count();
+        assert_eq!(layout_for(Some(200), readout), RowLayout::Full(METER_WIDTH));
+        // Narrow enough that a bar would carry nothing the percentage does not.
+        assert_eq!(layout_for(Some(45), readout), RowLayout::Compact);
+        // Narrower than the label column and readout together: percentage only.
+        assert_eq!(layout_for(Some(20), readout), RowLayout::Minimal);
+        // An unmeasurable terminal assumes 80 rather than refusing to draw.
+        assert_eq!(layout_for(None, readout), layout_for(Some(80), readout));
+    }
+
+    #[test]
+    fn a_shrinking_terminal_shrinks_the_meter_before_dropping_it() {
+        let readout = "1.0 MB of 18.0 MB".chars().count();
+        let RowLayout::Full(wide) = layout_for(Some(120), readout) else {
+            panic!("a 120-column terminal fits a full row");
+        };
+        let RowLayout::Full(mid) = layout_for(Some(70), readout) else {
+            panic!("a 70-column terminal still fits a meter");
+        };
+        assert!(
+            mid < wide,
+            "a narrower terminal gets a shorter bar, not the same one"
+        );
+        assert!(mid >= MIN_METER_WIDTH);
     }
 
     #[test]

@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.0.4 - 2026-08-26
+
+Fixes an installation that could not finish on any platform: the bootstrap script downloaded and
+checksummed the release, and the managed step it hands off to then refused the very same files.
+
+### Fixed
+
+- Managed installation no longer fails with `release verification error: release download error:
+  io: invalid peer certificate: UnknownIssuer`. The release downloader verified TLS against a
+  compiled-in Mozilla root snapshot, and GitHub's release-asset host now presents a chain anchored
+  at the ISRG `Root YR` certificate, which that snapshot does not carry. Rustls neither builds an
+  alternate path nor fetches a missing issuer, so it rejected the connection outright. `curl` and
+  `Invoke-WebRequest` use the host trust store, which does carry the root, which is why the
+  bootstrap download succeeded and only the payload's own fetch failed - on Windows and Linux
+  alike, because the bundled snapshot is the same everywhere. Release downloads now use the host
+  trust store too, by way of `relswap` 0.0.7. Ed25519 verification against `release-keys.json` is
+  unchanged and still runs after TLS succeeds.
+- Linux release binaries are built against glibc 2.28 instead of the CI runner's own glibc, so they
+  run on distributions older than the build host.
+
+### Changed
+
+- The install scripts keep one rewritten status row while a step runs rather than appending a line
+  per step, and `NO_COLOR` now turns off styling without also turning off that compact display.
+  Redirected and CI output remains a plain append-only transcript.
+- `rozi-launcher` is gated behind the `windows-launcher` feature. It only means something on
+  Windows, where it activates a managed install; every other target linked it for nothing.
+
 ## 0.0.3 - 2026-08-24
 
 ### Added

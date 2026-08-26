@@ -2,7 +2,7 @@
 
 pkgname=rozi-bin
 _pkgname=rozi
-pkgver=0.0.3
+pkgver=0.0.4
 pkgrel=1
 pkgdesc='Hyprland-style tiling terminal multiplexer built on tui-lipan (prebuilt binary)'
 arch=('x86_64' 'aarch64')
@@ -19,8 +19,8 @@ options=('!strip' '!debug')
 _url_base="$url/releases/download/v$pkgver"
 source_x86_64=("$_pkgname-$pkgver-x86_64.tar.gz::$_url_base/$_pkgname-$pkgver-x86_64-unknown-linux-gnu.tar.gz")
 source_aarch64=("$_pkgname-$pkgver-aarch64.tar.gz::$_url_base/$_pkgname-$pkgver-aarch64-unknown-linux-gnu.tar.gz")
-sha256sums_x86_64=('01b06967dcd79fa5d6a89c2cdf68967d4d9d23d7581b7995e20740ff6f637940')
-sha256sums_aarch64=('b72af6b2f8e4947518d05fc609229b7dddb65d32716985d1dbf333a7fa66bc43')
+sha256sums_x86_64=('a892dedd7298f9443119f1c310e5f3d73ec670677e016eb8cc9746253dd893a2')
+sha256sums_aarch64=('0d97ef8f46bd65790bdd999d64715acdccd7e3aca42335136cc504e29fd37b9a')
 
 package() {
 	local _target

@@ -1179,10 +1179,14 @@ fn host_probe_errors_are_recorded_then_cleared() {
                 "prod".to_string(),
                 crate::config::RemoteHostConfig::default(),
             );
-            state.sidebar_visible = true;
-            state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
-            state.sidebar.sessions_epoch = 3;
         }
+        // Disarm the sweep. Applying a probe outcome schedules the next refresh, and that refresh
+        // re-probes every host that is not `Idle` - which, after this test records an outcome, is
+        // the very host it is asserting on. The sweep runs real discovery, so on a machine without
+        // `ssh` it came back instantly with `Failed("ssh was not found on PATH")` and overwrote
+        // `Reached` before the assertion read it. What is under test is that the handler applies an
+        // outcome, not that a live host answers.
+        open_sessions_tab_unswept(&mut backend, 3);
         backend
             .dispatch(crate::Msg::SidebarSessionsDiscovered {
                 epoch: 3,

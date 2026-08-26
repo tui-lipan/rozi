@@ -113,12 +113,29 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
         })
         .unwrap();
 
+    // Wait for the probe's *content*, not for its file to appear. A shell redirection creates the
+    // target before the command writes to it, so `exists()` is true a moment before any bytes are
+    // there - which made this read back an empty string and fail with `left: ""` on a Windows
+    // runner that happened to poll inside that window.
+    //
+    // The budget is generous for the same reason the install self-test's is: spawning an
+    // interpreter for a freshly written script on a loaded CI runner, past a virus scanner that
+    // has never seen the file, is slow in a way that says nothing about whether it works.
     let result = extension_dir.join("result");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !result.exists() && Instant::now() < deadline {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let probe_output = loop {
+        let contents = std::fs::read_to_string(&result).unwrap_or_default();
+        if !contents.is_empty() || Instant::now() >= deadline {
+            break contents;
+        }
         std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(std::fs::read_to_string(result).unwrap(), "smoke");
+    };
+    assert_eq!(
+        probe_output,
+        "smoke",
+        "extension probe never wrote {}",
+        result.display()
+    );
 
     let changed_manifest = manifest
         .replace("id = \"probe\"", "id = \"probe-two\"")

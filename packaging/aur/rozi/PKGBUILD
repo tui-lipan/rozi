@@ -1,7 +1,7 @@
 # Maintainer: Adam Mikołajczyk <adam@tui-lipan.dev>
 
 pkgname=rozi
-pkgver=0.0.3
+pkgver=0.0.4
 pkgrel=1
 pkgdesc='Hyprland-style tiling terminal multiplexer built on tui-lipan'
 arch=('x86_64' 'aarch64')
@@ -27,7 +27,7 @@ options=('!lto' '!debug')
 # `git` is a makedepend for the same reason: the patched termina is a git dependency, fetched in
 # prepare() so that build() can stay offline.
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('53ea6beda427f176e3a8e2c35fc7ee33c746f8e1a3392fc74109846a744566ec')
+sha256sums=('3d180355cb498ae5c0f70d40d230edc93723c3d8ff3222435de7bccc09037d12')
 
 prepare() {
 	cd "$pkgname-$pkgver"

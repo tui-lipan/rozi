@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- A healthy Windows install no longer fails with `installation failed: self-test timed out`. The
+  probe runs the staged payload immediately after writing it, so an unsigned ~18 MB binary meets
+  real-time protection at its least informed: a full scan of a file nothing has seen before, plus a
+  cloud-delivered protection lookup that blocks for up to 10 seconds on its own. The 10-second
+  budget sat exactly on that ceiling, so the install failed and rolled back while an immediate retry
+  - reading a file that was cached by then - passed in about two seconds. The budget is now 90
+  seconds, which costs a healthy payload nothing: the probe waits on the process, not on the clock.
+
 ## 0.0.4 - 2026-08-26
 
 Fixes an installation that could not finish on any platform: the bootstrap script downloaded and

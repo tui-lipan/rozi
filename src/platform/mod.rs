@@ -53,6 +53,7 @@ pub mod user;
 
 pub mod ansi;
 pub mod command;
+pub mod cursor;
 pub mod environment;
 pub mod ipc;
 pub mod notifications;

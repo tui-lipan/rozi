@@ -10,7 +10,7 @@
 
 use std::io::{self, Write};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use super::ansi::{self, Rgb, palette};
@@ -143,9 +143,24 @@ pub struct StatusRow {
     truecolor: bool,
     /// When the row was last painted, so a fast link does not spend its time formatting.
     last_paint: Mutex<Option<Instant>>,
+    /// When the transfer started, for the rate and the estimate. Set on the first report rather
+    /// than at construction: the row is built before the request is made, and the connection and
+    /// TLS handshake would otherwise be charged to the transfer's average speed.
+    started: Mutex<Option<Instant>>,
+    /// Which spinner frame comes next. Advanced per redraw rather than per unit of time, which is
+    /// what makes the spin rate report the redraw rate: a stalled transfer visibly stops.
+    frame: AtomicUsize,
     /// Whether anything has been drawn yet, so `finish` knows if there is a row to erase.
     painted: AtomicBool,
 }
+
+/// Spinner frames, one eighth-circle apart. Braille is the densest way to show rotation in a
+/// single cell, and every terminal that renders the meter's box-drawing glyphs renders these.
+const SPINNER: [char; 8] = ['⠋', '⠙', '⠸', '⠼', '⠴', '⠦', '⠧', '⠏'];
+
+/// Below this a rate is guesswork: the first chunks of a transfer arrive at whatever speed the
+/// connection ramps to, and reporting that as a steady figure is worse than reporting nothing.
+const RATE_SETTLES_AFTER: Duration = Duration::from_millis(750);
 
 /// The narrowest meter worth drawing. Below this a bar carries no information a percentage does
 /// not already give, so a cramped terminal gets the readout alone rather than a four-cell stub.
@@ -218,6 +233,76 @@ fn worth_drawing(total: Option<u64>) -> bool {
     total.is_none_or(|total| total > MIN_REPORTABLE)
 }
 
+/// A duration as a person reads a wait: never more than two units, never a precision the estimate
+/// does not have.
+fn duration(left: Duration) -> String {
+    let seconds = left.as_secs();
+    match seconds {
+        0..60 => format!("{seconds}s"),
+        60..3600 => format!("{}m {:02}s", seconds / 60, seconds % 60),
+        _ => format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60),
+    }
+}
+
+/// The readouts a row could show, richest first.
+///
+/// Rate and estimate are the first things dropped when columns run short: they are the least of
+/// what a meter says, and a bar plus a byte count is still a complete answer. Both are omitted
+/// entirely until the transfer has run long enough for an average to mean anything.
+fn readouts(downloaded: u64, total: Option<u64>, elapsed: Option<Duration>) -> Vec<String> {
+    let mut options = Vec::new();
+    let Some(total) = total else {
+        // No declared length: the byte count is the whole readout, and there is no estimate to make.
+        return vec![bytes(downloaded)];
+    };
+    let transferred = format!("{} of {}", bytes(downloaded), bytes(total));
+
+    // A rate needs both a settled elapsed time and bytes to divide by it.
+    let rate = elapsed
+        .filter(|elapsed| *elapsed >= RATE_SETTLES_AFTER && downloaded > 0)
+        .map(|elapsed| downloaded as f64 / elapsed.as_secs_f64())
+        .filter(|rate| *rate > 0.0);
+
+    if let Some(rate) = rate {
+        let per_second = format!("{}/s", bytes(rate as u64));
+        // The estimate assumes the average speed holds, which is why it is the first thing cut:
+        // it is the least trustworthy figure on the row.
+        if total > downloaded {
+            let left = Duration::from_secs_f64((total - downloaded) as f64 / rate);
+            options.push(format!(
+                "{transferred} · {per_second} · {} left",
+                duration(left)
+            ));
+        }
+        options.push(format!("{transferred} · {per_second}"));
+    }
+    options.push(transferred);
+    options.push(bytes(downloaded));
+    options
+}
+
+/// The richest readout that leaves room for a meter, and its visible width.
+///
+/// Chosen against the *meter's* minimum rather than against the whole row, so extra detail never
+/// costs the bar: the bar is the thing the row exists to show.
+fn choose_readout(columns: Option<u16>, options: &[String]) -> (String, usize) {
+    let columns = columns.map_or(80usize, usize::from);
+    let budget = columns.saturating_sub(ROW_CHROME + MIN_METER_WIDTH);
+    options
+        .iter()
+        .map(|option| (option, option.chars().count()))
+        .find(|(_, width)| *width <= budget)
+        .map_or_else(
+            // Everything is too wide: take the shortest and let the layout tiers deal with it.
+            || {
+                let shortest = options.last().cloned().unwrap_or_default();
+                let width = shortest.chars().count();
+                (shortest, width)
+            },
+            |(option, width)| (option.clone(), width),
+        )
+}
+
 /// How far along a transfer is, or `None` when the total is unknown or nonsensical.
 ///
 /// A chunked response carries no `Content-Length`, and a server can declare zero while sending a
@@ -247,6 +332,8 @@ impl StatusRow {
             color,
             truecolor: color && super::ansi::supports_truecolor(),
             last_paint: Mutex::new(None),
+            started: Mutex::new(None),
+            frame: AtomicUsize::new(0),
             painted: AtomicBool::new(false),
         }
     }
@@ -269,6 +356,30 @@ impl StatusRow {
             super::ansi::SHOW_CURSOR
         );
         let _ = err.flush();
+        // Release the claim only after the escape has reached the terminal: a signal arriving in
+        // between must still find the cursor recorded as hidden and restore it.
+        super::cursor::show();
+    }
+
+    /// How long the transfer has been running, starting the clock on the first call.
+    ///
+    /// `None` until a second call, so the very first frame never reports a rate computed over a
+    /// zero-length interval.
+    fn elapsed(&self) -> Option<Duration> {
+        let mut started = self.started.lock().ok()?;
+        match *started {
+            Some(started) => Some(started.elapsed()),
+            None => {
+                *started = Some(Instant::now());
+                None
+            }
+        }
+    }
+
+    /// The next spinner frame.
+    fn spin(&self) -> char {
+        let frame = self.frame.fetch_add(1, Ordering::Relaxed);
+        SPINNER[frame % SPINNER.len()]
     }
 
     fn should_paint(&self, complete: bool) -> bool {
@@ -307,6 +418,15 @@ impl relswap::ProgressObserver for StatusRow {
         let accent = ansi::fg(palette::ROSE, self.truecolor);
         let lavender = ansi::fg(palette::LAVENDER, self.truecolor);
         let reset = ansi::RESET;
+        // Measured per redraw rather than cached: a terminal resized mid-download must re-fit
+        // rather than keep drawing to the width it had when the transfer started.
+        let columns = ansi::stderr_width();
+        let (readout, readout_width) =
+            choose_readout(columns, &readouts(downloaded, total, self.elapsed()));
+        // One lavender run over the whole readout: nesting a reset inside it would end the colour
+        // early and leave everything after it unstyled.
+        let readout = format!("{lavender}{readout}{reset}");
+
         let row = match fraction {
             Some(fraction) => {
                 let style = if complete {
@@ -314,57 +434,43 @@ impl relswap::ProgressObserver for StatusRow {
                 } else {
                     MeterStyle::brand(true, self.truecolor)
                 };
-                let readout = match total {
-                    // One lavender run over the whole readout: nesting a reset inside it would end
-                    // the colour early and leave the total unstyled.
-                    Some(total) => {
-                        format!("{lavender}{} of {}{reset}", bytes(downloaded), bytes(total))
-                    }
-                    None => format!("{lavender}{}{reset}", bytes(downloaded)),
-                };
-                // The escapes in `readout` are zero-width on screen but not in the string, so the
-                // budget has to be computed from the visible text rather than from its length.
-                let readout_width = match total {
-                    Some(total) => {
-                        bytes(downloaded).chars().count() + 4 + bytes(total).chars().count()
-                    }
-                    None => bytes(downloaded).chars().count(),
-                };
+                // A finished transfer shows a settled mark rather than a spinner frozen mid-turn.
+                let mark = if complete { '●' } else { self.spin() };
                 // The percentage is truncated, not rounded, for the same reason the meter reserves
                 // its last cell: 99.6% must not print as 100% beside a bar that is still short.
-                // Measured per redraw rather than cached: a terminal resized mid-download must not
-                // keep drawing to the width it had when the transfer started.
                 let percent = (fraction * 100.0) as u32;
-                match layout_for(ansi::stderr_width(), readout_width) {
+                match layout_for(columns, readout_width) {
                     RowLayout::Full(width) => format!(
-                        "  {accent}●{reset} {lavender}{:<LABEL_WIDTH$}{reset} {} {percent:>3}%  {readout}",
+                        "  {accent}{mark}{reset} {lavender}{:<LABEL_WIDTH$}{reset} {} {percent:>3}%  {readout}",
                         self.label,
                         meter(fraction, width, style),
                     ),
                     // Too narrow for a bar: the percentage and the readout still say everything a
                     // meter would, and they fit.
                     RowLayout::Compact => format!(
-                        "  {accent}●{reset} {lavender}{:<LABEL_WIDTH$}{reset} {percent:>3}%  {readout}",
+                        "  {accent}{mark}{reset} {lavender}{:<LABEL_WIDTH$}{reset} {percent:>3}%  {readout}",
                         self.label,
                     ),
-                    RowLayout::Minimal => format!("  {accent}●{reset} {percent:>3}%"),
+                    RowLayout::Minimal => format!("  {accent}{mark}{reset} {percent:>3}%"),
                 }
             }
-            // No Content-Length: there is no fraction to draw, so report what has arrived rather
-            // than inventing a position on a track.
+            // No Content-Length: there is no fraction to draw, so the spinner carries the fact that
+            // something is still happening, and the byte count carries how much.
             None => format!(
-                "  {accent}●{reset} {lavender}{:<LABEL_WIDTH$}{reset} {lavender}{}{reset}",
+                "  {accent}{}{reset} {lavender}{:<LABEL_WIDTH$}{reset} {readout}",
+                self.spin(),
                 self.label,
-                bytes(downloaded)
             ),
         };
 
         let mut err = io::stderr().lock();
-        let hide = if self.painted.swap(true, Ordering::Relaxed) {
-            ""
-        } else {
-            super::ansi::HIDE_CURSOR
-        };
+        let first = !self.painted.swap(true, Ordering::Relaxed);
+        if first {
+            // Claim the cursor before hiding it, so the signal handler knows it has something to
+            // restore even if the process is killed between this write and the next.
+            super::cursor::hide();
+        }
+        let hide = if first { super::ansi::HIDE_CURSOR } else { "" };
         let _ = write!(err, "{hide}{}{row}", super::ansi::CLEAR_ROW);
         let _ = err.flush();
     }
@@ -519,6 +625,133 @@ mod tests {
             "a narrower terminal gets a shorter bar, not the same one"
         );
         assert!(mid >= MIN_METER_WIDTH);
+    }
+
+    #[test]
+    fn a_rate_is_withheld_until_it_means_something() {
+        let total = Some(1024 * 1024 * 100);
+        // No elapsed time yet: the first frame has nothing to divide by.
+        let first = readouts(1024, total, None);
+        assert!(
+            first.iter().all(|option| !option.contains("/s")),
+            "{first:?}"
+        );
+        // Still ramping: an average over 100ms reports the connection warming up, not the transfer.
+        let early = readouts(1024, total, Some(Duration::from_millis(100)));
+        assert!(
+            early.iter().all(|option| !option.contains("/s")),
+            "{early:?}"
+        );
+        // Settled.
+        let settled = readouts(1024 * 1024 * 10, total, Some(Duration::from_secs(5)));
+        assert!(
+            settled.iter().any(|option| option.contains("/s")),
+            "{settled:?}"
+        );
+        assert!(
+            settled.iter().any(|option| option.contains("left")),
+            "{settled:?}"
+        );
+    }
+
+    #[test]
+    fn a_finished_transfer_offers_no_estimate() {
+        let total = 1024 * 1024 * 10;
+        // Nothing left to wait for; an estimate of zero is noise beside a full bar.
+        let done = readouts(total, Some(total), Some(Duration::from_secs(5)));
+        assert!(
+            done.iter().all(|option| !option.contains("left")),
+            "{done:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_total_offers_only_what_has_arrived() {
+        let options = readouts(4096, None, Some(Duration::from_secs(5)));
+        assert_eq!(options, vec![bytes(4096)]);
+    }
+
+    #[test]
+    fn readouts_are_offered_richest_first_and_each_is_shorter_than_the_last() {
+        let options = readouts(
+            1024 * 1024 * 10,
+            Some(1024 * 1024 * 100),
+            Some(Duration::from_secs(5)),
+        );
+        assert!(options.len() >= 3, "{options:?}");
+        for pair in options.windows(2) {
+            assert!(
+                pair[0].chars().count() > pair[1].chars().count(),
+                "{:?} should be longer than {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    #[test]
+    fn detail_is_dropped_before_the_meter_is() {
+        let options = readouts(
+            1024 * 1024 * 10,
+            Some(1024 * 1024 * 100),
+            Some(Duration::from_secs(5)),
+        );
+        // Wide: the estimate fits.
+        let (wide, _) = choose_readout(Some(200), &options);
+        assert!(wide.contains("left"), "{wide}");
+        // Narrow enough that the full readout no longer fits beside a minimum-width bar: the
+        // estimate is dropped, and the bar is still there. That ordering is the whole point - the
+        // bar is what the row exists to show, so detail yields to it rather than the reverse.
+        let (mid, mid_width) = choose_readout(Some(68), &options);
+        assert!(!mid.contains("left"), "{mid}");
+        assert!(mid.contains("/s"), "the rate outlives the estimate: {mid}");
+        assert!(
+            matches!(layout_for(Some(68), mid_width), RowLayout::Full(_)),
+            "the meter survives losing the estimate"
+        );
+
+        // Narrower still: the rate goes too, and the bar is *still* there.
+        let (tight, tight_width) = choose_readout(Some(52), &options);
+        assert!(!tight.contains("/s"), "{tight}");
+        assert!(
+            tight.contains(" of "),
+            "the byte count is the last thing kept: {tight}"
+        );
+        assert!(matches!(
+            layout_for(Some(52), tight_width),
+            RowLayout::Full(_)
+        ));
+    }
+
+    #[test]
+    fn a_spinner_advances_and_wraps() {
+        let row = StatusRow::new("Downloading");
+        let frames: Vec<char> = (0..SPINNER.len() * 2).map(|_| row.spin()).collect();
+        assert_eq!(&frames[..SPINNER.len()], &SPINNER);
+        // Wrapping rather than running off the end of the table.
+        assert_eq!(&frames[SPINNER.len()..], &SPINNER);
+    }
+
+    #[test]
+    fn durations_read_in_at_most_two_units() {
+        assert_eq!(duration(Duration::from_secs(9)), "9s");
+        assert_eq!(duration(Duration::from_secs(59)), "59s");
+        assert_eq!(duration(Duration::from_secs(60)), "1m 00s");
+        assert_eq!(duration(Duration::from_secs(125)), "2m 05s");
+        assert_eq!(duration(Duration::from_secs(3600)), "1h 00m");
+        assert_eq!(duration(Duration::from_secs(3725)), "1h 02m");
+    }
+
+    #[test]
+    fn a_row_claims_the_cursor_so_a_signal_can_restore_it() {
+        // The Ctrl+C path reads this flag from a signal handler; if the row never sets it, a killed
+        // download leaves the cursor hidden until the user types `reset`.
+        super::super::cursor::show();
+        assert!(!super::super::cursor::is_hidden());
+        super::super::cursor::hide();
+        assert!(super::super::cursor::is_hidden());
+        super::super::cursor::show();
+        assert!(!super::super::cursor::is_hidden());
     }
 
     #[test]

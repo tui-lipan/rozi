@@ -10,6 +10,17 @@
   which streams the body and reports bytes as they land; rozi supplies the observer that draws
   them. The meter goes to stderr, so redirecting stdout keeps a clean stream, and it is suppressed
   when stderr is not a terminal or `NO_COLOR` is set.
+- The download row carries a spinner, a transfer rate, and an estimate of the time left. The
+  spinner advances per redraw rather than per unit of time, so a stalled transfer visibly stops
+  rather than continuing to spin over a bar that is not moving. Rate and estimate are withheld
+  until the transfer has run long enough for an average to mean anything, and an estimate is
+  dropped once there is nothing left to wait for.
+- The cursor is restored when `rozi update` is interrupted. Hiding it for the meter was undone on
+  every path the program controls, but `Ctrl+C` terminates without unwinding, so no destructor ran
+  and the cursor stayed hidden in the shell until the user typed `reset`. A `SIGINT`/`SIGQUIT`
+  handler (and a console control handler on Windows) now restores it and re-raises, so the process
+  still dies of the signal it was sent. `SIGTERM` and `SIGHUP` are deliberately left to
+  `server_lifecycle`, which owns the clean-detach path.
 
 ### Changed
 
@@ -17,6 +28,11 @@
   logo and the app's own theme carry - instead of the basic ANSI colours the CLI had been using.
   Terminals that do not advertise 24-bit colour through `COLORTERM` get the nearest 256-colour cube
   entry rather than losing the styling.
+- The download row fits the terminal it is drawn on. It was laid out at a fixed width, so a
+  narrow terminal wrapped it - and because the erase-line escape only reaches the row the cursor is
+  on, every redraw left the previous fragment behind and the meter walked down the screen. The row
+  now degrades in tiers against the measured width, dropping the estimate, then the rate, then the
+  bar, then the label, and re-measures on every redraw so a mid-download resize re-fits.
 - Progress meters style their filled run and their track separately. Both were previously painted
   in the accent, which made the meter read as one solid shape and hid where the fill actually
   ended. The filled run now carries the brand gradient in a heavy glyph and the track is a light

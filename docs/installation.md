@@ -54,6 +54,11 @@ The meter is written to stderr, so redirecting stdout keeps a clean stream while
 reaches a watching terminal. It is suppressed entirely when stderr is not a terminal, or when
 `NO_COLOR` is set - a redirected or scripted update stays quiet.
 
+The row shows a spinner, the bytes transferred, the transfer rate, and an estimate of the time
+left. It is fitted to the terminal's width: a narrow terminal drops the estimate, then the rate,
+then the bar itself, rather than wrapping. Interrupting an update with `Ctrl+C` restores the
+cursor before exiting.
+
 Managed installations use these locations:
 
 | Platform | Version data | Command |

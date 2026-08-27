@@ -118,6 +118,48 @@ function Fail([string]$Message) {
     throw $Message
 }
 
+# 1 enforces, 2 evaluates, and the key is absent on Windows builds that predate the feature.
+function Get-AppControlState {
+    try {
+        $policy = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' `
+            -Name 'VerifiedAndReputablePolicyState' -ErrorAction Stop
+    } catch {
+        return ''
+    }
+    switch ($policy.VerifiedAndReputablePolicyState) {
+        1 { 'Smart App Control is on' }
+        2 { 'Smart App Control is in evaluation mode' }
+        default { '' }
+    }
+}
+
+# Windows can refuse to *start* the payload - Smart App Control and WDAC block unsigned binaries
+# that carry no established reputation - and that is a property of the machine, not of the release.
+# Saying "signature failed" there blames an archive nothing has examined: the Ed25519 check runs
+# inside the payload, which is precisely what did not run. The message is localized by Windows, so
+# the caller discriminates on the exception type rather than on any text in it.
+function Format-LaunchRefusal($ErrorRecord) {
+    # `Exception.Message` has the script position glued onto its tail; the inner Win32Exception
+    # carries the operating system's reason on its own, which is the only part worth showing.
+    $inner = $ErrorRecord.Exception.InnerException
+    $reason = if ($inner) {
+        $inner.Message.Trim()
+    } else {
+        ($ErrorRecord.Exception.Message -split "`r?`n", 2)[0].Trim()
+    }
+    $lines = @(
+        'Windows refused to run the extracted payload, so the release was never verified.',
+        "  $reason"
+    )
+    $policy = Get-AppControlState
+    if ($policy) {
+        $lines += "  $policy, and it blocks unsigned executables that carry no reputation."
+    }
+    $lines += '  The archive downloaded and its SHA-256 matched. This is a local execution policy,'
+    $lines += '  not a bad release.'
+    $lines -join [Environment]::NewLine
+}
+
 function Usage-Error([string]$Message) {
     $script:ExitCode = 2
     throw $Message
@@ -577,8 +619,18 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
         Assert-RegularFile $launcher 'archive launcher'
         Assert-Size $payload $script:MaxZipMemberBytes 'archive payload'
         Assert-Size $launcher $script:MaxZipMemberBytes 'archive launcher'
-        Write-Active 'Signature' 'verifying signed release'
-        $reportedVersion = (& $payload --version 2>&1 | Out-String)
+        # Not 'Signature': the signed-release check runs inside the payload, further down in
+        # `Invoke-ManagedCli`. This row is the payload sanity probe, and labelling it correctly is
+        # what keeps a refused launch from being reported as a bad signature.
+        Write-Active 'Payload' 'checking archive payload'
+        try {
+            $reportedVersion = (& $payload --version 2>&1 | Out-String)
+        } catch [System.Management.Automation.ApplicationFailedException] {
+            # Only a failure to *start* the process lands here. `$ErrorActionPreference = 'Stop'`
+            # makes that terminating before `$LASTEXITCODE` is ever assigned, so the check below
+            # cannot see it. A payload that runs and merely exits non-zero still takes that path.
+            Fail (Format-LaunchRefusal $_)
+        }
         $versionLine = ($reportedVersion -split "`r?`n", 2)[0]
         if ($LASTEXITCODE -ne 0) {
             Fail "archive payload could not report its version: $($reportedVersion.Trim())"

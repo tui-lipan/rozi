@@ -663,6 +663,37 @@ function Get-CommandHintState([string]$ManagedBin, [string]$SessionPath, [string
 # code at all. `-AddToPath` remains the right answer at install time, where it costs nothing extra.
 #
 # Both snippets check before they write, because an installer hint is something people paste twice.
+# The PowerShell that puts the managed directory on PATH, as lines ready to print.
+#
+# Returned rather than printed so the tests can check the thing a user actually pastes. Every block
+# defines every variable it uses: the two were previously offered as a pair that shared a `$bin`
+# from the first, so anyone who needed only the second - the common case, a terminal that is one
+# entry behind - pasted a snippet that failed on an undefined variable.
+#
+# Each write is guarded by the check above it, so a block is safe to run more than once.
+function Get-PathRemediation([string]$State) {
+    $lines = @('$bin = "$env:LOCALAPPDATA\rozi\bin"')
+    if ($State -eq 'absent') {
+        $lines += '$user = [Environment]::GetEnvironmentVariable(''Path'', ''User'')'
+        $lines += 'if (($user -split '';'').TrimEnd(''\'') -notcontains $bin) {'
+        $lines += '    [Environment]::SetEnvironmentVariable(''Path'', "$user;$bin".Trim('';''), ''User'')'
+        $lines += '}'
+    }
+    $lines += 'if (($env:Path -split '';'').TrimEnd(''\'') -notcontains $bin) {'
+    $lines += '    $env:Path += ";$bin"'
+    $lines += '}'
+    $lines
+}
+
+# `rozi` as a bare word only resolves if the managed directory is on PATH, and this script does not
+# put it there unless asked. Printing `$ rozi` unconditionally handed a user whose PATH does not
+# carry it a command that cannot be found, with nothing to say why.
+#
+# The remediation is the PowerShell that changes PATH, not a re-run of this installer with
+# `-AddToPath`. Re-running re-downloads the archive and re-verifies its checksum and signature to
+# append one string to the registry, and it does that after the payload probe: on a machine whose
+# application-control policy refuses the payload, the re-run fails before it reaches the PATH code
+# at all. `-AddToPath` remains the right answer at install time, where it costs nothing extra.
 function Write-CommandHint([string]$ManagedBin) {
     if (-not $ManagedBin) {
         Write-Host "  $($script:CDim)`$ rozi$($script:CReset)"
@@ -679,27 +710,23 @@ function Write-CommandHint([string]$ManagedBin) {
         return
     }
 
-    Write-Host "  $($script:CDim)`$ $command$($script:CReset)"
-    Write-Host ''
-    $session = 'if (($env:Path -split '';'').TrimEnd(''\'') -notcontains $bin) { $env:Path += ";$bin" }'
     if ($state -eq 'stale-session') {
-        Write-Host '  rozi is on PATH for new terminals. This one started before it was added, so'
-        Write-Host '  it needs the entry too - safe to run more than once:'
-        Write-Host ''
-        Write-Host "  $($script:CDim)`$bin = `"`$env:LOCALAPPDATA\rozi\bin`"$($script:CReset)"
-        Write-Host "  $($script:CDim)$session$($script:CReset)"
-        return
+        Write-Host '  rozi is on PATH for new terminals, but not for this one.'
+    } else {
+        Write-Host '  rozi is not on your PATH yet.'
     }
-
-    Write-Host '  rozi is not on your PATH. These are safe to run more than once.'
     Write-Host ''
-    Write-Host '  For new terminals:'
-    Write-Host "  $($script:CDim)`$bin = `"`$env:LOCALAPPDATA\rozi\bin`"$($script:CReset)"
-    Write-Host "  $($script:CDim)`$user = `"`$([Environment]::GetEnvironmentVariable('Path','User'))`".TrimEnd(';')$($script:CReset)"
-    Write-Host "  $($script:CDim)if ((`$user -split ';').TrimEnd('\') -notcontains `$bin) { [Environment]::SetEnvironmentVariable('Path', `"`$user;`$bin`".TrimStart(';'), 'User') }$($script:CReset)"
+    Write-Host '  Run it now:'
+    Write-Host "    $($script:CAccent)$command$($script:CReset)"
     Write-Host ''
-    Write-Host '  For this terminal:'
-    Write-Host "  $($script:CDim)$session$($script:CReset)"
+    if ($state -eq 'stale-session') {
+        Write-Host '  Or add it to this terminal - safe to run more than once:'
+    } else {
+        Write-Host '  Or add it to PATH - safe to run more than once:'
+    }
+    foreach ($line in Get-PathRemediation $state) {
+        Write-Host "    $($script:CDim)$line$($script:CReset)"
+    }
 }
 
 function Add-ManagedBinToPath {

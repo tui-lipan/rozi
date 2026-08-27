@@ -416,10 +416,13 @@ command_hint() {
       return 0
       ;;
   esac
-  printf '  %s$ %s/rozi%s\n' "$C_DIM" "$bin" "$C_RESET"
+  printf '  rozi is not on your PATH yet.\n'
   printf '\n'
-  printf '  rozi is not on your PATH. To put it there, add this to your shell profile:\n'
-  printf '  %s%s%s\n' "$C_DIM" 'export PATH="$HOME/.local/bin:$PATH"' "$C_RESET"
+  printf '  Run it now:\n'
+  printf '    %s%s/rozi%s\n' "$C_ACCENT" "$bin" "$C_RESET"
+  printf '\n'
+  printf '  Or add it to PATH - put this in your shell profile:\n'
+  printf '    %s%s%s\n' "$C_DIM" 'export PATH="$HOME/.local/bin:$PATH"' "$C_RESET"
 }
 
 install_version() {

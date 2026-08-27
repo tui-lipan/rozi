@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.0.6 - 2026-08-27
+
+Gives `rozi update` the download meter it was missing: the transfer streams behind a progress row
+that fits the terminal it is drawn on, reports rate and time remaining once an average means
+anything, and leaves the cursor where it found it even under `Ctrl+C`. Also corrects two Windows
+installer reports that named the wrong thing - a launch the operating system blocked was reported
+as a failed signature, and the script itself arrived mangled over the wire.
 
 ### Added
 
@@ -39,6 +45,24 @@
   glyph in the app's border colour, so the boundary survives `NO_COLOR` on glyph weight alone. A
   meter also reserves its last cell until the work is genuinely complete, rather than rounding up
   to a full bar at 99%.
+
+### Fixed
+
+- The Windows installer no longer reports `Signature failed` when Windows refuses to run the
+  downloaded payload. Smart App Control and WDAC block unsigned executables that carry no
+  established reputation, and `$ErrorActionPreference = 'Stop'` turned that refusal into a
+  terminating error before `$LASTEXITCODE` could be read - so the exit-code check never ran and
+  the raw PowerShell error surfaced under whichever status row happened to be active. The row was
+  labelled `Signature`, which named the one thing that provably had not happened: the Ed25519
+  check runs inside the payload, and the payload never started. The probe is now its own `Payload`
+  row, a refused launch is caught on the exception type rather than on Windows' localized message
+  text, and the report says the machine's policy blocked execution, notes when Smart App Control
+  is enabled, and states that the archive's SHA-256 matched.
+- `irm https://rozi.tui-lipan.dev/install.ps1 | iex` no longer mangles the installer's output. The
+  site served the script with no `Content-Type` at all, and PowerShell 5.1 decodes a text response
+  that declares no charset as ISO-8859-1, so every UTF-8 status glyph arrived as mojibake - the
+  script was corrupted in transit before `iex` parsed it. The two install scripts are now served
+  as `text/plain; charset=utf-8`.
 
 ## 0.0.5 - 2026-08-26
 

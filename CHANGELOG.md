@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.0.10 - 2026-08-27
+
+Replaces the Windows installer's PATH advice with commands that change PATH, and gives the script
+its first tests.
+
+### Changed
+
+- A Windows install that leaves the command off `PATH` now prints the PowerShell that fixes it
+  rather than telling the user to re-run the installer with `-AddToPath`. Re-running re-downloads
+  the archive and re-verifies its checksum and signature in order to append one string to the
+  registry, and it does that work *after* the payload probe - so on a machine whose
+  application-control policy refuses the payload, the re-run fails before it ever reaches the
+  `PATH` code. `-AddToPath` is unchanged and remains the right way to opt in during an install.
+- Both printed commands check before they write, so pasting either one twice cannot leave a
+  duplicate `PATH` entry. The two are offered separately because they do different things: one
+  persists the entry for new terminals, the other repairs the session that is already open.
+
+### Added
+
+- Windows contract tests for `install.ps1`. The bootstrap script is the only Windows-specific
+  surface a user meets before rozi has run at all, and it had none: three defects shipped in it in
+  a single day, each reasoned about rather than exercised. The tests load the functions out of the
+  file that ships and cover the three `PATH` states, the entry matching that separates them
+  (case, trailing separators, and a directory that merely shares a prefix), that every printed
+  `PATH` change is guarded against a second run, and that the hint never prescribes reinstalling.
+
 ## 0.0.9 - 2026-08-27
 
 Both installers now say whether the command they installed can actually be run by name.

@@ -295,14 +295,16 @@ function Download-HttpsFile([string]$Url, [string]$Destination, [int64]$MaxBytes
                     $output.Write($buffer, 0, $read)
                     $total += $read
                     if ($showProgress) {
-                        $percent = [int](100 * $total / $response.ContentLength)
+                        # Floor rather than round: a rounded 99.6 reads as 100 while bytes are
+                        # still arriving, which fills the bar early and defeats the reserved cell.
+                        $percent = [int][Math]::Floor(100 * $total / $response.ContentLength)
                         if ($percent -ne $lastPercent) {
                             $lastPercent = $percent
                             # Filled run and track differ in weight *and* colour: the weight
                             # survives NO_COLOR, the colour makes the boundary obvious. The filled
                             # run steps through the logo's rose-to-violet gradient in four bands.
                             $width = 32
-                            $filled = [int]($percent * $width / 100)
+                            $filled = [int][Math]::Floor($percent * $width / 100)
                             # Reserve the last cell until the download is actually complete, so the
                             # meter never reads full while bytes are still arriving.
                             if ($percent -lt 100 -and $filled -ge $width) { $filled = $width - 1 }
@@ -312,7 +314,16 @@ function Download-HttpsFile([string]$Url, [string]$Destination, [int64]$MaxBytes
                                 if ($script:CAccent) {
                                     $bands = @($script:CAccent, $script:CBand2, $script:CBand3, $script:CViolet)
                                     for ($cell = 0; $cell -lt $filled; $cell++) {
-                                        $bar += $bands[[int]($cell * 4 / $width)] + '━'
+                                        # `[int]` rounds in PowerShell rather than truncating, so
+                                        # `[int](28 * 4 / 32)` is `[int]3.5` = 4 - one past the end
+                                        # of a four-entry array, which failed every interactive
+                                        # Windows download at exactly 90%. install.sh gets this
+                                        # free from truncating arithmetic and a `*)` catch-all; the
+                                        # port has to say it, and the clamp keeps the last band
+                                        # covering the tail however the width divides.
+                                        $band = [int][Math]::Floor($cell * $bands.Count / $width)
+                                        if ($band -ge $bands.Count) { $band = $bands.Count - 1 }
+                                        $bar += $bands[$band] + '━'
                                     }
                                 } else {
                                     $bar = '━' * $filled

@@ -47,6 +47,19 @@ if ($script:Interactive -and -not $env:NO_COLOR) {
 }
 $script:CurrentOperation = ''
 
+# Built from code points rather than written as literals, so this file is pure ASCII. PowerShell
+# 5.1 reads a script without a byte-order mark as the system ANSI code page, which mangles a UTF-8
+# glyph in the source whenever the file is run from disk - the documented `.\install.ps1` form -
+# however cleanly the site serves it over the wire. A BOM would fix that case and break a worse
+# one: `iex` treats a leading U+FEFF as part of the first token, so `irm ... | iex` would fail
+# outright on any body whose BOM survived the fetch. ASCII source has neither problem.
+$script:GlyphActive = [string][char]0x25CF  # BLACK CIRCLE
+$script:GlyphOk     = [string][char]0x2713  # CHECK MARK
+$script:GlyphFailed = [string][char]0x2717  # BALLOT X
+$script:GlyphFill   = [string][char]0x2501  # BOX DRAWINGS HEAVY HORIZONTAL
+$script:GlyphTrack  = [string][char]0x2500  # BOX DRAWINGS LIGHT HORIZONTAL
+$script:GlyphSep    = [string][char]0x00B7  # MIDDLE DOT
+
 # Deliberately ASCII, and character-for-character the same wordmark install.sh prints. A Windows
 # console under a non-UTF-8 code page mangles box-drawing and block characters.
 function Show-Banner {
@@ -73,17 +86,17 @@ function Write-StatusRow([string]$Symbol, [string]$Color, [string]$Operation, [s
 
 function Write-Active([string]$Operation, [string]$Detail) {
     $script:CurrentOperation = $Operation
-    Write-StatusRow '●' $script:CAccent $Operation $Detail
+    Write-StatusRow $script:GlyphActive $script:CAccent $Operation $Detail
 }
 
 function Write-Done([string]$Operation, [string]$Detail) {
-    Write-StatusRow '✓' $script:COk $Operation $Detail
+    Write-StatusRow $script:GlyphOk $script:COk $Operation $Detail
     if ($script:Interactive) { Write-Host '' }
     $script:CurrentOperation = ''
 }
 
 function Write-Failed([string]$Operation, [string]$Detail) {
-    Write-StatusRow '✗' $script:CError $Operation $Detail
+    Write-StatusRow $script:GlyphFailed $script:CError $Operation $Detail
     if ($script:Interactive) { Write-Host '' }
     $script:CurrentOperation = ''
 }
@@ -323,14 +336,14 @@ function Download-HttpsFile([string]$Url, [string]$Destination, [int64]$MaxBytes
                                         # covering the tail however the width divides.
                                         $band = [int][Math]::Floor($cell * $bands.Count / $width)
                                         if ($band -ge $bands.Count) { $band = $bands.Count - 1 }
-                                        $bar += $bands[$band] + '━'
+                                        $bar += $bands[$band] + $script:GlyphFill
                                     }
                                 } else {
-                                    $bar = '━' * $filled
+                                    $bar = $script:GlyphFill * $filled
                                 }
                             }
-                            if ($remaining -gt 0) { $bar += $script:CTrack + ('─' * $remaining) }
-                            Write-StatusRow '●' $script:CAccent 'Download' "$bar$($script:CReset) $percent%"
+                            if ($remaining -gt 0) { $bar += $script:CTrack + ($script:GlyphTrack * $remaining) }
+                            Write-StatusRow $script:GlyphActive $script:CAccent 'Download' "$bar$($script:CReset) $percent%"
                         }
                     }
                 }
@@ -682,7 +695,7 @@ try {
     Assert-Version $Version
     $target = Get-Target
     if ($script:Interactive) { Write-Host -NoNewline "`r$($script:Esc)[2K" }
-    Write-Host "  $($script:CDim)rozi $Version  ·  $target$($script:CReset)"
+    Write-Host "  $($script:CDim)rozi $Version  $($script:GlyphSep)  $target$($script:CReset)"
     Write-Host ''
     Write-Done 'Resolve' $resolvedDetail
     Install-Version $Version ([bool]$AddToPath)

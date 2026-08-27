@@ -1,6 +1,6 @@
 [package]
 name = "rozi"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 # Set by the dependency tree, not by this crate's own source: terminal-images reaches
 # ratatui-image -> icy_sixel -> quantette, which requires 1.90.

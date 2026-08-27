@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.0.8 - 2026-08-27
+
+Stops the Windows installer taking the terminal down with it. Every install through the advertised
+`irm ... | iex` path ended by closing the user's shell, whether it succeeded or failed.
+
+### Fixed
+
+- The installer no longer exits the shell that ran it. `iex` runs the script text in the caller's
+  own session rather than in a child process, so the script's top-level `exit` terminated the
+  user's terminal, and the installer's status was handed back as the shell's own exit code - a run
+  blocked by application control ended `[process exited with code 1 (0x00000001)]`, and a
+  successful one closed the window. The install had always finished first, which is what made this
+  look like rozi killing the terminal on success. The script now exits only when there is a real
+  script invocation to leave, detected through `$PSCommandPath`, which is empty under `iex` even
+  when nested inside another script; every other caller receives the status through
+  `$LASTEXITCODE`. `install.sh` was never affected, because `curl ... | bash` runs the script in a
+  child shell.
+
 ## 0.0.7 - 2026-08-27
 
 Repairs a 0.0.6 regression that failed every interactive Windows install partway through the

@@ -45,7 +45,9 @@ $ast.FindAll({{ param($node)
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8_lossy(&output.stdout).trim().replace("\r\n", "\n")
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .replace("\r\n", "\n")
 }
 
 /// A shell that already had the entry added to it is not the same as a shell that never will.
@@ -65,7 +67,10 @@ Write-Output (Get-CommandHintState $bin 'C:\\a' \"C:\\a;$bin\")
 Write-Output (Get-CommandHintState $bin 'C:\\a' 'C:\\a')
 Write-Output (Get-CommandHintState $bin '' '')"
     );
-    let states = in_installer_scope(&["Test-PathContainsDirectory", "Get-CommandHintState"], &body);
+    let states = in_installer_scope(
+        &["Test-PathContainsDirectory", "Get-CommandHintState"],
+        &body,
+    );
 
     assert_eq!(
         states.lines().collect::<Vec<_>>(),

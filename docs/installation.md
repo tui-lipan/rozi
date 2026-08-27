@@ -42,6 +42,13 @@ without downloading the file first, turn that text into a script block and call 
 & ([scriptblock]::Create((irm https://rozi.tui-lipan.dev/install.ps1))) -AddToPath
 ```
 
+That opts in *during* an install. If an install has already finished and only `PATH` is wrong, set
+`PATH` directly instead of re-running: a re-run re-downloads the archive and re-verifies its
+checksum and signature to append one string, and it does that after the payload probe, so on a
+machine whose application-control policy refuses the payload it fails before reaching the `PATH`
+step at all. The installer prints the exact commands, guarded so they are safe to run more than
+once, whenever it finds the command directory missing.
+
 On Unix, add the directory to `PATH` in your shell profile:
 
 ```sh

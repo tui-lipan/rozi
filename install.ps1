@@ -613,28 +613,71 @@ function Get-ManagedBinDirectory {
 # way that matters here: an entry added now cannot reach a shell that started before it, so a setup
 # that is correct for every future terminal still needs the full path in this one. Saying "not on
 # PATH" there would be wrong, and saying nothing would be worse.
+# Which of the three PATH situations the finished install is in. Split out from the printing so it
+# can be tested: the caller supplies both PATH values, and every state is reachable without
+# touching the machine's real environment.
+#
+#   ready         - the directory is on this process's PATH, so `rozi` resolves right now
+#   stale-session - persisted for new terminals, but this one started before it was added
+#   absent        - not on either, so nothing will find the command by name
+function Get-CommandHintState([string]$ManagedBin, [string]$SessionPath, [string]$UserPath) {
+    if (Test-PathContainsDirectory $SessionPath $ManagedBin) {
+        return 'ready'
+    }
+    if (Test-PathContainsDirectory $UserPath $ManagedBin) {
+        return 'stale-session'
+    }
+    return 'absent'
+}
+
+# `rozi` as a bare word only resolves if the managed directory is on PATH, and this script does not
+# put it there unless asked. Printing `$ rozi` unconditionally handed a user whose PATH does not
+# carry it a command that cannot be found, with nothing to say why.
+#
+# The remediation is the PowerShell that changes PATH, not a re-run of this installer with
+# `-AddToPath`. Re-running re-downloads the archive and re-verifies its checksum and signature to
+# append one string to the registry, and it does that work *after* the payload probe: on a machine
+# whose application-control policy refuses the payload, the re-run fails before it reaches the PATH
+# code at all. `-AddToPath` remains the right answer at install time, where it costs nothing extra.
+#
+# Both snippets check before they write, because an installer hint is something people paste twice.
 function Write-CommandHint([string]$ManagedBin) {
     if (-not $ManagedBin) {
         Write-Host "  $($script:CDim)`$ rozi$($script:CReset)"
         return
     }
     $command = Join-Path $ManagedBin 'rozi.exe'
-    $inSession = Test-PathContainsDirectory ([Environment]::GetEnvironmentVariable('Path', 'Process')) $ManagedBin
-    $inUser = Test-PathContainsDirectory ([Environment]::GetEnvironmentVariable('Path', 'User')) $ManagedBin
+    $state = Get-CommandHintState `
+        $ManagedBin `
+        ([Environment]::GetEnvironmentVariable('Path', 'Process')) `
+        ([Environment]::GetEnvironmentVariable('Path', 'User'))
 
-    if ($inSession) {
+    if ($state -eq 'ready') {
         Write-Host "  $($script:CDim)`$ rozi$($script:CReset)"
         return
     }
+
     Write-Host "  $($script:CDim)`$ $command$($script:CReset)"
     Write-Host ''
-    if ($inUser) {
+    $session = 'if (($env:Path -split '';'').TrimEnd(''\'') -notcontains $bin) { $env:Path += ";$bin" }'
+    if ($state -eq 'stale-session') {
         Write-Host '  rozi is on PATH for new terminals. This one started before it was added, so'
-        Write-Host '  the full path above is what works here.'
+        Write-Host '  it needs the entry too - safe to run more than once:'
+        Write-Host ''
+        Write-Host "  $($script:CDim)`$bin = `"`$env:LOCALAPPDATA\rozi\bin`"$($script:CReset)"
+        Write-Host "  $($script:CDim)$session$($script:CReset)"
         return
     }
-    Write-Host '  rozi is not on your PATH. To put it there, re-run with -AddToPath:'
-    Write-Host "  $($script:CDim)& ([scriptblock]::Create((irm $($script:InstallScriptUrl)))) -AddToPath$($script:CReset)"
+
+    Write-Host '  rozi is not on your PATH. These are safe to run more than once.'
+    Write-Host ''
+    Write-Host '  For new terminals:'
+    Write-Host "  $($script:CDim)`$bin = `"`$env:LOCALAPPDATA\rozi\bin`"$($script:CReset)"
+    Write-Host "  $($script:CDim)`$user = `"`$([Environment]::GetEnvironmentVariable('Path','User'))`".TrimEnd(';')$($script:CReset)"
+    Write-Host "  $($script:CDim)if ((`$user -split ';').TrimEnd('\') -notcontains `$bin) { [Environment]::SetEnvironmentVariable('Path', `"`$user;`$bin`".TrimStart(';'), 'User') }$($script:CReset)"
+    Write-Host ''
+    Write-Host '  For this terminal:'
+    Write-Host "  $($script:CDim)$session$($script:CReset)"
 }
 
 function Add-ManagedBinToPath {

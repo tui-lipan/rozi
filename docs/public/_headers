@@ -1,0 +1,10 @@
+# `irm https://rozi.tui-lipan.dev/install.ps1 | iex` is the advertised Windows install path, and
+# PowerShell 5.1 decodes a text response that declares no charset as ISO-8859-1. The status glyphs
+# in install.ps1 are UTF-8, so without this they arrive mangled - the script is corrupted in
+# transit before `iex` ever parses it. Static assets are served with no Content-Type at all for
+# these two extensionless/unknown-type files, so the charset has to be declared here.
+/install.ps1
+  Content-Type: text/plain; charset=utf-8
+
+/install
+  Content-Type: text/plain; charset=utf-8

@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.0.11 - 2026-08-27
+
+Fixes the PATH command the 0.0.10 installer printed, and makes what it prints legible.
+
+### Fixed
+
+- The "For this terminal" command the installer printed could not be run. It referenced `$bin`,
+  which only the *other* block defined, so pasting the one a user actually needs - the session fix,
+  for a terminal that is one entry behind - failed with `The variable '$bin' cannot be retrieved
+  because it has not been set`. Each block now defines every variable it uses, and a `PATH` that
+  is missing the entry outright gets a single block that repairs both the persisted entry and the
+  open session, rather than two to choose between.
+
+### Changed
+
+- The installer's `PATH` guidance is laid out to be read. It previously printed the full command
+  path as though it were the next thing to run, then explained underneath that `PATH` was wrong,
+  then gave two dense one-liners that wrapped mid-argument in a normal terminal. It now states the
+  situation, offers the command that works immediately, and prints the remediation indented on its
+  own lines. `install.sh` follows the same shape.
+- Both installers draw the wordmark in the rose-to-violet gradient the download meter uses, in
+  place of the dim grey reserved for secondary text, and the blank line that separated it from the
+  command the user had just typed is gone. Where colour is off - `NO_COLOR`, or a redirected
+  stream - both still print the art character-for-character identically, which is the property the
+  two wordmarks exist to hold.
+
+### Added
+
+- The installer tests cover the two properties its remediation has to have: that every block
+  defines the variables it reads, which is the defect 0.0.10 shipped, and that every `PATH` write
+  sits inside a `-notcontains` check somewhere above it. The guard check previously looked for that
+  on the writing line itself, which the persisted write never satisfies.
+
 ## 0.0.10 - 2026-08-27
 
 Replaces the Windows installer's PATH advice with commands that change PATH, and gives the script

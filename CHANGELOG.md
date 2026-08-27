@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.0.9 - 2026-08-27
+
+Both installers now say whether the command they installed can actually be run by name.
+
+### Changed
+
+- The installers report whether the managed command is on `PATH` instead of always printing
+  `$ rozi`. Neither script adds its command directory to `PATH` unless asked, so a successful
+  install routinely ended by suggesting a command the shell could not find. When the directory is
+  reachable the hint is unchanged; when it is not, the full path is printed alongside the way to
+  add it - `-AddToPath` on Windows, a `PATH` line for a shell profile on Unix.
+- The Windows installer distinguishes "on `PATH` for new terminals" from "on `PATH` here". The
+  persisted user `PATH` and the current process's `PATH` diverge whenever an entry is added to a
+  shell that is already running, so a correct setup can still need the full path in the session
+  that made it. Unix has no equivalent split to report: a shell's `PATH` comes from startup files
+  the script neither reads nor writes.
+- The installation docs record how to pass an argument to the piped Windows form. `iex` receives
+  only the script's text and cannot take parameters, but the same text run as a script block can:
+  `& ([scriptblock]::Create((irm ...))) -AddToPath`.
+
 ## 0.0.8 - 2026-08-27
 
 Stops the Windows installer taking the terminal down with it. Every install through the advertised

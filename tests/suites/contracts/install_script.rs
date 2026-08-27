@@ -13,23 +13,19 @@ fn install_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("install.ps1")
 }
 
-/// Dot-source `functions` out of `install.ps1` and run `body` with them in scope.
+/// Dot-source every function in `install.ps1` and run `body` with them in scope.
 ///
-/// Parsing the file and loading only its function definitions is what keeps the script's top-level
-/// body - which downloads and installs - from running during a test.
-fn in_installer_scope(functions: &[&str], body: &str) -> String {
-    let wanted = functions
-        .iter()
-        .map(|name| format!("'{name}'"))
-        .collect::<Vec<_>>()
-        .join(",");
+/// Loading only the function definitions is what keeps the script's top-level body - which
+/// downloads and installs - from running during a test. Loading *all* of them, rather than a list
+/// each test names, is deliberate: a named list silently turns "this function gained a callee"
+/// into an opaque PowerShell failure inside the harness, which is exactly how this helper first
+/// broke.
+fn in_installer_scope(body: &str) -> String {
     let script = format!(
         "$ErrorActionPreference = 'Stop'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile('{path}', [ref]$null, [ref]$null)
-$wanted = @({wanted})
 $ast.FindAll({{ param($node)
-    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-    $wanted -contains $node.Name
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
 }}, $true) | ForEach-Object {{ . ([scriptblock]::Create($_.Extent.Text)) }}
 {body}",
         path = install_script().display(),
@@ -67,10 +63,7 @@ Write-Output (Get-CommandHintState $bin 'C:\\a' \"C:\\a;$bin\")
 Write-Output (Get-CommandHintState $bin 'C:\\a' 'C:\\a')
 Write-Output (Get-CommandHintState $bin '' '')"
     );
-    let states = in_installer_scope(
-        &["Test-PathContainsDirectory", "Get-CommandHintState"],
-        &body,
-    );
+    let states = in_installer_scope(&body);
 
     assert_eq!(
         states.lines().collect::<Vec<_>>(),
@@ -95,7 +88,7 @@ Write-Output (Test-PathContainsDirectory \" $bin \" $bin)
 Write-Output (Test-PathContainsDirectory \"${{bin}}2\" $bin)
 Write-Output (Test-PathContainsDirectory 'C:\\a;C:\\b' $bin)"
     );
-    let matches = in_installer_scope(&["Test-PathContainsDirectory"], &body);
+    let matches = in_installer_scope(&body);
 
     assert_eq!(
         matches.lines().collect::<Vec<_>>(),
@@ -129,7 +122,7 @@ fn the_printed_path_remediation_is_guarded_against_running_twice() {
         Write-Output "$state|$guarded"
     }
 }"#;
-    let reported = in_installer_scope(&["Get-PathRemediation"], body);
+    let reported = in_installer_scope(body);
 
     let writes: Vec<&str> = reported.lines().filter(|line| !line.is_empty()).collect();
     assert!(
@@ -171,7 +164,7 @@ fn path_remediation_defines_every_variable_it_uses() {
         Where-Object { $_ -notin @('true','false','null','_') } | Select-Object -Unique)
     Write-Output "$state|$(@($used | Where-Object { $_ -notin $assigned }) -join ',')"
 }"#;
-    let reported = in_installer_scope(&["Get-PathRemediation"], body);
+    let reported = in_installer_scope(body);
 
     for line in reported.lines().filter(|line| !line.is_empty()) {
         let (state, undefined) = line.split_once('|').expect("state-tagged line");
@@ -194,14 +187,7 @@ fn the_hint_does_not_prescribe_reinstalling_to_fix_path() {
     let body = "$script:CDim = ''
 $script:CReset = ''
 Write-CommandHint 'C:\\U\\AppData\\Local\\rozi\\bin'";
-    let printed = in_installer_scope(
-        &[
-            "Test-PathContainsDirectory",
-            "Get-CommandHintState",
-            "Write-CommandHint",
-        ],
-        body,
-    );
+    let printed = in_installer_scope(body);
 
     assert!(
         !printed.contains("-AddToPath"),

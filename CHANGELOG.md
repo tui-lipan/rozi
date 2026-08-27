@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.0.7 - 2026-08-27
+
+Repairs a 0.0.6 regression that failed every interactive Windows install partway through the
+download, and makes the installer's output survive being read or served under any encoding.
+
+### Fixed
+
+- The Windows installer no longer fails at 90% of the download with `Index was outside the bounds
+  of the array`. The download meter added in 0.0.6 picks a gradient band with `[int]($cell * 4 /
+  $width)`, and `[int]` rounds in PowerShell rather than truncating: at cell 28 that is `[int]3.5`,
+  which is 4, one past the end of a four-entry array. `install.sh` computes the same index with
+  `$(( ))`, which truncates, and sends anything unexpected to a `case` catch-all, so only the
+  PowerShell port was affected. The same cast on the percentage reported 100% two bytes before the
+  last one arrived, filling the bar early and defeating the final cell the meter deliberately
+  reserves. All three sites now floor explicitly and the band index is clamped.
+- The installer prints its status glyphs correctly when run from disk. Serving the script as
+  `text/plain; charset=utf-8` fixed `irm ... | iex`, but PowerShell 5.1 reads a script file with no
+  byte-order mark as the system ANSI code page, so the documented `.\install.ps1` form still
+  mangled every glyph. A byte-order mark would fix that and break the piped form, because `iex`
+  treats a leading U+FEFF as part of the first token; the six glyphs are now built from code
+  points instead, leaving the source pure ASCII that no decoding can damage.
+
 ## 0.0.6 - 2026-08-27
 
 Gives `rozi update` the download meter it was missing: the transfer streams behind a progress row

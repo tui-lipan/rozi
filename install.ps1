@@ -131,6 +131,17 @@ function Fail([string]$Message) {
     throw $Message
 }
 
+
+# `irm ... | iex` runs this text in the caller's own session, where a top-level `exit` terminates
+# *their* shell rather than this script. That closed the terminal on every install, successful or
+# not, and handed the installer's status back as the shell's own exit code - a failed install took
+# the window down with `exit 1`. `$PSCommandPath` is set only when there is a real script
+# invocation to leave: it is empty under `iex`, including an `iex` nested inside another script,
+# where `$MyInvocation.MyCommand.CommandType` still reports `ExternalScript` and would mislead.
+function Exit-Installer {
+    $global:LASTEXITCODE = $script:ExitCode
+    if ($PSCommandPath) { exit $script:ExitCode }
+}
 # 1 enforces, 2 evaluates, and the key is absent on Windows builds that predate the feature.
 function Get-AppControlState {
     try {
@@ -679,7 +690,9 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
 
 if ($Help) {
     Show-Usage
-    exit 0
+    $script:ExitCode = 0
+    Exit-Installer
+    return
 }
 
 try {
@@ -709,4 +722,4 @@ try {
     [Console]::Error.WriteLine($_.Exception.Message)
 }
 
-exit $script:ExitCode
+Exit-Installer

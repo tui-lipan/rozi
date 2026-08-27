@@ -372,6 +372,27 @@ managed_cli() {
   status_done 'Install' '~/.local/bin/rozi'
 }
 
+# `rozi` as a bare word only resolves if the managed directory is on PATH, and this script
+# deliberately does not edit a shell startup file. Printing `$ rozi` unconditionally handed a user
+# whose PATH does not carry it a command that cannot be found, with nothing to say why.
+#
+# Unlike the PowerShell installer there is no persisted-versus-current distinction to report here:
+# a shell's PATH comes from startup files this script neither reads nor writes, so `$PATH` is both
+# the only thing it can inspect and the only thing that matters for the command just printed.
+command_hint() {
+  local bin="$HOME/.local/bin"
+  case ":$PATH:" in
+    *":$bin:"*)
+      printf '  %s$ rozi%s\n' "$C_DIM" "$C_RESET"
+      return 0
+      ;;
+  esac
+  printf '  %s$ %s/rozi%s\n' "$C_DIM" "$bin" "$C_RESET"
+  printf '\n'
+  printf '  rozi is not on your PATH. To put it there, add this to your shell profile:\n'
+  printf '  %s%s%s\n' "$C_DIM" 'export PATH="$HOME/.local/bin:$PATH"' "$C_RESET"
+}
+
 install_version() {
   local version="$1" target="$2" base="$3"
   local archive_name stem archive checksum temp_extract payload payload_limit_kib
@@ -423,7 +444,7 @@ install_version() {
   printf '\n'
   printf '  rozi %s installed successfully\n' "$version"
   printf '\n'
-  printf '  %s$ rozi%s\n' "$C_DIM" "$C_RESET"
+  command_hint
   printf '\n'
   trap - EXIT
   rm -rf "$temp_extract"

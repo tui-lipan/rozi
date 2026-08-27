@@ -23,18 +23,33 @@ cargo install rozi
 The bootstrap scripts download the release for your platform, verify its checksum, and hand it to
 rozi's managed installer. They do not edit shell startup files.
 
-The Unix installer puts the command at `$HOME/.local/bin/rozi`. Add that directory to `PATH` if it
-is not already there. The Windows command is `%LOCALAPPDATA%\rozi\bin\rozi.exe`.
+The Unix installer puts the command at `$HOME/.local/bin/rozi`; the Windows command is
+`%LOCALAPPDATA%\rozi\bin\rozi.exe`. Neither directory is added to `PATH` unless you ask, so each
+installer finishes by reporting whether the command is reachable as a bare `rozi` and printing the
+full path when it is not.
 
-To let the Windows script add its command directory to your user `PATH`, download the script and
-run:
+To let the Windows script add its command directory to your user `PATH`, run the downloaded script
+with `-AddToPath`:
 
 ```powershell
 .\install.ps1 -AddToPath
 ```
 
-Piped installer commands do not accept arguments. A downloaded Unix script accepts
-`--version VERSION`; the Windows script accepts `-Version VERSION`.
+The piped form takes no arguments, because `iex` receives only the script's text. To pass one
+without downloading the file first, turn that text into a script block and call it:
+
+```powershell
+& ([scriptblock]::Create((irm https://rozi.tui-lipan.dev/install.ps1))) -AddToPath
+```
+
+On Unix, add the directory to `PATH` in your shell profile:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+A downloaded Unix script accepts `--version VERSION`; the Windows script accepts
+`-Version VERSION`.
 
 ## Update or roll back
 

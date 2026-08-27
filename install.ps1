@@ -12,6 +12,10 @@ Add-Type -AssemblyName System.IO.Compression
 # Trust-boundary caveat: "Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised."
 $script:ExitCode = 1
 $script:ReleaseRepo = if ($env:ROZI_RELEASE_REPO) { $env:ROZI_RELEASE_REPO } else { 'tui-lipan/rozi' }
+# The advertised install URL, quoted back to a user who needs to re-run with -AddToPath. The
+# release location is overridable for mirrors; the script's own address is not, so this is a
+# constant rather than an environment lookup.
+$script:InstallScriptUrl = 'https://rozi.tui-lipan.dev/install.ps1'
 $script:MaxArchiveBytes = [int64]268435456
 $script:MaxChecksumBytes = [int64]1048576
 $script:MaxZipMemberBytes = [int64]268435456
@@ -582,24 +586,71 @@ function Invoke-ManagedCli([string]$Payload) {
     Write-Done 'Install' '%LOCALAPPDATA%\rozi\bin\rozi.exe'
 }
 
-function Add-ManagedBinToPath {
+# Answer whether a PATH value already names `$Directory`, comparing entries the way Windows
+# resolves them: case-insensitively, and without caring about a trailing separator.
+function Test-PathContainsDirectory([string]$PathValue, [string]$Directory) {
+    $wanted = $Directory.TrimEnd([char]'\')
+    foreach ($entry in @($PathValue -split ';')) {
+        if ($entry.Trim().TrimEnd([char]'\') -ieq $wanted) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Get-ManagedBinDirectory {
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        return ''
+    }
+    Join-Path $env:LOCALAPPDATA 'rozi\bin'
+}
+
+# `rozi` as a bare word only resolves if the managed directory is on PATH, and this script does not
+# put it there unless asked. Printing `$ rozi` unconditionally handed a user whose PATH does not
+# carry it a command that cannot be found, with nothing to say why.
+#
+# The persisted user PATH and this process's PATH are reported separately because they diverge in a
+# way that matters here: an entry added now cannot reach a shell that started before it, so a setup
+# that is correct for every future terminal still needs the full path in this one. Saying "not on
+# PATH" there would be wrong, and saying nothing would be worse.
+function Write-CommandHint([string]$ManagedBin) {
+    if (-not $ManagedBin) {
+        Write-Host "  $($script:CDim)`$ rozi$($script:CReset)"
+        return
+    }
+    $command = Join-Path $ManagedBin 'rozi.exe'
+    $inSession = Test-PathContainsDirectory ([Environment]::GetEnvironmentVariable('Path', 'Process')) $ManagedBin
+    $inUser = Test-PathContainsDirectory ([Environment]::GetEnvironmentVariable('Path', 'User')) $ManagedBin
+
+    if ($inSession) {
+        Write-Host "  $($script:CDim)`$ rozi$($script:CReset)"
+        return
+    }
+    Write-Host "  $($script:CDim)`$ $command$($script:CReset)"
+    Write-Host ''
+    if ($inUser) {
+        Write-Host '  rozi is on PATH for new terminals. This one started before it was added, so'
+        Write-Host '  the full path above is what works here.'
+        return
+    }
+    Write-Host '  rozi is not on your PATH. To put it there, re-run with -AddToPath:'
+    Write-Host "  $($script:CDim)& ([scriptblock]::Create((irm $($script:InstallScriptUrl)))) -AddToPath$($script:CReset)"
+}
+
+function Add-ManagedBinToPath {
+    $managedBin = Get-ManagedBinDirectory
+    if (-not $managedBin) {
         Fail 'LOCALAPPDATA is unavailable; cannot add the managed command to PATH'
     }
-    $managedBin = Join-Path $env:LOCALAPPDATA 'rozi\bin'
     if (-not (Test-Path -LiteralPath $managedBin -PathType Container)) {
         Fail "managed command directory is missing after install: $managedBin"
     }
 
+    # The persisted entry is what every future terminal inherits; the process entry is what this
+    # one can still use. Both are set, and both are checked first, so re-running is a no-op rather
+    # than a second copy of the same directory.
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $alreadyPresent = $false
-    foreach ($entry in @($userPath -split ';')) {
-        if ($entry.Trim().TrimEnd([char]'\') -ieq $managedBin.TrimEnd([char]'\')) {
-            $alreadyPresent = $true
-            break
-        }
-    }
-    if (-not $alreadyPresent) {
+    if (-not (Test-PathContainsDirectory $userPath $managedBin)) {
         $newUserPath = if ([string]::IsNullOrEmpty($userPath)) {
             $managedBin
         } else {
@@ -609,15 +660,7 @@ function Add-ManagedBinToPath {
     }
 
     $processPath = [Environment]::GetEnvironmentVariable('Path', 'Process')
-    $processEntries = @($processPath -split ';')
-    $processHasBin = $false
-    foreach ($entry in $processEntries) {
-        if ($entry.Trim().TrimEnd([char]'\') -ieq $managedBin.TrimEnd([char]'\')) {
-            $processHasBin = $true
-            break
-        }
-    }
-    if (-not $processHasBin) {
+    if (-not (Test-PathContainsDirectory $processPath $managedBin)) {
         $env:Path = if ([string]::IsNullOrEmpty($processPath)) {
             $managedBin
         } else {
@@ -679,7 +722,7 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
         Write-Host ''
         Write-Host "  rozi $ResolvedVersion installed successfully"
         Write-Host ''
-        Write-Host "  $($script:CDim)`$ rozi$($script:CReset)"
+        Write-CommandHint (Get-ManagedBinDirectory)
         Write-Host ''
     } finally {
         if (Test-Path -LiteralPath $temporaryRoot) {

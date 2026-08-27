@@ -74,8 +74,30 @@ function Show-Banner {
         ' | | | (_) / / | |',
         ' |_|  \___/___||_|'
     )
-    Write-Host ''
-    foreach ($line in $art) { Write-Host "$($script:CDim)$line$($script:CReset)" }
+    # The wordmark carries the same rose-to-violet gradient as the download meter, sampled in bands
+    # across the width rather than per cell - one escape per band, and at this width it reads as a
+    # gradient anyway. The band index floors and clamps for the reason the meter's does: `[int]`
+    # rounds in PowerShell, which walks straight off the end of a four-entry array.
+    $bands = @($script:CAccent, $script:CBand2, $script:CBand3, $script:CViolet)
+    $width = ($art | Measure-Object -Property Length -Maximum).Maximum
+    foreach ($line in $art) {
+        if (-not $script:CAccent) {
+            Write-Host $line
+            continue
+        }
+        $painted = ''
+        $previous = -1
+        for ($column = 0; $column -lt $line.Length; $column++) {
+            $band = [int][Math]::Floor($column * $bands.Count / $width)
+            if ($band -ge $bands.Count) { $band = $bands.Count - 1 }
+            if ($band -ne $previous) {
+                $painted += $bands[$band]
+                $previous = $band
+            }
+            $painted += $line[$column]
+        }
+        Write-Host "$painted$($script:CReset)"
+    }
     Write-Host ''
 }
 

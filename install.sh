@@ -47,12 +47,41 @@ CURRENT_OPERATION=''
 # Deliberately ASCII. A Windows console under a non-UTF-8 code page mangles box-drawing and block
 # characters, and this wordmark has a PowerShell twin that must look identical.
 banner() {
-  printf '\n'
-  printf '%s                _ %s\n' "$C_DIM" "$C_RESET"
-  printf '%s  _ __ ___ ___ (_)%s\n' "$C_DIM" "$C_RESET"
-  printf '%s | %s__/ _ \\_  /| |%s\n' "$C_DIM" "'" "$C_RESET"
-  printf '%s | | | (_) / / | |%s\n' "$C_DIM" "$C_RESET"
-  printf '%s |_|  \\___/___||_|%s\n' "$C_DIM" "$C_RESET"
+  local line column band painted previous width=18
+  local -a art=(
+    '                _ '
+    '  _ __ ___ ___ (_)'
+    " | '__/ _ \_  /| |"
+    ' | | | (_) / / | |'
+    ' |_|  \___/___||_|'
+  )
+  # The same rose-to-violet gradient the download meter draws, sampled in four bands across the
+  # width. One escape per band rather than per character, which at this width still reads as a
+  # gradient. Hardcoded like the meter's, because the palette above carries only the two ends.
+  local -a bands=(
+    $'\033[38;2;253;74;128m'
+    $'\033[38;2;228;66;156m'
+    $'\033[38;2;203;58;185m'
+    $'\033[38;2;178;51;213m'
+  )
+  for line in "${art[@]}"; do
+    if [[ -z "$C_ACCENT" ]]; then
+      printf '%s\n' "$line"
+      continue
+    fi
+    painted=''
+    previous=-1
+    for ((column = 0; column < ${#line}; column++)); do
+      band=$((column * 4 / width))
+      ((band > 3)) && band=3
+      if ((band != previous)); then
+        painted+="${bands[band]}"
+        previous=$band
+      fi
+      painted+="${line:column:1}"
+    done
+    printf '%s%s\n' "$painted" "$C_RESET"
+  done
   printf '\n'
 }
 

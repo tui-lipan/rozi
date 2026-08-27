@@ -107,35 +107,78 @@ Write-Output (Test-PathContainsDirectory 'C:\\a;C:\\b' $bin)"
 /// Every PATH change the hint prints has to be safe to paste twice.
 ///
 /// An installer hint is read as a recipe, and a recipe that appends unconditionally leaves a
-/// duplicate entry behind on the second run. The guard is asserted on the printed text rather than
-/// on a copy of it here, because the text is what a user actually runs.
+/// duplicate entry behind on the second run.
 #[test]
 fn the_printed_path_remediation_is_guarded_against_running_twice() {
-    let body = "$script:CDim = ''
-$script:CReset = ''
-Write-CommandHint 'C:\\U\\AppData\\Local\\rozi\\bin'";
-    let printed = in_installer_scope(
-        &[
-            "Test-PathContainsDirectory",
-            "Get-CommandHintState",
-            "Write-CommandHint",
-        ],
-        body,
-    );
+    let body = r#"foreach ($state in 'absent','stale-session') {
+    $parsed = [System.Management.Automation.Language.Parser]::ParseInput(
+        ((Get-PathRemediation $state) -join "`n"), [ref]$null, [ref]$null)
+    $writes = @($parsed.FindAll({ param($n)
+        ($n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+         $n.Left.Extent.Text -like '*env:Path*') -or
+        ($n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+         $n.Member.Extent.Text -eq 'SetEnvironmentVariable') }, $true))
+    foreach ($write in $writes) {
+        $guarded = $false
+        $parent = $write.Parent
+        while ($null -ne $parent) {
+            if ($parent -is [System.Management.Automation.Language.IfStatementAst] -and
+                $parent.Clauses[0].Item1.Extent.Text -match '-notcontains') { $guarded = $true; break }
+            $parent = $parent.Parent
+        }
+        Write-Output "$state|$guarded"
+    }
+}"#;
+    let reported = in_installer_scope(&["Get-PathRemediation"], body);
 
-    let mutating: Vec<&str> = printed
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.contains("$env:Path +=") || line.contains("SetEnvironmentVariable"))
-        .collect();
+    let writes: Vec<&str> = reported.lines().filter(|line| !line.is_empty()).collect();
     assert!(
-        !mutating.is_empty(),
-        "the hint printed no PATH remediation at all:\n{printed}"
+        writes.len() >= 3,
+        "expected a persisted and a session write for 'absent' and a session write for \
+         'stale-session', got:\n{reported}"
     );
-    for line in &mutating {
+    for line in &writes {
+        let (state, guarded) = line.split_once('|').expect("state-tagged line");
+        assert_eq!(
+            guarded, "True",
+            "a PATH write in the {state} block is not inside a `-notcontains` check, so pasting \
+             that block twice duplicates the entry"
+        );
+    }
+}
+
+/// Each block has to stand on its own, because people paste one of them and not the other.
+///
+/// The two were once printed as a pair that shared a `$bin` defined only by the first, so anyone
+/// who needed just the session fix - a terminal one entry behind, the common case - pasted a
+/// snippet that died on an undefined variable. Comparing the variables a block *reads* against the
+/// ones it *assigns* is what catches that; running the block cannot, because the persisted half
+/// writes to the user's real environment.
+#[test]
+fn path_remediation_defines_every_variable_it_uses() {
+    let body = r#"foreach ($state in 'absent','stale-session') {
+    $parsed = [System.Management.Automation.Language.Parser]::ParseInput(
+        ((Get-PathRemediation $state) -join "`n"), [ref]$null, [ref]$null)
+    $assigned = @($parsed.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true) |
+        ForEach-Object { $_.Left } |
+        Where-Object { $_ -is [System.Management.Automation.Language.VariableExpressionAst] } |
+        ForEach-Object { $_.VariablePath.UserPath })
+    $used = @($parsed.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true) |
+        Where-Object { -not $_.VariablePath.IsDriveQualified } |
+        ForEach-Object { $_.VariablePath.UserPath } |
+        Where-Object { $_ -notin @('true','false','null','_') } | Select-Object -Unique)
+    Write-Output "$state|$(@($used | Where-Object { $_ -notin $assigned }) -join ',')"
+}"#;
+    let reported = in_installer_scope(&["Get-PathRemediation"], body);
+
+    for line in reported.lines().filter(|line| !line.is_empty()) {
+        let (state, undefined) = line.split_once('|').expect("state-tagged line");
         assert!(
-            line.contains("-notcontains"),
-            "a printed PATH change is not guarded, so pasting it twice duplicates the entry: {line}"
+            undefined.is_empty(),
+            "the {state} block reads variables it never defines ({undefined}), \
+             so pasting it on its own fails"
         );
     }
 }

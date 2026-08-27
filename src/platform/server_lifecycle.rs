@@ -22,9 +22,12 @@
 //!   process and terminates it (which, thanks to [`contain_children`], takes the job's ConPTY
 //!   children with it).
 //!
-//! The Windows half is written against documented API contracts and type-checks under
-//! `cargo check --target x86_64-pc-windows-gnu`, but is **unverified at runtime** - no Windows host
-//! is available in this workspace.
+//! The Windows half is written against documented API contracts and is compiled and linted on
+//! `windows-latest` in CI, but nothing exercises it: this module's own tests are `cfg(unix)`, and
+//! the situations these functions exist for - a job reaping live ConPTY children when a server is
+//! killed or crashes, and the console-control events a clean detach depends on - are not states the
+//! suite puts any host into. Treat a change here as unproven until it has been run by hand on a
+//! Windows console.
 
 use std::io;
 use std::path::Path;

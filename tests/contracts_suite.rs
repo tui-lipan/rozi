@@ -8,3 +8,8 @@ mod extensions_conformance;
 mod extensions_smoke;
 #[path = "suites/contracts/no_sleeping_pool_tasks.rs"]
 mod no_sleeping_pool_tasks;
+// The bootstrap script's own contracts. Windows-only: it drives `install.ps1` through PowerShell,
+// and the file it tests is the one that ships.
+#[cfg(windows)]
+#[path = "suites/contracts/install_script.rs"]
+mod install_script;

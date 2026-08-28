@@ -16,9 +16,57 @@
 //! `AppRoot` and dispatches actions must call [`isolate_user_dirs`] first.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
+
+use tui_lipan::CommandLink;
 
 use crate::platform::paths::PlatformEnv;
+
+/// A real session inbound mailbox seeded for dispatcher benchmarks.
+///
+/// The mailbox stays inactive so it does not enqueue drain messages behind the benchmark's back;
+/// callers explicitly dispatch [`drain_message`](Self::drain_message) until
+/// [`is_empty`](Self::is_empty).
+#[doc(hidden)]
+pub struct InboundMailboxFixture {
+    epoch: u64,
+    mailbox: Arc<crate::session::client::InboundMailbox>,
+}
+
+impl InboundMailboxFixture {
+    pub fn drain_message(&self) -> crate::Msg {
+        crate::Msg::DrainSessionFrames {
+            epoch: self.epoch,
+            mailbox: Arc::clone(&self.mailbox),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.mailbox.is_empty()
+    }
+}
+
+/// Seed the production mailbox without activating its automatic drain scheduling.
+#[doc(hidden)]
+pub fn inbound_mailbox_fixture(
+    link: CommandLink<crate::Msg>,
+    epoch: u64,
+    frames: impl IntoIterator<
+        Item = crate::session::protocol::Frame<crate::session::protocol::ServerMessage>,
+    >,
+) -> InboundMailboxFixture {
+    let mailbox = crate::session::client::InboundMailbox::new(
+        epoch,
+        "benchmark-session".to_string(),
+        link,
+    );
+    for frame in frames {
+        mailbox
+            .push(frame)
+            .expect("benchmark frame must fit in the inbound mailbox");
+    }
+    InboundMailboxFixture { epoch, mailbox }
+}
 
 /// This process's scratch root, created empty on first use.
 ///

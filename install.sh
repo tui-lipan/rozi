@@ -23,31 +23,62 @@ else
 fi
 if ((INTERACTIVE)) && [[ -z "${NO_COLOR:-}" ]]; then
   # The rozi palette, matching `platform::ansi::palette` and the logo's rose-to-violet gradient.
+  # The four bands are the gradient itself: the wordmark, the download meter and the success line
+  # all sample them, and they are the same four values install.ps1 carries.
   C_RESET=$'\033[0m'
   C_DIM=$'\033[38;2;142;147;180m'
   C_ACCENT=$'\033[38;2;253;74;128m'
-  C_VIOLET=$'\033[38;2;152;43;242m'
+  C_BAND2=$'\033[38;2;228;66;156m'
+  C_BAND3=$'\033[38;2;203;58;185m'
+  C_VIOLET=$'\033[38;2;178;51;213m'
   # The unfilled remainder of the meter. Near the app's border colour so a track reads as chrome
   # rather than as data - painting it in the accent hides where the fill actually ends.
   C_TRACK=$'\033[38;2;52;56;88m'
   C_OK=$'\033[38;2;74;222;128m'
+  C_WARN=$'\033[38;2;251;191;36m'
   C_ERROR=$'\033[38;2;255;95;87m'
 else
   C_RESET=''
   C_DIM=''
   C_ACCENT=''
+  C_BAND2=''
+  C_BAND3=''
   C_VIOLET=''
   C_TRACK=''
   C_OK=''
+  C_WARN=''
   C_ERROR=''
 fi
-readonly INTERACTIVE C_RESET C_DIM C_ACCENT C_OK C_ERROR
-CURRENT_OPERATION=''
+readonly INTERACTIVE C_RESET C_DIM C_ACCENT C_BAND2 C_BAND3 C_VIOLET C_TRACK C_OK C_WARN C_ERROR
 
 # Deliberately ASCII. A Windows console under a non-UTF-8 code page mangles box-drawing and block
 # characters, and this wordmark has a PowerShell twin that must look identical.
+# Paint text with the rose-to-violet gradient, sampled in four bands across `width` - one escape per
+# band rather than per character. `width` is separate from the text's own length so several lines
+# can share one ramp: the wordmark's bands have to line up vertically, which they cannot if each
+# line scales the ramp to itself.
+format_gradient() {
+  local text="$1" width="${2:-0}" column band previous=-1 painted=''
+  if [[ -z "$C_ACCENT" ]]; then
+    printf '%s' "$text"
+    return 0
+  fi
+  ((width > 0)) || width=${#text}
+  local -a bands=("$C_ACCENT" "$C_BAND2" "$C_BAND3" "$C_VIOLET")
+  for ((column = 0; column < ${#text}; column++)); do
+    band=$((column * 4 / width))
+    ((band > 3)) && band=3
+    if ((band != previous)); then
+      painted+="${bands[band]}"
+      previous=$band
+    fi
+    painted+="${text:column:1}"
+  done
+  printf '%s%s' "$painted" "$C_RESET"
+}
+
 banner() {
-  local line column band painted previous width=18
+  local line width=18
   local -a art=(
     '                _ '
     '  _ __ ___ ___ (_)'
@@ -55,63 +86,96 @@ banner() {
     ' | | | (_) / / | |'
     ' |_|  \___/___||_|'
   )
-  # The same rose-to-violet gradient the download meter draws, sampled in four bands across the
-  # width. One escape per band rather than per character, which at this width still reads as a
-  # gradient. Hardcoded like the meter's, because the palette above carries only the two ends.
-  local -a bands=(
-    $'\033[38;2;253;74;128m'
-    $'\033[38;2;228;66;156m'
-    $'\033[38;2;203;58;185m'
-    $'\033[38;2;178;51;213m'
-  )
   for line in "${art[@]}"; do
-    if [[ -z "$C_ACCENT" ]]; then
-      printf '%s\n' "$line"
-      continue
-    fi
-    painted=''
-    previous=-1
-    for ((column = 0; column < ${#line}; column++)); do
-      band=$((column * 4 / width))
-      ((band > 3)) && band=3
-      if ((band != previous)); then
-        painted+="${bands[band]}"
-        previous=$band
-      fi
-      painted+="${line:column:1}"
-    done
-    printf '%s%s\n' "$painted" "$C_RESET"
+    printf '%s\n' "$(format_gradient "$line" "$width")"
   done
   printf '\n'
 }
 
+# Human sizes, so a finished download reports what arrived rather than restating the file name the
+# version and target already imply.
+format_bytes() {
+  local bytes="$1"
+  if ((bytes >= 1048576)); then
+    LC_ALL=C awk -v b="$bytes" 'BEGIN { printf "%.1f MB", b / 1048576 }'
+  elif ((bytes >= 1024)); then
+    LC_ALL=C awk -v b="$bytes" 'BEGIN { printf "%.0f KB", b / 1024 }'
+  else
+    printf '%s B' "$bytes"
+  fi
+}
+# The spinner turns in a background subshell, because the work it reports is blocking: a checksum,
+# an HTTPS request and the payload's own install all hold the script, so a row the main shell
+# redraws can only advance where the work happens to loop. Only the download ever moved.
+SPINNER_FRAMES=('◐' '◓' '◑' '◒')
+SPINNER_INTERVAL=0.05
+SPINNER_PID=''
+readonly SPINNER_FRAMES SPINNER_INTERVAL
+
 status_row() {
   local symbol="$1" color="$2" operation="$3" detail="$4"
   if ((INTERACTIVE)); then
-    printf '\r\033[2K  %s%s%s %-12s%s' "$color" "$symbol" "$C_RESET" "$operation" "$detail"
+    printf '\r\033[2K %s%s%s %-12s%s' "$color" "$symbol" "$C_RESET" "$operation" "$detail"
   else
-    printf '  %s %-12s%s\n' "$symbol" "$operation" "$detail"
+    printf ' %s %-12s%s\n' "$symbol" "$operation" "$detail"
   fi
 }
 
+# Stop the spinner and leave the row for whatever writes next. Idempotent, and called before every
+# write to the row: a second writer mid-frame interleaves escapes with the finished line.
+stop_spinner() {
+  [[ -n "$SPINNER_PID" ]] || return 0
+  local pid="$SPINNER_PID"
+  SPINNER_PID=''
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
 status_active() {
+  stop_spinner
   CURRENT_OPERATION="$1"
-  status_row '●' "$C_ACCENT" "$1" "$2"
+  status_row "${SPINNER_FRAMES[0]}" "$C_ACCENT" "$1" "$2"
+  ((INTERACTIVE)) || return 0
+  local operation="$1" detail="$2"
+  (
+    local index=1
+    while :; do
+      sleep "$SPINNER_INTERVAL"
+      printf '\r\033[2K %s%s%s %-12s%s' \
+        "$C_ACCENT" "${SPINNER_FRAMES[index % 4]}" "$C_RESET" "$operation" "$detail"
+      index=$((index + 1))
+    done
+  ) &
+  SPINNER_PID=$!
+}
+
+# The same row one frame on, for a caller that already owns it - the download meter, which paints a
+# bar the spinner knows nothing about.
+SPINNER_INDEX=0
+status_spin() {
+  ((INTERACTIVE)) || return 0
+  SPINNER_INDEX=$(((SPINNER_INDEX + 1) % 4))
+  status_row "${SPINNER_FRAMES[SPINNER_INDEX]}" "$C_ACCENT" "$1" "$2"
 }
 
 status_done() {
+  stop_spinner
   status_row '✓' "$C_OK" "$1" "$2"
   ((INTERACTIVE)) && printf '\n'
   CURRENT_OPERATION=''
 }
 
 status_failed() {
+  stop_spinner
   status_row '✗' "$C_ERROR" "$1" "$2"
   ((INTERACTIVE)) && printf '\n'
   CURRENT_OPERATION=''
 }
 
 fail() {
+  # Unconditionally, before anything else prints: a failure can land while a row is active, and a
+  # spinner still turning would write its next frame over the message.
+  stop_spinner
   if [[ -n "$CURRENT_OPERATION" ]]; then
     status_failed "$CURRENT_OPERATION" 'failed'
   fi
@@ -186,6 +250,9 @@ download_file() {
     --max-redirs 5 --max-filesize "$max_bytes" --output "$destination" "$url" 2>"$curl_error" &
   curl_pid=$!
   if ((INTERACTIVE && show_progress)); then
+    # The meter owns the row from here: it paints a bar the spinner subshell knows nothing about,
+    # so two writers would interleave escapes across it. Its own redraws advance the frame instead.
+    stop_spinner
     while kill -0 "$curl_pid" 2>/dev/null; do
       if ((expected > 0)) && [[ -f "$destination" ]]; then
         render_download_progress "$(file_size "$destination" 2>/dev/null || printf 0)" "$expected"
@@ -243,7 +310,7 @@ render_download_progress() {
     printf -v tail '%*s' "$empty" ''
     bar+="${C_TRACK}${tail// /─}"
   fi
-  status_row '●' "$C_ACCENT" 'Download' "${bar}${C_RESET} ${percent}%"
+  status_spin 'Download' "${bar}${C_RESET} ${percent}%"
 }
 
 resolve_latest_version() {
@@ -412,17 +479,16 @@ command_hint() {
   local bin="$HOME/.local/bin"
   case ":$PATH:" in
     *":$bin:"*)
-      printf '  %s$ rozi%s\n' "$C_DIM" "$C_RESET"
+      printf '    Start it with:\n'
+      printf '      %srozi%s\n' "$C_ACCENT" "$C_RESET"
       return 0
       ;;
   esac
-  printf '  rozi is not on your PATH yet.\n'
+  printf ' %s!%s  Not on PATH yet. Run it with the full path:\n' "$C_WARN" "$C_RESET"
+  printf '      %s%s/rozi%s\n' "$C_ACCENT" "$bin" "$C_RESET"
   printf '\n'
-  printf '  Run it now:\n'
-  printf '    %s%s/rozi%s\n' "$C_ACCENT" "$bin" "$C_RESET"
-  printf '\n'
-  printf '  Or add it to PATH - put this in your shell profile:\n'
-  printf '    %s%s%s\n' "$C_DIM" 'export PATH="$HOME/.local/bin:$PATH"' "$C_RESET"
+  printf '    or add it to PATH by putting this in your shell profile:\n'
+  printf '      %s%s%s\n' "$C_VIOLET" 'export PATH="$HOME/.local/bin:$PATH"' "$C_RESET"
 }
 
 install_version() {
@@ -434,14 +500,14 @@ install_version() {
   [[ "$base" == https://* ]] || fail 'release base URL must use HTTPS'
 
   temp_extract="$(mktemp -d "${TMPDIR:-/tmp}/rozi-install.XXXXXX")"
-  trap 'rm -rf -- "${temp_extract:-}"' EXIT
+  trap 'stop_spinner; rm -rf -- "${temp_extract:-}"' EXIT
   archive="$temp_extract/$archive_name"
   checksum="$archive.sha256"
   status_active 'Download' "$archive_name"
   download_file "$base/$archive_name" "$archive" "$MAX_ARCHIVE_BYTES" "$archive_name" 1
   download_file "$base/$archive_name.sha256" "$checksum" "$MAX_CHECKSUM_BYTES" \
     "adjacent checksum for $archive_name"
-  status_done 'Download' "$archive_name"
+  status_done 'Download' "$(format_bytes "$(file_size "$archive")")"
 
   # The checksum detects corruption, not authenticity.  The extracted payload performs signed
   # metadata verification before activation, but the bootstrap payload is already executing.
@@ -474,7 +540,9 @@ install_version() {
   managed_cli "$payload"
 
   printf '\n'
-  printf '  rozi %s installed successfully\n' "$version"
+  # The one line worth catching an eye on: the only green in the run, with the version painted
+  # in the wordmark's own gradient so the result reads as the same object the banner announced.
+  printf ' %s%s%s  %s\n' "$C_OK" '✓' "$C_RESET" "$(format_gradient "Installed $version")"
   printf '\n'
   command_hint
   printf '\n'
@@ -516,10 +584,13 @@ main() {
   fi
   validate_version "$version"
   target="$(target_triple)"
+  # The Resolve row is still active and its subshell is still turning: erasing the line and writing
+  # the header underneath a live spinner puts the frame and the header on the same row.
+  stop_spinner
   if ((INTERACTIVE)); then
     printf '\r\033[2K'
   fi
-  printf '  %srozi %s  ·  %s%s\n\n' "$C_DIM" "$version" "$target" "$C_RESET"
+  printf ' %s  %s%s  %s%s%s\n\n' "$(format_gradient "rozi $version")" "$C_DIM" '·' "$C_VIOLET" "$target" "$C_RESET"
   status_done 'Resolve' "$resolved_detail"
   base="${ROZI_RELEASE_BASE_URL:-https://github.com/${RELEASE_REPO}/releases/download/v${version}}"
   install_version "$version" "$target" "$base"

@@ -501,11 +501,7 @@ fn drain_session_frames(
     aggregate
 }
 
-fn inbound_drain_has_capacity(
-    entries: usize,
-    bytes: usize,
-    elapsed: std::time::Duration,
-) -> bool {
+fn inbound_drain_has_capacity(entries: usize, bytes: usize, elapsed: std::time::Duration) -> bool {
     entries < INBOUND_DRAIN_MAX_ENTRIES
         && bytes < INBOUND_DRAIN_MAX_BYTES
         && (entries == 0 || elapsed < INBOUND_DRAIN_MAX_TIME)
@@ -526,10 +522,9 @@ fn inbound_event_update(
                     None => Update::none(),
                 }
             }
-            crate::session::client::InboundEvent::Disconnected => crate::scratch_runtime::failed(
-                ctx,
-                "private PTY host disconnected".to_string(),
-            ),
+            crate::session::client::InboundEvent::Disconnected => {
+                crate::scratch_runtime::failed(ctx, "private PTY host disconnected".to_string())
+            }
             crate::session::client::InboundEvent::Failed(message) => {
                 crate::scratch_runtime::failed(ctx, message)
             }
@@ -677,11 +672,7 @@ mod tests {
             INBOUND_DRAIN_MAX_BYTES,
             std::time::Duration::ZERO,
         ));
-        assert!(!inbound_drain_has_capacity(
-            1,
-            0,
-            INBOUND_DRAIN_MAX_TIME,
-        ));
+        assert!(!inbound_drain_has_capacity(1, 0, INBOUND_DRAIN_MAX_TIME,));
     }
 
     #[test]

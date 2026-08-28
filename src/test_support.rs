@@ -55,11 +55,8 @@ pub fn inbound_mailbox_fixture(
         Item = crate::session::protocol::Frame<crate::session::protocol::ServerMessage>,
     >,
 ) -> InboundMailboxFixture {
-    let mailbox = crate::session::client::InboundMailbox::new(
-        epoch,
-        "benchmark-session".to_string(),
-        link,
-    );
+    let mailbox =
+        crate::session::client::InboundMailbox::new(epoch, "benchmark-session".to_string(), link);
     for frame in frames {
         mailbox
             .push(frame)

@@ -671,6 +671,16 @@ pub(crate) enum InboundEvent {
     Failed(String),
 }
 
+impl InboundEvent {
+    pub(crate) fn wire_bytes(&self) -> usize {
+        match self {
+            Self::Frame(frame) => inbound_frame_bytes(frame),
+            Self::Disconnected => 0,
+            Self::Failed(message) => message.len(),
+        }
+    }
+}
+
 pub struct InboundMailbox {
     queue: ByteQueue<InboundEvent>,
     scheduled: AtomicBool,

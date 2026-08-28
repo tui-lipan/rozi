@@ -12,9 +12,18 @@ use tui_lipan::prelude::*;
 
 use crate::{AppRoot, Msg};
 
+const INBOUND_DRAIN_MAX_ENTRIES: usize = 64;
+const INBOUND_DRAIN_MAX_BYTES: usize = 256 * 1024;
+const INBOUND_DRAIN_MAX_TIME: std::time::Duration = std::time::Duration::from_millis(1);
+
 pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
     let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
-    let update = match msg {
+    let update = handle_msg_inner(_app, msg, ctx);
+    post_update_sync(ctx, update, is_layout_flush)
+}
+
+fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
+    match msg {
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::UserCommandFailed { message } => {
             crate::pty_events::notify_error(ctx, "Command failed", message);
@@ -324,47 +333,7 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::ScratchRuntimeFailed(message) => crate::scratch_runtime::failed(ctx, message),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
         Msg::DrainSessionFrames { epoch, mailbox } => {
-            let event = mailbox.pop();
-            mailbox.finish_drain();
-            if epoch == crate::scratch_runtime::SCRATCH_RUNTIME_EPOCH {
-                match event {
-                    Some(crate::session::client::InboundEvent::Frame(frame)) => {
-                        if let Some(message) = crate::scratch_runtime::message_for_frame(
-                            ctx.state.runtime_epoch,
-                            *frame,
-                        ) {
-                            return handle_msg(_app, message, ctx);
-                        }
-                        return Update::none();
-                    }
-                    Some(crate::session::client::InboundEvent::Disconnected) => {
-                        return crate::scratch_runtime::failed(
-                            ctx,
-                            "private PTY host disconnected".to_string(),
-                        );
-                    }
-                    Some(crate::session::client::InboundEvent::Failed(message)) => {
-                        return crate::scratch_runtime::failed(ctx, message);
-                    }
-                    None => return Update::none(),
-                }
-            }
-            match event {
-                Some(crate::session::client::InboundEvent::Frame(frame)) => {
-                    return handle_msg(
-                        _app,
-                        crate::session::bootstrap::server_message_to_msg(epoch, *frame),
-                        ctx,
-                    );
-                }
-                Some(crate::session::client::InboundEvent::Disconnected) => {
-                    session::disconnected(ctx, epoch, mailbox.session_name())
-                }
-                Some(crate::session::client::InboundEvent::Failed(message)) => {
-                    session::transport_failed(ctx, epoch, mailbox.session_name(), message)
-                }
-                None => Update::none(),
-            }
+            drain_session_frames(_app, ctx, epoch, mailbox)
         }
         Msg::SessionAttachFailed { epoch, message } => session::attach_failed(ctx, epoch, message),
         Msg::SessionAttached {
@@ -497,8 +466,116 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             epoch,
             session: name,
         } => session::renamed(ctx, epoch, name),
-    };
-    post_update_sync(ctx, update, is_layout_flush)
+    }
+}
+
+fn drain_session_frames(
+    app: &mut AppRoot,
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    mailbox: std::sync::Arc<crate::session::client::InboundMailbox>,
+) -> Update {
+    let started = std::time::Instant::now();
+    let mut entries = 0usize;
+    let mut bytes = 0usize;
+    let mut aggregate = Update::none();
+
+    while inbound_drain_has_capacity(entries, bytes, started.elapsed()) {
+        let Some(event) = mailbox.pop() else {
+            break;
+        };
+        bytes = bytes.saturating_add(event.wire_bytes());
+        entries += 1;
+
+        let next = inbound_event_update(app, ctx, epoch, &mailbox, event);
+        let has_command = next.command.is_some();
+        aggregate = merge_updates(aggregate, next);
+        // An Update can carry only one command. Yield immediately rather than dropping a later
+        // command or inventing ordering between unrelated asynchronous work.
+        if has_command {
+            break;
+        }
+    }
+
+    mailbox.finish_drain();
+    aggregate
+}
+
+fn inbound_drain_has_capacity(
+    entries: usize,
+    bytes: usize,
+    elapsed: std::time::Duration,
+) -> bool {
+    entries < INBOUND_DRAIN_MAX_ENTRIES
+        && bytes < INBOUND_DRAIN_MAX_BYTES
+        && (entries == 0 || elapsed < INBOUND_DRAIN_MAX_TIME)
+}
+
+fn inbound_event_update(
+    app: &mut AppRoot,
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    mailbox: &crate::session::client::InboundMailbox,
+    event: crate::session::client::InboundEvent,
+) -> Update {
+    if epoch == crate::scratch_runtime::SCRATCH_RUNTIME_EPOCH {
+        return match event {
+            crate::session::client::InboundEvent::Frame(frame) => {
+                match crate::scratch_runtime::message_for_frame(ctx.state.runtime_epoch, *frame) {
+                    Some(message) => handle_msg_inner(app, message, ctx),
+                    None => Update::none(),
+                }
+            }
+            crate::session::client::InboundEvent::Disconnected => crate::scratch_runtime::failed(
+                ctx,
+                "private PTY host disconnected".to_string(),
+            ),
+            crate::session::client::InboundEvent::Failed(message) => {
+                crate::scratch_runtime::failed(ctx, message)
+            }
+        };
+    }
+
+    match event {
+        crate::session::client::InboundEvent::Frame(frame) => handle_msg_inner(
+            app,
+            crate::session::bootstrap::server_message_to_msg(epoch, *frame),
+            ctx,
+        ),
+        crate::session::client::InboundEvent::Disconnected => {
+            session::disconnected(ctx, epoch, mailbox.session_name())
+        }
+        crate::session::client::InboundEvent::Failed(message) => {
+            session::transport_failed(ctx, epoch, mailbox.session_name(), message)
+        }
+    }
+}
+
+fn merge_updates(mut aggregate: Update, mut next: Update) -> Update {
+    debug_assert!(aggregate.command.is_none() || next.command.is_none());
+    let command = aggregate.command.take().or_else(|| next.command.take());
+    let level = strongest_update_level(aggregate.level(), next.level());
+    match (level, command) {
+        (UpdateLevel::None, None) => Update::none(),
+        (UpdateLevel::None, Some(command)) => Update::command_only(command),
+        (UpdateLevel::Paint, None) => Update::paint(),
+        // tui-lipan has no paint-with-command constructor. This combination is rare on inbound
+        // control traffic; a full update preserves both requirements without losing the command.
+        (UpdateLevel::Paint, Some(command)) => Update::with_command(command),
+        (UpdateLevel::Layout, command) => Update::layout_with_command(command),
+        (UpdateLevel::Full, command) => Update::with_command(command),
+    }
+}
+
+fn strongest_update_level(left: UpdateLevel, right: UpdateLevel) -> UpdateLevel {
+    use UpdateLevel::{Full, Layout, None, Paint};
+
+    match (left, right) {
+        (Full, _) | (_, Full) => Full,
+        (Layout, _) | (_, Layout) => Layout,
+        (Paint, _) | (_, Paint) => Paint,
+        (None, None) => None,
+    }
 }
 
 fn post_update_sync(
@@ -581,5 +658,39 @@ mod tests {
             runtime_metrics_update(current_epoch, current_epoch, false).level(),
             UpdateLevel::None
         );
+    }
+
+    #[test]
+    fn inbound_drain_budget_always_allows_one_entry_then_enforces_every_limit() {
+        assert!(inbound_drain_has_capacity(
+            0,
+            INBOUND_DRAIN_MAX_BYTES,
+            INBOUND_DRAIN_MAX_TIME,
+        ));
+        assert!(!inbound_drain_has_capacity(
+            INBOUND_DRAIN_MAX_ENTRIES,
+            0,
+            std::time::Duration::ZERO,
+        ));
+        assert!(!inbound_drain_has_capacity(
+            1,
+            INBOUND_DRAIN_MAX_BYTES,
+            std::time::Duration::ZERO,
+        ));
+        assert!(!inbound_drain_has_capacity(
+            1,
+            0,
+            INBOUND_DRAIN_MAX_TIME,
+        ));
+    }
+
+    #[test]
+    fn update_levels_merge_to_the_strongest_request() {
+        use UpdateLevel::{Full, Layout, None, Paint};
+
+        assert_eq!(strongest_update_level(None, Paint), Paint);
+        assert_eq!(strongest_update_level(Paint, Layout), Layout);
+        assert_eq!(strongest_update_level(Layout, Full), Full);
+        assert_eq!(strongest_update_level(Full, None), Full);
     }
 }

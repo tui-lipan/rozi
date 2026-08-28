@@ -806,7 +806,7 @@ mod tests {
                 "the following event must remain queued"
             );
             assert!(mailbox.pop().is_none());
-        );
+        });
     }
 
     #[test]

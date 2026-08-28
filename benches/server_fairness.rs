@@ -18,9 +18,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tui_lipan::prelude::TerminalColorPalette;
 
 const HELPER_ARG: &str = "--server-fairness-helper";
+const IDLE_HELPER_ARG: &str = "--idle-latency-helper";
 const SNAPSHOT_HELPER_ARG: &str = "--resurrection-snapshot-helper";
 const SERVER_ARG: &str = "--server-fairness-server";
 const SATURATION_PROBE_ARG: &str = "--saturation-probe";
+const IDLE_LATENCY_PROBE_ARG: &str = "--idle-latency-probe";
 const PANE_ID: u32 = 1;
 const SNAPSHOT_PANE_ID: u32 = 1;
 const SATURATION_PANES: u32 = 2;
@@ -33,6 +35,8 @@ const SNAPSHOT_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_PTY_EVENT_CHUNK: u64 = 64 * 1024;
 const FAIRNESS_TAIL_CAP: usize = 256;
+const IDLE_LATENCY_SAMPLES: usize = 200;
+const IDLE_SETTLE_TIME: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy)]
 struct ServerLaunch {
@@ -164,6 +168,17 @@ struct FairnessFixture {
 
 impl FairnessFixture {
     fn new(pane_count: u32, pace_millis: u64) -> Self {
+        Self::new_with_helper(
+            pane_count,
+            vec![HELPER_ARG.to_string(), pace_millis.to_string()],
+        )
+    }
+
+    fn idle() -> Self {
+        Self::new_with_helper(1, vec![IDLE_HELPER_ARG.to_string()])
+    }
+
+    fn new_with_helper(pane_count: u32, helper_args: Vec<String>) -> Self {
         let mut server = ServerOwner::start(ServerLaunch::default());
         let session = server.session.clone();
         let endpoint = server.endpoint.clone();
@@ -197,6 +212,8 @@ impl FairnessFixture {
 
         let helper = executable.to_string_lossy().into_owned();
         for pane_id in 1..=pane_count {
+            let mut shell = vec![helper.clone()];
+            shell.extend(helper_args.iter().cloned());
             client.spawn_pane(SpawnPaneRequest {
                 pane_id,
                 local: false,
@@ -209,11 +226,7 @@ impl FairnessFixture {
                 env: Vec::new(),
                 title: Some(format!("server-fairness-{pane_id}")),
                 palette: TerminalColorPalette::default(),
-                shell: vec![
-                    helper.clone(),
-                    HELPER_ARG.to_string(),
-                    pace_millis.to_string(),
-                ],
+                shell,
                 command_shell: Vec::new(),
             });
             wait_for_fairness_pane(&events, pane_id);
@@ -742,6 +755,44 @@ fn saturation_probe() {
     );
 }
 
+fn idle_latency_probe() {
+    let fixture = FairnessFixture::idle();
+    let mut samples = Vec::with_capacity(IDLE_LATENCY_SAMPLES);
+    for sequence in 0..IDLE_LATENCY_SAMPLES {
+        // Let both the server and client return to their steady idle cadence before every sample;
+        // this measures the user-visible cold key path rather than a warm burst.
+        std::thread::sleep(IDLE_SETTLE_TIME);
+        let key = format!("idle-{sequence:016x}");
+        let started = Instant::now();
+        fixture
+            .client
+            .as_ref()
+            .expect("idle-latency client available")
+            .send_input(PANE_ID, GENERATION, false, format!("{key}\n").into_bytes());
+        fixture.wait_for_ack(&key);
+        samples.push(started.elapsed());
+    }
+    samples.sort_unstable();
+    eprintln!(
+        "idle_latency_probe samples={} settle_ms={} p50_us={} p95_us={} p99_us={} max_us={}",
+        samples.len(),
+        IDLE_SETTLE_TIME.as_millis(),
+        percentile(&samples, 50).as_micros(),
+        percentile(&samples, 95).as_micros(),
+        percentile(&samples, 99).as_micros(),
+        samples.last().expect("idle latency samples").as_micros(),
+    );
+}
+
+fn percentile(samples: &[Duration], percentile: usize) -> Duration {
+    let rank = samples
+        .len()
+        .saturating_mul(percentile)
+        .div_ceil(100)
+        .saturating_sub(1);
+    samples[rank.min(samples.len().saturating_sub(1))]
+}
+
 fn server_fairness(c: &mut Criterion) {
     let mut group = c.benchmark_group("server_fairness");
     group.throughput(Throughput::Elements(1));
@@ -857,6 +908,27 @@ fn run_helper(pace_millis: u64) -> io::Result<()> {
     }
 }
 
+fn run_idle_helper() -> io::Result<()> {
+    disable_stdin_echo()?;
+    let mut stdout = io::stdout();
+    stdout.write_all(READY)?;
+    stdout.write_all(b"\r\n")?;
+    stdout.flush()?;
+
+    let mut lines = io::stdin().lock().lines();
+    if lines.next().transpose()?.as_deref() != Some("GO") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "idle helper expected GO",
+        ));
+    }
+    for line in lines {
+        stdout.write_all(format!("\r\n__ROZI_ACK_{}__\r\n", line?).as_bytes())?;
+        stdout.flush()?;
+    }
+    Ok(())
+}
+
 fn run_snapshot_helper(pane_id: u32, history_rows: usize) -> io::Result<()> {
     disable_stdin_echo()?;
     let mut stdout = io::stdout();
@@ -957,6 +1029,10 @@ fn run_server(
 fn main() {
     let mut args = std::env::args().skip(1);
     let mode = args.next();
+    if mode.as_deref() == Some(IDLE_LATENCY_PROBE_ARG) {
+        idle_latency_probe();
+        return;
+    }
     if mode.as_deref() == Some(SATURATION_PROBE_ARG) {
         saturation_probe();
         return;
@@ -968,6 +1044,10 @@ fn main() {
             .parse()
             .expect("server fairness helper pace");
         run_helper(pace_millis).expect("server fairness helper failed");
+        return;
+    }
+    if mode.as_deref() == Some(IDLE_HELPER_ARG) {
+        run_idle_helper().expect("idle latency helper failed");
         return;
     }
     if mode.as_deref() == Some(SNAPSHOT_HELPER_ARG) {

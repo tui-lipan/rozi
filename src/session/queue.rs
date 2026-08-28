@@ -199,10 +199,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(queue.stats().len, 1);
-        assert_eq!(
-            queue.try_pop_with_bytes(),
-            Some((vec![1, 2, 3, 4], 4))
-        );
+        assert_eq!(queue.try_pop_with_bytes(), Some((vec![1, 2, 3, 4], 4)));
     }
 
     #[test]

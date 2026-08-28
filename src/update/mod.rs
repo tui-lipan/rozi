@@ -787,7 +787,10 @@ mod tests {
         assert_eq!(handled, 2);
         assert_eq!(update.level(), UpdateLevel::Layout);
         assert!(update.command.is_some());
-        assert!(mailbox.pop().is_some(), "the following event must remain queued");
+        assert!(
+            mailbox.pop().is_some(),
+            "the following event must remain queued"
+        );
         assert!(mailbox.pop().is_none());
     }
 

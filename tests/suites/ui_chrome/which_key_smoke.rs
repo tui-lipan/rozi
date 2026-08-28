@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use rozi::AppRoot;
 use rozi::config::WhichKey;
-use rozi::state::MoveSession;
 use tui_lipan::TestBackend;
+use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::*;
 
 const VIEWPORT: Rect = Rect {
@@ -23,6 +23,15 @@ fn prefix() -> KeyEvent {
     KeyEvent {
         code: KeyCode::Char('a'),
         mods: KeyMods::CTRL,
+    }
+}
+
+fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
+    MouseEvent {
+        x,
+        y,
+        kind,
+        mods: KeyMods::NONE,
     }
 }
 
@@ -173,21 +182,12 @@ fn a_prefix_drag_dismisses_the_strip_and_leaves_the_badge() {
             "the strip is up before the drag starts"
         );
 
-        // The move session stands in for the pointer gesture that opens it; the drag paths
-        // themselves are covered in the pane suite. What matters here is that the strip reads it.
-        let id = backend.state().current().workspaces[0].panes[0].id;
-        backend.state_mut().moving_pane = Some(MoveSession {
-            id,
-            was_floating: false,
-            drag_rect: FloatRect {
-                x: 4.0,
-                y: 2.0,
-                w: 40.0,
-                h: 10.0,
-            },
-            pointer_x: 24,
-            pointer_y: 12,
-        });
+        backend
+            .send_mouse(mouse(20, 12, MouseKind::Down(MouseButton::Left)))
+            .expect("left mouse down");
+        backend
+            .send_mouse(mouse(24, 12, MouseKind::Drag(MouseButton::Left)))
+            .expect("left mouse drag");
         assert!(
             backend.state().pointer_layout_drag_active(),
             "the drag must actually be in flight for this to be testing anything"
@@ -201,6 +201,15 @@ fn a_prefix_drag_dismisses_the_strip_and_leaves_the_badge() {
         assert!(
             view.contains("PREFIX"),
             "the badge stays until the button release clears the chord:\n{view}"
+        );
+
+        backend
+            .send_mouse(mouse(24, 12, MouseKind::Up(MouseButton::Left)))
+            .expect("left mouse release");
+        let view = rendered(&mut backend);
+        assert!(
+            !view.contains("PREFIX") && !view.contains("New pane"),
+            "the release ends prefix mode, so neither half comes back:\n{view}"
         );
     });
 }

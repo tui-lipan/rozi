@@ -76,6 +76,11 @@ pub fn isolate_user_dirs() -> &'static Path {
 /// endpoint resemble a real one.
 ///
 /// `label` and the pid keep parallel tests and repeated runs from colliding on the derived name.
+/// The label must be unique per *test*, not per module: `ensure_private_dir` checks for the
+/// directory and then creates it, so two tests that pass the same label can both see it missing and
+/// both try to create it, and the loser fails with `ERROR_ALREADY_EXISTS` instead of validating the
+/// directory that now exists. Naming the socket inside a shared parent is not enough - the parent is
+/// what races.
 ///
 /// `cfg(test)` because every caller is a unit test in this crate. The rest of this module is
 /// compiled into normal builds for integration tests to link against; this has no such caller.

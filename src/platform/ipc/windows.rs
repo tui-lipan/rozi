@@ -763,9 +763,11 @@ mod tests {
     use super::*;
 
     /// Endpoints are registry entries under a private directory, so each test needs its own to avoid
-    /// colliding on the derived pipe name when the suite runs in parallel.
+    /// colliding on the derived pipe name when the suite runs in parallel. The name has to reach the
+    /// directory too: a parent shared by every test here races on creation, and the losing thread
+    /// fails outright (see [`crate::test_support::private_temp_dir`]).
     fn temp_endpoint(name: &str) -> IpcEndpoint {
-        let dir = crate::test_support::private_temp_dir("ipc-win-test");
+        let dir = crate::test_support::private_temp_dir(&format!("ipc-win-test-{name}"));
         IpcEndpoint::at_path(dir.join(format!("{name}-{}.sock", std::process::id())))
     }
 

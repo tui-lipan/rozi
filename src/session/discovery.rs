@@ -435,9 +435,13 @@ mod tests {
     use super::*;
 
     /// A private endpoint for one test, named so parallel tests and repeated runs never collide.
+    ///
+    /// The label names the directory, not just the socket in it: a parent shared by every test in
+    /// this module races on creation, and the losing thread fails outright (see
+    /// [`crate::test_support::private_temp_dir`]).
     fn test_endpoint(label: &str) -> IpcEndpoint {
         let endpoint = IpcEndpoint::at_path(
-            crate::test_support::private_temp_dir("discovery")
+            crate::test_support::private_temp_dir(&format!("discovery-{label}"))
                 .join(format!("{label}-{}.sock", std::process::id())),
         );
         endpoint.remove_stale();

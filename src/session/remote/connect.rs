@@ -52,8 +52,8 @@ impl From<String> for RemoteConnectError {
 
 /// Spawn ssh to the resolved remote and return a protocol-ready pipe plus the preamble.
 ///
-/// `ensure_remote_binary` should already have been run on the main thread before the TUI starts
-/// when install policy is `prompt`; this call re-checks and will not prompt again if a compatible
+/// `ensure_remote_binary` should already have been run before the TUI starts when install policy
+/// is `prompt`; this call re-checks and will not prompt again if a compatible
 /// binary is already present.
 pub fn connect_remote(
     target: &RemoteTarget,

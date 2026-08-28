@@ -1161,7 +1161,7 @@ pub fn run() -> Result<()> {
         None => None,
     };
 
-    // Probe / prompt / install on the main thread before the TUI takes stdin (install = "prompt").
+    // Probe / prompt / install before the TUI takes stdin (install = "prompt").
     if let Some(ref target) = remote {
         let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
         if let Err(err) =

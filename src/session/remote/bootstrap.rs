@@ -452,8 +452,8 @@ pub fn probe_remote(target: &RemoteTarget, config: &RemoteConfig) -> Result<Prob
 
 /// Install policy entry point used before connect. Returns the remote binary path to invoke.
 ///
-/// Call this on the main thread before the TUI takes over the terminal when `install = "prompt"`,
-/// so the yes/no prompt can read stdin.
+/// Call this before the TUI takes over the terminal when `install = "prompt"`, so the yes/no
+/// prompt still has stdin to read.
 pub fn ensure_remote_binary(
     target: &RemoteTarget,
     config: &RemoteConfig,

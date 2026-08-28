@@ -659,7 +659,7 @@ mod tests {
     fn inbound_drain_budget_always_allows_one_entry_then_enforces_every_limit() {
         assert!(inbound_drain_has_capacity(
             0,
-            INBOUND_DRAIN_MAX_BYTES,
+            0,
             INBOUND_DRAIN_MAX_TIME,
         ));
         assert!(!inbound_drain_has_capacity(

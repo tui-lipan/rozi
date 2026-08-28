@@ -208,7 +208,7 @@ See [Layouts and panes](layouts-and-panes.md).
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `name` | string | `"lipan"` | Built-in theme ID, `"system"`, or a file stem from the themes directory. Custom themes reload while active. |
+| `name` | string | `"rozi"` | Built-in theme ID, `"system"`, or a file stem from the themes directory. Custom themes reload while active. |
 
 See [Themes](themes.md).
 

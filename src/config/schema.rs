@@ -193,7 +193,7 @@ pub struct ThemeConfig {
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            name: ThemePreset::Lipan.id().to_string(),
+            name: ThemePreset::Rozi.id().to_string(),
         }
     }
 }

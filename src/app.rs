@@ -65,7 +65,7 @@ impl Default for AppRoot {
     fn default() -> Self {
         let config = Config::default();
         Self {
-            initial_theme: ThemePreset::Lipan.theme(),
+            initial_theme: ThemePreset::Rozi.theme(),
             initial_system_theme: None,
             config,
             startup_profile: None,

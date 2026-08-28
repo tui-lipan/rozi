@@ -591,8 +591,9 @@ impl ThemePreset {
             .replace(['_', ' '], "-")
             .as_str()
         {
-            "rozi" => Some(Self::Rozi),
-            "lipan" | "tui-lipan" | "tuilipan" | "default" => Some(Self::Lipan),
+            // `default` follows the default rather than naming a palette, so it moved with it.
+            "rozi" | "default" => Some(Self::Rozi),
+            "lipan" | "tui-lipan" | "tuilipan" => Some(Self::Lipan),
             "one-dark" | "onedark" => Some(Self::OneDark),
             "dracula" => Some(Self::Dracula),
             "nord" => Some(Self::Nord),

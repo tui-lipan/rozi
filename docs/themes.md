@@ -16,8 +16,8 @@ The active theme controls Rozi's interface and the ANSI palette used by pane ter
 
 | Id | Label |
 | --- | --- |
-| `rozi` | Rozi |
-| `lipan` | Lipan, the default |
+| `rozi` | Rozi, the default |
+| `lipan` | Lipan |
 | `one-dark` | One Dark |
 | `dracula` | Dracula |
 | `nord` | Nord |

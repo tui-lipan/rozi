@@ -89,7 +89,8 @@ pub struct ResolvedTheme {
 }
 
 /// Resolve a `[theme].name` to a concrete theme. `system_theme` supplies the host-derived
-/// theme for the reserved `system` name; unknown names and load failures fall back to Lipan
+/// theme for the reserved `system` name; an unknown name falls back to the default theme and a
+/// custom file that fails to load falls back to Lipan, the base its `extends` defaults to, both
 /// with a warning.
 pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme {
     let fallback = ThemePreset::Lipan.theme();
@@ -97,8 +98,8 @@ pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme 
     let choice = match resolve_choice(name) {
         Some(choice) => choice,
         None => {
-            warnings.push(format!("Unknown theme `{name}`; using lipan"));
-            ThemeChoice::Builtin(ThemePreset::Lipan)
+            warnings.push(format!("Unknown theme `{name}`; using rozi"));
+            ThemeChoice::Builtin(ThemePreset::Rozi)
         }
     };
     match choice {
@@ -198,8 +199,9 @@ mod tests {
     }
 
     #[test]
-    fn resolve_theme_falls_back_to_lipan_for_unknown_name() {
+    fn resolve_theme_falls_back_to_the_default_theme_for_unknown_name() {
         let resolved = resolve_theme("definitely-not-a-real-theme-xyz", None);
+        assert_eq!(resolved.theme, ThemePreset::Rozi.theme());
         assert!(!resolved.warnings.is_empty());
         assert!(resolved.watch_path.is_none());
     }

@@ -163,7 +163,7 @@
 [theme]
 # A built-in preset id, "system" for host-derived colors, or the stem of a file in
 # ~/.config/rozi/themes/. A custom file shadows a built-in of the same name.
-#name = "lipan"
+#name = "rozi"
 
 [profile]
 # Profile seeding every session opened without a recipe. Named targets, --profile, and

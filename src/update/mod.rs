@@ -749,17 +749,25 @@ mod tests {
 
     #[test]
     fn drain_session_frames_handles_multiple_real_mailbox_entries_in_one_dispatch() {
-        let (mut backend, mailbox) = mailbox_with_frames(3);
-        let epoch = backend.state().runtime_epoch;
+        // Full-app update dispatch can exceed the test harness's default 2 MiB stack.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (mut backend, mailbox) = mailbox_with_frames(3);
+                let epoch = backend.state().runtime_epoch;
 
-        backend
-            .update_level(Msg::DrainSessionFrames {
-                epoch,
-                mailbox: std::sync::Arc::clone(&mailbox),
+                backend
+                    .update_level(Msg::DrainSessionFrames {
+                        epoch,
+                        mailbox: std::sync::Arc::clone(&mailbox),
+                    })
+                    .expect("dispatch real mailbox drain");
+
+                assert!(mailbox.is_empty());
             })
-            .expect("dispatch real mailbox drain");
-
-        assert!(mailbox.is_empty());
+            .expect("spawn drain test")
+            .join()
+            .expect("drain test panicked");
     }
 
     #[test]

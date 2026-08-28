@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.0.12 - 2026-08-28
+
+Gives the Windows installer a working spinner and a legible shape.
+
+### Fixed
+
+- The spinner turns. It reported blocking work - a hash, an HTTPS request, the payload's own
+  install - all of which hold the pipeline, so a row redrawn by the main thread could only advance
+  where the work happened to loop, and every step but the download looked frozen. It runs on its
+  own thread now.
+- The spinner is no longer drawn as `?` on a console whose code page cannot carry its glyph. The
+  thread has no PowerShell host to write through, so it writes through `[Console]::OutputEncoding`
+  - code page 852 on a Polish console, which has no `U+25D0` - while the ticks beside it came out
+  intact, because `Write-Host` reaches the console as wide characters and never passes through
+  that encoding. The console is switched to UTF-8 for the duration and restored on every exit
+  path, and only when the encoding in place cannot carry the glyph.
+- The header no longer lands on the same row as the spinner. It was printed while the `Resolve`
+  row was still active, so the turning frame and the header shared a line.
+- A finished download reports its size invariantly. `{0:N1}` follows the console's culture, and a
+  Polish console rendered `7,6 MB`, which reads as a different number.
+
+### Changed
+
+- The run has one thing trying to catch an eye: a green tick and the version painted in the
+  wordmark's gradient. The `PATH` warning answers it with an amber `!` in the same column.
+- The header reads `rozi 0.0.11` again. Removing the repeated name left a bare version under a
+  logo that says nothing about which version it is.
+- A finished download reports what arrived - `7.6 MB` - rather than restating the archive name the
+  version and target already imply.
+- Everything below the wordmark is indented one column instead of two, and the `PATH` command and
+  the target are drawn in the gradient's violet rather than the grey used for secondary text.
+
 ## 0.0.11 - 2026-08-27
 
 Fixes the PATH command the 0.0.10 installer printed, and makes what it prints legible.

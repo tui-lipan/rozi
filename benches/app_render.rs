@@ -225,12 +225,16 @@ fn message_overhead(c: &mut Criterion) {
 /// multi-writer case where that optimization cannot collapse the mailbox, and therefore exposes
 /// how much dispatcher and post-update work the drain policy adds around terminal processing.
 fn inbound_drain(c: &mut Criterion) {
-    const TOTAL_BYTES: usize = 256 * 1024;
-
     let mut group = c.benchmark_group("inbound_drain");
-    group.throughput(Throughput::Bytes(TOTAL_BYTES as u64));
     for panes in [1usize, 2, 4, 8] {
-        for chunk_size in [64usize, 1024] {
+        // The 64 B and 1 KiB cases hit the entry limit first. The 16 KiB / 1 MiB case
+        // independently exercises the soft 256 KiB byte budget after 16 entries.
+        for (chunk_size, total_bytes) in [
+            (64usize, 256 * 1024),
+            (1024, 256 * 1024),
+            (16 * 1024, 1024 * 1024),
+        ] {
+            group.throughput(Throughput::Bytes(total_bytes as u64));
             group.bench_function(
                 BenchmarkId::new(format!("{panes}_panes"), chunk_size),
                 |b| {
@@ -256,7 +260,7 @@ fn inbound_drain(c: &mut Criterion) {
                         .map(|pane| (pane.id, pane.pty_generation))
                         .collect();
                     let chunk = support::bytes_of_len(chunk_size);
-                    let frames: Vec<_> = (0..TOTAL_BYTES / chunk_size)
+                    let frames: Vec<_> = (0..total_bytes / chunk_size)
                         .map(|index| {
                             let (pane_id, generation) = pane_keys[index % pane_keys.len()];
                             Frame::PaneBytes {

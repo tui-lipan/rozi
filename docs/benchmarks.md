@@ -64,7 +64,7 @@ Criterion writes generated measurements and reports below `target/criterion/`. D
 | `snapshot_rebuild` | Measures `render_snapshot()` by viewport, server-output processing by message size, and the difference between rebuilding after every message and once per output burst. |
 | `protocol_framing` | Measures pane-output frame encode/decode round trips and serde for generated large control frames. |
 | `session_pipeline` | Measures in-memory frame encode, decode, client terminal processing, and snapshot rebuilding. Unix also includes a socket-pair case. |
-| `app_render` | Measures whole-application view expansion and layout by pane count, with empty and populated terminals. It also measures fixed sidebar states, repository-size fixtures, per-message update overhead, and real inbound-mailbox draining for round-robin multi-pane output. It does not measure backend drawing or terminal buffer diffing. |
+| `app_render` | Measures whole-application view expansion and layout by pane count, with empty and populated terminals. It also measures fixed sidebar states, repository-size fixtures, per-message update overhead, and real inbound-mailbox draining for round-robin multi-pane output. The drain cases separately exercise the entry and soft byte budgets. It does not measure backend drawing or terminal buffer diffing. |
 | `scrollback_search` | Measures complete searches across fixed pane and history counts, scanner slices, and full production mapping for one cooperative slice. Cases cover sparse, dense, and absent matches. |
 | `server_fairness` | Measures key acknowledgement through a real server-owned PTY under paced continuous ingress, durable resurrection snapshot attempts, and a one-shot bounded saturation probe. |
 

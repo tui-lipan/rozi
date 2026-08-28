@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.0.13 - 2026-08-28
+
+Brings `install.sh` up to the Windows installer it is supposed to mirror.
+
+### Changed
+
+- `install.sh` matches `install.ps1` again. Three releases of Windows-only work had left two
+  scripts that are meant to be the same program in two languages looking nothing alike. The shell
+  installer gains the turning spinner, the gradient header and success line, the amber `!` on the
+  `PATH` warning, single-column padding, and a download row that reports its size.
+- The shell spinner turns in a background subshell, for the reason the Windows one needed a
+  thread: a checksum, an HTTPS request and the payload's own install all block the script, so a row
+  the main shell redraws can only advance where the work happens to loop. Every write to the row
+  stops it first, the header included - otherwise the header lands on the same line as a live
+  frame.
+- The shell palette gained the gradient's two middle bands and a warning colour, and its violet was
+  corrected to the value `install.ps1` uses. `C_VIOLET` had drifted to a different purple and was
+  never referenced, so nothing had ever shown the difference.
+
+### Fixed
+
+- The `PATH` section is aligned under its marker. It had three indents doing two jobs: the marker's
+  text at column four, the paths under it at column three, and the line introducing the second
+  command at column one - further left than the path it followed, so one thought read as three.
+- `install.sh` reports download sizes invariantly. `awk`'s `%.1f` follows `LC_NUMERIC`, so a Polish
+  shell rendered `7,6 MB` - the same trap `{0:N1}` set on the Windows side in 0.0.12.
+
 ## 0.0.12 - 2026-08-28
 
 Gives the Windows installer a working spinner and a legible shape.

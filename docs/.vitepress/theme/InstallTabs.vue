@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref } from "vue";
+import { nextTick, onMounted, ref } from "vue";
 
 /**
  * Every channel the landing page advertises. `command` is what the clipboard
@@ -43,6 +43,39 @@ const active = ref(channels[0]);
 const copied = ref(false);
 const rippling = ref(false);
 let clear = 0;
+
+/**
+ * `curl` covers Linux and macOS both, so the only preselection that changes
+ * anything is Windows - every other platform already wants the default tab.
+ * That asymmetry is why this asks one question rather than mapping platforms
+ * onto channels: a map would imply a granularity the tabs do not have.
+ *
+ * `userAgentData.platform` is the reading that is not deprecated, but it is
+ * Chromium-only. `navigator.platform` reports `Win32` even on 64-bit Windows,
+ * and the UA string is the last resort for browsers that freeze both.
+ */
+function onWindows() {
+  const hinted = (
+    navigator as Navigator & { userAgentData?: { platform?: string } }
+  ).userAgentData?.platform;
+  const platform = hinted || navigator.platform;
+  return platform
+    ? /^win/i.test(platform)
+    : /windows/i.test(navigator.userAgent);
+}
+
+/**
+ * Deliberately in `onMounted`: the landing page is prerendered, so choosing a
+ * tab while rendering would either bake one platform's choice into the static
+ * HTML or disagree with it on hydration. The first paint is always the default
+ * tab, and a Windows visitor's switch lands with the rest of hydration. A
+ * click always wins afterwards - this runs once and never again.
+ */
+onMounted(() => {
+  if (!onWindows()) return;
+  const windows = channels.find((channel) => channel.id === "powershell");
+  if (windows) active.value = windows;
+});
 
 function select(channel: Channel) {
   active.value = channel;

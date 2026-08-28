@@ -290,6 +290,13 @@ The whole command strip is the copy button, so the click target is the command
 itself rather than the small label at its end. That label is a `span`; a
 `button` there would be a nested button inside the strip's own `button`.
 
+A Windows visitor lands on the `powershell` tab instead of the default one.
+That is the only preselection there is: `curl` already covers Linux and macOS,
+so no other platform has a tab to move to. It runs in `onMounted` because the
+page is prerendered — deciding during render would bake one platform's tab into
+the static HTML, or disagree with it on hydration — so the first paint is always
+`curl` and the switch arrives with hydration. A click always wins afterwards.
+
 ## The hosted installers
 
 `curl -fsSL https://rozi.tui-lipan.dev/install | bash` is advertised on the

@@ -392,13 +392,22 @@ fn help_key(ctx: &Context<AppRoot>) -> Option<String> {
 }
 
 /// The strip and the rect it occupies, in content-viewport coordinates, or `None` when it is
-/// disabled, no chord is pending, or the viewport has no room for it.
+/// disabled, no chord is pending, a mouse drag is reshaping the layout, or the viewport has no
+/// room for it.
 pub(crate) fn layer(ctx: &Context<AppRoot>, content: Rect) -> Option<(Rect, Element)> {
     // `command_chord_revealed` rather than `command_chord_pending`: the strip waits out
     // `[input] which_key` so a chord finished from muscle memory never flashes it. The runtime
     // schedules the frame at which the delay elapses, so nothing here needs a timer. The
     // `enabled` check comes first, which is what lets `Off` report a zero reveal delay.
     if !ctx.state.config.input.which_key.enabled() || !ctx.command_chord_revealed() {
+        return None;
+    }
+    // A pending prefix owns mouse gestures, so a prefix drag keeps the chord - and the strip -
+    // alive for the whole gesture. Once the pointer is reshaping the layout the keys it lists are
+    // no longer what the user is doing, and the strip sits over the panes being dragged. Drop it
+    // and leave the `PREFIX` badge, which is small enough to stay until the button is released and
+    // the framework clears the chord.
+    if ctx.state.pointer_layout_drag_active() {
         return None;
     }
     let rows = rows(ctx);

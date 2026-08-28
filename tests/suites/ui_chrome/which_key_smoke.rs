@@ -1,12 +1,14 @@
 //! The which-key strip is chrome driven entirely by framework chord state, so the things worth
 //! pinning are the edges where it appears, disappears, and changes shape: it must not paint when no
 //! chord is pending, it must collapse the directional families, it must drop the relational
-//! commands in an unsplit workspace, and `[input] which_key = "off"` must remove it completely.
+//! commands in an unsplit workspace, a prefix drag must dismiss it for the gesture, and
+//! `[input] which_key = "off"` must remove it completely.
 
 use std::time::Duration;
 
 use rozi::AppRoot;
 use rozi::config::WhichKey;
+use rozi::state::MoveSession;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::*;
 
@@ -155,6 +157,51 @@ fn an_unsplit_workspace_drops_the_relational_commands() {
                 "`{inert}` cannot do anything with one pane, so it should not be offered:\n{view}"
             );
         }
+    });
+}
+
+/// A pending prefix owns mouse gestures, so the chord - and with it the strip - would otherwise
+/// stay up for the whole drag, listing keys over the panes being rearranged. The badge is the half
+/// that stays: it is one token wide and it is what says the button release will end prefix mode.
+#[test]
+fn a_prefix_drag_dismisses_the_strip_and_leaves_the_badge() {
+    on_deep_stack(|| {
+        let mut backend = backend(3, WhichKey::Instant);
+        backend.send_key(prefix()).expect("prefix goes pending");
+        assert!(
+            rendered(&mut backend).contains("New pane"),
+            "the strip is up before the drag starts"
+        );
+
+        // The move session stands in for the pointer gesture that opens it; the drag paths
+        // themselves are covered in the pane suite. What matters here is that the strip reads it.
+        let id = backend.state().current().workspaces[0].panes[0].id;
+        backend.state_mut().moving_pane = Some(MoveSession {
+            id,
+            was_floating: false,
+            drag_rect: FloatRect {
+                x: 4.0,
+                y: 2.0,
+                w: 40.0,
+                h: 10.0,
+            },
+            pointer_x: 24,
+            pointer_y: 12,
+        });
+        assert!(
+            backend.state().pointer_layout_drag_active(),
+            "the drag must actually be in flight for this to be testing anything"
+        );
+
+        let view = rendered(&mut backend);
+        assert!(
+            !view.contains("New pane"),
+            "the strip should be gone once the pointer is reshaping the layout:\n{view}"
+        );
+        assert!(
+            view.contains("PREFIX"),
+            "the badge stays until the button release clears the chord:\n{view}"
+        );
     });
 }
 

@@ -53,6 +53,9 @@ mouse-aware editors and TUIs working normally.
 | Prefix, then right-drag | Resize a pane |
 | Drag a tiled split boundary | Resize the split |
 
+A drag started from a pending prefix hides the which-key strip for the gesture. The `PREFIX` badge
+stays until you release the button, which is also when the prefix ends.
+
 Rozi limits forwarded pointer-motion events to the configured frame rate so a mouse-tracking
 program does not build an input backlog. Presses, releases, and wheel events are not coalesced.
 

@@ -812,6 +812,17 @@ impl State {
             || self.follow_prompt.is_some()
     }
 
+    /// Whether a pointer gesture is currently reshaping the layout: a pane move, a pane corner
+    /// resize, a split-boundary drag, or the scratchpad's top edge. Every one of these sessions is
+    /// mouse-only - the keyboard move and resize commands act in one step and hold no session - so
+    /// this answers whether the mouse is dragging the layout right now.
+    pub fn pointer_layout_drag_active(&self) -> bool {
+        self.moving_pane.is_some()
+            || self.resizing_pane.is_some()
+            || self.split_drag.is_some()
+            || self.scratch_resize_start.is_some()
+    }
+
     /// Vertical space (in rows) the workbar removes from the panes area. Independent of whether
     /// the workbar sits at the top or the bottom - either way it consumes the same one row.
     pub fn top_chrome_height(&self) -> u16 {

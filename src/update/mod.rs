@@ -691,6 +691,16 @@ mod tests {
         (backend, mailbox)
     }
 
+    fn run_drain_test(test: impl FnOnce() + Send + 'static) {
+        // Full-app test setup and update dispatch can exceed the harness's default 2 MiB stack.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn drain test")
+            .join()
+            .expect("drain test panicked");
+    }
+
     #[test]
     fn runtime_metrics_redraw_current_but_not_parked_visible_attachment() {
         let current_epoch = 7;
@@ -727,78 +737,76 @@ mod tests {
 
     #[test]
     fn inbound_drain_consumes_64_entries_and_reschedules_the_65th() {
-        let (_backend, mailbox) = mailbox_with_frames(INBOUND_DRAIN_MAX_ENTRIES + 1);
-        mailbox.activate();
-        let mut handled = 0usize;
+        run_drain_test(|| {
+            let (_backend, mailbox) = mailbox_with_frames(INBOUND_DRAIN_MAX_ENTRIES + 1);
+            mailbox.activate();
+            let mut handled = 0usize;
 
-        let update = drain_inbound_events(
-            &mailbox,
-            || std::time::Duration::ZERO,
-            |_| {
-                handled += 1;
-                Update::none()
-            },
-        );
+            let update = drain_inbound_events(
+                &mailbox,
+                || std::time::Duration::ZERO,
+                |_| {
+                    handled += 1;
+                    Update::none()
+                },
+            );
 
-        assert_eq!(handled, INBOUND_DRAIN_MAX_ENTRIES);
-        assert_eq!(update.level(), UpdateLevel::None);
-        assert!(mailbox.drain_is_scheduled());
-        assert!(mailbox.pop().is_some(), "the 65th entry must remain queued");
-        assert!(mailbox.pop().is_none());
+            assert_eq!(handled, INBOUND_DRAIN_MAX_ENTRIES);
+            assert_eq!(update.level(), UpdateLevel::None);
+            assert!(mailbox.drain_is_scheduled());
+            assert!(mailbox.pop().is_some(), "the 65th entry must remain queued");
+            assert!(mailbox.pop().is_none());
+        });
     }
 
     #[test]
     fn drain_session_frames_handles_multiple_real_mailbox_entries_in_one_dispatch() {
-        // Full-app update dispatch can exceed the test harness's default 2 MiB stack.
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, mailbox) = mailbox_with_frames(3);
-                let epoch = backend.state().runtime_epoch;
+        run_drain_test(|| {
+            let (mut backend, mailbox) = mailbox_with_frames(3);
+            let epoch = backend.state().runtime_epoch;
 
-                backend
-                    .update_level(Msg::DrainSessionFrames {
-                        epoch,
-                        mailbox: std::sync::Arc::clone(&mailbox),
-                    })
-                    .expect("dispatch real mailbox drain");
+            backend
+                .update_level(Msg::DrainSessionFrames {
+                    epoch,
+                    mailbox: std::sync::Arc::clone(&mailbox),
+                })
+                .expect("dispatch real mailbox drain");
 
-                assert!(mailbox.is_empty());
-            })
-            .expect("spawn drain test")
-            .join()
-            .expect("drain test panicked");
+            assert!(mailbox.is_empty());
+        });
     }
 
     #[test]
     fn inbound_drain_stops_after_command_and_keeps_earlier_stronger_level() {
-        let (_backend, mailbox) = mailbox_with_frames(3);
-        let mut handled = 0usize;
+        run_drain_test(|| {
+            let (_backend, mailbox) = mailbox_with_frames(3);
+            let mut handled = 0usize;
 
-        let update = drain_inbound_events(
-            &mailbox,
-            || std::time::Duration::ZERO,
-            |_| {
-                handled += 1;
-                match handled {
-                    1 => Update::layout(),
-                    2 => Update::command_only(Command::after(
-                        std::time::Duration::ZERO,
-                        |_link: CommandLink<Msg>| {},
-                    )),
-                    _ => panic!("the event after a command must not be consumed"),
-                }
-            },
-        );
+            let update = drain_inbound_events(
+                &mailbox,
+                || std::time::Duration::ZERO,
+                |_| {
+                    handled += 1;
+                    match handled {
+                        1 => Update::layout(),
+                        2 => Update::command_only(Command::after(
+                            std::time::Duration::ZERO,
+                            |_link: CommandLink<Msg>| {},
+                        )),
+                        _ => panic!("the event after a command must not be consumed"),
+                    }
+                },
+            );
 
-        assert_eq!(handled, 2);
-        assert_eq!(update.level(), UpdateLevel::Layout);
-        assert!(update.command.is_some());
-        assert!(
-            mailbox.pop().is_some(),
-            "the following event must remain queued"
+            assert_eq!(handled, 2);
+            assert_eq!(update.level(), UpdateLevel::Layout);
+            assert!(update.command.is_some());
+            assert!(
+                mailbox.pop().is_some(),
+                "the following event must remain queued"
+            );
+            assert!(mailbox.pop().is_none());
         );
-        assert!(mailbox.pop().is_none());
     }
 
     #[test]

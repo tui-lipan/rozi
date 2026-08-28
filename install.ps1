@@ -26,6 +26,30 @@ $script:Caveat = 'Downloading an archive and its checksum from the same HTTPS re
 # Redirected and CI output remains a normal, append-only transcript.
 $script:Interactive = -not [Console]::IsOutputRedirected
 $script:Esc = if ($script:Interactive) { [char]27 } else { '' }
+
+# The spinner turns on a background thread, and a thread has no PowerShell host to write through -
+# it writes with `[Console]::Write`, which encodes through `[Console]::OutputEncoding`. On a Polish
+# console that is code page 852, which has no U+25D0, so every frame arrived as `?` while the ticks
+# and bullets the main thread writes came out intact: `Write-Host` reaches the console as wide
+# characters and never passes through that encoding at all.
+#
+# Assigning `OutputEncoding` sets the console's output code page, so this fixes the thread's writes
+# and the error path's `[Console]::Error` alike. Only done when the current encoding actually
+# cannot carry the glyph, and always put back - the code page outlives this script otherwise.
+$script:PreviousOutputEncoding = $null
+if ($script:Interactive) {
+    try {
+        $probe = [string][char]0x25D0
+        if ([Console]::OutputEncoding.GetString([Console]::OutputEncoding.GetBytes($probe)) -ne $probe) {
+            $script:PreviousOutputEncoding = [Console]::OutputEncoding
+            [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+        }
+    } catch {
+        # A host that refuses the assignment keeps its own encoding; the spinner degrades to `?`
+        # rather than the install failing over a decoration.
+        $script:PreviousOutputEncoding = $null
+    }
+}
 if ($script:Interactive -and -not $env:NO_COLOR) {
     $script:CReset = "$($script:Esc)[0m"
     # The rozi palette, matching `platform::ansi::palette` and the logo's rose-to-violet gradient.
@@ -38,6 +62,7 @@ if ($script:Interactive -and -not $env:NO_COLOR) {
     $script:CTrack = "$($script:Esc)[38;2;52;56;88m"
     $script:COk = "$($script:Esc)[38;2;74;222;128m"
     $script:CError = "$($script:Esc)[38;2;255;95;87m"
+    $script:CWarn = "$($script:Esc)[38;2;251;191;36m"
 } else {
     $script:CReset = ''
     $script:CDim = ''
@@ -48,6 +73,7 @@ if ($script:Interactive -and -not $env:NO_COLOR) {
     $script:CTrack = ''
     $script:COk = ''
     $script:CError = ''
+    $script:CWarn = ''
 }
 $script:CurrentOperation = ''
 
@@ -57,12 +83,65 @@ $script:CurrentOperation = ''
 # however cleanly the site serves it over the wire. A BOM would fix that case and break a worse
 # one: `iex` treats a leading U+FEFF as part of the first token, so `irm ... | iex` would fail
 # outright on any body whose BOM survived the fetch. ASCII source has neither problem.
-$script:GlyphActive = [string][char]0x25CF  # BLACK CIRCLE
 $script:GlyphOk     = [string][char]0x2713  # CHECK MARK
 $script:GlyphFailed = [string][char]0x2717  # BALLOT X
 $script:GlyphFill   = [string][char]0x2501  # BOX DRAWINGS HEAVY HORIZONTAL
 $script:GlyphTrack  = [string][char]0x2500  # BOX DRAWINGS LIGHT HORIZONTAL
 $script:GlyphSep    = [string][char]0x00B7  # MIDDLE DOT
+
+# The spinner turns on its own thread, because the work it reports is blocking: `Get-FileHash`, an
+# HTTPS request and the payload's own install all hold the pipeline, so a row redrawn by the main
+# thread can only advance where the work happens to loop. That made every step but the download
+# look frozen, which is worse than no spinner at all.
+$script:SpinnerFrames = @(0x25D0, 0x25D3, 0x25D1, 0x25D2) | ForEach-Object { [string][char]$_ }
+$script:SpinnerIntervalMs = 50
+$script:SpinnerIndex = 0
+$script:Spinner = $null
+
+# Paint `$Text` with the rose-to-violet gradient, sampled in four bands across `$Width` - one escape
+# per band rather than per character. `$Width` is separate from the text's own length so several
+# lines can share one ramp: the wordmark's bands have to line up vertically, which they cannot if
+# each line scales the ramp to itself.
+function Format-Gradient([string]$Text, [int]$Width = 0) {
+    if (-not $script:CAccent) {
+        return $Text
+    }
+    if ($Width -le 0) {
+        $Width = $Text.Length
+    }
+    $bands = @($script:CAccent, $script:CBand2, $script:CBand3, $script:CViolet)
+    $painted = ''
+    $previous = -1
+    for ($column = 0; $column -lt $Text.Length; $column++) {
+        # Floors and clamps for the reason the meter's band index does: `[int]` rounds in
+        # PowerShell and walks straight off the end of a four-entry array.
+        $band = [int][Math]::Floor($column * $bands.Count / $Width)
+        if ($band -ge $bands.Count) {
+            $band = $bands.Count - 1
+        }
+        if ($band -ne $previous) {
+            $painted += $bands[$band]
+            $previous = $band
+        }
+        $painted += $Text[$column]
+    }
+    "$painted$($script:CReset)"
+}
+
+# Human sizes, so a finished download reports what arrived rather than restating the file name the
+# version and target already imply.
+function Format-Bytes([int64]$Bytes) {
+    # Invariant rather than the current culture: a size is a technical fact that ends up pasted
+    # into issue reports, and a Polish console rendering it `7,6 MB` reads as a different number.
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    if ($Bytes -ge 1048576) {
+        return [string]::Format($culture, '{0:N1} MB', $Bytes / 1048576)
+    }
+    if ($Bytes -ge 1024) {
+        return [string]::Format($culture, '{0:N0} KB', $Bytes / 1024)
+    }
+    "$Bytes B"
+}
 
 # Deliberately ASCII, and character-for-character the same wordmark install.sh prints. A Windows
 # console under a non-UTF-8 code page mangles box-drawing and block characters.
@@ -74,35 +153,17 @@ function Show-Banner {
         ' | | | (_) / / | |',
         ' |_|  \___/___||_|'
     )
-    # The wordmark carries the same rose-to-violet gradient as the download meter, sampled in bands
-    # across the width rather than per cell - one escape per band, and at this width it reads as a
-    # gradient anyway. The band index floors and clamps for the reason the meter's does: `[int]`
-    # rounds in PowerShell, which walks straight off the end of a four-entry array.
-    $bands = @($script:CAccent, $script:CBand2, $script:CBand3, $script:CViolet)
+    # One ramp across the widest line, so the bands line up down the wordmark instead of each row
+    # scaling the gradient to its own length.
     $width = ($art | Measure-Object -Property Length -Maximum).Maximum
     foreach ($line in $art) {
-        if (-not $script:CAccent) {
-            Write-Host $line
-            continue
-        }
-        $painted = ''
-        $previous = -1
-        for ($column = 0; $column -lt $line.Length; $column++) {
-            $band = [int][Math]::Floor($column * $bands.Count / $width)
-            if ($band -ge $bands.Count) { $band = $bands.Count - 1 }
-            if ($band -ne $previous) {
-                $painted += $bands[$band]
-                $previous = $band
-            }
-            $painted += $line[$column]
-        }
-        Write-Host "$painted$($script:CReset)"
+        Write-Host (Format-Gradient $line $width)
     }
     Write-Host ''
 }
 
 function Write-StatusRow([string]$Symbol, [string]$Color, [string]$Operation, [string]$Detail) {
-    $row = "  $Color$Symbol$($script:CReset) $($Operation.PadRight(12))$Detail"
+    $row = " $Color$Symbol$($script:CReset) $($Operation.PadRight(12))$Detail"
     if ($script:Interactive) {
         Write-Host -NoNewline "`r$($script:Esc)[2K$row"
     } else {
@@ -110,18 +171,81 @@ function Write-StatusRow([string]$Symbol, [string]$Color, [string]$Operation, [s
     }
 }
 
+# Stop the spinner thread and leave the row for whatever writes next.
+#
+# Idempotent, and called before every write to the row - a second writer mid-frame would interleave
+# escape sequences with the finished line.
+function Stop-Spinner {
+    if (-not $script:Spinner) {
+        return
+    }
+    $spinner = $script:Spinner
+    $script:Spinner = $null
+    $spinner.Shared.Stop = $true
+    try {
+        [void]$spinner.Shell.EndInvoke($spinner.Handle)
+    } catch {
+        # The thread only writes to the console; nothing it can fail at is worth failing an install
+        # over, and the row is erased by the next write regardless.
+    }
+    $spinner.Shell.Dispose()
+}
+
+# Draw the active row and, in a console, hand it to a thread that turns it.
+#
+# The thread is given fully formed strings rather than the script's functions, because it runs in
+# its own runspace and would not see them. It writes with `[Console]::Write` for the same reason.
 function Write-Active([string]$Operation, [string]$Detail) {
+    Stop-Spinner
     $script:CurrentOperation = $Operation
-    Write-StatusRow $script:GlyphActive $script:CAccent $Operation $Detail
+    $script:SpinnerIndex = 0
+    Write-StatusRow $script:SpinnerFrames[0] $script:CAccent $Operation $Detail
+    if (-not $script:Interactive) {
+        return
+    }
+    $shared = [hashtable]::Synchronized(@{ Stop = $false })
+    $shell = [powershell]::Create()
+    [void]$shell.AddScript({
+        param($shared, $prefix, $suffix, $frames, $intervalMs)
+        $index = 0
+        while (-not $shared.Stop) {
+            Start-Sleep -Milliseconds $intervalMs
+            if ($shared.Stop) { break }
+            [Console]::Write("$prefix$($frames[$index % $frames.Count])$suffix")
+            $index++
+        }
+    })
+    [void]$shell.AddArgument($shared)
+    [void]$shell.AddArgument("`r$($script:Esc)[2K $($script:CAccent)")
+    [void]$shell.AddArgument("$($script:CReset) $($Operation.PadRight(12))$Detail")
+    [void]$shell.AddArgument($script:SpinnerFrames)
+    [void]$shell.AddArgument($script:SpinnerIntervalMs)
+    $script:Spinner = @{
+        Shell  = $shell
+        Shared = $shared
+        Handle = $shell.BeginInvoke()
+    }
+}
+
+# Redraw the active row in place, one frame on, for a caller that already owns the row - the
+# download meter, which paints a bar the spinner thread knows nothing about.
+function Write-Spin([string]$Operation, [string]$Detail) {
+    if (-not $script:Interactive) {
+        return
+    }
+    $script:SpinnerIndex = ($script:SpinnerIndex + 1) % $script:SpinnerFrames.Count
+    Write-StatusRow $script:SpinnerFrames[$script:SpinnerIndex] $script:CAccent $Operation $Detail
 }
 
 function Write-Done([string]$Operation, [string]$Detail) {
+    Stop-Spinner
     Write-StatusRow $script:GlyphOk $script:COk $Operation $Detail
     if ($script:Interactive) { Write-Host '' }
     $script:CurrentOperation = ''
 }
 
 function Write-Failed([string]$Operation, [string]$Detail) {
+    Stop-Spinner
     Write-StatusRow $script:GlyphFailed $script:CError $Operation $Detail
     if ($script:Interactive) { Write-Host '' }
     $script:CurrentOperation = ''
@@ -165,6 +289,11 @@ function Fail([string]$Message) {
 # invocation to leave: it is empty under `iex`, including an `iex` nested inside another script,
 # where `$MyInvocation.MyCommand.CommandType` still reports `ExternalScript` and would mislead.
 function Exit-Installer {
+    Stop-Spinner
+    if ($script:PreviousOutputEncoding) {
+        try { [Console]::OutputEncoding = $script:PreviousOutputEncoding } catch { }
+        $script:PreviousOutputEncoding = $null
+    }
     $global:LASTEXITCODE = $script:ExitCode
     if ($PSCommandPath) { exit $script:ExitCode }
 }
@@ -336,6 +465,10 @@ function Download-HttpsFile([string]$Url, [string]$Destination, [int64]$MaxBytes
             # previously silent long enough to look hung. A declared length is required to show a
             # percentage, and the line is rewritten in place so it collapses to one row.
             $showProgress = $ShowProgress -and $script:Interactive -and ($response.ContentLength -gt 0)
+            # The meter owns the row from here: it paints a bar the spinner thread knows nothing
+            # about, so two writers would interleave escape sequences across it. Its own redraws
+            # advance the frame instead, once per percent.
+            if ($showProgress) { Stop-Spinner }
             $lastPercent = -1
             try {
                 while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
@@ -380,7 +513,7 @@ function Download-HttpsFile([string]$Url, [string]$Destination, [int64]$MaxBytes
                                 }
                             }
                             if ($remaining -gt 0) { $bar += $script:CTrack + ($script:GlyphTrack * $remaining) }
-                            Write-StatusRow $script:GlyphActive $script:CAccent 'Download' "$bar$($script:CReset) $percent%"
+                            Write-Spin 'Download' "$bar$($script:CReset) $percent%"
                         }
                     }
                 }
@@ -592,6 +725,9 @@ function Invoke-ManagedCli([string]$Payload) {
     if ($LASTEXITCODE -ne 0 -or $help -notmatch '(?m)(^|\s)install(?:\s|$)') {
         Fail "verified archive payload has no 'install' command; no managed files were changed"
     }
+    # The longest wait in the run, and the row turns through all of it now that the spinner has its
+    # own thread - which is why this went back to a plain call. Polling the process here bought the
+    # same animation at the cost of redirected streams and a wait loop to get wrong.
     Write-Active 'Signature' 'verifying signed release'
     $output = (& $Payload install 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
@@ -695,37 +831,35 @@ function Get-PathRemediation([string]$State) {
 # application-control policy refuses the payload, the re-run fails before it reaches the PATH code
 # at all. `-AddToPath` remains the right answer at install time, where it costs nothing extra.
 function Write-CommandHint([string]$ManagedBin) {
-    if (-not $ManagedBin) {
-        Write-Host "  $($script:CDim)`$ rozi$($script:CReset)"
-        return
+    $state = if ($ManagedBin) {
+        Get-CommandHintState `
+            $ManagedBin `
+            ([Environment]::GetEnvironmentVariable('Path', 'Process')) `
+            ([Environment]::GetEnvironmentVariable('Path', 'User'))
+    } else {
+        'ready'
     }
-    $command = Join-Path $ManagedBin 'rozi.exe'
-    $state = Get-CommandHintState `
-        $ManagedBin `
-        ([Environment]::GetEnvironmentVariable('Path', 'Process')) `
-        ([Environment]::GetEnvironmentVariable('Path', 'User'))
 
     if ($state -eq 'ready') {
-        Write-Host "  $($script:CDim)`$ rozi$($script:CReset)"
+        Write-Host ' Start it with:'
+        Write-Host "   $($script:CAccent)rozi$($script:CReset)"
         return
     }
 
     if ($state -eq 'stale-session') {
-        Write-Host '  rozi is on PATH for new terminals, but not for this one.'
+        Write-Host " $($script:CWarn)!$($script:CReset)  On PATH for new terminals, but not this one. Run it with the full path:"
     } else {
-        Write-Host '  rozi is not on your PATH yet.'
+        Write-Host " $($script:CWarn)!$($script:CReset)  Not on PATH yet. Run it with the full path:"
     }
-    Write-Host ''
-    Write-Host '  Run it now:'
-    Write-Host "    $($script:CAccent)$command$($script:CReset)"
+    Write-Host "   $($script:CAccent)$(Join-Path $ManagedBin 'rozi.exe')$($script:CReset)"
     Write-Host ''
     if ($state -eq 'stale-session') {
-        Write-Host '  Or add it to this terminal - safe to run more than once:'
+        Write-Host ' or add it to this terminal (safe to run more than once):'
     } else {
-        Write-Host '  Or add it to PATH - safe to run more than once:'
+        Write-Host ' or add it to PATH (safe to run more than once):'
     }
     foreach ($line in Get-PathRemediation $state) {
-        Write-Host "    $($script:CDim)$line$($script:CReset)"
+        Write-Host "   $($script:CViolet)$line$($script:CReset)"
     }
 }
 
@@ -776,7 +910,7 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
         Write-Active 'Download' $archiveName
         Download-HttpsFile "$base/$archiveName" $archive $script:MaxArchiveBytes $true
         Download-HttpsFile "$base/$archiveName.sha256" $checksum $script:MaxChecksumBytes
-        Write-Done 'Download' $archiveName
+        Write-Done 'Download' (Format-Bytes (Get-Item -LiteralPath $archive).Length)
         Assert-Size $archive $script:MaxArchiveBytes 'release archive'
         Assert-Size $checksum $script:MaxChecksumBytes 'checksum'
         Write-Active 'Checksum' 'verifying SHA-256'
@@ -812,7 +946,10 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
         if ($AddPath) { Add-ManagedBinToPath }
 
         Write-Host ''
-        Write-Host "  rozi $ResolvedVersion installed successfully"
+        # The one line worth catching an eye on: the only green in the run, with the version
+        # painted in the wordmark's own gradient so the result reads as the same object the banner
+        # announced.
+        Write-Host " $($script:COk)$($script:GlyphOk)$($script:CReset)  $(Format-Gradient "Installed $ResolvedVersion")"
         Write-Host ''
         Write-CommandHint (Get-ManagedBinDirectory)
         Write-Host ''
@@ -842,13 +979,21 @@ try {
     }
     Assert-Version $Version
     $target = Get-Target
+    # The Resolve row is still active and its thread is still turning: erasing the line and writing
+    # the header underneath a live spinner puts the frame and the header on the same row, which is
+    # what `Resolve   latest release rozi 0.0.11 - x86_64-...` was. Any main-thread write while a
+    # row is spinning has to stop it first.
+    Stop-Spinner
     if ($script:Interactive) { Write-Host -NoNewline "`r$($script:Esc)[2K" }
-    Write-Host "  $($script:CDim)rozi $Version  $($script:GlyphSep)  $target$($script:CReset)"
+    Write-Host " $(Format-Gradient "rozi $Version")  $($script:CDim)$($script:GlyphSep)  $($script:CViolet)$target$($script:CReset)"
     Write-Host ''
     Write-Done 'Resolve' $resolvedDetail
     Install-Version $Version ([bool]$AddToPath)
     $script:ExitCode = 0
 } catch {
+    # Unconditionally, before anything else prints: an exception can land while a step is active,
+    # and a spinner thread still turning would write its next frame over the failure.
+    Stop-Spinner
     if ($script:CurrentOperation) {
         Write-Failed $script:CurrentOperation 'failed'
     }

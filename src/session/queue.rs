@@ -123,11 +123,15 @@ impl<T> ByteQueue<T> {
     }
 
     pub(crate) fn try_pop(&self) -> Option<T> {
+        self.try_pop_with_bytes().map(|(value, _)| value)
+    }
+
+    pub(crate) fn try_pop_with_bytes(&self) -> Option<(T, usize)> {
         let mut state = self.state.lock().expect("byte queue poisoned");
         let entry = state.entries.pop_front()?;
         state.bytes -= entry.bytes;
         self.changed.notify_all();
-        Some(entry.value)
+        Some((entry.value, entry.bytes))
     }
 
     pub(crate) fn pop_blocking(&self) -> Option<T> {
@@ -195,7 +199,10 @@ mod tests {
             })
             .unwrap();
         assert_eq!(queue.stats().len, 1);
-        assert_eq!(queue.try_pop(), Some(vec![1, 2, 3, 4]));
+        assert_eq!(
+            queue.try_pop_with_bytes(),
+            Some((vec![1, 2, 3, 4], 4))
+        );
     }
 
     #[test]

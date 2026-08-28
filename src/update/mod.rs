@@ -493,10 +493,10 @@ fn drain_inbound_events(
     let mut aggregate = Update::none();
 
     while inbound_drain_has_capacity(entries, bytes, elapsed()) {
-        let Some(event) = mailbox.pop() else {
+        let Some((event, event_bytes)) = mailbox.pop() else {
             break;
         };
-        bytes = bytes.saturating_add(event.wire_bytes());
+        bytes = bytes.saturating_add(event_bytes);
         entries += 1;
 
         let next = handle(event);

@@ -660,7 +660,6 @@ mod tests {
         std::sync::Arc<crate::session::client::InboundMailbox>,
     ) {
         let mut backend = TestBackend::new(AppRoot::default());
-        backend.render();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while backend.state().command_link.is_none() {
             assert!(

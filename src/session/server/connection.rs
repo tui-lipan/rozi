@@ -11,10 +11,12 @@ pub(super) struct AttachRequest {
 }
 
 impl SessionServer {
-    pub(super) fn accept_new(&mut self, listener: &IpcListener) -> io::Result<()> {
+    pub(super) fn accept_new(&mut self, listener: &IpcListener) -> io::Result<bool> {
+        let mut accepted = false;
         loop {
             match listener.accept() {
                 Ok(stream) => {
+                    accepted = true;
                     if stream.set_nonblocking(true).is_err() {
                         continue;
                     }
@@ -22,21 +24,23 @@ impl SessionServer {
                     self.next_client_id += 1;
                     self.clients.push(ClientConn::new(id, stream));
                 }
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(accepted),
                 Err(err) => return Err(err),
             }
         }
     }
 
-    pub(super) fn pump_clients(&mut self) {
+    pub(super) fn pump_clients(&mut self) -> bool {
+        let mut activity = false;
         let mut inbound: Vec<(ClientId, Frame<ClientMessage>)> = Vec::new();
         let mut dead: Vec<ClientId> = Vec::new();
         for client in &mut self.clients {
             for _ in 0..16 {
                 match client.decoder.read_from_status(&mut client.stream) {
-                    Ok(protocol::FrameReadStatus::Read(_)) => {}
+                    Ok(protocol::FrameReadStatus::Read(_)) => activity = true,
                     Ok(protocol::FrameReadStatus::WouldBlock) => break,
                     Ok(protocol::FrameReadStatus::Eof) | Err(_) => {
+                        activity = true;
                         dead.push(client.id);
                         break;
                     }
@@ -44,9 +48,13 @@ impl SessionServer {
             }
             loop {
                 match client.decoder.next_frame::<ClientMessage>() {
-                    Ok(Some(frame)) => inbound.push((client.id, frame)),
+                    Ok(Some(frame)) => {
+                        activity = true;
+                        inbound.push((client.id, frame));
+                    }
                     Ok(None) => break,
                     Err(_) => {
+                        activity = true;
                         dead.push(client.id);
                         break;
                     }
@@ -60,6 +68,7 @@ impl SessionServer {
         for id in dead {
             self.remove_client(id);
         }
+        activity
     }
 
     pub(super) fn process_client_frame(&mut self, id: ClientId, frame: Frame<ClientMessage>) {

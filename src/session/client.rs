@@ -754,6 +754,11 @@ impl InboundMailbox {
         self.queue.stats().len == 0
     }
 
+    #[cfg(test)]
+    pub(crate) fn drain_is_scheduled(&self) -> bool {
+        self.scheduled.load(Ordering::Acquire)
+    }
+
     pub(crate) fn session_name(&self) -> String {
         self.session_name.clone()
     }

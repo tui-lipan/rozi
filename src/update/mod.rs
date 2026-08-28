@@ -476,18 +476,30 @@ fn drain_session_frames(
     mailbox: std::sync::Arc<crate::session::client::InboundMailbox>,
 ) -> Update {
     let started = std::time::Instant::now();
+    drain_inbound_events(
+        &mailbox,
+        || started.elapsed(),
+        |event| inbound_event_update(app, ctx, epoch, &mailbox, event),
+    )
+}
+
+fn drain_inbound_events(
+    mailbox: &std::sync::Arc<crate::session::client::InboundMailbox>,
+    mut elapsed: impl FnMut() -> std::time::Duration,
+    mut handle: impl FnMut(crate::session::client::InboundEvent) -> Update,
+) -> Update {
     let mut entries = 0usize;
     let mut bytes = 0usize;
     let mut aggregate = Update::none();
 
-    while inbound_drain_has_capacity(entries, bytes, started.elapsed()) {
+    while inbound_drain_has_capacity(entries, bytes, elapsed()) {
         let Some(event) = mailbox.pop() else {
             break;
         };
         bytes = bytes.saturating_add(event.wire_bytes());
         entries += 1;
 
-        let next = inbound_event_update(app, ctx, epoch, &mailbox, event);
+        let next = handle(event);
         let has_command = next.command.is_some();
         aggregate = merge_updates(aggregate, next);
         // An Update can carry only one command. Yield immediately rather than dropping a later
@@ -502,6 +514,9 @@ fn drain_session_frames(
 }
 
 fn inbound_drain_has_capacity(entries: usize, bytes: usize, elapsed: std::time::Duration) -> bool {
+    // The byte and time budgets are deliberately soft: they are checked between entries, and the
+    // first entry always runs. One already-coalesced output entry can therefore exceed either
+    // budget, which guarantees progress without making the previous one-entry behavior worse.
     entries < INBOUND_DRAIN_MAX_ENTRIES
         && bytes < INBOUND_DRAIN_MAX_BYTES
         && (entries == 0 || elapsed < INBOUND_DRAIN_MAX_TIME)
@@ -635,7 +650,47 @@ fn runtime_metrics_update(epoch: u64, current_epoch: u64, devtools_visible: bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tui_lipan::UpdateLevel;
+    use crate::session::protocol::Frame;
+    use tui_lipan::{TestBackend, UpdateLevel};
+
+    fn mailbox_with_frames(
+        count: usize,
+    ) -> (
+        TestBackend<AppRoot>,
+        std::sync::Arc<crate::session::client::InboundMailbox>,
+    ) {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.render();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.state().command_link.is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the test backend never delivered its command link"
+            );
+            backend.pump().expect("settle test mount");
+            std::thread::yield_now();
+        }
+        let mailbox = crate::session::client::InboundMailbox::new(
+            backend.state().runtime_epoch,
+            "batch-test".to_string(),
+            backend
+                .state()
+                .command_link
+                .clone()
+                .expect("command link settled above"),
+        );
+        for index in 0..count {
+            mailbox
+                .push(Frame::PaneBytes {
+                    pane_id: (index % 2) as crate::state::PaneId + 1,
+                    local: false,
+                    generation: 1,
+                    bytes: vec![index as u8],
+                })
+                .expect("test frame must fit in the inbound mailbox");
+        }
+        (backend, mailbox)
+    }
 
     #[test]
     fn runtime_metrics_redraw_current_but_not_parked_visible_attachment() {
@@ -657,11 +712,7 @@ mod tests {
 
     #[test]
     fn inbound_drain_budget_always_allows_one_entry_then_enforces_every_limit() {
-        assert!(inbound_drain_has_capacity(
-            0,
-            0,
-            INBOUND_DRAIN_MAX_TIME,
-        ));
+        assert!(inbound_drain_has_capacity(0, 0, INBOUND_DRAIN_MAX_TIME));
         assert!(!inbound_drain_has_capacity(
             INBOUND_DRAIN_MAX_ENTRIES,
             0,
@@ -673,6 +724,71 @@ mod tests {
             std::time::Duration::ZERO,
         ));
         assert!(!inbound_drain_has_capacity(1, 0, INBOUND_DRAIN_MAX_TIME,));
+    }
+
+    #[test]
+    fn inbound_drain_consumes_64_entries_and_reschedules_the_65th() {
+        let (_backend, mailbox) = mailbox_with_frames(INBOUND_DRAIN_MAX_ENTRIES + 1);
+        mailbox.activate();
+        let mut handled = 0usize;
+
+        let update = drain_inbound_events(
+            &mailbox,
+            || std::time::Duration::ZERO,
+            |_| {
+                handled += 1;
+                Update::none()
+            },
+        );
+
+        assert_eq!(handled, INBOUND_DRAIN_MAX_ENTRIES);
+        assert_eq!(update.level(), UpdateLevel::None);
+        assert!(mailbox.drain_is_scheduled());
+        assert!(mailbox.pop().is_some(), "the 65th entry must remain queued");
+        assert!(mailbox.pop().is_none());
+    }
+
+    #[test]
+    fn drain_session_frames_handles_multiple_real_mailbox_entries_in_one_dispatch() {
+        let (mut backend, mailbox) = mailbox_with_frames(3);
+        let epoch = backend.state().runtime_epoch;
+
+        backend
+            .update_level(Msg::DrainSessionFrames {
+                epoch,
+                mailbox: std::sync::Arc::clone(&mailbox),
+            })
+            .expect("dispatch real mailbox drain");
+
+        assert!(mailbox.is_empty());
+    }
+
+    #[test]
+    fn inbound_drain_stops_after_command_and_keeps_earlier_stronger_level() {
+        let (_backend, mailbox) = mailbox_with_frames(3);
+        let mut handled = 0usize;
+
+        let update = drain_inbound_events(
+            &mailbox,
+            || std::time::Duration::ZERO,
+            |_| {
+                handled += 1;
+                match handled {
+                    1 => Update::layout(),
+                    2 => Update::command_only(Command::after(
+                        std::time::Duration::ZERO,
+                        |_link: CommandLink<Msg>| {},
+                    )),
+                    _ => panic!("the event after a command must not be consumed"),
+                }
+            },
+        );
+
+        assert_eq!(handled, 2);
+        assert_eq!(update.level(), UpdateLevel::Layout);
+        assert!(update.command.is_some());
+        assert!(mailbox.pop().is_some(), "the following event must remain queued");
+        assert!(mailbox.pop().is_none());
     }
 
     #[test]

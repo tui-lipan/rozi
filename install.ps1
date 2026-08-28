@@ -841,8 +841,8 @@ function Write-CommandHint([string]$ManagedBin) {
     }
 
     if ($state -eq 'ready') {
-        Write-Host ' Start it with:'
-        Write-Host "   $($script:CAccent)rozi$($script:CReset)"
+        Write-Host '    Start it with:'
+        Write-Host "      $($script:CAccent)rozi$($script:CReset)"
         return
     }
 
@@ -851,15 +851,15 @@ function Write-CommandHint([string]$ManagedBin) {
     } else {
         Write-Host " $($script:CWarn)!$($script:CReset)  Not on PATH yet. Run it with the full path:"
     }
-    Write-Host "   $($script:CAccent)$(Join-Path $ManagedBin 'rozi.exe')$($script:CReset)"
+    Write-Host "      $($script:CAccent)$(Join-Path $ManagedBin 'rozi.exe')$($script:CReset)"
     Write-Host ''
     if ($state -eq 'stale-session') {
-        Write-Host ' or add it to this terminal (safe to run more than once):'
+        Write-Host '    or add it to this terminal (safe to run more than once):'
     } else {
-        Write-Host ' or add it to PATH (safe to run more than once):'
+        Write-Host '    or add it to PATH (safe to run more than once):'
     }
     foreach ($line in Get-PathRemediation $state) {
-        Write-Host "   $($script:CViolet)$line$($script:CReset)"
+        Write-Host "      $($script:CViolet)$line$($script:CReset)"
     }
 }
 

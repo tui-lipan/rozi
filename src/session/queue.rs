@@ -123,15 +123,17 @@ impl<T> ByteQueue<T> {
     }
 
     pub(crate) fn try_pop(&self) -> Option<T> {
-        self.try_pop_with_bytes().map(|(value, _)| value)
+        self.try_pop_with_bytes_and_more()
+            .map(|(value, _, _)| value)
     }
 
-    pub(crate) fn try_pop_with_bytes(&self) -> Option<(T, usize)> {
+    pub(crate) fn try_pop_with_bytes_and_more(&self) -> Option<(T, usize, bool)> {
         let mut state = self.state.lock().expect("byte queue poisoned");
         let entry = state.entries.pop_front()?;
         state.bytes -= entry.bytes;
+        let has_more = !state.entries.is_empty();
         self.changed.notify_all();
-        Some((entry.value, entry.bytes))
+        Some((entry.value, entry.bytes, has_more))
     }
 
     pub(crate) fn pop_blocking(&self) -> Option<T> {
@@ -199,7 +201,20 @@ mod tests {
             })
             .unwrap();
         assert_eq!(queue.stats().len, 1);
-        assert_eq!(queue.try_pop_with_bytes(), Some((vec![1, 2, 3, 4], 4)));
+        assert_eq!(
+            queue.try_pop_with_bytes_and_more(),
+            Some((vec![1, 2, 3, 4], 4, false))
+        );
+    }
+
+    #[test]
+    fn weighted_pop_reports_whether_an_entry_remains() {
+        let queue = ByteQueue::new(2);
+        queue.try_push(1, 1).unwrap();
+        queue.try_push(2, 1).unwrap();
+
+        assert_eq!(queue.try_pop_with_bytes_and_more(), Some((1, 1, true)));
+        assert_eq!(queue.try_pop_with_bytes_and_more(), Some((2, 1, false)));
     }
 
     #[test]

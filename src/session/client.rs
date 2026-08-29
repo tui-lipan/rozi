@@ -736,8 +736,8 @@ impl InboundMailbox {
         self.schedule();
     }
 
-    pub(crate) fn pop(&self) -> Option<(InboundEvent, usize)> {
-        self.queue.try_pop_with_bytes()
+    pub(crate) fn pop(&self) -> Option<(InboundEvent, usize, bool)> {
+        self.queue.try_pop_with_bytes_and_more()
     }
 
     pub(crate) fn is_empty(&self) -> bool {

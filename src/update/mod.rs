@@ -475,25 +475,55 @@ fn drain_session_frames(
     epoch: u64,
     mailbox: std::sync::Arc<crate::session::client::InboundMailbox>,
 ) -> Update {
+    let Some((event, event_bytes, has_more)) = mailbox.pop() else {
+        mailbox.finish_drain();
+        return Update::none();
+    };
+    if !has_more {
+        let update = inbound_event_update(app, ctx, epoch, &mailbox, event);
+        mailbox.finish_drain();
+        return update;
+    }
+
     let started = std::time::Instant::now();
-    drain_inbound_events(
+    drain_inbound_events_from_first(
         &mailbox,
+        (event, event_bytes),
         || started.elapsed(),
         |event| inbound_event_update(app, ctx, epoch, &mailbox, event),
     )
 }
 
+#[cfg(test)]
 fn drain_inbound_events(
     mailbox: &std::sync::Arc<crate::session::client::InboundMailbox>,
+    elapsed: impl FnMut() -> std::time::Duration,
+    handle: impl FnMut(crate::session::client::InboundEvent) -> Update,
+) -> Update {
+    let Some((event, event_bytes, _)) = mailbox.pop() else {
+        mailbox.finish_drain();
+        return Update::none();
+    };
+    drain_inbound_events_from_first(mailbox, (event, event_bytes), elapsed, handle)
+}
+
+fn drain_inbound_events_from_first(
+    mailbox: &std::sync::Arc<crate::session::client::InboundMailbox>,
+    first: (crate::session::client::InboundEvent, usize),
     mut elapsed: impl FnMut() -> std::time::Duration,
     mut handle: impl FnMut(crate::session::client::InboundEvent) -> Update,
 ) -> Update {
-    let mut entries = 0usize;
-    let mut bytes = 0usize;
-    let mut aggregate = Update::none();
+    let (event, event_bytes) = first;
+    let mut entries = 1usize;
+    let mut bytes = event_bytes;
+    let mut aggregate = handle(event);
+    if aggregate.command.is_some() {
+        mailbox.finish_drain();
+        return aggregate;
+    }
 
     while inbound_drain_has_capacity(entries, bytes, elapsed()) {
-        let Some((event, event_bytes)) = mailbox.pop() else {
+        let Some((event, event_bytes, _)) = mailbox.pop() else {
             break;
         };
         bytes = bytes.saturating_add(event_bytes);
@@ -771,6 +801,23 @@ mod tests {
                     mailbox: std::sync::Arc::clone(&mailbox),
                 })
                 .expect("dispatch real mailbox drain");
+
+            assert!(mailbox.is_empty());
+        });
+    }
+
+    #[test]
+    fn drain_session_frames_handles_single_mailbox_entry() {
+        run_drain_test(|| {
+            let (mut backend, mailbox) = mailbox_with_frames(1);
+            let epoch = backend.state().runtime_epoch;
+
+            backend
+                .update_level(Msg::DrainSessionFrames {
+                    epoch,
+                    mailbox: std::sync::Arc::clone(&mailbox),
+                })
+                .expect("dispatch single mailbox entry");
 
             assert!(mailbox.is_empty());
         });

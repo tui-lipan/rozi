@@ -33,9 +33,8 @@ pub(crate) fn read_last_named_session() -> Option<String> {
     discovery::valid_session_name(name).then(|| name.to_string())
 }
 
-/// The most recently used ad-hoc `--remote` targets, most-recent first. Persisted so the
-/// "Connect remote host…" prompt can offer them without re-typing. Only the target string is stored
-/// (host / user@host:port / ssh:// URL) - never a password or key, which SSH handles out of band.
+/// The most recently used remote targets, most-recent first. Only canonical target specs are
+/// stored — never a password or key, which SSH handles out of band.
 const MAX_RECENT_REMOTES: usize = 10;
 
 fn recent_remotes_path() -> Option<std::path::PathBuf> {
@@ -44,12 +43,7 @@ fn recent_remotes_path() -> Option<std::path::PathBuf> {
         .then(|| crate::platform::paths::state_dir(&env).join("recent-remotes"))
 }
 
-/// Record a successfully-used ad-hoc remote target, moving it to the front and capping the list.
-pub(crate) fn record_recent_remote(target: &str) {
-    let target = target.trim();
-    if target.is_empty() {
-        return;
-    }
+fn write_recent_remotes(entries: &[remote::RemoteTarget]) {
     let Some(path) = recent_remotes_path() else {
         return;
     };
@@ -58,25 +52,57 @@ pub(crate) fn record_recent_remote(target: &str) {
     {
         return;
     }
+    let text = entries
+        .iter()
+        .map(remote::RemoteTarget::to_spec)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = std::fs::write(path, text);
+}
+
+fn update_recent_targets(
+    entries: &mut Vec<remote::RemoteTarget>,
+    target: &remote::RemoteTarget,
+) {
+    entries.retain(|entry| entry != target);
+    entries.insert(0, target.clone());
+    entries.truncate(MAX_RECENT_REMOTES);
+}
+
+/// Record a successfully-used remote target, moving it to the front and capping the list.
+pub(crate) fn record_recent_remote(target: &remote::RemoteTarget) {
+    let mut entries = read_recent_remotes();
+    update_recent_targets(&mut entries, target);
+    write_recent_remotes(&entries);
+}
+
+/// Forget one exact remote identity without affecting a target with the same display label.
+pub(crate) fn forget_recent_remote(target: &remote::RemoteTarget) {
     let mut entries = read_recent_remotes();
     entries.retain(|entry| entry != target);
-    entries.insert(0, target.to_string());
-    entries.truncate(MAX_RECENT_REMOTES);
-    let _ = std::fs::write(path, entries.join("\n"));
+    write_recent_remotes(&entries);
 }
 
 /// Recently used ad-hoc remote targets, most-recent first.
-pub(crate) fn read_recent_remotes() -> Vec<String> {
+pub(crate) fn read_recent_remotes() -> Vec<remote::RemoteTarget> {
     let Some(path) = recent_remotes_path() else {
         return Vec::new();
     };
     std::fs::read_to_string(path)
         .map(|text| {
-            text.lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(str::to_string)
-                .collect()
+            let mut entries = Vec::new();
+            for target in text
+                .lines()
+                .filter_map(|line| remote::parse_remote_target(line.trim()).ok())
+            {
+                if !entries.contains(&target) {
+                    entries.push(target);
+                }
+                if entries.len() == MAX_RECENT_REMOTES {
+                    break;
+                }
+            }
+            entries
         })
         .unwrap_or_default()
 }
@@ -169,5 +195,43 @@ mod tests {
             serde_json::from_str(r#"{"box":[{"name":"only"}]}"#).unwrap();
         assert_eq!(sparse["box"][0].name, "only");
         assert_eq!(sparse["box"][0].panes, 0);
+    }
+
+    #[test]
+    fn typed_recents_deduplicate_move_to_front_and_cap() {
+        let mut entries = (0..MAX_RECENT_REMOTES)
+            .map(|index| remote::RemoteTarget::Alias(format!("host-{index}")))
+            .collect::<Vec<_>>();
+        let reused = entries[5].clone();
+        update_recent_targets(&mut entries, &reused);
+        assert_eq!(entries.first(), Some(&reused));
+        assert_eq!(entries.len(), MAX_RECENT_REMOTES);
+        assert_eq!(entries.iter().filter(|entry| *entry == &reused).count(), 1);
+
+        update_recent_targets(
+            &mut entries,
+            &remote::RemoteTarget::Url {
+                user: Some("adam".into()),
+                host: "new.example".into(),
+                port: Some(2222),
+            },
+        );
+        assert_eq!(entries.len(), MAX_RECENT_REMOTES);
+        assert_eq!(
+            entries.first().unwrap().to_spec(),
+            "ssh://adam@new.example:2222"
+        );
+    }
+
+    #[test]
+    fn recent_lines_parse_typed_identity_and_ignore_malformed_values() {
+        let parsed = ["workbox", "ssh://workbox", "bad target"]
+            .into_iter()
+            .filter_map(|line| remote::parse_remote_target(line).ok())
+            .collect::<Vec<_>>();
+        assert_eq!(parsed.len(), 2);
+        assert_ne!(parsed[0], parsed[1]);
+        assert_eq!(parsed[0].to_spec(), "workbox");
+        assert_eq!(parsed[1].to_spec(), "ssh://workbox");
     }
 }

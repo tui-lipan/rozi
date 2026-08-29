@@ -200,6 +200,7 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             crate::ops::session::remotes::activate_host(ctx, target)
         }
         Msg::RemotePickerNewHost => crate::ops::session::remotes::open_new_host_prompt(ctx),
+        Msg::RemotePickerForgetHost => crate::ops::session::remotes::forget_host(ctx),
         Msg::RemoteTargetPromptChanged(event) => {
             crate::ops::session::remotes::target_prompt_changed(ctx, event)
         }

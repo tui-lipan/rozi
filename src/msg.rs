@@ -227,6 +227,7 @@ pub enum Msg {
     RemotePickerHostSelect(crate::session::remote::RemoteTarget),
     RemotePickerHostActivate(crate::session::remote::RemoteTarget),
     RemotePickerNewHost,
+    RemotePickerForgetHost,
     RemoteTargetPromptChanged(InputEvent),
     SubmitRemoteTarget,
     CloseRemoteTargetPrompt,

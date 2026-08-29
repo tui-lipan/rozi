@@ -373,6 +373,18 @@ pub(crate) fn held_host_targets(
     std::iter::once(state.current())
         .chain(state.background.values())
         .filter_map(|attachment| {
+            if !attachment.session_attached
+                && attachment.pending_session_attach.is_none()
+                && !matches!(
+                    attachment.connection,
+                    crate::state::ConnectionState::Connected
+                        | crate::state::ConnectionState::Connecting
+                        | crate::state::ConnectionState::Reconnecting
+                        | crate::state::ConnectionState::AuthRequired
+                )
+            {
+                return None;
+            }
             let target = attachment.remote_target.clone()?;
             let alias = attachment
                 .remote_host

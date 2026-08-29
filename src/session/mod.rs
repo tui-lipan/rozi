@@ -171,6 +171,18 @@ pub(crate) fn set_cached_host_sessions(
     cache.insert(canonical, sessions);
 }
 
+pub(crate) fn remove_cached_host_sessions(
+    cache: &mut HostSessionCache,
+    target: &remote::RemoteTarget,
+) {
+    let canonical = target.to_spec();
+    let legacy = target.display_label();
+    let had_canonical = cache.remove(&canonical).is_some();
+    if legacy != canonical && !had_canonical {
+        cache.remove(&legacy);
+    }
+}
+
 fn write_host_session_cache(cache: &HostSessionCache) {
     let Some(path) = host_sessions_path() else {
         return;
@@ -200,8 +212,7 @@ pub(crate) fn record_host_sessions(
 /// Remove both canonical and legacy cache identities for one exact target.
 pub(crate) fn forget_host_sessions(target: &remote::RemoteTarget) {
     let mut cache = read_host_session_cache();
-    cache.remove(&target.to_spec());
-    cache.remove(&target.display_label());
+    remove_cached_host_sessions(&mut cache, target);
     write_host_session_cache(&cache);
 }
 
@@ -265,6 +276,10 @@ mod tests {
 
         set_cached_host_sessions(&mut cache, &url, legacy.clone());
         assert_eq!(cache.get("ssh://box"), Some(&legacy));
+        assert_eq!(cache.get("box"), Some(&legacy));
+
+        remove_cached_host_sessions(&mut cache, &url);
+        assert!(!cache.contains_key("ssh://box"));
         assert_eq!(cache.get("box"), Some(&legacy));
     }
 

@@ -148,6 +148,65 @@ pub(crate) fn host_selected(ctx: &mut Context<AppRoot>, target: RemoteTarget) ->
     Update::full()
 }
 
+pub(crate) fn host_can_forget(
+    state: &crate::state::State,
+    target: &RemoteTarget,
+) -> bool {
+    let Some(entry) = state.hosts.get(target) else {
+        return false;
+    };
+    entry.origin == crate::state::HostOrigin::Recent
+        && !matches!(entry.probe, crate::state::HostProbe::InFlight)
+        && std::iter::once(state.current())
+            .chain(state.background.values())
+            .all(|attachment| {
+                attachment.remote_target.as_ref() != Some(target)
+                    || !matches!(
+                        attachment.connection,
+                        crate::state::ConnectionState::Connected
+                            | crate::state::ConnectionState::Connecting
+                            | crate::state::ConnectionState::Reconnecting
+                            | crate::state::ConnectionState::AuthRequired
+                    )
+            })
+}
+
+pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(target) = ctx
+        .state
+        .remote_picker
+        .as_ref()
+        .and_then(|picker| picker.selected_host.clone())
+    else {
+        return Update::none();
+    };
+    if !host_can_forget(&ctx.state, &target) {
+        return Update::none();
+    }
+    let armed = ctx
+        .state
+        .remote_picker
+        .as_ref()
+        .is_some_and(|picker| picker.pending_forget.as_ref() == Some(&target));
+    if !armed {
+        if let Some(picker) = ctx.state.remote_picker.as_mut() {
+            picker.pending_forget = Some(target);
+        }
+        return crate::ops::confirm::arm(ctx);
+    }
+    crate::session::forget_recent_remote(&target);
+    crate::session::forget_host_sessions(&target);
+    crate::session::remove_cached_host_sessions(&mut ctx.state.host_session_cache, &target);
+    crate::ops::session::seed_host_registry(ctx);
+    let selected = ctx.state.hosts.iter().next().map(|entry| entry.target.clone());
+    if let Some(picker) = ctx.state.remote_picker.as_mut() {
+        picker.selected_host = selected;
+        picker.pending_forget = None;
+    }
+    ctx.state.sidebar.invalidate_sessions();
+    Update::full()
+}
+
 pub(crate) fn activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
     let rows = cached_rows_for_target(&ctx.state.host_session_cache, &target);
     let epoch = if let Some(picker) = ctx.state.remote_picker.as_mut() {
@@ -514,5 +573,36 @@ mod tests {
         picker.enter_host_sessions(selected.clone());
         state.remote_picker = Some(picker);
         assert_eq!(selected_target(&state), Some(selected));
+    }
+
+    #[test]
+    fn only_offline_recent_hosts_are_forgettable() {
+        let recent = RemoteTarget::Alias("recent".into());
+        let configured = RemoteTarget::Alias("configured".into());
+        let mut config = crate::config::Config::default();
+        config
+            .remote
+            .hosts
+            .insert("configured".into(), crate::config::RemoteHostConfig::default());
+        let mut state = crate::state::State::new(
+            config,
+            tui_lipan::prelude::Theme::default(),
+        );
+        state.hosts.seed(
+            &state.config.remote,
+            std::slice::from_ref(&recent),
+            &[],
+        );
+        assert!(host_can_forget(&state, &recent));
+        assert!(!host_can_forget(&state, &configured));
+
+        state.current_mut().remote_target = Some(recent.clone());
+        state.current_mut().connection = crate::state::ConnectionState::Connected;
+        assert!(!host_can_forget(&state, &recent));
+        state.current_mut().connection = crate::state::ConnectionState::Disconnected;
+        assert!(host_can_forget(&state, &recent));
+
+        state.hosts.get_mut(&recent).unwrap().probe = crate::state::HostProbe::InFlight;
+        assert!(!host_can_forget(&state, &recent));
     }
 }

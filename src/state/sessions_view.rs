@@ -81,8 +81,8 @@ pub enum HostStatus {
     Unreachable,
 }
 
-/// The set of known remote hosts, kept sorted by [`HostOrigin`] then alias so the tree order is
-/// stable across refreshes.
+/// The set of known remote hosts: configured aliases alphabetically, recents in MRU order, then
+/// attached-only hosts alphabetically.
 #[derive(Clone, Debug, Default)]
 pub struct HostRegistry {
     entries: Vec<HostEntry>,
@@ -111,7 +111,7 @@ impl HostRegistry {
     /// (connection) state. Called whenever the Sessions view opens or refreshes.
     ///
     /// - `remote_config`: configured `[remote.hosts.*]` aliases and `default_host`.
-    /// - `recents`: recently used ad-hoc `--remote` target strings, most-recent first.
+    /// - `recents`: recently used remote targets, most-recent first.
     /// - `held`: `(target, alias)` for every host a live attachment currently targets.
     ///
     /// A host present in more than one source keeps its strongest origin (Configured wins over
@@ -119,7 +119,7 @@ impl HostRegistry {
     pub fn seed(
         &mut self,
         remote_config: &RemoteConfig,
-        recents: &[String],
+        recents: &[RemoteTarget],
         held: &[(RemoteTarget, String)],
     ) {
         let mut rebuilt: Vec<HostEntry> = Vec::new();
@@ -156,11 +156,12 @@ impl HostRegistry {
             }
         }
 
-        for raw in recents {
-            if let Ok(target) = parse_remote_target(raw) {
-                let alias = target.display_label();
-                upsert(target, alias, HostOrigin::Recent);
-            }
+        for target in recents {
+            upsert(
+                target.clone(),
+                target.display_label(),
+                HostOrigin::Recent,
+            );
         }
 
         for (target, alias) in held {
@@ -175,7 +176,11 @@ impl HostRegistry {
             }
         }
 
-        rebuilt.sort_by(|a, b| a.origin.cmp(&b.origin).then_with(|| a.alias.cmp(&b.alias)));
+        // Configured entries were inserted alphabetically and recents in persisted MRU order.
+        // Only the attached-only tail needs normalizing: sorting the whole registry would destroy
+        // the order that makes Recent useful.
+        let attached_start = rebuilt.partition_point(|entry| entry.origin != HostOrigin::Attached);
+        rebuilt[attached_start..].sort_by(|a, b| a.alias.cmp(&b.alias));
         self.entries = rebuilt;
     }
 
@@ -234,7 +239,10 @@ mod tests {
         let mut registry = HostRegistry::default();
         registry.seed(
             &config(&["workbox"], Some("prod")),
-            &["scratch".to_string(), "workbox".to_string()],
+            &[
+                RemoteTarget::Alias("scratch".into()),
+                RemoteTarget::Alias("workbox".into()),
+            ],
             &[(RemoteTarget::Alias("adhoc".into()), "adhoc".into())],
         );
         let aliases: Vec<&str> = registry.iter().map(|entry| entry.alias.as_str()).collect();
@@ -257,7 +265,11 @@ mod tests {
         let target = RemoteTarget::Alias("workbox".into());
         registry.get_mut(&target).unwrap().probe = HostProbe::Failed("timed out".to_string());
         // A recent is added, but workbox survives and keeps its connection state.
-        registry.seed(&config(&["workbox"], None), &["scratch".to_string()], &[]);
+        registry.seed(
+            &config(&["workbox"], None),
+            &[RemoteTarget::Alias("scratch".into())],
+            &[],
+        );
         let entry = registry.get(&target).unwrap();
         assert_eq!(entry.probe.error(), Some("timed out"));
         // A host that dropped out of every source is gone.
@@ -317,5 +329,49 @@ mod tests {
             registry.status_for(&target, std::iter::empty(), true),
             HostStatus::Reachable
         );
+    }
+
+    #[test]
+    fn configured_is_alphabetical_while_recent_preserves_mru() {
+        let mut registry = HostRegistry::default();
+        registry.seed(
+            &config(&["zeta", "alpha"], None),
+            &[
+                RemoteTarget::Alias("recent-z".into()),
+                RemoteTarget::Alias("recent-a".into()),
+            ],
+            &[
+                (RemoteTarget::Alias("held-z".into()), "held-z".into()),
+                (RemoteTarget::Alias("held-a".into()), "held-a".into()),
+            ],
+        );
+        let aliases = registry
+            .iter()
+            .map(|entry| entry.alias.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            aliases,
+            vec![
+                "alpha",
+                "zeta",
+                "recent-z",
+                "recent-a",
+                "held-a",
+                "held-z"
+            ]
+        );
+    }
+
+    #[test]
+    fn target_keeps_its_strongest_origin_without_duplication() {
+        let target = RemoteTarget::Alias("workbox".into());
+        let mut registry = HostRegistry::default();
+        registry.seed(
+            &config(&["workbox"], None),
+            std::slice::from_ref(&target),
+            &[(target.clone(), "workbox".into())],
+        );
+        assert_eq!(registry.iter().count(), 1);
+        assert_eq!(registry.get(&target).unwrap().origin, HostOrigin::Configured);
     }
 }

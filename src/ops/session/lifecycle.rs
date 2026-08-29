@@ -558,9 +558,6 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<AppRoot>) -> Update {
             }
             ctx.state.rename_session = None;
             crate::ops::overlay_return::leave(ctx);
-            let target = crate::session::remote::parse_remote_target(&host)
-                .expect("remote target validated above");
-            crate::session::record_recent_remote(&target);
             // Attach a fresh ephemeral session on the remote host (as `--remote <host>` does with no
             // session named). The current session is retained in the background per the usual switch.
             let session = crate::state::remote_ephemeral_session_name();

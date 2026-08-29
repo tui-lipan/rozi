@@ -356,10 +356,7 @@ pub(crate) fn held_host_targets(
 /// live attachments. Preserves each host's expand/collapse and error state (see
 /// [`crate::state::HostRegistry::seed`]).
 pub(crate) fn seed_host_registry(ctx: &mut Context<AppRoot>) {
-    let recents = crate::session::read_recent_remotes()
-        .into_iter()
-        .map(|target| target.to_spec())
-        .collect::<Vec<_>>();
+    let recents = crate::session::read_recent_remotes();
     let held = held_host_targets(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
     ctx.state.hosts.seed(&remote_config, &recents, &held);

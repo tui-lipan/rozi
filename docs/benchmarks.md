@@ -73,10 +73,10 @@ The saturation probe is not a Criterion latency statistic. It checks the configu
 high-water behavior under unpaced producers and reports whether the bounded downstream policy
 activates. Keep its result separate from the paced key-acknowledgement benchmark.
 
-The idle-latency probe takes 200 key round trips, allowing 50 ms of quiescence before each one, and
-reports p50, p95, p99, and maximum latency. Run it on the same dedicated host before and after a
-server-wait change; unlike Criterion estimate intervals, these values are request-latency
-percentiles.
+The idle-latency probe takes 200 key round trips, allowing 50-66 ms of deterministically
+phase-jittered quiescence before each one, and reports p50, p95, p99, and maximum latency. Run it on
+the same dedicated host before and after a server-wait change; unlike Criterion estimate intervals,
+these values are request-latency percentiles.
 
 The resurrection cases report the server's complete durable snapshot attempt. Trigger and polling
 delay stay outside the sample. The benchmark also emits server-loop blocking data, which has a

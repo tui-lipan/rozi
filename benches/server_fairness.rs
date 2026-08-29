@@ -36,7 +36,9 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_PTY_EVENT_CHUNK: u64 = 64 * 1024;
 const FAIRNESS_TAIL_CAP: usize = 256;
 const IDLE_LATENCY_SAMPLES: usize = 200;
-const IDLE_SETTLE_TIME: Duration = Duration::from_millis(50);
+const IDLE_SETTLE_MIN_MS: u64 = 50;
+const IDLE_SETTLE_PHASES_MS: u64 = 17;
+const IDLE_SETTLE_PHASE_STEP_MS: u64 = 5;
 
 #[derive(Clone, Copy)]
 struct ServerLaunch {
@@ -760,8 +762,9 @@ fn idle_latency_probe() {
     let mut samples = Vec::with_capacity(IDLE_LATENCY_SAMPLES);
     for sequence in 0..IDLE_LATENCY_SAMPLES {
         // Let both the server and client return to their steady idle cadence before every sample;
-        // this measures the user-visible cold key path rather than a warm burst.
-        std::thread::sleep(IDLE_SETTLE_TIME);
+        // deterministic jitter prevents the probe from locking to the server's polling phase.
+        let phase_ms = (sequence as u64 * IDLE_SETTLE_PHASE_STEP_MS) % IDLE_SETTLE_PHASES_MS;
+        std::thread::sleep(Duration::from_millis(IDLE_SETTLE_MIN_MS + phase_ms));
         let key = format!("idle-{sequence:016x}");
         let started = Instant::now();
         fixture
@@ -774,9 +777,10 @@ fn idle_latency_probe() {
     }
     samples.sort_unstable();
     eprintln!(
-        "idle_latency_probe samples={} settle_ms={} p50_us={} p95_us={} p99_us={} max_us={}",
+        "idle_latency_probe samples={} settle_ms={}-{} p50_us={} p95_us={} p99_us={} max_us={}",
         samples.len(),
-        IDLE_SETTLE_TIME.as_millis(),
+        IDLE_SETTLE_MIN_MS,
+        IDLE_SETTLE_MIN_MS + IDLE_SETTLE_PHASES_MS - 1,
         percentile(&samples, 50).as_micros(),
         percentile(&samples, 95).as_micros(),
         percentile(&samples, 99).as_micros(),

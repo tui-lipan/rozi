@@ -55,12 +55,40 @@ Open **Sessions** with the `s` command key.
 | `Ctrl+E` twice | Restart a live session with fresh panes |
 | `Ctrl+W` | Disconnect this client from a background session |
 | `Ctrl+X` | Disconnect a remote host |
-| `Ctrl+R` | Connect a remote host |
+| `Ctrl+R` | Open Remote hosts |
 | `Ctrl+T` | Open or switch to this client's temporary shell |
 | `Esc` | Return to the sessionless launcher |
 
-The picker updates while it is open. A row can show whether a session is attached in the
-background, shared with other clients, restorable, or created from a profile.
+The picker updates local session state while it is open. A row can show whether a session is
+attached in the background, shared with other clients, restorable, or created from a profile.
+Opening Sessions does not contact configured remote hosts. Remote sessions already known from the
+last successful host discovery remain available from cache.
+
+### Browse remote hosts
+
+Press `Ctrl+R` in Sessions to open **Remote hosts**. The list combines configured hosts, recently
+used hosts, and hosts with a live attachment. Opening or returning to this list is local and does
+not contact any machine.
+
+| Key | Remote hosts | Sessions · host |
+| --- | --- | --- |
+| `Enter` | Discover and browse the selected host | Attach or switch to the selected session |
+| `Ctrl+N` | Enter a new SSH target | Create a named session on this host |
+| `Ctrl+T` | — | Create or switch to a temporary session on this host |
+| `Ctrl+K` twice | Forget an offline Recent host | Kill the selected session |
+| `Ctrl+E` twice | — | Restart the selected session |
+| `Ctrl+W` | — | Disconnect a retained session attachment |
+| `Ctrl+X` | — | Disconnect this client from the host |
+| `Esc` | Return to Sessions | Return to Remote hosts |
+
+Activating a host shows cached sessions immediately, then probes only that host. A successful
+result replaces the cache. If the host is unreachable, cached rows remain visible with the failure
+state. A successfully reached new host is remembered even when it has no sessions; a failed target
+is not remembered. OpenSSH remains responsible for aliases, keys, agents, and `ProxyJump`.
+
+Only offline Recent hosts can be forgotten. Configured hosts remain defined by configuration, and
+a host with a live or connecting attachment must be disconnected first. Forgetting also removes
+its cached session metadata.
 
 Switching sessions keeps the old attachment connected in the background. Its screens and
 scrollback continue to receive output. A background attachment gives up layout control. Returning

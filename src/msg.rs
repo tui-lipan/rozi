@@ -234,7 +234,10 @@ pub enum Msg {
     RemoteHostSessionsDiscovered {
         epoch: u64,
         target: crate::session::remote::RemoteTarget,
-        rows: Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
+        rows: std::result::Result<
+            Vec<crate::session::discovery::DiscoveredSession>,
+            String,
+        >,
     },
     RemotePickerSessionQueryChanged(String),
     RemotePickerSessionSelect(crate::state::RemoteSessionIdentity),

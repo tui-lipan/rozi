@@ -215,8 +215,15 @@ After `Shift+B` focuses the sidebar:
 
 The session picker uses `Enter` to connect, switch, or restore. `Ctrl+N` creates a named session,
 `Ctrl+K` twice kills or forgets, `Ctrl+E` twice restarts a live session, `Ctrl+W` disconnects a
-background attachment, `Ctrl+X` disconnects a remote host, `Ctrl+R` adds a remote host, and
-`Ctrl+T` opens the temporary shell. See [Sessions](sessions.md#use-the-session-picker).
+background attachment, `Ctrl+X` disconnects a remote host, `Ctrl+R` opens **Remote hosts**, and
+`Ctrl+T` opens the temporary shell. Opening Sessions performs no remote probes. See
+[Sessions](sessions.md#use-the-session-picker).
+
+In **Remote hosts**, `Enter` discovers only the selected host, `Ctrl+N` opens the shared new-host
+prompt, and `Ctrl+K` twice forgets an offline Recent host. The host-scoped Sessions view uses
+`Enter` to attach, `Ctrl+N` for a named session, `Ctrl+T` for a temporary session, `Ctrl+K` twice to
+kill, `Ctrl+E` twice to restart, `Ctrl+W` to disconnect a retained attachment, and `Ctrl+X` to
+disconnect from that host. `Esc` returns from host sessions to Remote hosts, then to Sessions.
 
 The profile picker uses `Enter` for the same-name session, `Ctrl+O` to launch under another name,
 `Ctrl+N` to capture, `Ctrl+R` twice to replace the current session, `Ctrl+F` to toggle the default,

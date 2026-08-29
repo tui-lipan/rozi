@@ -71,9 +71,8 @@ pub(crate) fn clear_pending_session_arms(ctx: &mut Context<AppRoot>) {
 }
 
 pub(crate) fn open_session_picker(ctx: &mut Context<AppRoot>) -> Update {
-    // Open instantly from local discovery and the last successful remote-host snapshots. Live
-    // remote state arrives through the recurring watcher; opening the picker does not need a
-    // duplicate eager ssh sweep.
+    // Open instantly from local discovery and the last successful remote-host snapshots. The
+    // recurring watcher refreshes local state only; remote discovery is explicit in Remote hosts.
     let rows = immediate_picker_rows(ctx);
     let mut picker = SessionPickerState::new(rows);
     if let Some(current_name) = ctx.state.current().session_name.as_deref()
@@ -92,13 +91,12 @@ pub(crate) fn open_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     Update::with_command(session_watch_command(
         ctx.state.session_picker_epoch,
         ctx.state.local_current_session_name().map(str::to_string),
-        ctx.state.config.remote.clone(),
     ))
 }
 
 /// Open the session picker at startup (nothing attached yet). Sets up the picker state and returns
 /// the watcher epoch so `init` can kick off the first discovery tick. Local rows show immediately;
-/// live remote rows arrive async, so a dead configured host never stalls startup.
+/// cached remote rows are immediate, while local runtime changes arrive through the watcher.
 ///
 /// `highlight` lands the selection on a specific session — what `[session] startup = "last"` uses
 /// to point at the session it remembered but could not reopen.
@@ -144,7 +142,6 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     Update::with_command(session_watch_command(
         ctx.state.session_picker_epoch,
         ctx.state.local_current_session_name().map(str::to_string),
-        ctx.state.config.remote.clone(),
     ))
 }
 

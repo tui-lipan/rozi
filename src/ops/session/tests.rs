@@ -1,4 +1,4 @@
-use super::discovery::{merge_current_session_row, push_cached_configured_remote_rows};
+use super::discovery::{merge_current_session_row, push_cached_known_remote_rows};
 use super::*;
 use crate::config::Config;
 use crate::session::discovery::DiscoveredSession;
@@ -101,7 +101,9 @@ fn cached_configured_hosts_are_available_without_a_probe() {
     );
     let mut rows = vec![session_row("local", None)];
 
-    push_cached_configured_remote_rows(&mut rows, &config, &cache, &[]);
+    let mut hosts = crate::state::HostRegistry::default();
+    hosts.seed(&config, &[], &[]);
+    push_cached_known_remote_rows(&mut rows, &hosts, &cache, &[]);
 
     let remote = rows
         .iter()
@@ -139,10 +141,45 @@ fn fresh_host_results_replace_cached_rows() {
     );
     let mut rows = vec![session_row("live", Some("winvm"))];
 
-    push_cached_configured_remote_rows(&mut rows, &config, &cache, std::slice::from_ref(&target));
+    let mut hosts = crate::state::HostRegistry::default();
+    hosts.seed(&config, &[], &[]);
+    push_cached_known_remote_rows(
+        &mut rows,
+        &hosts,
+        &cache,
+        std::slice::from_ref(&target),
+    );
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "live");
+}
+
+#[test]
+fn cached_recent_and_attached_hosts_are_available_without_a_probe() {
+    let recent = crate::session::remote::RemoteTarget::Alias("recent".into());
+    let attached = crate::session::remote::RemoteTarget::Alias("attached".into());
+    let mut hosts = crate::state::HostRegistry::default();
+    hosts.seed(
+        &crate::config::RemoteConfig::default(),
+        std::slice::from_ref(&recent),
+        &[(attached.clone(), "attached".into())],
+    );
+    let mut cache = crate::session::HostSessionCache::new();
+    for (target, name) in [(&recent, "recent-dev"), (&attached, "attached-dev")] {
+        crate::session::set_cached_host_sessions(
+            &mut cache,
+            target,
+            vec![crate::session::CachedHostSession {
+                name: name.into(),
+                ephemeral: false,
+                panes: 1,
+            }],
+        );
+    }
+    let mut rows = Vec::new();
+    push_cached_known_remote_rows(&mut rows, &hosts, &cache, &[]);
+    assert!(rows.iter().any(|row| row.name == "recent-dev"));
+    assert!(rows.iter().any(|row| row.name == "attached-dev"));
 }
 
 fn ephemeral_state(client_id: u64, controller: u64, clients: Vec<ClientInfo>) -> State {

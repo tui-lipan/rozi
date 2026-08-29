@@ -35,13 +35,11 @@ pub(crate) fn local_picker_rows(ctx: &Context<AppRoot>) -> Vec<DiscoveredSession
 }
 
 pub(crate) fn immediate_picker_rows(ctx: &mut Context<AppRoot>) -> Vec<DiscoveredSession> {
-    if ctx.state.host_session_cache.is_empty() {
-        ctx.state.host_session_cache = crate::session::read_host_session_cache();
-    }
+    seed_host_registry(ctx);
     let mut rows = local_picker_rows(ctx);
-    push_cached_configured_remote_rows(
+    push_cached_known_remote_rows(
         &mut rows,
-        &ctx.state.config.remote,
+        &ctx.state.hosts,
         &ctx.state.host_session_cache,
         &[],
     );
@@ -86,9 +84,9 @@ pub(crate) fn apply_discovered_sessions(
     }
     // A failed (or not-yet-run) host probe keeps its last successful snapshot visible. Successful
     // hosts use only the fresh rows above, including an empty result which clears stale sessions.
-    push_cached_configured_remote_rows(
+    push_cached_known_remote_rows(
         &mut rows,
-        &ctx.state.config.remote,
+        &ctx.state.hosts,
         &ctx.state.host_session_cache,
         &successful_targets,
     );
@@ -120,15 +118,10 @@ pub(crate) fn apply_discovered_sessions(
     Update::with_command(session_watch_command(
         epoch,
         ctx.state.local_current_session_name().map(str::to_string),
-        ctx.state.config.remote.clone(),
     ))
 }
 
-pub(crate) fn session_watch_command(
-    epoch: u64,
-    current_name: Option<String>,
-    remote_config: crate::config::RemoteConfig,
-) -> Command {
+pub(crate) fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
     // Recurring watch: see `profile_session_watch_command` -- the wait belongs on the timer
     // thread, not on a pooled worker held open for the life of the picker.
     Command::after(
@@ -136,9 +129,7 @@ pub(crate) fn session_watch_command(
         move |link: CommandLink<Msg>| {
             // Discovery runs here (off the UI thread); a failed sweep simply skips this tick and lets
             // the loop stop rather than clobbering the last good list.
-            if let Ok((rows, host_status)) =
-                discover_picker_sessions(current_name.as_deref(), &remote_config)
-            {
+            if let Ok((rows, host_status)) = discover_picker_sessions(current_name.as_deref()) {
                 link.send(Msg::SessionsDiscovered {
                     epoch,
                     rows,
@@ -154,19 +145,12 @@ pub(crate) fn session_watch_command(
 /// per-process, disposable, and self-reaping, and their `eph-…` names are reserved; another
 /// process's ephemeral has no business being a selectable row (attaching would fight its owner over
 /// teardown), so it is filtered out here. Our own ephemeral still appears via the current row.
-///
-/// Configured `[remote.hosts.*]` aliases are probed in parallel (failures are skipped so one
-/// unreachable host never blocks the picker).
 pub(crate) fn discover_picker_sessions(
     current_name: Option<&str>,
-    remote_config: &crate::config::RemoteConfig,
 ) -> std::io::Result<(Vec<DiscoveredSession>, HostProbeStatus)> {
     let mut rows = crate::session::discovery::discover_selectable_sessions(current_name)?;
-    let (remote_rows, host_status) =
-        probe_remote_targets_reporting(&configured_targets(remote_config), remote_config);
-    rows.extend(remote_rows);
     sort_session_rows(&mut rows);
-    Ok((rows, host_status))
+    Ok((rows, Vec::new()))
 }
 
 /// Per-probed-host outcome carried back from a sidebar sweep: `None` cleared the host's error,
@@ -260,16 +244,17 @@ pub(crate) fn cached_sessions_for_target(
         .collect()
 }
 
-/// Add last-successful rows for configured hosts not present in `fresh_targets`. Live/local rows
+/// Add last-successful rows for every known host not present in `fresh_targets`. Live/local rows
 /// win identity collisions, especially for an attachment whose pane/client counts are newer.
-pub(crate) fn push_cached_configured_remote_rows(
+pub(crate) fn push_cached_known_remote_rows(
     rows: &mut Vec<DiscoveredSession>,
-    remote_config: &crate::config::RemoteConfig,
+    hosts: &crate::state::HostRegistry,
     cache: &crate::session::HostSessionCache,
     fresh_targets: &[crate::session::remote::RemoteTarget],
 ) {
-    for target in configured_targets(remote_config)
-        .into_iter()
+    for target in hosts
+        .iter()
+        .map(|entry| entry.target.clone())
         .filter(|target| !fresh_targets.contains(target))
     {
         let label = target.display_label();

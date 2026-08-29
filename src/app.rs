@@ -350,7 +350,7 @@ impl Component for AppRoot {
                     std::thread::spawn(move || {
                         std::thread::sleep(Duration::from_millis(1500));
                         if let Ok((rows, host_status)) =
-                            crate::ops::session::discover_picker_sessions(None, &remote_config)
+                            crate::ops::session::discover_picker_sessions(None)
                         {
                             watch_link.send(Msg::SessionsDiscovered {
                                 epoch,

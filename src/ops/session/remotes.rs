@@ -538,6 +538,13 @@ mod tests {
     }
 
     #[test]
+    fn main_session_discovery_records_no_remote_probe_request() {
+        let _ = crate::ops::session::discovery::take_remote_probe_requests();
+        let _ = crate::ops::session::discover_picker_sessions(None);
+        assert!(crate::ops::session::discovery::take_remote_probe_requests().is_empty());
+    }
+
+    #[test]
     fn cached_rows_keep_the_exact_target_identity() {
         let target = RemoteTarget::Url {
             user: Some("adam".into()),

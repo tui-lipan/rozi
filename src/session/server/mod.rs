@@ -49,6 +49,17 @@ const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Server work below this duration is ordinary scheduling overhead. Longer pauses are excluded from
 /// client heartbeat deadlines because the server itself could not exchange heartbeat frames.
 const HEARTBEAT_STALL_THRESHOLD: Duration = Duration::from_millis(100);
+/// Preserve the old active-loop cadence while work is flowing.
+const SERVER_ACTIVE_WAIT: Duration = Duration::from_millis(1);
+/// Bound the extra client-input latency of the transport-neutral adaptive fallback. PTY and browse
+/// worker events wake the wait immediately through [`ByteQueue`], so this ceiling applies only to
+/// local IPC readiness, which the Unix socket and Windows named-pipe backends cannot currently wait
+/// on through one shared primitive.
+const SERVER_ATTACHED_IDLE_WAIT_MAX: Duration = Duration::from_millis(4);
+/// A server with no connected clients already used this cadence before adaptive waiting.
+const SERVER_UNATTACHED_WAIT: Duration = Duration::from_millis(20);
+/// Stay at the active cadence briefly so bursts do not repeatedly ramp the loop up and down.
+const SERVER_QUIET_ROUNDS_PER_STEP: u8 = 4;
 const MAX_PTY_EVENTS_PER_TICK: usize = 256;
 const MAX_PTY_INGRESS_BYTES: usize = 4 * 1024 * 1024;
 const MAX_COALESCED_PANE_BYTES: usize = 64 * 1024;
@@ -71,6 +82,30 @@ const DEFAULT_MAX_BACKLOG: usize = 8 * 1024 * 1024;
 /// Larger cap while a client is still receiving its initial replay seed.
 const SEED_MAX_BACKLOG: usize = 64 * 1024 * 1024;
 const SEED_CHUNK: usize = 256 * 1024;
+
+#[derive(Default)]
+struct ServerIdleWait {
+    quiet_rounds: u8,
+}
+
+impl ServerIdleWait {
+    fn next_timeout(&mut self, has_clients: bool, activity: bool) -> Duration {
+        if !has_clients {
+            self.quiet_rounds = 0;
+            return SERVER_UNATTACHED_WAIT;
+        }
+        if activity {
+            self.quiet_rounds = 0;
+            return SERVER_ACTIVE_WAIT;
+        }
+
+        self.quiet_rounds = self.quiet_rounds.saturating_add(1);
+        let steps = self.quiet_rounds / SERVER_QUIET_ROUNDS_PER_STEP;
+        SERVER_ACTIVE_WAIT
+            .saturating_mul(1_u32.checked_shl(u32::from(steps)).unwrap_or(u32::MAX))
+            .min(SERVER_ATTACHED_IDLE_WAIT_MAX)
+    }
+}
 
 pub struct SessionServer {
     panes: HashMap<PaneId, ServerPane>,
@@ -771,8 +806,10 @@ impl SessionServer {
         // Tracks how long an ephemeral session has had no *attached* client. A named session
         // ignores this timer and is durable until explicitly shut down.
         let mut no_client_since: Option<Instant> = None;
+        let mut idle_wait = ServerIdleWait::default();
         while !self.shutdown {
             let iteration_started = Instant::now();
+            let mut activity = false;
             // A rename binds the new endpoint before the old listener is retired, so no window
             // exists where the session is discoverable under neither name. Dropping the old
             // listener here does not disturb already-accepted connections: existing clients stay
@@ -790,19 +827,20 @@ impl SessionServer {
                 self.shutdown = true;
                 break;
             }
-            self.accept_new(&listener)?;
+            activity |= self.accept_new(&listener)?;
 
             for _ in 0..MAX_PTY_EVENTS_PER_TICK {
                 let Some(event) = self.events.try_pop() else {
                     break;
                 };
+                activity = true;
                 if let Some(outbound) = self.handle_event(event) {
                     self.broadcast_outbound(&outbound);
                 }
             }
 
             self.retry_browse_requests();
-            self.pump_clients();
+            activity |= self.pump_clients();
             self.retry_browse_requests();
             self.poll_pane_runtime();
             if let Some((next, retired)) = self.pending_listener.take() {
@@ -820,7 +858,7 @@ impl SessionServer {
             let iteration_elapsed = iteration_started.elapsed();
             self.credit_server_stall(iteration_elapsed);
             self.heartbeat();
-            self.flush_clients();
+            activity |= self.flush_clients();
 
             let attached = self.attached_count();
             if attached == 0 {
@@ -834,8 +872,8 @@ impl SessionServer {
                 no_client_since = None;
             }
 
-            let idle = if self.clients.is_empty() { 20 } else { 1 };
-            std::thread::sleep(Duration::from_millis(idle));
+            let timeout = idle_wait.next_timeout(!self.clients.is_empty(), activity);
+            self.events.wait_for_item(timeout);
         }
         // A signal-driven stop must capture the final screen generation before killing PTYs. An
         // explicit session deletion only waits for an already-started write, then removes it.

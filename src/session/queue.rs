@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct QueueStats {
@@ -151,6 +152,33 @@ impl<T> ByteQueue<T> {
         }
     }
 
+    /// Wait until an item is available, the queue closes, or `timeout` elapses.
+    ///
+    /// The item stays queued for the normal consumer. This is useful when a loop has other work to
+    /// perform between wakeup and dequeueing, while still letting producers interrupt an idle
+    /// wait without introducing another notification channel.
+    pub(crate) fn wait_for_item(&self, timeout: Duration) -> bool {
+        self.wait_for_item_after(timeout, || {})
+    }
+
+    fn wait_for_item_after(&self, timeout: Duration, before_wait: impl FnOnce()) -> bool {
+        let state = self.state.lock().expect("byte queue poisoned");
+        if !state.entries.is_empty() || state.closed {
+            return !state.entries.is_empty();
+        }
+        // Tests use this hook to prove that producer notification interrupts the condvar wait. It
+        // runs while the queue mutex is still held, immediately before `wait_timeout_while`
+        // atomically releases it, so the producer cannot race ahead of the waiter.
+        before_wait();
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, timeout, |state| {
+                state.entries.is_empty() && !state.closed
+            })
+            .expect("byte queue poisoned");
+        !state.entries.is_empty()
+    }
+
     pub(crate) fn close(&self) {
         let mut state = self.state.lock().expect("byte queue poisoned");
         state.closed = true;
@@ -172,8 +200,11 @@ impl<T> ByteQueue<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{Arc, mpsc};
     use std::time::Duration;
+
+    const WAKE_FALLBACK: Duration = Duration::from_secs(5);
+    const WAKE_DEADLINE: Duration = Duration::from_millis(500);
 
     #[test]
     fn preserves_order_and_exact_byte_accounting() {
@@ -244,6 +275,47 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         queue.close();
         assert_eq!(producer.join().unwrap(), Err(PushError::Closed(2)));
+    }
+
+    #[test]
+    fn timed_wait_observes_an_item_without_consuming_it() {
+        let queue = Arc::new(ByteQueue::new(1));
+        let waiting_queue = Arc::clone(&queue);
+        let (waiting_tx, waiting_rx) = mpsc::sync_channel(0);
+        let (result_tx, result_rx) = mpsc::sync_channel(0);
+        let waiter = std::thread::spawn(move || {
+            let result = waiting_queue.wait_for_item_after(WAKE_FALLBACK, || {
+                waiting_tx.send(()).unwrap();
+            });
+            result_tx.send(result).unwrap();
+        });
+
+        waiting_rx.recv_timeout(WAKE_DEADLINE).unwrap();
+        queue.try_push(7, 1).unwrap();
+
+        assert!(result_rx.recv_timeout(WAKE_DEADLINE).unwrap());
+        waiter.join().unwrap();
+        assert_eq!(queue.try_pop(), Some(7));
+    }
+
+    #[test]
+    fn timed_wait_returns_false_when_the_queue_closes_empty() {
+        let queue = Arc::new(ByteQueue::<u8>::new(1));
+        let waiting_queue = Arc::clone(&queue);
+        let (waiting_tx, waiting_rx) = mpsc::sync_channel(0);
+        let (result_tx, result_rx) = mpsc::sync_channel(0);
+        let waiter = std::thread::spawn(move || {
+            let result = waiting_queue.wait_for_item_after(WAKE_FALLBACK, || {
+                waiting_tx.send(()).unwrap();
+            });
+            result_tx.send(result).unwrap();
+        });
+
+        waiting_rx.recv_timeout(WAKE_DEADLINE).unwrap();
+        queue.close();
+
+        assert!(!result_rx.recv_timeout(WAKE_DEADLINE).unwrap());
+        waiter.join().unwrap();
     }
 
     #[test]

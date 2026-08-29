@@ -483,7 +483,8 @@ impl SessionServer {
         }
     }
 
-    pub(super) fn flush_clients(&mut self) {
+    pub(super) fn flush_clients(&mut self) -> bool {
+        let mut activity = false;
         let mut dead: Vec<ClientId> = Vec::new();
         for client in &mut self.clients {
             let mut disconnect = false;
@@ -491,10 +492,12 @@ impl SessionServer {
                 let chunk = &front[client.front_offset..];
                 match client.stream.write(chunk) {
                     Ok(0) => {
+                        activity = true;
                         disconnect = true;
                         break;
                     }
                     Ok(n) => {
+                        activity = true;
                         client.front_offset += n;
                         client.outbox_bytes -= n;
                         if client.front_offset >= front.len() {
@@ -511,6 +514,7 @@ impl SessionServer {
                         break;
                     }
                     Err(_) => {
+                        activity = true;
                         disconnect = true;
                         break;
                     }
@@ -529,6 +533,7 @@ impl SessionServer {
         for id in dead {
             self.remove_client(id);
         }
+        activity
     }
 
     pub(super) fn enqueue(&mut self, sender_id: ClientId, target: Target, message: ServerMessage) {

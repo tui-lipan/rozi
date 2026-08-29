@@ -45,6 +45,7 @@ cargo bench --bench app_render -- 'app_render/view_layout/(8|16)|sidebar_render|
 cargo bench --bench scrollback_search -- 'full_slice|sparse/(1|8|16)'
 cargo bench --bench server_fairness -- continuous_pty_ingress
 cargo bench --bench server_fairness -- resurrection_snapshot
+cargo bench --bench server_fairness -- --idle-latency-probe
 cargo bench --bench server_fairness -- --saturation-probe
 ```
 
@@ -66,11 +67,16 @@ Criterion writes generated measurements and reports below `target/criterion/`. D
 | `session_pipeline` | Measures in-memory frame encode, decode, client terminal processing, and snapshot rebuilding. Unix also includes a socket-pair case. |
 | `app_render` | Measures whole-application view expansion and layout by pane count, with empty and populated terminals. It also measures fixed sidebar states, repository-size fixtures, per-message update overhead, and real inbound-mailbox draining for round-robin multi-pane output. The drain cases separately exercise the entry and soft byte budgets. It does not measure backend drawing or terminal buffer diffing. |
 | `scrollback_search` | Measures complete searches across fixed pane and history counts, scanner slices, and full production mapping for one cooperative slice. Cases cover sparse, dense, and absent matches. |
-| `server_fairness` | Measures key acknowledgement through a real server-owned PTY under paced continuous ingress, durable resurrection snapshot attempts, and a one-shot bounded saturation probe. |
+| `server_fairness` | Measures key acknowledgement through a real server-owned PTY under paced continuous ingress, idle-settled key latency, durable resurrection snapshot attempts, and a one-shot bounded saturation probe. |
 
 The saturation probe is not a Criterion latency statistic. It checks the configured PTY ingress
 high-water behavior under unpaced producers and reports whether the bounded downstream policy
 activates. Keep its result separate from the paced key-acknowledgement benchmark.
+
+The idle-latency probe takes 200 key round trips, allowing 50-66 ms of deterministically
+phase-jittered quiescence before each one, and reports p50, p95, p99, and maximum latency. Run it on
+the same dedicated host before and after a server-wait change; unlike Criterion estimate intervals,
+these values are request-latency percentiles.
 
 The resurrection cases report the server's complete durable snapshot attempt. Trigger and polling
 delay stay outside the sample. The benchmark also emits server-loop blocking data, which has a

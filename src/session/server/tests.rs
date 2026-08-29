@@ -72,6 +72,51 @@ fn cooperative_server(session_name: &str) -> SessionServer {
     )
 }
 
+#[test]
+fn attached_idle_wait_backs_off_but_stays_bounded() {
+    let mut wait = ServerIdleWait::default();
+
+    assert_eq!(wait.next_timeout(true, false), Duration::from_millis(1));
+    for _ in 0..2 {
+        wait.next_timeout(true, false);
+    }
+    assert_eq!(wait.next_timeout(true, false), Duration::from_millis(2));
+    for _ in 0..4 {
+        wait.next_timeout(true, false);
+    }
+    assert_eq!(wait.next_timeout(true, false), Duration::from_millis(4));
+    for _ in 0..4 {
+        wait.next_timeout(true, false);
+    }
+    assert_eq!(
+        wait.next_timeout(true, false),
+        SERVER_ATTACHED_IDLE_WAIT_MAX
+    );
+    for _ in 0..100 {
+        assert!(wait.next_timeout(true, false) <= SERVER_ATTACHED_IDLE_WAIT_MAX);
+    }
+}
+
+#[test]
+fn server_activity_resets_attached_idle_wait_immediately() {
+    let mut wait = ServerIdleWait::default();
+    for _ in 0..32 {
+        wait.next_timeout(true, false);
+    }
+    assert_eq!(wait.next_timeout(true, true), SERVER_ACTIVE_WAIT);
+    assert_eq!(wait.next_timeout(true, false), SERVER_ACTIVE_WAIT);
+}
+
+#[test]
+fn server_without_clients_keeps_the_existing_wait_and_resets_backoff() {
+    let mut wait = ServerIdleWait::default();
+    for _ in 0..32 {
+        wait.next_timeout(true, false);
+    }
+    assert_eq!(wait.next_timeout(false, false), SERVER_UNATTACHED_WAIT);
+    assert_eq!(wait.next_timeout(true, false), SERVER_ACTIVE_WAIT);
+}
+
 /// Register a client backed by a socketpair and return its id plus the client-side stream.
 fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     let (client_stream, server_stream) = UnixStream::pair().unwrap();

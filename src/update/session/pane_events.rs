@@ -102,6 +102,12 @@ pub(crate) fn output(
             crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Bell);
         }
     }
+    if indicator_raised {
+        // Session output bypasses the global post-update sweep. An unseen-output or bell edge is
+        // the only output-side mutation that can start the shared alert animation, so arm it here
+        // once on that edge instead of scanning all panes after every ordinary chunk.
+        crate::update::panes::arm_alert_pulse(ctx);
+    }
     // Search coordinates are absolute within the retained terminal grid. Apply output first, drop
     // the pane borrow, then rebuild any affected scan so no result can address the pre-output grid.
     if !bytes.is_empty()

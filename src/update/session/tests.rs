@@ -59,6 +59,56 @@ fn search_output_lines(count: usize) -> Vec<u8> {
         .into_bytes()
 }
 
+fn settle_command_link(backend: &mut TestBackend<crate::AppRoot>) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while backend.state().command_link.is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the mount never delivered the command link"
+        );
+        backend.pump().expect("settle the mount");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn background_output_arms_the_alert_pulse_without_the_global_sweep() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            settle_command_link(&mut backend);
+            let epoch = backend.state().runtime_epoch;
+            let pane_id = 77;
+            let generation = 9;
+            let mut pane =
+                crate::state::Pane::new(pane_id, 100, tui_lipan::prelude::FloatRect::default());
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(pane_id, generation);
+            backend.state_mut().current_mut().workspaces[1]
+                .panes
+                .push(pane);
+
+            backend
+                .dispatch(Msg::SessionOutput {
+                    epoch,
+                    pane_id,
+                    local: false,
+                    generation,
+                    bytes: vec![7],
+                })
+                .expect("deliver background bell");
+
+            assert!(
+                backend.state().alert_pulse_armed,
+                "the output edge must arm the pulse before its reduced epilogue"
+            );
+        })
+        .expect("spawn output alert test")
+        .join()
+        .expect("output alert test completes");
+}
+
 #[test]
 fn pane_output_restarts_partial_search_and_rejects_its_stale_chunk() {
     std::thread::Builder::new()

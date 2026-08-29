@@ -16,14 +16,26 @@ const INBOUND_DRAIN_MAX_ENTRIES: usize = 64;
 const INBOUND_DRAIN_MAX_BYTES: usize = 256 * 1024;
 const INBOUND_DRAIN_MAX_TIME: std::time::Duration = std::time::Duration::from_millis(1);
 
-pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
-    let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
-    let update = handle_msg_inner(_app, msg, ctx);
-    post_update_sync(ctx, update, is_layout_flush)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PostUpdateKind {
+    Full,
+    SessionOutputOnly,
 }
 
-fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
-    match msg {
+struct HandledUpdate {
+    update: Update,
+    post_update: PostUpdateKind,
+}
+
+pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
+    let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
+    let handled = handle_msg_inner(_app, msg, ctx);
+    post_update_sync(ctx, handled.update, is_layout_flush, handled.post_update)
+}
+
+fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> HandledUpdate {
+    let is_session_output = matches!(&msg, Msg::SessionOutput { .. });
+    let update = match msg {
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::UserCommandFailed { message } => {
             crate::pty_events::notify_error(ctx, "Command failed", message);
@@ -333,7 +345,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ScratchRuntimeFailed(message) => crate::scratch_runtime::failed(ctx, message),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
         Msg::DrainSessionFrames { epoch, mailbox } => {
-            drain_session_frames(_app, ctx, epoch, mailbox)
+            return drain_session_frames(_app, ctx, epoch, mailbox);
         }
         Msg::SessionAttachFailed { epoch, message } => session::attach_failed(ctx, epoch, message),
         Msg::SessionAttached {
@@ -466,6 +478,14 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             epoch,
             session: name,
         } => session::renamed(ctx, epoch, name),
+    };
+    HandledUpdate {
+        update,
+        post_update: if is_session_output {
+            PostUpdateKind::SessionOutputOnly
+        } else {
+            PostUpdateKind::Full
+        },
     }
 }
 
@@ -474,15 +494,18 @@ fn drain_session_frames(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     mailbox: std::sync::Arc<crate::session::client::InboundMailbox>,
-) -> Update {
+) -> HandledUpdate {
     let Some((event, event_bytes, has_more)) = mailbox.pop() else {
         mailbox.finish_drain();
-        return Update::none();
+        return HandledUpdate {
+            update: Update::none(),
+            post_update: PostUpdateKind::Full,
+        };
     };
     if !has_more {
-        let update = inbound_event_update(app, ctx, epoch, &mailbox, event);
+        let handled = inbound_event_update(app, ctx, epoch, &mailbox, event);
         mailbox.finish_drain();
-        return update;
+        return handled;
     }
 
     let started = std::time::Instant::now();
@@ -498,11 +521,14 @@ fn drain_session_frames(
 fn drain_inbound_events(
     mailbox: &std::sync::Arc<crate::session::client::InboundMailbox>,
     elapsed: impl FnMut() -> std::time::Duration,
-    handle: impl FnMut(crate::session::client::InboundEvent) -> Update,
-) -> Update {
+    handle: impl FnMut(crate::session::client::InboundEvent) -> HandledUpdate,
+) -> HandledUpdate {
     let Some((event, event_bytes, _)) = mailbox.pop() else {
         mailbox.finish_drain();
-        return Update::none();
+        return HandledUpdate {
+            update: Update::none(),
+            post_update: PostUpdateKind::Full,
+        };
     };
     drain_inbound_events_from_first(mailbox, (event, event_bytes), elapsed, handle)
 }
@@ -511,13 +537,13 @@ fn drain_inbound_events_from_first(
     mailbox: &std::sync::Arc<crate::session::client::InboundMailbox>,
     first: (crate::session::client::InboundEvent, usize),
     mut elapsed: impl FnMut() -> std::time::Duration,
-    mut handle: impl FnMut(crate::session::client::InboundEvent) -> Update,
-) -> Update {
+    mut handle: impl FnMut(crate::session::client::InboundEvent) -> HandledUpdate,
+) -> HandledUpdate {
     let (event, event_bytes) = first;
     let mut entries = 1usize;
     let mut bytes = event_bytes;
     let mut aggregate = handle(event);
-    if aggregate.command.is_some() {
+    if aggregate.update.command.is_some() {
         mailbox.finish_drain();
         return aggregate;
     }
@@ -530,8 +556,8 @@ fn drain_inbound_events_from_first(
         entries += 1;
 
         let next = handle(event);
-        let has_command = next.command.is_some();
-        aggregate = merge_updates(aggregate, next);
+        let has_command = next.update.command.is_some();
+        aggregate = merge_handled_updates(aggregate, next);
         // An Update can carry only one command. Yield immediately rather than dropping a later
         // command or inventing ordering between unrelated asynchronous work.
         if has_command {
@@ -558,21 +584,29 @@ fn inbound_event_update(
     epoch: u64,
     mailbox: &crate::session::client::InboundMailbox,
     event: crate::session::client::InboundEvent,
-) -> Update {
+) -> HandledUpdate {
     if epoch == crate::scratch_runtime::SCRATCH_RUNTIME_EPOCH {
         return match event {
             crate::session::client::InboundEvent::Frame(frame) => {
                 match crate::scratch_runtime::message_for_frame(ctx.state.runtime_epoch, *frame) {
                     Some(message) => handle_msg_inner(app, message, ctx),
-                    None => Update::none(),
+                    None => HandledUpdate {
+                        update: Update::none(),
+                        post_update: PostUpdateKind::Full,
+                    },
                 }
             }
-            crate::session::client::InboundEvent::Disconnected => {
-                crate::scratch_runtime::failed(ctx, "private PTY host disconnected".to_string())
-            }
-            crate::session::client::InboundEvent::Failed(message) => {
-                crate::scratch_runtime::failed(ctx, message)
-            }
+            crate::session::client::InboundEvent::Disconnected => HandledUpdate {
+                update: crate::scratch_runtime::failed(
+                    ctx,
+                    "private PTY host disconnected".to_string(),
+                ),
+                post_update: PostUpdateKind::Full,
+            },
+            crate::session::client::InboundEvent::Failed(message) => HandledUpdate {
+                update: crate::scratch_runtime::failed(ctx, message),
+                post_update: PostUpdateKind::Full,
+            },
         };
     }
 
@@ -582,12 +616,27 @@ fn inbound_event_update(
             crate::session::bootstrap::server_message_to_msg(epoch, *frame),
             ctx,
         ),
-        crate::session::client::InboundEvent::Disconnected => {
-            session::disconnected(ctx, epoch, mailbox.session_name())
-        }
-        crate::session::client::InboundEvent::Failed(message) => {
-            session::transport_failed(ctx, epoch, mailbox.session_name(), message)
-        }
+        crate::session::client::InboundEvent::Disconnected => HandledUpdate {
+            update: session::disconnected(ctx, epoch, mailbox.session_name()),
+            post_update: PostUpdateKind::Full,
+        },
+        crate::session::client::InboundEvent::Failed(message) => HandledUpdate {
+            update: session::transport_failed(ctx, epoch, mailbox.session_name(), message),
+            post_update: PostUpdateKind::Full,
+        },
+    }
+}
+
+fn merge_handled_updates(left: HandledUpdate, right: HandledUpdate) -> HandledUpdate {
+    HandledUpdate {
+        update: merge_updates(left.update, right.update),
+        post_update: if left.post_update == PostUpdateKind::SessionOutputOnly
+            && right.post_update == PostUpdateKind::SessionOutputOnly
+        {
+            PostUpdateKind::SessionOutputOnly
+        } else {
+            PostUpdateKind::Full
+        },
     }
 }
 
@@ -622,7 +671,21 @@ fn post_update_sync(
     ctx: &mut Context<AppRoot>,
     mut update: Update,
     is_layout_flush: bool,
+    post_update: PostUpdateKind,
 ) -> Update {
+    // PTY bytes cannot change pane topology, focus, sidebar visibility/configuration, the session
+    // refresh epoch, terminal-palette inputs, help focus, or shared layout. Keep their hot-path
+    // epilogue to the one global dependency they can change: an active search may dirty the command
+    // model when its scan restarts. Alert pulses are armed at the point where output first raises an
+    // unseen-output/bell marker, so ordinary chunks do not have to scan every pane for alerts.
+    if post_update == PostUpdateKind::SessionOutputOnly {
+        if ctx.state.commands_dirty {
+            ctx.state.commands_dirty = false;
+            crate::commands::sync(ctx);
+        }
+        return update;
+    }
+
     ctx.state.current_mut().retired_panes.expire();
     for attachment in ctx.state.background.values_mut() {
         attachment.retired_panes.expire();
@@ -680,8 +743,21 @@ fn runtime_metrics_update(epoch: u64, current_epoch: u64, devtools_visible: bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::protocol::Frame;
+    use crate::session::protocol::{Frame, ServerMessage};
     use tui_lipan::{TestBackend, UpdateLevel};
+
+    fn classified(update: Update, post_update: PostUpdateKind) -> HandledUpdate {
+        HandledUpdate {
+            update,
+            post_update,
+        }
+    }
+
+    fn seed_stale_search(backend: &mut TestBackend<AppRoot>) {
+        backend.state_mut().search = Some(crate::state::ScrollbackSearchState::new(
+            crate::state::PaneId::MAX,
+        ));
+    }
 
     fn mailbox_with_frames(
         count: usize,
@@ -772,17 +848,21 @@ mod tests {
             mailbox.activate();
             let mut handled = 0usize;
 
-            let update = drain_inbound_events(
+            let handled_update = drain_inbound_events(
                 &mailbox,
                 || std::time::Duration::ZERO,
                 |_| {
                     handled += 1;
-                    Update::none()
+                    classified(Update::none(), PostUpdateKind::SessionOutputOnly)
                 },
             );
 
             assert_eq!(handled, INBOUND_DRAIN_MAX_ENTRIES);
-            assert_eq!(update.level(), UpdateLevel::None);
+            assert_eq!(handled_update.update.level(), UpdateLevel::None);
+            assert_eq!(
+                handled_update.post_update,
+                PostUpdateKind::SessionOutputOnly
+            );
             assert!(mailbox.drain_is_scheduled());
             assert!(mailbox.pop().is_some(), "the 65th entry must remain queued");
             assert!(mailbox.pop().is_none());
@@ -794,6 +874,7 @@ mod tests {
         run_drain_test(|| {
             let (mut backend, mailbox) = mailbox_with_frames(3);
             let epoch = backend.state().runtime_epoch;
+            seed_stale_search(&mut backend);
 
             backend
                 .update_level(Msg::DrainSessionFrames {
@@ -803,6 +884,59 @@ mod tests {
                 .expect("dispatch real mailbox drain");
 
             assert!(mailbox.is_empty());
+            assert!(
+                backend.state().search.is_some(),
+                "an output-only batch must skip full post-update bookkeeping"
+            );
+        });
+    }
+
+    #[test]
+    fn drain_session_frames_runs_full_bookkeeping_for_a_mixed_batch() {
+        run_drain_test(|| {
+            let (mut backend, mailbox) = mailbox_with_frames(1);
+            let epoch = backend.state().runtime_epoch;
+            mailbox
+                .push(Frame::Control(ServerMessage::Resized {
+                    pane_id: 1,
+                    local: false,
+                    generation: 1,
+                    cols: 80,
+                    rows: 24,
+                }))
+                .expect("test control frame must fit in the inbound mailbox");
+            seed_stale_search(&mut backend);
+
+            backend
+                .update_level(Msg::DrainSessionFrames {
+                    epoch,
+                    mailbox: std::sync::Arc::clone(&mailbox),
+                })
+                .expect("dispatch mixed mailbox drain");
+
+            assert!(mailbox.is_empty());
+            assert!(
+                backend.state().search.is_none(),
+                "a control frame must retain full post-update bookkeeping"
+            );
+        });
+    }
+
+    #[test]
+    fn drain_session_frames_runs_full_bookkeeping_for_an_empty_batch() {
+        run_drain_test(|| {
+            let (mut backend, mailbox) = mailbox_with_frames(0);
+            let epoch = backend.state().runtime_epoch;
+            seed_stale_search(&mut backend);
+
+            backend
+                .update_level(Msg::DrainSessionFrames {
+                    epoch,
+                    mailbox: std::sync::Arc::clone(&mailbox),
+                })
+                .expect("dispatch empty mailbox drain");
+
+            assert!(backend.state().search.is_none());
         });
     }
 
@@ -829,25 +963,29 @@ mod tests {
             let (_backend, mailbox) = mailbox_with_frames(3);
             let mut handled = 0usize;
 
-            let update = drain_inbound_events(
+            let handled_update = drain_inbound_events(
                 &mailbox,
                 || std::time::Duration::ZERO,
                 |_| {
                     handled += 1;
                     match handled {
-                        1 => Update::layout(),
-                        2 => Update::command_only(Command::after(
-                            std::time::Duration::ZERO,
-                            |_link: CommandLink<Msg>| {},
-                        )),
+                        1 => classified(Update::layout(), PostUpdateKind::Full),
+                        2 => classified(
+                            Update::command_only(Command::after(
+                                std::time::Duration::ZERO,
+                                |_link: CommandLink<Msg>| {},
+                            )),
+                            PostUpdateKind::SessionOutputOnly,
+                        ),
                         _ => panic!("the event after a command must not be consumed"),
                     }
                 },
             );
 
             assert_eq!(handled, 2);
-            assert_eq!(update.level(), UpdateLevel::Layout);
-            assert!(update.command.is_some());
+            assert_eq!(handled_update.update.level(), UpdateLevel::Layout);
+            assert!(handled_update.update.command.is_some());
+            assert_eq!(handled_update.post_update, PostUpdateKind::Full);
             assert!(
                 mailbox.pop().is_some(),
                 "the following event must remain queued"

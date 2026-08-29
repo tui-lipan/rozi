@@ -675,9 +675,9 @@ fn post_update_sync(
 ) -> Update {
     // PTY bytes cannot change pane topology, focus, sidebar visibility/configuration, the session
     // refresh epoch, terminal-palette inputs, help focus, or shared layout. Keep their hot-path
-    // epilogue to the one global dependency they can change: an active search may dirty the command
-    // model when its scan restarts. Alert pulses are armed at the point where output first raises an
-    // unseen-output/bell marker, so ordinary chunks do not have to scan every pane for alerts.
+    // epilogue to the cheap command-dirty guard, preserving that chokepoint if output-side behavior
+    // grows later. Alert pulses are armed at the point where output first raises an unseen-output
+    // or bell marker, so ordinary chunks do not have to scan every pane for alerts.
     if post_update == PostUpdateKind::SessionOutputOnly {
         if ctx.state.commands_dirty {
             ctx.state.commands_dirty = false;

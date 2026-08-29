@@ -184,12 +184,14 @@ fn sidebar_render(c: &mut Criterion) {
 ///
 /// `SessionOutput` is the highest-frequency message in the app — one per batch of PTY bytes — and
 /// this measures its fixed dispatcher/epilogue cost against terminal processing. The historical
-/// `none`/`deep` cases stay stable for saved-baseline comparisons; the pane-count cases make global
-/// bookkeeping regressions visible as the application grows.
+/// `none`/`deep` cases stay stable for saved-baseline comparisons. The pane-count cases call the
+/// updater directly so global bookkeeping regressions remain visible as the application grows.
 fn message_overhead(c: &mut Criterion) {
     let corpus = support::sgr_heavy();
     let filled: Vec<u8> = corpus.iter().copied().take(64 * 1024).collect();
     let chunk: Vec<u8> = corpus.iter().copied().take(512).collect();
+    // Keep parser work small enough that the pane-count cases expose the fixed update epilogue.
+    let bookkeeping_chunk = vec![b'x'];
 
     let mut group = c.benchmark_group("message_overhead");
     for cwd in ["none", "deep"] {
@@ -226,12 +228,12 @@ fn message_overhead(c: &mut Criterion) {
             };
             let epoch = backend.state().runtime_epoch;
             b.iter(|| {
-                let _ = backend.dispatch(rozi::Msg::SessionOutput {
+                let _ = backend.update_level(rozi::Msg::SessionOutput {
                     epoch,
                     pane_id,
                     local: false,
                     generation,
-                    bytes: chunk.clone(),
+                    bytes: bookkeeping_chunk.clone(),
                 });
             });
         });

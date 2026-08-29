@@ -29,13 +29,28 @@ struct HandledUpdate {
 
 pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
     let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
-    let handled = handle_msg_inner(_app, msg, ctx);
+    let handled = match msg {
+        Msg::DrainSessionFrames { epoch, mailbox } => {
+            drain_session_frames(_app, ctx, epoch, mailbox)
+        }
+        msg => HandledUpdate {
+            post_update: post_update_kind(&msg),
+            update: handle_msg_inner(_app, msg, ctx),
+        },
+    };
     post_update_sync(ctx, handled.update, is_layout_flush, handled.post_update)
 }
 
-fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> HandledUpdate {
-    let is_session_output = matches!(&msg, Msg::SessionOutput { .. });
-    let update = match msg {
+fn post_update_kind(msg: &Msg) -> PostUpdateKind {
+    if matches!(msg, Msg::SessionOutput { .. }) {
+        PostUpdateKind::SessionOutputOnly
+    } else {
+        PostUpdateKind::Full
+    }
+}
+
+fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
+    match msg {
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::UserCommandFailed { message } => {
             crate::pty_events::notify_error(ctx, "Command failed", message);
@@ -345,7 +360,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ScratchRuntimeFailed(message) => crate::scratch_runtime::failed(ctx, message),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
         Msg::DrainSessionFrames { epoch, mailbox } => {
-            return drain_session_frames(_app, ctx, epoch, mailbox);
+            drain_session_frames(_app, ctx, epoch, mailbox).update
         }
         Msg::SessionAttachFailed { epoch, message } => session::attach_failed(ctx, epoch, message),
         Msg::SessionAttached {
@@ -478,14 +493,6 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             epoch,
             session: name,
         } => session::renamed(ctx, epoch, name),
-    };
-    HandledUpdate {
-        update,
-        post_update: if is_session_output {
-            PostUpdateKind::SessionOutputOnly
-        } else {
-            PostUpdateKind::Full
-        },
     }
 }
 
@@ -589,7 +596,10 @@ fn inbound_event_update(
         return match event {
             crate::session::client::InboundEvent::Frame(frame) => {
                 match crate::scratch_runtime::message_for_frame(ctx.state.runtime_epoch, *frame) {
-                    Some(message) => handle_msg_inner(app, message, ctx),
+                    Some(message) => HandledUpdate {
+                        post_update: post_update_kind(&message),
+                        update: handle_msg_inner(app, message, ctx),
+                    },
                     None => HandledUpdate {
                         update: Update::none(),
                         post_update: PostUpdateKind::Full,
@@ -611,11 +621,13 @@ fn inbound_event_update(
     }
 
     match event {
-        crate::session::client::InboundEvent::Frame(frame) => handle_msg_inner(
-            app,
-            crate::session::bootstrap::server_message_to_msg(epoch, *frame),
-            ctx,
-        ),
+        crate::session::client::InboundEvent::Frame(frame) => {
+            let message = crate::session::bootstrap::server_message_to_msg(epoch, *frame);
+            HandledUpdate {
+                post_update: post_update_kind(&message),
+                update: handle_msg_inner(app, message, ctx),
+            }
+        }
         crate::session::client::InboundEvent::Disconnected => HandledUpdate {
             update: session::disconnected(ctx, epoch, mailbox.session_name()),
             post_update: PostUpdateKind::Full,

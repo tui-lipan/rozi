@@ -149,14 +149,12 @@ pub(crate) fn host_selected(ctx: &mut Context<AppRoot>, target: RemoteTarget) ->
 }
 
 pub(crate) fn activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
-    if ctx.state.hosts.get(&target).is_none() {
-        return Update::none();
-    }
     let rows = cached_rows_for_target(&ctx.state.host_session_cache, &target);
     let epoch = if let Some(picker) = ctx.state.remote_picker.as_mut() {
         picker.enter_host_sessions(target.clone());
         picker.replace_sessions(rows);
         picker.probe_epoch = picker.probe_epoch.wrapping_add(1);
+        picker.host_probe = crate::state::HostProbe::InFlight;
         picker.probe_epoch
     } else {
         return Update::none();
@@ -206,16 +204,95 @@ pub(crate) fn apply_host_discovery(
                 entry.probe = crate::state::HostProbe::Reached;
             }
             if let Some(picker) = ctx.state.remote_picker.as_mut() {
+                picker.host_probe = crate::state::HostProbe::Reached;
                 picker.replace_sessions(rows);
             }
         }
         Err(error) => {
+            if let Some(picker) = ctx.state.remote_picker.as_mut() {
+                picker.host_probe = crate::state::HostProbe::Failed(error.clone());
+            }
             if let Some(entry) = ctx.state.hosts.get_mut(&target) {
                 entry.probe = crate::state::HostProbe::Failed(error);
             }
         }
     }
     Update::full()
+}
+
+pub(crate) fn open_new_host_prompt(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(picker) = ctx.state.remote_picker.as_mut() else {
+        return Update::none();
+    };
+    if !matches!(picker.mode, RemotePickerMode::Hosts) {
+        return Update::none();
+    }
+    let initial = picker.host_input.text().trim().to_string();
+    picker.target_prompt = Some(crate::state::RemoteTargetPromptState::new(initial));
+    picker.pending_forget = None;
+    crate::ops::focus::request_remote_target_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn open_new_host_flow(ctx: &mut Context<AppRoot>) -> Update {
+    let _ = open_remote_hosts(ctx);
+    open_new_host_prompt(ctx)
+}
+
+pub(crate) fn target_prompt_changed(
+    ctx: &mut Context<AppRoot>,
+    event: InputEvent,
+) -> Update {
+    if let Some(prompt) = ctx
+        .state
+        .remote_picker
+        .as_mut()
+        .and_then(|picker| picker.target_prompt.as_mut())
+    {
+        event.apply_to(&mut prompt.input);
+        prompt.error = None;
+    }
+    crate::ops::focus::request_remote_target_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn close_target_prompt(ctx: &mut Context<AppRoot>) -> Update {
+    if let Some(picker) = ctx.state.remote_picker.as_mut() {
+        picker.target_prompt = None;
+    }
+    crate::ops::focus::request_remote_picker_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn submit_remote_target(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(raw) = ctx
+        .state
+        .remote_picker
+        .as_ref()
+        .and_then(|picker| picker.target_prompt.as_ref())
+        .map(|prompt| prompt.input.text().trim().to_string())
+    else {
+        return Update::none();
+    };
+    let target = match crate::session::remote::parse_remote_target(&raw) {
+        Ok(target) => target,
+        Err(error) => {
+            if let Some(prompt) = ctx
+                .state
+                .remote_picker
+                .as_mut()
+                .and_then(|picker| picker.target_prompt.as_mut())
+            {
+                prompt.error = Some(error);
+            }
+            crate::ops::focus::request_remote_target_focus(ctx);
+            return Update::full();
+        }
+    };
+    if let Some(picker) = ctx.state.remote_picker.as_mut() {
+        picker.target_prompt = None;
+    }
+    activate_host(ctx, target)
 }
 
 pub(crate) fn session_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {

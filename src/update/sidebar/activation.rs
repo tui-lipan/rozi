@@ -92,7 +92,7 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         RowTarget::NewSession(Some(target)) => {
             crate::ops::session::open_create_session_on_host(ctx, target)
         }
-        RowTarget::ConnectHost => crate::ops::session::open_connect_remote_host(ctx),
+        RowTarget::ConnectHost => crate::ops::session::open_new_host_flow(ctx),
         RowTarget::Launcher {
             config_epoch,
             tab_id,

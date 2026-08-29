@@ -199,6 +199,14 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::RemotePickerHostActivate(target) => {
             crate::ops::session::remotes::activate_host(ctx, target)
         }
+        Msg::RemotePickerNewHost => crate::ops::session::remotes::open_new_host_prompt(ctx),
+        Msg::RemoteTargetPromptChanged(event) => {
+            crate::ops::session::remotes::target_prompt_changed(ctx, event)
+        }
+        Msg::SubmitRemoteTarget => crate::ops::session::remotes::submit_remote_target(ctx),
+        Msg::CloseRemoteTargetPrompt => {
+            crate::ops::session::remotes::close_target_prompt(ctx)
+        }
         Msg::RemoteHostSessionsDiscovered {
             epoch,
             target,

@@ -61,6 +61,20 @@ pub enum RemotePickerMode {
     },
 }
 
+pub struct RemoteTargetPromptState {
+    pub input: TextInput,
+    pub error: Option<String>,
+}
+
+impl RemoteTargetPromptState {
+    pub fn new(initial: impl AsRef<str>) -> Self {
+        Self {
+            input: TextInput::new(initial.as_ref()),
+            error: None,
+        }
+    }
+}
+
 /// The dedicated remote-host browser. Host and session navigation retain independent text fields
 /// and identity-based selections so returning from a host never loses the user's place and a
 /// reordered async result cannot redirect a destructive confirmation.
@@ -72,6 +86,8 @@ pub struct RemotePickerState {
     pub selected_session: Option<RemoteSessionIdentity>,
     pub sessions: Vec<DiscoveredSession>,
     pub probe_epoch: u64,
+    pub host_probe: super::HostProbe,
+    pub target_prompt: Option<RemoteTargetPromptState>,
     pub pending_forget: Option<crate::session::remote::RemoteTarget>,
     pub pending_kill: Option<RemoteSessionIdentity>,
     pub pending_restart: Option<RemoteSessionIdentity>,
@@ -87,6 +103,8 @@ impl RemotePickerState {
             selected_session: None,
             sessions: Vec::new(),
             probe_epoch: 0,
+            host_probe: super::HostProbe::Idle,
+            target_prompt: None,
             pending_forget: None,
             pending_kill: None,
             pending_restart: None,
@@ -98,17 +116,21 @@ impl RemotePickerState {
         self.mode = RemotePickerMode::HostSessions { target };
         self.sessions.clear();
         self.selected_session = None;
+        self.host_probe = super::HostProbe::Idle;
         self.pending_forget = None;
         self.pending_kill = None;
         self.pending_restart = None;
+        self.target_prompt = None;
     }
 
     pub fn return_to_hosts(&mut self) {
         self.mode = RemotePickerMode::Hosts;
         self.sessions.clear();
         self.selected_session = None;
+        self.host_probe = super::HostProbe::Idle;
         self.pending_kill = None;
         self.pending_restart = None;
+        self.target_prompt = None;
     }
 
     pub fn replace_sessions(&mut self, sessions: Vec<DiscoveredSession>) {

@@ -35,7 +35,7 @@ pub(crate) use lifecycle::{
     session_row_can_disconnect, session_row_can_disconnect_host, session_row_can_restart,
     session_row_is_current, session_row_is_restorable,
 };
-pub(crate) use remotes::{close_remote_picker, open_remote_hosts};
+pub(crate) use remotes::{close_remote_picker, open_new_host_flow, open_remote_hosts};
 
 #[cfg(test)]
 mod tests;

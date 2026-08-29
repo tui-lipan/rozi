@@ -1319,6 +1319,10 @@ pub(crate) fn request_remote_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::remote_picker_key());
 }
 
+pub(crate) fn request_remote_target_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::remote_target_input_key());
+}
+
 pub(crate) fn request_pick_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::pick_key());
 }

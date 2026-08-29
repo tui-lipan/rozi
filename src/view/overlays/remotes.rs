@@ -83,6 +83,8 @@ fn remote_hosts_palette(
     let interceptor = ctx.link().key_handler(|key| {
         if key.is(KeyCode::Esc) {
             Some(Msg::CloseRemotePicker)
+        } else if ctrl_letter(&key, 'n') {
+            Some(Msg::RemotePickerNewHost)
         } else {
             None
         }
@@ -146,9 +148,9 @@ fn remote_host_sessions_palette(
             .filter_map(RemoteSessionIdentity::of)
             .position(|identity| &identity == selected)
     });
-    let empty_text = match ctx.state.hosts.get(target).map(|entry| &entry.probe) {
-        Some(crate::state::HostProbe::InFlight) => "Discovering sessions...".to_string(),
-        Some(crate::state::HostProbe::Failed(error)) => {
+    let empty_text = match &picker.host_probe {
+        crate::state::HostProbe::InFlight => "Discovering sessions...".to_string(),
+        crate::state::HostProbe::Failed(error) => {
             crate::session::discovery::probe_failure_reason(error).to_string()
         }
         _ if picker.session_input.text().trim().is_empty() => "No sessions".to_string(),
@@ -293,6 +295,20 @@ pub(crate) fn remote_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.remote_picker.as_ref() else {
         return Text::new("").into();
     };
+    if let Some(prompt) = picker.target_prompt.as_ref() {
+        return prompt_overlay(
+            ctx,
+            "Connect new host",
+            "host / alias / ssh://...",
+            &prompt.input,
+            remote_target_input_key(),
+            Msg::RemoteTargetPromptChanged,
+            Msg::CloseRemoteTargetPrompt,
+            Msg::SubmitRemoteTarget,
+            &[("connect", "enter")],
+            prompt.error.as_deref(),
+        );
+    }
     let (title, body) = match &picker.mode {
         crate::state::RemotePickerMode::Hosts => {
             let body = VStack::new()
@@ -300,7 +316,8 @@ pub(crate) fn remote_picker_overlay(ctx: &Context<AppRoot>) -> Element {
                 .child(remote_hosts_palette(ctx, picker))
                 .child(
                     hint_row()
-                        .child(hint_pill(&ctx.state.theme, "open", "enter")),
+                        .child(hint_pill(&ctx.state.theme, "open", "enter"))
+                        .child(hint_pill(&ctx.state.theme, "new host", "ctrl+n")),
                 );
             ("Remote hosts".to_string(), body.into())
         }

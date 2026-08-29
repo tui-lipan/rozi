@@ -226,6 +226,10 @@ pub enum Msg {
     RemotePickerHostQueryChanged(String),
     RemotePickerHostSelect(crate::session::remote::RemoteTarget),
     RemotePickerHostActivate(crate::session::remote::RemoteTarget),
+    RemotePickerNewHost,
+    RemoteTargetPromptChanged(InputEvent),
+    SubmitRemoteTarget,
+    CloseRemoteTargetPrompt,
     RemoteHostSessionsDiscovered {
         epoch: u64,
         target: crate::session::remote::RemoteTarget,

@@ -40,6 +40,10 @@ pub fn remote_picker_key() -> &'static str {
     "rozi-remote-picker"
 }
 
+pub fn remote_target_input_key() -> &'static str {
+    "rozi-remote-target-input"
+}
+
 pub fn collaboration_key() -> &'static str {
     "rozi-collaboration"
 }

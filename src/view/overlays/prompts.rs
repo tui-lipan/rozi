@@ -185,10 +185,6 @@ pub(crate) fn rename_session_overlay(ctx: &Context<AppRoot>) -> Element {
             format!("Rename workspace {}", index + 1),
             "Workspace name, empty clears it".to_string(),
         ),
-        crate::state::NamingMode::ConnectRemoteHost => (
-            "Connect remote host".to_string(),
-            "host, user@host:port, or ssh:// URL".to_string(),
-        ),
     };
     // The armed line is the whole safety step for closing a temporary session, so it says how many
     // go and stays on screen under the finger — not in a toast that may already have faded.

@@ -58,8 +58,6 @@ pub enum NamingMode {
     RenameWorkspace {
         index: usize,
     },
-    /// Enter an SSH target and attach to a fresh session on that remote host.
-    ConnectRemoteHost,
 }
 
 /// The state of a leave prompt: the client is on its way out and the temporary sessions it would
@@ -132,16 +130,6 @@ impl SessionRenameState {
         let mut state = Self::new("", NamingMode::CreateSession);
         state.host_target = Some(target);
         state
-    }
-
-    /// A "Connect remote host…" prompt, prefilled with the most recently used ad-hoc target so a
-    /// quick reconnect is one keypress away.
-    pub fn new_connect_host() -> Self {
-        let recent = crate::session::read_recent_remotes();
-        let initial = recent
-            .first()
-            .map_or_else(String::new, |target| target.to_spec());
-        Self::new(initial, NamingMode::ConnectRemoteHost)
     }
 
     pub fn new_open_profile_as(profile: String, path: std::path::PathBuf) -> Self {

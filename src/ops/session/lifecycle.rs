@@ -539,37 +539,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<AppRoot>) -> Update {
             }
             crate::ops::overlay_return::finish(ctx)
         }
-        NamingMode::ConnectRemoteHost => {
-            let host = name;
-            if host.is_empty() {
-                // An empty target is a cancel by another name.
-                ctx.state.rename_session = None;
-                return crate::ops::overlay_return::finish(ctx);
-            }
-            // Validate the SSH target before tearing anything down; a bad host must not strand the
-            // current session.
-            if let Err(err) = crate::session::remote::parse_remote_target(&host) {
-                crate::pty_events::notify_error(
-                    ctx,
-                    "Invalid remote host",
-                    format!("`{host}`: {err}"),
-                );
-                request_rename_session_focus(ctx);
-                return Update::full();
-            }
-            ctx.state.rename_session = None;
-            crate::ops::overlay_return::leave(ctx);
-            // Attach a fresh ephemeral session on the remote host (as `--remote <host>` does with no
-            // session named). The current session is retained in the background per the usual switch.
-            let session = crate::state::remote_ephemeral_session_name();
-            attach_session_by_name(ctx, session, Some(host), None, true)
-        }
     }
-}
-
-pub(crate) fn open_connect_remote_host(ctx: &mut Context<AppRoot>) -> Update {
-    clear_pending_session_arms(ctx);
-    enter_session_rename(ctx, SessionRenameState::new_connect_host())
 }
 
 /// Open this client's temporary remote session on an explicitly selected host. The picker target

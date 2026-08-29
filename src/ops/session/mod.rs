@@ -28,7 +28,7 @@ pub(crate) use lifecycle::{
     activate_discovered_session, activate_selected_session, apply_rename_session,
     clear_pending_session_arms, close_rename_session, close_session_picker,
     disconnect_discovered_attachment, disconnect_selected_attachment, disconnect_selected_host,
-    kill_discovered_session, kill_selected_session, open_connect_remote_host, open_create_session,
+    kill_discovered_session, kill_selected_session, open_create_session,
     open_create_session_on_host, open_ephemeral_session, open_ephemeral_session_on_host,
     open_leave_prompt, open_rename_session, open_session_picker, open_startup_session_picker,
     restart_selected_session,

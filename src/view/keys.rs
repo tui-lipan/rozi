@@ -36,6 +36,10 @@ pub fn session_picker_key() -> &'static str {
     "rozi-session-picker"
 }
 
+pub fn remote_picker_key() -> &'static str {
+    "rozi-remote-picker"
+}
+
 pub fn collaboration_key() -> &'static str {
     "rozi-collaboration"
 }

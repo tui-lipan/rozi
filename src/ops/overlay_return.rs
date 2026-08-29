@@ -27,6 +27,21 @@ pub(crate) fn picker_origin(state: &State) -> Option<OverlayOrigin> {
             apply_mode: picker.apply_mode,
         });
     }
+    if let Some(picker) = state.remote_picker.as_ref() {
+        return Some(match &picker.mode {
+            crate::state::RemotePickerMode::Hosts => OverlayOrigin::RemoteHosts {
+                query: picker.host_input.text().to_string(),
+                selected_target: picker.selected_host.clone(),
+            },
+            crate::state::RemotePickerMode::HostSessions { target } => {
+                OverlayOrigin::RemoteHostSessions {
+                    target: target.clone(),
+                    query: picker.session_input.text().to_string(),
+                    selected_session: picker.selected_session.clone(),
+                }
+            }
+        });
+    }
     state
         .session_picker
         .as_ref()
@@ -84,6 +99,24 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
             }
             Some(update)
         }
+        OverlayOrigin::RemoteHosts {
+            query,
+            selected_target,
+        } => Some(crate::ops::session::remotes::restore_remote_hosts(
+            ctx,
+            query,
+            selected_target,
+        )),
+        OverlayOrigin::RemoteHostSessions {
+            target,
+            query,
+            selected_session,
+        } => Some(crate::ops::session::remotes::restore_remote_host_sessions(
+            ctx,
+            target,
+            query,
+            selected_session,
+        )),
     }
 }
 

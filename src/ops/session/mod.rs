@@ -2,6 +2,7 @@ pub(crate) mod attach;
 pub(crate) mod control_lease;
 pub(crate) mod discovery;
 pub(crate) mod lifecycle;
+pub(crate) mod remotes;
 
 pub(crate) use attach::{
     apply_pending_background_closes, attach_session_by_name, clear_pending_session_action,
@@ -32,6 +33,7 @@ pub(crate) use lifecycle::{
     session_row_can_disconnect, session_row_can_disconnect_host, session_row_can_restart,
     session_row_is_current, session_row_is_restorable,
 };
+pub(crate) use remotes::{close_remote_picker, open_remote_hosts};
 
 #[cfg(test)]
 mod tests;

@@ -187,8 +187,18 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             prompts::session_picker_disconnect_attachment(ctx)
         }
         Msg::SessionPickerDisconnectHost => prompts::session_picker_disconnect_host(ctx),
-        Msg::SessionPickerConnectHost => prompts::session_picker_connect_host(ctx),
+        Msg::SessionPickerRemoteHosts => prompts::session_picker_remote_hosts(ctx),
         Msg::SessionPickerNameCurrent => prompts::session_picker_name_current(ctx),
+        Msg::CloseRemotePicker => crate::ops::session::remotes::close_remote_picker(ctx),
+        Msg::RemotePickerHostQueryChanged(query) => {
+            crate::ops::session::remotes::host_query_changed(ctx, query)
+        }
+        Msg::RemotePickerHostSelect(target) => {
+            crate::ops::session::remotes::host_selected(ctx, target)
+        }
+        Msg::RemotePickerHostActivate(target) => {
+            crate::ops::session::remotes::activate_host(ctx, target)
+        }
         Msg::CloseCollaboration => prompts::close_collaboration(ctx),
         Msg::CollaborationQueryChanged(query) => prompts::collaboration_query_changed(ctx, query),
         Msg::CollaborationSelect(index) => prompts::collaboration_select(ctx, index),

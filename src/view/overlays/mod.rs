@@ -17,7 +17,8 @@ use super::keys::{
     collaboration_key, help_filter_key, help_scroll_key, layout_picker_key, palette_key,
     pane_padding_horizontal_key, pane_padding_vertical_key, pick_key, pick_prompt_input_key,
     profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
-    search_input_key, session_picker_key, settings_palette_key, theme_picker_key,
+    remote_picker_key, search_input_key, session_picker_key, settings_palette_key,
+    theme_picker_key,
 };
 use super::{
     action_palette_frame, action_palette_modal, action_palette_modal_with_width, fg_only,
@@ -28,6 +29,7 @@ include!("search.rs");
 include!("prompts.rs");
 include!("profiles.rs");
 include!("sessions.rs");
+include!("remotes.rs");
 include!("commands.rs");
 include!("settings.rs");
 include!("layout.rs");

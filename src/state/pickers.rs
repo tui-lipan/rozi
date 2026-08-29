@@ -38,6 +38,80 @@ pub struct SessionPickerState {
     pub pending_restart: Option<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteSessionIdentity {
+    pub target: crate::session::remote::RemoteTarget,
+    pub name: String,
+}
+
+impl RemoteSessionIdentity {
+    pub fn of(session: &DiscoveredSession) -> Option<Self> {
+        Some(Self {
+            target: session.remote_target.clone()?,
+            name: session.name.clone(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemotePickerMode {
+    Hosts,
+    HostSessions {
+        target: crate::session::remote::RemoteTarget,
+    },
+}
+
+/// The dedicated remote-host browser. Host and session navigation retain independent text fields
+/// and identity-based selections so returning from a host never loses the user's place and a
+/// reordered async result cannot redirect a destructive confirmation.
+pub struct RemotePickerState {
+    pub mode: RemotePickerMode,
+    pub host_input: TextInput,
+    pub selected_host: Option<crate::session::remote::RemoteTarget>,
+    pub session_input: TextInput,
+    pub selected_session: Option<RemoteSessionIdentity>,
+    pub sessions: Vec<DiscoveredSession>,
+    pub probe_epoch: u64,
+    pub pending_forget: Option<crate::session::remote::RemoteTarget>,
+    pub pending_kill: Option<RemoteSessionIdentity>,
+    pub pending_restart: Option<RemoteSessionIdentity>,
+}
+
+impl RemotePickerState {
+    pub fn new(selected_host: Option<crate::session::remote::RemoteTarget>) -> Self {
+        Self {
+            mode: RemotePickerMode::Hosts,
+            host_input: TextInput::new(""),
+            selected_host,
+            session_input: TextInput::new(""),
+            selected_session: None,
+            sessions: Vec::new(),
+            probe_epoch: 0,
+            pending_forget: None,
+            pending_kill: None,
+            pending_restart: None,
+        }
+    }
+
+    pub fn enter_host_sessions(&mut self, target: crate::session::remote::RemoteTarget) {
+        self.selected_host = Some(target.clone());
+        self.mode = RemotePickerMode::HostSessions { target };
+        self.sessions.clear();
+        self.selected_session = None;
+        self.pending_forget = None;
+        self.pending_kill = None;
+        self.pending_restart = None;
+    }
+
+    pub fn return_to_hosts(&mut self) {
+        self.mode = RemotePickerMode::Hosts;
+        self.sessions.clear();
+        self.selected_session = None;
+        self.pending_kill = None;
+        self.pending_restart = None;
+    }
+}
+
 /// The open *Manage collaborators* dialog: the roster of everyone else on the session. The
 /// session-wide controls it sits beside (request control, input lock, takeover) are ordinary
 /// command-palette entries, not part of this dialog.
@@ -130,6 +204,15 @@ pub enum OverlayOrigin {
         query: String,
         selected: usize,
     },
+    RemoteHosts {
+        query: String,
+        selected_target: Option<crate::session::remote::RemoteTarget>,
+    },
+    RemoteHostSessions {
+        target: crate::session::remote::RemoteTarget,
+        query: String,
+        selected_session: Option<RemoteSessionIdentity>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,6 +254,31 @@ impl SessionPickerState {
             pending_kill: None,
             pending_restart: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_picker_tests {
+    use super::*;
+
+    #[test]
+    fn mode_transitions_clear_incompatible_confirmations() {
+        let first = crate::session::remote::RemoteTarget::Alias("first".into());
+        let second = crate::session::remote::RemoteTarget::Alias("second".into());
+        let session = RemoteSessionIdentity {
+            target: second.clone(),
+            name: "dev".into(),
+        };
+        let mut picker = RemotePickerState::new(Some(first.clone()));
+        picker.pending_forget = Some(first);
+        picker.enter_host_sessions(second);
+        assert!(picker.pending_forget.is_none());
+
+        picker.pending_kill = Some(session.clone());
+        picker.pending_restart = Some(session);
+        picker.return_to_hosts();
+        assert!(picker.pending_kill.is_none());
+        assert!(picker.pending_restart.is_none());
     }
 }
 

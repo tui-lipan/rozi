@@ -254,8 +254,8 @@ pub(super) fn session_picker_disconnect_host(ctx: &mut Context<AppRoot>) -> Upda
     crate::ops::session::disconnect_selected_host(ctx)
 }
 
-pub(super) fn session_picker_connect_host(ctx: &mut Context<AppRoot>) -> Update {
-    crate::ops::session::open_connect_remote_host(ctx)
+pub(super) fn session_picker_remote_hosts(ctx: &mut Context<AppRoot>) -> Update {
+    crate::ops::session::open_remote_hosts(ctx)
 }
 
 pub(super) fn session_picker_name_current(ctx: &mut Context<AppRoot>) -> Update {

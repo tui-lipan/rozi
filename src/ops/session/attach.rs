@@ -248,10 +248,11 @@ pub(crate) fn release_background_for_exit(ctx: &mut Context<AppRoot>, close_temp
     }
 }
 
-/// Drop the session and profile pickers that led into a session switch or attach.
+/// Drop the session, remote, and profile pickers that led into a session switch or attach.
 pub(crate) fn dismiss_session_pickers(ctx: &mut Context<AppRoot>) {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
+    ctx.state.remote_picker = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
 }
@@ -653,6 +654,7 @@ pub(crate) fn held_ephemeral_session(
 pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
+    ctx.state.remote_picker = None;
     ctx.state.commands_dirty = true;
     // Set when this session had to be seeded here rather than from the parked launcher seed, which
     // already carries the launch's own `deferred_profile_seed`.

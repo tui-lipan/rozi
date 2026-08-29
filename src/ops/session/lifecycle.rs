@@ -310,6 +310,7 @@ fn enter_session_rename(ctx: &mut Context<AppRoot>, rename: SessionRenameState) 
     ctx.state.search = None;
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
+    ctx.state.remote_picker = None;
     ctx.state.mode = crate::state::Mode::Normal;
     request_rename_session_focus(ctx);
     Update::full()

@@ -289,11 +289,11 @@ pub(crate) fn session_name_already_running(
             .ok()
             .flatten()
             .is_some(),
-        Some(target) => ctx
-            .state
-            .host_session_cache
-            .get(&target.display_label())
-            .is_some_and(|sessions| sessions.iter().any(|session| session.name == name)),
+        Some(target) => crate::session::host_sessions_for(
+            &ctx.state.host_session_cache,
+            target,
+        )
+        .is_some_and(|sessions| sessions.iter().any(|session| session.name == name)),
     }
 }
 
@@ -749,14 +749,23 @@ pub(crate) fn remove_cached_remote_session(
     session_name: &str,
     target: &crate::session::remote::RemoteTarget,
 ) {
-    let label = target.display_label();
-    let Some(sessions) = ctx.state.host_session_cache.get_mut(&label) else {
+    let Some(mut sessions) = crate::session::host_sessions_for(
+        &ctx.state.host_session_cache,
+        target,
+    )
+    .map(|sessions| sessions.to_vec())
+    else {
         return;
     };
     let old_len = sessions.len();
     sessions.retain(|session| session.name != session_name);
     if sessions.len() != old_len {
-        crate::session::record_host_sessions(&label, sessions.clone());
+        crate::session::record_host_sessions(target, sessions.clone());
+        crate::session::set_cached_host_sessions(
+            &mut ctx.state.host_session_cache,
+            target,
+            sessions,
+        );
     }
 }
 

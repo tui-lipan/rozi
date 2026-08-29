@@ -119,8 +119,8 @@ pub struct CachedHostSession {
     pub panes: usize,
 }
 
-/// Per-host cache of last-seen sessions, keyed by the host's exact display target (so `box` and
-/// `dev@box:22` cache separately). Persisted under the state dir.
+/// Per-host cache of last-seen sessions, keyed by [`remote::RemoteTarget::to_spec`]. Persisted
+/// under the state dir. Readers accept legacy display-label keys until the next mutation.
 pub type HostSessionCache = std::collections::HashMap<String, Vec<CachedHostSession>>;
 
 fn host_sessions_path() -> Option<std::path::PathBuf> {
@@ -141,14 +141,37 @@ pub(crate) fn read_host_session_cache() -> HostSessionCache {
         .unwrap_or_default()
 }
 
-/// Replace the cached session list for one host after a successful probe. An empty list is retained
-/// (the host answered with no sessions) so a stale non-empty entry does not linger. Writing the
-/// whole map keeps the file self-consistent.
-pub(crate) fn record_host_sessions(target_label: &str, sessions: Vec<CachedHostSession>) {
-    let target_label = target_label.trim();
-    if target_label.is_empty() {
-        return;
-    }
+/// Read one target's cache by canonical identity, with a legacy display-label fallback.
+pub(crate) fn host_sessions_for<'a>(
+    cache: &'a HostSessionCache,
+    target: &remote::RemoteTarget,
+) -> Option<&'a [CachedHostSession]> {
+    cache
+        .get(&target.to_spec())
+        .or_else(|| cache.get(&target.display_label()))
+        .map(Vec::as_slice)
+}
+
+pub(crate) fn host_cache_contains_target(
+    cache: &HostSessionCache,
+    target: &remote::RemoteTarget,
+) -> bool {
+    host_sessions_for(cache, target).is_some()
+}
+
+/// Install a canonical in-memory entry. A different legacy display-label key is retained because
+/// it may now be the canonical key of an alias with the same label; deleting it would collapse the
+/// exact identity this migration is meant to preserve.
+pub(crate) fn set_cached_host_sessions(
+    cache: &mut HostSessionCache,
+    target: &remote::RemoteTarget,
+    sessions: Vec<CachedHostSession>,
+) {
+    let canonical = target.to_spec();
+    cache.insert(canonical, sessions);
+}
+
+fn write_host_session_cache(cache: &HostSessionCache) {
     let Some(path) = host_sessions_path() else {
         return;
     };
@@ -157,11 +180,29 @@ pub(crate) fn record_host_sessions(target_label: &str, sessions: Vec<CachedHostS
     {
         return;
     }
-    let mut cache = read_host_session_cache();
-    cache.insert(target_label.to_string(), sessions);
-    if let Ok(text) = serde_json::to_string_pretty(&cache) {
+    if let Ok(text) = serde_json::to_string_pretty(cache) {
         let _ = std::fs::write(path, text);
     }
+}
+
+/// Replace the cached session list for one host after a successful probe. An empty list is retained
+/// (the host answered with no sessions) so a stale non-empty entry does not linger. Writing the
+/// whole map keeps the file self-consistent.
+pub(crate) fn record_host_sessions(
+    target: &remote::RemoteTarget,
+    sessions: Vec<CachedHostSession>,
+) {
+    let mut cache = read_host_session_cache();
+    set_cached_host_sessions(&mut cache, target, sessions);
+    write_host_session_cache(&cache);
+}
+
+/// Remove both canonical and legacy cache identities for one exact target.
+pub(crate) fn forget_host_sessions(target: &remote::RemoteTarget) {
+    let mut cache = read_host_session_cache();
+    cache.remove(&target.to_spec());
+    cache.remove(&target.display_label());
+    write_host_session_cache(&cache);
 }
 
 #[cfg(test)]
@@ -195,6 +236,36 @@ mod tests {
             serde_json::from_str(r#"{"box":[{"name":"only"}]}"#).unwrap();
         assert_eq!(sparse["box"][0].name, "only");
         assert_eq!(sparse["box"][0].panes, 0);
+    }
+
+    #[test]
+    fn host_cache_prefers_canonical_identity_and_migrates_legacy_on_write() {
+        let alias = remote::RemoteTarget::Alias("box".into());
+        let url = remote::RemoteTarget::Url {
+            user: None,
+            host: "box".into(),
+            port: None,
+        };
+        let legacy = vec![CachedHostSession {
+            name: "legacy".into(),
+            ephemeral: false,
+            panes: 1,
+        }];
+        let canonical = vec![CachedHostSession {
+            name: "canonical".into(),
+            ephemeral: false,
+            panes: 2,
+        }];
+        let mut cache = HostSessionCache::new();
+        cache.insert("box".into(), legacy.clone());
+        cache.insert("ssh://box".into(), canonical.clone());
+
+        assert_eq!(host_sessions_for(&cache, &alias), Some(legacy.as_slice()));
+        assert_eq!(host_sessions_for(&cache, &url), Some(canonical.as_slice()));
+
+        set_cached_host_sessions(&mut cache, &url, legacy.clone());
+        assert_eq!(cache.get("ssh://box"), Some(&legacy));
+        assert_eq!(cache.get("box"), Some(&legacy));
     }
 
     #[test]

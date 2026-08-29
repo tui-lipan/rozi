@@ -278,10 +278,10 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
             }
             HostStatus::Disconnected | HostStatus::Unreachable => {
                 // Offline: the host row connects it; last-seen sessions remain visible from cache.
-                if let Some(cached) = ctx
-                    .state
-                    .host_session_cache
-                    .get(&host.target.display_label())
+                if let Some(cached) = crate::session::host_sessions_for(
+                    &ctx.state.host_session_cache,
+                    &host.target,
+                )
                 {
                     for entry in cached.iter().filter(|s| !s.ephemeral) {
                         rows.push(cached_session_row(ctx, host, entry));

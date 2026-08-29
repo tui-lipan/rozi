@@ -244,8 +244,10 @@ impl State {
                             });
                         }
                         HostStatus::Disconnected | HostStatus::Unreachable => {
-                            if let Some(cached) =
-                                self.host_session_cache.get(&host.target.display_label())
+                            if let Some(cached) = crate::session::host_sessions_for(
+                                &self.host_session_cache,
+                                &host.target,
+                            )
                             {
                                 for cached_entry in cached.iter().filter(|s| !s.ephemeral) {
                                     let entry = crate::session::discovery::DiscoveredSession {

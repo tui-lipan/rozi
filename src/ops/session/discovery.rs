@@ -51,14 +51,21 @@ pub(crate) fn apply_discovered_sessions(
         .filter_map(|(target, error)| error.is_none().then_some(target.clone()))
         .collect();
     for target in &successful_targets {
-        let label = target.display_label();
         let sessions = cached_sessions_for_target(&rows, target);
-        let known = ctx.state.host_session_cache.contains_key(&label);
+        let known = crate::session::host_cache_contains_target(
+            &ctx.state.host_session_cache,
+            target,
+        );
         if (!sessions.is_empty() || known)
-            && ctx.state.host_session_cache.get(&label) != Some(&sessions)
+            && crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
+                != Some(sessions.as_slice())
         {
-            crate::session::record_host_sessions(&label, sessions.clone());
-            ctx.state.host_session_cache.insert(label, sessions);
+            crate::session::record_host_sessions(target, sessions.clone());
+            crate::session::set_cached_host_sessions(
+                &mut ctx.state.host_session_cache,
+                target,
+                sessions,
+            );
         }
     }
     // A failed (or not-yet-run) host probe keeps its last successful snapshot visible. Successful
@@ -242,7 +249,7 @@ pub(crate) fn push_cached_configured_remote_rows(
         .filter(|target| !fresh_targets.contains(target))
     {
         let label = target.display_label();
-        let Some(sessions) = cache.get(&label) else {
+        let Some(sessions) = crate::session::host_sessions_for(cache, &target) else {
             continue;
         };
         for session in sessions {

@@ -13,12 +13,12 @@ fn remote_host_description(
     ctx: &Context<AppRoot>,
     entry: &crate::state::HostEntry,
 ) -> ItemDescription {
-    let cached = ctx
-        .state
-        .host_session_cache
-        .get(&entry.target.display_label())
-        .map(Vec::len)
-        .unwrap_or_default();
+    let cached = crate::session::host_sessions_for(
+        &ctx.state.host_session_cache,
+        &entry.target,
+    )
+    .map(|sessions| sessions.len())
+    .unwrap_or_default();
     let connections = remote_host_connections(ctx, &entry.target);
     let status = ctx
         .state
@@ -41,11 +41,11 @@ fn remote_host_marker(
     ctx: &Context<AppRoot>,
     entry: &crate::state::HostEntry,
 ) -> &'static str {
-    let cached = ctx
-        .state
-        .host_session_cache
-        .get(&entry.target.display_label())
-        .is_some_and(|sessions| !sessions.is_empty());
+    let cached = crate::session::host_sessions_for(
+        &ctx.state.host_session_cache,
+        &entry.target,
+    )
+    .is_some_and(|sessions| !sessions.is_empty());
     let connections = remote_host_connections(ctx, &entry.target);
     match ctx
         .state

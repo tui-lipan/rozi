@@ -120,7 +120,6 @@ pub(crate) fn sessions_discovered(
     // changed, so a steady 1.5s sweep does not churn the disk).
     for (target, status) in host_status {
         if status.is_none() {
-            let label = target.display_label();
             let sessions: Vec<crate::session::CachedHostSession> = ctx
                 .state
                 .sidebar
@@ -142,12 +141,20 @@ pub(crate) fn sessions_discovered(
             // Only persist a real change, and never write an empty list for a host that never had
             // one cached — there is nothing to remember, and it keeps the sweep from creating a
             // file on the first probe of a session-less host.
-            let known = ctx.state.host_session_cache.contains_key(&label);
+            let known = crate::session::host_cache_contains_target(
+                &ctx.state.host_session_cache,
+                &target,
+            );
             if (!sessions.is_empty() || known)
-                && ctx.state.host_session_cache.get(&label) != Some(&sessions)
+                && crate::session::host_sessions_for(&ctx.state.host_session_cache, &target)
+                    != Some(sessions.as_slice())
             {
-                crate::session::record_host_sessions(&label, sessions.clone());
-                ctx.state.host_session_cache.insert(label, sessions);
+                crate::session::record_host_sessions(&target, sessions.clone());
+                crate::session::set_cached_host_sessions(
+                    &mut ctx.state.host_session_cache,
+                    &target,
+                    sessions,
+                );
             }
         }
         if let Some(entry) = ctx.state.hosts.get_mut(&target) {

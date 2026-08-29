@@ -88,7 +88,10 @@ fn attached_idle_wait_backs_off_but_stays_bounded() {
     for _ in 0..4 {
         wait.next_timeout(true, false);
     }
-    assert_eq!(wait.next_timeout(true, false), Duration::from_millis(8));
+    assert_eq!(
+        wait.next_timeout(true, false),
+        SERVER_ATTACHED_IDLE_WAIT_MAX
+    );
     for _ in 0..100 {
         assert!(wait.next_timeout(true, false) <= SERVER_ATTACHED_IDLE_WAIT_MAX);
     }

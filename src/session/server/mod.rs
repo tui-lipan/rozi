@@ -55,7 +55,7 @@ const SERVER_ACTIVE_WAIT: Duration = Duration::from_millis(1);
 /// worker events wake the wait immediately through [`ByteQueue`], so this ceiling applies only to
 /// local IPC readiness, which the Unix socket and Windows named-pipe backends cannot currently wait
 /// on through one shared primitive.
-const SERVER_ATTACHED_IDLE_WAIT_MAX: Duration = Duration::from_millis(8);
+const SERVER_ATTACHED_IDLE_WAIT_MAX: Duration = Duration::from_millis(4);
 /// A server with no connected clients already used this cadence before adaptive waiting.
 const SERVER_UNATTACHED_WAIT: Duration = Duration::from_millis(20);
 /// Stay at the active cadence briefly so bursts do not repeatedly ramp the loop up and down.

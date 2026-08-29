@@ -8,8 +8,8 @@ use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::input::Action;
 use crate::state::{
-    MAX_MATCHES, ProfilePickerState, ScrollbackSearchState, SessionPickerState, SettingsAction,
-    cap_style_label,
+    MAX_MATCHES, ProfilePickerState, RemoteSessionIdentity, ScrollbackSearchState,
+    SessionPickerState, SettingsAction, cap_style_label,
 };
 use crate::{AppRoot, Msg};
 

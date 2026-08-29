@@ -212,6 +212,23 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::RemotePickerSessionSelect(identity) => {
             crate::ops::session::remotes::session_selected(ctx, identity)
         }
+        Msg::RemotePickerSessionActivate(identity) => {
+            crate::ops::session::remotes::activate_session(ctx, identity)
+        }
+        Msg::RemotePickerCreateSession => {
+            crate::ops::session::remotes::create_session(ctx)
+        }
+        Msg::RemotePickerEphemeral => crate::ops::session::remotes::open_ephemeral(ctx),
+        Msg::RemotePickerKillSession => crate::ops::session::remotes::kill_session(ctx),
+        Msg::RemotePickerRestartSession => {
+            crate::ops::session::remotes::restart_session(ctx)
+        }
+        Msg::RemotePickerDisconnectSession => {
+            crate::ops::session::remotes::disconnect_session(ctx)
+        }
+        Msg::RemotePickerDisconnectHost => {
+            crate::ops::session::remotes::disconnect_selected_host(ctx)
+        }
         Msg::CloseCollaboration => prompts::close_collaboration(ctx),
         Msg::CollaborationQueryChanged(query) => prompts::collaboration_query_changed(ctx, query),
         Msg::CollaborationSelect(index) => prompts::collaboration_select(ctx, index),

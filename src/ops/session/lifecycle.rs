@@ -572,6 +572,23 @@ pub(crate) fn open_connect_remote_host(ctx: &mut Context<AppRoot>) -> Update {
     enter_session_rename(ctx, SessionRenameState::new_connect_host())
 }
 
+/// Open this client's temporary remote session on an explicitly selected host. The picker target
+/// is authoritative even when a different remote attachment is visible behind the overlay.
+pub(crate) fn open_ephemeral_session_on_host(
+    ctx: &mut Context<AppRoot>,
+    target: crate::session::remote::RemoteTarget,
+) -> Update {
+    crate::ops::overlay_return::leave(ctx);
+    let name = crate::state::remote_ephemeral_session_name();
+    attach_session_by_name(
+        ctx,
+        name,
+        Some(target.display_label()),
+        Some(target),
+        true,
+    )
+}
+
 pub(crate) fn close_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     // Cancelling any session naming prompt - including the detach-and-name one - just returns to the
     // session. A detach never tears panes down: quitting (with its own confirmation) is the only
@@ -783,6 +800,13 @@ pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<AppRoot>) -> Upda
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
+    disconnect_discovered_attachment(ctx, entry)
+}
+
+pub(crate) fn disconnect_discovered_attachment(
+    ctx: &mut Context<AppRoot>,
+    entry: DiscoveredSession,
+) -> Update {
     if !session_row_can_disconnect(&ctx.state, &entry) {
         return Update::none();
     }
@@ -806,7 +830,11 @@ pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<AppRoot>) -> Upda
         ctx,
         format!("Disconnected from `{display}` — server still running"),
     );
-    refresh_session_picker(ctx)
+    if ctx.state.show_session_picker {
+        refresh_session_picker(ctx)
+    } else {
+        Update::full()
+    }
 }
 
 /// Disconnect the client from a remote host: close every attachment (current and retained) to the

@@ -241,6 +241,144 @@ pub(crate) fn session_selected(
     Update::full()
 }
 
+fn selected_session(
+    state: &crate::state::State,
+) -> Option<crate::session::discovery::DiscoveredSession> {
+    let picker = state.remote_picker.as_ref()?;
+    let selected = picker.selected_session.as_ref()?;
+    picker
+        .sessions
+        .iter()
+        .find(|session| RemoteSessionIdentity::of(session).as_ref() == Some(selected))
+        .cloned()
+}
+
+fn selected_target(state: &crate::state::State) -> Option<RemoteTarget> {
+    match &state.remote_picker.as_ref()?.mode {
+        RemotePickerMode::HostSessions { target } => Some(target.clone()),
+        RemotePickerMode::Hosts => None,
+    }
+}
+
+pub(crate) fn activate_session(
+    ctx: &mut Context<AppRoot>,
+    identity: RemoteSessionIdentity,
+) -> Update {
+    let Some(session) = ctx
+        .state
+        .remote_picker
+        .as_ref()
+        .and_then(|picker| {
+            picker.sessions.iter().find(|session| {
+                RemoteSessionIdentity::of(session).as_ref() == Some(&identity)
+            })
+        })
+        .cloned()
+    else {
+        return Update::none();
+    };
+    crate::ops::session::activate_discovered_session(ctx, session)
+}
+
+pub(crate) fn create_session(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(target) = selected_target(&ctx.state) else {
+        return Update::none();
+    };
+    crate::ops::session::open_create_session_on_host(ctx, target)
+}
+
+pub(crate) fn open_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(target) = selected_target(&ctx.state) else {
+        return Update::none();
+    };
+    crate::ops::session::open_ephemeral_session_on_host(ctx, target)
+}
+
+pub(crate) fn kill_session(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(session) = selected_session(&ctx.state) else {
+        return Update::none();
+    };
+    let Some(identity) = RemoteSessionIdentity::of(&session) else {
+        return Update::none();
+    };
+    let armed = ctx
+        .state
+        .remote_picker
+        .as_ref()
+        .is_some_and(|picker| picker.pending_kill.as_ref() == Some(&identity));
+    if !armed {
+        if let Some(picker) = ctx.state.remote_picker.as_mut() {
+            picker.pending_kill = Some(identity);
+            picker.pending_restart = None;
+        }
+        return crate::ops::confirm::arm(ctx);
+    }
+    if let Some(picker) = ctx.state.remote_picker.as_mut() {
+        picker.pending_kill = None;
+        picker.pending_restart = None;
+    }
+    let update = crate::ops::session::kill_discovered_session(ctx, session.clone());
+    let removed = session.remote_target.as_ref().is_some_and(|target| {
+        crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
+            .is_none_or(|sessions| sessions.iter().all(|cached| cached.name != session.name))
+    });
+    if removed
+        && let Some(picker) = ctx.state.remote_picker.as_mut()
+    {
+        let rows = picker
+            .sessions
+            .iter()
+            .filter(|listed| RemoteSessionIdentity::of(listed).as_ref() != Some(&identity))
+            .cloned()
+            .collect();
+        picker.replace_sessions(rows);
+    }
+    update
+}
+
+pub(crate) fn restart_session(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(session) = selected_session(&ctx.state) else {
+        return Update::none();
+    };
+    if !crate::ops::session::session_row_can_restart(&session) {
+        return Update::none();
+    }
+    let Some(identity) = RemoteSessionIdentity::of(&session) else {
+        return Update::none();
+    };
+    let armed = ctx
+        .state
+        .remote_picker
+        .as_ref()
+        .is_some_and(|picker| picker.pending_restart.as_ref() == Some(&identity));
+    if !armed {
+        if let Some(picker) = ctx.state.remote_picker.as_mut() {
+            picker.pending_restart = Some(identity);
+            picker.pending_kill = None;
+        }
+        return crate::ops::confirm::arm(ctx);
+    }
+    if let Some(picker) = ctx.state.remote_picker.as_mut() {
+        picker.pending_restart = None;
+        picker.pending_kill = None;
+    }
+    super::lifecycle::restart_discovered_session(ctx, session)
+}
+
+pub(crate) fn disconnect_session(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(session) = selected_session(&ctx.state) else {
+        return Update::none();
+    };
+    crate::ops::session::disconnect_discovered_attachment(ctx, session)
+}
+
+pub(crate) fn disconnect_selected_host(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(target) = selected_target(&ctx.state) else {
+        return Update::none();
+    };
+    crate::ops::session::disconnect_host(ctx, &target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +422,20 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].host.as_deref(), Some("adam@workbox:2222"));
         assert_eq!(rows[0].remote_target.as_ref(), Some(&target));
+    }
+
+    #[test]
+    fn picker_target_wins_over_the_current_attachment_target() {
+        let current = RemoteTarget::Alias("current".into());
+        let selected = RemoteTarget::Alias("selected".into());
+        let mut state = crate::state::State::new(
+            crate::config::Config::default(),
+            tui_lipan::prelude::Theme::default(),
+        );
+        state.current_mut().remote_target = Some(current);
+        let mut picker = RemotePickerState::new(Some(selected.clone()));
+        picker.enter_host_sessions(selected.clone());
+        state.remote_picker = Some(picker);
+        assert_eq!(selected_target(&state), Some(selected));
     }
 }

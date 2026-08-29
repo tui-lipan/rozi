@@ -199,6 +199,19 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::RemotePickerHostActivate(target) => {
             crate::ops::session::remotes::activate_host(ctx, target)
         }
+        Msg::RemoteHostSessionsDiscovered {
+            epoch,
+            target,
+            rows,
+        } => crate::ops::session::remotes::apply_host_discovery(
+            ctx, epoch, target, rows,
+        ),
+        Msg::RemotePickerSessionQueryChanged(query) => {
+            crate::ops::session::remotes::session_query_changed(ctx, query)
+        }
+        Msg::RemotePickerSessionSelect(identity) => {
+            crate::ops::session::remotes::session_selected(ctx, identity)
+        }
         Msg::CloseCollaboration => prompts::close_collaboration(ctx),
         Msg::CollaborationQueryChanged(query) => prompts::collaboration_query_changed(ctx, query),
         Msg::CollaborationSelect(index) => prompts::collaboration_select(ctx, index),

@@ -118,16 +118,65 @@ fn remote_hosts_palette(
         ))
 }
 
-fn remote_host_sessions_placeholder(ctx: &Context<AppRoot>) -> Element {
-    shared_search_palette::<usize>(ctx, Length::Auto, false)
+fn remote_host_sessions_palette(
+    ctx: &Context<AppRoot>,
+    picker: &crate::state::RemotePickerState,
+    target: &crate::session::remote::RemoteTarget,
+) -> SearchPalette<crate::state::RemoteSessionIdentity> {
+    let entries = picker
+        .sessions
+        .iter()
+        .filter_map(|session| {
+            let identity = crate::state::RemoteSessionIdentity::of(session)?;
+            let label = if session.ephemeral {
+                "ephemeral".to_string()
+            } else {
+                session.name.clone()
+            };
+            Some(
+                SearchEntry::item(label, identity)
+                    .description(session_description(session, false)),
+            )
+        })
+        .collect::<Vec<_>>();
+    let selected = picker.selected_session.as_ref().and_then(|selected| {
+        picker
+            .sessions
+            .iter()
+            .filter_map(crate::state::RemoteSessionIdentity::of)
+            .position(|identity| &identity == selected)
+    });
+    let empty_text = match ctx.state.hosts.get(target).map(|entry| &entry.probe) {
+        Some(crate::state::HostProbe::InFlight) => "Discovering sessions...".to_string(),
+        Some(crate::state::HostProbe::Failed(error)) => {
+            crate::session::discovery::probe_failure_reason(error).to_string()
+        }
+        _ if picker.session_input.text().trim().is_empty() => "No sessions".to_string(),
+        _ => format!(
+            "No sessions match `{}`",
+            picker.session_input.text().trim()
+        ),
+    };
+    shared_search_palette::<crate::state::RemoteSessionIdentity>(ctx, Length::Auto, false)
         .width(Length::Flex(1))
-        .entries(Vec::new())
+        .entries(entries)
         .placeholder("Search sessions...")
-        .empty_text("Discovering sessions...")
+        .initial_query(picker.session_input.text().to_string())
+        .initial_selected_item_index(selected)
+        .sync_selection(true)
+        .empty_text(empty_text)
+        .description_placement(DescriptionPlacement::Right)
         .input_key_interceptor(ctx.link().key_handler(|key| {
             key.is(KeyCode::Esc).then_some(Msg::CloseRemotePicker)
         }))
-        .into()
+        .on_query_change(ctx.link().callback(|query: Arc<str>| {
+            Msg::RemotePickerSessionQueryChanged(query.to_string())
+        }))
+        .on_select(ctx.link().callback(
+            |event: SearchEvent<crate::state::RemoteSessionIdentity>| {
+                Msg::RemotePickerSessionSelect(event.item.value.clone())
+            },
+        ))
 }
 
 pub(crate) fn remote_picker_overlay(ctx: &Context<AppRoot>) -> Element {
@@ -148,7 +197,7 @@ pub(crate) fn remote_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         crate::state::RemotePickerMode::HostSessions { target } => {
             let body = VStack::new()
                 .height(Length::Auto)
-                .child(remote_host_sessions_placeholder(ctx));
+                .child(remote_host_sessions_palette(ctx, picker, target));
             (format!("Sessions · {}", target.display_label()), body.into())
         }
     };

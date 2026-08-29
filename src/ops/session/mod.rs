@@ -21,7 +21,8 @@ pub(crate) use control_lease::{
 };
 pub(crate) use discovery::{
     HostProbeStatus, apply_discovered_sessions, attached_session_rows, discover_picker_sessions,
-    discover_sidebar_sessions, local_picker_rows, seed_host_registry,
+    discover_remote_host_sessions, discover_sidebar_sessions, local_picker_rows,
+    seed_host_registry,
 };
 pub(crate) use lifecycle::{
     activate_discovered_session, activate_selected_session, apply_rename_session,

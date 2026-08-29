@@ -110,6 +110,23 @@ impl RemotePickerState {
         self.pending_kill = None;
         self.pending_restart = None;
     }
+
+    pub fn replace_sessions(&mut self, sessions: Vec<DiscoveredSession>) {
+        let changed = self.sessions != sessions;
+        self.sessions = sessions;
+        let selected = self.selected_session.take().filter(|selected| {
+            self.sessions
+                .iter()
+                .filter_map(RemoteSessionIdentity::of)
+                .any(|identity| &identity == selected)
+        });
+        self.selected_session = selected
+            .or_else(|| self.sessions.first().and_then(RemoteSessionIdentity::of));
+        if changed {
+            self.pending_kill = None;
+            self.pending_restart = None;
+        }
+    }
 }
 
 /// The open *Manage collaborators* dialog: the roster of everyone else on the session. The
@@ -277,6 +294,22 @@ mod remote_picker_tests {
         picker.pending_kill = Some(session.clone());
         picker.pending_restart = Some(session);
         picker.return_to_hosts();
+        assert!(picker.pending_kill.is_none());
+        assert!(picker.pending_restart.is_none());
+    }
+
+    #[test]
+    fn replacing_sessions_disarms_a_stale_confirmation() {
+        let target = crate::session::remote::RemoteTarget::Alias("workbox".into());
+        let identity = RemoteSessionIdentity {
+            target: target.clone(),
+            name: "dev".into(),
+        };
+        let mut picker = RemotePickerState::new(Some(target.clone()));
+        picker.enter_host_sessions(target);
+        picker.pending_kill = Some(identity.clone());
+        picker.pending_restart = Some(identity);
+        picker.replace_sessions(Vec::new());
         assert!(picker.pending_kill.is_none());
         assert!(picker.pending_restart.is_none());
     }

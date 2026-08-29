@@ -226,6 +226,13 @@ pub enum Msg {
     RemotePickerHostQueryChanged(String),
     RemotePickerHostSelect(crate::session::remote::RemoteTarget),
     RemotePickerHostActivate(crate::session::remote::RemoteTarget),
+    RemoteHostSessionsDiscovered {
+        epoch: u64,
+        target: crate::session::remote::RemoteTarget,
+        rows: Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
+    },
+    RemotePickerSessionQueryChanged(String),
+    RemotePickerSessionSelect(crate::state::RemoteSessionIdentity),
     CloseCollaboration,
     CollaborationQueryChanged(String),
     CollaborationSelect(usize),

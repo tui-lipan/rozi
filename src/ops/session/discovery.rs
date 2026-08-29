@@ -8,6 +8,22 @@ use crate::session::discovery::DiscoveredSession;
 
 pub(crate) const SESSION_PICKER_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 
+#[cfg(test)]
+static REMOTE_PROBE_REQUESTS: std::sync::Mutex<Vec<crate::session::remote::RemoteTarget>> =
+    std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn note_remote_probe_request(target: &crate::session::remote::RemoteTarget) {
+    #[cfg(test)]
+    REMOTE_PROBE_REQUESTS.lock().unwrap().push(target.clone());
+    #[cfg(not(test))]
+    let _ = target;
+}
+
+#[cfg(test)]
+pub(crate) fn take_remote_probe_requests() -> Vec<crate::session::remote::RemoteTarget> {
+    std::mem::take(&mut *REMOTE_PROBE_REQUESTS.lock().unwrap())
+}
+
 /// Fast, local-only rows used by the picker and Sessions sidebar: local named sessions plus the
 /// attached session, with no remote ssh.
 pub(crate) fn local_picker_rows(ctx: &Context<AppRoot>) -> Vec<DiscoveredSession> {
@@ -161,6 +177,17 @@ pub(crate) type HostProbeStatus = Vec<(crate::session::remote::RemoteTarget, Opt
 /// per-host probe outcomes.
 pub(crate) type SidebarDiscovery = (std::io::Result<Vec<DiscoveredSession>>, HostProbeStatus);
 
+/// Probe exactly one remote host using the shared SSH/list-sessions protocol path.
+pub(crate) fn discover_remote_host_sessions(
+    target: &crate::session::remote::RemoteTarget,
+    remote_config: &crate::config::RemoteConfig,
+) -> std::io::Result<Vec<DiscoveredSession>> {
+    crate::session::discovery::discover_sessions_from(
+        &crate::session::discovery::SessionSource::Remote(target.clone()),
+        remote_config,
+    )
+}
+
 /// Every configured remote target: `[remote.hosts.*]` aliases plus `default_host`.
 pub(crate) fn configured_targets(
     remote_config: &crate::config::RemoteConfig,
@@ -192,10 +219,7 @@ pub(crate) fn probe_remote_targets_reporting(
         let config = remote_config.clone();
         let target = target.clone();
         handles.push(std::thread::spawn(move || {
-            let outcome = crate::session::discovery::discover_sessions_from(
-                &crate::session::discovery::SessionSource::Remote(target.clone()),
-                &config,
-            );
+            let outcome = discover_remote_host_sessions(&target, &config);
             (target, outcome)
         }));
     }

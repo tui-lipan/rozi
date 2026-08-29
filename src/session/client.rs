@@ -698,7 +698,10 @@ impl InboundMailbox {
         })
     }
 
-    fn push(self: &Arc<Self>, frame: Frame<ServerMessage>) -> std::result::Result<(), ()> {
+    pub(crate) fn push(
+        self: &Arc<Self>,
+        frame: Frame<ServerMessage>,
+    ) -> std::result::Result<(), ()> {
         let bytes = inbound_frame_bytes(&frame);
         // Parsing terminal graphics can briefly take longer than the socket reader needs to fill
         // this bounded mailbox. Backpressure that reader instead of tearing down a healthy local
@@ -733,8 +736,17 @@ impl InboundMailbox {
         self.schedule();
     }
 
-    pub(crate) fn pop(&self) -> Option<InboundEvent> {
-        self.queue.try_pop()
+    pub(crate) fn pop(&self) -> Option<(InboundEvent, usize, bool)> {
+        self.queue.try_pop_with_bytes_and_more()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.queue.stats().len == 0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drain_is_scheduled(&self) -> bool {
+        self.scheduled.load(Ordering::Acquire)
     }
 
     pub(crate) fn session_name(&self) -> String {

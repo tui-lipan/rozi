@@ -17,8 +17,9 @@
 
 mod support;
 
-use criterion::{BenchmarkId, Criterion};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
 use rozi::AppRoot;
+use rozi::session::protocol::Frame;
 use rozi::state::{Pane, PaneId};
 use rozi::tiling::build_dwindle_tree;
 use std::hint::black_box;
@@ -218,6 +219,87 @@ fn message_overhead(c: &mut Criterion) {
     group.finish();
 }
 
+/// Client mailbox throughput when several panes produce interleaved output.
+///
+/// Adjacent output for one pane is already coalesced on insertion. Round-robin pane order pins the
+/// multi-writer case where that optimization cannot collapse the mailbox, and therefore exposes
+/// how much dispatcher and post-update work the drain policy adds around terminal processing.
+fn inbound_drain(c: &mut Criterion) {
+    let mut group = c.benchmark_group("inbound_drain");
+    for panes in [1usize, 2, 4, 8] {
+        // The 64 B and 1 KiB cases hit the entry limit first. The 16 KiB / 1 MiB case
+        // independently exercises the soft 256 KiB byte budget after 16 entries.
+        for (chunk_size, total_bytes) in [
+            (64usize, 256 * 1024),
+            (1024, 256 * 1024),
+            (16 * 1024, 1024 * 1024),
+        ] {
+            group.throughput(Throughput::Bytes(total_bytes as u64));
+            group.bench_function(
+                BenchmarkId::new(format!("{panes}_panes"), chunk_size),
+                |b| {
+                    let mut backend = backend_with_panes(panes, b"");
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                    while backend.state().command_link.is_none() {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "the benchmark backend never delivered its command link"
+                        );
+                        backend.pump().expect("settle benchmark mount");
+                        std::thread::yield_now();
+                    }
+                    let link = backend
+                        .state()
+                        .command_link
+                        .clone()
+                        .expect("command link settled above");
+                    let epoch = backend.state().runtime_epoch;
+                    let pane_keys: Vec<_> = backend.state().current().workspaces[0]
+                        .panes
+                        .iter()
+                        .map(|pane| (pane.id, pane.pty_generation))
+                        .collect();
+                    let chunk = support::bytes_of_len(chunk_size);
+                    let frames: Vec<_> = (0..total_bytes / chunk_size)
+                        .map(|index| {
+                            let (pane_id, generation) = pane_keys[index % pane_keys.len()];
+                            Frame::PaneBytes {
+                                pane_id,
+                                local: false,
+                                generation,
+                                bytes: chunk.clone(),
+                            }
+                        })
+                        .collect();
+
+                    b.iter_batched(
+                        || {
+                            rozi::test_support::inbound_mailbox_fixture(
+                                link.clone(),
+                                epoch,
+                                frames.clone(),
+                            )
+                        },
+                        |mailbox| {
+                            let mut dispatcher_messages = 0usize;
+                            while !mailbox.is_empty() {
+                                let level = backend
+                                    .update_level(mailbox.drain_message())
+                                    .expect("drain benchmark update");
+                                black_box(level);
+                                dispatcher_messages += 1;
+                            }
+                            black_box(dispatcher_messages);
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
 fn main() {
     // Criterion's harness runs on the main thread; re-host it on a deep stack so the dwindle
     // layout recursion at 16 panes does not overflow.
@@ -228,6 +310,7 @@ fn main() {
             app_render(&mut criterion);
             sidebar_render(&mut criterion);
             message_overhead(&mut criterion);
+            inbound_drain(&mut criterion);
             criterion.final_summary();
         })
         .expect("spawn bench thread")

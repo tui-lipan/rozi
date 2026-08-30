@@ -214,6 +214,24 @@ fn focus_in_direction_with_wrap(
         focus_pane(state, id);
         return Some(id);
     };
+
+    let next = resolve_directional_focus_target(workspace, &candidates, current, direction, wrap)?;
+    focus_pane(state, next);
+    state.active_workspace_mut().last_directional_focus = Some(DirectionalFocusHint {
+        pane: next,
+        entry_direction: direction,
+        target: focused,
+    });
+    Some(next)
+}
+
+fn resolve_directional_focus_target(
+    workspace: &Workspace,
+    candidates: &[tiling::PanePlacement],
+    current: &tiling::PanePlacement,
+    direction: Direction,
+    wrap: bool,
+) -> Option<PaneId> {
     // Across a strip layout's single axis every tiled pane spans the full extent, so no tile sits
     // ahead of another and `directional_score` rightly rejects them all. Wrapping there would fall
     // through to an arbitrary equally-ranked pane, which is why this bounced between two panes no
@@ -225,11 +243,26 @@ fn focus_in_direction_with_wrap(
             && workspace
                 .panes
                 .iter()
-                .any(|pane| pane.id == focused && !pane.floating && !pane.closing));
-    let continue_band = continue_focus_band(workspace, &candidates, focused, direction);
-    let geometric = candidates
+                .any(|pane| pane.id == current.id && !pane.floating && !pane.closing));
+    let continue_band = continue_focus_band(workspace, candidates, current.id, direction);
+    let geometric =
+        geometric_focus_target(candidates, current, direction, continue_band).or_else(|| {
+            wrap.then(|| wrapped_focus_id(candidates, current, direction, continue_band))
+                .flatten()
+        });
+    let remembered = remembered_focus_target(workspace, candidates, current.id, direction);
+    prefer_aligned_focus_target(candidates, current, direction, remembered, geometric)
+}
+
+fn geometric_focus_target(
+    candidates: &[tiling::PanePlacement],
+    current: &tiling::PanePlacement,
+    direction: Direction,
+    continue_band: Option<FloatRect>,
+) -> Option<PaneId> {
+    candidates
         .iter()
-        .filter(|candidate| candidate.id != focused)
+        .filter(|candidate| candidate.id != current.id)
         .filter_map(|candidate| {
             // Require cross-axis overlap so focus stays orthogonal (2→Right wraps to 1, not
             // diagonally to 4). Swap already uses the same rule.
@@ -251,24 +284,6 @@ fn focus_in_direction_with_wrap(
                 .then_with(|| score_a.total_cmp(score_b))
         })
         .map(|(id, _, _)| id)
-        .or_else(|| {
-            wrap.then(|| wrapped_focus_id(&candidates, current, direction, continue_band))
-                .flatten()
-        });
-    let remembered = remembered_focus_target(workspace, &candidates, focused, direction);
-    let next = prefer_aligned_focus_target(&candidates, current, direction, remembered, geometric);
-
-    if let Some(next_id) = next {
-        focus_pane(state, next_id);
-        state.active_workspace_mut().last_directional_focus = Some(DirectionalFocusHint {
-            pane: next_id,
-            entry_direction: direction,
-            target: focused,
-        });
-        Some(next_id)
-    } else {
-        None
-    }
 }
 
 /// Whether `direction` runs across a strip layout's single axis: Columns and Scrollable lay panes

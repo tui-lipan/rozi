@@ -498,59 +498,35 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
     }))
 }
 
-pub(crate) fn attach_session_by_name(
+fn parse_attach_remote(
     ctx: &mut Context<AppRoot>,
-    name: String,
-    remote_host: Option<String>,
     discovered_target: Option<crate::session::remote::RemoteTarget>,
-    autostart: bool,
-) -> Update {
-    if !crate::session::discovery::valid_attach_target(&name) {
-        crate::pty_events::notify_error(
-            ctx,
-            "Invalid session name",
-            "Use letters, numbers, _ or -",
-        );
-        return Update::full();
-    }
-    let remote_target = match (discovered_target, remote_host.as_deref()) {
-        (Some(target), _) => Some(target),
+    remote_host: Option<&str>,
+) -> std::result::Result<Option<crate::session::remote::RemoteTarget>, Update> {
+    match (discovered_target, remote_host) {
+        (Some(target), _) => Ok(Some(target)),
         (None, Some(host)) => match crate::session::remote::parse_remote_target(host) {
-            Ok(target) => Some(target),
+            Ok(target) => Ok(Some(target)),
             Err(err) => {
                 crate::pty_events::notify_error(
                     ctx,
                     "Invalid remote host",
                     format!("`{host}`: {err}"),
                 );
-                return Update::full();
+                Err(Update::full())
             }
         },
-        (None, None) => None,
-    };
-    if ctx.state.is_attached_to(&name, remote_target.as_ref()) {
-        return Update::none();
+        (None, None) => Ok(None),
     }
-    // An attach already running for *this same* target is the double-click case: stay silent and
-    // let it finish. Aiming somewhere else is the user changing their mind, and must go through —
-    // refusing it would make a pending attach a trap, with no way off a session that never finishes
-    // connecting. The mid-connect attachment is released rather than parked by the install below
-    // (it has no live client to keep), and the abandoned attach thread's reply is discarded by the
-    // epoch check in `attach_failed`/`connected`.
-    if let Some(pending) = ctx.state.current().pending_session_attach.as_ref()
-        && pending.name == name
-        && ctx.state.current().remote_target == remote_target
-    {
-        return Update::none();
-    }
-    // Fast path: the target session is already retained in the background - switch to it instantly
-    // (its client and screens are live) instead of reconnecting.
-    if let Some(parked) = ctx
-        .state
-        .parked_attachment_id(&name, remote_target.as_ref())
-    {
-        return switch_to_parked(ctx, parked);
-    }
+}
+
+fn begin_named_attach(
+    ctx: &mut Context<AppRoot>,
+    name: String,
+    remote_host: Option<String>,
+    remote_target: Option<crate::session::remote::RemoteTarget>,
+    autostart: bool,
+) -> Update {
     // Attach-elsewhere. Retain the current attached session in the background so switching back is
     // instant and its screens stay live; only tear it down when it is not actually attached (e.g.
     // still mid-connect). The epoch advances below, so the retained session's remaining frames route
@@ -559,7 +535,6 @@ pub(crate) fn attach_session_by_name(
     let mut parked_epoch = None;
     let left =
         if ctx.state.current().session_attached {
-            // Retain the previous session under its current epoch so a failed attach can restore it.
             parked_epoch = Some(ctx.state.runtime_epoch);
             park_current_session(ctx);
             None
@@ -585,7 +560,7 @@ pub(crate) fn attach_session_by_name(
         autostart,
         read_only: false,
         reconnect: false,
-        remote_host: remote_host.clone(),
+        remote_host,
         intent: crate::state::AttachIntent::Plain,
         left,
         parked_epoch,
@@ -602,7 +577,6 @@ pub(crate) fn attach_session_by_name(
                     false,
                     target,
                     remote_config,
-                    // Explicit attach: fail fast rather than blocking the UI on a dead host.
                     false,
                     link,
                 );
@@ -613,6 +587,51 @@ pub(crate) fn attach_session_by_name(
             }
         });
     }))
+}
+
+pub(crate) fn attach_session_by_name(
+    ctx: &mut Context<AppRoot>,
+    name: String,
+    remote_host: Option<String>,
+    discovered_target: Option<crate::session::remote::RemoteTarget>,
+    autostart: bool,
+) -> Update {
+    if !crate::session::discovery::valid_attach_target(&name) {
+        crate::pty_events::notify_error(
+            ctx,
+            "Invalid session name",
+            "Use letters, numbers, _ or -",
+        );
+        return Update::full();
+    }
+    let remote_target = match parse_attach_remote(ctx, discovered_target, remote_host.as_deref()) {
+        Ok(target) => target,
+        Err(update) => return update,
+    };
+    if ctx.state.is_attached_to(&name, remote_target.as_ref()) {
+        return Update::none();
+    }
+    // An attach already running for *this same* target is the double-click case: stay silent and
+    // let it finish. Aiming somewhere else is the user changing their mind, and must go through —
+    // refusing it would make a pending attach a trap, with no way off a session that never finishes
+    // connecting. The mid-connect attachment is released rather than parked by the install below
+    // (it has no live client to keep), and the abandoned attach thread's reply is discarded by the
+    // epoch check in `attach_failed`/`connected`.
+    if let Some(pending) = ctx.state.current().pending_session_attach.as_ref()
+        && pending.name == name
+        && ctx.state.current().remote_target == remote_target
+    {
+        return Update::none();
+    }
+    // Fast path: the target session is already retained in the background - switch to it instantly
+    // (its client and screens are live) instead of reconnecting.
+    if let Some(parked) = ctx
+        .state
+        .parked_attachment_id(&name, remote_target.as_ref())
+    {
+        return switch_to_parked(ctx, parked);
+    }
+    begin_named_attach(ctx, name, remote_host, remote_target, autostart)
 }
 
 /// The launcher's one offer: start this client's ephemeral session now, in the launcher's own

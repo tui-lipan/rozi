@@ -61,6 +61,106 @@ struct StartupProfile {
     records_origin: bool,
 }
 
+struct StartupTasks {
+    enabled: bool,
+    watch_hangup: bool,
+    control_listener: Option<crate::platform::ipc::IpcListener>,
+    event_hub: events::EventHub,
+    start: SessionStart,
+    read_only: bool,
+    remote: Option<crate::session::remote::RemoteTarget>,
+    remote_config: config::RemoteConfig,
+    theme_tick: bool,
+    workbar_tick: bool,
+}
+
+impl StartupTasks {
+    fn run(mut self, link: CommandLink<Msg>) {
+        link.send(Msg::CommandLinkReady(link.clone()));
+        if !self.enabled {
+            return;
+        }
+        ops::config::spawn_config_watcher(&link);
+        if self.watch_hangup {
+            let hangup_link = link.clone();
+            if let Err(err) = platform::server_lifecycle::on_hangup(move || {
+                hangup_link.send(Msg::Hangup);
+            }) {
+                eprintln!("rozi: could not watch for terminal hangup: {err}");
+            }
+        }
+        if let Some(listener) = self.control_listener.take() {
+            let listener_link = link.clone();
+            let event_hub = self.event_hub.clone();
+            std::thread::spawn(move || {
+                crate::control::run_listener(listener, listener_link, event_hub)
+            });
+        }
+        let theme_tick = self.theme_tick;
+        let workbar_tick = self.workbar_tick;
+        self.start_session(link.clone());
+        if theme_tick {
+            std::thread::sleep(Duration::from_millis(150));
+            link.send(Msg::ThemeTick);
+        }
+        if workbar_tick {
+            link.send(Msg::WorkbarTick);
+        }
+    }
+
+    fn start_session(self, link: CommandLink<Msg>) {
+        match self.start {
+            SessionStart::Attach {
+                epoch,
+                name,
+                autostart,
+                create_only,
+            } => {
+                std::thread::spawn(move || {
+                    if let Some(remote) = self.remote {
+                        crate::session::bootstrap::attach_remote_session_client(
+                            epoch,
+                            name,
+                            self.read_only,
+                            create_only,
+                            remote,
+                            self.remote_config,
+                            false,
+                            link,
+                        );
+                    } else if create_only {
+                        crate::session::bootstrap::create_session_client(
+                            epoch,
+                            name,
+                            self.read_only,
+                            link,
+                        )
+                    } else {
+                        attach_session_client(epoch, name, autostart, self.read_only, link)
+                    }
+                });
+            }
+            SessionStart::Picker { epoch } => {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    if let Ok((rows, host_status)) =
+                        crate::ops::session::discover_picker_sessions(None)
+                    {
+                        link.send(Msg::SessionsDiscovered {
+                            epoch,
+                            rows,
+                            host_status,
+                        });
+                    }
+                });
+            }
+            SessionStart::RemotePicker { target } => {
+                link.send(Msg::RemotePickerHostActivate(target));
+            }
+        }
+    }
+}
+
 impl Default for AppRoot {
     fn default() -> Self {
         let config = Config::default();
@@ -147,6 +247,94 @@ impl AppRoot {
             None,
         )
     }
+
+    fn start_theme_watcher(ctx: &mut Context<Self>) {
+        let Some(path) =
+            config::resolve_choice(&ctx.state.config.theme.name).and_then(|choice| match choice {
+                config::ThemeChoice::Custom { path, .. } => Some(path),
+                _ => None,
+            })
+        else {
+            return;
+        };
+        match ThemeWatcher::new(path, ThemePreset::Lipan.theme()) {
+            Ok(watcher) => ctx.state.theme_watcher = Some(watcher),
+            Err(err) => {
+                crate::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
+            }
+        }
+    }
+
+    fn prepare_session_start(&mut self, ctx: &mut Context<Self>) -> SessionStart {
+        if self.want_startup_picker {
+            let seed = std::mem::take(ctx.state.current_mut());
+            ctx.state.launcher_seed = Some(seed);
+            return match self.remote.clone() {
+                Some(target) => {
+                    ctx.state.launcher_scope = Some(target.clone());
+                    ops::session::open_startup_remote_picker(
+                        ctx,
+                        target.clone(),
+                        self.startup_last_session.take(),
+                    );
+                    SessionStart::RemotePicker { target }
+                }
+                None => {
+                    let epoch = ops::session::open_startup_session_picker(
+                        ctx,
+                        self.startup_last_session.take(),
+                    );
+                    SessionStart::Picker { epoch }
+                }
+            };
+        }
+
+        let name = self.attach_session.clone().unwrap_or_else(|| {
+            if self.remote.is_some() {
+                state::remote_ephemeral_session_name()
+            } else {
+                state::ephemeral_session_name()
+            }
+        });
+        let epoch = ctx.state.runtime_epoch;
+        let autostart = self.startup_autostart && !self.read_only;
+        let intent =
+            self.startup_profile
+                .as_ref()
+                .map_or(crate::state::AttachIntent::Plain, |profile| {
+                    if profile.records_origin {
+                        crate::state::AttachIntent::ProfileSeed {
+                            profile: profile.name.clone(),
+                            path: profile.path.clone(),
+                        }
+                    } else {
+                        crate::state::AttachIntent::Plain
+                    }
+                });
+        let remote_host = self.remote.as_ref().map(|target| target.display_label());
+        ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+            epoch,
+            name: name.clone(),
+            client: None,
+            autostart,
+            read_only: self.read_only,
+            reconnect: false,
+            remote_host: remote_host.clone(),
+            intent,
+            left: None,
+            parked_epoch: None,
+        });
+        ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
+        ctx.state.current_mut().auto_created = self.attach_session.is_none();
+        ctx.state.current_mut().remote_host = remote_host;
+        ctx.state.current_mut().remote_target = self.remote.clone();
+        SessionStart::Attach {
+            epoch,
+            name,
+            autostart,
+            create_only: self.startup_create_only,
+        }
+    }
 }
 
 impl Component for AppRoot {
@@ -186,210 +374,21 @@ impl Component for AppRoot {
         for message in std::mem::take(&mut self.startup_messages) {
             crate::pty_events::notify_info(ctx, message);
         }
-
-        if let Some(path) =
-            config::resolve_choice(&ctx.state.config.theme.name).and_then(|choice| match choice {
-                config::ThemeChoice::Custom { path, .. } => Some(path),
-                _ => None,
-            })
-        {
-            match ThemeWatcher::new(path, ThemePreset::Lipan.theme()) {
-                Ok(watcher) => ctx.state.theme_watcher = Some(watcher),
-                Err(err) => {
-                    crate::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
-                }
-            }
-        }
-
-        // Always-server model: with no explicit target, attach to this process's ephemeral
-        // session (`eph-<pid>`), autostarting its server. Restored/initial panes are spawned on
-        // the server once `Msg::SessionAttached` reports an empty session. Opt-in `--pick` /
-        // `[session] startup = "picker"` instead opens the session picker first when a named
-        // session exists, so nothing is attached until the user chooses.
-        let control_listener = self.control_listener.take();
-        let event_hub = self.event_hub.clone();
-        let theme_tick = ctx.state.theme_watcher.is_some();
-        let workbar_tick = ctx.state.config.workbar.has_clock();
-
-        let start = if self.want_startup_picker {
-            // Nothing is attached behind the startup picker, so the panes `create_state` prepared
-            // have no session to live in yet. Park them as the launcher seed: choosing a session
-            // discards them, while starting a shell gets exactly the layout this launch intended.
-            let seed = std::mem::take(ctx.state.current_mut());
-            ctx.state.launcher_seed = Some(seed);
-            match self.remote.clone() {
-                // Startup policy applies in the scope the launch names. Under `--remote` that is
-                // the host: the launcher is scoped to it before anything is contacted, and the
-                // picker that opens lists *its* sessions rather than this machine's.
-                Some(target) => {
-                    ctx.state.launcher_scope = Some(target.clone());
-                    ops::session::open_startup_remote_picker(
-                        ctx,
-                        target.clone(),
-                        self.startup_last_session.take(),
-                    );
-                    SessionStart::RemotePicker { target }
-                }
-                None => {
-                    let epoch = ops::session::open_startup_session_picker(
-                        ctx,
-                        self.startup_last_session.take(),
-                    );
-                    SessionStart::Picker { epoch }
-                }
-            }
-        } else {
-            let name = self.attach_session.clone().unwrap_or_else(|| {
-                // Under `--remote` a bare `eph-<pid>` could collide with another client that shares
-                // the pid on a different machine, since the ephemeral session lives on the remote
-                // host. Qualify it with a stable per-client identifier so it stays per-client.
-                if self.remote.is_some() {
-                    state::remote_ephemeral_session_name()
-                } else {
-                    state::ephemeral_session_name()
-                }
-            });
-            let epoch = ctx.state.runtime_epoch;
-            let autostart = self.startup_autostart && !self.read_only;
-            ctx.state.current_mut().pending_session_attach =
-                Some(crate::state::PendingSessionAttach {
-                    epoch,
-                    name: name.clone(),
-                    client: None,
-                    autostart,
-                    read_only: self.read_only,
-                    reconnect: false,
-                    remote_host: self.remote.as_ref().map(|target| target.display_label()),
-                    intent: self.startup_profile.as_ref().map_or(
-                        crate::state::AttachIntent::Plain,
-                        |profile| {
-                            if profile.records_origin {
-                                crate::state::AttachIntent::ProfileSeed {
-                                    profile: profile.name.clone(),
-                                    path: profile.path.clone(),
-                                }
-                            } else {
-                                crate::state::AttachIntent::Plain
-                            }
-                        },
-                    ),
-                    left: None,
-                    parked_epoch: None,
-                });
-            ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
-            // A bare launch that deliberately bypasses the picker lands on an ephemeral nobody
-            // asked for by name. Mark it so switching away discards it instead of leaving it
-            // running behind the session the user actually wanted.
-            ctx.state.current_mut().auto_created = self.attach_session.is_none();
-            ctx.state.current_mut().remote_host =
-                self.remote.as_ref().map(|target| target.display_label());
-            ctx.state.current_mut().remote_target = self.remote.clone();
-            SessionStart::Attach {
-                epoch,
-                name,
-                autostart,
-                create_only: self.startup_create_only,
-            }
+        Self::start_theme_watcher(ctx);
+        let start = self.prepare_session_start(ctx);
+        let tasks = StartupTasks {
+            enabled: self.startup_tasks,
+            watch_hangup: self.watch_hangup,
+            control_listener: self.control_listener.take(),
+            event_hub: self.event_hub.clone(),
+            start,
+            read_only: self.read_only,
+            remote: self.remote.clone(),
+            remote_config: self.config.remote.clone(),
+            theme_tick: ctx.state.theme_watcher.is_some(),
+            workbar_tick: ctx.state.config.workbar.has_clock(),
         };
-
-        let startup_read_only = self.read_only;
-        let watch_hangup = self.watch_hangup;
-        let startup_tasks = self.startup_tasks;
-        let remote = self.remote.clone();
-        let remote_config = self.config.remote.clone();
-        Some(Command::spawn(move |link: CommandLink<Msg>| {
-            link.send(Msg::CommandLinkReady(link.clone()));
-            if !startup_tasks {
-                return;
-            }
-            ops::config::spawn_config_watcher(&link);
-            if watch_hangup {
-                let hangup_link = link.clone();
-                if let Err(err) = platform::server_lifecycle::on_hangup(move || {
-                    hangup_link.send(Msg::Hangup);
-                }) {
-                    // Not fatal: without it, an exiting terminal kills the client outright, which
-                    // loses the detach-time layout mirror but leaves a named session's server (and
-                    // its PTYs) running exactly as before.
-                    eprintln!("rozi: could not watch for terminal hangup: {err}");
-                }
-            }
-            if let Some(listener) = control_listener {
-                let listener_link = link.clone();
-                std::thread::spawn(move || {
-                    crate::control::run_listener(listener, listener_link, event_hub)
-                });
-            }
-            match start {
-                SessionStart::Attach {
-                    epoch,
-                    name,
-                    autostart,
-                    create_only,
-                } => {
-                    let session_link = link.clone();
-                    std::thread::spawn(move || {
-                        if let Some(remote) = remote {
-                            crate::session::bootstrap::attach_remote_session_client(
-                                epoch,
-                                name,
-                                startup_read_only,
-                                create_only,
-                                remote,
-                                remote_config,
-                                // Startup: fail fast to the ephemeral fallback if the host is down.
-                                false,
-                                session_link,
-                            );
-                        } else if create_only {
-                            crate::session::bootstrap::create_session_client(
-                                epoch,
-                                name,
-                                startup_read_only,
-                                session_link,
-                            )
-                        } else {
-                            attach_session_client(
-                                epoch,
-                                name,
-                                autostart,
-                                startup_read_only,
-                                session_link,
-                            )
-                        }
-                    });
-                }
-                SessionStart::Picker { epoch } => {
-                    // Kick off the first discovery tick; `apply_discovered_sessions` re-arms the
-                    // auto-refresh loop from there, exactly as an in-app picker opening would.
-                    let watch_link = link.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(1500));
-                        if let Ok((rows, host_status)) =
-                            crate::ops::session::discover_picker_sessions(None)
-                        {
-                            watch_link.send(Msg::SessionsDiscovered {
-                                epoch,
-                                rows,
-                                host_status,
-                            });
-                        }
-                    });
-                }
-                // Contacting the host is the picker's own activation path, run once from here so a
-                // launch and an Enter on the host row reach `Sessions · <host>` the same way.
-                SessionStart::RemotePicker { target } => {
-                    link.send(Msg::RemotePickerHostActivate(target));
-                }
-            }
-            if theme_tick {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                link.send(Msg::ThemeTick);
-            }
-            if workbar_tick {
-                link.send(Msg::WorkbarTick);
-            }
-        }))
+        Some(Command::spawn(move |link| tasks.run(link)))
     }
 
     fn update(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> Update {

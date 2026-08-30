@@ -614,6 +614,45 @@ fn validate_workspace_index(index: usize) -> Option<ControlResponse> {
     }
 }
 
+struct PreparedNewPane {
+    workspace: Option<usize>,
+    launch: Option<crate::pane_launch::PaneLaunch>,
+    scratch_source: bool,
+}
+
+fn prepare_new_pane(
+    state: &crate::state::State,
+    source: Option<PaneId>,
+    command: Option<String>,
+    argv: Option<Vec<String>>,
+    workspace: Option<usize>,
+) -> std::result::Result<PreparedNewPane, ControlResponse> {
+    let workspace = match workspace {
+        Some(index) => {
+            if let Some(response) = validate_workspace_index(index) {
+                return Err(response);
+            }
+            Some(index - 1)
+        }
+        None => None,
+    };
+    let launch = requested_pane_launch(command, argv).map_err(ControlResponse::error)?;
+    let scratch_source = source.is_some_and(|id| crate::scratchpad::contains(state, id));
+    if state.scratch_visible && source.is_some() && !scratch_source {
+        return Err(ControlResponse::error(
+            "source pane is hidden behind scratchpad",
+        ));
+    }
+    if !scratch_source && !state.is_controller() {
+        return Err(ControlResponse::error("not controller"));
+    }
+    Ok(PreparedNewPane {
+        workspace,
+        launch,
+        scratch_source,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn new_pane(
     ctx: &mut Context<AppRoot>,
@@ -627,34 +666,17 @@ fn new_pane(
     workspace: Option<usize>,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
-    let workspace = match workspace {
-        Some(index) => {
-            if let Some(response) = validate_workspace_index(index) {
-                let _ = reply.send(response);
-                return Update::full();
-            }
-            Some(index - 1)
-        }
-        None => None,
-    };
-    let launch = match requested_pane_launch(command, argv) {
-        Ok(launch) => launch,
-        Err(message) => {
-            let _ = reply.send(ControlResponse::error(message));
+    let PreparedNewPane {
+        workspace,
+        launch,
+        scratch_source,
+    } = match prepare_new_pane(&ctx.state, source, command, argv, workspace) {
+        Ok(prepared) => prepared,
+        Err(response) => {
+            let _ = reply.send(response);
             return Update::full();
         }
     };
-    let scratch_source = source.is_some_and(|id| crate::scratchpad::contains(&ctx.state, id));
-    if ctx.state.scratch_visible && source.is_some() && !scratch_source {
-        let _ = reply.send(ControlResponse::error(
-            "source pane is hidden behind scratchpad",
-        ));
-        return Update::full();
-    }
-    if !scratch_source && !ctx.state.is_controller() {
-        let _ = reply.send(ControlResponse::error("not controller"));
-        return Update::full();
-    }
     if let Some(update) = crate::ops::session::ensure_session_for_pty(
         ctx,
         crate::state::PendingSessionAction::NewPane {

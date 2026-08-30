@@ -183,12 +183,15 @@ fn sidebar_render(c: &mut Criterion) {
 /// Per-message overhead of the post-update chokepoints in `update::handle_msg`.
 ///
 /// `SessionOutput` is the highest-frequency message in the app — one per batch of PTY bytes — and
-/// every one of them pays for the sidebar's root sync and the focus chokepoint regardless of
-/// whether the sidebar is even visible. This measures that fixed cost against the message itself.
+/// this measures its fixed dispatcher/epilogue cost against terminal processing. The historical
+/// `none`/`deep` cases stay stable for saved-baseline comparisons. The pane-count cases call the
+/// updater directly so global bookkeeping regressions remain visible as the application grows.
 fn message_overhead(c: &mut Criterion) {
     let corpus = support::sgr_heavy();
     let filled: Vec<u8> = corpus.iter().copied().take(64 * 1024).collect();
     let chunk: Vec<u8> = corpus.iter().copied().take(512).collect();
+    // Keep parser work small enough that the pane-count cases expose the fixed update epilogue.
+    let bookkeeping_chunk = vec![b'x'];
 
     let mut group = c.benchmark_group("message_overhead");
     for cwd in ["none", "deep"] {
@@ -212,6 +215,25 @@ fn message_overhead(c: &mut Criterion) {
                     local: false,
                     generation,
                     bytes: chunk.clone(),
+                });
+            });
+        });
+    }
+    for panes in [1, 8, 16] {
+        group.bench_function(BenchmarkId::new("panes", panes), |b| {
+            let mut backend = backend_with_panes(panes, &filled);
+            let (pane_id, generation) = {
+                let pane = &backend.state().current().workspaces[0].panes[0];
+                (pane.id, pane.pty_generation)
+            };
+            let epoch = backend.state().runtime_epoch;
+            b.iter(|| {
+                let _ = backend.update_level(rozi::Msg::SessionOutput {
+                    epoch,
+                    pane_id,
+                    local: false,
+                    generation,
+                    bytes: bookkeeping_chunk.clone(),
                 });
             });
         });

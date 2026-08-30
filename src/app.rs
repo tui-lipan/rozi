@@ -635,27 +635,8 @@ impl Component for AppRoot {
 
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context<Self>) -> KeyUpdate {
         key_routing::sync_focus_from_framework(ctx);
-        if ctx.state.show_help
-            && ctx.has_focus_within_key(crate::view::help_filter_key())
-            && key.code == KeyCode::Enter
-            && !key.mods.ctrl
-            && !key.mods.alt
-            && !key.mods.super_key
-        {
-            ctx.request_focus(crate::view::help_scroll_key());
-            return KeyUpdate::handled(Update::full());
-        }
-        if ctx.state.show_help && key.is(KeyCode::Esc) {
-            ctx.link().send(Msg::HelpEscape);
-            return KeyUpdate::handled(Update::full());
-        }
-        if ctx.state.show_help
-            && !ctx.has_focus_within_key(crate::view::help_filter_key())
-            && key.code == KeyCode::Char('/')
-            && key.mods == KeyMods::NONE
-        {
-            ctx.request_focus(crate::view::help_filter_key());
-            return KeyUpdate::handled(Update::full());
+        if let Some(update) = Self::handle_help_overlay_key(ctx, key) {
+            return update;
         }
         let (handled, mut update) = key_routing::handle_key_routing(ctx, key, None);
         if ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
@@ -706,12 +687,34 @@ impl AppRoot {
     ///
     /// `target_rect` sizes the Slide spring's amplitude and is only known to the view; without it the
     /// spring degrades to the plain geometry curve rather than guessing an amplitude.
-    pub(crate) fn geometry_transition_for_pane(
-        state: &State,
-        pane: &Pane,
-        viewport_changed: bool,
-        target_rect: Option<FloatRect>,
-    ) -> TransitionConfig {
+    fn handle_help_overlay_key(ctx: &mut Context<Self>, key: KeyEvent) -> Option<KeyUpdate> {
+        if !ctx.state.show_help {
+            return None;
+        }
+        if ctx.has_focus_within_key(crate::view::help_filter_key())
+            && key.code == KeyCode::Enter
+            && !key.mods.ctrl
+            && !key.mods.alt
+            && !key.mods.super_key
+        {
+            ctx.request_focus(crate::view::help_scroll_key());
+            return Some(KeyUpdate::handled(Update::full()));
+        }
+        if key.is(KeyCode::Esc) {
+            ctx.link().send(Msg::HelpEscape);
+            return Some(KeyUpdate::handled(Update::full()));
+        }
+        if !ctx.has_focus_within_key(crate::view::help_filter_key())
+            && key.code == KeyCode::Char('/')
+            && key.mods == KeyMods::NONE
+        {
+            ctx.request_focus(crate::view::help_filter_key());
+            return Some(KeyUpdate::handled(Update::full()));
+        }
+        None
+    }
+
+    fn geometry_animation_enabled(state: &State, pane: &Pane, viewport_changed: bool) -> bool {
         if !state.is_controller()
             || viewport_changed
             || state
@@ -722,26 +725,33 @@ impl AppRoot {
                 .as_ref()
                 .is_some_and(|session| session.id == pane.id)
         {
-            return anim::instant_transition();
+            return false;
         }
-
         let animations = state.config.animations;
         if !animations.enabled {
-            return anim::instant_transition();
+            return false;
         }
-
-        let enabled = match state.animation {
+        match state.animation {
             GeometryAnimation::None => false,
             GeometryAnimation::Spawn => animations.spawn,
             GeometryAnimation::Close => animations.close,
             GeometryAnimation::Fullscreen => animations.fullscreen,
             GeometryAnimation::TileFloat => animations.tile_float,
             GeometryAnimation::AxisChange => animations.axis_change,
-        };
-        if !enabled {
+        }
+    }
+
+    pub(crate) fn geometry_transition_for_pane(
+        state: &State,
+        pane: &Pane,
+        viewport_changed: bool,
+        target_rect: Option<FloatRect>,
+    ) -> TransitionConfig {
+        if !Self::geometry_animation_enabled(state, pane, viewport_changed) {
             return anim::instant_transition();
         }
 
+        let animations = state.config.animations;
         // An arriving or leaving pane that slides does not animate its rectangle at all: it is placed
         // at its destination and a rigid offset carries it in from the edge, so it keeps its final
         // size the whole way. Animating the rect too would fight the offset for the same motion.

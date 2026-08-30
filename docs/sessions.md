@@ -43,6 +43,21 @@ session or profile is literally named `attach`.
 
 Remote targets use the same session commands. See [Remote sessions](remote.md).
 
+## Scope: where an action happens
+
+Every surface names the scope it acts in, and its keys act only in that scope.
+
+| Surface | Scope | `Ctrl+N` | `Ctrl+T` |
+| --- | --- | --- | --- |
+| **Sessions** | Global — every host at once | New local named session | Local temporary shell |
+| **Remote hosts** | Host navigation | Connect a new host | — |
+| **Sessions · host** | That one host | New named session on the host | Temporary session on the host |
+
+Sessions stays global even while a remote session fills the screen behind it. Attached to
+`backend@workbox`, `Ctrl+N` there still creates a *local* session; the footer reads `new local`
+whenever a remote host is in play, so the key says what it does before you press it. To create
+another session on `workbox`, go through its own surface: `Ctrl+R`, the host, then `Ctrl+N`.
+
 ## Use the session picker
 
 Open **Sessions** with the `s` command key.
@@ -50,13 +65,13 @@ Open **Sessions** with the `s` command key.
 | Key | Action |
 | --- | --- |
 | `Enter` | Connect, switch to a background attachment, or restore a snapshot |
-| Type a name, then `Ctrl+N` | Create and switch to a named session |
+| Type a name, then `Ctrl+N` | Create and switch to a local named session |
 | `Ctrl+K` twice | Kill a live session, or forget a snapshot |
 | `Ctrl+E` twice | Restart a live session with fresh panes |
 | `Ctrl+W` | Disconnect this client from a background session |
 | `Ctrl+X` | Disconnect a remote host |
 | `Ctrl+R` | Open Remote hosts |
-| `Ctrl+T` | Open or switch to this client's temporary shell |
+| `Ctrl+T` | Open or switch to this client's local temporary shell |
 | `Esc` | Return to the sessionless launcher |
 
 The picker updates local session state while it is open. A row can show whether a session is
@@ -87,6 +102,11 @@ cache. If the host is unreachable, the row stays on Remote hosts with the failur
 successfully reached new host is remembered even when it has no sessions; a failed target is not
 remembered. OpenSSH remains responsible for aliases, keys, agents, and `ProxyJump`.
 
+Opening a host never creates or attaches a session, and `[session] startup` does not apply again.
+Browsing a host is an explicit request to look at it, so it always lands on that host's launcher.
+The same is true of `Ctrl+N` on Remote hosts: a new target that discovers successfully opens
+`Sessions · <host>` and waits.
+
 Only offline Recent hosts can be forgotten. Configured hosts remain defined by configuration, and
 a host with a live or connecting attachment must be disconnected first. Forgetting also removes
 its cached session metadata.
@@ -100,7 +120,7 @@ been used stays available in the background.
 
 ## Choose startup behavior
 
-`[session] startup` affects only a bare `rozi`:
+`[session] startup` decides where a launch lands when you name no session:
 
 | Value | Behavior |
 | --- | --- |
@@ -109,11 +129,48 @@ been used stays available in the background.
 | `last` | Reopen the most recently attached named session. |
 | `profile` | Open the session named by `[profile] default`. |
 
-Explicit session targets, `attach`, `new`, `--pick`, and `--remote` take precedence. If `last` or
-`profile` cannot resolve its requested session, Rozi falls back to the picker and reports why.
+The policy runs in the scope the launch names. A bare `rozi` applies it locally;
+`rozi --remote workbox` applies the same four values on `workbox`:
+
+| Value | `rozi --remote workbox` |
+| --- | --- |
+| `picker` | Connect, discover, and open `Sessions · workbox`. No session is created. |
+| `ephemeral` | Create or attach a temporary session on `workbox`. |
+| `last` | Attach the last session used on `workbox` if it is still there, else `Sessions · workbox`. |
+| `profile` | Open or create the default-profile session on `workbox`, else `Sessions · workbox`. |
+
+`last` is remembered per host, so a local launch never reaches for a name that only exists on
+`workbox`, and the reverse.
+
+`last` reopens a session; it never revives one. On a remote host the launch opens
+`Sessions · workbox` and attaches the remembered session only if the host's own discovery still
+lists it, so a session killed while Rozi was away stays dead and you land on the picker. Nothing
+blocks on SSH before the first frame. `profile` does create its session — that is the difference
+between the two modes.
+
+Explicit session targets, `attach`, `new`, and `--pick` take precedence: a session you name is
+always the one you get. If `last` or `profile` cannot resolve its requested session, Rozi falls
+back to that scope's picker and reports why.
 
 From the sessionless launcher, bare `Enter` starts a temporary shell. The configured spawn command
 also works there.
+
+### The sessionless launcher has a scope
+
+A launcher can be scoped to a host without holding a session or an SSH connection to it:
+
+```text
+REMOTE · workbox
+Not attached. A shell starts on workbox.
+```
+
+That is where `rozi --remote workbox` lands under `startup = "picker"` once you dismiss the picker,
+and where dismissing `Sessions · workbox` leaves a client with nothing attached. `Enter` there
+starts a temporary shell on `workbox`. Opening Sessions from it is still global.
+
+The scope follows the session you are working in, so killing a session leaves you in that
+machine's launcher rather than silently back on this one. Disconnecting the host (`Ctrl+X`) or
+forgetting it clears the scope.
 
 ## Name or rename a session
 

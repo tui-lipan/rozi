@@ -33,7 +33,7 @@ pub struct AppRoot {
     /// sessionless even when the list is empty.
     want_startup_picker: bool,
     /// Session name the startup picker should land on, from a `last` that could not reopen.
-    startup_picker_highlight: Option<String>,
+    startup_last_session: Option<String>,
     /// Whether to install the process-global terminal-hangup handler
     /// ([`platform::server_lifecycle::on_hangup`]) at startup. Only the real [`run`] wants this:
     /// a `TestBackend`-driven test constructs its app through [`Default`], and a test process must
@@ -78,7 +78,7 @@ impl Default for AppRoot {
             read_only: false,
             remote: None,
             want_startup_picker: false,
-            startup_picker_highlight: None,
+            startup_last_session: None,
             watch_hangup: false,
             startup_tasks: false,
             event_hub: events::EventHub::default(),
@@ -102,7 +102,7 @@ impl AppRoot {
         read_only: bool,
         remote: Option<crate::session::remote::RemoteTarget>,
         want_startup_picker: bool,
-        startup_picker_highlight: Option<String>,
+        startup_last_session: Option<String>,
     ) -> Self {
         Self {
             config,
@@ -118,7 +118,7 @@ impl AppRoot {
             read_only,
             remote,
             want_startup_picker,
-            startup_picker_highlight,
+            startup_last_session,
             watch_hangup: true,
             startup_tasks: true,
             event_hub: events::EventHub::default(),
@@ -211,17 +211,33 @@ impl Component for AppRoot {
         let theme_tick = ctx.state.theme_watcher.is_some();
         let workbar_tick = ctx.state.config.workbar.has_clock();
 
-        let start = if self.want_startup_picker && self.remote.is_none() {
+        let start = if self.want_startup_picker {
             // Nothing is attached behind the startup picker, so the panes `create_state` prepared
             // have no session to live in yet. Park them as the launcher seed: choosing a session
             // discards them, while starting a shell gets exactly the layout this launch intended.
             let seed = std::mem::take(ctx.state.current_mut());
             ctx.state.launcher_seed = Some(seed);
-            let epoch = ops::session::open_startup_session_picker(
-                ctx,
-                self.startup_picker_highlight.take(),
-            );
-            SessionStart::Picker { epoch }
+            match self.remote.clone() {
+                // Startup policy applies in the scope the launch names. Under `--remote` that is
+                // the host: the launcher is scoped to it before anything is contacted, and the
+                // picker that opens lists *its* sessions rather than this machine's.
+                Some(target) => {
+                    ctx.state.launcher_scope = Some(target.clone());
+                    ops::session::open_startup_remote_picker(
+                        ctx,
+                        target.clone(),
+                        self.startup_last_session.take(),
+                    );
+                    SessionStart::RemotePicker { target }
+                }
+                None => {
+                    let epoch = ops::session::open_startup_session_picker(
+                        ctx,
+                        self.startup_last_session.take(),
+                    );
+                    SessionStart::Picker { epoch }
+                }
+            }
         } else {
             let name = self.attach_session.clone().unwrap_or_else(|| {
                 // Under `--remote` a bare `eph-<pid>` could collide with another client that shares
@@ -359,6 +375,11 @@ impl Component for AppRoot {
                             });
                         }
                     });
+                }
+                // Contacting the host is the picker's own activation path, run once from here so a
+                // launch and an Enter on the host row reach `Sessions · <host>` the same way.
+                SessionStart::RemotePicker { target } => {
+                    link.send(Msg::RemotePickerHostActivate(target));
                 }
             }
             if theme_tick {
@@ -909,25 +930,40 @@ pub fn run() -> Result<()> {
     let mut attach_session = cli.attach_session.clone();
     let mut startup_autostart = attach_session.is_none();
     let mut startup_create_only = false;
-    // The name the startup picker should land on when `last` could not reopen its session.
-    let mut startup_picker_highlight = None;
-    // Startup policy chooses a session only for a bare local launch: `--pick` asks for the picker
-    // by hand, and under `--remote` the session lives on the far host, which local discovery,
-    // snapshots, and profiles do not describe.
-    if attach_session.is_none() && !cli.pick && cli.remote.is_none() {
+    // What `last` remembered, when the launch could not act on it up front. Locally that is a
+    // highlight — openability was already checked, so a name reaching here is known to be gone.
+    // Remotely it is a *resume*: nothing local can say whether the host still has the session, so
+    // the host's own discovery decides, and the picker attaches it if the row comes back.
+    let mut startup_last_session = None;
+    // Resolved before startup policy runs, because the policy now runs *inside* whatever scope the
+    // launch names: `rozi --remote workbox` picks among workbox's sessions, remembers workbox's last
+    // one, and falls back to workbox's launcher — never this machine's.
+    let remote = resolve_startup_remote(cli.remote.as_deref(), &loaded.config);
+    // Startup policy chooses a session only when the user named none. `--pick` asks for the picker
+    // by hand, and an explicit session target overrides the policy outright.
+    if attach_session.is_none() && !cli.pick {
         match loaded.config.session.startup {
+            // `last` reopens a session, it never revives one. Locally that is settled here.
+            // Remotely it cannot be: answering "is `backend` still on workbox?" means an SSH round
+            // trip, and paying for it before the first frame would buy seconds of black terminal.
+            // So the launch takes the host's picker — which is about to discover anyway — and the
+            // name rides along to be attached if, and only if, the host still lists it. A session
+            // killed while rozi was away stays dead and the user lands on `Sessions · workbox`.
+            config::SessionStartup::Last if remote.is_some() => {
+                startup_last_session = crate::session::read_last_session(remote.as_ref());
+            }
             config::SessionStartup::Last => match resolve_last_session_target() {
                 LastSessionTarget::Reopen(name) => {
                     attach_session = Some(name);
                     startup_autostart = true;
                 }
-                LastSessionTarget::Pick(name) => startup_picker_highlight = name,
+                LastSessionTarget::Pick(name) => startup_last_session = name,
             },
             // Resolving to a name is the whole mode: the untargeted `Dwim` arm below then attaches
             // it when running and creates it from its canonical profile when not, which is exactly
             // what `rozi <name>` does.
             config::SessionStartup::Profile => {
-                match resolve_profile_session_target(&loaded.config) {
+                match resolve_profile_session_target(&loaded.config, remote.as_ref()) {
                     Ok(name) => {
                         attach_session = Some(name);
                         startup_autostart = true;
@@ -966,7 +1002,26 @@ pub fn run() -> Result<()> {
                 }
             }
             cli::SessionCommand::Attach => startup_autostart = false,
-            cli::SessionCommand::Dwim => startup_autostart = true,
+            cli::SessionCommand::Dwim => {
+                startup_autostart = true;
+                // A name startup policy chose (`last`, `profile`), not one the user typed. If the
+                // host has no session under it, this is a launch rather than an attach, and it gets
+                // the same canonical `profiles/<name>.toml` a local one would — the profile is
+                // launch intent the client replays, and stays local. A profile that will not load
+                // reports itself and opens the session blank rather than refusing to start.
+                let canonical_path = config::profile_path_for_name(name);
+                if !explicit_target
+                    && canonical_path.exists()
+                    && remote
+                        .as_ref()
+                        .is_some_and(|target| !remote_session_known(target, name))
+                {
+                    match try_load_startup_profile(name, canonical_path) {
+                        Ok(profile) => startup_profile = Some(profile),
+                        Err(message) => startup_messages.push(message),
+                    }
+                }
+            }
         }
     } else if let Some(name) = attach_session.as_ref() {
         if !crate::session::discovery::valid_session_name(name) {
@@ -1084,9 +1139,10 @@ pub fn run() -> Result<()> {
     let config = loaded.config;
     // Open the picker at startup only for a bare launch (no explicit attach target). The
     // "anything to pick" gate is checked in `init` so it reflects live state at mount. `last` and
-    // `profile` reach here only when the session they name could not be opened.
+    // `profile` reach here only when the session they name could not be opened. Under `--remote`
+    // the same decision opens that host's picker instead — no session is created behind the user's
+    // back on a machine they have only asked to look at.
     let want_startup_picker = attach_session.is_none()
-        && cli.remote.is_none()
         && (cli.pick
             || matches!(
                 config.session.startup,
@@ -1142,32 +1198,6 @@ pub fn run() -> Result<()> {
         // Ctrl-q is unbound: rozi's own `quit`/`detach` commands own client lifecycle exits.
         .global_quit(None);
 
-    let remote = match cli.remote.as_deref() {
-        Some("") => {
-            let Some(default_host) = config.remote.default_host.as_deref() else {
-                eprintln!(
-                    "--remote requires a host alias or ssh:// URL (or set [remote] default_host)"
-                );
-                std::process::exit(1);
-            };
-            match crate::session::remote::parse_remote_target(default_host) {
-                Ok(target) => Some(target),
-                Err(err) => {
-                    eprintln!("[remote] default_host: {err}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Some(raw) => match crate::session::remote::parse_remote_target(raw) {
-            Ok(target) => Some(target),
-            Err(err) => {
-                eprintln!("{err}");
-                std::process::exit(1);
-            }
-        },
-        None => None,
-    };
-
     // Probe / prompt / install before the TUI takes stdin (install = "prompt").
     if let Some(ref target) = remote {
         let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
@@ -1194,7 +1224,7 @@ pub fn run() -> Result<()> {
             cli.read_only,
             remote,
             want_startup_picker,
-            startup_picker_highlight,
+            startup_last_session,
         ))
         .exit_view(crate::exit_view::exit_view)
         .run();
@@ -1244,8 +1274,39 @@ enum LastSessionTarget {
     Pick(Option<String>),
 }
 
+/// Resolve `--remote`'s argument into the host the launch is scoped to. `None` for a local launch;
+/// a bare `--remote` takes `[remote] default_host`. Exits on an unusable target, the way every other
+/// malformed command line does — the alternative is a TUI that comes up pointed nowhere.
+fn resolve_startup_remote(
+    raw: Option<&str>,
+    config: &config::Config,
+) -> Option<crate::session::remote::RemoteTarget> {
+    let (raw, label) = match raw? {
+        "" => {
+            let Some(default_host) = config.remote.default_host.as_deref() else {
+                eprintln!(
+                    "--remote requires a host alias or ssh:// URL (or set [remote] default_host)"
+                );
+                std::process::exit(1);
+            };
+            (default_host, "[remote] default_host: ")
+        }
+        raw => (raw, ""),
+    };
+    match crate::session::remote::parse_remote_target(raw) {
+        Ok(target) => Some(target),
+        Err(err) => {
+            eprintln!("{label}{err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `startup = "last"` for a local launch, where openability is a local question with a local answer.
+/// The remote scope resolves through host discovery instead — see the `Last` arm of the startup
+/// policy.
 fn resolve_last_session_target() -> LastSessionTarget {
-    let Some(last) = crate::session::read_last_named_session() else {
+    let Some(last) = crate::session::read_last_session(None) else {
         return LastSessionTarget::Pick(None);
     };
     let reopenable = session_openable_by_name(&last);
@@ -1265,16 +1326,37 @@ fn session_openable_by_name(name: &str) -> bool {
         || config::profile_path_for_name(name).exists()
 }
 
-/// `[session] startup = "profile"`: the session named after `[profile] default`. Returns the warning
-/// to report when there is nothing to open under that name; the launch then takes the ordinary
-/// bare-launch picker rather than attaching some other session. No picker highlight: an
-/// unresolvable name has no row to land on.
+/// Whether `name` is a session rozi has seen on `target`, from the persisted per-host cache.
+///
+/// The cache is the only thing that can answer this at launch: the host has not been contacted yet,
+/// and adding an SSH round trip before the first frame would trade a host-scoped `last` for several
+/// seconds of black terminal. Being a cache, it can be wrong in both directions — and both are
+/// recoverable. A session that has since died is autostarted by name on the far host, which is what
+/// `rozi --remote workbox dev` does anyway; one the cache has never heard of drops the launch into
+/// `Sessions · workbox`, where the live list is one probe away.
+fn remote_session_known(target: &crate::session::remote::RemoteTarget, name: &str) -> bool {
+    let cache = crate::session::read_host_session_cache();
+    crate::session::host_sessions_for(&cache, target)
+        .is_some_and(|sessions| sessions.iter().any(|session| session.name == name))
+}
+
+/// `[session] startup = "profile"`: the session named after `[profile] default`, in the scope the
+/// launch names. Returns the warning to report when there is nothing to open under that name; the
+/// launch then takes that scope's picker rather than attaching some other session. No picker
+/// highlight: an unresolvable name has no row to land on.
+///
+/// Under `--remote` the session lives on the host but the profile is a local file, so either one
+/// makes the name openable: a session of that name already on the host, or a profile here to seed a
+/// new one with. The profile itself is never sent — it is launch intent the client replays.
 ///
 /// Nothing is written back. Settings withholds this mode until a default profile exists and clears it
 /// when one goes away, so reaching the first case means the config was hand-written or synced in,
 /// where the profile may be missing only on this machine or only until a checkout finishes.
 /// Overwriting it there would discard an intent that is still in use.
-fn resolve_profile_session_target(config: &config::Config) -> std::result::Result<String, String> {
+fn resolve_profile_session_target(
+    config: &config::Config,
+    scope: Option<&crate::session::remote::RemoteTarget>,
+) -> std::result::Result<String, String> {
     let Some(name) = config.profile.default.as_deref() else {
         return Err(
             "Startup mode needs a default profile: set one in Profiles with ctrl+f.".to_string(),
@@ -1285,9 +1367,18 @@ fn resolve_profile_session_target(config: &config::Config) -> std::result::Resul
             "Profile `{name}` is not a usable session name; ignored session.startup = \"profile\"."
         ));
     }
-    if !session_openable_by_name(name) {
+    let openable = match scope {
+        None => session_openable_by_name(name),
+        Some(target) => {
+            remote_session_known(target, name) || config::profile_path_for_name(name).exists()
+        }
+    };
+    if !openable {
+        let where_ = scope
+            .map(|target| format!(" on `{}`", target.display_label()))
+            .unwrap_or_default();
         return Err(format!(
-            "No session or profile named `{name}`; ignored session.startup = \"profile\"."
+            "No session or profile named `{name}`{where_}; ignored session.startup = \"profile\"."
         ));
     }
     Ok(name.to_string())
@@ -1426,6 +1517,52 @@ mod tests {
         );
     }
 
+    /// `last` reads the scope the launch names, and never the other one: a session remembered on
+    /// `workbox` must not become what a bare `rozi` reaches for.
+    #[test]
+    fn startup_last_reads_only_its_own_scope() {
+        crate::test_support::isolate_user_dirs();
+        let workbox = crate::session::remote::RemoteTarget::Alias("startup-scope-box".into());
+        crate::session::record_last_session(Some(&workbox), "backend");
+
+        assert_eq!(
+            crate::session::read_last_session(Some(&workbox)).as_deref(),
+            Some("backend"),
+            "the remote scope carries the name the host's picker will try to resume"
+        );
+        assert_eq!(
+            resolve_last_session_target(),
+            LastSessionTarget::Pick(None),
+            "and the local scope has learned nothing from it"
+        );
+    }
+
+    /// Under `--remote` a local profile of that name is enough to open the default-profile session
+    /// on the host: the profile is launch intent the client replays, not a file the host needs.
+    #[test]
+    fn startup_profile_resolves_against_the_host_or_a_local_profile() {
+        crate::test_support::isolate_user_dirs();
+        let workbox = crate::session::remote::RemoteTarget::Alias("profile-scope-box".into());
+        let mut config = crate::config::Config::default();
+        config.profile.default = Some("profile-scope-session".to_string());
+
+        assert!(
+            resolve_profile_session_target(&config, Some(&workbox))
+                .expect_err("neither on the host nor here")
+                .contains("profile-scope-box"),
+            "the warning has to name the host it looked on"
+        );
+
+        let profiles = crate::config::profiles_dir();
+        std::fs::create_dir_all(&profiles).expect("profiles dir");
+        let path = profiles.join("profile-scope-session.toml");
+        crate::profiles::save_profile(&path, &crate::profiles::Profile::default())
+            .expect("write profile");
+        let resolved = resolve_profile_session_target(&config, Some(&workbox));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(resolved, Ok("profile-scope-session".to_string()));
+    }
+
     /// `profile` mode resolves to the canonical session name so the untargeted `Dwim` path can
     /// attach it or launch it from `profiles/<name>.toml`.
     #[test]
@@ -1438,7 +1575,7 @@ mod tests {
 
         let mut config = crate::config::Config::default();
         config.profile.default = Some("startup-profile-mode".to_string());
-        let resolved = resolve_profile_session_target(&config);
+        let resolved = resolve_profile_session_target(&config, None);
 
         let _ = std::fs::remove_file(&path);
         assert_eq!(resolved, Ok("startup-profile-mode".to_string()));
@@ -1452,7 +1589,7 @@ mod tests {
         assert!(config.profile.default.is_none());
         // Actionable rather than a config-key restatement: the fix is one keypress in Profiles.
         assert!(
-            resolve_profile_session_target(&config)
+            resolve_profile_session_target(&config, None)
                 .expect_err("no default configured")
                 .contains("set one in Profiles")
         );
@@ -1460,7 +1597,7 @@ mod tests {
         let mut config = crate::config::Config::default();
         config.profile.default = Some("not a session name".to_string());
         assert!(
-            resolve_profile_session_target(&config)
+            resolve_profile_session_target(&config, None)
                 .expect_err("invalid session name")
                 .contains("not a usable session name")
         );
@@ -1468,7 +1605,7 @@ mod tests {
         let mut config = crate::config::Config::default();
         config.profile.default = Some("rozi-no-such-profile-xyzzy".to_string());
         assert!(
-            resolve_profile_session_target(&config)
+            resolve_profile_session_target(&config, None)
                 .expect_err("nothing to open")
                 .contains("No session or profile named")
         );

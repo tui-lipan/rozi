@@ -263,6 +263,15 @@ pub struct State {
     /// choosing it after dismissing the picker still lands on the layout the launch intended.
     /// `None` once consumed, and for a launcher reached by killing a session rather than at launch.
     pub launcher_seed: Option<Attachment>,
+    /// The host the launcher is *scoped to*: which machine "start a shell here" means, and what the
+    /// `REMOTE · <host>` badge names while nothing is attached.
+    ///
+    /// A launcher scope is not a connection. `rozi --remote workbox` with `startup = "picker"`
+    /// lands here — scoped to `workbox`, holding no SSH link and having created no session — and so
+    /// does opening a host in the remote picker from a sessionless client. Only meaningful while
+    /// [`State::is_launcher`]; every attach overwrites it with that session's own host, so killing
+    /// a session leaves the user in the scope they were working in.
+    pub launcher_scope: Option<crate::session::remote::RemoteTarget>,
     /// PTY action waiting for an ephemeral session attach (open-config, user `run`/`popup`,
     /// scratchpad, control `new-pane`). Cleared on attach success or failure.
     pub pending_session_action: Option<PendingSessionAction>,
@@ -438,6 +447,7 @@ impl State {
             attachment,
             background: HashMap::new(),
             launcher_seed: None,
+            launcher_scope: None,
             pending_session_action: None,
             pending_control_reply: None,
             pending_spawn_replies: HashMap::new(),
@@ -665,6 +675,15 @@ impl State {
                 .workspaces
                 .iter()
                 .any(|workspace| !workspace.panes.is_empty())
+    }
+
+    /// The host the sessionless launcher is scoped to, if it is in one.
+    ///
+    /// Guarded on [`Self::is_launcher`] rather than read raw, because [`Self::launcher_scope`]
+    /// tracks the *attached* session's host while one is up: outside the launcher it is a record of
+    /// where the user is working, not a scope anything should act on.
+    pub fn active_launcher_scope(&self) -> Option<&crate::session::remote::RemoteTarget> {
+        self.launcher_scope.as_ref().filter(|_| self.is_launcher())
     }
 
     /// Whether a new PTY spawn would have nowhere to run: no live client and no attach in flight.

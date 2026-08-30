@@ -5,8 +5,8 @@ use crate::ops::focus::{
     request_current_pane_focus, request_rename_session_focus, request_session_picker_focus,
 };
 use crate::ops::session::attach::{
-    attach_session_by_name, disconnect_host, held_ephemeral_session, kill_current_session,
-    refresh_picker_after_kill, restart_current_session, start_launcher_shell,
+    attach_session_by_name, disconnect_host, held_ephemeral_session_in, kill_current_session,
+    refresh_picker_after_kill, restart_current_session, start_local_launcher_shell,
 };
 use crate::ops::session::control_lease::require_attached;
 use crate::ops::session::discovery::{immediate_picker_rows, session_watch_command};
@@ -199,43 +199,35 @@ pub(crate) fn activate_discovered_session(
     attach_session_by_name(ctx, entry.name, entry.host, entry.remote_target, autostart)
 }
 
-/// Go to this client's scratch session: the session picker's `Ctrl+T`, and its `Enter` when there
-/// is nothing on the list to activate.
+/// Go to this client's **local** scratch session: the global Sessions picker's `Ctrl+T`, and its
+/// `Enter` when there is nothing on the list to activate.
 ///
 /// One key covers both directions — start the ephemeral when there is none, switch to it when there
 /// already is — because from the keyboard they are the same request. Already being on it is a
 /// no-op beyond closing the picker: switching somewhere you already are is not worth a toast.
+///
+/// Local, deliberately, even while a remote session fills the screen behind the overlay. The global
+/// Sessions surface lists every host at once and so commits to none; an action that quietly
+/// inherited whichever host happened to be attached would make the same key mean different things
+/// on the same screen. A shell on a host is asked for on that host's own surface — `Ctrl+R`, the
+/// host, then `Ctrl+T` — which says where it will land before it lands.
 pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
-    // Checked before the launcher case: the session on screen being the scratch one settles this
-    // whether or not its client is live, and re-attaching what is already attached is never right.
-    if ctx.state.is_ephemeral_session() {
+    // Checked before the launcher case: the session on screen being the *local* scratch one settles
+    // this whether or not its client is live, and re-attaching what is already attached is never
+    // right. A remote scratch session on screen is a different session, and does not answer for it.
+    if ctx.state.is_ephemeral_session() && ctx.state.current().remote_target.is_none() {
         return close_session_picker(ctx);
     }
     // In the launcher there is nothing to park, and the panes the launch prepared are still waiting
     // to be handed to the session that starts.
     if ctx.state.needs_session_for_pty() {
-        return start_launcher_shell(ctx);
+        return start_local_launcher_shell(ctx);
     }
-    let held = held_ephemeral_session(&ctx.state).map(|attachment| {
-        (
-            attachment.session_name.clone().unwrap_or_default(),
-            attachment.remote_host.clone(),
-            attachment.remote_target.clone(),
-        )
-    });
-    let (name, remote_host, remote_target) = held.unwrap_or_else(|| {
-        // Nothing held: create the one this client would launch. Under `--remote` the ephemeral
-        // lives on the remote host, so it takes the host-qualified name and that host's target.
-        let remote_target = ctx.state.current().remote_target.clone();
-        let name = if remote_target.is_some() {
-            crate::state::remote_ephemeral_session_name()
-        } else {
-            crate::state::ephemeral_session_name()
-        };
-        (name, ctx.state.current().remote_host.clone(), remote_target)
-    });
-    attach_session_by_name(ctx, name, remote_host, remote_target, true)
+    let name = held_ephemeral_session_in(&ctx.state, None)
+        .and_then(|attachment| attachment.session_name.clone())
+        .unwrap_or_else(crate::state::ephemeral_session_name);
+    attach_session_by_name(ctx, name, None, None, true)
 }
 
 /// Close the session picker. With a session in the foreground this just returns focus to the

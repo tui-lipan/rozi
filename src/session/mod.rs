@@ -6,17 +6,42 @@ pub(crate) mod queue;
 pub mod remote;
 pub mod server;
 
-fn last_session_path() -> Option<std::path::PathBuf> {
-    let env = crate::platform::paths::PlatformEnv::from_process();
-    (env.home.is_some() || env.xdg_state_home.is_some())
-        .then(|| crate::platform::paths::state_dir(&env).join("last-session"))
+/// The map key for the local machine's own last session, alongside one key per remote target spec.
+/// `local` is not a valid [`remote::RemoteTarget::to_spec`] output (those are `ssh://…` or a bare
+/// alias, and an alias may not contain a scheme), so it cannot collide with a host.
+const LOCAL_SCOPE_KEY: &str = "local";
+
+/// Which workplace a "last session" memory belongs to: this machine, or one exact remote host.
+///
+/// `startup = "last"` reopens the last session *of the scope it launches into*. A bare `rozi` must
+/// not reach for a name that only ever existed on `workbox`, and `rozi --remote workbox` must not
+/// reopen the local one — they are different workplaces that happen to share one setting. Keying on
+/// the canonical target spec keeps `dev@box:22` and `box` apart the same way the host registry does.
+fn last_session_scope_key(scope: Option<&remote::RemoteTarget>) -> String {
+    match scope {
+        None => LOCAL_SCOPE_KEY.to_string(),
+        Some(target) => target.to_spec(),
+    }
 }
 
-pub(crate) fn record_last_named_session(name: &str) {
-    if !discovery::valid_session_name(name) {
-        return;
-    }
-    let Some(path) = last_session_path() else {
+fn last_sessions_path() -> Option<std::path::PathBuf> {
+    let env = crate::platform::paths::PlatformEnv::from_process();
+    (env.home.is_some() || env.xdg_state_home.is_some())
+        .then(|| crate::platform::paths::state_dir(&env).join("last-sessions.json"))
+}
+
+fn read_last_sessions() -> std::collections::HashMap<String, String> {
+    let Some(path) = last_sessions_path() else {
+        return std::collections::HashMap::new();
+    };
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_last_sessions(entries: &std::collections::HashMap<String, String>) {
+    let Some(path) = last_sessions_path() else {
         return;
     };
     if let Some(parent) = path.parent()
@@ -24,13 +49,33 @@ pub(crate) fn record_last_named_session(name: &str) {
     {
         return;
     }
-    let _ = std::fs::write(path, format!("{name}\n"));
+    if let Ok(text) = serde_json::to_string_pretty(entries) {
+        let _ = std::fs::write(path, text);
+    }
 }
 
-pub(crate) fn read_last_named_session() -> Option<String> {
-    let name = std::fs::read_to_string(last_session_path()?).ok()?;
-    let name = name.trim();
-    discovery::valid_session_name(name).then(|| name.to_string())
+pub(crate) fn record_last_session(scope: Option<&remote::RemoteTarget>, name: &str) {
+    if !discovery::valid_session_name(name) {
+        return;
+    }
+    let mut entries = read_last_sessions();
+    entries.insert(last_session_scope_key(scope), name.to_string());
+    write_last_sessions(&entries);
+}
+
+pub(crate) fn read_last_session(scope: Option<&remote::RemoteTarget>) -> Option<String> {
+    let entries = read_last_sessions();
+    let name = entries.get(&last_session_scope_key(scope))?;
+    discovery::valid_session_name(name).then(|| name.clone())
+}
+
+/// Drop one host's last-session memory, for the same reason forgetting a host drops its session
+/// cache: the user asked for that machine to stop being one of their workplaces.
+pub(crate) fn forget_last_session(scope: Option<&remote::RemoteTarget>) {
+    let mut entries = read_last_sessions();
+    if entries.remove(&last_session_scope_key(scope)).is_some() {
+        write_last_sessions(&entries);
+    }
 }
 
 /// The most recently used remote targets, most-recent first. Only canonical target specs are
@@ -216,6 +261,50 @@ pub(crate) fn forget_host_sessions(target: &remote::RemoteTarget) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `startup = "last"` means "last here", and `here` is the machine the launch names. A local
+    /// launch reaching for a session that only ever existed on `workbox` would try to start a
+    /// same-named local server; the reverse would strand a `--remote workbox` launch on a name that
+    /// host has never heard of.
+    #[test]
+    fn last_session_is_remembered_per_workplace() {
+        crate::test_support::isolate_user_dirs();
+        let workbox = remote::RemoteTarget::Alias("workbox".into());
+        let other = remote::RemoteTarget::Url {
+            user: Some("dev".into()),
+            host: "workbox".into(),
+            port: Some(22),
+        };
+
+        record_last_session(None, "local-dev");
+        record_last_session(Some(&workbox), "backend");
+
+        assert_eq!(read_last_session(None).as_deref(), Some("local-dev"));
+        assert_eq!(
+            read_last_session(Some(&workbox)).as_deref(),
+            Some("backend")
+        );
+        // Same display label, different SSH endpoint: a different workplace, as everywhere else.
+        assert_eq!(read_last_session(Some(&other)), None);
+
+        // Writing one scope leaves the others alone.
+        record_last_session(Some(&workbox), "api");
+        assert_eq!(read_last_session(Some(&workbox)).as_deref(), Some("api"));
+        assert_eq!(read_last_session(None).as_deref(), Some("local-dev"));
+
+        forget_last_session(Some(&workbox));
+        assert_eq!(read_last_session(Some(&workbox)), None);
+        assert_eq!(read_last_session(None).as_deref(), Some("local-dev"));
+    }
+
+    /// An unusable name never reaches the file, so a later launch cannot be handed one to attach.
+    #[test]
+    fn an_invalid_session_name_is_not_remembered() {
+        crate::test_support::isolate_user_dirs();
+        let target = remote::RemoteTarget::Alias("scratchbox".into());
+        record_last_session(Some(&target), "not a session name");
+        assert_eq!(read_last_session(Some(&target)), None);
+    }
 
     /// The host session cache is a plain string-keyed map of session summaries; it must survive a
     /// serialize/parse round-trip so an offline host's workplaces reload intact, and it must hold no

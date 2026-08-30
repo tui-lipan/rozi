@@ -16,6 +16,12 @@ pub(crate) enum SessionStart {
     Picker {
         epoch: u64,
     },
+    /// `--remote <host>` with a startup policy that chose no session: land in that host's own
+    /// launcher (`Sessions · <host>`) rather than this machine's picker, and contact the host once
+    /// the runtime is up.
+    RemotePicker {
+        target: crate::session::remote::RemoteTarget,
+    },
 }
 
 /// Whether any *named* (non-ephemeral) session is currently discoverable. Used to gate the startup

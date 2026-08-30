@@ -94,6 +94,14 @@ pub struct RemotePickerState {
     /// Bumped to remount the hosts palette while a probe is in flight, so navigation cannot
     /// move the highlight off the connecting row.
     pub interaction_epoch: u64,
+    /// The session `startup = "last"` remembered on this host, waiting on discovery to say whether
+    /// the host still has it. Attached when the first successful probe lists it, dropped otherwise —
+    /// `last` reopens a session, it never revives one, so a name the host does not report leaves the
+    /// user on this picker.
+    ///
+    /// Consumed by that first probe whatever it finds, so a host reopened by hand later is a plain
+    /// browse rather than a second, surprising auto-attach.
+    pub startup_resume: Option<String>,
 }
 
 impl RemotePickerState {
@@ -112,6 +120,7 @@ impl RemotePickerState {
             pending_kill: None,
             pending_restart: None,
             interaction_epoch: 0,
+            startup_resume: None,
         }
     }
 

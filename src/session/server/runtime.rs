@@ -322,43 +322,35 @@ impl SessionServer {
     }
 }
 
-/// Build the candidate [`PaneRuntimeState`] for `pane`, bumping `sequence` past its previous value
-/// only when some other field actually differs (a no-op recompute must not burn a sequence number,
-/// or every idle heartbeat tick would look like a change to clients).
-fn compute_runtime_state(
+struct PathRuntime {
+    cwd: Option<String>,
+    cwd_host: Option<String>,
+    display_path: Option<String>,
+    project_root: Option<String>,
+    git_branch: Option<String>,
+    cwd_source: PaneCwdSource,
+}
+
+fn derive_path_runtime(
     pane: &mut ServerPane,
+    reported: Option<&TerminalWorkingDirectory>,
     inspector: &impl ProcessInspector,
-    agents: Option<&AgentCatalog>,
-    scan: &mut LazyProcessScan,
-) -> PaneRuntimeState {
-    let semantic = pane.screen().semantic_state();
-    let command_phase = PaneCommandPhase::from(semantic.command_phase);
-    let last_exit_status = match command_phase {
-        PaneCommandPhase::Completed { exit_status } => {
-            exit_status.or(pane.runtime.last_exit_status)
-        }
-        _ => pane.runtime.last_exit_status,
-    };
-    // A shell without OSC 133 integration never reports a per-command exit status; once the whole
-    // pane exits, its own exit code is at least as informative a fallback as leaving this `None`.
-    let last_exit_status = last_exit_status.or(pane.exited);
-    let (cwd, cwd_host, cwd_source) = resolve_cwd(pane, semantic.cwd.as_ref(), inspector);
+) -> PathRuntime {
+    let (cwd, cwd_host, cwd_source) = resolve_cwd(pane, reported, inspector);
     let cwd_changed = !cwd_unchanged(&cwd, &pane.runtime.cwd) || cwd_host != pane.runtime.cwd_host;
     let display_path_missing = cwd.is_some() && pane.runtime.display_path.is_none();
     let display_path = if cwd_changed || display_path_missing {
         match (cwd.as_deref(), cwd_host.as_deref()) {
             (Some(cwd), None) => Some(crate::platform::paths::display_cwd(cwd)),
-            // A nested remote cwd belongs to a host whose filesystem and home directory the session
-            // server cannot inspect, so preserve the reported absolute spelling.
+            // The session server cannot inspect a nested remote host's filesystem or home.
             (Some(cwd), Some(_)) => Some(cwd.to_string()),
             (None, _) => None,
         }
     } else {
         pane.runtime.display_path.clone()
     };
-    // Local paths only: a `cwd_host` directory lives on a machine whose `.git` this server cannot
-    // stat, and reporting this host's answer for it would attribute one repository's branch to
-    // another machine's directory.
+
+    // A nested remote cwd belongs to a filesystem whose Git state this server cannot inspect.
     let git_stale = pane
         .last_git_read
         .is_none_or(|at| at.elapsed() >= GIT_REFRESH);
@@ -380,6 +372,110 @@ fn compute_runtime_state(
             pane.runtime.git_branch.clone(),
         )
     };
+
+    PathRuntime {
+        cwd,
+        cwd_host,
+        display_path,
+        project_root,
+        git_branch,
+        cwd_source,
+    }
+}
+
+/// Refresh expensive process-based identity only when its probe is stale. Screen state is read on
+/// every poll so agent transitions and run clocks do not wait for the identity refresh interval.
+fn derive_detected_agent(
+    pane: &mut ServerPane,
+    agents: Option<&AgentCatalog>,
+    inspector: &impl ProcessInspector,
+    foreground_program: Option<&str>,
+    command_phase: PaneCommandPhase,
+    scan: &mut LazyProcessScan,
+) -> Option<DetectedAgent> {
+    // Published rows describe all sessions, while screen detection sees only the session in view.
+    if !pane.runtime.rows.is_empty() {
+        pane.agent.hold = None;
+        pane.agent.read = None;
+        let aggregate = crate::session::protocol::aggregate_row_state(&pane.runtime.rows);
+        return pane
+            .runtime
+            .detected_agent
+            .as_ref()
+            .zip(aggregate)
+            .map(|(previous, state)| DetectedAgent {
+                agent: previous.agent.clone(),
+                state,
+            });
+    }
+    let Some(agents) = agents else {
+        return pane.runtime.detected_agent.clone();
+    };
+
+    let probe = AgentProbe {
+        foreground_program: foreground_program.map(str::to_string),
+        command_phase,
+    };
+    // A changed foreground program invalidates state held for the previous process.
+    if pane.agent.probe.as_ref().is_some_and(|last| *last != probe) {
+        pane.agent.hold = None;
+    }
+    let stale = pane.agent.probe.as_ref().is_none_or(|last| *last != probe)
+        || pane
+            .agent
+            .detected_at
+            .is_none_or(|at| at.elapsed() >= AGENT_DETECT_REFRESH);
+    if stale {
+        pane.agent.probe = Some(probe);
+        pane.agent.detected_at = Some(Instant::now());
+        let identity = identify_pane_agent(pane, agents, inspector, foreground_program, scan)
+            .map(|definition| definition.id().to_string());
+        if identity != pane.agent.identity {
+            pane.agent.read = None;
+            pane.agent.identity = identity;
+        }
+    }
+    read_agent_state(pane, agents)
+}
+
+fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeState) -> bool {
+    !cwd_unchanged(&candidate.cwd, &current.cwd)
+        || candidate.cwd_host != current.cwd_host
+        || candidate.display_path != current.display_path
+        || candidate.project_root != current.project_root
+        || candidate.git_branch != current.git_branch
+        || candidate.cwd_source != current.cwd_source
+        || candidate.command_phase != current.command_phase
+        || candidate.foreground_program != current.foreground_program
+        || candidate.foreground_executable != current.foreground_executable
+        || candidate.foreground_arguments != current.foreground_arguments
+        || candidate.last_exit_status != current.last_exit_status
+        || candidate.status != current.status
+        || candidate.detected_agent != current.detected_agent
+        || candidate.work_started_at != current.work_started_at
+}
+
+/// Build the candidate [`PaneRuntimeState`] for `pane`, bumping `sequence` past its previous value
+/// only when some other field actually differs (a no-op recompute must not burn a sequence number,
+/// or every idle heartbeat tick would look like a change to clients).
+fn compute_runtime_state(
+    pane: &mut ServerPane,
+    inspector: &impl ProcessInspector,
+    agents: Option<&AgentCatalog>,
+    scan: &mut LazyProcessScan,
+) -> PaneRuntimeState {
+    let semantic = pane.screen().semantic_state();
+    let command_phase = PaneCommandPhase::from(semantic.command_phase);
+    let last_exit_status = match command_phase {
+        PaneCommandPhase::Completed { exit_status } => {
+            exit_status.or(pane.runtime.last_exit_status)
+        }
+        _ => pane.runtime.last_exit_status,
+    };
+    // A shell without OSC 133 integration never reports a per-command exit status; once the whole
+    // pane exits, its own exit code is at least as informative a fallback as leaving this `None`.
+    let last_exit_status = last_exit_status.or(pane.exited);
+    let path = derive_path_runtime(pane, semantic.cwd.as_ref(), inspector);
     let foreground_program = semantic
         .executable
         .as_deref()
@@ -402,63 +498,14 @@ fn compute_runtime_state(
             (None, Vec::new())
         }
     };
-    // Naming the agent behind a pane sweeps every process on the host (it has to, to find this
-    // pane's process-group members), so running it on every poll cost ~2% of a core per idle pane.
-    // The foreground program and command phase above are already known and change whenever the
-    // pane starts running something new, so an unchanged pair means the sweep would rediscover the
-    // cached answer. AGENT_DETECT_REFRESH still re-sweeps periodically, catching a wrapped process
-    // that appears inside an unchanged foreground program. What that named agent is *doing* is not
-    // gated with it: that comes off the pane's own screen, and waiting for the next sweep to read
-    // it would start every run's clock up to AGENT_DETECT_REFRESH late.
-    // A pane whose program enumerates its own sessions is authoritative. Screen detection can only
-    // ever see the session in view, so scraping such a pane would answer a question the publisher
-    // has already answered better - and would answer it about the wrong session.
-    let detected_agent = if !pane.runtime.rows.is_empty() {
-        pane.agent.hold = None;
-        pane.agent.read = None;
-        let aggregate = crate::session::protocol::aggregate_row_state(&pane.runtime.rows);
-        // If an agent kind was previously detected, update its aggregate state.
-        // If nothing was detected, detected_agent remains None.
-        pane.runtime
-            .detected_agent
-            .as_ref()
-            .zip(aggregate)
-            .map(|(previous, state)| DetectedAgent {
-                agent: previous.agent.clone(),
-                state,
-            })
-    } else if let Some(agents) = agents {
-        let probe = AgentProbe {
-            foreground_program: foreground_program.clone(),
-            command_phase,
-        };
-        // A different foreground program is a different program: whatever was held describes
-        // something that is no longer running behind this pane.
-        if pane.agent.probe.as_ref().is_some_and(|last| *last != probe) {
-            pane.agent.hold = None;
-        }
-        let stale = pane.agent.probe.as_ref().is_none_or(|last| *last != probe)
-            || pane
-                .agent
-                .detected_at
-                .is_none_or(|at| at.elapsed() >= AGENT_DETECT_REFRESH);
-        if stale {
-            pane.agent.probe = Some(probe);
-            pane.agent.detected_at = Some(Instant::now());
-            let identity =
-                identify_pane_agent(pane, agents, inspector, foreground_program.as_deref(), scan)
-                    .map(|definition| definition.id().to_string());
-            if identity != pane.agent.identity {
-                // A different agent's rules read a different screen; nothing about the last read
-                // carries over.
-                pane.agent.read = None;
-                pane.agent.identity = identity;
-            }
-        }
-        read_agent_state(pane, agents)
-    } else {
-        pane.runtime.detected_agent.clone()
-    };
+    let detected_agent = derive_detected_agent(
+        pane,
+        agents,
+        inspector,
+        foreground_program.as_deref(),
+        command_phase,
+        scan,
+    );
 
     let work_started_at = next_work_started_at(
         &pane.runtime,
@@ -466,12 +513,12 @@ fn compute_runtime_state(
         detected_agent.as_ref(),
     );
     let candidate = PaneRuntimeState {
-        cwd,
-        cwd_host,
-        display_path,
-        project_root,
-        git_branch,
-        cwd_source,
+        cwd: path.cwd,
+        cwd_host: path.cwd_host,
+        display_path: path.display_path,
+        project_root: path.project_root,
+        git_branch: path.git_branch,
+        cwd_source: path.cwd_source,
         command_phase,
         foreground_program,
         foreground_executable,
@@ -484,20 +531,7 @@ fn compute_runtime_state(
         rows: pane.runtime.rows.clone(),
         sequence: pane.runtime.sequence,
     };
-    let changed = !cwd_unchanged(&candidate.cwd, &pane.runtime.cwd)
-        || candidate.cwd_host != pane.runtime.cwd_host
-        || candidate.display_path != pane.runtime.display_path
-        || candidate.project_root != pane.runtime.project_root
-        || candidate.git_branch != pane.runtime.git_branch
-        || candidate.cwd_source != pane.runtime.cwd_source
-        || candidate.command_phase != pane.runtime.command_phase
-        || candidate.foreground_program != pane.runtime.foreground_program
-        || candidate.foreground_executable != pane.runtime.foreground_executable
-        || candidate.foreground_arguments != pane.runtime.foreground_arguments
-        || candidate.last_exit_status != pane.runtime.last_exit_status
-        || candidate.status != pane.runtime.status
-        || candidate.detected_agent != pane.runtime.detected_agent
-        || candidate.work_started_at != pane.runtime.work_started_at;
+    let changed = runtime_state_changed(&candidate, &pane.runtime);
     PaneRuntimeState {
         sequence: if changed {
             pane.runtime.sequence.wrapping_add(1)

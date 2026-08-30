@@ -615,32 +615,49 @@ pub(crate) fn attach_session_by_name(
     }))
 }
 
-/// The launcher's one offer: start this client's ephemeral session now. Reached by `Enter` on the
-/// launcher panel and by the session picker's scratch-session key, which is why it also drops any
-/// deferred PTY action — asking for a plain shell replaces whatever spawn was queued against a
-/// session that never arrived.
+/// The launcher's one offer: start this client's ephemeral session now, in the launcher's own
+/// scope. Reached by `Enter` on the launcher panel, so a launcher scoped to `workbox` starts the
+/// shell *there* — that scope is the whole content of the `REMOTE · workbox` badge above it.
+///
+/// It also drops any deferred PTY action: asking for a plain shell replaces whatever spawn was
+/// queued against a session that never arrived.
 pub(crate) fn start_launcher_shell(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_action(ctx, None);
-    attach_startup_ephemeral(ctx)
+    let scope = ctx.state.active_launcher_scope().cloned();
+    attach_startup_ephemeral(ctx, scope)
 }
 
-/// This client's own scratch session, when it already has one: the ephemeral it holds in the
-/// foreground or parked in the background.
+/// [`start_launcher_shell`] pinned to the local machine, for the global Sessions picker's `Ctrl+T`.
+/// The picker shows every host at once and therefore commits to none; only a host-scoped surface
+/// may put a shell on a host.
+pub(crate) fn start_local_launcher_shell(ctx: &mut Context<AppRoot>) -> Update {
+    clear_pending_session_action(ctx, None);
+    attach_startup_ephemeral(ctx, None)
+}
+
+/// This client's own scratch session on `scope`, when it already has one: the ephemeral it holds in
+/// the foreground or parked in the background, on that exact host (or locally for `None`).
 ///
 /// The name is read back off the attachment rather than recomputed from the pid, because a
 /// restarted ephemeral is salted (`eph-<pid>-<salt>`) and would not be found by name. Other
 /// clients' ephemerals are deliberately not counted — they are somebody else's scratch session, and
 /// the picker already lists them as rows.
-pub(crate) fn held_ephemeral_session(
-    state: &crate::state::State,
-) -> Option<&crate::state::Attachment> {
+///
+/// Scoped because this client may hold one scratch session per workplace: the local one it launched
+/// with and one on each host it has opened a shell on. Answering with whichever came first would
+/// make the global picker's `Ctrl+T` land on a remote shell.
+pub(crate) fn held_ephemeral_session_in<'a>(
+    state: &'a crate::state::State,
+    scope: Option<&crate::session::remote::RemoteTarget>,
+) -> Option<&'a crate::state::Attachment> {
     std::iter::once(state.current())
         .chain(state.background.values())
         .find(|attachment| {
-            attachment
-                .session_name
-                .as_deref()
-                .is_some_and(crate::state::is_ephemeral_session_name)
+            attachment.remote_target.as_ref() == scope
+                && attachment
+                    .session_name
+                    .as_deref()
+                    .is_some_and(crate::state::is_ephemeral_session_name)
         })
 }
 
@@ -651,7 +668,15 @@ pub(crate) fn held_ephemeral_session(
 /// A launcher reached by killing a session has no seed; it falls back to a single default pane.
 /// When a [`PendingSessionAction`] is waiting, the seed is empty so the deferred action creates the
 /// only pane after attach — avoiding a blank local pane and a leftover shell.
-pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
+///
+/// `scope` is the host the shell starts on, `None` for this machine. It is passed in rather than
+/// read off the current attachment because the two callers disagree on purpose: the launcher starts
+/// its shell where the launcher is scoped, and the global Sessions picker starts one locally
+/// whatever host happens to be behind the overlay.
+pub(crate) fn attach_startup_ephemeral(
+    ctx: &mut Context<AppRoot>,
+    scope: Option<crate::session::remote::RemoteTarget>,
+) -> Update {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     crate::ops::session::remotes::dismiss_remote_picker(&mut ctx.state);
@@ -686,12 +711,20 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.current_mut().auto_created = true;
         finish_session_install(ctx);
     }
-    // This is a *local* fallback; clear any remote target left over from a failed `--remote` attach
-    // so panes resolve their shell/cwd locally and the sidebar does not keep probing a dead host.
-    ctx.state.current_mut().remote_host = None;
-    ctx.state.current_mut().remote_target = None;
+    // The scope is authoritative in both directions: it installs the host a scoped launcher starts
+    // on, and clears any target left over from a failed `--remote` attach so a local shell resolves
+    // its shell/cwd locally and the sidebar stops probing a dead host.
+    let remote_host = scope.as_ref().map(|target| target.display_label());
+    ctx.state.current_mut().remote_host = remote_host.clone();
+    ctx.state.current_mut().remote_target = scope.clone();
     let epoch = ctx.state.runtime_epoch;
-    let name = crate::state::ephemeral_session_name();
+    // A remote scratch session lives on the far host, where a bare `eph-<pid>` could collide with
+    // another client sharing that pid on a different machine.
+    let name = if scope.is_some() {
+        crate::state::remote_ephemeral_session_name()
+    } else {
+        crate::state::ephemeral_session_name()
+    };
     let intent = match ctx.state.current_mut().deferred_profile_seed.take() {
         Some((profile, path)) => crate::state::AttachIntent::ProfileSeed { profile, path },
         None => seeded_intent.unwrap_or(crate::state::AttachIntent::Plain),
@@ -703,15 +736,29 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
         autostart: true,
         read_only: false,
         reconnect: false,
-        remote_host: None,
+        remote_host,
         intent,
         left: None,
         parked_epoch: None,
     });
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
+    let remote_config = ctx.state.config.remote.clone();
     Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || {
-            crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
+        std::thread::spawn(move || match scope {
+            Some(target) => crate::session::bootstrap::attach_remote_session_client(
+                epoch,
+                name,
+                false,
+                false,
+                target,
+                remote_config,
+                // Explicit request: fail fast rather than blocking the UI on a dead host.
+                false,
+                link,
+            ),
+            None => {
+                crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
+            }
         });
     }))
 }
@@ -732,7 +779,10 @@ pub(crate) fn ensure_session_for_pty(
         return None;
     }
     ctx.state.pending_session_action = Some(action);
-    Some(attach_startup_ephemeral(ctx))
+    // A deferred PTY runs wherever the launcher is pointed: a scratchpad opened from a launcher
+    // scoped to `workbox` belongs on `workbox`, not silently on this machine.
+    let scope = ctx.state.active_launcher_scope().cloned();
+    Some(attach_startup_ephemeral(ctx, scope))
 }
 
 /// Drop a deferred PTY action (and any held control reply) without running it — attach failed, or
@@ -813,10 +863,19 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<AppRoot>) -> Update {
     }
 }
 
-/// Disconnect from a remote host: close every attachment to it — current and retained — leaving the
-/// remote servers running for reattach. If the current session lives on that host, the UI lands on
-/// the session picker when other choices remain, otherwise the sessionless launcher.
-/// Non-destructive.
+/// Disconnect this client from a remote host: close every attachment to it — current and retained —
+/// leaving the remote servers running for reattach. If the current session lives on that host, the
+/// UI lands on the session picker when other choices remain, otherwise the sessionless launcher.
+///
+/// Host-wide, and deliberately not destructive to anything the user could come back to. A named
+/// remote session keeps running whichever client started it; only `Ctrl+K` kills a session. The one
+/// thing torn down is a scratch session this client created on the user's behalf and that they
+/// never worked in — nothing can reattach to it by name, so leaving it behind on a host we are
+/// walking away from would only litter the far machine.
+///
+/// The client's shared SSH connection to the host goes too. Keeping the master alive for its last
+/// minute after an explicit disconnect would leave an authenticated channel open to a machine the
+/// user just said they were done with.
 ///
 /// The returned [`Update`] carries any picker-watch command that follows. Callers must return it;
 /// dropping it strands the client without a way to rediscover sessions.
@@ -830,7 +889,12 @@ pub(crate) fn disconnect_host(
     if let Some(entry) = ctx.state.hosts.get_mut(target) {
         entry.probe = crate::state::HostProbe::Idle;
     }
-    // Close every retained background attachment on this host; their servers keep running.
+    // The launcher's scope is a place to work, and this host is no longer one.
+    if ctx.state.launcher_scope.as_ref() == Some(target) {
+        ctx.state.launcher_scope = None;
+    }
+    // Close every retained background attachment on this host; their servers keep running, except
+    // for a disposable scratch session that nothing could reattach to.
     let ids: Vec<crate::state::AttachmentId> = ctx
         .state
         .background
@@ -842,7 +906,11 @@ pub(crate) fn disconnect_host(
     for id in ids {
         if let Some(attachment) = ctx.state.background.remove(&id) {
             if let Some(client) = attachment.session_client.as_ref() {
-                client.detach();
+                if attachment.disposition() == crate::state::SessionDisposition::Discard {
+                    client.shutdown();
+                } else {
+                    client.detach();
+                }
             }
             closed += 1;
         }
@@ -850,9 +918,15 @@ pub(crate) fn disconnect_host(
     let current_on_host = ctx.state.current().session_attached
         && ctx.state.current().remote_target.as_ref() == Some(target);
     if current_on_host {
+        let discard =
+            ctx.state.current().disposition() == crate::state::SessionDisposition::Discard;
         if let Some(client) = ctx.state.current().session_client.clone() {
             crate::ops::exit::mark_session_detached(ctx, None);
-            client.detach();
+            if discard {
+                client.shutdown();
+            } else {
+                client.detach();
+            }
         }
         closed += 1;
         // The session on screen is being taken away rather than left, so land somewhere the user

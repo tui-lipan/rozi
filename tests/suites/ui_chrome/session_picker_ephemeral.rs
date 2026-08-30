@@ -195,3 +195,75 @@ fn a_parked_scratch_session_also_drops_the_hint() {
         );
     });
 }
+
+/// The global Sessions picker's own keys act locally, and once a remote host is in play the footer
+/// says so. Without something remote on screen there is no second reading to guard against, and
+/// "new local" would only raise a question the surface cannot answer.
+#[test]
+fn the_global_pickers_keys_name_their_scope_once_a_host_is_in_play() {
+    on_a_big_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(VIEWPORT);
+        {
+            let state = backend.state_mut();
+            *state.current_mut() = rozi::state::Attachment::new();
+            state.show_session_picker = true;
+            state.session_picker = Some(SessionPickerState::new(vec![session_row("dev")]));
+        }
+
+        let local_only = screen(&mut backend);
+        assert!(
+            local_only.contains("new Ctrl+n") && !local_only.contains("new local"),
+            "with nothing remote anywhere, `new` needs no qualifier:\n{local_only}"
+        );
+        assert!(
+            local_only.contains("ephemeral shell Ctrl+t"),
+            "and the scratch chord keeps its plain name:\n{local_only}"
+        );
+
+        backend.state_mut().current_mut().remote_host = Some("workbox".to_string());
+        backend.state_mut().current_mut().remote_target = Some(
+            rozi::session::remote::RemoteTarget::Alias("workbox".to_string()),
+        );
+        backend.state_mut().current_mut().session_name = Some("backend".to_string());
+        backend.state_mut().current_mut().session_attached = true;
+        backend.state_mut().current_mut().pending_session_attach = None;
+
+        let with_remote = screen(&mut backend);
+        assert!(
+            with_remote.contains("new local Ctrl+n"),
+            "attached to a host, the global picker says which machine its `new` means:\n{with_remote}"
+        );
+        assert!(
+            with_remote.contains("local ephemeral Ctrl+t"),
+            "and so does its scratch chord, which is local for the same reason:\n{with_remote}"
+        );
+    });
+}
+
+/// A sessionless client scoped to a host is a real resting state: it names the machine, holds no
+/// session, and starts its shell there.
+#[test]
+fn a_scoped_launcher_names_its_host_and_says_where_its_shell_lands() {
+    on_a_big_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(VIEWPORT);
+        {
+            let state = backend.state_mut();
+            *state.current_mut() = rozi::state::Attachment::new();
+            state.launcher_scope = Some(rozi::session::remote::RemoteTarget::Alias(
+                "workbox".to_string(),
+            ));
+        }
+
+        let rendered = screen(&mut backend);
+        assert!(
+            rendered.contains("REMOTE · workbox"),
+            "the launcher wears the scope it will act in:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Not attached. A shell starts on workbox."),
+            "and says both that nothing is attached and where its one offer lands:\n{rendered}"
+        );
+    });
+}

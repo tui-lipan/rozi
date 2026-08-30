@@ -1432,3 +1432,257 @@ fn disconnecting_a_session_we_do_not_hold_is_inert() {
         .join()
         .expect("test thread panicked");
 }
+
+/// The rule the whole model rests on: an action operates on the scope its surface *shows*. Global
+/// Sessions shows every host at once, so its `Ctrl+T` starts a local shell — even with a remote
+/// session filling the screen behind the overlay. Inheriting `workbox` from whatever happened to be
+/// attached would make one key mean two things on one screen.
+#[test]
+fn the_global_pickers_scratch_key_stays_local_behind_a_remote_session() {
+    use crate::AppRoot;
+    use crate::Msg;
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("backend".into());
+                state.current_mut().session_attached = true;
+                state.current_mut().remote_host = Some("workbox".into());
+                state.current_mut().remote_target = Some(workbox);
+                state.session_picker = Some(SessionPickerState::new(vec![session_row(
+                    "backend",
+                    Some("workbox"),
+                )]));
+                state.show_session_picker = true;
+            }
+
+            backend
+                .dispatch(Msg::SessionPickerEphemeral)
+                .expect("start the scratch session from the global picker");
+
+            let state = backend.state();
+            let pending = state
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .expect("an attach is in flight");
+            assert_eq!(pending.name, crate::state::ephemeral_session_name());
+            assert!(
+                pending.remote_host.is_none(),
+                "the global picker's scratch key must not inherit the attached session's host"
+            );
+            assert!(backend.state().current().remote_target.is_none());
+        })
+        .expect("spawn global scratch scope test")
+        .join()
+        .expect("global scratch scope test completes");
+}
+
+/// A remote scratch session on screen is a different session from the local one, so the key that
+/// reaches the local one must still act rather than reading "you are already there".
+#[test]
+fn a_remote_scratch_session_does_not_answer_for_the_local_one() {
+    use crate::AppRoot;
+    use crate::Msg;
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_name =
+                    Some(crate::state::remote_ephemeral_session_name());
+                state.current_mut().session_attached = true;
+                state.current_mut().remote_host = Some("workbox".into());
+                state.current_mut().remote_target = Some(
+                    crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                );
+                state.session_picker = Some(SessionPickerState::new(Vec::new()));
+                state.show_session_picker = true;
+            }
+
+            backend
+                .dispatch(Msg::SessionPickerEphemeral)
+                .expect("reach the local scratch session");
+
+            let state = backend.state();
+            let pending = state
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .expect("an attach is in flight rather than a silent close");
+            assert_eq!(pending.name, crate::state::ephemeral_session_name());
+            assert!(pending.remote_host.is_none());
+        })
+        .expect("spawn remote scratch distinctness test")
+        .join()
+        .expect("remote scratch distinctness test completes");
+}
+
+/// The launcher, unlike the global picker, *does* name a machine — that is the whole content of its
+/// `REMOTE · <host>` badge — so its one offer starts the shell there.
+#[test]
+fn a_scoped_launcher_starts_its_shell_on_the_host_it_names() {
+    use crate::AppRoot;
+    use crate::Msg;
+    use crate::input::Action;
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            {
+                let state = backend.state_mut();
+                *state.current_mut() = crate::state::Attachment::new();
+                state.launcher_scope = Some(crate::session::remote::RemoteTarget::Alias(
+                    "workbox".into(),
+                ));
+            }
+            assert!(backend.state().is_launcher());
+
+            backend
+                .dispatch(Msg::RunAction(Action::Spawn))
+                .expect("start the launcher's shell");
+
+            let state = backend.state();
+            let pending = state
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .expect("an attach is in flight");
+            assert_eq!(pending.name, crate::state::remote_ephemeral_session_name());
+            assert_eq!(pending.remote_host.as_deref(), Some("workbox"));
+            assert_eq!(
+                state
+                    .current()
+                    .remote_target
+                    .as_ref()
+                    .map(|target| target.display_label()),
+                Some("workbox".to_string()),
+            );
+        })
+        .expect("spawn scoped launcher test")
+        .join()
+        .expect("scoped launcher test completes");
+}
+
+/// A launcher scope is not a connection, and is only a scope while the foreground is empty. With a
+/// session up, the field is a record of where the user is working — reading it as a scope would let
+/// a host browsed earlier decide where a later kill lands.
+#[test]
+fn a_launcher_scope_is_only_read_while_the_foreground_is_empty() {
+    let mut state = State::new(Config::default(), ThemePreset::Lipan.theme());
+    // A launch seeds an initial pane; the launcher is what is left once nothing is in front.
+    *state.current_mut() = crate::state::Attachment::new();
+    state.launcher_scope = Some(crate::session::remote::RemoteTarget::Alias(
+        "workbox".into(),
+    ));
+    assert!(state.is_launcher());
+    assert!(state.active_launcher_scope().is_some());
+
+    state.current_mut().session_name = Some("dev".into());
+    assert!(!state.is_launcher());
+    assert!(state.active_launcher_scope().is_none());
+}
+
+/// `Ctrl+X` walks away from a host; it does not clean it out. A named remote session keeps running
+/// whichever client started it — killing it is `Ctrl+K`'s job alone. The one thing torn down is a
+/// scratch session this client made on the user's behalf and that they never worked in: nothing can
+/// reattach to it by name, so leaving it would only litter a machine we are done with.
+#[test]
+fn disconnecting_a_host_keeps_named_sessions_and_drops_only_the_disposable_scratch_one() {
+    use crate::AppRoot;
+    use crate::Msg;
+    use crate::session::client::{ClientOutbound, SessionClient};
+    use crate::session::protocol::ClientMessage;
+    use crate::state::{RemotePickerMode, RemotePickerState};
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+            let (named_client, named_rx) = SessionClient::test_channel();
+            let (scratch_client, scratch_rx) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                state.launcher_scope = Some(workbox.clone());
+
+                let mut named = crate::state::Attachment::new();
+                named.epoch = 11;
+                named.session_name = Some("backend".into());
+                named.session_attached = true;
+                named.remote_host = Some("workbox".into());
+                named.remote_target = Some(workbox.clone());
+                named.session_client = Some(named_client);
+                state.background.insert(11, named);
+
+                // Auto-created and never engaged: the definition of disposable.
+                let mut scratch = crate::state::Attachment::new();
+                scratch.epoch = 12;
+                scratch.session_name = Some(crate::state::remote_ephemeral_session_name());
+                scratch.session_attached = true;
+                scratch.auto_created = true;
+                scratch.engaged = false;
+                scratch.remote_host = Some("workbox".into());
+                scratch.remote_target = Some(workbox.clone());
+                scratch.session_client = Some(scratch_client);
+                state.background.insert(12, scratch);
+
+                // The surface `Ctrl+X` is pressed on: `Sessions · workbox`.
+                let mut picker = RemotePickerState::new(Some(workbox.clone()));
+                picker.mode = RemotePickerMode::HostSessions {
+                    target: workbox.clone(),
+                };
+                state.remote_picker = Some(picker);
+            }
+
+            backend
+                .update_level(Msg::RemotePickerDisconnectHost)
+                .expect("disconnect the host from its own picker");
+
+            let named_sent: Vec<ClientOutbound> = named_rx.try_iter().collect();
+            assert!(
+                named_sent.iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::Detach)
+                )),
+                "a named remote session is detached, not ended: {named_sent:?}"
+            );
+            assert!(
+                !named_sent.iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::Shutdown)
+                )),
+                "disconnecting a host must never kill a named session"
+            );
+
+            let scratch_sent: Vec<ClientOutbound> = scratch_rx.try_iter().collect();
+            assert!(
+                scratch_sent.iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::Shutdown)
+                )),
+                "an untouched scratch session on the host we are leaving is closed: {scratch_sent:?}"
+            );
+
+            let state = backend.state();
+            assert!(state.background.is_empty(), "no attachment survives the host");
+            assert!(
+                state.launcher_scope.is_none(),
+                "the launcher stops being scoped to a host we just disconnected from"
+            );
+        })
+        .expect("spawn disconnect-host test")
+        .join()
+        .expect("disconnect-host test completes");
+}

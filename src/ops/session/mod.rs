@@ -6,7 +6,7 @@ pub(crate) mod remotes;
 
 pub(crate) use attach::{
     apply_pending_background_closes, attach_session_by_name, clear_pending_session_action,
-    disconnect_host, ensure_session_for_pty, enter_launcher, held_ephemeral_session,
+    disconnect_host, ensure_session_for_pty, enter_launcher, held_ephemeral_session_in,
     install_fresh_attachment, kill_current_session, land_on_surviving_session,
     may_shutdown_ephemeral, needs_session_for_pty, park_current_and_install,
     reconnect_current_session, release_background_for_exit, release_current_session,
@@ -34,7 +34,7 @@ pub(crate) use lifecycle::{
     restart_selected_session, session_row_can_disconnect, session_row_can_disconnect_host,
     session_row_can_restart, session_row_is_current, session_row_is_restorable,
 };
-pub(crate) use remotes::{open_new_host_flow, open_remote_hosts};
+pub(crate) use remotes::{open_new_host_flow, open_remote_hosts, open_startup_remote_picker};
 
 #[cfg(test)]
 mod tests;

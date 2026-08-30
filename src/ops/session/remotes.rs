@@ -125,6 +125,24 @@ pub(crate) fn open_remote_hosts(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
+/// Open the remote picker at launch with `target` selected, ready for the activation the startup
+/// command sends next.
+///
+/// Installed synchronously so `--remote <host>` is already showing that host's row while the first
+/// probe is still in flight — a launch that named a machine must never look like a generic host
+/// list. No discovery is scheduled here; the activation does that, on the same path an Enter on the
+/// row takes.
+pub(crate) fn open_startup_remote_picker(
+    ctx: &mut Context<AppRoot>,
+    target: RemoteTarget,
+    resume: Option<String>,
+) {
+    install_remote_hosts(ctx, String::new(), Some(target));
+    if let Some(picker) = ctx.state.remote_picker.as_mut() {
+        picker.startup_resume = resume;
+    }
+}
+
 pub(crate) fn restore_remote_hosts(
     ctx: &mut Context<AppRoot>,
     query: String,
@@ -142,6 +160,7 @@ pub(crate) fn restore_remote_host_sessions(
 ) -> Update {
     install_remote_hosts(ctx, String::new(), Some(target.clone()));
     let rows = immediate_rows_for_target(&ctx.state, &target);
+    scope_launcher_to(ctx, Some(&target));
     if let Some(entry) = ctx.state.hosts.get_mut(&target) {
         entry.probe = crate::state::HostProbe::Reached;
     }
@@ -167,6 +186,9 @@ pub(crate) fn close_remote_picker(ctx: &mut Context<AppRoot>) -> Update {
     match mode {
         Some(RemotePickerMode::HostSessions { .. }) => {
             abandon_remote_probe(&mut ctx.state);
+            // Back out of the host and the launcher stops being scoped to it: the surface the user
+            // is on is the host *list* again, which names no machine.
+            scope_launcher_to(ctx, None);
             if let Some(picker) = ctx.state.remote_picker.as_mut() {
                 picker.return_to_hosts();
             }
@@ -207,6 +229,19 @@ pub(crate) fn cancel_host_probe(ctx: &mut Context<AppRoot>) -> bool {
         picker.probe_epoch = epoch;
     }
     true
+}
+
+/// Point a *sessionless* client's launcher at `target`, so dismissing `Sessions · <host>` leaves it
+/// reading `REMOTE · <host>` with no active session — a real resting state, and the thing that makes
+/// the launcher's `Enter` start its shell there.
+///
+/// Only while in the launcher. With a session on screen the picker is something the user is looking
+/// *through*, and browsing a host would otherwise quietly decide where they land after killing a
+/// session they have not killed yet.
+fn scope_launcher_to(ctx: &mut Context<AppRoot>, target: Option<&RemoteTarget>) {
+    if ctx.state.is_launcher() {
+        ctx.state.launcher_scope = target.cloned();
+    }
 }
 
 fn reject_connecting_interaction(picker: &mut RemotePickerState) -> Update {
@@ -291,6 +326,10 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
     }
     crate::session::forget_recent_remote(&target);
     crate::session::forget_host_sessions(&target);
+    crate::session::forget_last_session(Some(&target));
+    if ctx.state.launcher_scope.as_ref() == Some(&target) {
+        ctx.state.launcher_scope = None;
+    }
     crate::session::remove_cached_host_sessions(&mut ctx.state.host_session_cache, &target);
     crate::ops::session::seed_host_registry(ctx);
     let selected = ctx
@@ -369,9 +408,11 @@ pub(crate) fn apply_host_discovery(
             );
             crate::session::record_recent_remote(&target);
             crate::ops::session::seed_host_registry(ctx);
+            scope_launcher_to(ctx, Some(&target));
             if let Some(entry) = ctx.state.hosts.get_mut(&target) {
                 entry.probe = crate::state::HostProbe::Reached;
             }
+            let mut resume = None;
             if let Some(picker) = ctx.state.remote_picker.as_mut() {
                 picker.mode = RemotePickerMode::HostSessions {
                     target: target.clone(),
@@ -382,11 +423,25 @@ pub(crate) fn apply_host_discovery(
                 picker.pending_restart = None;
                 picker.target_prompt = None;
                 picker.replace_sessions(rows);
+                // Spent on this probe whatever it finds: a `last` the host no longer lists is a
+                // session that stayed dead, and the user is already looking at what it does have.
+                resume = picker.startup_resume.take().and_then(|name| {
+                    picker
+                        .sessions
+                        .iter()
+                        .find(|session| session.name == name)
+                        .and_then(RemoteSessionIdentity::of)
+                });
+            }
+            if let Some(identity) = resume {
+                return activate_session(ctx, identity);
             }
         }
         Err(error) => {
             if let Some(picker) = ctx.state.remote_picker.as_mut() {
                 picker.host_probe = crate::state::HostProbe::Failed(error.clone());
+                // An unreachable host answers nothing, so it cannot answer this either.
+                picker.startup_resume = None;
             }
             if let Some(entry) = ctx.state.hosts.get_mut(&target) {
                 entry.probe = crate::state::HostProbe::Failed(error);
@@ -921,6 +976,101 @@ mod tests {
                 RemotePickerMode::HostSessions { target: active } if active == &target
             ));
             assert_eq!(picker.host_probe, crate::state::HostProbe::Reached);
+        });
+    }
+
+    /// `startup = "last"` under `--remote` resumes a session, it never revives one. The host's own
+    /// discovery is the authority — the launch never blocks on an SSH probe before the first frame —
+    /// so a session still listed is attached, and one killed while rozi was away stays dead with the
+    /// user on `Sessions · <host>`.
+    #[test]
+    fn a_remembered_session_is_resumed_only_when_the_host_still_lists_it() {
+        with_backend(|backend| {
+            let target = RemoteTarget::Alias("workbox".into());
+            primed_connecting_picker(backend, &target, 7);
+            // The default launch queues its own ephemeral attach; this test is about what the
+            // probe does, so clear it and let any attach below be the probe's doing.
+            backend.state_mut().current_mut().pending_session_attach = None;
+            backend
+                .state_mut()
+                .remote_picker
+                .as_mut()
+                .expect("remote picker")
+                .startup_resume = Some("backend".into());
+
+            backend
+                .dispatch(Msg::RemoteHostSessionsDiscovered {
+                    epoch: 7,
+                    target: target.clone(),
+                    rows: Ok(vec![crate::session::discovery::DiscoveredSession {
+                        name: "api".into(),
+                        ephemeral: false,
+                        host: Some("workbox".into()),
+                        remote_target: Some(target.clone()),
+                        status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            panes: 1,
+                            clients: 0,
+                            has_layout: false,
+                            created_from_profile: None,
+                        },
+                    }]),
+                })
+                .expect("apply a probe that does not list the remembered session");
+
+            let state = backend.state();
+            let picker = state.remote_picker.as_ref().expect("remote picker");
+            assert!(
+                matches!(&picker.mode, RemotePickerMode::HostSessions { target: active } if active == &target),
+                "a session the host no longer has leaves the user on that host's picker"
+            );
+            assert!(
+                state.current().pending_session_attach.is_none(),
+                "and nothing is recreated under the remembered name"
+            );
+            assert!(
+                picker.startup_resume.is_none(),
+                "the resume is spent on the first probe, whatever it found"
+            );
+        });
+
+        with_backend(|backend| {
+            let target = RemoteTarget::Alias("workbox".into());
+            primed_connecting_picker(backend, &target, 8);
+            backend.state_mut().current_mut().pending_session_attach = None;
+            backend
+                .state_mut()
+                .remote_picker
+                .as_mut()
+                .expect("remote picker")
+                .startup_resume = Some("backend".into());
+
+            backend
+                .dispatch(Msg::RemoteHostSessionsDiscovered {
+                    epoch: 8,
+                    target: target.clone(),
+                    rows: Ok(vec![crate::session::discovery::DiscoveredSession {
+                        name: "backend".into(),
+                        ephemeral: false,
+                        host: Some("workbox".into()),
+                        remote_target: Some(target.clone()),
+                        status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            panes: 2,
+                            clients: 0,
+                            has_layout: false,
+                            created_from_profile: None,
+                        },
+                    }]),
+                })
+                .expect("apply a probe that still lists the remembered session");
+
+            let state = backend.state();
+            let pending = state
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .expect("the remembered session is attached");
+            assert_eq!(pending.name, "backend");
+            assert_eq!(pending.remote_host.as_deref(), Some("workbox"));
         });
     }
 

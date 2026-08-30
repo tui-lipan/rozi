@@ -558,6 +558,11 @@ fn location_label(state: &crate::state::State) -> Option<String> {
         };
         return Some(format!(" 󰒍 {host}{suffix} "));
     }
+    // Sessionless but scoped: the badge names where the next shell would start. No connection
+    // suffix, because there is no connection to describe.
+    if let Some(target) = state.active_launcher_scope() {
+        return Some(format!(" 󰒍 {} ", target.display_label()));
+    }
     let retained = state
         .background
         .values()
@@ -956,6 +961,13 @@ pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     } else {
         leave_keys.join(" / ")
     };
+    // The launcher's scope decides where its one offer lands, so the panel has to name it. It goes
+    // in the header and the line above the keys rather than on the key row, which is too narrow for
+    // a host name and would truncate the very word that carries the meaning.
+    let scope = ctx
+        .state
+        .active_launcher_scope()
+        .map(crate::session::remote::RemoteTarget::display_label);
     let rows = [
         (
             crate::keys_display::format_keys(&format!("enter / {prefix} enter")),
@@ -976,8 +988,20 @@ pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     let keys = rows.iter().fold(VStack::new(), |stack, (keys, what)| {
         stack.child(Text::new(format!("{keys:<key_width$}{what}")))
     });
+    // A scoped launcher is not a connection and does not claim to be one: it says which machine
+    // this client is working on, while holding no session and no SSH link on it.
+    let (header, blurb) = match scope.as_deref() {
+        Some(host) => (
+            format!("REMOTE · {host}"),
+            format!("Not attached. A shell starts on {host}."),
+        ),
+        None => (
+            "No session".to_string(),
+            "Not attached to any session.".to_string(),
+        ),
+    };
     Frame::new()
-        .header_left("No session")
+        .header_left(header)
         .header_padding(1)
         .border(true)
         .border_style(BorderStyle::Rounded)
@@ -987,12 +1011,7 @@ pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
                 .bg(theme.surface.backdrop),
         )
         .padding(1)
-        .child(
-            VStack::new()
-                .gap(1)
-                .child(Text::new("Not attached to any session."))
-                .child(keys),
-        )
+        .child(VStack::new().gap(1).child(Text::new(blurb)).child(keys))
         .into()
 }
 

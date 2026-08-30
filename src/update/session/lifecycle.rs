@@ -162,12 +162,17 @@ pub(crate) fn attached(
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connected;
     ctx.state.current_mut().reconnect_read_only = read_only;
     ctx.state.current_mut().session_attached = true;
+    // Working somewhere sets the scope you come back to: killing this session leaves the launcher
+    // pointed at the same machine rather than silently back on this one.
+    ctx.state.launcher_scope = ctx.state.current().remote_target.clone();
     ctx.state.sidebar.invalidate_sessions();
     ctx.state.current_mut().deferred_profile_seed = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     if !crate::state::is_ephemeral_session_name(&session) {
-        crate::session::record_last_named_session(&session);
+        // Remembered per scope: the last session on `workbox` is what `--remote workbox` reopens,
+        // and it must not become what a bare launch reaches for.
+        crate::session::record_last_session(ctx.state.current().remote_target.as_ref(), &session);
     }
 
     let mut shared = crate::state::SharedSessionState::new(client_id);
@@ -369,7 +374,7 @@ pub(crate) fn renamed(ctx: &mut Context<AppRoot>, epoch: u64, session: String) -
         .session_name
         .replace(session.clone())
         .unwrap_or_default();
-    crate::session::record_last_named_session(&session);
+    crate::session::record_last_session(ctx.state.current().remote_target.as_ref(), &session);
     crate::events::emit(
         &ctx.state,
         crate::events::Event::new(

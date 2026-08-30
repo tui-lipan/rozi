@@ -318,6 +318,22 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
 /// say it already. With nothing to pick, Enter is free and carries it; with the scratch session
 /// itself on the list, its own row is the obvious way to it. The label borrows the word the rows
 /// use (`ephemeral`) so the hint and the session it lands on read as the same thing.
+/// Whether a remote host is anywhere in this client's picture: the session on screen, one parked in
+/// the background, or the host a sessionless launcher is scoped to.
+///
+/// What it gates is the word "local" on the global picker's own keys. Those keys are local
+/// unconditionally — the global Sessions surface shows every host and commits to none — but a user
+/// with nothing remote in play has no second reading to be protected from, and "new local" would
+/// only raise a question ("local as opposed to what?") the screen cannot answer.
+fn remote_is_in_play(state: &crate::state::State) -> bool {
+    state.current().remote_target.is_some()
+        || state.launcher_scope.is_some()
+        || state
+            .background
+            .values()
+            .any(|attachment| attachment.remote_target.is_some())
+}
+
 fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let Some(picker) = ctx.state.session_picker.as_ref() else {
@@ -328,7 +344,15 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
 
     let mut row = hint_row();
     if picker_list_is_empty(picker) {
-        row = row.child(hint_pill(theme, "ephemeral shell", "enter"));
+        row = row.child(hint_pill(
+            theme,
+            if remote_is_in_play(&ctx.state) {
+                "local ephemeral"
+            } else {
+                "ephemeral shell"
+            },
+            "enter",
+        ));
     }
     if let Some(entry) = selected {
         if restorable {
@@ -346,11 +370,27 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
             row = row.child(hint_pill(theme, label, "enter"));
         }
     }
-    row = row.child(hint_pill(theme, "new", "ctrl+n"));
+    // Both keys act on this surface's scope, which is global — so they act locally. Saying "local"
+    // is only worth the width once a remote host is in play; with nothing remote anywhere, "new"
+    // has nothing to be mistaken for.
+    let remote_in_play = remote_is_in_play(&ctx.state);
+    row = row.child(hint_pill(
+        theme,
+        if remote_in_play { "new local" } else { "new" },
+        "ctrl+n",
+    ));
     if !picker_list_is_empty(picker)
-        && crate::ops::session::held_ephemeral_session(&ctx.state).is_none()
+        && crate::ops::session::held_ephemeral_session_in(&ctx.state, None).is_none()
     {
-        row = row.child(hint_pill(theme, "ephemeral shell", "ctrl+t"));
+        row = row.child(hint_pill(
+            theme,
+            if remote_in_play {
+                "local ephemeral"
+            } else {
+                "ephemeral shell"
+            },
+            "ctrl+t",
+        ));
     }
     if ctx.state.current().session_attached && ctx.state.is_ephemeral_session() {
         row = row.child(hint_pill(theme, "name current", "ctrl+s"));

@@ -15,9 +15,16 @@ rozi list-sessions --remote workbox
 rozi kill-session dev --remote workbox
 ```
 
-The session commands behave like local commands. A bare remote launch starts a temporary session.
-A named target attaches to its running session or launches its same-name profile. See
+The session commands behave like local commands. A named target attaches to its running session or
+launches its same-name profile. See
 [Sessions](sessions.md#open-a-session-from-the-command-line).
+
+A bare `rozi --remote workbox` names no session, so `[session] startup` decides — applied on
+`workbox` rather than locally. Under the default `picker` it connects, lists that host's sessions,
+and creates nothing; `ephemeral` starts a temporary session there; `last` reattaches the session it
+remembers on that host if the host still has it; `profile` opens or creates the default-profile
+session there. Each falls back to `Sessions · workbox`. See
+[Choose startup behavior](sessions.md#choose-startup-behavior).
 
 Rozi supports Linux, macOS, and Windows as either client or remote server hosts. The local machine
 needs `ssh` and `curl` on `PATH`. Automatic installation also needs `tar` for a Linux or macOS
@@ -74,6 +81,10 @@ overriding any `ControlMaster` or `ControlPath` in your SSH config for its own c
 connection closes on its own about a minute after the last one finishes. `ServerAliveInterval` and
 `ServerAliveCountMax` apply to it, since a shared connection's settings come from whichever command
 opened it.
+
+The `ControlPath` is per user rather than per client, so two Rozi clients on the same machine share
+one master per host. This is why disconnecting from a host does not close it: exiting a master also
+terminates the sessions riding on it, including another client's attachment.
 
 Windows clients have no SSH connection multiplexing and authenticate per command.
 
@@ -172,6 +183,23 @@ refers to the remote host.
 
 See [Terminal features](terminal.md) for shell metadata, clipboard behavior, and image limits.
 
+## Work on a host without a session
+
+A client can be scoped to a host while holding no session there:
+
+```text
+REMOTE · workbox
+Not attached. A shell starts on workbox.
+```
+
+This is a resting state, not a failure. It says which machine the launcher acts on — `Enter` starts
+a temporary shell on `workbox` — and it implies no live SSH connection. `rozi --remote workbox`
+under `startup = "picker"` lands here, and so does dismissing `Sessions · workbox` with nothing
+attached.
+
+Opening **Sessions** from this state is still global: its `Ctrl+N` and `Ctrl+T` create local
+sessions. See [Scope](sessions.md#scope-where-an-action-happens).
+
 ## Reconnection and switching
 
 Switching to another local or remote session parks the current attachment in the background.
@@ -181,8 +209,22 @@ If a retained SSH connection drops, Rozi marks it offline. Selecting that attach
 reconnect in place. The remote named server keeps running independently of the SSH connection.
 Temporary servers still follow their no-client recovery timer.
 
-Disconnecting a remote host closes this client's attachments to that host. It does not kill named
-servers there. Use the session picker or Sessions sidebar to reconnect.
+## Disconnect from a host
+
+`Ctrl+W` detaches one session attachment. `Ctrl+X` disconnects this client from the whole host:
+
+- every attachment to that host closes, current and background;
+- named remote servers keep running, whichever client started them;
+- a temporary session this client created there and you never worked in is closed, because
+  nothing can reattach to it by name;
+- a launcher scoped to that host stops being scoped to it.
+
+Only `Ctrl+K` kills a session. Disconnecting never does, even for a named session this client
+created. Use the session picker or Sessions sidebar to reconnect.
+
+Disconnecting does not close the shared SSH connection. That master is per user, not per client, so
+another Rozi client may be riding it; it closes on its own once the last command using it finishes
+its `ControlPersist` window.
 
 ## Troubleshooting
 

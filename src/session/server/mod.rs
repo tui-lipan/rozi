@@ -808,18 +808,11 @@ impl SessionServer {
         let mut no_client_since: Option<Instant> = None;
         let mut idle_wait = ServerIdleWait::default();
         while !self.shutdown {
-            let iteration_started = Instant::now();
-            let mut activity = false;
             // A rename binds the new endpoint before the old listener is retired, so no window
             // exists where the session is discoverable under neither name. Dropping the old
             // listener here does not disturb already-accepted connections: existing clients stay
             // attached across a rename.
-            if let Some((next, retired)) = self.pending_listener.take() {
-                listener = next;
-                if let Some(retired) = retired {
-                    retired.remove_stale();
-                }
-            }
+            self.adopt_pending_listener(&mut listener);
             // A signal (Unix) or console control event (Windows) asking this server to stop routes
             // onto the same graceful teardown the authenticated `Shutdown` message takes, rather
             // than killing the process mid-write and stranding its PTY children.
@@ -827,54 +820,76 @@ impl SessionServer {
                 self.shutdown = true;
                 break;
             }
-            activity |= self.accept_new(&listener)?;
-
-            for _ in 0..MAX_PTY_EVENTS_PER_TICK {
-                let Some(event) = self.events.try_pop() else {
-                    break;
-                };
-                activity = true;
-                if let Some(outbound) = self.handle_event(event) {
-                    self.broadcast_outbound(&outbound);
-                }
-            }
-
-            self.retry_browse_requests();
-            activity |= self.pump_clients();
-            self.retry_browse_requests();
-            self.poll_pane_runtime();
-            if let Some((next, retired)) = self.pending_listener.take() {
-                listener = next;
-                if let Some(retired) = retired {
-                    retired.remove_stale();
-                }
-            }
-            if let Err(err) = self.drain_snapshot_results() {
-                eprintln!("rozi: session snapshot failed: {err}");
-            }
-            if let Err(err) = self.maybe_snapshot() {
-                eprintln!("rozi: session snapshot failed: {err}");
-            }
-            let iteration_elapsed = iteration_started.elapsed();
-            self.credit_server_stall(iteration_elapsed);
-            self.heartbeat();
-            activity |= self.flush_clients();
-
-            let attached = self.attached_count();
-            if attached == 0 {
-                if crate::state::is_ephemeral_session_name(&self.session_name) {
-                    let since = no_client_since.get_or_insert_with(Instant::now);
-                    if since.elapsed() >= EPHEMERAL_NO_CLIENT_GRACE {
-                        self.shutdown = true;
-                    }
-                }
-            } else {
-                no_client_since = None;
-            }
-
+            let activity = self.pump_iteration(&mut listener, &mut no_client_since)?;
             let timeout = idle_wait.next_timeout(!self.clients.is_empty(), activity);
             self.events.wait_for_item(timeout);
         }
+        self.shutdown_listener()
+    }
+
+    fn adopt_pending_listener(&mut self, listener: &mut IpcListener) {
+        if let Some((next, retired)) = self.pending_listener.take() {
+            *listener = next;
+            if let Some(retired) = retired {
+                retired.remove_stale();
+            }
+        }
+    }
+
+    fn drain_pty_events(&mut self) -> bool {
+        let mut activity = false;
+        for _ in 0..MAX_PTY_EVENTS_PER_TICK {
+            let Some(event) = self.events.try_pop() else {
+                break;
+            };
+            activity = true;
+            if let Some(outbound) = self.handle_event(event) {
+                self.broadcast_outbound(&outbound);
+            }
+        }
+        activity
+    }
+
+    fn update_ephemeral_lifetime(&mut self, no_client_since: &mut Option<Instant>) {
+        if self.attached_count() != 0 {
+            *no_client_since = None;
+            return;
+        }
+        if crate::state::is_ephemeral_session_name(&self.session_name) {
+            let since = no_client_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= EPHEMERAL_NO_CLIENT_GRACE {
+                self.shutdown = true;
+            }
+        }
+    }
+
+    fn pump_iteration(
+        &mut self,
+        listener: &mut IpcListener,
+        no_client_since: &mut Option<Instant>,
+    ) -> io::Result<bool> {
+        let iteration_started = Instant::now();
+        let mut activity = self.accept_new(listener)?;
+        activity |= self.drain_pty_events();
+        self.retry_browse_requests();
+        activity |= self.pump_clients();
+        self.retry_browse_requests();
+        self.poll_pane_runtime();
+        self.adopt_pending_listener(listener);
+        if let Err(err) = self.drain_snapshot_results() {
+            eprintln!("rozi: session snapshot failed: {err}");
+        }
+        if let Err(err) = self.maybe_snapshot() {
+            eprintln!("rozi: session snapshot failed: {err}");
+        }
+        self.credit_server_stall(iteration_started.elapsed());
+        self.heartbeat();
+        activity |= self.flush_clients();
+        self.update_ephemeral_lifetime(no_client_since);
+        Ok(activity)
+    }
+
+    fn shutdown_listener(&mut self) -> io::Result<()> {
         // A signal-driven stop must capture the final screen generation before killing PTYs. An
         // explicit session deletion only waits for an already-started write, then removes it.
         if self.forget_snapshot {

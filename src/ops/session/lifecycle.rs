@@ -567,6 +567,30 @@ pub(crate) fn restart_selected_session(ctx: &mut Context<AppRoot>) -> Update {
 
 /// Restart a discovered session: shut its server down and immediately recreate it as the active
 /// session. Distinct from kill (sessionless landing) and from disconnect (server keeps running).
+fn detach_parked_instance(
+    ctx: &mut Context<AppRoot>,
+    name: &str,
+    remote_target: Option<&crate::session::remote::RemoteTarget>,
+) {
+    if let Some(id) = ctx.state.parked_attachment_id(name, remote_target)
+        && let Some(attachment) = ctx.state.background.remove(&id)
+        && let Some(client) = attachment.session_client.as_ref()
+    {
+        client.detach();
+    }
+}
+
+fn restart_session_name(state: &mut crate::state::State, entry: &DiscoveredSession) -> String {
+    if !entry.ephemeral {
+        return entry.name.clone();
+    }
+    if entry.remote_target.is_some() {
+        crate::state::remote_ephemeral_session_name()
+    } else {
+        crate::state::fresh_ephemeral_session_name(state.mint_attachment_id())
+    }
+}
+
 pub(crate) fn restart_discovered_session(
     ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
@@ -584,15 +608,7 @@ pub(crate) fn restart_discovered_session(
     if is_current {
         return restart_current_session(ctx);
     }
-    // Drop any parked attachment before recreating so we do not keep a dead background client.
-    if let Some(id) = ctx
-        .state
-        .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
-        && let Some(attachment) = ctx.state.background.remove(&id)
-        && let Some(client) = attachment.session_client.as_ref()
-    {
-        client.detach();
-    }
+    detach_parked_instance(ctx, &entry.name, entry.remote_target.as_ref());
     let remote_config = ctx.state.config.remote.clone();
     if let Err(err) = shutdown_discovered_session(&entry, &remote_config) {
         crate::pty_events::notify_error(ctx, "Restart failed", err.to_string());
@@ -606,15 +622,7 @@ pub(crate) fn restart_discovered_session(
     } else {
         entry.name.clone()
     };
-    let restart_name = if entry.ephemeral {
-        if entry.remote_target.is_some() {
-            crate::state::remote_ephemeral_session_name()
-        } else {
-            crate::state::fresh_ephemeral_session_name(ctx.state.mint_attachment_id())
-        }
-    } else {
-        entry.name.clone()
-    };
+    let restart_name = restart_session_name(&mut ctx.state, &entry);
     // Recreate and make it active immediately — never leave a silent background reconnect.
     let update = attach_session_by_name(
         ctx,
@@ -651,14 +659,7 @@ pub(crate) fn kill_discovered_session(
     match shutdown_discovered_session(&entry, &remote_config) {
         Ok(()) => {
             // Drop any parked client attachment for the killed server so it cannot linger offline.
-            if let Some(id) = ctx
-                .state
-                .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
-                && let Some(attachment) = ctx.state.background.remove(&id)
-                && let Some(client) = attachment.session_client.as_ref()
-            {
-                client.detach();
-            }
+            detach_parked_instance(ctx, &entry.name, entry.remote_target.as_ref());
             // Drop the row now rather than waiting for the next sweep to notice, and bump the epoch
             // so the sweep re-runs against the server that is gone.
             ctx.state.sidebar.sessions.retain(|listed| {

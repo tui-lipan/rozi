@@ -358,173 +358,140 @@ pub(crate) fn open_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     enter_session_rename(ctx, SessionRenameState::new(initial, mode))
 }
 
+fn apply_workspace_name(ctx: &mut Context<AppRoot>, index: usize, name: String) -> Update {
+    if let Some(workspace) = ctx.state.current_mut().workspaces.get_mut(index) {
+        workspace.name = (!name.is_empty()).then_some(name);
+    }
+    ctx.state.rename_session = None;
+    ctx.state.commands_dirty = true;
+    crate::ops::overlay_return::finish(ctx)
+}
+
+fn apply_create_session(
+    ctx: &mut Context<AppRoot>,
+    name: String,
+    open_ephemeral: bool,
+    host_target: Option<crate::session::remote::RemoteTarget>,
+    profile_seed: Option<(String, std::path::PathBuf)>,
+) -> Update {
+    if !open_ephemeral && !crate::session::discovery::valid_session_name(&name) {
+        reject_session_name(ctx, "Use letters, numbers, _ or -");
+        return Update::full();
+    }
+    if !open_ephemeral && session_name_already_running(ctx, &name, host_target.as_ref()) {
+        reject_session_name(ctx, format!("Session `{name}` is already running"));
+        return Update::full();
+    }
+    if let Some(target) = host_target {
+        ctx.state.rename_session = None;
+        crate::ops::overlay_return::leave(ctx);
+        let alias = target.display_label();
+        return attach_session_by_name(ctx, name, Some(alias), Some(target), true);
+    }
+
+    ctx.state.rename_session = None;
+    crate::ops::overlay_return::leave(ctx);
+    let intent = match profile_seed {
+        Some((profile, path)) => {
+            crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path }
+        }
+        None => crate::ops::profile::OpenNamedIntent::CreateFresh,
+    };
+    if open_ephemeral {
+        let crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path } = intent
+        else {
+            return Update::none();
+        };
+        return crate::ops::profile::load_profile_into_fresh_ephemeral(
+            ctx,
+            crate::config::ProfileEntry {
+                name: profile,
+                path,
+            },
+        );
+    }
+    crate::ops::profile::open_named_target(ctx, name, intent)
+}
+
+fn confirm_empty_ephemeral_leave(
+    ctx: &mut Context<AppRoot>,
+    leave: crate::state::LeaveIntent,
+) -> Update {
+    if ctx.state.config.confirm.quit_ephemeral && !leave.armed {
+        if let Some(rename) = ctx.state.rename_session.as_mut() {
+            rename.leave = Some(crate::state::LeaveIntent {
+                armed: true,
+                ..leave
+            });
+        }
+        request_rename_session_focus(ctx);
+        return Update::full();
+    }
+    ctx.state.rename_session = None;
+    crate::ops::overlay_return::leave(ctx);
+    crate::ops::exit::leave_client_now(ctx, true)
+}
+
+fn apply_session_name(
+    ctx: &mut Context<AppRoot>,
+    name: String,
+    leave: Option<crate::state::LeaveIntent>,
+) -> Update {
+    if name.is_empty()
+        && let Some(leave) = leave
+    {
+        return confirm_empty_ephemeral_leave(ctx, leave);
+    }
+    if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
+        reject_session_name(ctx, "Use letters, numbers, _ or -");
+        return Update::full();
+    }
+    if session_name_already_running(ctx, &name, ctx.state.current().remote_target.as_ref())
+        && ctx.state.current().session_name.as_deref() != Some(name.as_str())
+    {
+        reject_session_name(ctx, format!("Session `{name}` is already running"));
+        return Update::full();
+    }
+
+    ctx.state.rename_session = None;
+    if leave.is_some() {
+        crate::ops::overlay_return::leave(ctx);
+        let Some(client) = ctx.state.current().session_client.clone() else {
+            crate::pty_events::notify_error(ctx, "Rename failed", "Session connection lost");
+            return Update::full();
+        };
+        crate::ops::session::flush_layout_commit(ctx);
+        client.rename(name.clone());
+        ctx.state.current_mut().session_name = Some(name);
+        return crate::ops::exit::leave_client(ctx);
+    }
+    if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {
+        return crate::ops::overlay_return::finish(ctx);
+    }
+    if let Some(client) = ctx.state.current().session_client.clone() {
+        client.rename(name);
+    }
+    crate::ops::overlay_return::finish(ctx)
+}
+
 pub(crate) fn apply_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(rename_state) = ctx.state.rename_session.as_ref() else {
         return Update::none();
     };
     let name = rename_state.input.text().trim().to_string();
+    let mode = rename_state.mode;
+    let leave = rename_state.leave;
+    let host_target = rename_state.host_target.clone();
+    let profile_seed = rename_state.profile_seed.clone();
 
-    match rename_state.mode {
-        NamingMode::RenameWorkspace { index } => {
-            if let Some(workspace) = ctx.state.current_mut().workspaces.get_mut(index) {
-                workspace.name = (!name.is_empty()).then_some(name);
-            }
-            ctx.state.rename_session = None;
-            ctx.state.commands_dirty = true;
-            crate::ops::overlay_return::finish(ctx)
-        }
+    match mode {
+        NamingMode::RenameWorkspace { index } => apply_workspace_name(ctx, index, name),
         NamingMode::CreateSession | NamingMode::OpenProfileAs => {
-            let open_ephemeral = rename_state.mode == NamingMode::OpenProfileAs && name.is_empty();
-            if !open_ephemeral && !crate::session::discovery::valid_session_name(&name) {
-                reject_session_name(ctx, "Use letters, numbers, _ or -");
-                return Update::full();
-            }
-
-            // "New session on <host>": create/attach the named session on the remote host, parking
-            // the current session in the background. No ephemeral-discard confirm — switching away
-            // retains the current session rather than discarding it.
-            let host_target = ctx
-                .state
-                .rename_session
-                .as_ref()
-                .and_then(|rename| rename.host_target.clone());
-            if !open_ephemeral && session_name_already_running(ctx, &name, host_target.as_ref()) {
-                reject_session_name(ctx, format!("Session `{name}` is already running"));
-                return Update::full();
-            }
-            if let Some(target) = host_target {
-                ctx.state.rename_session = None;
-                // Attaching retires the picker this was raised from: its rows are about to be
-                // stale, so land on the new session rather than back in a list.
-                crate::ops::overlay_return::leave(ctx);
-                let alias = target.display_label();
-                return attach_session_by_name(ctx, name, Some(alias), Some(target), true);
-            }
-
-            // Creating a session no longer discards the current ephemeral one — like switching, it
-            // parks it live in the background — so there is nothing destructive to confirm; a single
-            // Enter commits.
-            let profile_seed = ctx
-                .state
-                .rename_session
-                .as_ref()
-                .and_then(|rename| rename.profile_seed.clone());
-            ctx.state.rename_session = None;
-            crate::ops::overlay_return::leave(ctx);
-            let intent = match profile_seed {
-                Some((profile, path)) => {
-                    crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path }
-                }
-                None => crate::ops::profile::OpenNamedIntent::CreateFresh,
-            };
-            if open_ephemeral {
-                let crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path } =
-                    intent
-                else {
-                    return Update::none();
-                };
-                return crate::ops::profile::load_profile_into_fresh_ephemeral(
-                    ctx,
-                    crate::config::ProfileEntry {
-                        name: profile,
-                        path,
-                    },
-                );
-            }
-            crate::ops::profile::open_named_target(ctx, name, intent)
+            let open_ephemeral = mode == NamingMode::OpenProfileAs && name.is_empty();
+            apply_create_session(ctx, name, open_ephemeral, host_target, profile_seed)
         }
-        NamingMode::NameEphemeralSession => {
-            let leave = rename_state.leave;
-            // At the leave prompt an empty name is not a mistake, it is the other answer: close
-            // these sessions and go. It takes a second press, and what that press closes is
-            // spelled out in the prompt itself while the finger is still over the key.
-            if name.is_empty()
-                && let Some(leave) = leave
-            {
-                let confirm = ctx.state.config.confirm.quit_ephemeral;
-                if confirm && !leave.armed {
-                    if let Some(rename) = ctx.state.rename_session.as_mut() {
-                        rename.leave = Some(crate::state::LeaveIntent {
-                            armed: true,
-                            ..leave
-                        });
-                    }
-                    request_rename_session_focus(ctx);
-                    return Update::full();
-                }
-                ctx.state.rename_session = None;
-                crate::ops::overlay_return::leave(ctx);
-                return crate::ops::exit::leave_client_now(ctx, true);
-            }
-            if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
-                reject_session_name(ctx, "Use letters, numbers, _ or -");
-                return Update::full();
-            }
-
-            // Naming must not collide with another live session.
-            if session_name_already_running(ctx, &name, ctx.state.current().remote_target.as_ref())
-                && ctx.state.current().session_name.as_deref() != Some(name.as_str())
-            {
-                reject_session_name(ctx, format!("Session `{name}` is already running"));
-                return Update::full();
-            }
-
-            ctx.state.rename_session = None;
-
-            if leave.is_some() {
-                // The client is leaving the session; there is nothing to return to.
-                crate::ops::overlay_return::leave(ctx);
-                let Some(client) = ctx.state.current().session_client.clone() else {
-                    crate::pty_events::notify_error(
-                        ctx,
-                        "Rename failed",
-                        "Session connection lost",
-                    );
-                    return Update::full();
-                };
-                crate::ops::session::flush_layout_commit(ctx);
-                client.rename(name.clone());
-                ctx.state.current_mut().session_name = Some(name);
-                // Naming kept this one; anything still temporary gets its own prompt on the way
-                // out, so no session is closed without having been offered a name.
-                return crate::ops::exit::leave_client(ctx);
-            }
-
-            if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {
-                return crate::ops::overlay_return::finish(ctx);
-            }
-
-            if let Some(client) = ctx.state.current().session_client.clone() {
-                client.rename(name);
-            }
-            // Naming in place attaches nothing, so the picker it was raised from ("name current")
-            // is still valid - reopen it showing the new name.
-            crate::ops::overlay_return::finish(ctx)
-        }
-        NamingMode::RenameSession => {
-            if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
-                reject_session_name(ctx, "Use letters, numbers, _ or -");
-                return Update::full();
-            }
-
-            if session_name_already_running(ctx, &name, ctx.state.current().remote_target.as_ref())
-                && ctx.state.current().session_name.as_deref() != Some(name.as_str())
-            {
-                reject_session_name(ctx, format!("Session `{name}` is already running"));
-                return Update::full();
-            }
-
-            ctx.state.rename_session = None;
-
-            if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {
-                return crate::ops::overlay_return::finish(ctx);
-            }
-
-            if let Some(client) = ctx.state.current().session_client.clone() {
-                client.rename(name);
-            }
-            crate::ops::overlay_return::finish(ctx)
-        }
+        NamingMode::NameEphemeralSession => apply_session_name(ctx, name, leave),
+        NamingMode::RenameSession => apply_session_name(ctx, name, None),
     }
 }
 

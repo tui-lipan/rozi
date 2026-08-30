@@ -491,6 +491,114 @@ struct PickReport {
     rows: Vec<crate::state::PickRow>,
 }
 
+fn write_control_response(stream: &mut IpcConnection, response: &ControlResponse) {
+    let _ = writeln!(stream, "{}", serde_json::to_string(response).unwrap());
+}
+
+fn authorize_extension_request(
+    stream: &mut IpcConnection,
+    link: &CommandLink<Msg>,
+    provenance: Option<&crate::config::ExtensionProvenance>,
+) -> bool {
+    let Some(provenance) = provenance else {
+        return true;
+    };
+    let (reply, authorized) = mpsc::channel();
+    link.send(Msg::AuthorizeExtensionControl {
+        provenance: provenance.clone(),
+        reply,
+    });
+    if authorized.recv_timeout(Duration::from_secs(10)) == Ok(true) {
+        return true;
+    }
+    write_control_response(
+        stream,
+        &ControlResponse::error("extension generation is not active"),
+    );
+    false
+}
+
+fn run_subscription(
+    mut stream: IpcConnection,
+    link: CommandLink<Msg>,
+    event_hub: EventHub,
+    events: &[String],
+    extension: Option<crate::config::ExtensionProvenance>,
+) {
+    let mut kinds = std::collections::HashSet::new();
+    for id in events {
+        let Some(kind) = EventKind::parse(id) else {
+            write_control_response(
+                &mut stream,
+                &ControlResponse::error(format!("unknown event `{id}`")),
+            );
+            return;
+        };
+        kinds.insert(kind);
+    }
+
+    static NEXT_SUBSCRIPTION_ID: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(1);
+    let owned_subscription = extension.map(|provenance| {
+        let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (cancel, cancelled) = mpsc::sync_channel(1);
+        let (reply, opened) = mpsc::channel();
+        link.send(Msg::ExtensionSubscriptionOpen {
+            id,
+            provenance,
+            cancel,
+            reply,
+        });
+        (id, cancelled, opened)
+    });
+    if let Some((_, _, opened)) = &owned_subscription
+        && opened.recv_timeout(Duration::from_secs(10)) != Ok(true)
+    {
+        write_control_response(
+            &mut stream,
+            &ControlResponse::error("extension generation is not active"),
+        );
+        return;
+    }
+
+    let rx = event_hub.subscribe((!kinds.is_empty()).then_some(kinds));
+    write_control_response(&mut stream, &ControlResponse::empty());
+    let _ = stream.set_read_timeout(None);
+    loop {
+        if owned_subscription
+            .as_ref()
+            .is_some_and(|(_, cancelled, _)| cancelled.try_recv().is_ok())
+        {
+            break;
+        }
+        match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(event) => {
+                if writeln!(stream, "{event}").is_err() {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Subscribers send nothing after the request. Probe for EOF while idle.
+                let mut probe = [0u8; 8];
+                let _ = stream.set_nonblocking(true);
+                let disconnected = match std::io::Read::read(&mut stream, &mut probe) {
+                    Ok(0) => true,
+                    Ok(_) => false,
+                    Err(err) => err.kind() != std::io::ErrorKind::WouldBlock,
+                };
+                let _ = stream.set_nonblocking(false);
+                if disconnected {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    if let Some((id, _, _)) = owned_subscription {
+        link.send(Msg::ExtensionSubscriptionClosed { id });
+    }
+}
+
 fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hub: EventHub) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
@@ -505,97 +613,18 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
     let request = match serde_json::from_str::<ControlRequest>(&line) {
         Ok(request) => request,
         Err(err) => {
-            let _ = writeln!(
-                stream,
-                "{}",
-                serde_json::to_string(&ControlResponse::error(format!("invalid request: {err}")))
-                    .unwrap()
+            write_control_response(
+                &mut stream,
+                &ControlResponse::error(format!("invalid request: {err}")),
             );
             return;
         }
     };
-    if let Some(provenance) = request.extension.clone() {
-        let (reply, authorized) = mpsc::channel();
-        link.send(Msg::AuthorizeExtensionControl { provenance, reply });
-        if authorized.recv_timeout(Duration::from_secs(10)) != Ok(true) {
-            let response = ControlResponse::error("extension generation is not active");
-            let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
-            return;
-        }
+    if !authorize_extension_request(&mut stream, &link, request.extension.as_ref()) {
+        return;
     }
     if let ControlCommand::Subscribe { events } = &request.command {
-        let mut kinds = std::collections::HashSet::new();
-        for id in events {
-            let Some(kind) = EventKind::parse(id) else {
-                let response = ControlResponse::error(format!("unknown event `{id}`"));
-                let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
-                return;
-            };
-            kinds.insert(kind);
-        }
-        static NEXT_SUBSCRIPTION_ID: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(1);
-        let owned_subscription = request.extension.clone().map(|provenance| {
-            let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let (cancel, cancelled) = mpsc::sync_channel(1);
-            let (reply, opened) = mpsc::channel();
-            link.send(Msg::ExtensionSubscriptionOpen {
-                id,
-                provenance,
-                cancel,
-                reply,
-            });
-            (id, cancelled, opened)
-        });
-        if let Some((_, _, opened)) = &owned_subscription
-            && opened.recv_timeout(Duration::from_secs(10)) != Ok(true)
-        {
-            let response = ControlResponse::error("extension generation is not active");
-            let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
-            return;
-        }
-        let rx = event_hub.subscribe((!kinds.is_empty()).then_some(kinds));
-        let _ = writeln!(
-            stream,
-            "{}",
-            serde_json::to_string(&ControlResponse::empty()).unwrap()
-        );
-        let _ = stream.set_read_timeout(None);
-        loop {
-            if owned_subscription
-                .as_ref()
-                .is_some_and(|(_, cancelled, _)| cancelled.try_recv().is_ok())
-            {
-                break;
-            }
-            match rx.recv_timeout(Duration::from_secs(1)) {
-                Ok(event) => {
-                    if writeln!(stream, "{event}").is_err() {
-                        break;
-                    }
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // Idle liveness probe: subscribers send nothing after the request line, so
-                    // EOF (or any hard error) means the peer is gone and this thread can be
-                    // reaped instead of waiting for a matching event's failed write.
-                    let mut probe = [0u8; 8];
-                    let _ = stream.set_nonblocking(true);
-                    let disconnected = match std::io::Read::read(&mut stream, &mut probe) {
-                        Ok(0) => true,
-                        Ok(_) => false,
-                        Err(err) => err.kind() != std::io::ErrorKind::WouldBlock,
-                    };
-                    let _ = stream.set_nonblocking(false);
-                    if disconnected {
-                        break;
-                    }
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-        if let Some((id, _, _)) = owned_subscription {
-            link.send(Msg::ExtensionSubscriptionClosed { id });
-        }
+        run_subscription(stream, link, event_hub, events, request.extension.clone());
         return;
     }
     if let ControlCommand::Publish = &request.command {
@@ -636,7 +665,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
     let response = rx
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or_else(|_| ControlResponse::error("control request timed out"));
-    let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
+    write_control_response(&mut stream, &response);
 }
 
 #[cfg(test)]

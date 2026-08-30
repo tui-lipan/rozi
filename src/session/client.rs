@@ -880,6 +880,48 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<u32> {
     Ok(effective)
 }
 
+enum TransportFrameDisposition {
+    Forward,
+    Consumed,
+    Disconnect,
+}
+
+fn handle_transport_frame(
+    frame: &Frame<ServerMessage>,
+    outbound: Option<&Arc<ByteQueue<ClientOutbound>>>,
+    latest_server_metrics: Option<&Arc<Mutex<Option<TimedServerRuntimeMetrics>>>>,
+    metrics_request_pending: Option<&Arc<AtomicBool>>,
+    request_metrics_on_heartbeat: bool,
+    shutdown_signal: Option<&Arc<AtomicBool>>,
+) -> TransportFrameDisposition {
+    if let Frame::Control(ServerMessage::Ping { seq }) = frame
+        && let Some(outbound) = outbound
+    {
+        if shutdown_signal.is_some_and(|signal| signal.load(Ordering::Relaxed)) {
+            return TransportFrameDisposition::Disconnect;
+        }
+        let pong = ClientOutbound::Control(ClientMessage::Pong { seq: *seq });
+        let bytes = pong.wire_bytes();
+        if outbound.try_push(pong, bytes).is_err() {
+            return TransportFrameDisposition::Disconnect;
+        }
+        if request_metrics_on_heartbeat && let Some(pending) = metrics_request_pending {
+            try_enqueue_runtime_metrics_request(outbound, pending);
+        }
+        return TransportFrameDisposition::Consumed;
+    }
+    if let Frame::Control(ServerMessage::RuntimeMetrics { metrics }) = frame
+        && let Some(cache) = latest_server_metrics
+    {
+        *cache.lock().expect("server metrics cache poisoned") =
+            Some(TimedServerRuntimeMetrics::received(metrics.clone()));
+        if let Some(pending) = metrics_request_pending {
+            pending.store(false, Ordering::Release);
+        }
+    }
+    TransportFrameDisposition::Forward
+}
+
 fn forward_inbound<R: std::io::Read>(
     reader: &mut R,
     inbound: &InboundTarget,
@@ -906,32 +948,17 @@ fn forward_inbound<R: std::io::Read>(
             }
             match decoder.next_frame::<ServerMessage>() {
                 Ok(Some(frame)) => {
-                    if let Frame::Control(ServerMessage::Ping { seq }) = &frame
-                        && let Some(outbound) = outbound
-                    {
-                        if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
-                            break 'read;
-                        }
-                        let pong = ClientOutbound::Control(ClientMessage::Pong { seq: *seq });
-                        let bytes = pong.wire_bytes();
-                        if outbound.try_push(pong, bytes).is_err() {
-                            break 'read;
-                        }
-                        if request_metrics_on_heartbeat
-                            && let Some(pending) = metrics_request_pending
-                        {
-                            try_enqueue_runtime_metrics_request(outbound, pending);
-                        }
-                        continue;
-                    }
-                    if let Frame::Control(ServerMessage::RuntimeMetrics { metrics }) = &frame
-                        && let Some(cache) = latest_server_metrics
-                    {
-                        *cache.lock().expect("server metrics cache poisoned") =
-                            Some(TimedServerRuntimeMetrics::received(metrics.clone()));
-                        if let Some(pending) = metrics_request_pending {
-                            pending.store(false, Ordering::Release);
-                        }
+                    match handle_transport_frame(
+                        &frame,
+                        outbound,
+                        latest_server_metrics,
+                        metrics_request_pending,
+                        request_metrics_on_heartbeat,
+                        shutdown_signal,
+                    ) {
+                        TransportFrameDisposition::Forward => {}
+                        TransportFrameDisposition::Consumed => continue,
+                        TransportFrameDisposition::Disconnect => break 'read,
                     }
                     if inbound.send(frame).is_err() {
                         break 'read;

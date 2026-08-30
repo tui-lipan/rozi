@@ -92,6 +92,152 @@ pub(crate) fn close_pane_inner_without_focus(
     close_pane_inner_with_focus(ctx, id, kill_server_pane, false, None)
 }
 
+fn close_scratch_pane(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    kill_server_pane: bool,
+    resolve_focus: bool,
+) -> Option<u64> {
+    let bounds = crate::scratchpad::deployed_rect(&ctx.state, ctx.viewport());
+    let placements = crate::layout::workspace_target_rects(
+        &ctx.state.scratch,
+        bounds,
+        0.0,
+        ctx.state.tile_gap(),
+    );
+    let client = ctx.state.scratch_client();
+    let was_focused = ctx.state.scratch.focused_pane == Some(id);
+    let scrollable_neighbor = (ctx.state.scratch.layout_kind
+        == crate::state::LayoutKind::Scrollable)
+        .then(|| scrollable_close_neighbor(&ctx.state.scratch, id))
+        .flatten();
+    let pane = ctx
+        .state
+        .scratch
+        .panes
+        .iter_mut()
+        .find(|pane| pane.id == id && !pane.closing)?;
+    let generation = pane.pty_generation;
+    if kill_server_pane && let Some(client) = client {
+        client.kill(id, generation, true);
+    }
+    pane.floating_rect = crate::layout::placement_for(&placements, id).unwrap_or(bounds);
+    pane.opening = false;
+    pane.closing = true;
+    pane.terminal.kill();
+    remove_tiled_window(&mut ctx.state.scratch, id);
+
+    if was_focused {
+        match scrollable_neighbor {
+            Some(target) => focus_pane(&mut ctx.state, target),
+            None => choose_fallback_focus_near(&mut ctx.state, Some(id), None),
+        }
+    }
+    ctx.state.animation = GeometryAnimation::Close;
+    if ctx.state.scratch.focused_pane.is_none() {
+        crate::scratchpad::after_pane_removed(ctx);
+    } else if resolve_focus {
+        request_current_pane_focus(ctx);
+    }
+    Some(generation)
+}
+
+#[derive(Default)]
+struct WorkspaceCloseFocus {
+    active_pane: bool,
+    neighbor: Option<PaneId>,
+    anchor_remap: Option<(usize, Option<PaneId>, crate::state::ScrollableRevealEdge)>,
+}
+
+fn plan_workspace_close_focus(
+    state: &crate::state::State,
+    id: PaneId,
+    resolve_focus: bool,
+) -> WorkspaceCloseFocus {
+    if !resolve_focus {
+        return WorkspaceCloseFocus::default();
+    }
+    let attachment = state.current();
+    let active_workspace = attachment.active_workspace;
+    let owner_workspace = attachment
+        .workspaces
+        .iter()
+        .position(|workspace| workspace.panes.iter().any(|pane| pane.id == id));
+    let active_pane =
+        owner_workspace == Some(active_workspace) && attachment.focused_pane == Some(id);
+    let neighbor = owner_workspace
+        .and_then(|workspace| scrollable_close_neighbor(&attachment.workspaces[workspace], id));
+    let anchor_remap = owner_workspace.and_then(|workspace_index| {
+        let workspace = &attachment.workspaces[workspace_index];
+        (workspace.layout_kind == crate::state::LayoutKind::Scrollable
+            && workspace.scrollable_anchor == Some(id))
+        .then_some((workspace_index, neighbor, workspace.scrollable_reveal_edge))
+    });
+    WorkspaceCloseFocus {
+        active_pane,
+        neighbor,
+        anchor_remap,
+    }
+}
+
+fn mark_workspace_pane_closing(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    kill_server_pane: bool,
+    namespace: Option<bool>,
+) -> Option<u64> {
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let placements = {
+        let attachment = ctx.state.current();
+        let workspace = &attachment.workspaces[attachment.active_workspace];
+        crate::layout::workspace_target_rects(
+            workspace,
+            bounds,
+            ctx.state.workspace_top_gap(),
+            ctx.state.tile_gap(),
+        )
+    };
+    let client = ctx.state.current().session_client.clone();
+    let wire_local = namespace.unwrap_or_else(|| pane_is_local(&ctx.state, id));
+    let pane = match namespace {
+        Some(false) => find_pane_in_namespace_mut(&mut ctx.state, id, false),
+        _ => find_pane_mut(&mut ctx.state, id),
+    }?;
+    if pane.closing {
+        return None;
+    }
+    let generation = pane.pty_generation;
+    if kill_server_pane && let Some(client) = client {
+        client.kill(id, generation, wire_local);
+    }
+    pane.floating_rect =
+        crate::layout::placement_for(&placements, id).unwrap_or(pane.floating_rect);
+    pane.opening = false;
+    pane.closing = true;
+    pane.terminal.kill();
+    Some(generation)
+}
+
+fn repair_workspace_focus(ctx: &mut Context<AppRoot>, plan: WorkspaceCloseFocus) {
+    if plan.active_pane {
+        if let Some(target) = plan.neighbor {
+            focus_pane(&mut ctx.state, target);
+        } else {
+            choose_fallback_focus(&mut ctx.state);
+        }
+    }
+    if let Some((workspace, anchor, edge)) = plan.anchor_remap
+        && (!plan.active_pane || anchor.is_none())
+    {
+        ctx.state.current_mut().workspaces[workspace].set_scrollable_viewport(anchor, edge);
+    }
+    // Focus synchronization may arm AxisChange, but the retained pane needs the close transition.
+    ctx.state.animation = GeometryAnimation::Close;
+    request_current_pane_focus(ctx);
+}
+
 pub(crate) fn close_pane_inner_with_focus(
     ctx: &mut Context<AppRoot>,
     id: PaneId,
@@ -101,144 +247,19 @@ pub(crate) fn close_pane_inner_with_focus(
 ) -> Option<u64> {
     let in_scratch = crate::scratchpad::contains(&ctx.state, id);
     if namespace != Some(false) && in_scratch {
-        let bounds = crate::scratchpad::deployed_rect(&ctx.state, ctx.viewport());
-        let placements = crate::layout::workspace_target_rects(
-            &ctx.state.scratch,
-            bounds,
-            0.0,
-            ctx.state.tile_gap(),
-        );
-        let client = ctx.state.scratch_client();
-        let was_focused = ctx.state.scratch.focused_pane == Some(id);
-        let scrollable_neighbor = (ctx.state.scratch.layout_kind
-            == crate::state::LayoutKind::Scrollable)
-            .then(|| scrollable_close_neighbor(&ctx.state.scratch, id))
-            .flatten();
-        let pane = ctx
-            .state
-            .scratch
-            .panes
-            .iter_mut()
-            .find(|pane| pane.id == id && !pane.closing)?;
-        let generation = pane.pty_generation;
-        if kill_server_pane && let Some(client) = client {
-            client.kill(id, generation, true);
-        }
-        pane.floating_rect = crate::layout::placement_for(&placements, id).unwrap_or(bounds);
-        pane.opening = false;
-        pane.closing = true;
-        pane.terminal.kill();
-        remove_tiled_window(&mut ctx.state.scratch, id);
-        // Same focus resolution as a workspace: hand the keyboard to the pane nearest the one that
-        // just left, not to whichever is first in the list. The frozen `floating_rect` above is the
-        // reference rect, so `choose_fallback_focus_near` needs no extra geometry.
-        if was_focused {
-            match scrollable_neighbor {
-                Some(target) => focus_pane(&mut ctx.state, target),
-                None => choose_fallback_focus_near(&mut ctx.state, Some(id), None),
-            }
-        }
-        // `focus_pane` may arm Scrollable's AxisChange while it syncs the viewport; the close
-        // transition owns this frame.
-        ctx.state.animation = GeometryAnimation::Close;
-        if ctx.state.scratch.focused_pane.is_none() {
-            crate::scratchpad::after_pane_removed(ctx);
-        } else if resolve_focus {
-            request_current_pane_focus(ctx);
-        }
-        return Some(generation);
+        return close_scratch_pane(ctx, id, kill_server_pane, resolve_focus);
     }
     if namespace == Some(true) {
         return None;
     }
-    // Capture this before `closing` removes the pane from `tiled_ids()`: a Scrollable strip's
-    // lifecycle/storage order is not its visual neighbor order after a move or swap. Batch callers
-    // deliberately skip both focus and anchor resolution until the whole teardown is marked.
-    let attachment = ctx.state.current();
-    let active_workspace_index = attachment.active_workspace;
-    let owner_workspace_index = attachment
-        .workspaces
-        .iter()
-        .position(|workspace| workspace.panes.iter().any(|pane| pane.id == id));
-    let active_global_focus = resolve_focus
-        && owner_workspace_index == Some(active_workspace_index)
-        && attachment.focused_pane == Some(id);
-    let close_neighbor = resolve_focus
-        .then(|| {
-            owner_workspace_index.and_then(|workspace_index| {
-                scrollable_close_neighbor(&attachment.workspaces[workspace_index], id)
-            })
-        })
-        .flatten();
-    let scrollable_anchor_remap = if resolve_focus {
-        owner_workspace_index.and_then(|workspace_index| {
-            let workspace = &attachment.workspaces[workspace_index];
-            (workspace.layout_kind == crate::state::LayoutKind::Scrollable
-                && workspace.scrollable_anchor == Some(id))
-            .then_some((
-                workspace_index,
-                close_neighbor,
-                workspace.scrollable_reveal_edge,
-            ))
-        })
-    } else {
-        None
-    };
-    // Freeze the pane where it currently sits. Once it is excluded from tiling its placement is
-    // gone, so the close animation needs the rectangle it occupied captured up front.
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
-    let top_gap = ctx.state.workspace_top_gap();
-    let tile_gap = ctx.state.tile_gap();
-    let placements = {
-        let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
-        crate::layout::workspace_target_rects(workspace, bounds, top_gap, tile_gap)
-    };
-
-    let client = ctx.state.current().session_client.clone();
-    let wire_local = namespace.unwrap_or_else(|| pane_is_local(&ctx.state, id));
-    let mut generation = None;
-    if let Some(pane) = match namespace {
-        Some(false) => find_pane_in_namespace_mut(&mut ctx.state, id, false),
-        _ => find_pane_mut(&mut ctx.state, id),
-    } && !pane.closing
-    {
-        generation = Some(pane.pty_generation);
-        if kill_server_pane && let Some(client) = client {
-            client.kill(id, pane.pty_generation, wire_local);
-        }
-        pane.floating_rect =
-            crate::layout::placement_for(&placements, id).unwrap_or(pane.floating_rect);
-        pane.opening = false;
-        pane.closing = true;
-        pane.terminal.kill();
+    // Plan before marking the pane closing, which removes it from Scrollable's visual order.
+    let focus = plan_workspace_close_focus(&ctx.state, id, resolve_focus);
+    let generation = mark_workspace_pane_closing(ctx, id, kill_server_pane, namespace)?;
+    ctx.state.animation = GeometryAnimation::Close;
+    if resolve_focus {
+        repair_workspace_focus(ctx, focus);
     }
-
-    if generation.is_some() {
-        ctx.state.animation = GeometryAnimation::Close;
-        if resolve_focus {
-            if active_global_focus {
-                if let Some(target) = close_neighbor {
-                    focus_pane(&mut ctx.state, target);
-                } else {
-                    choose_fallback_focus(&mut ctx.state);
-                }
-            }
-            if let Some((workspace_index, anchor, edge)) = scrollable_anchor_remap
-                && (!active_global_focus || anchor.is_none())
-            {
-                ctx.state.current_mut().workspaces[workspace_index]
-                    .set_scrollable_viewport(anchor, edge);
-            }
-            // `focus_pane` may arm Scrollable's AxisChange animation while it synchronizes the new
-            // viewport. The close transition owns this frame, however; keep its animation policy
-            // (and therefore the retained pane's close scale) intact.
-            ctx.state.animation = GeometryAnimation::Close;
-            request_current_pane_focus(ctx);
-        }
-    }
-    generation
+    Some(generation)
 }
 
 /// Drop a pane once its close animation has run, if it is still the same closing pane.

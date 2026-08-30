@@ -401,80 +401,68 @@ pub(crate) fn frac_rect_to_float(rect: FracRect, canvas_cols: u16, canvas_rows: 
     }
 }
 
-/// Reconcile the client's local `State` toward an authoritative shared layout at revision `rev`.
-///
-/// This is the follower's read path (and the seed path on attach). It moves, adds, removes, and
-/// reorders `Pane` structs and rewrites workspace metadata, but never touches a surviving pane's
-/// terminal screen, scrollback, or snapshot - only brand-new panes get a fresh backend, and only
-/// their buffered orphan output is replayed. Local-only state (focus, active workspace, overlays,
-/// mode, theme) is preserved. Removed panes are dropped from application state immediately; the
-/// stable keyed Canvas retains their already-described visual subtree for its exit animation.
-pub(crate) fn apply_shared_layout(
-    ctx: &mut Context<crate::AppRoot>,
-    layout: &SharedLayout,
-    rev: u64,
-) -> Update {
-    use crate::state::{Pane, WORKSPACE_COUNT};
+struct DrainedPanes {
+    reusable: std::collections::HashMap<PaneId, crate::state::Pane>,
+    closing_by_workspace: Vec<Vec<crate::state::Pane>>,
+    pruned: Vec<(PaneId, u64)>,
+}
 
-    // A foreign commit can only land mid-drag right after this client lost the lease; cancel any
-    // in-flight move/resize so it does not fight the incoming geometry.
-    ctx.state.moving_pane = None;
-    ctx.state.resizing_pane = None;
-    ctx.state.split_drag = None;
-    let canvas_cols = layout.canvas_cols.max(1);
-    let canvas_rows = layout.canvas_rows.max(1);
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+struct RebuiltWorkspaces {
+    next_pane_id: PaneId,
+    next_generation: u64,
+    orphan_clipboard_events: Vec<tui_lipan::prelude::TerminalClipboardEvent>,
+}
 
-    // Index the incoming panes: id -> (workspace index, order within workspace, pane).
-    let mut incoming: std::collections::HashMap<PaneId, (usize, usize, &SharedPane)> =
-        std::collections::HashMap::new();
-    let mut seen_ids = std::collections::HashSet::new();
-    for shared_ws in &layout.workspaces {
-        if shared_ws.index >= WORKSPACE_COUNT {
-            continue;
-        }
-        for (order, pane) in shared_ws.panes.iter().enumerate() {
-            incoming.insert(pane.pane_id, (shared_ws.index, order, pane));
-        }
-    }
-    let moved_between_workspaces = ctx
-        .state
+fn index_incoming_panes(layout: &SharedLayout) -> std::collections::HashMap<PaneId, usize> {
+    use crate::state::WORKSPACE_COUNT;
+
+    layout
+        .workspaces
+        .iter()
+        .filter(|workspace| workspace.index < WORKSPACE_COUNT)
+        .flat_map(|workspace| {
+            workspace
+                .panes
+                .iter()
+                .map(move |pane| (pane.pane_id, workspace.index))
+        })
+        .collect()
+}
+
+fn panes_move_between_workspaces(
+    state: &State,
+    incoming: &std::collections::HashMap<PaneId, usize>,
+) -> bool {
+    state
         .current()
         .workspaces
         .iter()
         .enumerate()
         .flat_map(|(workspace, state)| state.panes.iter().map(move |pane| (pane.id, workspace)))
-        .any(|(id, workspace)| {
-            incoming
-                .get(&id)
-                .is_some_and(|(target, _, _)| *target != workspace)
-        });
-    if moved_between_workspaces {
-        ctx.state.pane_canvas_epoch = ctx.state.pane_canvas_epoch.wrapping_add(1);
-    }
+        .any(|(id, workspace)| incoming.get(&id).is_some_and(|target| *target != workspace))
+}
 
-    // Drain every current pane into a pool. A pane absent from the authoritative document is not
-    // dropped on the spot: it is marked closing and stays in its workspace so it scales out the
-    // same way a locally closed pane does, and `Msg::PruneClosed` retires it afterwards. Panes
-    // already closing keep going, undisturbed by the commit.
-    let mut pool = std::collections::HashMap::new();
-    let mut closing_by_ws: Vec<Vec<Pane>> = Vec::with_capacity(WORKSPACE_COUNT);
-    let mut pruned: Vec<(PaneId, u64)> = Vec::new();
-    for ws in &mut ctx.state.current_mut().workspaces {
+fn drain_existing_panes(
+    state: &mut State,
+    incoming: &std::collections::HashMap<PaneId, usize>,
+) -> DrainedPanes {
+    use crate::state::WORKSPACE_COUNT;
+
+    let mut reusable = std::collections::HashMap::new();
+    let mut closing_by_workspace = Vec::with_capacity(WORKSPACE_COUNT);
+    let mut pruned = Vec::new();
+    for workspace in &mut state.current_mut().workspaces {
         let mut closing = Vec::new();
-        for mut pane in ws.panes.drain(..) {
+        for mut pane in workspace.panes.drain(..) {
             if incoming.contains_key(&pane.id) {
                 // A commit that re-adds a pane mid-close cancels the close and hands the live
                 // pane back with its terminal screen and scrollback intact.
                 pane.closing = false;
-                pool.insert(pane.id, pane);
+                reusable.insert(pane.id, pane);
             } else if pane.closing {
                 closing.push(pane);
             } else {
-                // No `client.kill`: the server already dropped this pane at the controller's
-                // request, so re-killing would race a reused id.
+                // The server already dropped this pane. Re-killing it could race a reused id.
                 pane.opening = false;
                 pane.closing = true;
                 pane.terminal.kill();
@@ -482,27 +470,43 @@ pub(crate) fn apply_shared_layout(
                 closing.push(pane);
             }
         }
-        closing_by_ws.push(closing);
+        closing_by_workspace.push(closing);
     }
+    DrainedPanes {
+        reusable,
+        closing_by_workspace,
+        pruned,
+    }
+}
 
-    let mut max_pane_id = ctx.state.current().next_pane_id;
-    let mut max_generation = ctx.state.current().next_pty_generation;
+fn rebuild_shared_workspaces(
+    ctx: &mut Context<crate::AppRoot>,
+    layout: &SharedLayout,
+    canonical_canvas: (u16, u16),
+    bounds: FloatRect,
+    reusable: &mut std::collections::HashMap<PaneId, crate::state::Pane>,
+    closing_by_workspace: &mut [Vec<crate::state::Pane>],
+) -> RebuiltWorkspaces {
+    use crate::state::{Pane, WORKSPACE_COUNT};
+
+    let (canvas_cols, canvas_rows) = canonical_canvas;
+    let mut next_pane_id = ctx.state.current().next_pane_id;
+    let mut next_generation = ctx.state.current().next_pty_generation;
     let scrollback = ctx.state.config.scrollback;
     let mut orphan_clipboard_events = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
 
-    // Rebuild each workspace from the incoming order, reusing pooled panes (survivors + moves) and
-    // creating brand-new ones as needed.
-    for shared_ws in &layout.workspaces {
-        if shared_ws.index >= WORKSPACE_COUNT {
+    for shared_workspace in &layout.workspaces {
+        if shared_workspace.index >= WORKSPACE_COUNT {
             continue;
         }
-        let mut rebuilt: Vec<Pane> = Vec::with_capacity(shared_ws.panes.len());
-        for shared_pane in &shared_ws.panes {
+        let mut rebuilt = Vec::with_capacity(shared_workspace.panes.len());
+        for shared_pane in &shared_workspace.panes {
             if !seen_ids.insert(shared_pane.pane_id) {
                 continue;
             }
-            max_pane_id = max_pane_id.max(shared_pane.pane_id.saturating_add(1));
-            max_generation = max_generation.max(shared_pane.generation.saturating_add(1));
+            next_pane_id = next_pane_id.max(shared_pane.pane_id.saturating_add(1));
+            next_generation = next_generation.max(shared_pane.generation.saturating_add(1));
 
             let float_rect = shared_pane
                 .rect
@@ -510,16 +514,14 @@ pub(crate) fn apply_shared_layout(
                 .unwrap_or_else(|| {
                     crate::geometry::default_floating_rect(bounds, shared_pane.pane_id)
                 });
-
-            let existing = pool.remove(&shared_pane.pane_id).or_else(|| {
+            let existing = reusable.remove(&shared_pane.pane_id).or_else(|| {
                 ctx.state
                     .current_mut()
                     .take_retired_pane(shared_pane.pane_id, shared_pane.generation)
             });
             let mut pane = match existing {
                 Some(mut existing) => {
-                    // Surviving pane (possibly moved workspace): keep its terminal untouched unless
-                    // the generation changed (a respawn), which requires a fresh backend.
+                    // A new generation needs a fresh server backend, but keeps local dimensions.
                     if existing.pty_generation != shared_pane.generation {
                         existing.terminal.cols = existing.terminal.cols.max(1);
                         existing.terminal.rows = existing.terminal.rows.max(1);
@@ -528,8 +530,6 @@ pub(crate) fn apply_shared_layout(
                             .bind_server_backend(shared_pane.pane_id, shared_pane.generation);
                         existing.pty_generation = shared_pane.generation;
                     }
-                    // Output can race an authoritative removal and re-addition. The shared-session
-                    // buffer is drained only for this newly described live pane.
                     orphan_clipboard_events.extend(drain_orphan_output(
                         ctx_shared_mut(ctx),
                         &mut existing,
@@ -538,8 +538,6 @@ pub(crate) fn apply_shared_layout(
                     existing
                 }
                 None => {
-                    // Brand-new pane: a fresh backend is legal here only because it has no local
-                    // screen yet. Replay any output buffered before this commit created it.
                     let mut pane = Pane::new(shared_pane.pane_id, scrollback, float_rect);
                     pane.pty_generation = shared_pane.generation;
                     pane.terminal
@@ -560,82 +558,155 @@ pub(crate) fn apply_shared_layout(
             rebuilt.push(pane);
         }
 
-        let ws = &mut ctx.state.current_mut().workspaces[shared_ws.index];
-        ws.name = shared_ws
+        let workspace = &mut ctx.state.current_mut().workspaces[shared_workspace.index];
+        workspace.name = shared_workspace
             .name
             .as_deref()
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(str::to_string);
-        ws.synchronized = shared_ws.synchronized;
-        ws.layout_kind = shared_ws.layout.into();
-        ws.start_axis = shared_ws.start_axis.into();
-        if !shared_ws.split_ratios.is_empty() {
-            ws.split_ratios = shared_ws.split_ratios.clone();
+        workspace.synchronized = shared_workspace.synchronized;
+        workspace.layout_kind = shared_workspace.layout.into();
+        workspace.start_axis = shared_workspace.start_axis.into();
+        if !shared_workspace.split_ratios.is_empty() {
+            workspace.split_ratios = shared_workspace.split_ratios.clone();
         }
-        let known: std::collections::HashSet<PaneId> = rebuilt
+        let known = rebuilt
             .iter()
             .filter(|pane| !pane.floating)
             .map(|pane| pane.id)
             .collect();
-        ws.tile_tree = shared_ws
+        workspace.tile_tree = shared_workspace
             .tree
             .as_ref()
             .and_then(|tree| dwindle_from_shared(tree, &known));
-        ws.last_move_swap = None;
+        workspace.last_move_swap = None;
 
-        // Closing panes rejoin their workspace so they keep rendering while they scale out.
-        // They are already excluded from tiling, focus, and counts, so nothing else sees them.
-        rebuilt.extend(std::mem::take(&mut closing_by_ws[shared_ws.index]));
-        ws.panes = rebuilt;
+        // Closing panes keep rendering in their old workspace until their animation is pruned.
+        rebuilt.extend(std::mem::take(
+            &mut closing_by_workspace[shared_workspace.index],
+        ));
+        workspace.panes = rebuilt;
     }
 
-    // A partial document still clears the live panes of omitted workspaces.
-    for index in 0..WORKSPACE_COUNT {
-        if !layout
+    RebuiltWorkspaces {
+        next_pane_id,
+        next_generation,
+        orphan_clipboard_events,
+    }
+}
+
+fn restore_closing_panes_in_omitted_workspaces(
+    state: &mut State,
+    layout: &SharedLayout,
+    closing_by_workspace: Vec<Vec<crate::state::Pane>>,
+) {
+    use crate::state::WORKSPACE_COUNT;
+
+    for (index, closing) in closing_by_workspace.into_iter().enumerate() {
+        let omitted = !layout
             .workspaces
             .iter()
-            .any(|ws| ws.index == index && ws.index < WORKSPACE_COUNT)
-        {
-            ctx.state.current_mut().workspaces[index].panes.clear();
+            .any(|workspace| workspace.index == index && workspace.index < WORKSPACE_COUNT);
+        if omitted {
+            state.current_mut().workspaces[index].panes.clear();
         }
+        state.current_mut().workspaces[index].panes.extend(closing);
     }
-    for (index, closing) in closing_by_ws.into_iter().enumerate() {
-        if !closing.is_empty() {
-            ctx.state.current_mut().workspaces[index]
-                .panes
-                .extend(closing);
-        }
-    }
+}
 
-    // Fix up focus per workspace: keep the current focus when it survived, else fall back to the
-    // first live pane. Local scrollable anchors survive only while their tiled pane still exists.
-    // When focus falls back but a different Scrollable anchor remains, the fallback may sit under
-    // a right-scrolled viewport — remember to sync reveal for that workspace after active is known.
-    let mut scrollable_reveal_after_focus_fallback = [false; WORKSPACE_COUNT];
-    for (index, ws) in ctx.state.current_mut().workspaces.iter_mut().enumerate() {
-        let focus_valid = ws
-            .focused_pane
-            .is_some_and(|id| ws.panes.iter().any(|pane| pane.id == id && !pane.closing));
+fn repair_workspace_focus_and_anchors(state: &mut State) -> [bool; crate::state::WORKSPACE_COUNT] {
+    use crate::state::{LayoutKind, ScrollableRevealEdge, WORKSPACE_COUNT};
+
+    let mut reveal_after_focus_fallback = [false; WORKSPACE_COUNT];
+    for (index, workspace) in state.current_mut().workspaces.iter_mut().enumerate() {
+        let focus_valid = workspace.focused_pane.is_some_and(|id| {
+            workspace
+                .panes
+                .iter()
+                .any(|pane| pane.id == id && !pane.closing)
+        });
         let focus_invalid = !focus_valid;
         if focus_invalid {
-            ws.focused_pane = ws
+            workspace.focused_pane = workspace
                 .panes
                 .iter()
                 .find(|pane| !pane.closing)
                 .map(|pane| pane.id);
         }
-        let anchor_valid = ws.scrollable_anchor.is_some_and(|id| {
-            ws.panes
+        let anchor_valid = workspace.scrollable_anchor.is_some_and(|id| {
+            workspace
+                .panes
                 .iter()
                 .any(|pane| pane.id == id && !pane.closing && !pane.floating)
         });
         if !anchor_valid {
-            ws.set_scrollable_viewport(None, crate::state::ScrollableRevealEdge::Left);
-        } else if focus_invalid && ws.layout_kind == crate::state::LayoutKind::Scrollable {
-            scrollable_reveal_after_focus_fallback[index] = true;
+            workspace.set_scrollable_viewport(None, ScrollableRevealEdge::Left);
+        } else if focus_invalid && workspace.layout_kind == LayoutKind::Scrollable {
+            reveal_after_focus_fallback[index] = true;
         }
     }
+    reveal_after_focus_fallback
+}
+
+/// Reconcile the client's local `State` toward an authoritative shared layout at revision `rev`.
+///
+/// This is the follower's read path (and the seed path on attach). It moves, adds, removes, and
+/// reorders `Pane` structs and rewrites workspace metadata, but never touches a surviving pane's
+/// terminal screen, scrollback, or snapshot - only brand-new panes get a fresh backend, and only
+/// their buffered orphan output is replayed. Local-only state (focus, active workspace, overlays,
+/// mode, theme) is preserved. Removed panes are dropped from application state immediately; the
+/// stable keyed Canvas retains their already-described visual subtree for its exit animation.
+pub(crate) fn apply_shared_layout(
+    ctx: &mut Context<crate::AppRoot>,
+    layout: &SharedLayout,
+    rev: u64,
+) -> Update {
+    use crate::state::WORKSPACE_COUNT;
+
+    // A foreign commit can only land mid-drag right after this client lost the lease; cancel any
+    // in-flight move/resize so it does not fight the incoming geometry.
+    ctx.state.moving_pane = None;
+    ctx.state.resizing_pane = None;
+    ctx.state.split_drag = None;
+    let canvas_cols = layout.canvas_cols.max(1);
+    let canvas_rows = layout.canvas_rows.max(1);
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+
+    let incoming = index_incoming_panes(layout);
+    if panes_move_between_workspaces(&ctx.state, &incoming) {
+        ctx.state.pane_canvas_epoch = ctx.state.pane_canvas_epoch.wrapping_add(1);
+    }
+
+    // Missing panes remain in their workspace until their close animation is pruned.
+    let DrainedPanes {
+        reusable: mut pool,
+        closing_by_workspace: mut closing_by_ws,
+        pruned,
+    } = drain_existing_panes(&mut ctx.state, &incoming);
+
+    let RebuiltWorkspaces {
+        next_pane_id,
+        next_generation,
+        orphan_clipboard_events,
+    } = rebuild_shared_workspaces(
+        ctx,
+        layout,
+        (canvas_cols, canvas_rows),
+        bounds,
+        &mut pool,
+        &mut closing_by_ws,
+    );
+
+    restore_closing_panes_in_omitted_workspaces(&mut ctx.state, layout, closing_by_ws);
+
+    // Fix up focus per workspace: keep the current focus when it survived, else fall back to the
+    // first live pane. Local scrollable anchors survive only while their tiled pane still exists.
+    // When focus falls back but a different Scrollable anchor remains, the fallback may sit under
+    // a right-scrolled viewport — remember to sync reveal for that workspace after active is known.
+    let scrollable_reveal_after_focus_fallback = repair_workspace_focus_and_anchors(&mut ctx.state);
     let active = ctx
         .state
         .current()
@@ -651,12 +722,12 @@ pub(crate) fn apply_shared_layout(
         crate::ops::focus::sync_scrollable_reveal(&mut ctx.state, focus, false);
     }
 
-    ctx.state.current_mut().next_pane_id = ctx.state.current_mut().next_pane_id.max(max_pane_id);
+    ctx.state.current_mut().next_pane_id = ctx.state.current_mut().next_pane_id.max(next_pane_id);
     ctx.state.current_mut().next_pty_generation = ctx
         .state
         .current_mut()
         .next_pty_generation
-        .max(max_generation);
+        .max(next_generation);
     if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared.layout_rev = rev;
         shared.canonical_canvas = Some((canvas_cols, canvas_rows));

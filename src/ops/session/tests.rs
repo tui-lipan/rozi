@@ -143,12 +143,7 @@ fn fresh_host_results_replace_cached_rows() {
 
     let mut hosts = crate::state::HostRegistry::default();
     hosts.seed(&config, &[], &[]);
-    push_cached_known_remote_rows(
-        &mut rows,
-        &hosts,
-        &cache,
-        std::slice::from_ref(&target),
-    );
+    push_cached_known_remote_rows(&mut rows, &hosts, &cache, std::slice::from_ref(&target));
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "live");

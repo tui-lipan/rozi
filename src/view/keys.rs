@@ -44,6 +44,11 @@ pub fn remote_target_input_key() -> &'static str {
     "rozi-remote-target-input"
 }
 
+/// The field that answers an OpenSSH password or host-key prompt.
+pub fn askpass_input_key() -> &'static str {
+    "rozi-askpass-input"
+}
+
 pub fn collaboration_key() -> &'static str {
     "rozi-collaboration"
 }

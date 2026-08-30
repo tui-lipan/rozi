@@ -34,7 +34,8 @@ pub struct HostEntry {
     pub origin: HostOrigin,
     /// Live connection state for the host, driving its status (Online / Offline / Connecting) and
     /// any inline error. A host is *connected* — its sessions are listed and kept fresh — while this
-    /// is `InFlight`/`Reached`; "Click to connect" moves it there and "Click to disconnect" returns
+    /// is `InFlight`/`Reached`; activating an offline host row moves it there and the host row's ✕
+    /// returns
     /// it to `Idle`.
     pub probe: HostProbe,
 }
@@ -157,11 +158,7 @@ impl HostRegistry {
         }
 
         for target in recents {
-            upsert(
-                target.clone(),
-                target.display_label(),
-                HostOrigin::Recent,
-            );
+            upsert(target.clone(), target.display_label(), HostOrigin::Recent);
         }
 
         for (target, alias) in held {
@@ -351,14 +348,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             aliases,
-            vec![
-                "alpha",
-                "zeta",
-                "recent-z",
-                "recent-a",
-                "held-a",
-                "held-z"
-            ]
+            vec!["alpha", "zeta", "recent-z", "recent-a", "held-a", "held-z"]
         );
     }
 
@@ -372,6 +362,9 @@ mod tests {
             &[(target.clone(), "workbox".into())],
         );
         assert_eq!(registry.iter().count(), 1);
-        assert_eq!(registry.get(&target).unwrap().origin, HostOrigin::Configured);
+        assert_eq!(
+            registry.get(&target).unwrap().origin,
+            HostOrigin::Configured
+        );
     }
 }

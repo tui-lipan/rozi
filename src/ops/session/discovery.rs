@@ -66,10 +66,8 @@ pub(crate) fn apply_discovered_sessions(
         .collect();
     for target in &successful_targets {
         let sessions = cached_sessions_for_target(&rows, target);
-        let known = crate::session::host_cache_contains_target(
-            &ctx.state.host_session_cache,
-            target,
-        );
+        let known =
+            crate::session::host_cache_contains_target(&ctx.state.host_session_cache, target);
         if (!sessions.is_empty() || known)
             && crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
                 != Some(sessions.as_slice())
@@ -166,28 +164,14 @@ pub(crate) fn discover_remote_host_sessions(
     target: &crate::session::remote::RemoteTarget,
     remote_config: &crate::config::RemoteConfig,
 ) -> std::io::Result<Vec<DiscoveredSession>> {
-    crate::session::discovery::discover_sessions_from(
+    let mut rows = crate::session::discovery::discover_sessions_from(
         &crate::session::discovery::SessionSource::Remote(target.clone()),
         remote_config,
-    )
-}
-
-/// Every configured remote target: `[remote.hosts.*]` aliases plus `default_host`.
-pub(crate) fn configured_targets(
-    remote_config: &crate::config::RemoteConfig,
-) -> Vec<crate::session::remote::RemoteTarget> {
-    let mut hosts: Vec<String> = remote_config.hosts.keys().cloned().collect();
-    if let Some(default_host) = &remote_config.default_host
-        && !hosts.iter().any(|h| h == default_host)
-    {
-        hosts.push(default_host.clone());
-    }
-    hosts.sort();
-    hosts.dedup();
-    hosts
-        .iter()
-        .filter_map(|alias| crate::session::remote::parse_remote_target(alias).ok())
-        .collect()
+    )?;
+    // Remote ephemeral sessions belong to the client that created them. The caller adds this
+    // client's attached ephemeral rows back from local state.
+    rows.retain(|entry| !entry.ephemeral);
+    Ok(rows)
 }
 
 /// Probe `targets` for their sessions, one ssh round-trip each, in parallel, reporting each host's
@@ -230,7 +214,7 @@ pub(crate) fn cached_sessions_for_target(
     target: &crate::session::remote::RemoteTarget,
 ) -> Vec<crate::session::CachedHostSession> {
     rows.iter()
-        .filter(|entry| entry.remote_target.as_ref() == Some(target))
+        .filter(|entry| !entry.ephemeral && entry.remote_target.as_ref() == Some(target))
         .map(|entry| crate::session::CachedHostSession {
             name: entry.name.clone(),
             ephemeral: entry.ephemeral,

@@ -219,7 +219,8 @@ background attachment, `Ctrl+X` disconnects a remote host, `Ctrl+R` opens **Remo
 `Ctrl+T` opens the temporary shell. Opening Sessions performs no remote probes. See
 [Sessions](sessions.md#use-the-session-picker).
 
-In **Remote hosts**, `Enter` discovers only the selected host, `Ctrl+N` opens the shared new-host
+In **Remote hosts**, `Enter` probes only the selected host in place. While connecting, the row
+shows a spinner, navigation is locked, and `Esc` cancels. `Ctrl+N` opens the shared new-host
 prompt, and `Ctrl+K` twice forgets an offline Recent host. The host-scoped Sessions view uses
 `Enter` to attach, `Ctrl+N` for a named session, `Ctrl+T` for a temporary session, `Ctrl+K` twice to
 kill, `Ctrl+E` twice to restart, `Ctrl+W` to disconnect a retained attachment, and `Ctrl+X` to

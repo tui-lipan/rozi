@@ -191,14 +191,11 @@ pub(crate) fn pick_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
     };
     prompt_overlay(
         ctx,
-        &prompt.title,
-        "",
+        PromptChrome::new(&prompt.title, "", &[("submit", "enter")]),
         &prompt.input,
         pick_prompt_input_key(),
         Msg::PickPromptChanged,
         Msg::PickPromptCancel,
         Msg::PickPromptSubmit,
-        &[("submit", "enter")],
-        None,
     )
 }

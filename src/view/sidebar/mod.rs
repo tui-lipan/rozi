@@ -377,11 +377,15 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
 
     for (index, row) in rows.into_iter().enumerate() {
         let selectable = row.selectable();
+        let closable = row.close.is_some();
         let close = close_affordance(ctx, panel, &row, index);
+        let hovered = panel_state.hovered_row == Some(index) && !panel_state.suppress_row_hover;
         let mut element = match row.kind {
             row::RowKind::Spacer => Text::new(" ").height(Length::Px(1)).into(),
             row::RowKind::Header(element) => *element,
-            row::RowKind::Item(item) => item.build(ctx, focused && cursor == Some(index), close),
+            row::RowKind::Item(item) => {
+                item.build(ctx, focused && cursor == Some(index), hovered, close)
+            }
         };
         let close_hovered = ctx.has_hover_within_key(row::close_hover_key(panel, index));
         if close_hovered && !panel_state.suppress_row_hover {
@@ -394,32 +398,38 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
                 .child(element)
                 .into();
         }
-        let element: Element = if selectable {
-            let mut region = MouseRegion::new()
-                .on_mouse_move(
-                    ctx.link()
-                        .callback(move |_| Msg::SidebarPointerMoved(panel)),
-                )
-                .on_click(
-                    ctx.link()
-                        .callback(move |_| Msg::SidebarRowActivate { panel, index }),
-                )
-                .on_hover_change(ctx.link().callback(move |hovered| Msg::SidebarRowHover {
-                    panel,
-                    index,
-                    hovered,
-                }))
-                .child(element);
-            if !panel_state.suppress_row_hover {
-                // A transform rather than a style: it lifts whatever the row already painted, so
-                // the active pane's row and the row under the keyboard cursor still respond to the
-                // pointer. An absolute hover style sits *under* those backgrounds and never shows.
-                region = region.hover_effect(VisualEffect::transform_bg(super::hover_lift()));
-            }
-            region.into()
-        } else {
-            element
-        };
+        // Hover is tracked for *every* row, not only the ones a click does something to. Pointing
+        // at a row is a fact about the pointer; whether the row can be activated is not. Tying the
+        // two together left `hovered_row` pointing at a row whose region had gone: a host row stops
+        // being selectable the moment connecting starts, so the pointer leaving it fired no
+        // `on_hover_change`, and the index stayed hovered forever — long enough for the failed
+        // host to come back wearing "Connect" instead of its status, and for a connected host
+        // (inert, but closable) to be unable to show its ✕ at all.
+        let interactive = selectable || closable;
+        let mut region = MouseRegion::new()
+            .on_mouse_move(
+                ctx.link()
+                    .callback(move |_| Msg::SidebarPointerMoved(panel)),
+            )
+            .on_hover_change(ctx.link().callback(move |hovered| Msg::SidebarRowHover {
+                panel,
+                index,
+                hovered,
+            }))
+            .child(element);
+        if selectable {
+            region = region.on_click(
+                ctx.link()
+                    .callback(move |_| Msg::SidebarRowActivate { panel, index }),
+            );
+        }
+        if interactive && !panel_state.suppress_row_hover {
+            // A transform rather than a style: it lifts whatever the row already painted, so
+            // the active pane's row and the row under the keyboard cursor still respond to the
+            // pointer. An absolute hover style sits *under* those backgrounds and never shows.
+            region = region.hover_effect(VisualEffect::transform_bg(super::hover_lift()));
+        }
+        let element: Element = region.into();
         view = view.child(element.key(row_key(panel, index)));
     }
     view.key(body_key(panel))

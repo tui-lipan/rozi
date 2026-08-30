@@ -205,16 +205,12 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
             crate::ops::session::remotes::target_prompt_changed(ctx, event)
         }
         Msg::SubmitRemoteTarget => crate::ops::session::remotes::submit_remote_target(ctx),
-        Msg::CloseRemoteTargetPrompt => {
-            crate::ops::session::remotes::close_target_prompt(ctx)
-        }
+        Msg::CloseRemoteTargetPrompt => crate::ops::session::remotes::close_target_prompt(ctx),
         Msg::RemoteHostSessionsDiscovered {
             epoch,
             target,
             rows,
-        } => crate::ops::session::remotes::apply_host_discovery(
-            ctx, epoch, target, rows,
-        ),
+        } => crate::ops::session::remotes::apply_host_discovery(ctx, epoch, target, rows),
         Msg::RemotePickerSessionQueryChanged(query) => {
             crate::ops::session::remotes::session_query_changed(ctx, query)
         }
@@ -224,17 +220,11 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::RemotePickerSessionActivate(identity) => {
             crate::ops::session::remotes::activate_session(ctx, identity)
         }
-        Msg::RemotePickerCreateSession => {
-            crate::ops::session::remotes::create_session(ctx)
-        }
+        Msg::RemotePickerCreateSession => crate::ops::session::remotes::create_session(ctx),
         Msg::RemotePickerEphemeral => crate::ops::session::remotes::open_ephemeral(ctx),
         Msg::RemotePickerKillSession => crate::ops::session::remotes::kill_session(ctx),
-        Msg::RemotePickerRestartSession => {
-            crate::ops::session::remotes::restart_session(ctx)
-        }
-        Msg::RemotePickerDisconnectSession => {
-            crate::ops::session::remotes::disconnect_session(ctx)
-        }
+        Msg::RemotePickerRestartSession => crate::ops::session::remotes::restart_session(ctx),
+        Msg::RemotePickerDisconnectSession => crate::ops::session::remotes::disconnect_session(ctx),
         Msg::RemotePickerDisconnectHost => {
             crate::ops::session::remotes::disconnect_selected_host(ctx)
         }
@@ -244,6 +234,16 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::CollaborationGrant(index) => prompts::collaboration_grant(ctx, index),
         Msg::CollaborationDecline(index) => prompts::collaboration_decline(ctx, index),
         Msg::CollaborationKick(index) => prompts::collaboration_kick(ctx, index),
+        Msg::RemoteAskpassPrompt {
+            id,
+            session,
+            kind,
+            prompt,
+        } => prompts::askpass_prompt(ctx, id, session, kind, prompt),
+        Msg::RemoteAskpassExpired { id } => prompts::askpass_expired(ctx, id),
+        Msg::RemoteAskpassChanged(event) => prompts::askpass_changed(ctx, event),
+        Msg::SubmitRemoteAskpass => prompts::submit_askpass(ctx),
+        Msg::CancelRemoteAskpass => prompts::cancel_askpass(ctx),
         Msg::FollowPromptSelect(index) => prompts::follow_prompt_select(ctx, index),
         Msg::FollowPromptChoose(index) => prompts::follow_prompt_choose(ctx, index),
         Msg::FocusPane(id) => panes::focus_pane(ctx, id),

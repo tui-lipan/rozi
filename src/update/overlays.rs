@@ -29,7 +29,11 @@ fn padding_error(ctx: &mut Context<AppRoot>) {
 }
 
 pub(super) fn command_link_ready(ctx: &mut Context<AppRoot>, link: CommandLink<Msg>) -> Update {
-    ctx.state.command_link = Some(link);
+    ctx.state.command_link = Some(link.clone());
+    // Started here rather than at the first remote operation: every ssh this client spawns has to
+    // find the endpoint already bound, and the ops that spawn one run on worker threads with no
+    // route back to the UI of their own.
+    crate::session::remote::askpass::start(link);
     crate::update::sidebar::request_sessions_refresh(ctx);
     crate::update::sidebar::request_command_poll(ctx);
     crate::update::workbar::request_command_polls(ctx);

@@ -7,12 +7,12 @@ mod which_key;
 mod workbar;
 
 pub use keys::{
-    collaboration_key, follow_prompt_key, help_filter_key, help_scroll_key, layout_picker_key,
-    palette_key, pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key,
-    pane_window_key, pick_key, pick_prompt_input_key, profile_picker_key, rename_input_key,
-    remote_picker_key, remote_target_input_key, rename_session_input_key, save_profile_key,
-    search_input_key, session_picker_key,
-    settings_palette_key, sidebar_body_key, theme_picker_key,
+    askpass_input_key, collaboration_key, follow_prompt_key, help_filter_key, help_scroll_key,
+    layout_picker_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
+    pane_terminal_key, pane_window_key, pick_key, pick_prompt_input_key, profile_picker_key,
+    remote_picker_key, remote_target_input_key, rename_input_key, rename_session_input_key,
+    save_profile_key, search_input_key, session_picker_key, settings_palette_key, sidebar_body_key,
+    theme_picker_key,
 };
 pub(crate) use pane::{
     PaneKind, PaneMerge, divider_title_element, has_pane_alert, pane_alert, pane_element,
@@ -34,12 +34,11 @@ use crate::{AppRoot, Msg};
 use pane::pane_title_bg;
 
 use overlays::{
-    collaboration_overlay, follow_prompt_overlay, help_overlay, layout_picker_overlay,
-    palette_overlay, pane_padding_overlay, pick_overlay, pick_prompt_overlay,
-    profile_picker_overlay, reconnecting_overlay, rename_overlay, rename_session_overlay,
-    remote_picker_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
-    settings_overlay,
-    theme_picker_overlay,
+    askpass_overlay, collaboration_overlay, follow_prompt_overlay, help_overlay,
+    layout_picker_overlay, palette_overlay, pane_padding_overlay, pick_overlay,
+    pick_prompt_overlay, profile_picker_overlay, reconnecting_overlay, remote_picker_overlay,
+    rename_overlay, rename_session_overlay, save_profile_overlay, search_overlay,
+    session_picker_overlay, settings_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
@@ -542,7 +541,8 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         || ctx.state.show_session_picker
         || ctx.state.remote_picker.is_some()
         || ctx.state.collaboration.is_some()
-        || ctx.state.follow_prompt.is_some();
+        || ctx.state.follow_prompt.is_some()
+        || ctx.state.askpass.is_some();
     let dialog_dim_progress = ctx.transition::<f32>(
         "rozi-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
@@ -779,6 +779,11 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.follow_prompt.is_some() {
         root = root.child(follow_prompt_overlay(ctx));
+    }
+    // Last, so its own backdrop fades every dialog already on screen: an ssh prompt arrives on
+    // ssh's schedule, over whatever the user had open, and returns them to it.
+    if ctx.state.askpass.is_some() {
+        root = root.child(askpass_overlay(ctx));
     }
     if reconnecting {
         root = root.child(reconnecting_overlay(ctx));

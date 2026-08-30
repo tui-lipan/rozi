@@ -79,12 +79,13 @@ not contact any machine.
 | `Ctrl+E` twice | — | Restart the selected session |
 | `Ctrl+W` | — | Disconnect a retained session attachment |
 | `Ctrl+X` | — | Disconnect this client from the host |
-| `Esc` | Return to Sessions | Return to Remote hosts |
+| `Esc` | Cancel a connecting probe, otherwise return to Sessions | Return to Remote hosts |
 
-Activating a host shows cached sessions immediately, then probes only that host. A successful
-result replaces the cache. If the host is unreachable, cached rows remain visible with the failure
-state. A successfully reached new host is remembered even when it has no sessions; a failed target
-is not remembered. OpenSSH remains responsible for aliases, keys, agents, and `ProxyJump`.
+Activating a host probes it in place. The host row shows a spinner and `connecting…`; navigation
+is locked and `Esc` cancels. A successful result opens that host's sessions and replaces the
+cache. If the host is unreachable, the row stays on Remote hosts with the failure state. A
+successfully reached new host is remembered even when it has no sessions; a failed target is not
+remembered. OpenSSH remains responsible for aliases, keys, agents, and `ProxyJump`.
 
 Only offline Recent hosts can be forgotten. Configured hosts remain defined by configuration, and
 a host with a live or connecting attachment must be disconnected first. Forgetting also removes

@@ -726,6 +726,9 @@ fn parse_installed_path(stdout: &str) -> Result<String, String> {
 /// `-p`). `ssh_args` are passed through — they are `-o key=value` pairs scp also accepts.
 fn scp_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command {
     let mut command = Command::new("scp");
+    super::askpass::configure(&mut command);
+    // Same control socket as ssh: an upload rides the connection the probe already authenticated.
+    apply_multiplexing(&mut command);
     if config.batch_mode {
         command.arg("-o").arg("BatchMode=yes");
     }
@@ -928,9 +931,30 @@ fn verify_sha256(archive: &Path, sha_file: &Path) -> Result<(), String> {
 /// `BatchMode` comes from `[remote] batch_mode` (default on). It is the single place that decides
 /// whether ssh may prompt, so probe, install, attach, list, and kill all agree — a mix would mean
 /// a host that lists fine but hangs on attach.
+///
+/// Being that single place is also why the askpass redirect is installed here: a prompt that
+/// escaped even one of those invocations would land on the terminal the TUI is drawing on. See
+/// [`super::askpass`].
 pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command {
     let mut command = Command::new("ssh");
     command.arg("-T");
+    super::askpass::configure(&mut command);
+    apply_multiplexing(&mut command);
+    // On every invocation, not just the attach: with multiplexing the *first* connection to a host
+    // becomes the master that all the others ride on, and a client's keepalive settings are ignored
+    // in favour of the master's. Setting them only on the attach would leave a session whose
+    // liveness depends on a master the probe opened without any.
+    command
+        .arg("-o")
+        .arg(format!(
+            "ServerAliveInterval={}",
+            config.server_alive_interval_secs
+        ))
+        .arg("-o")
+        .arg(format!(
+            "ServerAliveCountMax={}",
+            config.server_alive_count_max
+        ));
     if config.batch_mode {
         command.arg("-o").arg("BatchMode=yes");
     }
@@ -949,6 +973,48 @@ pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig)
         command.arg(arg);
     }
     command
+}
+
+/// How long a shared connection outlives the command that opened it. Long enough to carry a probe
+/// straight into the attach that follows it, short enough that quitting rozi leaves nothing behind
+/// worth noticing.
+const CONTROL_PERSIST_SECS: u32 = 60;
+
+/// Share one authenticated connection across every ssh a single remote operation runs.
+///
+/// Opening a host is not one ssh. It is a shell-family probe, a capability probe, a re-probe before
+/// the attach, and the attach — each its own connection, each its own authentication. On a host
+/// with a key or an agent that is invisible; on one that asks for a password it means typing the
+/// password four times to open a session, and it is the difference between a remote host being
+/// usable and being a chore.
+///
+/// `ControlMaster=auto` makes the first connection the master and every later one a client riding
+/// on it, so the password is asked once. It also removes several seconds of handshake from every
+/// subsequent invocation.
+///
+/// Unix only: OpenSSH for Windows has no connection multiplexing, so a Windows client authenticates
+/// per invocation exactly as before. The socket lives in the runtime directory, which is already
+/// private to this user; without one, multiplexing is simply skipped.
+fn apply_multiplexing(command: &mut Command) {
+    if !cfg!(unix) {
+        return;
+    }
+    let Ok(dir) = crate::control::runtime_dir() else {
+        return;
+    };
+    // `%C` is a hash of user/host/port/proxy, so one master per distinct destination, and a path
+    // short enough for the socket-name limit however long the destination is.
+    let control_path = dir.join("ssh-%C");
+    let Some(control_path) = control_path.to_str() else {
+        return;
+    };
+    command
+        .arg("-o")
+        .arg("ControlMaster=auto")
+        .arg("-o")
+        .arg(format!("ControlPath={control_path}"))
+        .arg("-o")
+        .arg(format!("ControlPersist={CONTROL_PERSIST_SECS}"));
 }
 
 /// Append the OpenSSH end-of-options marker and destination. OpenSSH expects the destination before
@@ -1395,6 +1461,48 @@ protocol_max={beyond}
         assert_eq!(located.file_name().unwrap(), "rozi");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Opening a host is four ssh invocations — two probes, a re-probe, the attach — and without a
+    /// shared connection that is four authentications, which on a password host means typing the
+    /// password four times. The options that collapse them have to be on *every* invocation: the
+    /// one that arrives first becomes the master, and it is not always the same one.
+    #[cfg(unix)]
+    #[test]
+    fn every_invocation_offers_to_share_one_authenticated_connection() {
+        let resolved = ResolvedRemote {
+            alias: Some("workbox".into()),
+            host: "workbox".into(),
+            user: None,
+            port: None,
+            identity_file: None,
+            ssh_args: Vec::new(),
+            binary_path: None,
+        };
+        let config = RemoteConfig::default();
+        let args: Vec<String> = ssh_base_command(&resolved, &config)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(args.iter().any(|arg| arg == "ControlMaster=auto"));
+        assert!(
+            args.iter()
+                .any(|arg| arg.starts_with("ControlPath=") && arg.contains("ssh-%C")),
+            "one master per destination, named by ssh's own destination hash: {args:?}"
+        );
+        assert!(args.iter().any(|arg| arg.starts_with("ControlPersist=")));
+        // Keepalive belongs here rather than on the attach alone: a client riding a master defers
+        // to the master's settings, and the master is whichever invocation connected first.
+        assert!(
+            args.iter()
+                .any(|arg| arg.starts_with("ServerAliveInterval=")),
+            "the master carries the keepalive: {args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg.starts_with("ServerAliveCountMax="))
+        );
     }
 
     /// `[remote] batch_mode` is the one switch deciding whether ssh may prompt, so it has to reach

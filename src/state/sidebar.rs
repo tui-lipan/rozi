@@ -34,10 +34,8 @@ pub enum RowTarget {
         row_id: String,
     },
     Session(Box<crate::session::discovery::DiscoveredSession>),
-    /// "Click to connect" under an offline host in the Sessions tab: connect (probe) that host.
+    /// An offline host row in the Sessions tab: connect (probe) that host.
     HostConnect(crate::session::remote::RemoteTarget),
-    /// "Click to disconnect" under an online host: disconnect it (a confirming second click).
-    HostDisconnect(crate::session::remote::RemoteTarget),
     /// A "New session" action row. `None` creates locally; `Some(host)` creates on that host.
     NewSession(Option<crate::session::remote::RemoteTarget>),
     /// The "Connect a host…" action row, opening the remote-host connect prompt.
@@ -67,6 +65,11 @@ pub enum SidebarClose {
     Session {
         name: String,
         remote_target: Option<crate::session::remote::RemoteTarget>,
+    },
+    /// Disconnect the host: close every attachment to it — their servers keep running — and return
+    /// it to offline. Not a kill, but destructive enough to deserve the same two-step ✕ as one.
+    Host {
+        target: crate::session::remote::RemoteTarget,
     },
 }
 
@@ -198,25 +201,24 @@ impl State {
                     let status =
                         self.hosts
                             .status_for(&host.target, conns.iter(), !live.is_empty());
-                    let header_target = match status {
-                        HostStatus::Connected | HostStatus::Reachable => {
-                            RowTarget::HostDisconnect(host.target.clone())
-                        }
+                    // A connected host offers no activation: disconnecting is the hover ✕, the same
+                    // affordance (and the same confirmation) every other closable row uses.
+                    let (header_target, header_close) = match status {
+                        HostStatus::Connected | HostStatus::Reachable => (
+                            RowTarget::Inert,
+                            Some(SidebarClose::Host {
+                                target: host.target.clone(),
+                            }),
+                        ),
                         HostStatus::Disconnected | HostStatus::Unreachable => {
-                            RowTarget::HostConnect(host.target.clone())
+                            (RowTarget::HostConnect(host.target.clone()), None)
                         }
-                        HostStatus::Connecting => RowTarget::Inert,
+                        HostStatus::Connecting => (RowTarget::Inert, None),
                     };
                     items.push(SidebarItemProjection {
                         target: header_target,
-                        close: None,
+                        close: header_close,
                     });
-                    if host.probe.error().is_some() {
-                        items.push(SidebarItemProjection {
-                            target: RowTarget::Inert,
-                            close: None,
-                        });
-                    }
 
                     match status {
                         HostStatus::Connecting => {}
@@ -247,8 +249,7 @@ impl State {
                             if let Some(cached) = crate::session::host_sessions_for(
                                 &self.host_session_cache,
                                 &host.target,
-                            )
-                            {
+                            ) {
                                 for cached_entry in cached.iter().filter(|s| !s.ephemeral) {
                                     let entry = crate::session::discovery::DiscoveredSession {
                                         name: cached_entry.name.clone(),
@@ -543,9 +544,6 @@ pub struct SidebarState {
     /// loop), the post-update chokepoint re-arms the loop so the tab keeps updating instead of
     /// freezing until it is reopened.
     pub sessions_refresh_armed_epoch: Option<u64>,
-    /// A host whose "Click to disconnect" is armed for a confirming second click. Cleared by
-    /// navigating away or acting on anything else, so the confirmation never outlives the moment.
-    pub pending_host_disconnect: Option<crate::session::remote::RemoteTarget>,
     /// Resolved roots for the file-tree tabs: the focused pane's local working directory, and the
     /// git repository containing it. Both are recomputed only when the pane's reported directory
     /// actually changes, so the ancestor walk does not run on every frame or every shell prompt.

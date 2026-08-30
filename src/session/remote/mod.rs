@@ -4,12 +4,14 @@
 //! `ssh … rozi --remote-serve <NAME>`, which proxies to the remote host's local session
 //! endpoint. The session server itself is unchanged.
 
+pub mod askpass;
 mod bootstrap;
 mod connect;
 mod preamble;
 mod proxy;
 mod target;
 
+pub use askpass::AskpassKind;
 pub use bootstrap::ensure_remote_binary;
 pub(crate) use bootstrap::{append_ssh_destination, ssh_base_command};
 #[allow(unused_imports)] // re-exported for callers/tests

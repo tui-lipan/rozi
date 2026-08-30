@@ -60,10 +60,7 @@ fn write_recent_remotes(entries: &[remote::RemoteTarget]) {
     let _ = std::fs::write(path, text);
 }
 
-fn update_recent_targets(
-    entries: &mut Vec<remote::RemoteTarget>,
-    target: &remote::RemoteTarget,
-) {
+fn update_recent_targets(entries: &mut Vec<remote::RemoteTarget>, target: &remote::RemoteTarget) {
     entries.retain(|entry| entry != target);
     entries.insert(0, target.clone());
     entries.truncate(MAX_RECENT_REMOTES);

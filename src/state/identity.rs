@@ -55,9 +55,7 @@ pub enum NamingMode {
     OpenProfileAs,
     NameEphemeralSession,
     RenameSession,
-    RenameWorkspace {
-        index: usize,
-    },
+    RenameWorkspace { index: usize },
 }
 
 /// The state of a leave prompt: the client is on its way out and the temporary sessions it would

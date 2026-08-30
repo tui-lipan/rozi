@@ -700,7 +700,7 @@ fn host_connect_and_two_click_disconnect() {
         // `row_activate` rebuilds the rows from the current state before the post-update sweep
         // repopulates local sessions, so clearing them here makes the layout deterministic:
         //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 spacer
-        //   4 WINVM / "Click to connect" · 5 spacer · 6 "Connect a host…"
+        //   4 WINVM (one line) · 5 spacer · 6 "Connect a host…"
         backend.state_mut().sidebar.sessions.clear();
         backend
             .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
@@ -711,31 +711,39 @@ fn host_connect_and_two_click_disconnect() {
             "connecting marks the host in flight"
         );
 
-        // Now online, the same row reads "Click to disconnect". Force the host reached and arm.
+        // Now online, the row is one line and carries no activation at all: disconnecting is its
+        // ✕, which takes the same two clicks every other closable row does.
         backend.state_mut().hosts.get_mut(&target).unwrap().probe =
             crate::state::HostProbe::Reached;
-        //   … 4 WINVM / "Click to disconnect" · 5 "No sessions here yet" · 6 "+ New…"
         backend.state_mut().sidebar.sessions.clear();
         backend
-            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
             .expect("arm disconnect");
         assert_eq!(
-            backend.state().sidebar.pending_host_disconnect.as_ref(),
-            Some(&target),
-            "first click arms the confirmation"
+            backend.state().sidebar.pending_row_close,
+            Some(crate::state::SidebarClose::Host {
+                target: target.clone()
+            }),
+            "the first ✕ arms the confirmation"
         );
+        assert_eq!(
+            backend.state().hosts.get(&target).unwrap().probe,
+            crate::state::HostProbe::Reached,
+            "and changes nothing yet"
+        );
+
         backend.state_mut().hosts.get_mut(&target).unwrap().probe =
             crate::state::HostProbe::Reached;
         backend.state_mut().sidebar.sessions.clear();
         backend
-            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
             .expect("confirm disconnect");
         assert_eq!(
             backend.state().hosts.get(&target).unwrap().probe,
             crate::state::HostProbe::Idle,
             "confirming disconnect returns the host to offline"
         );
-        assert!(backend.state().sidebar.pending_host_disconnect.is_none());
+        assert!(backend.state().sidebar.pending_row_close.is_none());
     });
 }
 
@@ -1000,15 +1008,17 @@ fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
             state.park_current(parked_epoch, incoming);
             state.runtime_epoch = state.mint_attachment_id();
 
-            // Online, and armed, so the next activation of the host row commits the disconnect.
+            // Online, and armed, so the next ✕ on the host row commits the disconnect.
             state.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::Reached;
-            state.sidebar.pending_host_disconnect = Some(target.clone());
+            state.sidebar.pending_row_close = Some(crate::state::SidebarClose::Host {
+                target: target.clone(),
+            });
             state.sidebar.sessions.clear();
         }
 
         // Row 4 is the WINVM host row — see `host_connect_and_two_click_disconnect`.
         backend
-            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
             .expect("confirm disconnect");
 
         let state = backend.state();

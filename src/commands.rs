@@ -801,8 +801,12 @@ fn commands_active_without_scratchpad(state: &State) -> bool {
         && state.save_profile_prompt.is_none()
         && !state.show_profile_picker
         && !state.show_session_picker
+        && state.remote_picker.is_none()
         && state.collaboration.is_none()
         && state.follow_prompt.is_none()
+        // A password is arbitrary text: any chord it happens to contain must reach the field, not
+        // run a command.
+        && state.askpass.is_none()
         && state.current().connection != crate::state::ConnectionState::Reconnecting
 }
 

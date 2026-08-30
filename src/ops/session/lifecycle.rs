@@ -286,11 +286,8 @@ pub(crate) fn session_name_already_running(
             .ok()
             .flatten()
             .is_some(),
-        Some(target) => crate::session::host_sessions_for(
-            &ctx.state.host_session_cache,
-            target,
-        )
-        .is_some_and(|sessions| sessions.iter().any(|session| session.name == name)),
+        Some(target) => crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
+            .is_some_and(|sessions| sessions.iter().any(|session| session.name == name)),
     }
 }
 
@@ -307,7 +304,7 @@ fn enter_session_rename(ctx: &mut Context<AppRoot>, rename: SessionRenameState) 
     ctx.state.search = None;
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
-    ctx.state.remote_picker = None;
+    crate::ops::session::remotes::dismiss_remote_picker(&mut ctx.state);
     ctx.state.mode = crate::state::Mode::Normal;
     request_rename_session_focus(ctx);
     Update::full()
@@ -547,13 +544,7 @@ pub(crate) fn open_ephemeral_session_on_host(
 ) -> Update {
     crate::ops::overlay_return::leave(ctx);
     let name = crate::state::remote_ephemeral_session_name();
-    attach_session_by_name(
-        ctx,
-        name,
-        Some(target.display_label()),
-        Some(target),
-        true,
-    )
+    attach_session_by_name(ctx, name, Some(target.display_label()), Some(target), true)
 }
 
 pub(crate) fn close_rename_session(ctx: &mut Context<AppRoot>) -> Update {
@@ -733,11 +724,9 @@ pub(crate) fn remove_cached_remote_session(
     session_name: &str,
     target: &crate::session::remote::RemoteTarget,
 ) {
-    let Some(mut sessions) = crate::session::host_sessions_for(
-        &ctx.state.host_session_cache,
-        target,
-    )
-    .map(|sessions| sessions.to_vec())
+    let Some(mut sessions) =
+        crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
+            .map(|sessions| sessions.to_vec())
     else {
         return;
     };

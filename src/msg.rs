@@ -234,10 +234,7 @@ pub enum Msg {
     RemoteHostSessionsDiscovered {
         epoch: u64,
         target: crate::session::remote::RemoteTarget,
-        rows: std::result::Result<
-            Vec<crate::session::discovery::DiscoveredSession>,
-            String,
-        >,
+        rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
     },
     RemotePickerSessionQueryChanged(String),
     RemotePickerSessionSelect(crate::state::RemoteSessionIdentity),
@@ -248,6 +245,25 @@ pub enum Msg {
     RemotePickerRestartSession,
     RemotePickerDisconnectSession,
     RemotePickerDisconnectHost,
+    /// OpenSSH asked for a password, a key passphrase, or a host-key confirmation on a connection
+    /// this client owns. Raised from the askpass broker's worker thread, which blocks on the
+    /// answer — see [`session::remote::askpass`].
+    RemoteAskpassPrompt {
+        id: u64,
+        /// Which ssh invocation is asking, so its three retries read as one conversation and the
+        /// next connection starts a fresh one.
+        session: String,
+        kind: session::remote::AskpassKind,
+        prompt: String,
+    },
+    /// The prompt went unanswered long enough that the helper gave up on it; take its modal down
+    /// rather than leaving a dialog whose ssh has already failed.
+    RemoteAskpassExpired {
+        id: u64,
+    },
+    RemoteAskpassChanged(InputEvent),
+    SubmitRemoteAskpass,
+    CancelRemoteAskpass,
     CloseCollaboration,
     CollaborationQueryChanged(String),
     CollaborationSelect(usize),

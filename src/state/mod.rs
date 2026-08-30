@@ -184,10 +184,18 @@ pub struct State {
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
     pub remote_picker: Option<RemotePickerState>,
+    /// Global remote-discovery generation. Unlike picker-local state, this survives closing and
+    /// reopening the picker so a late result can never match a newer request by accident.
+    pub remote_probe_epoch: u64,
     pub collaboration: Option<CollaborationState>,
     /// Raised when an attach lands on a session another client is actively controlling, so
     /// following is something the user chooses rather than something that happens to them.
     pub follow_prompt: Option<FollowPromptState>,
+    /// An OpenSSH password, passphrase, or host-key question, answered in the UI rather than on
+    /// the terminal it would otherwise write over. See [`crate::session::remote::askpass`].
+    pub askpass: Option<AskpassState>,
+    /// Outlives the modal, because reading the next prompt needs to know what became of the last.
+    pub askpass_history: AskpassHistory,
     /// Where the open nested dialog was raised from, so cancelling or finishing it returns there
     /// rather than to the focused pane. Assigned by every child-dialog opener (to `None` when the
     /// child was raised standalone, which is what keeps it from going stale) and consumed by
@@ -398,8 +406,11 @@ impl State {
             show_session_picker: false,
             session_picker: None,
             remote_picker: None,
+            remote_probe_epoch: 0,
             collaboration: None,
             follow_prompt: None,
+            askpass: None,
+            askpass_history: AskpassHistory::default(),
             overlay_return: None,
             replaceable_toasts: HashMap::new(),
             session_picker_epoch: 0,
@@ -601,6 +612,11 @@ impl State {
     fn next_parked_seq(&mut self) -> u64 {
         self.next_parked_seq = self.next_parked_seq.wrapping_add(1);
         self.next_parked_seq
+    }
+
+    pub(crate) fn mint_remote_probe_epoch(&mut self) -> u64 {
+        self.remote_probe_epoch = self.remote_probe_epoch.wrapping_add(1);
+        self.remote_probe_epoch
     }
 
     /// Parked sessions worth returning to, most recently used first.
@@ -810,8 +826,10 @@ impl State {
             || self.save_profile_prompt.is_some()
             || self.show_profile_picker
             || self.show_session_picker
+            || self.remote_picker.is_some()
             || self.collaboration.is_some()
             || self.follow_prompt.is_some()
+            || self.askpass.is_some()
     }
 
     /// Whether a pointer gesture is currently reshaping the layout: a pane move, a pane corner

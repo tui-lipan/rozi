@@ -608,11 +608,45 @@ impl SessionServer {
         Ok(restored)
     }
 
+    /// Remove the published snapshot and any staging or backup directory left over for this
+    /// session. A writer killed between creating `.{session}.tmp-…` and the rename that publishes
+    /// it leaves that directory behind holding a complete `meta.json`; forgetting the session has
+    /// to take the debris with it, or bytes describing a deleted session outlive it on disk.
+    ///
+    /// Only a server owning this session name ever writes those directories, and the two callers
+    /// (a snapshot the user forgot, and shutdown after `finish_snapshots`) both run with no write
+    /// in flight, so nothing live is swept out from under.
     pub(super) fn delete_snapshot(&self) -> io::Result<()> {
         let path = self.snapshot_path()?;
-        match fs::remove_dir_all(path) {
+        let removed = match fs::remove_dir_all(&path) {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
             result => result,
+        };
+        if let Some(parent) = path.parent() {
+            remove_staging_dirs(parent, &self.session_name);
+        }
+        removed
+    }
+}
+
+/// Best-effort sweep of abandoned staging/backup directories for one session. A leftover that
+/// resists removal is not worth failing a delete over: it is already invisible to discovery.
+fn remove_staging_dirs(parent: &Path, session_name: &str) {
+    let prefixes = [
+        format!(".{session_name}.tmp-"),
+        format!(".{session_name}.old-"),
+    ];
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        // A session name cannot contain `.`, so the separator keeps `foo` from matching `foo-bar`.
+        if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            let _ = fs::remove_dir_all(entry.path());
         }
     }
 }
@@ -667,9 +701,15 @@ pub(crate) fn list_snapshot_names_by_recency() -> Vec<String> {
     let mut snapshots = entries
         .flatten()
         .filter_map(|entry| {
+            // Identity is the directory the snapshot is *published* under, not the name recorded
+            // inside it. A staging directory abandoned by a killed writer still holds a complete
+            // `meta.json`; trusting that would list a restorable session that forget can never
+            // remove, because forget deletes `<root>/<session>` and the debris is not there.
+            let dir_name = entry.file_name().into_string().ok()?;
             let meta: SnapshotMeta =
                 serde_json::from_slice(&fs::read(entry.path().join("meta.json")).ok()?).ok()?;
             (meta.version == SNAPSHOT_VERSION
+                && meta.session == dir_name
                 && crate::session::discovery::valid_session_name(&meta.session))
             .then_some((meta.saved_at, meta.session))
         })
@@ -694,6 +734,52 @@ mod tests {
         .unwrap();
 
         assert_eq!(meta.created_from_profile, None);
+    }
+
+    /// A snapshot write killed before its rename leaves `.{session}.tmp-…` behind, complete with
+    /// metadata. Listing that as restorable produced a row nothing could clear: `restore` found no
+    /// snapshot and `forget` deleted `<root>/<session>`, which never existed.
+    #[test]
+    fn an_abandoned_staging_directory_is_neither_restorable_nor_left_behind_by_forget() {
+        let root = default_snapshot_dir().expect("test scratch state dir");
+        let published = "staging-published";
+        let abandoned = "staging-abandoned";
+        let staging = root.join(format!(".{abandoned}.tmp-4242.99"));
+        for (dir, session) in [
+            (root.join(published), published),
+            (staging.clone(), abandoned),
+        ] {
+            fs::create_dir_all(&dir).expect("create snapshot dir");
+            fs::write(
+                dir.join("meta.json"),
+                serde_json::to_vec(&SnapshotMeta {
+                    version: SNAPSHOT_VERSION,
+                    session: session.to_string(),
+                    saved_at: 1,
+                    layout_rev: 0,
+                    created_from_profile: None,
+                    panes: Vec::new(),
+                })
+                .unwrap(),
+            )
+            .expect("write snapshot meta");
+        }
+
+        let listed = list_snapshot_names_by_recency();
+        assert!(
+            listed.iter().any(|name| name == published),
+            "a published snapshot is restorable\n{listed:?}"
+        );
+        assert!(
+            !listed.iter().any(|name| name == abandoned),
+            "a staging leftover must not be offered as restorable\n{listed:?}"
+        );
+
+        delete_snapshot_for(abandoned).expect("forget the abandoned session");
+        assert!(!staging.exists(), "forget sweeps the staging leftover");
+
+        delete_snapshot_for(published).expect("forget the published session");
+        assert!(!root.join(published).exists());
     }
 
     #[test]

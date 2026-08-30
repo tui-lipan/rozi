@@ -5,6 +5,135 @@ use crate::pane_lifecycle::{find_pane_in_namespace_mut, remove_pane_after_exit};
 use crate::pty_events::maybe_notify_pane_exit;
 use crate::state::PaneId;
 
+struct PaneOutputEffects {
+    indicator_raised: bool,
+    chrome_changed: bool,
+    clipboard_events: Vec<TerminalClipboardEvent>,
+    bell_fired: bool,
+    bell_alert_raised: bool,
+}
+
+fn apply_current_pane_output(
+    state: &mut crate::state::State,
+    pane_id: PaneId,
+    local: bool,
+    generation: u64,
+    bytes: &[u8],
+) -> Option<PaneOutputEffects> {
+    let attended = state.is_pane_attended(pane_id);
+    let bell_notifications = state.config.notifications.bell;
+    // Reassert media policy on every path that can create or feed a pane.
+    let policy = if local && crate::scratchpad::contains(state, pane_id) {
+        GraphicsMediaPolicy::SHARED
+    } else {
+        state.current().image_media_policy()
+    };
+    let pane = find_pane_in_namespace_mut(state, pane_id, local)?;
+    if pane.pty_generation != generation {
+        return None;
+    }
+    pane.terminal.set_media_policy(policy);
+    let output = pane.terminal.process_server_output(bytes);
+    let chrome_changed = matches!(output.frame, crate::pane::OutputFrame::Rebuild);
+    let bell_fired = pane.terminal.take_bell();
+    pane.activity.last_activity = Some(std::time::Instant::now());
+
+    let mut indicator_raised = false;
+    let mut bell_alert_raised = false;
+    if !attended {
+        indicator_raised = !pane.activity.has_unseen_output;
+        pane.activity.has_unseen_output = true;
+        if bell_fired && bell_notifications {
+            indicator_raised |= !pane.activity.bell;
+            bell_alert_raised = !pane.activity.bell;
+            pane.activity.bell = true;
+        }
+    }
+    Some(PaneOutputEffects {
+        indicator_raised,
+        chrome_changed,
+        clipboard_events: output.clipboard_events,
+        bell_fired,
+        bell_alert_raised,
+    })
+}
+
+fn relay_output_clipboard(ctx: &mut Context<AppRoot>, events: Vec<TerminalClipboardEvent>) {
+    if !ctx.state.config.clipboard.enable_osc52 {
+        return;
+    }
+    for event in events {
+        if matches!(event.target, TerminalClipboardTarget::Clipboard) {
+            ctx.clipboard().relay_osc52(&event.text);
+        }
+    }
+}
+
+fn emit_output_bell(
+    ctx: &mut Context<AppRoot>,
+    pane_id: PaneId,
+    focused: Option<PaneId>,
+    alert_raised: bool,
+) {
+    crate::events::emit(
+        &ctx.state,
+        crate::events::Event::new(
+            crate::events::EventKind::Bell,
+            vec![
+                ("pane", pane_id.to_string()),
+                ("focused", (focused == Some(pane_id)).to_string()),
+            ],
+        ),
+    );
+    if alert_raised && !ctx.state.do_not_disturb {
+        crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Bell);
+    }
+}
+
+fn apply_stale_output(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    pane_id: PaneId,
+    local: bool,
+    generation: u64,
+    bytes: &[u8],
+) {
+    // A popup belongs to the outgoing attachment. Scratch frames are retagged when drained.
+    if local {
+        return;
+    }
+    if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
+        attachment.apply_background_output(pane_id, generation, bytes);
+    }
+}
+
+fn buffer_orphan_output(
+    state: &mut crate::state::State,
+    pane_id: PaneId,
+    local: bool,
+    generation: u64,
+    bytes: &[u8],
+) {
+    if !local && let Some(shared) = state.current_mut().shared.as_mut() {
+        shared.buffer_orphan_output(pane_id, generation, bytes);
+    }
+}
+
+fn output_frame_update(
+    state: &crate::state::State,
+    pane_id: PaneId,
+    indicator_raised: bool,
+    chrome_changed: bool,
+) -> Update {
+    if indicator_raised || chrome_changed {
+        Update::full()
+    } else if state.pane_is_rendered(pane_id) {
+        Update::paint()
+    } else {
+        Update::none()
+    }
+}
+
 pub(crate) fn output(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
@@ -14,95 +143,31 @@ pub(crate) fn output(
     bytes: Vec<u8>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
-        // A popup is owned by the outgoing attachment and never lives in a parked one. Scratch
-        // frames are retagged with the current epoch when their private mailbox is drained.
-        if local {
-            return Update::none();
-        }
         // A retained background attachment: keep its screens live so switching back is instant, but
         // never draw them (nothing background is on screen).
-        if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
-            attachment.apply_background_output(pane_id, generation, &bytes);
-        }
+        apply_stale_output(ctx, epoch, pane_id, local, generation, &bytes);
         return Update::none();
     }
     let focused = ctx.state.focused_pane();
-    let attended = ctx.state.is_pane_attended(pane_id);
-    let bell_notifications = ctx.state.config.notifications.bell;
-    // Reasserted here, on the output path itself, so it holds for every pane however it was
-    // created and whichever attachment is feeding it.
-    let policy = if local && crate::scratchpad::contains(&ctx.state, pane_id) {
-        GraphicsMediaPolicy::SHARED
-    } else {
-        ctx.state.current().image_media_policy()
-    };
     // Activity/bell indicators are workspace-agnostic (the workbar counts them across every
     // workspace), so an off-screen pane still needs a frame on the chunk that first raises one.
     // Both flags only ever go false -> true here, so that is a single frame per quiet period
     // rather than one per output chunk.
-    let mut indicator_raised = false;
-    let mut chrome_changed = false;
-    let mut clipboard_events = Vec::new();
-    let mut bell_fired = false;
-    let mut bell_alert_raised = false;
-    let matched = match find_pane_in_namespace_mut(&mut ctx.state, pane_id, local) {
-        Some(pane) if pane.pty_generation == generation => {
-            pane.terminal.set_media_policy(policy);
-            let output = pane.terminal.process_server_output(&bytes);
-            chrome_changed |= matches!(output.frame, crate::pane::OutputFrame::Rebuild);
-            clipboard_events = output.clipboard_events;
-            let bell = pane.terminal.take_bell();
-            bell_fired = bell;
-            pane.activity.last_activity = Some(std::time::Instant::now());
-            if !attended {
-                indicator_raised |= !pane.activity.has_unseen_output;
-                pane.activity.has_unseen_output = true;
-                if bell && bell_notifications {
-                    indicator_raised |= !pane.activity.bell;
-                    bell_alert_raised = !pane.activity.bell;
-                    pane.activity.bell = true;
-                }
-            }
-            true
-        }
-        _ => false,
-    };
-    if !matched {
+    let Some(effects) =
+        apply_current_pane_output(&mut ctx.state, pane_id, local, generation, &bytes)
+    else {
         // Output arrived before the layout commit that introduces this pane (or its new generation).
         // Buffer it so the reconciler can replay it when the pane appears; dropping it would leave
         // a follower's fresh pane blank until the next redraw. Nothing draws it yet, so no frame.
         // Local output never joins that shared-layout race: the owner created the pane itself.
-        if !local && let Some(shared) = ctx.state.current_mut().shared.as_mut() {
-            shared.buffer_orphan_output(pane_id, generation, &bytes);
-        }
+        buffer_orphan_output(&mut ctx.state, pane_id, local, generation, &bytes);
         return Update::none();
+    };
+    relay_output_clipboard(ctx, effects.clipboard_events);
+    if effects.bell_fired {
+        emit_output_bell(ctx, pane_id, focused, effects.bell_alert_raised);
     }
-    if ctx.state.config.clipboard.enable_osc52 {
-        for event in clipboard_events {
-            if matches!(
-                event.target,
-                tui_lipan::prelude::TerminalClipboardTarget::Clipboard
-            ) {
-                ctx.clipboard().relay_osc52(&event.text);
-            }
-        }
-    }
-    if bell_fired {
-        crate::events::emit(
-            &ctx.state,
-            crate::events::Event::new(
-                crate::events::EventKind::Bell,
-                vec![
-                    ("pane", pane_id.to_string()),
-                    ("focused", (focused == Some(pane_id)).to_string()),
-                ],
-            ),
-        );
-        if bell_alert_raised && !ctx.state.do_not_disturb {
-            crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Bell);
-        }
-    }
-    if indicator_raised {
+    if effects.indicator_raised {
         // Session output bypasses the global post-update sweep. An unseen-output or bell edge is
         // the only output-side mutation that can start the shared alert animation, so arm it here
         // once on that edge instead of scanning all panes after every ordinary chunk.
@@ -129,13 +194,12 @@ pub(crate) fn output(
     //
     // A raised activity or bell indicator is different: those *are* view state (the workbar counts
     // them), as is a changed OSC title, so those frames have to be full ones.
-    if indicator_raised || chrome_changed {
-        Update::full()
-    } else if ctx.state.pane_is_rendered(pane_id) {
-        Update::paint()
-    } else {
-        Update::none()
-    }
+    output_frame_update(
+        &ctx.state,
+        pane_id,
+        effects.indicator_raised,
+        effects.chrome_changed,
+    )
 }
 
 pub(crate) fn resized(

@@ -85,6 +85,7 @@ pub(crate) struct Row {
     title: String,
     title_style: Style,
     badge: Option<Element>,
+    hover_badge: Option<Element>,
     meta: Option<Element>,
     detail: Vec<(String, Style)>,
 }
@@ -98,6 +99,7 @@ impl Row {
             title: title.into(),
             title_style: Style::default(),
             badge: None,
+            hover_badge: None,
             meta: None,
             detail: Vec::new(),
         }
@@ -137,6 +139,15 @@ impl Row {
         self
     }
 
+    /// What the badge becomes while the pointer is on the row: an affordance in place of a status,
+    /// the same trade the ✕ makes. It costs no line of its own, which is what lets a row say both
+    /// what it is and what clicking it does without growing — and a row that grows under the
+    /// pointer shifts everything below it out from under the hand that is aiming.
+    pub(super) fn hover_badge_text(mut self, text: impl Into<String>, style: Style) -> Self {
+        self.hover_badge = Some(Text::new(text.into()).style(style).into());
+        self
+    }
+
     pub(super) fn glyph(mut self, glyph: impl Into<Element>) -> Self {
         self.glyph = Some(glyph.into());
         self
@@ -156,6 +167,7 @@ impl Row {
         mut self,
         ctx: &Context<AppRoot>,
         selected: bool,
+        hovered: bool,
         close: Option<CloseAffordance>,
     ) -> Element {
         let theme = &ctx.state.theme;
@@ -200,9 +212,10 @@ impl Row {
         // A visible ✕ takes that slot instead of the badge rather than fighting it for width. The
         // badge is ambient (what the pane runs) and comes back the moment the pointer leaves; the ✕
         // is the thing being aimed at, so in a column this narrow it gets the space.
-        let trailing = match close {
-            Some(close) => Some(close_affordance(ctx, close)),
-            None => self.badge,
+        let trailing = match (close, hovered) {
+            (Some(close), _) => Some(close_affordance(ctx, close)),
+            (None, true) => self.hover_badge.or(self.badge),
+            (None, false) => self.badge,
         };
         // The name keeps only the width it needs when something rides beside it, so the meta
         // token stays attached to the name rather than drifting to the far edge; the flex moves to

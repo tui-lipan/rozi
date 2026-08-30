@@ -71,9 +71,8 @@ pub(crate) fn clear_pending_session_arms(ctx: &mut Context<AppRoot>) {
 }
 
 pub(crate) fn open_session_picker(ctx: &mut Context<AppRoot>) -> Update {
-    // Open instantly from local discovery and the last successful remote-host snapshots. Live
-    // remote state arrives through the recurring watcher; opening the picker does not need a
-    // duplicate eager ssh sweep.
+    // Open instantly from local discovery and the last successful remote-host snapshots. The
+    // recurring watcher refreshes local state only; remote discovery is explicit in Remote hosts.
     let rows = immediate_picker_rows(ctx);
     let mut picker = SessionPickerState::new(rows);
     if let Some(current_name) = ctx.state.current().session_name.as_deref()
@@ -92,13 +91,12 @@ pub(crate) fn open_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     Update::with_command(session_watch_command(
         ctx.state.session_picker_epoch,
         ctx.state.local_current_session_name().map(str::to_string),
-        ctx.state.config.remote.clone(),
     ))
 }
 
 /// Open the session picker at startup (nothing attached yet). Sets up the picker state and returns
 /// the watcher epoch so `init` can kick off the first discovery tick. Local rows show immediately;
-/// live remote rows arrive async, so a dead configured host never stalls startup.
+/// cached remote rows are immediate, while local runtime changes arrive through the watcher.
 ///
 /// `highlight` lands the selection on a specific session — what `[session] startup = "last"` uses
 /// to point at the session it remembered but could not reopen.
@@ -144,7 +142,6 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     Update::with_command(session_watch_command(
         ctx.state.session_picker_epoch,
         ctx.state.local_current_session_name().map(str::to_string),
-        ctx.state.config.remote.clone(),
     ))
 }
 
@@ -289,10 +286,7 @@ pub(crate) fn session_name_already_running(
             .ok()
             .flatten()
             .is_some(),
-        Some(target) => ctx
-            .state
-            .host_session_cache
-            .get(&target.display_label())
+        Some(target) => crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
             .is_some_and(|sessions| sessions.iter().any(|session| session.name == name)),
     }
 }
@@ -310,6 +304,7 @@ fn enter_session_rename(ctx: &mut Context<AppRoot>, rename: SessionRenameState) 
     ctx.state.search = None;
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
+    crate::ops::session::remotes::dismiss_remote_picker(&mut ctx.state);
     ctx.state.mode = crate::state::Mode::Normal;
     request_rename_session_focus(ctx);
     Update::full()
@@ -538,38 +533,18 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<AppRoot>) -> Update {
             }
             crate::ops::overlay_return::finish(ctx)
         }
-        NamingMode::ConnectRemoteHost => {
-            let host = name;
-            if host.is_empty() {
-                // An empty target is a cancel by another name.
-                ctx.state.rename_session = None;
-                return crate::ops::overlay_return::finish(ctx);
-            }
-            // Validate the SSH target before tearing anything down; a bad host must not strand the
-            // current session.
-            if let Err(err) = crate::session::remote::parse_remote_target(&host) {
-                crate::pty_events::notify_error(
-                    ctx,
-                    "Invalid remote host",
-                    format!("`{host}`: {err}"),
-                );
-                request_rename_session_focus(ctx);
-                return Update::full();
-            }
-            ctx.state.rename_session = None;
-            crate::ops::overlay_return::leave(ctx);
-            crate::session::record_recent_remote(&host);
-            // Attach a fresh ephemeral session on the remote host (as `--remote <host>` does with no
-            // session named). The current session is retained in the background per the usual switch.
-            let session = crate::state::remote_ephemeral_session_name();
-            attach_session_by_name(ctx, session, Some(host), None, true)
-        }
     }
 }
 
-pub(crate) fn open_connect_remote_host(ctx: &mut Context<AppRoot>) -> Update {
-    clear_pending_session_arms(ctx);
-    enter_session_rename(ctx, SessionRenameState::new_connect_host())
+/// Open this client's temporary remote session on an explicitly selected host. The picker target
+/// is authoritative even when a different remote attachment is visible behind the overlay.
+pub(crate) fn open_ephemeral_session_on_host(
+    ctx: &mut Context<AppRoot>,
+    target: crate::session::remote::RemoteTarget,
+) -> Update {
+    crate::ops::overlay_return::leave(ctx);
+    let name = crate::state::remote_ephemeral_session_name();
+    attach_session_by_name(ctx, name, Some(target.display_label()), Some(target), true)
 }
 
 pub(crate) fn close_rename_session(ctx: &mut Context<AppRoot>) -> Update {
@@ -749,14 +724,21 @@ pub(crate) fn remove_cached_remote_session(
     session_name: &str,
     target: &crate::session::remote::RemoteTarget,
 ) {
-    let label = target.display_label();
-    let Some(sessions) = ctx.state.host_session_cache.get_mut(&label) else {
+    let Some(mut sessions) =
+        crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
+            .map(|sessions| sessions.to_vec())
+    else {
         return;
     };
     let old_len = sessions.len();
     sessions.retain(|session| session.name != session_name);
     if sessions.len() != old_len {
-        crate::session::record_host_sessions(&label, sessions.clone());
+        crate::session::record_host_sessions(target, sessions.clone());
+        crate::session::set_cached_host_sessions(
+            &mut ctx.state.host_session_cache,
+            target,
+            sessions,
+        );
     }
 }
 
@@ -774,6 +756,13 @@ pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<AppRoot>) -> Upda
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
+    disconnect_discovered_attachment(ctx, entry)
+}
+
+pub(crate) fn disconnect_discovered_attachment(
+    ctx: &mut Context<AppRoot>,
+    entry: DiscoveredSession,
+) -> Update {
     if !session_row_can_disconnect(&ctx.state, &entry) {
         return Update::none();
     }
@@ -797,7 +786,11 @@ pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<AppRoot>) -> Upda
         ctx,
         format!("Disconnected from `{display}` — server still running"),
     );
-    refresh_session_picker(ctx)
+    if ctx.state.show_session_picker {
+        refresh_session_picker(ctx)
+    } else {
+        Update::full()
+    }
 }
 
 /// Disconnect the client from a remote host: close every attachment (current and retained) to the

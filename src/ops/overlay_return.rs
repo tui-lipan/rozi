@@ -27,6 +27,22 @@ pub(crate) fn picker_origin(state: &State) -> Option<OverlayOrigin> {
             apply_mode: picker.apply_mode,
         });
     }
+    if let Some(picker) = state.remote_picker.as_ref() {
+        return Some(match &picker.mode {
+            crate::state::RemotePickerMode::Hosts => OverlayOrigin::RemoteHosts {
+                query: picker.host_input.text().to_string(),
+                selected_target: picker.selected_host.clone(),
+            },
+            crate::state::RemotePickerMode::HostSessions { target } => {
+                OverlayOrigin::RemoteHostSessions {
+                    target: target.clone(),
+                    query: picker.session_input.text().to_string(),
+                    selected_session: picker.selected_session.clone(),
+                    parent: state.overlay_return.clone().map(Box::new),
+                }
+            }
+        });
+    }
     state
         .session_picker
         .as_ref()
@@ -83,6 +99,28 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
                 picker.selected = selected.min(picker.entries.len().saturating_sub(1));
             }
             Some(update)
+        }
+        OverlayOrigin::RemoteHosts {
+            query,
+            selected_target,
+        } => Some(crate::ops::session::remotes::restore_remote_hosts(
+            ctx,
+            query,
+            selected_target,
+        )),
+        OverlayOrigin::RemoteHostSessions {
+            target,
+            query,
+            selected_session,
+            parent,
+        } => {
+            ctx.state.overlay_return = parent.map(|origin| *origin);
+            Some(crate::ops::session::remotes::restore_remote_host_sessions(
+                ctx,
+                target,
+                query,
+                selected_session,
+            ))
         }
     }
 }
@@ -260,6 +298,49 @@ mod tests {
                     .as_ref()
                     .map(|picker| picker.input.text().to_string()),
                 Some("dev".to_string())
+            );
+        });
+    }
+
+    #[test]
+    fn remote_create_prompt_preserves_the_sessions_grandparent() {
+        with_backend(|backend| {
+            let target = crate::session::remote::RemoteTarget::Alias("workbox".into());
+            let mut sessions = SessionPickerState::new(Vec::new());
+            sessions.input.set_text("local");
+            backend.state_mut().session_picker = Some(sessions);
+            backend.state_mut().show_session_picker = true;
+
+            backend
+                .dispatch(Msg::SessionPickerRemoteHosts)
+                .expect("open remote hosts");
+            backend
+                .state_mut()
+                .remote_picker
+                .as_mut()
+                .expect("remote picker")
+                .enter_host_sessions(target);
+            backend
+                .dispatch(Msg::RemotePickerCreateSession)
+                .expect("open remote create prompt");
+            backend
+                .dispatch(Msg::CloseRenameSession)
+                .expect("return to host sessions");
+            backend
+                .dispatch(Msg::CloseRemotePicker)
+                .expect("return to hosts");
+            backend
+                .dispatch(Msg::CloseRemotePicker)
+                .expect("return to sessions");
+
+            assert!(backend.state().show_session_picker);
+            assert_eq!(
+                backend
+                    .state()
+                    .session_picker
+                    .as_ref()
+                    .map(|picker| picker.input.text()),
+                Some("local")
             );
         });
     }

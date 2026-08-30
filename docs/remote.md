@@ -39,8 +39,43 @@ identity_file = "~/.ssh/id_ed25519"
 ```
 
 Set `[remote] batch_mode = false` to allow SSH prompts. This applies to probing, installing,
-attaching, listing, and killing sessions. An attach uses SSH standard input for the live session, so
-a prompt may appear over the TUI. Prefer a loaded agent for regular use.
+attaching, listing, and killing sessions. Prefer a loaded agent for regular use.
+
+### Prompts inside the UI
+
+With `batch_mode = false`, a running Rozi client answers SSH prompts in a modal instead of letting
+them reach the terminal:
+
+- A password or key passphrase is masked and never appears on screen.
+- A host-key question shows the full fingerprint and takes `yes` or `no` unmasked.
+- A rejected password is reported on the prompt when SSH asks again.
+- `Esc` ends that connection's attempt. SSH re-asks three times per connection, so a refusal also
+  declines those retries and gives up on the host probe that raised them. Activating the host again
+  starts a new connection and prompts normally.
+- A prompt left unanswered for five minutes fails its connection and closes.
+
+Rozi sets `SSH_ASKPASS`, `SSH_ASKPASS_REQUIRE=force`, and its own endpoint variables on every `ssh`
+and `scp` it runs, overriding a desktop `SSH_ASKPASS` for those commands only. This needs OpenSSH
+8.4 or newer on the client; older clients prompt on the terminal, where the prompt will overwrite
+the UI.
+
+Command-line runs have no UI to cover, so `rozi list-sessions --remote`, `rozi kill-session
+--remote`, and the pre-launch install prompt keep SSH's ordinary terminal prompt.
+
+## Shared connections
+
+Opening a host runs several SSH commands: a shell-family probe, a capability probe, a re-check, and
+the attach. On Linux and macOS these share one connection, so a host is authenticated once instead
+of once per command — a password host asks for the password a single time, and later commands skip
+the handshake entirely.
+
+Rozi passes `ControlMaster=auto`, a `ControlPath` in its runtime directory, and `ControlPersist=60`,
+overriding any `ControlMaster` or `ControlPath` in your SSH config for its own commands. The shared
+connection closes on its own about a minute after the last one finishes. `ServerAliveInterval` and
+`ServerAliveCountMax` apply to it, since a shared connection's settings come from whichever command
+opened it.
+
+Windows clients have no SSH connection multiplexing and authenticate per command.
 
 Test authentication directly when setup fails:
 

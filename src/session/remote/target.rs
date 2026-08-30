@@ -12,6 +12,29 @@ pub enum RemoteTarget {
 }
 
 impl RemoteTarget {
+    /// Reversible representation used for persistent identity and command-line arguments.
+    ///
+    /// Unlike [`Self::display_label`], this preserves the distinction between a bare OpenSSH
+    /// alias and an explicit `ssh://` endpoint, and brackets IPv6 hosts so the result parses back
+    /// into the same target.
+    pub fn to_spec(&self) -> String {
+        match self {
+            Self::Alias(alias) => alias.clone(),
+            Self::Url { user, host, port } => {
+                let user = user
+                    .as_deref()
+                    .map_or(String::new(), |user| format!("{user}@"));
+                let host = if host.contains(':') {
+                    format!("[{host}]")
+                } else {
+                    host.clone()
+                };
+                let port = port.map_or(String::new(), |port| format!(":{port}"));
+                format!("ssh://{user}{host}{port}")
+            }
+        }
+    }
+
     pub fn display_label(&self) -> String {
         match self {
             Self::Alias(alias) => alias.clone(),
@@ -205,6 +228,44 @@ mod tests {
                 port: Some(2222),
             }
         );
+    }
+
+    #[test]
+    fn canonical_specs_round_trip() {
+        for target in [
+            RemoteTarget::Alias("workbox".into()),
+            RemoteTarget::Url {
+                user: None,
+                host: "example.com".into(),
+                port: None,
+            },
+            RemoteTarget::Url {
+                user: Some("adam".into()),
+                host: "example.com".into(),
+                port: Some(2222),
+            },
+            RemoteTarget::Url {
+                user: Some("adam".into()),
+                host: "2001:db8::1".into(),
+                port: Some(2222),
+            },
+        ] {
+            assert_eq!(parse_remote_target(&target.to_spec()).unwrap(), target);
+        }
+    }
+
+    #[test]
+    fn alias_and_url_with_the_same_label_keep_distinct_specs() {
+        let alias = RemoteTarget::Alias("box".into());
+        let url = RemoteTarget::Url {
+            user: None,
+            host: "box".into(),
+            port: None,
+        };
+        assert_eq!(alias.display_label(), url.display_label());
+        assert_ne!(alias, url);
+        assert_eq!(alias.to_spec(), "box");
+        assert_eq!(url.to_spec(), "ssh://box");
     }
 
     #[test]

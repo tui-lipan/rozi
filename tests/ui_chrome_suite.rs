@@ -1,7 +1,11 @@
+#[path = "suites/ui_chrome/askpass_smoke.rs"]
+mod askpass_smoke;
 #[path = "suites/ui_chrome/pick_smoke.rs"]
 mod pick_smoke;
 #[path = "suites/ui_chrome/prefix_mouse_gestures.rs"]
 mod prefix_mouse_gestures;
+#[path = "suites/ui_chrome/remote_sessions_smoke.rs"]
+mod remote_sessions_smoke;
 #[path = "suites/ui_chrome/session_picker_ephemeral.rs"]
 mod session_picker_ephemeral;
 #[path = "suites/ui_chrome/settings_rows_smoke.rs"]

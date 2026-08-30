@@ -46,7 +46,6 @@ pub(crate) fn expired(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
 /// which surface armed it, which would have to be kept in step with every new one.
 fn clear_all(ctx: &mut Context<AppRoot>) -> Update {
     let mut cleared = ctx.state.sidebar.pending_row_close.take().is_some();
-    cleared |= ctx.state.sidebar.pending_host_disconnect.take().is_some();
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         cleared |= picker.pending_kill.take().is_some();
         cleared |= picker.pending_restart.take().is_some();

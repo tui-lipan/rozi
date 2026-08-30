@@ -1315,6 +1315,21 @@ pub(crate) fn request_session_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::session_picker_key());
 }
 
+pub(crate) fn request_remote_picker_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::remote_picker_key());
+}
+
+pub(crate) fn request_remote_target_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::remote_target_input_key());
+}
+
+/// Focus the ssh prompt modal. It is raised by a background thread rather than by a keypress, so
+/// nothing else is moving focus onto it — and it has to take focus, or the answer would be typed
+/// into whatever was focused when ssh asked.
+pub(crate) fn request_askpass_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::askpass_input_key());
+}
+
 pub(crate) fn request_pick_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::pick_key());
 }

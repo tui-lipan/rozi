@@ -101,7 +101,7 @@ pub(super) fn command_rows(
                     },
                 )
             } else {
-                SidebarRow::header(built.build(ctx, false, None))
+                SidebarRow::header(built.build(ctx, false, false, None))
             }
         })
         .collect()

@@ -2,6 +2,7 @@ pub(crate) mod attach;
 pub(crate) mod control_lease;
 pub(crate) mod discovery;
 pub(crate) mod lifecycle;
+pub(crate) mod remotes;
 
 pub(crate) use attach::{
     apply_pending_background_closes, attach_session_by_name, clear_pending_session_action,
@@ -20,18 +21,20 @@ pub(crate) use control_lease::{
 };
 pub(crate) use discovery::{
     HostProbeStatus, apply_discovered_sessions, attached_session_rows, discover_picker_sessions,
-    discover_sidebar_sessions, local_picker_rows, seed_host_registry,
+    discover_remote_host_sessions, discover_sidebar_sessions, local_picker_rows,
+    seed_host_registry,
 };
 pub(crate) use lifecycle::{
     activate_discovered_session, activate_selected_session, apply_rename_session,
     clear_pending_session_arms, close_rename_session, close_session_picker,
-    disconnect_selected_attachment, disconnect_selected_host, kill_discovered_session,
-    kill_selected_session, open_connect_remote_host, open_create_session,
-    open_create_session_on_host, open_ephemeral_session, open_leave_prompt, open_rename_session,
-    open_session_picker, open_startup_session_picker, restart_selected_session,
-    session_row_can_disconnect, session_row_can_disconnect_host, session_row_can_restart,
-    session_row_is_current, session_row_is_restorable,
+    disconnect_discovered_attachment, disconnect_selected_attachment, disconnect_selected_host,
+    kill_discovered_session, kill_selected_session, open_create_session,
+    open_create_session_on_host, open_ephemeral_session, open_ephemeral_session_on_host,
+    open_leave_prompt, open_rename_session, open_session_picker, open_startup_session_picker,
+    restart_selected_session, session_row_can_disconnect, session_row_can_disconnect_host,
+    session_row_can_restart, session_row_is_current, session_row_is_restorable,
 };
+pub(crate) use remotes::{open_new_host_flow, open_remote_hosts};
 
 #[cfg(test)]
 mod tests;

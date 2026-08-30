@@ -8,6 +8,22 @@ use crate::session::discovery::DiscoveredSession;
 
 pub(crate) const SESSION_PICKER_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 
+#[cfg(test)]
+static REMOTE_PROBE_REQUESTS: std::sync::Mutex<Vec<crate::session::remote::RemoteTarget>> =
+    std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn note_remote_probe_request(target: &crate::session::remote::RemoteTarget) {
+    #[cfg(test)]
+    REMOTE_PROBE_REQUESTS.lock().unwrap().push(target.clone());
+    #[cfg(not(test))]
+    let _ = target;
+}
+
+#[cfg(test)]
+pub(crate) fn take_remote_probe_requests() -> Vec<crate::session::remote::RemoteTarget> {
+    std::mem::take(&mut *REMOTE_PROBE_REQUESTS.lock().unwrap())
+}
+
 /// Fast, local-only rows used by the picker and Sessions sidebar: local named sessions plus the
 /// attached session, with no remote ssh.
 pub(crate) fn local_picker_rows(ctx: &Context<AppRoot>) -> Vec<DiscoveredSession> {
@@ -19,13 +35,11 @@ pub(crate) fn local_picker_rows(ctx: &Context<AppRoot>) -> Vec<DiscoveredSession
 }
 
 pub(crate) fn immediate_picker_rows(ctx: &mut Context<AppRoot>) -> Vec<DiscoveredSession> {
-    if ctx.state.host_session_cache.is_empty() {
-        ctx.state.host_session_cache = crate::session::read_host_session_cache();
-    }
+    seed_host_registry(ctx);
     let mut rows = local_picker_rows(ctx);
-    push_cached_configured_remote_rows(
+    push_cached_known_remote_rows(
         &mut rows,
-        &ctx.state.config.remote,
+        &ctx.state.hosts,
         &ctx.state.host_session_cache,
         &[],
     );
@@ -51,21 +65,26 @@ pub(crate) fn apply_discovered_sessions(
         .filter_map(|(target, error)| error.is_none().then_some(target.clone()))
         .collect();
     for target in &successful_targets {
-        let label = target.display_label();
         let sessions = cached_sessions_for_target(&rows, target);
-        let known = ctx.state.host_session_cache.contains_key(&label);
+        let known =
+            crate::session::host_cache_contains_target(&ctx.state.host_session_cache, target);
         if (!sessions.is_empty() || known)
-            && ctx.state.host_session_cache.get(&label) != Some(&sessions)
+            && crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
+                != Some(sessions.as_slice())
         {
-            crate::session::record_host_sessions(&label, sessions.clone());
-            ctx.state.host_session_cache.insert(label, sessions);
+            crate::session::record_host_sessions(target, sessions.clone());
+            crate::session::set_cached_host_sessions(
+                &mut ctx.state.host_session_cache,
+                target,
+                sessions,
+            );
         }
     }
     // A failed (or not-yet-run) host probe keeps its last successful snapshot visible. Successful
     // hosts use only the fresh rows above, including an empty result which clears stale sessions.
-    push_cached_configured_remote_rows(
+    push_cached_known_remote_rows(
         &mut rows,
-        &ctx.state.config.remote,
+        &ctx.state.hosts,
         &ctx.state.host_session_cache,
         &successful_targets,
     );
@@ -97,15 +116,10 @@ pub(crate) fn apply_discovered_sessions(
     Update::with_command(session_watch_command(
         epoch,
         ctx.state.local_current_session_name().map(str::to_string),
-        ctx.state.config.remote.clone(),
     ))
 }
 
-pub(crate) fn session_watch_command(
-    epoch: u64,
-    current_name: Option<String>,
-    remote_config: crate::config::RemoteConfig,
-) -> Command {
+pub(crate) fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
     // Recurring watch: see `profile_session_watch_command` -- the wait belongs on the timer
     // thread, not on a pooled worker held open for the life of the picker.
     Command::after(
@@ -113,9 +127,7 @@ pub(crate) fn session_watch_command(
         move |link: CommandLink<Msg>| {
             // Discovery runs here (off the UI thread); a failed sweep simply skips this tick and lets
             // the loop stop rather than clobbering the last good list.
-            if let Ok((rows, host_status)) =
-                discover_picker_sessions(current_name.as_deref(), &remote_config)
-            {
+            if let Ok((rows, host_status)) = discover_picker_sessions(current_name.as_deref()) {
                 link.send(Msg::SessionsDiscovered {
                     epoch,
                     rows,
@@ -131,19 +143,12 @@ pub(crate) fn session_watch_command(
 /// per-process, disposable, and self-reaping, and their `eph-…` names are reserved; another
 /// process's ephemeral has no business being a selectable row (attaching would fight its owner over
 /// teardown), so it is filtered out here. Our own ephemeral still appears via the current row.
-///
-/// Configured `[remote.hosts.*]` aliases are probed in parallel (failures are skipped so one
-/// unreachable host never blocks the picker).
 pub(crate) fn discover_picker_sessions(
     current_name: Option<&str>,
-    remote_config: &crate::config::RemoteConfig,
 ) -> std::io::Result<(Vec<DiscoveredSession>, HostProbeStatus)> {
     let mut rows = crate::session::discovery::discover_selectable_sessions(current_name)?;
-    let (remote_rows, host_status) =
-        probe_remote_targets_reporting(&configured_targets(remote_config), remote_config);
-    rows.extend(remote_rows);
     sort_session_rows(&mut rows);
-    Ok((rows, host_status))
+    Ok((rows, Vec::new()))
 }
 
 /// Per-probed-host outcome carried back from a sidebar sweep: `None` cleared the host's error,
@@ -154,22 +159,19 @@ pub(crate) type HostProbeStatus = Vec<(crate::session::remote::RemoteTarget, Opt
 /// per-host probe outcomes.
 pub(crate) type SidebarDiscovery = (std::io::Result<Vec<DiscoveredSession>>, HostProbeStatus);
 
-/// Every configured remote target: `[remote.hosts.*]` aliases plus `default_host`.
-pub(crate) fn configured_targets(
+/// Probe exactly one remote host using the shared SSH/list-sessions protocol path.
+pub(crate) fn discover_remote_host_sessions(
+    target: &crate::session::remote::RemoteTarget,
     remote_config: &crate::config::RemoteConfig,
-) -> Vec<crate::session::remote::RemoteTarget> {
-    let mut hosts: Vec<String> = remote_config.hosts.keys().cloned().collect();
-    if let Some(default_host) = &remote_config.default_host
-        && !hosts.iter().any(|h| h == default_host)
-    {
-        hosts.push(default_host.clone());
-    }
-    hosts.sort();
-    hosts.dedup();
-    hosts
-        .iter()
-        .filter_map(|alias| crate::session::remote::parse_remote_target(alias).ok())
-        .collect()
+) -> std::io::Result<Vec<DiscoveredSession>> {
+    let mut rows = crate::session::discovery::discover_sessions_from(
+        &crate::session::discovery::SessionSource::Remote(target.clone()),
+        remote_config,
+    )?;
+    // Remote ephemeral sessions belong to the client that created them. The caller adds this
+    // client's attached ephemeral rows back from local state.
+    rows.retain(|entry| !entry.ephemeral);
+    Ok(rows)
 }
 
 /// Probe `targets` for their sessions, one ssh round-trip each, in parallel, reporting each host's
@@ -185,10 +187,7 @@ pub(crate) fn probe_remote_targets_reporting(
         let config = remote_config.clone();
         let target = target.clone();
         handles.push(std::thread::spawn(move || {
-            let outcome = crate::session::discovery::discover_sessions_from(
-                &crate::session::discovery::SessionSource::Remote(target.clone()),
-                &config,
-            );
+            let outcome = discover_remote_host_sessions(&target, &config);
             (target, outcome)
         }));
     }
@@ -215,7 +214,7 @@ pub(crate) fn cached_sessions_for_target(
     target: &crate::session::remote::RemoteTarget,
 ) -> Vec<crate::session::CachedHostSession> {
     rows.iter()
-        .filter(|entry| entry.remote_target.as_ref() == Some(target))
+        .filter(|entry| !entry.ephemeral && entry.remote_target.as_ref() == Some(target))
         .map(|entry| crate::session::CachedHostSession {
             name: entry.name.clone(),
             ephemeral: entry.ephemeral,
@@ -229,20 +228,21 @@ pub(crate) fn cached_sessions_for_target(
         .collect()
 }
 
-/// Add last-successful rows for configured hosts not present in `fresh_targets`. Live/local rows
+/// Add last-successful rows for every known host not present in `fresh_targets`. Live/local rows
 /// win identity collisions, especially for an attachment whose pane/client counts are newer.
-pub(crate) fn push_cached_configured_remote_rows(
+pub(crate) fn push_cached_known_remote_rows(
     rows: &mut Vec<DiscoveredSession>,
-    remote_config: &crate::config::RemoteConfig,
+    hosts: &crate::state::HostRegistry,
     cache: &crate::session::HostSessionCache,
     fresh_targets: &[crate::session::remote::RemoteTarget],
 ) {
-    for target in configured_targets(remote_config)
-        .into_iter()
+    for target in hosts
+        .iter()
+        .map(|entry| entry.target.clone())
         .filter(|target| !fresh_targets.contains(target))
     {
         let label = target.display_label();
-        let Some(sessions) = cache.get(&label) else {
+        let Some(sessions) = crate::session::host_sessions_for(cache, &target) else {
             continue;
         };
         for session in sessions {
@@ -342,6 +342,18 @@ pub(crate) fn held_host_targets(
     std::iter::once(state.current())
         .chain(state.background.values())
         .filter_map(|attachment| {
+            if !attachment.session_attached
+                && attachment.pending_session_attach.is_none()
+                && !matches!(
+                    attachment.connection,
+                    crate::state::ConnectionState::Connected
+                        | crate::state::ConnectionState::Connecting
+                        | crate::state::ConnectionState::Reconnecting
+                        | crate::state::ConnectionState::AuthRequired
+                )
+            {
+                return None;
+            }
             let target = attachment.remote_target.clone()?;
             let alias = attachment
                 .remote_host

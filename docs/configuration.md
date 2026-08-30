@@ -300,7 +300,7 @@ See [Sessions](sessions.md).
 | `server_alive_interval_secs` | integer | `15` | Minimum `1`. |
 | `server_alive_count_max` | integer | `3` | Minimum `1`. |
 | `install` | string | `"prompt"` | `"prompt"`, `"always"`, or `"never"`. Noninteractive runs never install. |
-| `batch_mode` | bool | `true` | Sets SSH `BatchMode=yes`. |
+| `batch_mode` | bool | `true` | Sets SSH `BatchMode=yes`. When `false`, a running client answers SSH prompts in a modal; see [Remote sessions](remote.md#prompts-inside-the-ui). |
 
 ### `[remote.hosts.<alias>]`
 

@@ -1,0 +1,31 @@
+# Minimal configuration for exercising the remote host picker.
+#
+# Run with:
+#   cargo run -- --config examples/remote-host-picker.toml
+#
+# Open Sessions, then press Ctrl+R. `localhost` can succeed when an SSH server and Rozi are
+# available locally. `offline-demo` uses the documentation-only TEST-NET-1 range to exercise the
+# failure state without contacting a real machine.
+
+[remote]
+default_host = "localhost"
+connection_timeout_secs = 3
+# Allow OpenSSH to request a password or key passphrase for this local test host.
+batch_mode = false
+install = "prompt"
+
+[remote.hosts.localhost]
+host = "localhost"
+# The probe looks for `rozi` on PATH and in ~/.local/bin, ~/.cargo/bin, /usr/local/bin — none of
+# which is where `cargo run` puts it. Without this the host reports "No rozi on host", and
+# `install = "prompt"` cannot rescue it: there is no way to answer that prompt from inside the TUI.
+# `binary_path` skips the probe and the install entirely.
+# binary_path = "/absolute/path/to/rozi/target/debug/rozi"
+
+[remote.hosts.offline-demo]
+host = "192.0.2.1"
+
+[sidebar]
+split_ratio = 0.690
+split = false
+width = 30

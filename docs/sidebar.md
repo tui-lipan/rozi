@@ -89,6 +89,11 @@ to it. Restorable sessions and cached offline remote rows remain visible when av
 An offline host has a connect row. An online host has a disconnect row and a new-session row.
 Disconnecting a host detaches this client but leaves named servers running.
 
+The final **+ Connect a host…** row opens the same new-host prompt as **Sessions → Remote hosts →
+Ctrl+N**. A valid target is remembered only after successful discovery. Expanding or explicitly
+connecting a host probes on demand; merely opening Sessions or the sidebar does not contact every
+configured host.
+
 Hover a live session row and click `x` twice to kill it. Killing the active session leaves the
 client in the picker or sessionless launcher. See [Sessions](sessions.md).
 

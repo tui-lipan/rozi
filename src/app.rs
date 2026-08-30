@@ -350,7 +350,7 @@ impl Component for AppRoot {
                     std::thread::spawn(move || {
                         std::thread::sleep(Duration::from_millis(1500));
                         if let Ok((rows, host_status)) =
-                            crate::ops::session::discover_picker_sessions(None, &remote_config)
+                            crate::ops::session::discover_picker_sessions(None)
                         {
                             watch_link.send(Msg::SessionsDiscovered {
                                 epoch,
@@ -766,6 +766,13 @@ fn apply_config_path(path: Option<String>) {
 }
 
 pub fn run() -> Result<()> {
+    // Ahead of argument parsing: `ssh` re-executes this binary as its askpass helper with a prompt
+    // where rozi expects a subcommand. The environment it was handed says so unambiguously, and
+    // only `session::remote::askpass::configure` ever sets it.
+    if let Some(helper) = crate::session::remote::askpass::helper_invocation() {
+        helper.run();
+    }
+
     let parsed = match cli::parse_cli_args(std::env::args().skip(1).collect()) {
         Ok(parsed) => parsed,
         Err(message) => {
@@ -1172,24 +1179,29 @@ pub fn run() -> Result<()> {
         }
     }
 
-    app.mount(AppRoot::new(
-        config,
-        theme,
-        startup_system_theme,
-        startup_profile,
-        startup_messages,
-        control_listener,
-        control_guard,
-        attach_session,
-        startup_autostart,
-        startup_create_only,
-        cli.read_only,
-        remote,
-        want_startup_picker,
-        startup_picker_highlight,
-    ))
-    .exit_view(crate::exit_view::exit_view)
-    .run()
+    let outcome = app
+        .mount(AppRoot::new(
+            config,
+            theme,
+            startup_system_theme,
+            startup_profile,
+            startup_messages,
+            control_listener,
+            control_guard,
+            attach_session,
+            startup_autostart,
+            startup_create_only,
+            cli.read_only,
+            remote,
+            want_startup_picker,
+            startup_picker_highlight,
+        ))
+        .exit_view(crate::exit_view::exit_view)
+        .run();
+    // The control socket has a guard the app owns; the askpass endpoint is reached from worker
+    // threads with no such owner, so it is retired here.
+    crate::session::remote::askpass::shutdown();
+    outcome
 }
 
 /// Load a profile the user named explicitly. A target typed on the command line is a request that
@@ -2717,7 +2729,7 @@ mod tests {
                 assert!(
                     lines
                         .iter()
-                        .any(|line| line.contains("connect host Ctrl+r")),
+                        .any(|line| line.contains("remote hosts Ctrl+r")),
                     "{joined}"
                 );
                 assert!(

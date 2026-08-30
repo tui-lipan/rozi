@@ -265,7 +265,6 @@ pub(crate) fn move_cursor(ctx: &mut Context<AppRoot>, delta: isize) -> Update {
         return Update::none();
     }
     // Moving off a row disarms any pending confirmation.
-    ctx.state.sidebar.pending_host_disconnect = None;
     ctx.state.sidebar.pending_row_close = None;
     ctx.state.sidebar.panels[panel].cursor = cursor;
     ctx.state.sidebar.panels[panel].suppress_row_hover = true;

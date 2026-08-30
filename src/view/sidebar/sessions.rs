@@ -44,18 +44,6 @@ fn attachment_connections(ctx: &Context<AppRoot>, target: &RemoteTarget) -> Vec<
         .collect()
 }
 
-/// The dot glyph, label, and text style for a host's status. Collapsed to the two states that
-/// matter to the user — Online / Offline — plus the transient Connecting.
-fn status_face(theme: &Theme, status: HostStatus) -> (&'static str, &'static str, Style) {
-    match status {
-        HostStatus::Connected => ("●", "Online", Style::new().fg(theme.status.success)),
-        HostStatus::Reachable => ("●", "Online", Style::new().fg(theme.status.info)),
-        HostStatus::Connecting => ("◌", "Connecting…", Style::new().fg(theme.status.warning)),
-        HostStatus::Disconnected => ("○", "Offline", super::super::fg_only(&theme.muted)),
-        HostStatus::Unreachable => ("○", "Offline", Style::new().fg(theme.status.error)),
-    }
-}
-
 /// One live session row: name, current/background/reconnecting state, panes, and origin.
 fn session_row(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> SidebarRow {
     let current = ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
@@ -135,52 +123,60 @@ fn cached_session_row(
 
 /// A section header (`LOCAL`, or a host alias) with an optional right-aligned status badge.
 ///
-/// A remote host is one two-line row: its connect/disconnect description is the detail line, so the
-/// row list wraps the title and description in one `MouseRegion`. `LOCAL` remains a one-line,
-/// inert header.
+/// The badge says what state the host is in; the second line, when it has one, says why. What to
+/// *do* about the state depends on whether that line is already spoken for:
+///
+/// - a connected host is one line, and its ✕ appears under the pointer;
+/// - a host that failed spends its second line on the reason, so its connect affordance hides in
+///   the badge's slot rather than growing the row to three lines;
+/// - an offline host with nothing to explain has that line free, and a standing "Click to connect"
+///   is plainer than one the pointer has to go looking for.
 fn header_row(
     ctx: &Context<AppRoot>,
     label: &str,
-    remote: Option<(HostStatus, &RemoteTarget)>,
+    host: Option<(&HostEntry, HostStatus)>,
 ) -> SidebarRow {
     let theme = &ctx.state.theme;
     let mut row = Row::new(label.to_string())
         .group_level()
         .title_style(super::super::fg_only(&theme.accent).bold());
-    let mut target = RowTarget::Inert;
-    if let Some((status, remote_target)) = remote {
-        let (dot, text, color) = status_face(theme, status);
-        row = row.badge_text(format!("{dot} {text}"), color);
-        let muted = super::super::fg_only(&theme.muted);
-        let (description, description_style, row_target) = match status {
-            HostStatus::Connected | HostStatus::Reachable => {
-                let armed =
-                    ctx.state.sidebar.pending_host_disconnect.as_ref() == Some(remote_target);
-                if armed {
-                    (
-                        "Click again to confirm",
+    let Some((host, status)) = host else {
+        return SidebarRow::item(row, RowTarget::Inert);
+    };
+    row = row.badge(crate::view::session_status::host_status_badge(
+        status,
+        crate::view::session_status::HostStatusStyles::from_theme(theme),
+    ));
+    match status {
+        HostStatus::Connected | HostStatus::Reachable => SidebarRow::item(row, RowTarget::Inert)
+            .closable(crate::state::SidebarClose::Host {
+                target: host.target.clone(),
+            }),
+        HostStatus::Disconnected | HostStatus::Unreachable => {
+            // Only while unreachable: a live attachment outranks the probe in `status_for`, so a
+            // host that failed once and is connected now would otherwise keep explaining a failure
+            // that no longer describes anything on screen.
+            let reason = (status == HostStatus::Unreachable)
+                .then(|| host.probe.error())
+                .flatten();
+            row = match reason {
+                // The reason has taken the second line, and a row that is already two lines high
+                // must not grow a third — so the affordance hides in the badge's slot, muted,
+                // reading as the same quiet chrome as the word it replaces.
+                Some(error) => row
+                    .detail(
+                        crate::session::discovery::probe_failure_reason(error),
                         Style::new().fg(theme.status.error),
-                        RowTarget::HostDisconnect(remote_target.clone()),
                     )
-                } else {
-                    (
-                        "Click to disconnect",
-                        muted,
-                        RowTarget::HostDisconnect(remote_target.clone()),
-                    )
-                }
-            }
-            HostStatus::Disconnected | HostStatus::Unreachable => (
-                "Click to connect",
-                muted,
-                RowTarget::HostConnect(remote_target.clone()),
-            ),
-            HostStatus::Connecting => ("Connecting…", muted, RowTarget::Inert),
-        };
-        row = row.detail(description, description_style);
-        target = row_target;
+                    .hover_badge_text("Connect", super::super::fg_only(&theme.muted)),
+                // Nothing to explain, so the second line is free. Spend it: a standing invitation
+                // is plainer than one the pointer has to go looking for.
+                None => row.detail("Click to connect", super::super::fg_only(&theme.muted)),
+            };
+            SidebarRow::item(row, RowTarget::HostConnect(host.target.clone()))
+        }
+        HostStatus::Connecting => SidebarRow::item(row, RowTarget::Inert),
     }
-    SidebarRow::item(row, target)
 }
 
 /// The muted "nothing here" line for a group with no sessions to list.
@@ -253,11 +249,8 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
         rows.push(header_row(
             ctx,
             &host.alias.to_uppercase(),
-            Some((status, &host.target)),
+            Some((host, status)),
         ));
-        if let Some(error) = host.probe.error() {
-            rows.push(empty_row_error(ctx, error));
-        }
 
         match status {
             HostStatus::Connecting => {}
@@ -278,10 +271,8 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
             }
             HostStatus::Disconnected | HostStatus::Unreachable => {
                 // Offline: the host row connects it; last-seen sessions remain visible from cache.
-                if let Some(cached) = ctx
-                    .state
-                    .host_session_cache
-                    .get(&host.target.display_label())
+                if let Some(cached) =
+                    crate::session::host_sessions_for(&ctx.state.host_session_cache, &host.target)
                 {
                     for entry in cached.iter().filter(|s| !s.ephemeral) {
                         rows.push(cached_session_row(ctx, host, entry));
@@ -297,17 +288,4 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
     rows.push(action_row(ctx, "Connect a host…", RowTarget::ConnectHost));
 
     rows
-}
-
-/// The inline reason under a host that failed to connect: a short phrase naming what to go fix, not
-/// the ssh/plumbing message behind it — see [`crate::session::discovery::probe_failure_reason`].
-fn empty_row_error(ctx: &Context<AppRoot>, error: &str) -> SidebarRow {
-    SidebarRow::item(
-        Row::new(crate::session::discovery::probe_failure_reason(error))
-            // Aligned with the host row above rather than indented under it: this says something
-            // about the host itself, not about one of the sessions it would have listed.
-            .group_level()
-            .title_style(Style::new().fg(ctx.state.theme.status.error)),
-        RowTarget::Inert,
-    )
 }

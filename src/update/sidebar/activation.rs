@@ -24,8 +24,6 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
     let Some(close) = row.close else {
         return Update::none();
     };
-    // Any other pending confirmation is abandoned by acting here, as it is on an activation.
-    ctx.state.sidebar.pending_host_disconnect = None;
     if ctx.state.sidebar.pending_row_close.take() != Some(close.clone()) {
         ctx.state.sidebar.pending_row_close = Some(close);
         return crate::ops::confirm::arm(ctx);
@@ -41,6 +39,9 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
             RowTarget::Session(entry) => crate::ops::session::kill_discovered_session(ctx, *entry),
             _ => Update::none(),
         },
+        crate::state::SidebarClose::Host { target } => {
+            crate::update::sidebar::sessions::disconnect_host(ctx, target)
+        }
     }
 }
 
@@ -71,9 +72,7 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
     if index >= items.len() {
         return Update::none();
     }
-    // Acting on anything disarms a pending confirmation; capture the host one first so the matching
-    // disconnect row can still see its own armed state below.
-    let armed_disconnect = ctx.state.sidebar.pending_host_disconnect.take();
+    // Acting on anything disarms a pending confirmation.
     ctx.state.sidebar.pending_row_close = None;
     match items.swap_remove(index).target {
         RowTarget::Inert => Update::none(),
@@ -85,14 +84,11 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         RowTarget::HostConnect(target) => {
             crate::update::sidebar::sessions::connect_host(ctx, target)
         }
-        RowTarget::HostDisconnect(target) => {
-            crate::update::sidebar::sessions::disconnect_host(ctx, target, armed_disconnect)
-        }
         RowTarget::NewSession(None) => crate::ops::session::open_create_session(ctx),
         RowTarget::NewSession(Some(target)) => {
             crate::ops::session::open_create_session_on_host(ctx, target)
         }
-        RowTarget::ConnectHost => crate::ops::session::open_connect_remote_host(ctx),
+        RowTarget::ConnectHost => crate::ops::session::open_new_host_flow(ctx),
         RowTarget::Launcher {
             config_epoch,
             tab_id,

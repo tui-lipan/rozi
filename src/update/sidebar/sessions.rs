@@ -120,34 +120,25 @@ pub(crate) fn sessions_discovered(
     // changed, so a steady 1.5s sweep does not churn the disk).
     for (target, status) in host_status {
         if status.is_none() {
-            let label = target.display_label();
-            let sessions: Vec<crate::session::CachedHostSession> = ctx
-                .state
-                .sidebar
-                .sessions
-                .iter()
-                .filter(|entry| entry.remote_target.as_ref() == Some(&target))
-                .map(|entry| crate::session::CachedHostSession {
-                    name: entry.name.clone(),
-                    ephemeral: entry.ephemeral,
-                    panes: match &entry.status {
-                        crate::session::discovery::DiscoveredSessionStatus::Running {
-                            panes,
-                            ..
-                        } => *panes,
-                        _ => 0,
-                    },
-                })
-                .collect();
+            let sessions = crate::ops::session::discovery::cached_sessions_for_target(
+                &ctx.state.sidebar.sessions,
+                &target,
+            );
             // Only persist a real change, and never write an empty list for a host that never had
             // one cached — there is nothing to remember, and it keeps the sweep from creating a
             // file on the first probe of a session-less host.
-            let known = ctx.state.host_session_cache.contains_key(&label);
+            let known =
+                crate::session::host_cache_contains_target(&ctx.state.host_session_cache, &target);
             if (!sessions.is_empty() || known)
-                && ctx.state.host_session_cache.get(&label) != Some(&sessions)
+                && crate::session::host_sessions_for(&ctx.state.host_session_cache, &target)
+                    != Some(sessions.as_slice())
             {
-                crate::session::record_host_sessions(&label, sessions.clone());
-                ctx.state.host_session_cache.insert(label, sessions);
+                crate::session::record_host_sessions(&target, sessions.clone());
+                crate::session::set_cached_host_sessions(
+                    &mut ctx.state.host_session_cache,
+                    &target,
+                    sessions,
+                );
             }
         }
         if let Some(entry) = ctx.state.hosts.get_mut(&target) {
@@ -172,7 +163,7 @@ pub(crate) fn activate_session(
     crate::ops::session::activate_discovered_session(ctx, entry)
 }
 
-/// "Click to connect": bring a host online. Mark its probe in flight (so the header reads
+/// Activating an offline host row: bring it online. Mark its probe in flight (so the header reads
 /// "Connecting…" at once) and bump the sessions epoch so the post-update chokepoint re-sweeps with
 /// this host now included, probing it immediately rather than at the next periodic tick.
 pub(crate) fn connect_host(
@@ -190,19 +181,13 @@ pub(crate) fn connect_host(
     Update::full()
 }
 
-/// "Click to disconnect": the first activation arms a confirmation (`armed` is what the row was
-/// showing); the second commits it. Disconnecting closes any live attachments to the host — their
-/// servers keep running — and returns it to offline.
+/// Commit the host row's ✕. Arming is the ✕'s own two-step, shared with every other closable row;
+/// by the time this runs the user has confirmed. Disconnecting closes any live attachments to the
+/// host — their servers keep running — and returns it to offline.
 pub(crate) fn disconnect_host(
     ctx: &mut Context<AppRoot>,
     target: crate::session::remote::RemoteTarget,
-    armed: Option<crate::session::remote::RemoteTarget>,
 ) -> Update {
-    if armed.as_ref() != Some(&target) {
-        // Arm: the render turns the row red and reads "Click again to confirm".
-        ctx.state.sidebar.pending_host_disconnect = Some(target);
-        return crate::ops::confirm::arm(ctx);
-    }
     // The update is the disconnect's *result*, not a repaint hint: when the current session lived on
     // this host it carries the command that lands the user somewhere else — an attach round-trip for
     // a fresh ephemeral, or a reconnect for the session being switched to. Dropping it left the UI

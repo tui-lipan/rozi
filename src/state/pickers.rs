@@ -38,6 +38,138 @@ pub struct SessionPickerState {
     pub pending_restart: Option<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteSessionIdentity {
+    pub target: crate::session::remote::RemoteTarget,
+    pub name: String,
+}
+
+impl RemoteSessionIdentity {
+    pub fn of(session: &DiscoveredSession) -> Option<Self> {
+        Some(Self {
+            target: session.remote_target.clone()?,
+            name: session.name.clone(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemotePickerMode {
+    Hosts,
+    HostSessions {
+        target: crate::session::remote::RemoteTarget,
+    },
+}
+
+pub struct RemoteTargetPromptState {
+    pub input: TextInput,
+    pub error: Option<String>,
+}
+
+impl RemoteTargetPromptState {
+    pub fn new(initial: impl AsRef<str>) -> Self {
+        Self {
+            input: TextInput::new(initial.as_ref()),
+            error: None,
+        }
+    }
+}
+
+/// The dedicated remote-host browser. Host and session navigation retain independent text fields
+/// and identity-based selections so returning from a host never loses the user's place and a
+/// reordered async result cannot redirect a destructive confirmation.
+pub struct RemotePickerState {
+    pub mode: RemotePickerMode,
+    pub host_input: TextInput,
+    pub selected_host: Option<crate::session::remote::RemoteTarget>,
+    pub session_input: TextInput,
+    pub selected_session: Option<RemoteSessionIdentity>,
+    pub sessions: Vec<DiscoveredSession>,
+    pub probe_epoch: u64,
+    pub host_probe: super::HostProbe,
+    pub target_prompt: Option<RemoteTargetPromptState>,
+    pub pending_forget: Option<crate::session::remote::RemoteTarget>,
+    pub pending_kill: Option<RemoteSessionIdentity>,
+    pub pending_restart: Option<RemoteSessionIdentity>,
+    /// Bumped to remount the hosts palette while a probe is in flight, so navigation cannot
+    /// move the highlight off the connecting row.
+    pub interaction_epoch: u64,
+}
+
+impl RemotePickerState {
+    pub fn new(selected_host: Option<crate::session::remote::RemoteTarget>) -> Self {
+        Self {
+            mode: RemotePickerMode::Hosts,
+            host_input: TextInput::new(""),
+            selected_host,
+            session_input: TextInput::new(""),
+            selected_session: None,
+            sessions: Vec::new(),
+            probe_epoch: 0,
+            host_probe: super::HostProbe::Idle,
+            target_prompt: None,
+            pending_forget: None,
+            pending_kill: None,
+            pending_restart: None,
+            interaction_epoch: 0,
+        }
+    }
+
+    pub fn enter_host_sessions(&mut self, target: crate::session::remote::RemoteTarget) {
+        self.selected_host = Some(target.clone());
+        self.mode = RemotePickerMode::HostSessions { target };
+        self.sessions.clear();
+        self.selected_session = None;
+        self.host_probe = super::HostProbe::Idle;
+        self.pending_forget = None;
+        self.pending_kill = None;
+        self.pending_restart = None;
+        self.target_prompt = None;
+    }
+
+    pub fn return_to_hosts(&mut self) {
+        self.mode = RemotePickerMode::Hosts;
+        self.sessions.clear();
+        self.selected_session = None;
+        self.host_probe = super::HostProbe::Idle;
+        self.pending_kill = None;
+        self.pending_restart = None;
+        self.target_prompt = None;
+    }
+
+    pub fn replace_sessions(&mut self, sessions: Vec<DiscoveredSession>) {
+        let changed = self.sessions != sessions;
+        self.sessions = sessions;
+        let selected = self.selected_session.take().filter(|selected| {
+            self.sessions
+                .iter()
+                .filter_map(RemoteSessionIdentity::of)
+                .any(|identity| &identity == selected)
+        });
+        self.selected_session =
+            selected.or_else(|| self.sessions.first().and_then(RemoteSessionIdentity::of));
+        let identity_exists = |pending: &RemoteSessionIdentity| {
+            self.sessions
+                .iter()
+                .filter_map(RemoteSessionIdentity::of)
+                .any(|identity| &identity == pending)
+        };
+        if changed
+            || self
+                .pending_kill
+                .as_ref()
+                .is_some_and(|pending| !identity_exists(pending))
+            || self
+                .pending_restart
+                .as_ref()
+                .is_some_and(|pending| !identity_exists(pending))
+        {
+            self.pending_kill = None;
+            self.pending_restart = None;
+        }
+    }
+}
+
 /// The open *Manage collaborators* dialog: the roster of everyone else on the session. The
 /// session-wide controls it sits beside (request control, input lock, takeover) are ordinary
 /// command-palette entries, not part of this dialog.
@@ -114,6 +246,112 @@ pub struct FollowPromptState {
     pub selected: usize,
 }
 
+/// One prompt OpenSSH raised on a connection this client owns, waiting on the user.
+pub struct AskpassPrompt {
+    /// Identifies the waiting helper process. The answer is routed by id, so a reply can never
+    /// reach the ssh that asked a different question.
+    pub id: u64,
+    /// The ssh invocation asking. All three of one connection's retries share it; the next
+    /// connection carries a different one.
+    pub session: String,
+    pub kind: crate::session::remote::AskpassKind,
+    /// Verbatim prompt text from ssh, multi-line for host-key verification.
+    pub prompt: String,
+    /// Why the previous answer to this same question was not accepted. `ssh` re-asks in silence,
+    /// so without this the modal reappears looking like it was never submitted.
+    pub error: Option<String>,
+}
+
+/// What became of the last ssh prompt, which is the only way to read the next one.
+///
+/// OpenSSH re-asks the *same question* three times after a wrong answer **and** after a refusal —
+/// declining is not "no" to ssh, it is "that answer was wrong" — and it says nothing about which
+/// it is. A probe runs several ssh invocations back to back, each with its own three. What
+/// separates them is the connection asking: a repeat from the same connection means the answer was
+/// rejected, and a prompt from a connection whose prompt was refused is the refusal being ignored.
+///
+/// Keying on the connection rather than on elapsed time is what keeps a fresh attempt at the same
+/// host from inheriting the last one's verdict — the user retrying a host they just cancelled must
+/// get a prompt, not a silent refusal.
+#[derive(Default)]
+pub struct AskpassHistory {
+    /// The connection whose prompts are declined unasked, because one of them already was.
+    refused: Option<String>,
+    /// The connection and question last answered, so its repeat can be recognized.
+    answered: Option<(String, String)>,
+}
+
+impl AskpassHistory {
+    /// Whether this connection has already been refused, so the prompt should be declined unasked.
+    pub fn refuses(&self, session: &str) -> bool {
+        self.refused.as_deref() == Some(session)
+    }
+
+    pub fn refused(&mut self, session: &str) {
+        self.refused = Some(session.to_string());
+        self.answered = None;
+    }
+
+    pub fn answered(&mut self, session: &str, prompt: &str) {
+        self.refused = None;
+        self.answered = Some((session.to_string(), prompt.to_string()));
+    }
+
+    /// Whether `prompt` is one connection asking again for something already answered — that is,
+    /// whether the answer was rejected.
+    pub fn is_retry_of(&self, session: &str, prompt: &str) -> bool {
+        self.answered
+            .as_ref()
+            .is_some_and(|(last_session, last_prompt)| {
+                last_session == session && last_prompt == prompt
+            })
+    }
+}
+
+/// The modal standing in for the terminal prompt `ssh` would otherwise write over the UI.
+///
+/// Two ssh processes can be in flight at once (a host probe alongside an attach), so a second
+/// prompt queues behind the one on screen rather than replacing it — replacing would leave the
+/// first ssh waiting on an answer nobody can give any more.
+pub struct AskpassState {
+    pub current: AskpassPrompt,
+    pub input: TextInput,
+    pub queued: std::collections::VecDeque<AskpassPrompt>,
+}
+
+impl AskpassState {
+    pub fn new(current: AskpassPrompt) -> Self {
+        Self {
+            current,
+            input: TextInput::new(""),
+            queued: std::collections::VecDeque::new(),
+        }
+    }
+
+    /// Move to the next queued prompt, if any, with a cleared field. Returns `false` when the
+    /// queue is empty and the modal should close.
+    pub fn advance(&mut self) -> bool {
+        match self.queued.pop_front() {
+            Some(next) => {
+                self.current = next;
+                self.input = TextInput::new("");
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Drop `id` wherever it sits. Returns `true` when it was the prompt on screen, so the caller
+    /// knows to [`Self::advance`].
+    pub fn discard(&mut self, id: u64) -> bool {
+        if self.current.id == id {
+            return true;
+        }
+        self.queued.retain(|prompt| prompt.id != id);
+        false
+    }
+}
+
 /// The dialog a nested one was raised from, so cancelling (or finishing) the child returns there
 /// instead of dropping the user back on the terminal. A picker is rebuilt rather than un-hidden —
 /// opening a child drops the picker's state — so its origin carries the query and highlighted row
@@ -129,6 +367,18 @@ pub enum OverlayOrigin {
     SessionPicker {
         query: String,
         selected: usize,
+    },
+    RemoteHosts {
+        query: String,
+        selected_target: Option<crate::session::remote::RemoteTarget>,
+    },
+    RemoteHostSessions {
+        target: crate::session::remote::RemoteTarget,
+        query: String,
+        selected_session: Option<RemoteSessionIdentity>,
+        /// The picker below Remote hosts, retained while a naming prompt temporarily replaces the
+        /// remote picker.
+        parent: Option<Box<OverlayOrigin>>,
     },
 }
 
@@ -171,6 +421,47 @@ impl SessionPickerState {
             pending_kill: None,
             pending_restart: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_picker_tests {
+    use super::*;
+
+    #[test]
+    fn mode_transitions_clear_incompatible_confirmations() {
+        let first = crate::session::remote::RemoteTarget::Alias("first".into());
+        let second = crate::session::remote::RemoteTarget::Alias("second".into());
+        let session = RemoteSessionIdentity {
+            target: second.clone(),
+            name: "dev".into(),
+        };
+        let mut picker = RemotePickerState::new(Some(first.clone()));
+        picker.pending_forget = Some(first);
+        picker.enter_host_sessions(second);
+        assert!(picker.pending_forget.is_none());
+
+        picker.pending_kill = Some(session.clone());
+        picker.pending_restart = Some(session);
+        picker.return_to_hosts();
+        assert!(picker.pending_kill.is_none());
+        assert!(picker.pending_restart.is_none());
+    }
+
+    #[test]
+    fn replacing_sessions_disarms_a_stale_confirmation() {
+        let target = crate::session::remote::RemoteTarget::Alias("workbox".into());
+        let identity = RemoteSessionIdentity {
+            target: target.clone(),
+            name: "dev".into(),
+        };
+        let mut picker = RemotePickerState::new(Some(target.clone()));
+        picker.enter_host_sessions(target);
+        picker.pending_kill = Some(identity.clone());
+        picker.pending_restart = Some(identity);
+        picker.replace_sessions(Vec::new());
+        assert!(picker.pending_kill.is_none());
+        assert!(picker.pending_restart.is_none());
     }
 }
 
@@ -288,4 +579,68 @@ pub struct PickState {
     pub rows: Vec<PickRow>,
     pub selected: usize,
     pub reply: std::sync::mpsc::SyncSender<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PROMPT: &str = "dev@workbox's password: ";
+
+    /// One Esc has to cover the whole connection: ssh re-raises the same question three times
+    /// whatever the helper answers.
+    #[test]
+    fn a_refusal_covers_every_later_prompt_from_the_same_connection() {
+        let mut history = AskpassHistory::default();
+        history.refused("ssh-1");
+
+        assert!(history.refuses("ssh-1"));
+        assert!(
+            !history.refuses("ssh-2"),
+            "a fresh connection is asked, not refused"
+        );
+    }
+
+    /// The bug this replaced a timer to fix: cancelling a host and immediately trying it again is
+    /// a new connection, and it has to get a prompt rather than inherit the refusal.
+    #[test]
+    fn retrying_the_host_after_a_refusal_is_asked_again() {
+        let mut history = AskpassHistory::default();
+        history.refused("probe-1");
+        assert!(!history.refuses("probe-2"));
+        assert!(!history.is_retry_of("probe-2", PROMPT));
+    }
+
+    /// A repeat of a question already answered is ssh saying the answer was wrong — the only
+    /// signal it gives, since the prompt text is identical either way.
+    #[test]
+    fn a_repeat_of_an_answered_prompt_reads_as_a_rejection() {
+        let mut history = AskpassHistory::default();
+        history.answered("ssh-1", PROMPT);
+
+        assert!(history.is_retry_of("ssh-1", PROMPT));
+        assert!(
+            !history.is_retry_of("ssh-1", "dev@other's password: "),
+            "a different question is a different question"
+        );
+        assert!(
+            !history.is_retry_of("ssh-2", PROMPT),
+            "and the same question from a new connection is a first ask"
+        );
+    }
+
+    /// The two records are exclusive. Answering ends a refusal (the user changed their mind), and
+    /// refusing drops the answered record, so a later dialog cannot open pre-accusing a password
+    /// nobody typed.
+    #[test]
+    fn answering_and_refusing_each_clear_the_other() {
+        let mut history = AskpassHistory::default();
+
+        history.refused("ssh-1");
+        history.answered("ssh-1", PROMPT);
+        assert!(!history.refuses("ssh-1"));
+
+        history.refused("ssh-1");
+        assert!(!history.is_retry_of("ssh-1", PROMPT));
+    }
 }

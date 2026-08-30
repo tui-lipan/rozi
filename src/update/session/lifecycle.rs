@@ -149,6 +149,9 @@ pub(crate) fn attached(
     let Some(client) = pending.client else {
         return Update::none();
     };
+    if !reconnect && let Some(target) = ctx.state.current().remote_target.as_ref() {
+        crate::session::record_recent_remote(target);
+    }
     ctx.state.runtime_epoch = epoch;
     ctx.state.current_mut().session_client = Some(client);
     ctx.state.current_mut().session_name = Some(session.clone());

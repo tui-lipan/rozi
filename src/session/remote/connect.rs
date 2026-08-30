@@ -79,18 +79,9 @@ pub fn connect_remote(
         super::ensure_remote_binary(target, config, false).map_err(RemoteConnectError::Message)?;
     validate_remote_executable_token(&remote_bin).map_err(RemoteConnectError::Message)?;
 
+    // Keepalive comes from `ssh_base_command` now: with connection multiplexing the master decides
+    // it for every client riding on it, so it has to be set wherever the master might be opened.
     let mut command = ssh_base_command(&resolved, config);
-    command
-        .arg("-o")
-        .arg(format!(
-            "ServerAliveInterval={}",
-            config.server_alive_interval_secs
-        ))
-        .arg("-o")
-        .arg(format!(
-            "ServerAliveCountMax={}",
-            config.server_alive_count_max
-        ));
     append_ssh_destination(&mut command, &resolved);
     command.arg(&remote_bin);
     command.arg("--remote-serve");
@@ -107,13 +98,7 @@ pub fn connect_remote(
     let stderr_tail = child.stderr.take().map(spawn_stderr_collector);
 
     let mut conn = ipc::connection_from_child(child)?;
-    if config.connection_timeout_secs > 0 {
-        let _ = conn.set_read_timeout(Some(Duration::from_secs(
-            config.connection_timeout_secs.max(1),
-        )));
-    } else {
-        let _ = conn.set_read_timeout(Some(Duration::from_secs(15)));
-    }
+    let _ = conn.set_read_timeout(Some(preamble_timeout(config)));
     let preamble = match preamble::read_preamble(&mut conn) {
         Ok(preamble) => preamble,
         Err(err) => {
@@ -142,6 +127,32 @@ pub fn connect_remote(
         return Err(RemoteConnectError::Message(message));
     }
     Ok((conn, preamble))
+}
+
+/// Default wait for the proxy's first bytes when `[remote] connection_timeout_secs` is `0`.
+const DEFAULT_PREAMBLE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Extra budget for a connection that may still have to be authenticated by hand.
+///
+/// `ssh` authenticates before the remote proxy can say anything, so a password typed into the
+/// in-app prompt is spent *inside* this read. Charging the user's typing to the remote's latency is
+/// what turns a slow password into "did not send a valid preamble". Generous, because the wait ends
+/// the moment the answer is given — and because a genuinely dead remote closes the pipe rather than
+/// going quiet, which fails immediately whatever this says.
+const INTERACTIVE_AUTH_ALLOWANCE: Duration = Duration::from_secs(180);
+
+/// How long to wait for the proxy's preamble.
+fn preamble_timeout(config: &RemoteConfig) -> Duration {
+    let base = if config.connection_timeout_secs > 0 {
+        Duration::from_secs(config.connection_timeout_secs.max(1))
+    } else {
+        DEFAULT_PREAMBLE_TIMEOUT
+    };
+    if super::askpass::may_prompt() && !config.batch_mode {
+        base + INTERACTIVE_AUTH_ALLOWANCE
+    } else {
+        base
+    }
 }
 
 /// Kill a named session on the remote host via `rozi kill-session` over ssh.

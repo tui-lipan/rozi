@@ -355,7 +355,7 @@ fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.current().session_attached && ctx.state.is_ephemeral_session() {
         row = row.child(hint_pill(theme, "name current", "ctrl+s"));
     }
-    row = row.child(hint_pill(theme, "connect host", "ctrl+r"));
+    row = row.child(hint_pill(theme, "remote hosts", "ctrl+r"));
     if let Some(entry) = selected
         && !restorable
     {
@@ -654,7 +654,7 @@ fn session_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
         } else if can_disconnect_host && ctrl_letter(&key, 'x') {
             Some(Msg::SessionPickerDisconnectHost)
         } else if ctrl_letter(&key, 'r') {
-            Some(Msg::SessionPickerConnectHost)
+            Some(Msg::SessionPickerRemoteHosts)
         } else {
             None
         }

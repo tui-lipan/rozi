@@ -161,6 +161,244 @@ impl StartupTasks {
     }
 }
 
+struct StartupPlan {
+    config: Config,
+    messages: Vec<String>,
+    attach_session: Option<String>,
+    autostart: bool,
+    create_only: bool,
+    profile: Option<StartupProfile>,
+    remote: Option<crate::session::remote::RemoteTarget>,
+    last_session: Option<String>,
+    want_picker: bool,
+}
+
+impl StartupPlan {
+    fn resolve(cli: &cli::CliArgs, loaded: config::LoadedConfig) -> Self {
+        let explicit_target = cli.attach_session.is_some();
+        let remote = resolve_startup_remote(cli.remote.as_deref(), &loaded.config);
+        let mut plan = Self {
+            messages: loaded.warnings,
+            attach_session: cli.attach_session.clone(),
+            autostart: cli.attach_session.is_none(),
+            create_only: false,
+            profile: None,
+            remote,
+            last_session: None,
+            want_picker: false,
+            config: loaded.config,
+        };
+        plan.apply_session_policy(cli);
+        plan.resolve_session_target(cli, explicit_target);
+        plan.load_fallback_profile();
+        // Picker at startup only for a bare launch. `last` and `profile` reach here when the
+        // named session could not be opened. Under `--remote` this opens that host's picker.
+        plan.want_picker = plan.attach_session.is_none()
+            && (cli.pick
+                || matches!(
+                    plan.config.session.startup,
+                    config::SessionStartup::Picker
+                        | config::SessionStartup::Last
+                        | config::SessionStartup::Profile
+                ));
+        plan
+    }
+
+    fn apply_session_policy(&mut self, cli: &cli::CliArgs) {
+        // Startup policy chooses a session only when the user named none. `--pick` asks for the
+        // picker by hand, and an explicit session target overrides the policy outright.
+        if self.attach_session.is_some() || cli.pick {
+            return;
+        }
+        match self.config.session.startup {
+            // `last` reopens a session, it never revives one. Locally that is settled here.
+            // Remotely it cannot be: answering "is `backend` still on workbox?" means an SSH round
+            // trip before the first frame. The name rides with the host picker instead, and is
+            // attached only if the host still lists it.
+            config::SessionStartup::Last if self.remote.is_some() => {
+                self.last_session = crate::session::read_last_session(self.remote.as_ref());
+            }
+            config::SessionStartup::Last => match resolve_last_session_target() {
+                LastSessionTarget::Reopen(name) => {
+                    self.attach_session = Some(name);
+                    self.autostart = true;
+                }
+                LastSessionTarget::Pick(name) => self.last_session = name,
+            },
+            config::SessionStartup::Profile => {
+                match resolve_profile_session_target(&self.config, self.remote.as_ref()) {
+                    Ok(name) => {
+                        self.attach_session = Some(name);
+                        self.autostart = true;
+                    }
+                    Err(warning) => self.messages.push(warning),
+                }
+            }
+            config::SessionStartup::Picker | config::SessionStartup::Ephemeral => {}
+        }
+    }
+
+    fn resolve_session_target(&mut self, cli: &cli::CliArgs, explicit_target: bool) {
+        let Some(name) = self.attach_session.clone() else {
+            return;
+        };
+        if !crate::session::discovery::valid_session_name(&name) {
+            startup_fatal(format!("Invalid session name `{name}`."));
+        }
+        if self.remote.is_some() {
+            self.resolve_remote_session(cli, &name, explicit_target);
+        } else {
+            self.resolve_local_session(cli, &name, explicit_target);
+        }
+    }
+
+    fn resolve_remote_session(&mut self, cli: &cli::CliArgs, name: &str, explicit_target: bool) {
+        // Under `--remote` the session lives on the far host. Local discovery and local profiles
+        // do not describe it. `New` is still create-only, enforced remotely via `server_started`.
+        match cli.session_command {
+            cli::SessionCommand::New => {
+                self.autostart = true;
+                self.create_only = true;
+                self.profile = requested_new_profile(cli);
+            }
+            cli::SessionCommand::Attach => self.autostart = false,
+            cli::SessionCommand::Dwim => {
+                self.autostart = true;
+                // A name startup policy chose (`last`, `profile`), not one the user typed. If the
+                // host has no session under it, this is a launch rather than an attach, and it gets
+                // the same canonical `profiles/<name>.toml` a local one would.
+                let path = config::profile_path_for_name(name);
+                if !explicit_target
+                    && path.exists()
+                    && self
+                        .remote
+                        .as_ref()
+                        .is_some_and(|target| !remote_session_known(target, name))
+                {
+                    match try_load_startup_profile(name, path) {
+                        Ok(profile) => self.profile = Some(profile),
+                        Err(message) => self.messages.push(message),
+                    }
+                }
+            }
+        }
+    }
+
+    fn resolve_local_session(&mut self, cli: &cli::CliArgs, name: &str, explicit_target: bool) {
+        let running = crate::session::discovery::discover_session(name)
+            .ok()
+            .flatten()
+            .is_some();
+        let path = config::profile_path_for_name(name);
+        match cli.session_command {
+            cli::SessionCommand::Attach => {
+                if !running {
+                    let hint = path
+                        .exists()
+                        .then(|| format!("\nStart it with: rozi {name}"));
+                    startup_fatal(format!(
+                        "Session `{name}` is not running.{}",
+                        hint.unwrap_or_default()
+                    ));
+                }
+                self.autostart = false;
+            }
+            cli::SessionCommand::New => {
+                if running {
+                    startup_fatal(format!(
+                        "Session `{name}` is already running.\nAttach with: rozi attach {name}"
+                    ));
+                }
+                self.autostart = true;
+                self.create_only = true;
+                self.profile = requested_new_profile(cli);
+            }
+            cli::SessionCommand::Dwim if explicit_target => {
+                if running {
+                    self.autostart = false;
+                } else if cli.read_only {
+                    startup_fatal(format!("Session `{name}` is not running."));
+                } else if path.exists() {
+                    self.profile = Some(load_startup_profile(name, path));
+                    self.autostart = true;
+                } else {
+                    startup_fatal(format!(
+                        "No session or profile named `{name}`.\nCreate it with: rozi new {name}"
+                    ));
+                }
+            }
+            // Reached only for a target startup policy chose (`last`, `profile`), never one the
+            // user typed: a profile that will not load reports the failure and opens the session
+            // blank, rather than refusing to launch rozi at all until the file is fixed.
+            cli::SessionCommand::Dwim => {
+                self.autostart = true;
+                if !running && path.exists() {
+                    match try_load_startup_profile(name, path) {
+                        Ok(profile) => self.profile = Some(profile),
+                        Err(message) => self.messages.push(message),
+                    }
+                }
+            }
+        }
+    }
+
+    fn load_fallback_profile(&mut self) {
+        if self.attach_session.is_some() || self.profile.is_some() {
+            return;
+        }
+        if let Some(name) = &self.config.profile.default {
+            let path = config::profile_path_for_name(name);
+            match profiles::load_profile(&path) {
+                Ok(profile) => {
+                    self.profile = Some(StartupProfile {
+                        profile,
+                        name: name.clone(),
+                        path,
+                        records_origin: true,
+                    });
+                    return;
+                }
+                Err(err) => self
+                    .messages
+                    .push(format!("Default profile `{name}` load failed: {err}")),
+            }
+        }
+        if !self.config.session.autosave {
+            return;
+        }
+        let Some(path) = profiles::session_path(&self.config).filter(|path| path.exists()) else {
+            return;
+        };
+        match profiles::load_profile(&path) {
+            Ok(profile) => {
+                self.profile = Some(StartupProfile {
+                    profile,
+                    name: path
+                        .file_stem()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("session")
+                        .to_string(),
+                    path,
+                    records_origin: false,
+                });
+            }
+            Err(err) => self.messages.push(format!("Session restore failed: {err}")),
+        }
+    }
+}
+
+fn requested_new_profile(cli: &cli::CliArgs) -> Option<StartupProfile> {
+    let profile_name = cli.profile.as_ref()?;
+    if !crate::session::discovery::valid_session_name(profile_name) {
+        startup_fatal(format!("Invalid profile name `{profile_name}`."));
+    }
+    let path = config::profile_path_for_name(profile_name);
+    if !path.exists() {
+        startup_fatal(format!("Profile `{profile_name}` does not exist."));
+    }
+    Some(load_startup_profile(profile_name, path))
+}
+
 impl Default for AppRoot {
     fn default() -> Self {
         let config = Config::default();
@@ -923,247 +1161,24 @@ pub fn run() -> Result<()> {
 
     apply_config_path(cli.config_path.clone());
 
-    let loaded = config::load_config();
-    let mut startup_messages = loaded.warnings;
-    let explicit_target = cli.attach_session.is_some();
-    let mut attach_session = cli.attach_session.clone();
-    let mut startup_autostart = attach_session.is_none();
-    let mut startup_create_only = false;
-    // What `last` remembered, when the launch could not act on it up front. Locally that is a
-    // highlight — openability was already checked, so a name reaching here is known to be gone.
-    // Remotely it is a *resume*: nothing local can say whether the host still has the session, so
-    // the host's own discovery decides, and the picker attaches it if the row comes back.
-    let mut startup_last_session = None;
-    // Resolved before startup policy runs, because the policy now runs *inside* whatever scope the
-    // launch names: `rozi --remote workbox` picks among workbox's sessions, remembers workbox's last
-    // one, and falls back to workbox's launcher — never this machine's.
-    let remote = resolve_startup_remote(cli.remote.as_deref(), &loaded.config);
-    // Startup policy chooses a session only when the user named none. `--pick` asks for the picker
-    // by hand, and an explicit session target overrides the policy outright.
-    if attach_session.is_none() && !cli.pick {
-        match loaded.config.session.startup {
-            // `last` reopens a session, it never revives one. Locally that is settled here.
-            // Remotely it cannot be: answering "is `backend` still on workbox?" means an SSH round
-            // trip, and paying for it before the first frame would buy seconds of black terminal.
-            // So the launch takes the host's picker — which is about to discover anyway — and the
-            // name rides along to be attached if, and only if, the host still lists it. A session
-            // killed while rozi was away stays dead and the user lands on `Sessions · workbox`.
-            config::SessionStartup::Last if remote.is_some() => {
-                startup_last_session = crate::session::read_last_session(remote.as_ref());
-            }
-            config::SessionStartup::Last => match resolve_last_session_target() {
-                LastSessionTarget::Reopen(name) => {
-                    attach_session = Some(name);
-                    startup_autostart = true;
-                }
-                LastSessionTarget::Pick(name) => startup_last_session = name,
-            },
-            // Resolving to a name is the whole mode: the untargeted `Dwim` arm below then attaches
-            // it when running and creates it from its canonical profile when not, which is exactly
-            // what `rozi <name>` does.
-            config::SessionStartup::Profile => {
-                match resolve_profile_session_target(&loaded.config, remote.as_ref()) {
-                    Ok(name) => {
-                        attach_session = Some(name);
-                        startup_autostart = true;
-                    }
-                    Err(warning) => startup_messages.push(warning),
-                }
-            }
-            config::SessionStartup::Picker | config::SessionStartup::Ephemeral => {}
-        }
-    }
-    let mut startup_profile = None;
-    if let Some(name) = attach_session.as_ref()
-        && cli.remote.is_some()
-    {
-        // Under `--remote` the session lives on the remote host: local discovery and local profiles
-        // do not describe it, so none of the checks below apply. The remote `--remote-serve`
-        // autostarts the session server, and `New`'s create-only intent is enforced remotely via the
-        // preamble's `server_started` flag. Only map the subcommand onto the create-only flag; a
-        // `New --profile` still seeds from a locally loaded profile.
-        if !crate::session::discovery::valid_session_name(name) {
-            startup_fatal(format!("Invalid session name `{name}`."));
-        }
-        match cli.session_command {
-            cli::SessionCommand::New => {
-                startup_autostart = true;
-                startup_create_only = true;
-                if let Some(profile_name) = cli.profile.as_ref() {
-                    if !crate::session::discovery::valid_session_name(profile_name) {
-                        startup_fatal(format!("Invalid profile name `{profile_name}`."));
-                    }
-                    let path = config::profile_path_for_name(profile_name);
-                    if !path.exists() {
-                        startup_fatal(format!("Profile `{profile_name}` does not exist."));
-                    }
-                    startup_profile = Some(load_startup_profile(profile_name, path));
-                }
-            }
-            cli::SessionCommand::Attach => startup_autostart = false,
-            cli::SessionCommand::Dwim => {
-                startup_autostart = true;
-                // A name startup policy chose (`last`, `profile`), not one the user typed. If the
-                // host has no session under it, this is a launch rather than an attach, and it gets
-                // the same canonical `profiles/<name>.toml` a local one would — the profile is
-                // launch intent the client replays, and stays local. A profile that will not load
-                // reports itself and opens the session blank rather than refusing to start.
-                let canonical_path = config::profile_path_for_name(name);
-                if !explicit_target
-                    && canonical_path.exists()
-                    && remote
-                        .as_ref()
-                        .is_some_and(|target| !remote_session_known(target, name))
-                {
-                    match try_load_startup_profile(name, canonical_path) {
-                        Ok(profile) => startup_profile = Some(profile),
-                        Err(message) => startup_messages.push(message),
-                    }
-                }
-            }
-        }
-    } else if let Some(name) = attach_session.as_ref() {
-        if !crate::session::discovery::valid_session_name(name) {
-            startup_fatal(format!("Invalid session name `{name}`."));
-        }
-        let running = crate::session::discovery::discover_session(name)
-            .ok()
-            .flatten()
-            .is_some();
-        let canonical_path = config::profile_path_for_name(name);
-        match cli.session_command {
-            cli::SessionCommand::Attach => {
-                if !running {
-                    let hint = canonical_path
-                        .exists()
-                        .then(|| format!("\nStart it with: rozi {name}"));
-                    startup_fatal(format!(
-                        "Session `{name}` is not running.{}",
-                        hint.unwrap_or_default()
-                    ));
-                }
-                startup_autostart = false;
-            }
-            cli::SessionCommand::New => {
-                if running {
-                    startup_fatal(format!(
-                        "Session `{name}` is already running.\nAttach with: rozi attach {name}"
-                    ));
-                }
-                startup_autostart = true;
-                startup_create_only = true;
-                if let Some(profile_name) = cli.profile.as_ref() {
-                    if !crate::session::discovery::valid_session_name(profile_name) {
-                        startup_fatal(format!("Invalid profile name `{profile_name}`."));
-                    }
-                    let path = config::profile_path_for_name(profile_name);
-                    if !path.exists() {
-                        startup_fatal(format!("Profile `{profile_name}` does not exist."));
-                    }
-                    startup_profile = Some(load_startup_profile(profile_name, path));
-                }
-            }
-            cli::SessionCommand::Dwim if explicit_target => {
-                if running {
-                    startup_autostart = false;
-                } else if cli.read_only {
-                    startup_fatal(format!("Session `{name}` is not running."));
-                } else if canonical_path.exists() {
-                    startup_profile = Some(load_startup_profile(name, canonical_path));
-                    startup_autostart = true;
-                } else {
-                    startup_fatal(format!(
-                        "No session or profile named `{name}`.\nCreate it with: rozi new {name}"
-                    ));
-                }
-            }
-            // Reached only for a target startup policy chose (`last`, `profile`), never one the
-            // user typed: a profile that will not load reports the failure and opens the session
-            // blank, rather than refusing to launch rozi at all until the file is fixed.
-            cli::SessionCommand::Dwim => {
-                startup_autostart = true;
-                if !running && canonical_path.exists() {
-                    match try_load_startup_profile(name, canonical_path) {
-                        Ok(profile) => startup_profile = Some(profile),
-                        Err(message) => startup_messages.push(message),
-                    }
-                }
-            }
-        }
-    }
-
-    if attach_session.is_none()
-        && startup_profile.is_none()
-        && let Some(name) = &loaded.config.profile.default
-    {
-        let path = config::profile_path_for_name(name);
-        match profiles::load_profile(&path) {
-            Ok(profile) => {
-                startup_profile = Some(StartupProfile {
-                    profile,
-                    name: name.clone(),
-                    path,
-                    records_origin: true,
-                })
-            }
-            Err(err) => {
-                startup_messages.push(format!("Default profile `{name}` load failed: {err}"))
-            }
-        }
-    }
-
-    // With no explicit profile, restore the autosaved session if one exists.
-    if attach_session.is_none()
-        && startup_profile.is_none()
-        && loaded.config.session.autosave
-        && let Some(path) = profiles::session_path(&loaded.config)
-        && path.exists()
-    {
-        match profiles::load_profile(&path) {
-            Ok(profile) => {
-                startup_profile = Some(StartupProfile {
-                    profile,
-                    name: path
-                        .file_stem()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or("session")
-                        .to_string(),
-                    path,
-                    records_origin: false,
-                });
-            }
-            Err(err) => startup_messages.push(format!("Session restore failed: {err}")),
-        }
-    }
-    let config = loaded.config;
-    // Open the picker at startup only for a bare launch (no explicit attach target). The
-    // "anything to pick" gate is checked in `init` so it reflects live state at mount. `last` and
-    // `profile` reach here only when the session they name could not be opened. Under `--remote`
-    // the same decision opens that host's picker instead — no session is created behind the user's
-    // back on a machine they have only asked to look at.
-    let want_startup_picker = attach_session.is_none()
-        && (cli.pick
-            || matches!(
-                config.session.startup,
-                config::SessionStartup::Picker
-                    | config::SessionStartup::Last
-                    | config::SessionStartup::Profile
-            ));
+    let mut plan = StartupPlan::resolve(&cli, config::load_config());
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);
     let startup_system_theme = startup_host_colors.map(ops::theme::system_theme_from_host_colors);
-    let resolved_theme = config::resolve_theme(&config.theme.name, startup_system_theme.as_ref());
-    startup_messages.extend(resolved_theme.warnings);
+    let resolved_theme =
+        config::resolve_theme(&plan.config.theme.name, startup_system_theme.as_ref());
+    plan.messages.extend(resolved_theme.warnings);
     let theme = ops::theme::apply_backdrop_policy(
         resolved_theme.theme,
         terminal_bg,
-        config.pane.background_follows_terminal,
+        plan.config.pane.background_follows_terminal,
     );
 
     let (control_listener, control_guard) = match control::bind_control_socket() {
         Ok((listener, guard)) => (Some(listener), Some(guard)),
         Err(err) => {
-            startup_messages.push(format!("Control socket unavailable: {err}"));
+            plan.messages
+                .push(format!("Control socket unavailable: {err}"));
             (None, None)
         }
     };
@@ -1174,10 +1189,10 @@ pub fn run() -> Result<()> {
         .terminal_bg(terminal_bg)
         .toast_placement(ToastPlacement::BottomEnd)
         .toast_margin((1, 2, 1, 1))
-        .clipboard_config(clipboard_config(&config))
+        .clipboard_config(clipboard_config(&plan.config))
         // Read once at startup: the runner turns this into its poll interval, so a live config
         // reload cannot move it. Detaching and reattaching picks up a new value.
-        .frame_rate(config.frame_rate)
+        .frame_rate(plan.config.frame_rate)
         .mouse(true)
         // Leader chords (`ctrl-a c`) and WM-modifier chords (`alt-c`) are executable command
         // shortcuts (see `commands.rs`), not a framework keymap file - resolve them ahead of
@@ -1193,15 +1208,15 @@ pub fn run() -> Result<()> {
         // How long the prefix is held before the which-key strip appears. Only that strip reads the
         // delayed signal; the PREFIX badge, the withheld caret, and prefix mouse gestures all stay
         // on the instant `command_chord_pending`.
-        .command_chord_reveal_delay(config.input.which_key.reveal_delay())
+        .command_chord_reveal_delay(plan.config.input.which_key.reveal_delay())
         // Ctrl-q is unbound: rozi's own `quit`/`detach` commands own client lifecycle exits.
         .global_quit(None);
 
     // Probe / prompt / install before the TUI takes stdin (install = "prompt").
-    if let Some(ref target) = remote {
+    if let Some(ref target) = plan.remote {
         let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
         if let Err(err) =
-            crate::session::remote::ensure_remote_binary(target, &config.remote, interactive)
+            crate::session::remote::ensure_remote_binary(target, &plan.config.remote, interactive)
         {
             eprintln!("rozi: {err}");
             std::process::exit(1);
@@ -1210,20 +1225,20 @@ pub fn run() -> Result<()> {
 
     let outcome = app
         .mount(AppRoot::new(
-            config,
+            plan.config,
             theme,
             startup_system_theme,
-            startup_profile,
-            startup_messages,
+            plan.profile,
+            plan.messages,
             control_listener,
             control_guard,
-            attach_session,
-            startup_autostart,
-            startup_create_only,
+            plan.attach_session,
+            plan.autostart,
+            plan.create_only,
             cli.read_only,
-            remote,
-            want_startup_picker,
-            startup_last_session,
+            plan.remote,
+            plan.want_picker,
+            plan.last_session,
         ))
         .exit_view(crate::exit_view::exit_view)
         .run();

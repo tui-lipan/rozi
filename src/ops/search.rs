@@ -245,30 +245,18 @@ pub enum SearchScanAdvance {
     Complete { first_match: bool },
 }
 
-/// Advance the active search by at most `line_budget` retained lines, newest pane lines first.
-///
-/// This deterministic seam is used by tests; production always passes
-/// [`SEARCH_LINES_PER_CHUNK`].
-pub fn advance_search_scan(
-    state: &mut State,
-    epoch: u64,
-    mut line_budget: usize,
-) -> SearchScanAdvance {
-    let Some(search) = state.search.as_ref() else {
-        return SearchScanAdvance::Stale;
-    };
-    if search.scan.as_ref().is_none_or(|scan| scan.epoch != epoch) {
-        return SearchScanAdvance::Stale;
-    }
-    let purged = purge_missing_search_matches(state);
-    let mut scan = state
-        .search
-        .as_mut()
-        .and_then(|search| search.scan.take())
-        .expect("validated active scan");
-    let mut appended = Vec::new();
-    let mut truncated = false;
+struct SearchScanChunk {
+    matches: Vec<ScrollbackMatch>,
+    truncated: bool,
+}
 
+fn scan_search_lines(
+    state: &State,
+    scan: &mut ScrollbackSearchScan,
+    mut line_budget: usize,
+) -> SearchScanChunk {
+    let mut matches = Vec::new();
+    let mut truncated = false;
     while line_budget > 0 && scan.pane_index < scan.panes.len() {
         let pane_id = scan.panes[scan.pane_index];
         let pane_end = scan.pane_ends[scan.pane_index];
@@ -277,10 +265,7 @@ pub fn advance_search_scan(
             scan.line_cursor = 0;
             continue;
         }
-        // `line_cursor` counts lines already consumed from this pane's newest end, while the
-        // terminal range API is addressed from the oldest retained line. Search one line at a
-        // time in reverse here: a bounded range call scans ascending and could otherwise consume
-        // the cap on older hits before the newest hits in this chunk.
+        // Consume newest lines first. The terminal range API itself scans ascending.
         let range_end = pane_end - scan.line_cursor;
         let range_start = range_end.saturating_sub(line_budget);
         let Some(pane) = find_pane(state, pane_id) else {
@@ -290,21 +275,19 @@ pub fn advance_search_scan(
         };
         let mut consumed = 0;
         for line in (range_start..range_end).rev() {
-            let remaining = MAX_MATCHES.saturating_sub(state.search.as_ref().map_or(
-                appended.len(),
-                |search| {
+            let remaining =
+                MAX_MATCHES.saturating_sub(state.search.as_ref().map_or(matches.len(), |search| {
                     search
                         .refresh_matches
                         .as_ref()
                         .map_or(search.matches.len(), Vec::len)
-                        + appended.len()
-                },
-            ));
+                        + matches.len()
+                }));
             let result =
                 pane.terminal
                     .search_scrollback_range(&scan.query, line, line + 1, remaining);
             consumed += 1;
-            appended.extend(result.matches.into_iter().map(|matched| ScrollbackMatch {
+            matches.extend(result.matches.into_iter().map(|matched| ScrollbackMatch {
                 offset: matched.offset,
                 line: matched.line,
                 start_col: matched.start_col,
@@ -327,18 +310,44 @@ pub fn advance_search_scan(
             scan.line_cursor = 0;
         }
     }
+    SearchScanChunk { matches, truncated }
+}
 
-    let complete = truncated || scan.pane_index >= scan.panes.len();
+fn install_refreshed_matches(search: &mut ScrollbackSearchState, truncated: bool) {
+    let Some(matches) = search.refresh_matches.take() else {
+        return;
+    };
+    let selected = search.matches.get(search.current).cloned();
+    let current = search.current;
+    search.replace_results(matches, truncated);
+    search.current = selected
+        .as_ref()
+        .and_then(|selected| {
+            search
+                .matches
+                .iter()
+                .position(|matched| matched == selected)
+        })
+        .unwrap_or_else(|| current.min(search.matches.len().saturating_sub(1)));
+}
+
+fn finish_search_scan(
+    state: &mut State,
+    mut scan: ScrollbackSearchScan,
+    chunk: SearchScanChunk,
+    purged: bool,
+) -> SearchScanAdvance {
+    let complete = chunk.truncated || scan.pane_index >= scan.panes.len();
     let search = state
         .search
         .as_mut()
         .expect("search survived synchronous scan");
     if let Some(refresh_matches) = search.refresh_matches.as_mut() {
-        refresh_matches.extend(appended);
+        refresh_matches.extend(chunk.matches);
     } else {
-        search.append_results(appended);
+        search.append_results(chunk.matches);
     }
-    if truncated && search.refresh_matches.is_none() {
+    if chunk.truncated && search.refresh_matches.is_none() {
         search.truncated = true;
     }
     let result_count = search
@@ -351,20 +360,7 @@ pub fn advance_search_scan(
     }
     if complete {
         search.scan = None;
-        if let Some(matches) = search.refresh_matches.take() {
-            let selected = search.matches.get(search.current).cloned();
-            let current = search.current;
-            search.replace_results(matches, truncated);
-            search.current = selected
-                .as_ref()
-                .and_then(|selected| {
-                    search
-                        .matches
-                        .iter()
-                        .position(|matched| matched == selected)
-                })
-                .unwrap_or_else(|| current.min(search.matches.len().saturating_sub(1)));
-        }
+        install_refreshed_matches(search, chunk.truncated);
     } else {
         search.scan = Some(scan);
     }
@@ -378,6 +374,27 @@ pub fn advance_search_scan(
             render: first_match || purged,
         }
     }
+}
+
+/// Advance the active search by at most `line_budget` retained lines, newest pane lines first.
+///
+/// This deterministic seam is used by tests; production always passes
+/// [`SEARCH_LINES_PER_CHUNK`].
+pub fn advance_search_scan(state: &mut State, epoch: u64, line_budget: usize) -> SearchScanAdvance {
+    let Some(search) = state.search.as_ref() else {
+        return SearchScanAdvance::Stale;
+    };
+    if search.scan.as_ref().is_none_or(|scan| scan.epoch != epoch) {
+        return SearchScanAdvance::Stale;
+    }
+    let purged = purge_missing_search_matches(state);
+    let mut scan = state
+        .search
+        .as_mut()
+        .and_then(|search| search.scan.take())
+        .expect("validated active scan");
+    let chunk = scan_search_lines(state, &mut scan, line_budget);
+    finish_search_scan(state, scan, chunk, purged)
 }
 
 pub(crate) fn search_scan_chunk(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {

@@ -3,8 +3,8 @@
 # approvals, footer versus transcript interrupt hints - are asserted inline in
 # `src/agent_detection/mod.rs`, where they can also be run against another agent's rules.
 source = "capture"
-captured_at = "2026-08-20"
-notes = "Claude Code v2.1.237, first launch in an unseen directory"
+captured_at = "2026-08-20..2026-09-01"
+notes = "Claude Code v2.1.237 first-launch cases; current-version queued-input screenshot added 2026-09-01"
 
 # Caught, where Codex's and Copilot's equivalents were not: the option cursor starts its line, which
 # is the shape Claude's own rule looks for. Kept because a first-run dialog is the single screen a
@@ -115,6 +115,24 @@ screen = '''
 ❯ Press up to edit queued messages
 ─────────────────────────────────────────────────────────────────────────────────────────
   ⏸ manual mode on · esc to interrupt · ← for agents
+'''
+
+# Typing into Claude's composer during a live turn removes the interrupt hint from the compact
+# status row and pushes the activity row beyond Rozi's eight-line footer window. Kept because this
+# exact screen used to read idle and arm a false completion pulse while Claude was still streaming.
+# The task text is trimmed; the activity row and everything from the live composer down is intact.
+[[case]]
+name = "working-with-draft-input"
+state = "working"
+screen = '''
+✻ Jitterbugging… (27m 50s · ↓ 49.3k tokens)
+  └ Tip: Use /btw to ask a quick side question without interrupting
+    Claude's current work
+                               Update available! Run: mise upgrade claude
+─────────────────────────────────────────────────────────────────────────────────────────
+❯ df
+─────────────────────────────────────────────────────────────────────────────────────────
+  ›› auto mode on (shift+tab to cycle)
 '''
 
 # Finished. The interrupt hint becomes `? for shortcuts`, and the run's own summary line appears.

@@ -62,6 +62,10 @@ needed a hand-edited `config.toml`, and API 1 is frozen.
 
 ### Fixed
 
+- Typing a queued or steering prompt no longer makes a streaming Claude Code pane look finished.
+  Claude removes its interrupt hint while the composer is occupied and a wrapped draft can push
+  the animated activity row off-screen; Rozi now reads Claude's star animation directly, then
+  holds the last state when the draft leaves no live state evidence to read.
 - The Windows client no longer overflows its stack. Opening the sidebar while attached to a remote
   host killed it with `thread 'main' has overflowed its stack`. Rendering recurses through the
   whole view tree, and Windows hands the first thread 1 MiB where Linux and macOS hand it 8 MiB -

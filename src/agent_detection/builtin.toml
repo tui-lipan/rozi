@@ -149,6 +149,42 @@ match = { names = ["claude", "claude-code"], paths = ["@anthropic-ai/claude-code
 state = "blocked"
 screen = { regex = true, any_of = ["(?m)^\\s*❯\\s*\\d+\\. "] }
 
+# Claude keeps accepting a queued or steering prompt while a turn streams. As soon as the user
+# types, the composer grows and its compact status row drops `esc to interrupt`; even a one-line
+# draft pushes the live activity row outside the eight-row footer window. The animated activity
+# row itself remains positive evidence: one of Claude's star frames, a verb ending in an ellipsis,
+# then its elapsed-time counter. Completed rows replace that shape rather than leaving it behind.
+#
+# This one is deliberately unscoped. A long prompt moves the row arbitrarily far above the footer,
+# and anchoring the whole live-row grammar is what keeps ordinary transcript prose from matching.
+[[agents.states]]
+state = "working"
+screen = { regex = true, any_of = [
+    "(?m)^\\s*[*·✢✶✻✽]\\s+\\S.*…(?:\\s+\\(\\d+[smh](?:\\s|·)|\\s*$)",
+] }
+
+# Once a tall draft pushes both the activity row and interrupt hint off-screen, the pixels no
+# longer say whether Claude is still streaming or has just finished. Calling that idle creates a
+# false completion edge. Hold the last observed state instead; submitting or clearing the draft
+# restores Claude's ordinary live chrome, and the server's bounded hold remains the backstop.
+#
+# Positive working evidence is excluded because `unknown` has higher precedence. Approval chrome
+# is excluded for the same reason: a draft left in the transcript must not hide a live dialog.
+[[agents.states]]
+state = "unknown"
+screen = { regex = true, all_of = [
+    "(?m)^─{8,}\\s*\\n\\s*❯\\s+\\S",
+    "(?m)^\\s*[⏸⏵›»]+.*(?:mode|permissions) on",
+], none_of = [
+    "(?m)^\\s*[*·✢✶✻✽]\\s+\\S.*…(?:\\s+\\(\\d+[smh](?:\\s|·)|\\s*$)",
+    "esc (?:again )?to interrupt",
+    "press esc to interrupt",
+    "ctrl\\+c to interrupt",
+    "\\? for shortcuts",
+    "(?m)^\\s*❯\\s*\\d+\\. ",
+    "esc to cancel",
+] }
+
 [[agents.states]]
 state = "working"
 title = { regex = true, any_of = ["^[\\x{2800}-\\x{28ff}]"] }

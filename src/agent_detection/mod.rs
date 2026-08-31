@@ -372,6 +372,53 @@ mod tests {
         );
     }
 
+    /// Claude's composer stays editable while a turn streams. A draft adds rows below the live
+    /// activity, pushing `esc to interrupt` out of the compact status row and eventually pushing
+    /// the activity itself off-screen. The former still has positive evidence; the latter has no
+    /// evidence and must hold the previous state instead of announcing a false completion.
+    #[test]
+    fn claude_draft_input_does_not_finish_a_live_turn() {
+        let live_screen = |frame| {
+            format!(
+                "{frame} Jitterbugging… (27m 50s · ↓ 49.3k tokens)\n\
+                 ────────────────────────────────────────────────────────────\n\
+                 ❯ draft the next instruction\n\
+                 ────────────────────────────────────────────────────────────\n\
+                   ›› auto mode on (shift+tab to cycle)"
+            )
+        };
+        for frame in ['*', '·', '✢', '✶', '✻', '✽'] {
+            assert_eq!(
+                detect_state("claude", &live_screen(frame), ""),
+                Some(DetectedAgentState::Working),
+                "Claude's {frame} activity frame is live working evidence"
+            );
+        }
+
+        let activity_scrolled_away = "\
+────────────────────────────────────────────────────────────
+❯ a draft long enough to wrap
+  through the input box and push the live activity above the
+  visible terminal
+────────────────────────────────────────────────────────────
+  ›› auto mode on (shift+tab to cycle)";
+        assert_eq!(
+            detect_state("claude", activity_scrolled_away, ""),
+            None,
+            "an occupied composer with its live chrome displaced is ambiguous, not idle"
+        );
+
+        assert_eq!(
+            detect_state(
+                "claude",
+                &format!("{activity_scrolled_away} · ? for shortcuts"),
+                ""
+            ),
+            Some(DetectedAgentState::Idle),
+            "Claude's positive idle hint ends the hold even while a draft remains"
+        );
+    }
+
     #[test]
     fn opencodes_subagent_view_reports_no_evidence_rather_than_idle() {
         // Captured from opencode 1.18.16 (`ctrl+x down` from a session). The composer and the

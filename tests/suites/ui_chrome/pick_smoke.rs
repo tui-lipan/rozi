@@ -190,3 +190,37 @@ fn a_long_description_never_costs_a_row_its_label() {
         );
     });
 }
+
+/// A picker owns the keyboard while it is up. The leader prefix is the one that bites: a chord
+/// starting inside a picker used to put rozi into PREFIX mode behind the modal, so the next
+/// keystroke ran a window command instead of filtering.
+#[test]
+fn a_picker_takes_the_keyboard_from_app_chords() {
+    on_large_stack(|| {
+        let (mut backend, _rx) = pick_backend(100, 30);
+        backend.render();
+        assert!(
+            backend.state().has_modal_overlay(),
+            "a picker is a modal overlay like any other"
+        );
+        // What the command registry was last built with, not what state merely says: the chords are
+        // matched by the framework, so a gate nobody applied leaves them live behind the modal.
+        assert!(
+            !backend.state().commands_gate,
+            "the registry was rebuilt for the open picker"
+        );
+
+        backend
+            .send_key(KeyEvent {
+                code: KeyCode::Esc,
+                mods: KeyMods::NONE,
+            })
+            .expect("close the picker");
+        backend.render();
+        assert!(!backend.state().has_modal_overlay());
+        assert!(
+            backend.state().commands_gate,
+            "closing it hands the chords back without anyone announcing it"
+        );
+    });
+}

@@ -661,10 +661,7 @@ impl Component for AppRoot {
             let command = update.command.take();
             update = Update::with_command(command);
         }
-        if ctx.state.commands_dirty {
-            ctx.state.commands_dirty = false;
-            commands::sync(ctx);
-        }
+        commands::sync_if_needed(ctx);
         // Key routing can mutate the layout without going through `handle_msg` (prefix-mode window
         // management), so schedule the same commit chokepoint here to publish those changes.
         crate::ops::session::schedule_layout_commit(ctx);

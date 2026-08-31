@@ -788,32 +788,43 @@ pub(crate) fn commands_active(state: &State) -> bool {
 }
 
 fn commands_active_without_scratchpad(state: &State) -> bool {
+    // One list, not two. This used to enumerate every overlay again beside
+    // `State::has_modal_overlay`, and the two drifted: an overlay added to one and forgotten in the
+    // other either kept chords live over itself or refused to open over nothing. A password field
+    // is part of that list for the same reason as the rest - arbitrary text must reach the field,
+    // not run whatever chord it happens to contain.
     state.mode == Mode::Normal
-        && !state.show_help
-        && !state.show_palette
-        && !state.show_settings
-        && !state.show_theme_picker
-        && !state.show_layout_picker
-        && !state.show_pick
-        && state.search.is_none()
-        && state.rename.is_none()
-        && state.rename_session.is_none()
-        && state.save_profile_prompt.is_none()
-        && !state.show_profile_picker
-        && !state.show_session_picker
-        && state.remote_picker.is_none()
-        && state.collaboration.is_none()
-        && state.follow_prompt.is_none()
-        // A password is arbitrary text: any chord it happens to contain must reach the field, not
-        // run a command.
-        && state.askpass.is_none()
+        && !state.has_modal_overlay()
         && state.current().connection != crate::state::ConnectionState::Reconnecting
+}
+
+/// Whether the command registry needs rebuilding before the next key is routed.
+///
+/// `commands_dirty` is an announcement, and announcements get forgotten - opening a picker set its
+/// overlay flag without making one, so every chord stayed enabled over it. The gate itself is cheap
+/// to evaluate, so it is compared against what the registry was last built with rather than trusted
+/// to a flag. Anything that opens or closes an overlay is then covered whether it remembers or not.
+pub(crate) fn needs_sync(state: &State) -> bool {
+    state.commands_dirty || state.commands_gate != commands_active(state)
 }
 
 /// Register (or re-register, replacing by id) every command from the current `State`: builtin
 /// actions, workspace digit switches, and user `[keys]` commands. Idempotent - call again after
 /// anything that changes shortcuts (config reload), labels (toggle actions, layout cycling), or
 /// the `commands_active` gate (mode/overlay transitions).
+/// Rebuild the registry if anything it renders from moved, then record what it now believes.
+///
+/// The one entry point for keeping the registry current: it answers both "someone asked" and "the
+/// gate flipped and nobody said so".
+pub(crate) fn sync_if_needed(ctx: &mut Context<AppRoot>) {
+    if !needs_sync(&ctx.state) {
+        return;
+    }
+    ctx.state.commands_dirty = false;
+    ctx.state.commands_gate = commands_active(&ctx.state);
+    sync(ctx);
+}
+
 pub(crate) fn sync(ctx: &Context<AppRoot>) {
     let state = &ctx.state;
     let config = &state.config;

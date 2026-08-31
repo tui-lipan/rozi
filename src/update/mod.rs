@@ -744,10 +744,7 @@ fn post_update_sync(
     // grows later. Alert pulses are armed at the point where output first raises an unseen-output
     // or bell marker, so ordinary chunks do not have to scan every pane for alerts.
     if post_update == PostUpdateKind::SessionOutputOnly {
-        if ctx.state.commands_dirty {
-            ctx.state.commands_dirty = false;
-            crate::commands::sync(ctx);
-        }
+        crate::commands::sync_if_needed(ctx);
         return update;
     }
 
@@ -777,10 +774,7 @@ fn post_update_sync(
         update = Update::with_command(command);
     }
 
-    if ctx.state.commands_dirty {
-        ctx.state.commands_dirty = false;
-        crate::commands::sync(ctx);
-    }
+    crate::commands::sync_if_needed(ctx);
 
     if ctx.state.show_help
         && !ctx.has_focus_within_key(crate::view::help_filter_key())

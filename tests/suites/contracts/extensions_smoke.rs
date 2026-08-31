@@ -82,7 +82,12 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
         .dispatch(Msg::RunAction(Action::ToggleDoNotDisturb))
         .unwrap();
 
-    backend.state_mut().show_palette = true;
+    // Opened and closed through the real action rather than by poking the flag: closing an overlay
+    // is what re-enables the command registry, and a test that skips that path is testing a state
+    // the app never reaches.
+    backend
+        .dispatch(Msg::RunAction(Action::TogglePalette))
+        .unwrap();
     backend.render();
     for ch in "extension".chars() {
         backend
@@ -94,7 +99,12 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
     }
     let palette = backend.capture_frame().to_fixed_grid_lines().join("\n");
     assert!(palette.contains("Run extension probe"), "{palette}");
-    backend.state_mut().show_palette = false;
+    backend
+        .send_key(KeyEvent {
+            code: KeyCode::Esc,
+            mods: KeyMods::NONE,
+        })
+        .unwrap();
     backend.render();
 
     backend
@@ -152,7 +162,12 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
     backend
         .dispatch(Msg::RunAction(Action::ToggleDoNotDisturb))
         .unwrap();
-    backend.state_mut().show_palette = true;
+    // Opened and closed through the real action rather than by poking the flag: closing an overlay
+    // is what re-enables the command registry, and a test that skips that path is testing a state
+    // the app never reaches.
+    backend
+        .dispatch(Msg::RunAction(Action::TogglePalette))
+        .unwrap();
     backend.render();
     for ch in "changed".chars() {
         backend
@@ -182,7 +197,12 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
     backend
         .dispatch(Msg::RunAction(Action::ToggleDoNotDisturb))
         .unwrap();
-    backend.state_mut().show_palette = true;
+    // Opened and closed through the real action rather than by poking the flag: closing an overlay
+    // is what re-enables the command registry, and a test that skips that path is testing a state
+    // the app never reaches.
+    backend
+        .dispatch(Msg::RunAction(Action::TogglePalette))
+        .unwrap();
     backend.render();
     let reloaded = backend.capture_frame().to_fixed_grid_lines().join("\n");
     assert!(!reloaded.contains("Run extension probe"), "{reloaded}");

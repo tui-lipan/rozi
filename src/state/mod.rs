@@ -317,6 +317,13 @@ pub struct State {
     /// `update::handle_msg` rather than resyncing unconditionally, since high-frequency messages
     /// (PTY output, keystrokes forwarded to a pane) never affect it.
     pub commands_dirty: bool,
+    /// The `crate::commands::commands_active` value the registry was last built with.
+    ///
+    /// The dirty flag is set by hand in dozens of places, and an overlay that forgets leaves every
+    /// chord live over it - the leader prefix included, which is how a picker ends up entering
+    /// PREFIX mode. Recording what the registry actually believes lets the gate correct itself
+    /// whichever overlay opened, including one written after this.
+    pub commands_gate: bool,
 }
 
 /// The default single-pane attachment a fresh launch, a fresh ephemeral session, or a killed
@@ -458,6 +465,7 @@ impl State {
             confirm_epoch: 0,
             next_parked_seq: 0,
             commands_dirty: false,
+            commands_gate: true,
         }
     }
 
@@ -834,7 +842,8 @@ impl State {
 
     /// Whether any modal overlay (help, palette, settings, pickers, prompts) is currently open.
     pub fn has_modal_overlay(&self) -> bool {
-        self.show_palette
+        self.show_pick
+            || self.show_palette
             || self.show_settings
             || self.show_help
             || self.show_theme_picker

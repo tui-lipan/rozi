@@ -2,12 +2,14 @@ use std::time::Duration;
 
 use tui_lipan::prelude::{Easing, FloatRect, TransitionConfig};
 
-pub const GEOMETRY_MS: u64 = 220;
-pub const CLOSE_MS: u64 = 120;
-pub const OPEN_DELAY_MS: u64 = 36;
-pub const FOCUS_CHROME_MS: u64 = 160;
-pub const ALERT_PULSE_MS: u64 = 1600;
-pub const ALERT_PULSE_MIN_HALF_MS: u64 = 400;
+/// Default durations for [`WindowAnimationConfig`]. Callers read the configured values off that
+/// type rather than these, so a user override cannot be bypassed by reaching for the default.
+const GEOMETRY_MS: u64 = 220;
+const CLOSE_MS: u64 = 120;
+const OPEN_DELAY_MS: u64 = 36;
+const FOCUS_CHROME_MS: u64 = 160;
+const ALERT_PULSE_MS: u64 = 1600;
+const ALERT_PULSE_MIN_HALF_MS: u64 = 400;
 /// A long, subtle breathe needs fewer samples than short focus feedback. Keeping this separate from
 /// the app-wide colour cadence avoids repainting the whole realized tree at 30 fps indefinitely.
 pub const ALERT_PULSE_FRAME_RATE: u16 = 10;
@@ -19,7 +21,7 @@ pub const ALERT_PULSE_BLEND: f32 = 0.55;
 /// attention. An integer multiple keeps the two in a harmonic relationship: they realign every
 /// `ALERT_PULSE_CALM_FACTOR` beats instead of drifting past each other, which is what makes two
 /// simultaneous breathes read as one system rather than as noise.
-pub const ALERT_PULSE_CALM_FACTOR: u32 = 2;
+const ALERT_PULSE_CALM_FACTOR: u32 = 2;
 
 /// How far a marked workspace tab's *background* is tinted toward its alert role at the peak of the
 /// breathe. Tabs mark on background rather than foreground: a coloured glyph on the panel surface is

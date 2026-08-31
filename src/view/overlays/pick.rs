@@ -1,3 +1,34 @@
+/// Room the frame, padding, and selection marker take before a row's own text starts.
+const PICK_ROW_CHROME: usize = 8;
+/// Blank cells kept between a label and the description right-aligned after it.
+const PICK_DESCRIPTION_GAP: usize = 2;
+/// A description shorter than this says nothing worth crowding the label for.
+const PICK_MIN_DESCRIPTION: usize = 8;
+
+/// Fit a producer-supplied description into what the label leaves behind.
+///
+/// Every other picker in rozi puts a short fixed token in this slot — `busy`, `restorable`, a
+/// marker list — so none of them can overflow it. `pick` is the only one relaying arbitrary text
+/// from another program, and a long enough description pushed the label out of its own row
+/// entirely. The label is the thing being chosen between, so it is served first; the description
+/// takes what is left, loses its tail to an ellipsis, and is dropped outright when the remainder is
+/// too small to carry meaning.
+fn fit_description(label: &str, description: &str, width: u16) -> String {
+    let available = usize::from(width).saturating_sub(PICK_ROW_CHROME);
+    let budget = available
+        .saturating_sub(label.chars().count())
+        .saturating_sub(PICK_DESCRIPTION_GAP);
+    if budget < PICK_MIN_DESCRIPTION {
+        return String::new();
+    }
+    if description.chars().count() <= budget {
+        return description.to_string();
+    }
+    let mut fitted: String = description.chars().take(budget.saturating_sub(1)).collect();
+    fitted.push('…');
+    fitted
+}
+
 pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(pick) = ctx.state.pick.as_ref() else {
         return Text::new("").into();
@@ -19,13 +50,16 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
             if let Some(priority) = row.priority {
                 item = item.priority(priority);
             }
-            let description = row
-                .disabled
-                .as_deref()
-                .or(row.description.as_deref())
-                .unwrap_or("");
+            let description = fit_description(
+                &row.label,
+                row.disabled
+                    .as_deref()
+                    .or(row.description.as_deref())
+                    .unwrap_or(""),
+                width,
+            );
             if !description.is_empty() {
-                item = item.description(ItemDescription::new().right(description.to_string()));
+                item = item.description(ItemDescription::new().right(description));
             }
             let entry = SearchEntry::Item(item);
             if let Some((_, items)) = groups.iter_mut().find(|(name, _)| *name == group_name) {
@@ -43,13 +77,16 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
                 if let Some(priority) = row.priority {
                     item = item.priority(priority);
                 }
-                let description = row
-                    .disabled
-                    .as_deref()
-                    .or(row.description.as_deref())
-                    .unwrap_or("");
+                let description = fit_description(
+                    &row.label,
+                    row.disabled
+                        .as_deref()
+                        .or(row.description.as_deref())
+                        .unwrap_or(""),
+                    width,
+                );
                 if !description.is_empty() {
-                    item = item.description(ItemDescription::new().right(description.to_string()));
+                    item = item.description(ItemDescription::new().right(description));
                 }
                 SearchEntry::Item(item)
             })
@@ -198,4 +235,31 @@ pub(crate) fn pick_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
         Msg::PickPromptCancel,
         Msg::PickPromptSubmit,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The row is a choice between labels, so a description never costs the label a cell.
+    #[test]
+    fn a_long_description_yields_to_its_label() {
+        let long = "wasm-pack build wasm/showcase --target web --out-dir pkg";
+
+        // Short label, wide picker: room for both, nothing is touched.
+        assert_eq!(fit_description("dev", "npm run build", 60), "npm run build");
+
+        // The overflowing case from a real project: the label survives whole and the description
+        // gives up its tail.
+        let fitted = fit_description("build:wasm", long, 60);
+        assert!(fitted.ends_with('…'));
+        assert!(fitted.chars().count() <= 60 - PICK_ROW_CHROME - "build:wasm".chars().count());
+        assert!(long.starts_with(&fitted[..fitted.len() - '…'.len_utf8()]));
+
+        // A label that fills the row leaves nothing worth saying, so the description goes.
+        assert_eq!(fit_description(&"x".repeat(50), long, 60), "");
+        // A narrow picker clips hard but still never spends a cell the label needs.
+        let narrow = fit_description("build:wasm", long, 30);
+        assert!(narrow.chars().count() <= 30 - PICK_ROW_CHROME - "build:wasm".chars().count());
+    }
 }

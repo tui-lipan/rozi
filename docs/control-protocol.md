@@ -230,7 +230,7 @@ Row fields:
 | --- | --- | --- | --- |
 | `id` | string | `label` | Value returned as `selected`. |
 | `label` | string | required | Visible row text. |
-| `description` | string | none | Right-aligned detail. |
+| `description` | string | none | Right-aligned detail. Clipped, or dropped entirely, when the label needs the room. |
 | `group` | string | none | Section label. |
 | `disabled` | string | none | Makes the row inert and shows the reason. |
 | `active` | bool | `false` | Marks the current item. |

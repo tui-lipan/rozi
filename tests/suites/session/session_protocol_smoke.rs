@@ -27,17 +27,33 @@ const OUTPUT_MARKER: &[u8] = b"rozi-session-smoke-output";
 #[test]
 fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     let session = unique_session_name();
-    let runtime_base = private_temp_dir();
+    let test_root = private_temp_dir();
+    let runtime_base = test_root.join("runtime");
+    let config_path = test_root.join("config.toml");
+    std::fs::write(&config_path, "[session]\nresurrect = false\n")
+        .expect("write isolated server config");
     let endpoint = subprocess_endpoint(&runtime_base, &session);
     let child = Command::new(env!("CARGO_BIN_EXE_rozi"))
         .args(["--server", &session])
+        // A subprocess does not inherit the integration test's in-process path override. Redirect
+        // every persisted-data root explicitly, and disable resurrection because this test does
+        // not exercise it. Otherwise an interrupted run can publish this protocol-test session
+        // into the developer's real resurrection directory.
+        .env("HOME", &test_root)
+        .env("XDG_CONFIG_HOME", test_root.join("config"))
+        .env("XDG_STATE_HOME", test_root.join("state"))
+        .env("XDG_CACHE_HOME", test_root.join("cache"))
+        .env("XDG_DATA_HOME", test_root.join("data"))
         .env("XDG_RUNTIME_DIR", &runtime_base)
+        .env("APPDATA", test_root.join("AppData").join("Roaming"))
+        .env("LOCALAPPDATA", test_root.join("AppData").join("Local"))
+        .env("ROZI_CONFIG", config_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("launch real session server");
-    let mut server = ServerGuard::new(child, runtime_base);
+    let mut server = ServerGuard::new(child, test_root.clone());
 
     let mut first = connect_when_ready(&endpoint, server.child_mut());
     first.write_control(&attach_message(&session, "first"));
@@ -226,6 +242,20 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     second.write_control(&ClientMessage::Shutdown);
     drop(second);
     server.wait_for_exit();
+
+    let state_base = if cfg!(windows) {
+        test_root.join("AppData").join("Local").join("rozi/state")
+    } else {
+        test_root.join("state/rozi")
+    };
+    assert!(
+        !state_base
+            .join("sessions")
+            .join(&session)
+            .join("meta.json")
+            .is_file(),
+        "the protocol test must not publish a resurrection snapshot"
+    );
 }
 
 fn attach_message(session: &str, label: &str) -> ClientMessage {

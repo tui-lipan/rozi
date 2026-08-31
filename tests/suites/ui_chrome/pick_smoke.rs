@@ -134,3 +134,59 @@ fn pick_overlay_filters_rows() {
         );
     });
 }
+
+/// A producer can send a description far longer than the row: a build command line beside a short
+/// script name. The label is what the user is choosing between, so it must survive whole.
+#[test]
+fn a_long_description_never_costs_a_row_its_label() {
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+        let (ack_tx, _ack_rx) = std::sync::mpsc::channel();
+        backend
+            .dispatch(rozi::Msg::PickStreamOpen {
+                width: None,
+                actions: Vec::new(),
+                id: 1,
+                title: Some("Tasks".into()),
+                placeholder: Some("Filter tasks…".into()),
+                extension: None,
+                sender: tx,
+                ack: ack_tx,
+            })
+            .expect("dispatch open");
+        backend
+            .dispatch(rozi::Msg::PickRowsReported {
+                id: 1,
+                rows: vec![PickRow {
+                    id: Some("npm:build:wasm".into()),
+                    label: "build:wasm".into(),
+                    description: Some(
+                        "wasm-pack build wasm/showcase --target web --out-dir pkg".into(),
+                    ),
+                    group: Some("package.json".into()),
+                    disabled: None,
+                    active: false,
+                    priority: None,
+                }],
+            })
+            .expect("dispatch rows");
+
+        let frame = rendered_lines(&mut backend);
+        assert!(
+            frame.contains("build:wasm"),
+            "the label survives its own description:\n{frame}"
+        );
+        assert!(
+            !frame.contains("--out-dir pkg"),
+            "the description gave up its tail rather than the label:\n{frame}"
+        );
+    });
+}

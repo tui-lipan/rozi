@@ -133,14 +133,21 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
                     .into();
                 }
                 let disabled_reason = row.disabled.as_deref();
-                let status = disabled_reason.or(row.description.as_deref()).unwrap_or("");
+                // Fitted here as well as on the entry: this custom renderer is what the palette
+                // actually draws, and it reads the row out of state rather than using the
+                // description the entry was built with.
+                let status = fit_description(
+                    item.label.as_ref(),
+                    disabled_reason.or(row.description.as_deref()).unwrap_or(""),
+                    width,
+                );
                 let style = if disabled_reason.is_some() {
                     disabled_style
                 } else {
                     item_style
                 };
                 ListItem::from_spans(vec![Span::new(item.label.as_ref()).style(style)])
-                    .description(status)
+                    .description(status.as_str())
                     .description_style(if disabled_reason.is_some() {
                         disabled_style
                     } else {

@@ -961,8 +961,24 @@ fn register_user_commands(ctx: &Context<AppRoot>, config: &Config, active: bool)
 fn register_named_commands(ctx: &Context<AppRoot>, config: &Config, active: bool) {
     for (index, command) in config.commands.iter().enumerate() {
         let registry_id = format!("command.{}", command.id);
-        let shortcuts = resolve_shortcuts(config, &command.id, &[]);
-        let hint = builtin_keybinding_hint(config, &command.id, &[]);
+        // An extension's suggested chord is a default, so it behaves like one: `[keys]` still wins,
+        // and `resolve_shortcuts` consults that first.
+        let suggested: Vec<_> = config
+            .extension_key_defaults
+            .get(&command.id)
+            .cloned()
+            .unwrap_or_default();
+        let shortcuts = if config.key_overrides.contains_key(&command.id) {
+            resolve_shortcuts(config, &command.id, &[])
+        } else {
+            KeyBindings::from_bindings(suggested.iter().cloned())
+        };
+        let hint = if config.key_overrides.contains_key(&command.id) {
+            builtin_keybinding_hint(config, &command.id, &[])
+        } else {
+            let parts: Vec<_> = suggested.iter().map(format_binding).collect();
+            (!parts.is_empty()).then(|| Arc::<str>::from(parts.join(" / ")))
+        };
         let link = ctx.link().clone();
         ctx.register_command(
             CommandEntry::builder(registry_id)
@@ -1146,6 +1162,29 @@ fn builtin_keybinding_hint_parts(config: &Config, id: &str, defaults: &[&str]) -
 fn default_shortcuts_for<S: AsRef<str>>(config: &Config, keys: &[S]) -> Vec<KeyBinding> {
     keys.iter()
         .flat_map(|key| crate::config::scheme_shortcuts(&config.input, key.as_ref()))
+        .collect()
+}
+
+/// The leader key reserved for extension chords.
+///
+/// Extensions suggest steps *inside* this space (`key = "b"` becomes `<prefix> x b`), so a
+/// suggestion can never collide with a built-in and a built-in can never quietly take a suggestion
+/// away in a later release. Rozi does not assign this key to anything; a test enforces that.
+pub(crate) const EXTENSION_KEY_LEADER: &str = "x";
+
+/// Every chord the built-in commands answer to out of the box, paired with the id that owns it.
+/// Used to tell an extension its suggested chord is already spoken for.
+pub(crate) fn builtin_default_shortcuts(
+    input: &crate::config::InputConfig,
+) -> Vec<(&'static str, KeyBinding)> {
+    BUILTIN_COMMANDS
+        .iter()
+        .filter_map(|command| Some((command.action.id()?, command.default_keys)))
+        .flat_map(|(id, keys)| {
+            keys.iter()
+                .flat_map(move |key| crate::config::scheme_shortcuts(input, key))
+                .map(move |binding| (id, binding))
+        })
         .collect()
 }
 
@@ -1422,6 +1461,24 @@ mod tests {
                 shift: true,
                 ..KeyMods::NONE
             },
+        }
+    }
+
+    /// The extension chord space is a promise, not a coincidence: if a built-in ever claims this
+    /// key, every extension's suggested chord loses to it at once.
+    #[test]
+    fn the_extension_leader_key_is_never_claimed_by_a_builtin() {
+        let input = crate::config::InputConfig::default();
+        let reserved = format!(
+            "{} {EXTENSION_KEY_LEADER}",
+            input.prefix.canonical_lowercase()
+        );
+        for (id, binding) in builtin_default_shortcuts(&input) {
+            let canonical = binding.canonical_lowercase();
+            assert!(
+                canonical != reserved && !canonical.starts_with(&format!("{reserved} ")),
+                "`{id}` claims the extension chord space with `{canonical}`"
+            );
         }
     }
 

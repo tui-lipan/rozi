@@ -128,6 +128,18 @@ stops polling.
 Custom launcher tabs contain configured `run`, `send`, or `popup` entries. These use the same
 actions as custom key commands.
 
+An entry's `group` puts it under a section header, the same header the Activity, Panes, and Sessions
+tabs use. Entries are clustered by group in the order each group first appears, and entries without
+one lead the list unheaded. A tab of agents grouped by which agent to start is the shape this is
+for: one click opens a pane running that agent in that project.
+
+```toml
+{ name = "agents", label = "Agents", entries = [
+  { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
+  { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },
+] }
+```
+
 Command-backed tabs run a command when the tab becomes visible and repeat at the configured
 interval, with a minimum of five seconds. Each run has:
 
@@ -140,8 +152,25 @@ interval, with a minimum of five seconds. Each run has:
 Rozi strips terminal control sequences from output. Spawn failures, timeouts, standard error, and
 non-zero exits appear as non-clickable error rows.
 
+Extensions contribute tabs too, with `[[sidebar_tabs]]` in their manifest and the same launcher and
+command forms. Their IDs are namespaced `<extension>.<name>`, they land in the first panel until you
+drag them somewhere, and a placement survives the extension being disabled or broken. See
+[Extensions](extensions.md#sidebar-tabs).
+
+A command tab groups its own output: set `group_prefix`, and each output line starting with it
+becomes a section header carrying the rest of the line. A line holding nothing but the prefix is
+dropped. Headers are never selectable.
+
 An `on_click` `send` action may use `{line}`. Rozi sends the selected sanitized row literally. It
 does not quote or evaluate it. `{line}` is rejected in `run` and `popup`.
+
+`run`, `popup`, and `exec` actions receive the selected row in `ROZI_ROW` instead, the same way tree
+actions receive a path in `ROZI_FILE`. Quote `"$ROZI_ROW"` when passing it to another program: a row
+is command output and must never compose a command line.
+
+Command tabs also run where the focused pane is, so a tab describes the project you are working in
+and re-lists when you `cd`. Under `--remote` the pane's directory belongs to the server, so the
+client's own directory stands.
 
 Tree `send` actions may use `{path}`. Tree `run` and `popup` actions receive the selected path in
 `ROZI_FILE` instead of inserting it into command text. Quote `"$ROZI_FILE"` when passing it to

@@ -844,6 +844,13 @@ pub struct Config {
     pub agents: Vec<crate::agent_detection::AgentDefinition>,
     /// Stable IDs of extensions that are valid, compatible, unique, and enabled for this load.
     pub active_extensions: HashSet<String>,
+    /// Chords extensions asked for and got: command id -> bindings. Separate from
+    /// [`Self::key_overrides`], which means "the user bound this by hand" and outranks these.
+    pub extension_key_defaults: HashMap<String, Vec<KeyBinding>>,
+    /// Stable IDs of every extension present on disk, whatever its status. Wider than
+    /// [`Self::active_extensions`] on purpose: a durable sidebar placement naming a tab from a
+    /// disabled or currently broken extension is kept, and only one that is gone gets pruned.
+    pub installed_extensions: HashSet<String>,
     /// Process-facing definitions used to preserve or rotate opaque runtime fencing tokens.
     pub(crate) extension_runtime:
         std::collections::BTreeMap<String, super::extensions::ExtensionRuntimeFingerprint>,
@@ -894,6 +901,10 @@ pub struct NamedCommand {
     pub action: UserCommandAction,
     pub category: String,
     pub env: Vec<(String, String)>,
+    /// Key steps an extension suggests after the leader prefix. A suggestion only: it is resolved
+    /// into [`Config::extension_key_defaults`] at load, and dropped there if anything already
+    /// answers to that chord. Always `None` for a `config.toml` command, which has `[keys]`.
+    pub default_key: Option<String>,
 }
 
 impl NamedCommand {
@@ -1139,6 +1150,9 @@ impl SidebarTabId {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SidebarLauncherEntry {
     pub label: String,
+    /// Section this entry belongs under, or `None` for the unheaded run at the top of the tab.
+    /// Entries are clustered by it at parse time, so the stored order is already display order.
+    pub group: Option<String>,
     pub action: UserCommandAction,
 }
 
@@ -1237,6 +1251,9 @@ pub enum SidebarTab {
         name: SidebarTabId,
         label: String,
         entries: Vec<SidebarLauncherEntry>,
+        /// Environment an extension's tab passes to whatever its rows launch. Empty for a
+        /// `config.toml` tab, which runs as the user with nothing added.
+        env: Vec<(String, String)>,
     },
     Command {
         name: SidebarTabId,
@@ -1244,6 +1261,12 @@ pub enum SidebarTab {
         command: String,
         interval_secs: u64,
         on_click: Option<UserCommandAction>,
+        /// Marks which output lines are section headers rather than rows. A line starting with it
+        /// renders as a header with the prefix stripped; without it every line is an ordinary row,
+        /// which is what a command that knows nothing about rozi produces.
+        group_prefix: Option<String>,
+        /// Environment for the polling process and for `on_click`. Empty for a `config.toml` tab.
+        env: Vec<(String, String)>,
     },
 }
 
@@ -1280,6 +1303,15 @@ impl SidebarTab {
     /// sidebar must not wrap it in a second scroll view.
     pub fn scrolls_itself(&self) -> bool {
         matches!(self, Self::Tree { .. })
+    }
+
+    /// Environment the tab's own processes receive. Only an extension's tab carries any: it is how
+    /// a contributed tab is told where it is installed and what the user configured.
+    pub fn env(&self) -> &[(String, String)] {
+        match self {
+            Self::Launcher { env, .. } | Self::Command { env, .. } => env,
+            _ => &[],
+        }
     }
 }
 
@@ -1437,6 +1469,8 @@ impl Default for Config {
             services: Vec::new(),
             agents: Vec::new(),
             active_extensions: HashSet::new(),
+            installed_extensions: HashSet::new(),
+            extension_key_defaults: HashMap::new(),
             extension_runtime: std::collections::BTreeMap::new(),
             logging: LoggingConfig::default(),
             workbar: WorkbarConfig::default(),

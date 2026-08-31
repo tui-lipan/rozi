@@ -8,6 +8,7 @@ fn row(text: &str) -> SidebarCommandRow {
         raw: text.to_string(),
         display: text.to_string(),
         error: false,
+        header: false,
     }
 }
 
@@ -20,6 +21,128 @@ fn unsplit_reorder_keeps_the_saved_panel_boundary() {
     assert_eq!(
         persisted_panel_ids(displayed, &configured, false),
         vec![vec![id("panes")], vec![id("agents"), id("sessions")]]
+    );
+}
+
+/// A command tab describes the project in front of you, so it has to notice a `cd`. Waiting out the
+/// poll interval would leave it describing the previous directory for up to half a minute, and a
+/// poll already running was launched against the old one.
+#[test]
+fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
+    on_test_thread(|| {
+        let mut backend = settled_backend();
+        let id = SidebarTabId::new("rows");
+        {
+            let state = backend.state_mut();
+            state.sidebar_visible = true;
+            state.config.sidebar.tabs = vec![SidebarTab::Command {
+                name: id.clone(),
+                label: "Rows".to_string(),
+                command: "printf row".to_string(),
+                interval_secs: 30,
+                on_click: None,
+                group_prefix: None,
+                env: Vec::new(),
+            }];
+            state.sidebar.panels[0].tabs = vec![id.clone()];
+            state.sidebar.panels[0].active_tab = Some(id.clone());
+            state.sidebar.command_output.insert(
+                id.clone(),
+                SidebarCommandOutput {
+                    epoch: 1,
+                    rows: vec![row("stale")],
+                },
+            );
+            state.sidebar.command_in_flight.insert(id.clone(), 1);
+        }
+
+        let focused = backend.state().current().workspaces[0].panes[0].id;
+        backend.state_mut().current_mut().focused_pane = Some(focused);
+        backend.state_mut().current_mut().workspaces[0].focused_pane = Some(focused);
+        let before = backend.state().sidebar.command_epoch;
+        backend.state_mut().current_mut().workspaces[0].panes[0]
+            .terminal
+            .cwd = Some("/home/x/project".to_string());
+        backend
+            .dispatch(crate::Msg::SidebarTreeFocused)
+            .expect("any message runs the per-message sidebar sync");
+
+        let state = backend.state();
+        assert_eq!(
+            state.sidebar.command_cwd.as_deref(),
+            Some("/home/x/project")
+        );
+        assert_ne!(state.sidebar.command_epoch, before);
+        // The poll that was running described the old directory, so its result is no longer
+        // awaited: whatever is in flight now belongs to the new epoch, not the stale one.
+        assert!(
+            state
+                .sidebar
+                .command_in_flight
+                .get(&id)
+                .is_none_or(|epoch| *epoch != 1)
+        );
+        // The rows already on screen stay until the new ones arrive: a re-list, not a blank tab.
+        assert_eq!(state.sidebar.command_output[&id].rows, vec![row("stale")]);
+    });
+}
+
+/// A tab whose extension is still installed keeps its spot even though this load has no such tab:
+/// disabling an extension, or shipping a broken update, must not quietly rewrite the arrangement
+/// the user dragged into place.
+#[test]
+fn persisting_keeps_placements_for_installed_extensions_and_drops_removed_ones() {
+    let id = |name: &str| crate::config::SidebarTabId::new(name);
+    let installed: std::collections::HashSet<_> = ["git-tools".to_string()].into_iter().collect();
+    let configured = vec![
+        vec![id("panes")],
+        vec![
+            id("git-tools.agents"),
+            id("sessions"),
+            id("gone-tools.tasks"),
+        ],
+    ];
+    // What is on screen this run: neither extension tab exists, one because it is disabled and one
+    // because the extension was deleted.
+    let displayed = vec![vec![id("panes")], vec![id("sessions")]];
+
+    assert_eq!(
+        retain_absent_extension_tabs(displayed, &configured, &installed),
+        vec![
+            vec![id("panes")],
+            // Reinserted at the index it held, so re-enabling puts the tab back where it was.
+            vec![id("git-tools.agents"), id("sessions")]
+        ]
+    );
+}
+
+/// Collapsing the split leaves fewer panels than the saved layout had; a retained tab folds into the
+/// last one rather than being dropped with the panel that used to hold it.
+#[test]
+fn retained_placements_survive_a_panel_disappearing() {
+    let id = |name: &str| crate::config::SidebarTabId::new(name);
+    let installed: std::collections::HashSet<_> = ["git-tools".to_string()].into_iter().collect();
+    let configured = vec![vec![id("panes")], vec![id("git-tools.agents")]];
+
+    assert_eq!(
+        retain_absent_extension_tabs(vec![vec![id("panes")]], &configured, &installed),
+        vec![vec![id("panes"), id("git-tools.agents")]]
+    );
+}
+
+/// Only namespaced ids are retained. A bare name that no longer resolves is a user's own stale tab,
+/// and rearranging the sidebar is the right moment to let it go.
+#[test]
+fn a_bare_unknown_tab_is_not_retained() {
+    let id = |name: &str| crate::config::SidebarTabId::new(name);
+    let configured = vec![vec![id("panes"), id("removed")]];
+    assert_eq!(
+        retain_absent_extension_tabs(
+            vec![vec![id("panes")]],
+            &configured,
+            &std::collections::HashSet::new()
+        ),
+        vec![vec![id("panes")]]
     );
 }
 
@@ -1228,12 +1351,15 @@ fn host_probe_errors_are_recorded_then_cleared() {
 fn command_rows_are_sanitized_bounded_and_keep_raw_separate_from_display() {
     let long = "x".repeat(COMMAND_RAW_ROW_CHARS + 20);
     let stdout = format!("\x1b[31mred\x1b[0m\n{long}\n{}", "row\n".repeat(600));
-    let rows = command_rows(Ok(crate::platform::command::CommandOutput {
-        stdout: stdout.into_bytes(),
-        stderr: Vec::new(),
-        status: Some(0),
-        timed_out: false,
-    }));
+    let rows = command_rows(
+        Ok(crate::platform::command::CommandOutput {
+            stdout: stdout.into_bytes(),
+            stderr: Vec::new(),
+            status: Some(0),
+            timed_out: false,
+        }),
+        None,
+    );
     assert_eq!(rows.len(), COMMAND_MAX_ROWS);
     assert_eq!(rows[0].raw, "red");
     assert_eq!(rows[1].raw.chars().count(), COMMAND_RAW_ROW_CHARS);
@@ -1245,26 +1371,32 @@ fn command_rows_are_sanitized_bounded_and_keep_raw_separate_from_display() {
 
 #[test]
 fn command_errors_cover_timeout_nonzero_stderr_and_spawn_failure() {
-    let timeout = command_rows(Ok(crate::platform::command::CommandOutput {
-        stdout: b"ignored".to_vec(),
-        stderr: Vec::new(),
-        status: None,
-        timed_out: true,
-    }));
+    let timeout = command_rows(
+        Ok(crate::platform::command::CommandOutput {
+            stdout: b"ignored".to_vec(),
+            stderr: Vec::new(),
+            status: None,
+            timed_out: true,
+        }),
+        None,
+    );
     assert!(timeout[0].error && timeout[0].raw.contains("timed out"));
 
-    let nonzero = command_rows(Ok(crate::platform::command::CommandOutput {
-        stdout: Vec::new(),
-        stderr: b"\x1b[31mbad\x1b[0m".to_vec(),
-        status: Some(7),
-        timed_out: false,
-    }));
+    let nonzero = command_rows(
+        Ok(crate::platform::command::CommandOutput {
+            stdout: Vec::new(),
+            stderr: b"\x1b[31mbad\x1b[0m".to_vec(),
+            status: Some(7),
+            timed_out: false,
+        }),
+        None,
+    );
     assert_eq!(nonzero[0].raw, "Error: bad");
 
-    let spawn = command_rows(Err(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "missing",
-    )));
+    let spawn = command_rows(
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "missing")),
+        None,
+    );
     assert!(spawn[0].error && spawn[0].raw.contains("missing"));
 }
 
@@ -1297,8 +1429,10 @@ fn activate_launcher(
     backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Launcher {
         name: id.clone(),
         label: "Launch".to_string(),
+        env: Vec::new(),
         entries: vec![crate::config::SidebarLauncherEntry {
             label: "Entry".to_string(),
+            group: None,
             action,
         }],
     }];
@@ -1375,6 +1509,103 @@ fn launcher_popup_inherits_cwd_and_keeps_its_identity_keep_open() {
     });
 }
 
+/// Headers and their spacers are extra rows the click path never saw before: the projection has to
+/// keep every entry index pointing at the entry the row actually shows, or a click under one header
+/// runs an action from another section.
+#[test]
+fn grouped_launcher_rows_stay_inert_at_headers_and_keep_entry_indices_aligned() {
+    on_test_thread(|| {
+        let backend = settled_backend();
+        let id = SidebarTabId::new("agents");
+        let entry = |label: &str, group: Option<&str>| crate::config::SidebarLauncherEntry {
+            label: label.to_string(),
+            group: group.map(str::to_string),
+            action: UserCommandAction::run("true".to_string()),
+        };
+        let tab = SidebarTab::Launcher {
+            name: id.clone(),
+            label: "Agents".to_string(),
+            env: Vec::new(),
+            entries: vec![
+                entry("Shell", None),
+                entry("rozi", Some("claude")),
+                entry("docs", Some("claude")),
+                entry("rozi", Some("codex")),
+            ],
+        };
+        let indices: Vec<Option<usize>> = backend
+            .state()
+            .sidebar_item_projections(&tab)
+            .into_iter()
+            .map(|item| match item.target {
+                crate::state::RowTarget::Launcher { entry_index, .. } => Some(entry_index),
+                _ => None,
+            })
+            .collect();
+        // Ungrouped entry, then spacer + header ahead of each section's first entry.
+        assert_eq!(
+            indices,
+            vec![Some(0), None, None, Some(1), Some(2), None, None, Some(3)]
+        );
+    });
+}
+
+/// A `group_prefix` line labels the rows under it. It carries no command of its own, so it must not
+/// be clickable even on a tab whose every other row is.
+#[test]
+fn group_prefix_lines_become_inert_headers_with_the_marker_stripped() {
+    let rows = command_rows(
+        Ok(crate::platform::command::CommandOutput {
+            stdout: b"# claude\nrozi\n#\n# codex\ndocs".to_vec(),
+            stderr: Vec::new(),
+            status: Some(0),
+            timed_out: false,
+        }),
+        Some("#"),
+    );
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.display.as_str(), row.header))
+            .collect::<Vec<_>>(),
+        // The bare marker labels nothing, so it drops out the way a blank line does.
+        vec![
+            ("claude", true),
+            ("rozi", false),
+            ("codex", true),
+            ("docs", false),
+        ]
+    );
+    assert!(rows.iter().all(|row| !row.error));
+
+    on_test_thread(move || {
+        let mut backend = settled_backend();
+        let id = SidebarTabId::new("rows");
+        let tab = SidebarTab::Command {
+            name: id.clone(),
+            label: "Rows".to_string(),
+            command: "printf x".to_string(),
+            interval_secs: 30,
+            on_click: Some(UserCommandAction::Send("{line}\n".to_string())),
+            group_prefix: Some("#".to_string()),
+            env: Vec::new(),
+        };
+        backend.state_mut().config.sidebar.tabs = vec![tab.clone()];
+        backend
+            .state_mut()
+            .sidebar
+            .command_output
+            .insert(id, SidebarCommandOutput { epoch: 1, rows });
+        let selectable: Vec<bool> = backend
+            .state()
+            .sidebar_item_projections(&tab)
+            .iter()
+            .map(crate::state::SidebarItemProjection::selectable)
+            .collect();
+        // Header, spacer + header, and the two output rows between them.
+        assert_eq!(selectable, vec![false, true, false, false, true]);
+    });
+}
+
 #[test]
 fn launcher_click_revalidates_config_epoch_tab_and_index() {
     on_test_thread(|| {
@@ -1383,8 +1614,10 @@ fn launcher_click_revalidates_config_epoch_tab_and_index() {
         backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Launcher {
             name: id.clone(),
             label: "Launch".to_string(),
+            env: Vec::new(),
             entries: vec![crate::config::SidebarLauncherEntry {
                 label: "Run".to_string(),
+                group: None,
                 action: UserCommandAction::run("printf safe".to_string()),
             }],
         }];
@@ -1430,6 +1663,8 @@ fn command_click_rejects_stale_output_epoch_and_changed_raw_line() {
             command: "printf row".to_string(),
             interval_secs: 30,
             on_click: Some(UserCommandAction::run("printf fixed".to_string())),
+            group_prefix: None,
+            env: Vec::new(),
         }];
         backend.state_mut().sidebar.config_epoch = 2;
         backend.state_mut().sidebar.command_output.insert(
@@ -1513,6 +1748,8 @@ fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
                 command: "sleep 1".to_string(),
                 interval_secs: 5,
                 on_click: None,
+                group_prefix: None,
+                env: Vec::new(),
             }];
             state.sidebar.panels[0].active_tab = Some(id.clone());
             state.sidebar.command_epoch = 6;
@@ -1563,6 +1800,8 @@ fn sessions_and_command_panels_refresh_together() {
                     command: "echo command-panel".to_string(),
                     interval_secs: 5,
                     on_click: None,
+                    group_prefix: None,
+                    env: Vec::new(),
                 },
             ];
             state.sidebar.panels = vec![

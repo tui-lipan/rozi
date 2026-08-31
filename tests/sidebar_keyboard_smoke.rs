@@ -575,8 +575,10 @@ fn keyboard_tab_cycling_scrolls_the_active_top_tab_into_view() {
             let launcher = |name: &str, label: &str| SidebarTab::Launcher {
                 name: SidebarTabId::new(name),
                 label: label.into(),
+                env: Vec::new(),
                 entries: vec![SidebarLauncherEntry {
                     label: "Action".into(),
+                    group: None,
                     action: UserCommandAction::Send("true".into()),
                 }],
             };

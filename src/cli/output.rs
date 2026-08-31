@@ -5,6 +5,21 @@
 
 use crate::control;
 
+/// Write a finished report to stdout, treating a closed reader as a normal end.
+///
+/// Rust ignores `SIGPIPE`, so `println!` *panics* once the other side of a pipe is gone — piping any
+/// of these reports into `head` would print a backtrace instead of the first lines. Unix convention
+/// is to stop quietly, which is what exiting here does. Callers therefore build a whole report and
+/// hand it over in one piece rather than printing line by line.
+pub(super) fn print_or_stop(text: &str) {
+    use std::io::Write as _;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    if out.write_all(text.as_bytes()).is_err() || out.flush().is_err() {
+        std::process::exit(0);
+    }
+}
+
 /// ANSI palette for human-facing command output.
 ///
 /// JSON forms, publish/subscribe streams, and the version/protocol preamble deliberately bypass

@@ -14,6 +14,29 @@ pub(super) struct ExtensionManifestFile {
     /// `[[agents]]`; ids are namespaced `<extension>.<id>` like commands and services are.
     #[serde(default)]
     pub(super) agents: Vec<crate::agent_detection::AgentSpec>,
+    /// Sidebar tabs this extension contributes. Same launcher and command forms `config.toml`
+    /// accepts, under namespaced ids so an extension can only ever add a tab.
+    #[serde(default)]
+    pub(super) sidebar_tabs: Vec<ExtensionSidebarTabFile>,
+    /// Settings this extension understands, with the value each one takes when the user says
+    /// nothing. Declaring them is what makes a user override checkable and what gives
+    /// `check-extension` something to show; an undeclared key is not a setting.
+    #[serde(default)]
+    pub(super) settings: BTreeMap<String, toml::Value>,
+}
+
+/// One `[[sidebar_tabs]]` entry. The tree-only options `config.toml` tab tables accept are absent:
+/// `files` and `git` are built-in tabs an extension cannot reconfigure.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExtensionSidebarTabFile {
+    pub(super) name: Option<String>,
+    pub(super) label: Option<String>,
+    pub(super) entries: Option<Vec<super::super::file::SidebarLauncherEntrySpec>>,
+    pub(super) command: Option<String>,
+    pub(super) interval: Option<u64>,
+    pub(super) on_click: Option<super::super::file::UserCommandTableSpec>,
+    pub(super) group_prefix: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -21,6 +44,10 @@ pub(super) struct ExtensionManifestFile {
 pub(super) struct ExtensionCommandFile {
     pub(super) id: Option<String>,
     pub(super) label: Option<String>,
+    /// Suggested chord, written as the key steps that follow the user's leader prefix (`"g b"`
+    /// means `<prefix> g b`). Never a bare key and never the held-modifier layer: an extension
+    /// proposes a shortcut inside the prefix space, it does not take one.
+    pub(super) key: Option<String>,
     pub(super) exec: Option<Vec<String>>,
     pub(super) shell: Option<String>,
     pub(super) send: Option<String>,

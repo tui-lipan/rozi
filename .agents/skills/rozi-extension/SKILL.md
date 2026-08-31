@@ -48,6 +48,14 @@ api = 1
 id = "branches"
 label = "Branches…"
 exec = ["python", "{extension_dir}/bin/git_tools.py", "branches"]
+# Optional: suggested chord, written as the steps inside the reserved <prefix> x space.
+key = "b"
+
+# Optional: settings this extension understands, at their defaults. Users override them in
+# [extensions.git-tools]; the merged result arrives as JSON in ROZI_EXTENSION_CONFIG.
+[settings]
+protected = ["main", "master"]
+confirm = true
 
 [[services]]
 name = "watch"
@@ -64,6 +72,15 @@ match = { names = ["mytool"], paths = ["@acme/mytool"] }
 [[agents.states]]
 state = "blocked"
 screen = { any_of = ["approve? (a/d)"] }
+
+# Optional: contribute a sidebar tab. Launcher form shown; a command form takes
+# command/interval/group_prefix instead of entries.
+[[sidebar_tabs]]
+name = "agents"
+label = "Agents"
+entries = [
+  { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
+]
 ```
 
 - Keep the extension `id` stable. IDs match `[a-z0-9_-]+`; do not derive identity from the
@@ -86,8 +103,26 @@ screen = { any_of = ["approve? (a/d)"] }
   one. Rules are evaluated by precedence (blocked, working, idle, unknown), not declaration order;
   scope a `working` rule to `footer` or a transcript quoting its own hints reads as a live run. Full
   format in `docs/agents.md`. Publish rows instead when the program knows its own state.
-- Any invalid command, service, or agent invalidates the whole extension atomically.
+- `[[sidebar_tabs]]` takes the launcher and command forms `[sidebar]` tab tables accept, minus the
+  `files`/`git` tree options. Ids are namespaced `<extension>.<name>`, so a tab can only be added,
+  never substituted for a built-in one, and a `config.toml` tab of the same id wins. Out-of-range
+  values are clamped silently here rather than warned about. Full format in `docs/extensions.md`.
+- A user may drag an extension tab anywhere; that placement is persisted and survives the extension
+  being disabled or failing to load, and is only dropped once the extension leaves the disk.
+- `[settings]` values are strings, integers, booleans, or string lists. Read them from
+  `ROZI_EXTENSION_CONFIG` (compact JSON, `{}` when none are declared), never from a file the
+  extension writes into its own directory. A user's unknown key or wrong type is reported and
+  ignored, so always code against your declared default being present.
+- A command's `key` is a suggestion inside `<prefix> x`, never a bare key and never the held
+  modifier. It loses to any existing binding, including a chord it merely extends, and losing is
+  a warning rather than a failure. Do not assume it was granted.
+- Any invalid command, service, agent, sidebar tab, or setting invalidates the whole extension
+  atomically.
 - Disable an installed extension with `[extensions] disabled = ["git-tools"]` in `config.toml`.
+- Extension API 1 is frozen: manifest keys, id namespacing, the `ROZI_EXTENSION*` variables, the
+  control commands, atomic validity, the `<prefix> x` chord space, and `schema_version: 1`
+  diagnostics. Rozi may add keys inside API 1; anything that would break a working manifest needs
+  `api = 2`. Do not rely on behavior that is not in `docs/extensions.md` or `docs/control.md`.
 
 Manifest command `branches` under extension `git-tools` becomes `git-tools.branches`. Invoke it with:
 

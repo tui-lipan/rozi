@@ -26,8 +26,24 @@ tabs = [
     command = "git branch --format='%(refname:short)'",
     interval = 15,
   },
+  # Grouped launcher: one section per agent, one row per project. Clicking a row opens a pane
+  # running that agent in that directory.
+  { name = "agents", label = "Agents", entries = [
+    { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
+    { label = "docs", group = "claude", run = "cd ~/Projects/docs && claude" },
+    { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },
+  ] },
+  # Grouped command tab: the command emits its own section headers, marked with `## `.
+  {
+    name = "worktrees",
+    label = "Worktrees",
+    command = "git worktree list --porcelain | awk '/^worktree /{print \"## \" $2} /^branch /{print $2}'",
+    interval = 30,
+    group_prefix = "## ",
+    on_click = { send = "{line}" },
+  },
 ]
 panels = [
   ["activity", "panes", "files", "git"],
-  ["sessions", "dev", "branches"],
+  ["sessions", "dev", "branches", "agents", "worktrees"],
 ]

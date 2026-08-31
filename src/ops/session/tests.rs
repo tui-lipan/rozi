@@ -959,10 +959,15 @@ fn create_session_starts_fresh_instead_of_carrying_current_panes() {
             assert_eq!(state.current().workspaces[0].panes.len(), 1);
             assert_eq!(state.current().workspaces[0].panes[0].identity.launch, None);
             // Client-global state is not per-session, so installing a fresh attachment leaves it
-            // untouched: command/config epochs don't churn (command tabs keep polling, no
-            // flicker), the sidebar stays open on its tab, and workbar scheduling stays live.
-            // This is the whole point of installing an attachment instead of rebuilding State.
-            assert_eq!(state.sidebar.command_epoch, 7);
+            // untouched: the config epoch doesn't churn, the sidebar stays open on its tab, and
+            // workbar scheduling stays live. This is the whole point of installing an attachment
+            // instead of rebuilding State.
+            //
+            // The sidebar command epoch does advance by one, because the new attachment's focused
+            // pane is somewhere else and a command tab describes the project in front of you. The
+            // cached rows stay on screen until the new ones land, so this re-lists without a
+            // flicker rather than blanking the tab.
+            assert_eq!(state.sidebar.command_epoch, 8);
             assert_eq!(state.sidebar.config_epoch, 11);
             assert!(state.sidebar_visible);
             assert_eq!(

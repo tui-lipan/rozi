@@ -39,6 +39,18 @@ pub(crate) fn tree_active(ctx: &Context<AppRoot>) -> bool {
         })
 }
 
+/// The environment an extension's command tab polls with. Empty for a `config.toml` tab.
+pub(crate) fn command_tab_env(ctx: &Context<AppRoot>, id: &SidebarTabId) -> Vec<(String, String)> {
+    ctx.state
+        .config
+        .sidebar
+        .tabs
+        .iter()
+        .find(|tab| &tab.id() == id)
+        .map(|tab| tab.env().to_vec())
+        .unwrap_or_default()
+}
+
 pub(crate) fn command_tab(ctx: &Context<AppRoot>, id: &SidebarTabId) -> Option<(String, u64)> {
     ctx.state
         .config
@@ -52,6 +64,22 @@ pub(crate) fn command_tab(ctx: &Context<AppRoot>, id: &SidebarTabId) -> Option<(
                 interval_secs,
                 ..
             } if name == id => Some((command.clone(), *interval_secs)),
+            _ => None,
+        })
+}
+
+/// The tab's section marker, read at poll time so a config reload takes effect on the next run
+/// rather than on the next restart.
+pub(crate) fn command_group_prefix(ctx: &Context<AppRoot>, id: &SidebarTabId) -> Option<String> {
+    ctx.state
+        .config
+        .sidebar
+        .tabs
+        .iter()
+        .find_map(|tab| match tab {
+            SidebarTab::Command {
+                name, group_prefix, ..
+            } if name == id => group_prefix.clone(),
             _ => None,
         })
 }
@@ -131,13 +159,30 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
         ctx.state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
     );
+    let group_prefix = command_group_prefix(ctx, &tab_id);
+    let env = command_tab_env(ctx, &tab_id);
+    // A command tab describes the project in front of you, so it runs where the focused pane is —
+    // the same rule extension commands follow. Under `--remote` the pane's path belongs to the
+    // server and this poll runs on the client, so nothing is set and the client's own directory
+    // stands.
+    let cwd = ctx
+        .state
+        .sidebar
+        .command_cwd
+        .clone()
+        .map(std::path::PathBuf::from);
     Update::command_only(Command::spawn(move |link: CommandLink<crate::Msg>| {
-        let rows = command_rows(crate::platform::command::run_bounded_shell_command(
-            &shell,
-            &command_line,
-            COMMAND_TIMEOUT,
-            COMMAND_CAPTURE_BYTES,
-        ));
+        let rows = command_rows(
+            crate::platform::command::run_bounded_shell_command_with_env(
+                &shell,
+                &command_line,
+                &env,
+                cwd.as_deref(),
+                COMMAND_TIMEOUT,
+                COMMAND_CAPTURE_BYTES,
+            ),
+            group_prefix.as_deref(),
+        );
         link.send(crate::Msg::SidebarCommandOutput {
             epoch,
             tab_id,
@@ -190,6 +235,26 @@ pub(crate) fn command_output(
     }
 }
 
+/// Follow the focused pane's directory, so a `cd` re-lists a command tab instead of leaving it
+/// describing the project you were in half a minute ago.
+///
+/// Runs after every message like the tree's own root sync, so the unchanged case is one borrowed
+/// string comparison. A change invalidates any poll already in flight — its output describes the
+/// old directory — and starts a new one straight away rather than waiting out the interval.
+pub(crate) fn sync_command_cwd(ctx: &mut Context<AppRoot>) {
+    if ctx.state.current().remote_host.is_some() {
+        return;
+    }
+    let cwd = crate::pane::lifecycle::focused_local_cwd_ref(&ctx.state);
+    if cwd == ctx.state.sidebar.command_cwd.as_deref() {
+        return;
+    }
+    ctx.state.sidebar.command_cwd = cwd.map(str::to_string);
+    ctx.state.sidebar.command_epoch = ctx.state.sidebar.command_epoch.wrapping_add(1);
+    ctx.state.sidebar.command_in_flight.clear();
+    request_command_poll(ctx);
+}
+
 pub(crate) fn refresh_active_tabs(ctx: &mut Context<AppRoot>) -> Update {
     if sessions_active(ctx) {
         crate::update::sidebar::sessions::open_sessions(ctx);
@@ -200,6 +265,7 @@ pub(crate) fn refresh_active_tabs(ctx: &mut Context<AppRoot>) -> Update {
 
 pub(crate) fn command_rows(
     result: std::io::Result<crate::platform::command::CommandOutput>,
+    group_prefix: Option<&str>,
 ) -> Vec<SidebarCommandRow> {
     let output = match result {
         Ok(output) => output,
@@ -208,7 +274,7 @@ pub(crate) fn command_rows(
     if output.timed_out {
         return vec![error_row("command timed out after 5 seconds")];
     }
-    let mut rows = text_rows(&output.stderr, true);
+    let mut rows = text_rows(&output.stderr, true, None);
     if output.status != Some(0) && !rows.iter().any(|row| row.error) {
         rows.push(error_row(&format!(
             "command exited with status {}",
@@ -217,12 +283,16 @@ pub(crate) fn command_rows(
                 .map_or_else(|| "unknown".to_string(), |status| status.to_string())
         )));
     }
-    rows.extend(text_rows(&output.stdout, false));
+    rows.extend(text_rows(&output.stdout, false, group_prefix));
     rows.truncate(COMMAND_MAX_ROWS);
     rows
 }
 
-pub(crate) fn text_rows(bytes: &[u8], error: bool) -> Vec<SidebarCommandRow> {
+pub(crate) fn text_rows(
+    bytes: &[u8],
+    error: bool,
+    group_prefix: Option<&str>,
+) -> Vec<SidebarCommandRow> {
     bytes
         .split(|byte| *byte == b'\n')
         .take(COMMAND_MAX_ROWS)
@@ -237,10 +307,25 @@ pub(crate) fn text_rows(bytes: &[u8], error: bool) -> Vec<SidebarCommandRow> {
             } else if error {
                 Some(error_row(&sanitized))
             } else {
-                Some(row(&sanitized, false))
+                match group_prefix.and_then(|prefix| sanitized.strip_prefix(prefix)) {
+                    // The marker is rozi's chrome, not part of the label; a line carrying nothing
+                    // but the marker drops out the same way a blank line does.
+                    Some(label) => Some(label.trim())
+                        .filter(|label| !label.is_empty())
+                        .map(header_row),
+                    None => Some(row(&sanitized, false)),
+                }
             }
         })
         .collect()
+}
+
+/// A section header carrying no action, built through [`row`] so it truncates like every other row.
+pub(crate) fn header_row(text: &str) -> SidebarCommandRow {
+    SidebarCommandRow {
+        header: true,
+        ..row(text, false)
+    }
 }
 
 pub(crate) fn error_row(text: &str) -> SidebarCommandRow {
@@ -257,5 +342,6 @@ pub(crate) fn row(text: &str, error: bool) -> SidebarCommandRow {
         raw,
         display,
         error,
+        header: false,
     }
 }

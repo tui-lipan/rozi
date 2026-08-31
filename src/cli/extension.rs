@@ -43,13 +43,20 @@ fn extension_status_tone(status: crate::config::ExtensionStatus) -> OutputTone {
 
 pub(super) fn format_extensions_text(
     entries: &[crate::config::ExtensionInfo],
+    root: &std::path::Path,
     verbose: bool,
     styles: OutputStyles,
 ) -> String {
+    // Unlike an empty session or pane report, an empty extension report has a location that is
+    // almost always the answer: extensions live under the data directory, and the neighbouring
+    // config directory is the obvious wrong guess.
     if entries.is_empty() {
         return format!(
             "{}\n",
-            styles.paint("No extensions found.", OutputTone::Muted)
+            styles.paint(
+                &format!("No extensions found in {}.", root.display()),
+                OutputTone::Muted
+            )
         );
     }
     let rows = entries
@@ -122,6 +129,24 @@ pub(super) fn format_extensions_text(
                 out.push('\n');
             }
         }
+        if !extension.settings.is_empty() {
+            out.push_str("  settings\n");
+            for (key, value) in &extension.settings {
+                out.push_str("    ");
+                out.push_str(key);
+                out.push_str("  ");
+                out.push_str(&serde_json::to_string(value).unwrap_or_else(|_| "?".to_string()));
+                out.push('\n');
+            }
+        }
+        if !extension.sidebar_tabs.is_empty() {
+            out.push_str("  sidebar tabs\n");
+            for id in &extension.sidebar_tabs {
+                out.push_str("    ");
+                out.push_str(id);
+                out.push('\n');
+            }
+        }
         for error in &extension.errors {
             out.push_str("  error     ");
             out.push_str(error);
@@ -132,6 +157,7 @@ pub(super) fn format_extensions_text(
 }
 
 pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
+    let root = crate::config::extensions_dir_path();
     let scan = crate::config::scan_extensions_for_cli();
     for error in &scan.root_errors {
         eprintln!("rozi: {error}");
@@ -139,16 +165,18 @@ pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
     let entries = scan.entries();
     if json {
         let document = crate::config::ExtensionListDocument::new(entries);
-        println!(
-            "{}",
+        super::output::print_or_stop(&format!(
+            "{}\n",
             serde_json::to_string_pretty(&document).map_err(std::io::Error::other)?
-        );
+        ));
         return Ok(());
     }
-    print!(
-        "{}",
-        format_extensions_text(&entries, verbose, OutputStyles::detect())
-    );
+    super::output::print_or_stop(&format_extensions_text(
+        &entries,
+        &root,
+        verbose,
+        OutputStyles::detect(),
+    ));
     Ok(())
 }
 
@@ -157,84 +185,114 @@ pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Res
     let info = &extension.info;
     if json {
         let document = crate::config::ExtensionCheckDocument::new(info.clone());
-        println!(
-            "{}",
+        super::output::print_or_stop(&format!(
+            "{}\n",
             serde_json::to_string_pretty(&document).map_err(std::io::Error::other)?
-        );
+        ));
         return Ok(info.status == crate::config::ExtensionStatus::Loaded);
     }
     let styles = OutputStyles::detect();
-    println!(
+    super::output::print_or_stop(&format_check_text(info, styles));
+    if info.status != crate::config::ExtensionStatus::Loaded {
+        for error in &info.errors {
+            eprintln!("rozi: {error}");
+        }
+    }
+    Ok(info.status == crate::config::ExtensionStatus::Loaded)
+}
+
+/// The whole `check-extension` report as one string.
+///
+/// Built rather than printed line by line so it reaches stdout in a single write: `println!` panics
+/// when the reader has gone, and `rozi check-extension … | head` is an ordinary thing to type.
+fn format_check_text(info: &crate::config::ExtensionInfo, styles: OutputStyles) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
         "{}  {}",
         styles.paint("Extension", OutputTone::Muted),
         styles.paint(info.display_name(), OutputTone::Accent)
     );
-    println!(
+    let _ = writeln!(
+        out,
         "{}    {}",
         styles.paint("Version", OutputTone::Muted),
         info.version.as_deref().unwrap_or("—")
     );
-    println!(
+    let _ = writeln!(
+        out,
         "{}        {}",
         styles.paint("API", OutputTone::Muted),
         info.api
             .map(|api| api.to_string())
             .unwrap_or_else(|| "—".to_string())
     );
-    println!();
+    out.push('\n');
     if info.status == crate::config::ExtensionStatus::Loaded {
-        println!("{}", styles.paint("CHECKS", OutputTone::Heading));
+        let _ = writeln!(out, "{}", styles.paint("CHECKS", OutputTone::Heading));
         for check in [
             "manifest valid".to_string(),
             "extension id valid".to_string(),
             format!("{} commands", info.commands.len()),
             format!("{} services", info.services.len()),
+            format!("{} sidebar tabs", info.sidebar_tabs.len()),
+            format!("{} settings", info.settings.len()),
             "executable paths resolved".to_string(),
         ] {
-            println!("  {} {check}", styles.paint("✓", OutputTone::Success));
+            let _ = writeln!(out, "  {} {check}", styles.paint("✓", OutputTone::Success));
         }
     } else {
-        println!(
+        let _ = writeln!(
+            out,
             "{}  {}",
             styles.paint("Status", OutputTone::Muted),
             styles.paint(info.status.as_str(), extension_status_tone(info.status))
         );
-        for error in &info.errors {
-            eprintln!("rozi: {error}");
-        }
     }
     if !info.command_details.is_empty() {
-        println!("\n{}", styles.paint("COMMANDS", OutputTone::Heading));
+        let _ = writeln!(out, "\n{}", styles.paint("COMMANDS", OutputTone::Heading));
         for command in &info.command_details {
-            println!("  {}", styles.paint(&command.id, OutputTone::Accent));
-            println!("    launch: {}", format_extension_launch(&command.launch));
-            println!("    cwd:    {}", command.cwd);
-            println!(
+            let _ = writeln!(out, "  {}", styles.paint(&command.id, OutputTone::Accent));
+            let _ = writeln!(
+                out,
+                "    launch: {}",
+                format_extension_launch(&command.launch)
+            );
+            let _ = writeln!(out, "    cwd:    {}", command.cwd);
+            let _ = writeln!(
+                out,
                 "    env:    {}",
                 format_extension_env(&command.injected_env)
             );
         }
     }
     if !info.service_details.is_empty() {
-        println!("\n{}", styles.paint("SERVICES", OutputTone::Heading));
+        let _ = writeln!(out, "\n{}", styles.paint("SERVICES", OutputTone::Heading));
         for service in &info.service_details {
-            println!("  {}", styles.paint(&service.id, OutputTone::Accent));
-            println!("    launch: {}", format_extension_launch(&service.launch));
-            println!("    cwd:    {}", service.cwd);
-            println!("    restart: {}", service.restart);
-            println!(
+            let _ = writeln!(out, "  {}", styles.paint(&service.id, OutputTone::Accent));
+            let _ = writeln!(
+                out,
+                "    launch: {}",
+                format_extension_launch(&service.launch)
+            );
+            let _ = writeln!(out, "    cwd:    {}", service.cwd);
+            let _ = writeln!(out, "    restart: {}", service.restart);
+            let _ = writeln!(
+                out,
                 "    env:    {}",
                 format_extension_env(&service.injected_env)
             );
             if !service.configured_env_keys.is_empty() {
-                println!(
+                let _ = writeln!(
+                    out,
                     "    manifest env: {} (values redacted)",
                     service.configured_env_keys.join(", ")
                 );
             }
         }
     }
-    Ok(info.status == crate::config::ExtensionStatus::Loaded)
+    out
 }
 
 fn format_extension_launch(launch: &crate::config::ExtensionLaunchDiagnostic) -> String {

@@ -112,20 +112,22 @@ pub(crate) fn launcher_activate(
     if config_epoch != ctx.state.sidebar.config_epoch {
         return Update::none();
     }
-    let action = ctx
+    let found = ctx
         .state
         .config
         .sidebar
         .tabs
         .iter()
         .find_map(|tab| match tab {
-            SidebarTab::Launcher { name, entries, .. } if name == &tab_id => {
-                entries.get(entry_index).map(|entry| entry.action.clone())
-            }
+            SidebarTab::Launcher {
+                name, entries, env, ..
+            } if name == &tab_id => entries
+                .get(entry_index)
+                .map(|entry| (entry.action.clone(), env.clone())),
             _ => None,
         });
-    action.map_or_else(Update::none, |action| {
-        crate::actions::execute_user_command_action(ctx, &action)
+    found.map_or_else(Update::none, |(action, env)| {
+        crate::actions::execute_user_command_action_with_env(ctx, &action, env)
     })
 }
 
@@ -145,7 +147,7 @@ pub(crate) fn command_row_activate(
     }) {
         return Update::none();
     }
-    let action = ctx
+    let found = ctx
         .state
         .config
         .sidebar
@@ -155,15 +157,22 @@ pub(crate) fn command_row_activate(
             SidebarTab::Command {
                 name,
                 on_click: Some(action),
+                env,
                 ..
-            } if name == &tab_id => Some(action.clone()),
+            } if name == &tab_id => Some((action.clone(), env.clone())),
             _ => None,
         });
-    action
-        .map(|action| resolve_row_action(&action, &line))
-        .map_or_else(Update::none, |action| {
-            crate::actions::execute_user_command_action(ctx, &action)
-        })
+    found.map_or_else(Update::none, |(action, mut env)| {
+        // `send` gets the row substituted as literal keystrokes. `run`/`popup`/`exec` never do — a
+        // row is command output and must not compose a command line — so they receive it as
+        // `$ROZI_ROW` instead, the same bargain the file tree makes with `$ROZI_FILE`.
+        env.push(("ROZI_ROW".to_string(), line.clone()));
+        crate::actions::execute_user_command_action_with_env(
+            ctx,
+            &resolve_row_action(&action, &line),
+            env,
+        )
+    })
 }
 
 pub(crate) fn resolve_row_action(action: &UserCommandAction, line: &str) -> UserCommandAction {

@@ -48,9 +48,23 @@ pub fn run_bounded_shell_command(
     timeout: std::time::Duration,
     capture_limit: usize,
 ) -> std::io::Result<CommandOutput> {
+    run_bounded_shell_command_with_env(shell, command_line, &[], None, timeout, capture_limit)
+}
+
+/// As [`run_bounded_shell_command`], with extra environment for the child. Used by an extension's
+/// sidebar tab, whose polling process is told where it is installed and what the user configured
+/// the same way the extension's commands and services are.
+pub fn run_bounded_shell_command_with_env(
+    shell: &ShellCommand,
+    command_line: &str,
+    env: &[(String, String)],
+    cwd: Option<&std::path::Path>,
+    timeout: std::time::Duration,
+    capture_limit: usize,
+) -> std::io::Result<CommandOutput> {
     let mut args = shell.args.clone();
     args.push(command_line.to_string());
-    run_bounded_argv_command(&shell.program, &args, timeout, capture_limit)
+    run_bounded_argv_command_with_env(&shell.program, &args, env, cwd, timeout, capture_limit)
 }
 
 /// Run a program with an already-separated argv. Stdout and stderr are drained to avoid pipe
@@ -67,15 +81,34 @@ where
     P: AsRef<std::ffi::OsStr>,
     A: AsRef<std::ffi::OsStr>,
 {
+    run_bounded_argv_command_with_env(program, args, &[], None, timeout, capture_limit)
+}
+
+pub fn run_bounded_argv_command_with_env<P, A>(
+    program: P,
+    args: &[A],
+    env: &[(String, String)],
+    cwd: Option<&std::path::Path>,
+    timeout: std::time::Duration,
+    capture_limit: usize,
+) -> std::io::Result<CommandOutput>
+where
+    P: AsRef<std::ffi::OsStr>,
+    A: AsRef<std::ffi::OsStr>,
+{
     use std::io::Read;
     use std::process::Stdio;
 
     let mut command = std::process::Command::new(program);
     command
         .args(args)
+        .envs(env.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(cwd) = cwd.filter(|cwd| cwd.is_dir()) {
+        command.current_dir(cwd);
+    }
     configure_command_group(&mut command);
     let mut child = command.spawn()?;
     let group = match CommandGroup::new(&child) {

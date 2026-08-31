@@ -1,0 +1,36 @@
+[extension]
+id = "tasks"
+title = "Tasks"
+description = "Run project tasks discovered from just, make, and package.json"
+version = "1.0.0"
+api = 1
+
+[[commands]]
+id = "run"
+label = "Run task…"
+exec = ["python", "{extension_dir}/bin/tasks.py", "pick"]
+key = "t"
+
+[[commands]]
+id = "repeat"
+label = "Repeat last task"
+exec = ["python", "{extension_dir}/bin/tasks.py", "repeat"]
+key = "."
+
+[settings]
+# Task sources to scan, in the order their groups appear.
+sources = ["just", "make", "npm"]
+# Where a task runs: "focus" takes you to it, "background" leaves you where you are.
+pane = "focus"
+# Hold the pane open after the task exits so its output stays readable.
+keep_open = true
+# Workspace to run in; 0 means the current one.
+workspace = 0
+
+[[sidebar_tabs]]
+name = "list"
+label = "Tasks"
+command = "python {extension_dir}/bin/tasks.py list"
+interval = 30
+group_prefix = "## "
+on_click = { send = "{line}" }

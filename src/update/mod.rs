@@ -763,6 +763,7 @@ fn post_update_sync(
     }
     panes::arm_alert_pulse(ctx);
     sidebar::sync_tree_roots(ctx);
+    sidebar::sync_command_cwd(ctx);
     sidebar::ensure_tree_refresh_armed(ctx);
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,
     // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.

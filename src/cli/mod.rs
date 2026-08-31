@@ -46,9 +46,16 @@ mod tests {
             format_panes_text(None, OutputStyles::plain()),
             "No panes found.\n"
         );
+        // Extensions add the one thing that answers the question: extensions live in the data
+        // directory, and the config directory next to it is the obvious wrong guess.
         assert_eq!(
-            format_extensions_text(&[], false, OutputStyles::plain()),
-            "No extensions found.\n"
+            format_extensions_text(
+                &[],
+                std::path::Path::new("/data/rozi/extensions"),
+                false,
+                OutputStyles::plain()
+            ),
+            "No extensions found in /data/rozi/extensions.\n"
         );
     }
 }

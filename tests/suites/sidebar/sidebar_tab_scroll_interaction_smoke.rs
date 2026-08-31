@@ -137,6 +137,8 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
                         command: "printf file-row".to_string(),
                         interval_secs: 10,
                         on_click: None,
+                        group_prefix: None,
+                        env: Vec::new(),
                     },
                 ];
                 // One panel holding exactly these two tabs, so nothing the default split would
@@ -152,6 +154,7 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
                             raw: "file-row".to_string(),
                             display: "file-row".to_string(),
                             error: false,
+                            header: false,
                         }],
                     },
                 );
@@ -182,6 +185,7 @@ fn app_sidebar_tabs_keep_native_selection_hover_click_and_wheel_behavior() {
                 name: SidebarTabId::new(name),
                 label: label.into(),
                 entries: Vec::new(),
+                env: Vec::new(),
             };
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {

@@ -1,7 +1,8 @@
 # Extensions
 
 Rozi extensions are directories containing `extension.toml` and out-of-process programs. They add
-commands, supervised services, and agent definitions. Runtime interaction uses the same
+commands, supervised services, agent definitions, and sidebar tabs, and they take settings from the
+user's `config.toml`. Runtime interaction uses the same
 [`rozi` control commands](control.md) available to scripts.
 
 ## Inspect before installing
@@ -39,11 +40,26 @@ the user data directory:
 Linux example:
 
 ```sh
-install_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions"
-mkdir -p "$install_root"
+data_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
+install_root="$data_root/extensions"
+# Owner-only, because Rozi's data directory is also its managed-installation root and a
+# group- or world-readable one makes Rozi refuse to start. A plain `mkdir -p` uses your
+# umask, which is usually 0755.
+install -d -m 700 "$data_root" "$install_root"
 cp -R ./rozi-git-tools "$install_root/git-tools"
 rozi check-extension "$install_root/git-tools"
 rozi run-action reload-config
+```
+
+Extensions live under the **data** directory, not next to `config.toml`. Only the `[extensions]`
+settings go in the config file. If a freshly copied extension does not appear, run
+`rozi list-extensions` — it names the directory it scanned.
+
+If Rozi refuses to start with `managed installation ... permissions must not allow group/other
+access`, the data directory was created with default permissions. Fix it with:
+
+```sh
+chmod 700 "${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
 ```
 
 The installation directory name is not the extension identity. Identity comes from
@@ -58,8 +74,8 @@ rozi list-extensions --json
 ```
 
 The report includes loaded, disabled, invalid, incompatible, and duplicate candidates. Verbose
-output adds paths, public command, service, and agent IDs, resolved executables, and validation
-errors.
+output adds paths, public command, service, agent, and sidebar tab IDs, resolved executables, and
+validation errors.
 
 `check-extension --json` and `list-extensions --json` are available for tooling:
 
@@ -78,8 +94,9 @@ disabled = ["git-tools"]
 ```
 
 Run `rozi run-action reload-config` after changing the setting. Rozi removes the extension's
-commands and agents, stops its services, and closes its owned picker, publisher, and subscription
-streams.
+commands, agents, and sidebar tabs, stops its services, and closes its owned picker, publisher, and
+subscription streams. A disabled extension's sidebar placement is remembered, so re-enabling it puts
+its tab back where you had it.
 
 To remove an extension, delete its installed directory and reload. Disable it first if you want the
 running client to stop its processes before deleting files.
@@ -221,8 +238,151 @@ Use a service for long-lived work such as [`rozi subscribe`](control.md#subscrip
 
 An extension may include `[[agents]]` entries in the same format as
 [user agent definitions](agents.md). Rozi namespaces each local ID under the extension ID. An
-extension cannot replace a built-in agent. One invalid command, service, or agent definition makes
-the whole extension invalid.
+extension cannot replace a built-in agent. One invalid command, service, agent, sidebar tab, or
+setting declaration makes the whole extension invalid.
+
+### Settings
+
+An extension declares the settings it understands, with the value each takes when the user says
+nothing:
+
+```toml
+[settings]
+runner = "auto"
+rows = 50
+notify = true
+ignore = ["target", "node_modules"]
+```
+
+A setting is a string, integer, boolean, or list of strings. Floats and nested tables are rejected,
+and a setting Rozi cannot carry makes the extension invalid.
+
+Users override them per extension in `config.toml`:
+
+```toml
+[extensions.tasks]
+runner = "just"
+rows = 20
+```
+
+An undeclared key or a value of the wrong type is reported and ignored; the extension keeps its own
+default, so a stale line survives an update that drops a setting. A `[extensions.<id>]` table naming
+nothing installed is reported too — being disabled is not enough to earn that warning, since the
+settings are waiting for the extension to come back.
+
+Every command and service receives the merged result as compact JSON in `ROZI_EXTENSION_CONFIG`:
+
+```json
+{"ignore":["target","node_modules"],"notify":true,"rows":20,"runner":"just"}
+```
+
+Changing a setting is a process-facing change: the generation rotates and services restart with the
+new value. `rozi check-extension` lists the declared settings and their defaults.
+
+### Default keybindings
+
+A command may suggest a chord. It is written as the key steps *inside* the reserved extension space,
+which is the leader prefix followed by `x`:
+
+```toml
+[[commands]]
+id = "run"
+label = "Run task…"
+exec = ["python", "{extension_dir}/bin/tasks.py", "run"]
+key = "r"
+```
+
+That command answers to `<prefix> x r` — `Ctrl+A x r` with the default prefix. Rozi assigns nothing
+to `x` itself, so a suggestion can never collide with a built-in and a later Rozi release can never
+take one away.
+
+A suggestion is the weakest claim in the system. It loses to anything already bound: a `[keys]`
+entry, another extension that asked first, and any chord that merely starts with it, since typing
+those steps would fire the other command first. Losing is reported as a warning and costs nothing
+else — the command stays in the palette, and the user can bind it by hand:
+
+```toml
+[keys]
+"tasks.run" = "ctrl-a t"
+```
+
+An explicit `[keys]` entry for the command always wins, and silences the suggestion entirely.
+
+### Sidebar tabs
+
+An extension may contribute sidebar tabs with `[[sidebar_tabs]]`. These take the launcher and
+command forms [`[sidebar]` tab tables](configuration.md#sidebar) accept, minus the options that only
+apply to the built-in `files` and `git` trees.
+
+```toml
+[[sidebar_tabs]]
+name = "agents"
+label = "Agents"
+entries = [
+  { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
+  { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },
+]
+
+[[sidebar_tabs]]
+name = "worktrees"
+label = "Worktrees"
+command = "git-tools worktrees --sidebar"
+interval = 30
+group_prefix = "## "
+on_click = { send = "{line}" }
+```
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `name` | string | required, `[a-z0-9_-]+` |
+| `label` | string | required |
+| `entries` | array of tables | mutually exclusive with `command` |
+| `group` (per entry) | string | none |
+| `command` | string | mutually exclusive with `entries` |
+| `interval` | integer seconds | `30`, minimum `5` |
+| `on_click` | action table | none |
+| `group_prefix` | string | none, command tabs only |
+
+A tab's `command` and its action strings substitute `{extension_dir}`, and the processes behind them
+receive the same `ROZI_EXTENSION*` environment an extension command does. A command tab runs in the
+focused pane's working directory and re-lists when that changes; its `on_click` `run`/`popup`/`exec`
+receives the clicked row in `ROZI_ROW`.
+
+The tab ID is `<extension-id>.<name>`, so an extension can only add a tab, never replace a built-in
+one. A `config.toml` tab claiming the same ID wins and the extension's tab is skipped. Out-of-range
+values are clamped silently rather than reported, unlike the same setting in `config.toml`.
+
+Extension tabs are placed in the first panel unless `[sidebar] panels` already names them. Drag them
+wherever you like: Rozi persists the arrangement the same way it does for built-in tabs.
+
+A placement naming a tab whose extension is disabled, mid-update, or failing to load is kept, not
+warned about, and restored when the extension comes back. It is only dropped once the extension is
+gone from the extensions directory, and only the next time you rearrange the sidebar — Rozi never
+rewrites the layout on load.
+
+## Stability
+
+Extension API 1 is frozen. Everything below is a contract Rozi will not break inside API 1:
+
+- the manifest keys documented on this page, and the schema at
+  [`schemas/extension.schema.json`](../schemas/extension.schema.json);
+- namespacing: every contributed id is `<extension-id>.<local-id>`, and an extension can only add,
+  never replace a built-in;
+- the `ROZI_EXTENSION*` environment variables and their meanings;
+- the `rozi` control commands documented in [Control](control.md), and their exit codes;
+- atomic validity: an extension is loaded whole or not at all;
+- the `<prefix> x` chord space reserved for extension key suggestions;
+- `--json` diagnostics, whose `schema_version` is `1`.
+
+Rozi may still add manifest keys, control commands, and diagnostic fields inside API 1. Additions
+are the only compatible change; a manifest that does not use them keeps working. Anything that would
+invalidate a working manifest — a removed key, a narrowed value, a changed default, a renamed
+environment variable — requires `api = 2`, and an extension declaring `api = 1` keeps loading against
+the API 1 rules.
+
+Practically, for an extension author: read `ROZI_EXTENSION_CONFIG` through defaults, do not assume a
+suggested chord was granted, and do not depend on undocumented behavior you happened to observe. If
+something you need is not on this page or in [Control](control.md), it is not part of the contract.
 
 ## Runtime environment
 
@@ -232,11 +392,12 @@ Every extension command and service receives:
 | --- | --- |
 | `ROZI_EXTENSION` | Stable manifest ID. |
 | `ROZI_EXTENSION_DIR` | Absolute lexical installation directory. |
+| `ROZI_EXTENSION_CONFIG` | Merged settings as a compact JSON object. `{}` when none are declared. |
 | `ROZI_EXTENSION_GENERATION` | Opaque token for the currently loaded process contract. |
 | `ROZI_BIN` | Running Rozi executable when available. |
 | `ROZI_SOCKET` | Current UI endpoint when available. |
 
-Services may not override the three `ROZI_EXTENSION*` variables.
+Services may not override the four `ROZI_EXTENSION*` variables.
 
 Use `ROZI_BIN` instead of assuming `rozi` is on `PATH`, and pass `ROZI_SOCKET` back to it:
 

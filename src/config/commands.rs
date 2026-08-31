@@ -68,6 +68,7 @@ pub(crate) fn build_named_commands(
             continue;
         };
         commands.push(NamedCommand {
+            default_key: None,
             id,
             label,
             action,

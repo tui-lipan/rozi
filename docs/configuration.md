@@ -347,6 +347,7 @@ A table in `tabs` can configure `files` or `git`, or define a custom launcher or
 | `command` | string | none | Command-tab producer. |
 | `interval` | integer seconds | `30` | Minimum `5`. Command tabs only. |
 | `on_click` | action table | none, except tree tabs type `{path}` | Action for a command or tree row. |
+| `group_prefix` | string | none | Command tabs only. Output lines starting with it become section headers with the prefix stripped. |
 | `root` | string | `"cwd"` for files, `"repo"` for git | `"cwd"` or `"repo"`. Tree tabs only. |
 | `show_hidden` | bool | `true` | Tree tabs only. |
 | `icons` | bool | `false` | Tree tabs only. Also requires `nerd_icons`. |
@@ -354,9 +355,40 @@ A table in `tabs` can configure `files` or `git`, or define a custom launcher or
 | `diff_stats` | bool | `false` for files, `true` for git | Tree tabs only. |
 | `max_entries` | integer | `2000` | Clamped to `1..=10000`. Tree tabs only. |
 
-Launcher entries use `label`, exactly one of `run`, `send`, or `popup`, and optional `keep_open`
-which defaults to `true`. An `on_click` action accepts `label`, exactly one of `run`, `send`,
-`popup`, or `exec`, and optional `keep_open`. `label` only affects command presentation.
+Launcher entries use `label`, exactly one of `run`, `send`, or `popup`, optional `keep_open` which
+defaults to `true`, and optional `group`. An `on_click` action accepts `label`, exactly one of
+`run`, `send`, `popup`, or `exec`, and optional `keep_open`. `label` only affects command
+presentation.
+
+### Grouping rows into sections
+
+A launcher entry's `group` puts it under a section header. Entries are clustered by group, sections
+follow the order their group first appears, entries keep their order inside a section, and entries
+without a `group` lead the list with no header of their own.
+
+```toml
+[sidebar]
+tabs = [
+  { name = "agents", label = "Agents", entries = [
+    { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
+    { label = "docs", group = "claude", run = "cd ~/Projects/docs && claude" },
+    { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },
+  ] },
+]
+```
+
+An extension can contribute the same kinds of tab from its manifest; see
+[Extensions](extensions.md#sidebar-tabs). A `panels` entry naming an extension tab that is not
+loaded right now is kept silently rather than reported as unknown.
+
+A command tab runs in the focused pane's working directory and re-lists when that changes. Its
+`on_click` `send` may substitute `{line}`; `run`, `popup`, and `exec` receive the row in `ROZI_ROW`
+rather than spliced into the command.
+
+A command tab groups its own output instead: with `group_prefix` set, an output line starting with
+that prefix becomes a section header carrying the rest of the line. A line holding nothing but the
+prefix is dropped, as blank lines are. Headers are never selectable, so `on_click` still applies to
+every other row.
 
 ### Opening a diff viewer or editor from a row
 
@@ -512,6 +544,24 @@ branches = "i"
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `disabled` | array of strings | `[]` | Stable manifest IDs to disable. Directory names are not extension IDs. |
+
+A `[extensions.<id>]` subtable configures one installed extension. Keys are the settings that
+extension declares; an undeclared key, a value of the wrong type, and a table naming nothing
+installed are each reported and ignored.
+
+```toml
+[extensions]
+disabled = ["docker"]
+
+[extensions.tasks]
+runner = "just"
+rows = 20
+```
+
+Run `rozi check-extension <path>` to see the settings an extension declares and their defaults.
+
+Extension commands may also suggest a default chord inside the reserved `<prefix> x` space. A
+`[keys]` entry for the command overrides it.
 
 See [Extensions](extensions.md).
 

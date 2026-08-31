@@ -64,6 +64,11 @@
           "send": {
             "type": "string",
             "minLength": 1
+          },
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Suggested chord, as the key steps inside the reserved extension space: \"b\" means <prefix> x b."
           }
         },
         "oneOf": [
@@ -322,6 +327,181 @@
             }
           }
         }
+      }
+    },
+    "sidebar_tabs": {
+      "type": "array",
+      "description": "Sidebar tabs. Ids are namespaced <extension>.<name> once loaded.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "label"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "label"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "group": {
+                  "type": "string",
+                  "description": "Section header this entry sits under."
+                },
+                "run": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "send": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "popup": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "keep_open": {
+                  "type": "boolean"
+                }
+              },
+              "oneOf": [
+                {
+                  "required": [
+                    "run"
+                  ]
+                },
+                {
+                  "required": [
+                    "send"
+                  ]
+                },
+                {
+                  "required": [
+                    "popup"
+                  ]
+                }
+              ]
+            }
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "interval": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "on_click": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "run": {
+                "type": "string",
+                "minLength": 1
+              },
+              "send": {
+                "type": "string",
+                "minLength": 1
+              },
+              "popup": {
+                "type": "string",
+                "minLength": 1
+              },
+              "exec": {
+                "type": "string",
+                "minLength": 1
+              },
+              "keep_open": {
+                "type": "boolean"
+              }
+            },
+            "oneOf": [
+              {
+                "required": [
+                  "run"
+                ]
+              },
+              {
+                "required": [
+                  "send"
+                ]
+              },
+              {
+                "required": [
+                  "popup"
+                ]
+              },
+              {
+                "required": [
+                  "exec"
+                ]
+              }
+            ]
+          },
+          "group_prefix": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Command tabs only. Output lines starting with it render as section headers."
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "entries"
+            ]
+          },
+          {
+            "required": [
+              "command"
+            ]
+          }
+        ]
+      }
+    },
+    "settings": {
+      "type": "object",
+      "description": "Settings this extension understands, each at its default value. Users override them in [extensions.<id>].",
+      "propertyNames": {
+        "pattern": "^[a-z0-9_-]+$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
       }
     }
   }

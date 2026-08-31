@@ -47,17 +47,21 @@ fn launcher_entries_render_as_glyphed_two_line_rows() {
     let lines = sidebar_lines(SidebarTab::Launcher {
         name: SidebarTabId::new("deploy"),
         label: "Deploy".into(),
+        env: Vec::new(),
         entries: vec![
             SidebarLauncherEntry {
                 label: "Build".into(),
+                group: None,
                 action: UserCommandAction::run("cargo build --release"),
             },
             SidebarLauncherEntry {
                 label: "Date".into(),
+                group: None,
                 action: UserCommandAction::Send("date\n".into()),
             },
             SidebarLauncherEntry {
                 label: "Logs".into(),
+                group: None,
                 action: UserCommandAction::popup("journalctl -f"),
             },
         ],
@@ -83,12 +87,57 @@ fn launcher_entries_render_as_glyphed_two_line_rows() {
     assert!(lines[index("Build")].starts_with(' '));
 }
 
+/// Grouped entries read as sections: a header above each group, a blank row between them, and the
+/// ungrouped entries leading without a header of their own.
+#[test]
+fn grouped_launcher_entries_render_under_section_headers() {
+    let entry = |label: &str, group: Option<&str>, command: &str| SidebarLauncherEntry {
+        label: label.into(),
+        group: group.map(Into::into),
+        action: UserCommandAction::run(command),
+    };
+    let lines = sidebar_lines(SidebarTab::Launcher {
+        name: SidebarTabId::new("agents"),
+        label: "Agents".into(),
+        env: Vec::new(),
+        entries: vec![
+            entry("Shell", None, "bash"),
+            entry("rozi", Some("claude"), "claude"),
+            entry("docs", Some("claude"), "claude"),
+            entry("rozi", Some("codex"), "codex"),
+        ],
+    });
+    let index = |needle: &str| {
+        lines
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("sidebar shows {needle:?}"))
+    };
+
+    // Ungrouped rows lead with no header over them; sections follow in first-appearance order.
+    assert!(index("Shell") < index("claude"));
+    assert!(index("claude") < index("codex"));
+    // A header sits directly above the first row of its section, separated from what came before
+    // it by a blank row.
+    assert_eq!(index("rozi"), index("claude") + 1);
+    // Only the row's own text matters here; the sidebar's border and scrollbar occupy the tail of
+    // every captured line.
+    let blank = |line: &str| line.chars().take(24).all(char::is_whitespace);
+    assert!(blank(&lines[index("claude") - 1]));
+    assert!(blank(&lines[index("codex") - 1]));
+    // Both entries of a section sit under the one header rather than repeating it.
+    assert_eq!(index("docs"), index("rozi") + 2);
+    // A header is a label, not a row: no action glyph.
+    assert!(!lines[index("claude")].contains('▸'));
+}
+
 #[test]
 fn launcher_tab_without_entries_shows_a_muted_placeholder() {
     let lines = sidebar_lines(SidebarTab::Launcher {
         name: SidebarTabId::new("deploy"),
         label: "Deploy".into(),
         entries: Vec::new(),
+        env: Vec::new(),
     });
     assert!(
         lines
@@ -120,6 +169,8 @@ fn read_only_command_output_has_one_cell_of_leading_padding() {
                     command: "git branch --format='%(refname:short)'".into(),
                     interval_secs: 30,
                     on_click: None,
+                    group_prefix: None,
+                    env: Vec::new(),
                 }];
                 state.sidebar.panels[0].tabs = vec![tab_id.clone()];
                 state.sidebar.panels[0].active_tab = Some(tab_id.clone());
@@ -131,6 +182,7 @@ fn read_only_command_output_has_one_cell_of_leading_padding() {
                             raw: "master".into(),
                             display: "master".into(),
                             error: false,
+                            header: false,
                         }],
                     },
                 );

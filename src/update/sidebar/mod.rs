@@ -156,8 +156,63 @@ pub(crate) fn sync_and_persist_panels(ctx: &mut Context<AppRoot>) {
         &ctx.state.config.sidebar.panels,
         ctx.state.config.sidebar.split,
     );
+    let panels = retain_absent_extension_tabs(
+        panels,
+        &ctx.state.config.sidebar.panels,
+        &ctx.state.config.installed_extensions,
+    );
     ctx.state.config.sidebar.panels = panels.clone();
     persist_sidebar_preference(ctx, crate::config::persist_sidebar_panels(&panels));
+}
+
+/// Carry a placement forward for a tab whose extension is installed but is not contributing on this
+/// load — disabled, mid-update, or failing to parse.
+///
+/// The displayed layout only holds tabs that exist right now, so writing it back verbatim would
+/// quietly delete such a tab from the user's config, and with it the spot they dragged it to. An id
+/// only disappears once its extension is gone from disk, and that pruning happens here rather than
+/// on load: this runs because the user rearranged the sidebar, so it is their write, not a
+/// background edit of their config by a client that happened to start while an extension was down.
+pub(crate) fn retain_absent_extension_tabs(
+    mut panels: Vec<Vec<crate::config::SidebarTabId>>,
+    configured: &[Vec<crate::config::SidebarTabId>],
+    installed: &std::collections::HashSet<String>,
+) -> Vec<Vec<crate::config::SidebarTabId>> {
+    if panels.is_empty() {
+        panels.push(Vec::new());
+    }
+    let mut live: std::collections::HashSet<_> = panels.iter().flatten().cloned().collect();
+    for (index, panel) in configured.iter().enumerate() {
+        // A panel that no longer exists (the split was collapsed) folds into the last one rather
+        // than taking its tabs down with it. Its saved index means nothing there, so those tabs go
+        // to the end instead of jumping ahead of tabs that are actually on screen.
+        let target = index.min(panels.len() - 1);
+        let keeps_index = target == index;
+        for (position, id) in panel.iter().enumerate() {
+            if live.contains(id) || !extension_is_installed(id, installed) {
+                continue;
+            }
+            let at = if keeps_index {
+                position.min(panels[target].len())
+            } else {
+                panels[target].len()
+            };
+            panels[target].insert(at, id.clone());
+            live.insert(id.clone());
+        }
+    }
+    panels
+}
+
+fn extension_is_installed(
+    id: &crate::config::SidebarTabId,
+    installed: &std::collections::HashSet<String>,
+) -> bool {
+    crate::config::is_extension_scoped_id(id.as_str())
+        && id
+            .as_str()
+            .split_once('.')
+            .is_some_and(|(extension, _)| installed.contains(extension))
 }
 
 pub(crate) fn persisted_panel_ids(

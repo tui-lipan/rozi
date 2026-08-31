@@ -12,9 +12,10 @@ pub(crate) use namespace::{
     pane_is_local,
 };
 pub(crate) use spawn::{
-    PaneSpawnRequest, SpawnFloat, SpawnPlacement, focused_local_cwd, focused_server_cwd_ref,
-    focused_spawn_cwd, request_pane_spawn, respawn_focused_pane, spawn_floating_pane_at_cursor,
-    spawn_interactive_pane, spawn_interactive_pane_with_focus, spawn_pane, spawn_pane_in_scratch,
+    PaneSpawnRequest, SpawnFloat, SpawnPlacement, focused_local_cwd, focused_local_cwd_ref,
+    focused_server_cwd_ref, focused_spawn_cwd, request_pane_spawn, respawn_focused_pane,
+    spawn_floating_pane_at_cursor, spawn_interactive_pane, spawn_interactive_pane_with_focus,
+    spawn_pane, spawn_pane_in_scratch,
 };
 pub(crate) use timers::{open_timers_batch_command, open_timers_command};
 

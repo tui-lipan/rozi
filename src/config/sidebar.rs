@@ -28,9 +28,13 @@ fn build_tree_tab(
 ) -> SidebarTab {
     let name = view.id();
     let mut config = SidebarTreeConfig::for_view(view);
-    if table.entries.is_some() || table.command.is_some() || table.interval.is_some() {
+    if table.entries.is_some()
+        || table.command.is_some()
+        || table.interval.is_some()
+        || table.group_prefix.is_some()
+    {
         warnings.push(format!(
-            "Sidebar tab `{name}` is a reserved built-in file tree; ignoring `entries`/`command`/`interval` (rename the tab to keep those as a custom tab)"
+            "Sidebar tab `{name}` is a reserved built-in file tree; ignoring `entries`/`command`/`interval`/`group_prefix` (rename the tab to keep those as a custom tab)"
         ));
     }
     if let Some(root) = table.root {
@@ -73,9 +77,16 @@ fn build_tree_tab(
     SidebarTab::Tree { view, config }
 }
 
+/// Apply the `[sidebar]` table, then let installed extensions add their own tabs.
+///
+/// Extension tabs are appended to the catalog before placement is resolved, so a tab the user has
+/// already dragged somewhere keeps that spot and a new one is reachable without being placed by
+/// hand. They can only ever add: a namespaced id cannot collide with a built-in, and a config tab
+/// claiming the same id wins.
 pub(super) fn apply_sidebar_config(
     sidebar: &mut SidebarConfig,
     raw: SidebarFileConfig,
+    extension_tabs: Vec<SidebarTab>,
     warnings: &mut Vec<String>,
 ) {
     let requested_panels = raw.panels;
@@ -103,11 +114,23 @@ pub(super) fn apply_sidebar_config(
     if let Some(tabs) = raw.tabs {
         sidebar.tabs = build_tabs(tabs, warnings);
     }
+    for tab in extension_tabs {
+        let id = tab.id();
+        if sidebar.tabs.iter().any(|existing| existing.id() == id) {
+            warnings.push(format!(
+                "Sidebar tab `{}` is already configured; the extension's tab was skipped",
+                id.as_str()
+            ));
+            continue;
+        }
+        sidebar.tabs.push(tab);
+    }
     // A config that names neither list keeps the built-in placement, which is two panels;
     // rebuilding it from `tabs` alone would flatten every default into one bar.
     if custom_tabs || requested_panels.is_some() {
         sidebar.panels = build_panels(&sidebar.tabs, requested_panels, warnings);
     }
+    place_unplaced_tabs(sidebar);
     sidebar.split = raw.split.unwrap_or(sidebar.panels.len() > 1);
     if sidebar.split && sidebar.panels.len() == 1 {
         sidebar.panels.push(Vec::new());
@@ -128,6 +151,27 @@ pub(super) fn apply_sidebar_config(
         }
         sidebar.split_ratio = clamped;
     }
+}
+
+/// Give every configured tab a panel without rebuilding the placement that already exists. This is
+/// how a newly installed extension's tab becomes reachable: `build_panels` only runs when the user
+/// named `tabs` or `panels`, and rerunning it just to place one extension tab would flatten a
+/// two-panel sidebar into one.
+fn place_unplaced_tabs(sidebar: &mut SidebarConfig) {
+    let placed: HashSet<_> = sidebar.panels.iter().flatten().cloned().collect();
+    let unplaced: Vec<_> = sidebar
+        .tabs
+        .iter()
+        .map(SidebarTab::id)
+        .filter(|id| !placed.contains(id))
+        .collect();
+    if unplaced.is_empty() {
+        return;
+    }
+    if sidebar.panels.is_empty() {
+        sidebar.panels.push(Vec::new());
+    }
+    sidebar.panels[0].extend(unplaced);
 }
 
 fn build_panels(
@@ -157,10 +201,16 @@ fn build_panels(
         for name in panel {
             let id = SidebarTabId::new(name.trim());
             if !ids.contains(&id) {
-                warnings.push(format!(
-                    "Unknown sidebar panel tab `{}`; skipped",
-                    id.as_str()
-                ));
+                // A namespaced id names an extension's tab, not a typo. The extension may be
+                // disabled, mid-update, or gone; either way the placement is data the user chose,
+                // so it is skipped for this load without nagging about it. `sync_and_persist_panels`
+                // is what eventually drops it, and only once the extension is really gone.
+                if !super::extensions::is_extension_scoped_id(id.as_str()) {
+                    warnings.push(format!(
+                        "Unknown sidebar panel tab `{}`; skipped",
+                        id.as_str()
+                    ));
+                }
             } else if !seen.insert(id.clone()) {
                 warnings.push(format!(
                     "Sidebar panel tab `{}` appears more than once; duplicate skipped",
@@ -178,6 +228,140 @@ fn build_panels(
         panels[0].extend(omitted);
     }
     panels
+}
+
+/// Cluster launcher entries under their groups so the stored order is already display order: the
+/// view and the click projection then only have to notice where the group changes, and an entry
+/// index means the same thing to both. Section order is first appearance, entry order within a
+/// section is config order, and ungrouped entries lead because they are the run that sits above the
+/// first header.
+fn cluster_by_group(mut entries: Vec<SidebarLauncherEntry>) -> Vec<SidebarLauncherEntry> {
+    let mut order: Vec<Option<String>> = Vec::new();
+    for entry in &entries {
+        if !order.contains(&entry.group) {
+            order.push(entry.group.clone());
+        }
+    }
+    // Stable, so this only lifts each entry to its section without disturbing the entries around it.
+    entries.sort_by_key(|entry| match &entry.group {
+        None => 0,
+        group => 1 + order.iter().position(|known| known == group).unwrap_or(0),
+    });
+    entries
+}
+
+/// The fields a custom sidebar tab is built from, shared by `config.toml`'s tab tables and an
+/// extension manifest's `[[sidebar_tabs]]` so both forms accept exactly the same tab.
+pub(super) struct CustomTabParts {
+    pub(super) label: String,
+    /// Environment the finished tab's processes inherit. Empty for a `config.toml` tab.
+    pub(super) env: Vec<(String, String)>,
+    pub(super) entries: Option<Vec<super::file::SidebarLauncherEntrySpec>>,
+    pub(super) command: Option<String>,
+    pub(super) interval: Option<u64>,
+    pub(super) on_click: Option<super::file::UserCommandTableSpec>,
+    pub(super) group_prefix: Option<String>,
+}
+
+/// Build one launcher or command tab under an already-resolved id.
+///
+/// `Err` is a declaration that cannot become a tab at all; the caller decides what that means —
+/// `config.toml` warns and skips it, an extension manifest treats it as an error that invalidates
+/// the extension. Everything recoverable (a clamped interval, one unusable entry) goes to
+/// `warnings` and the tab is still built.
+pub(super) fn build_custom_tab(
+    id: SidebarTabId,
+    parts: CustomTabParts,
+    warnings: &mut Vec<String>,
+) -> Result<SidebarTab, String> {
+    let name = id.as_str();
+    let label = parts.label.trim();
+    if label.is_empty() {
+        return Err(format!("Sidebar tab `{name}` label must not be empty"));
+    }
+    match (parts.entries, parts.command) {
+        (Some(entries), None) => {
+            if parts.group_prefix.is_some() {
+                warnings.push(format!(
+                    "Sidebar tab `{name}` is a launcher; ignoring `group_prefix` (group its entries with `group` instead)"
+                ));
+            }
+            let entries = entries
+                .into_iter()
+                .filter_map(|mut entry| {
+                    let label = entry.label.trim().to_string();
+                    if label.is_empty() {
+                        warnings.push(format!(
+                            "Sidebar tab `{name}` has an entry with an empty label; skipped"
+                        ));
+                        return None;
+                    }
+                    let group = entry
+                        .group
+                        .take()
+                        .map(|group| group.trim().to_string())
+                        .filter(|group| !group.is_empty());
+                    let action = parse_sidebar_action(
+                        entry.action(),
+                        &format!("Sidebar entry `{label}` in `{name}`"),
+                        "{line}",
+                        warnings,
+                    )?;
+                    Some(SidebarLauncherEntry {
+                        label,
+                        group,
+                        action,
+                    })
+                })
+                .collect();
+            Ok(SidebarTab::Launcher {
+                name: id.clone(),
+                label: label.to_string(),
+                entries: cluster_by_group(entries),
+                env: parts.env,
+            })
+        }
+        (None, Some(command)) if !command.trim().is_empty() => {
+            let requested = parts.interval.unwrap_or(30);
+            let interval_secs = requested.max(SIDEBAR_MIN_COMMAND_INTERVAL_SECS);
+            if interval_secs != requested {
+                warnings.push(format!(
+                    "Sidebar tab `{name}` interval {requested}s is below the minimum; clamped to {interval_secs}s"
+                ));
+            }
+            let on_click = parts.on_click.and_then(|action| {
+                parse_sidebar_action(
+                    action,
+                    &format!("Sidebar tab `{name}` on_click"),
+                    "{line}",
+                    warnings,
+                )
+            });
+            // Not trimmed: a marker is often written with its trailing space (`"## "`), and that
+            // space is part of what distinguishes it from an ordinary line. An empty one would turn
+            // every row into a header, which is never meant.
+            let group_prefix = parts.group_prefix.filter(|prefix| {
+                if prefix.is_empty() {
+                    warnings.push(format!(
+                        "Sidebar tab `{name}` group_prefix must not be empty; ignored"
+                    ));
+                }
+                !prefix.is_empty()
+            });
+            Ok(SidebarTab::Command {
+                name: id.clone(),
+                label: label.to_string(),
+                command: command.trim().to_string(),
+                interval_secs,
+                on_click,
+                group_prefix,
+                env: parts.env,
+            })
+        }
+        _ => Err(format!(
+            "Sidebar tab `{name}` needs exactly one of `entries` or `command`"
+        )),
+    }
 }
 
 fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<SidebarTab> {
@@ -201,15 +385,16 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                 },
             },
             SidebarTabSpec::Table(table) => {
-                let name = table.name.trim();
+                let table = *table;
+                let name = table.name.trim().to_string();
                 if name.is_empty() {
                     warnings.push("Sidebar tab name must not be empty; skipped".to_string());
                     continue;
                 }
                 // A table naming a built-in file tree configures it; every other built-in name is
                 // still reserved, since those tabs take no options.
-                if let Some(view) = tree_view(name) {
-                    let tab = build_tree_tab(view, *table, warnings);
+                if let Some(view) = tree_view(&name) {
+                    let tab = build_tree_tab(view, table, warnings);
                     let id = tab.id();
                     if !seen.insert(id.clone()) {
                         warnings.push(format!("Duplicate sidebar tab `{}`; skipped", id.as_str()));
@@ -218,72 +403,23 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                     tabs.push(tab);
                     continue;
                 }
-                if BUILTIN_TABS.contains(&name) {
+                if BUILTIN_TABS.contains(&name.as_str()) {
                     warnings.push(format!("Sidebar tab name `{name}` is reserved; skipped"));
                     continue;
                 }
-                let label = table.label.trim();
-                if label.is_empty() {
-                    warnings.push(format!(
-                        "Sidebar tab `{name}` label must not be empty; skipped"
-                    ));
-                    continue;
-                }
-                match (table.entries, table.command) {
-                    (Some(entries), None) => {
-                        let entries = entries
-                            .into_iter()
-                            .filter_map(|entry| {
-                                let label = entry.label.trim().to_string();
-                                if label.is_empty() {
-                                    warnings.push(format!(
-                                        "Sidebar tab `{name}` has an entry with an empty label; skipped"
-                                    ));
-                                    return None;
-                                }
-                                let action = parse_sidebar_action(
-                                    entry.action(),
-                                    &format!("Sidebar entry `{label}` in `{name}`"),
-                                    "{line}",
-                                    warnings,
-                                )?;
-                                Some(SidebarLauncherEntry { label, action })
-                            })
-                            .collect();
-                        SidebarTab::Launcher {
-                            name: SidebarTabId::new(name),
-                            label: label.to_string(),
-                            entries,
-                        }
-                    }
-                    (None, Some(command)) if !command.trim().is_empty() => {
-                        let requested = table.interval.unwrap_or(30);
-                        let interval_secs = requested.max(SIDEBAR_MIN_COMMAND_INTERVAL_SECS);
-                        if interval_secs != requested {
-                            warnings.push(format!(
-                                "Sidebar tab `{name}` interval {requested}s is below the minimum; clamped to {interval_secs}s"
-                            ));
-                        }
-                        let on_click = table.on_click.and_then(|action| {
-                            parse_sidebar_action(
-                                action,
-                                &format!("Sidebar tab `{name}` on_click"),
-                                "{line}",
-                                warnings,
-                            )
-                        });
-                        SidebarTab::Command {
-                            name: SidebarTabId::new(name),
-                            label: label.to_string(),
-                            command: command.trim().to_string(),
-                            interval_secs,
-                            on_click,
-                        }
-                    }
-                    _ => {
-                        warnings.push(format!(
-                            "Sidebar tab `{name}` needs exactly one of `entries` or `command`; skipped"
-                        ));
+                let parts = CustomTabParts {
+                    label: table.label,
+                    entries: table.entries,
+                    command: table.command,
+                    interval: table.interval,
+                    on_click: table.on_click,
+                    group_prefix: table.group_prefix,
+                    env: Vec::new(),
+                };
+                match build_custom_tab(SidebarTabId::new(name), parts, warnings) {
+                    Ok(tab) => tab,
+                    Err(error) => {
+                        warnings.push(format!("{error}; skipped"));
                         continue;
                     }
                 }
@@ -330,11 +466,31 @@ mod tests {
     use super::*;
 
     fn parse(text: &str) -> (SidebarConfig, Vec<String>) {
+        parse_with_extensions(text, Vec::new())
+    }
+
+    fn parse_with_extensions(
+        text: &str,
+        extension_tabs: Vec<SidebarTab>,
+    ) -> (SidebarConfig, Vec<String>) {
         let raw = toml::from_str(text).expect("sidebar config parses");
         let mut config = SidebarConfig::default();
         let mut warnings = Vec::new();
-        apply_sidebar_config(&mut config, raw, &mut warnings);
+        apply_sidebar_config(&mut config, raw, extension_tabs, &mut warnings);
         (config, warnings)
+    }
+
+    fn extension_tab(id: &str) -> SidebarTab {
+        SidebarTab::Launcher {
+            name: SidebarTabId::new(id),
+            label: "Agents".to_string(),
+            env: Vec::new(),
+            entries: vec![SidebarLauncherEntry {
+                label: "rozi".to_string(),
+                group: None,
+                action: crate::config::UserCommandAction::run("claude"),
+            }],
+        }
     }
 
     #[test]
@@ -680,5 +836,127 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// An extension tab has to become reachable without rebuilding a placement the user never asked
+    /// to change: appending it must not collapse the default two panels into one.
+    #[test]
+    fn an_extension_tab_joins_the_existing_placement_without_rebuilding_it() {
+        let (config, warnings) = parse_with_extensions("", vec![extension_tab("git-tools.agents")]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(config.panels.len(), 2);
+        assert_eq!(
+            config.panels[0].last(),
+            Some(&SidebarTabId::new("git-tools.agents"))
+        );
+        assert_eq!(config.panels[1], SidebarConfig::default().panels[1]);
+    }
+
+    /// The user's own arrangement wins: a `panels` entry naming the extension tab keeps it where it
+    /// was dragged rather than sending it back to the first panel.
+    #[test]
+    fn a_dragged_extension_tab_keeps_the_panel_it_was_placed_in() {
+        let (config, warnings) = parse_with_extensions(
+            r#"panels = [["panes"], ["git-tools.agents", "sessions"]]"#,
+            vec![extension_tab("git-tools.agents")],
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(config.panels[1][0], SidebarTabId::new("git-tools.agents"));
+    }
+
+    #[test]
+    fn a_config_tab_of_the_same_id_wins_over_the_extension_one() {
+        let (config, warnings) = parse_with_extensions(
+            r#"tabs = ["panes", { name = "git-tools.agents", label = "Mine", entries = [{ label = "Date", run = "date" }] }]"#,
+            vec![extension_tab("git-tools.agents")],
+        );
+        assert_eq!(config.tabs.len(), 2);
+        assert_eq!(config.tabs[1].label(), "Mine");
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("already configured")),
+            "{warnings:?}"
+        );
+    }
+
+    /// A placement naming an extension tab that is not loaded right now is data the user chose, not
+    /// a typo: it is skipped in silence and restored when the extension returns. A bare name that
+    /// resolves to nothing is still a typo and still says so.
+    #[test]
+    fn an_absent_extension_tab_in_panels_is_silent_while_a_bare_typo_still_warns() {
+        let (config, warnings) = parse(
+            r#"
+            tabs = ["panes", "sessions"]
+            panels = [["panes", "git-tools.agents"], ["sessions", "pannes"]]
+            "#,
+        );
+        assert_eq!(config.panels[0], vec![SidebarTabId::new("panes")]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("pannes"), "{warnings:?}");
+    }
+
+    #[test]
+    fn launcher_entries_cluster_under_their_groups_with_ungrouped_ones_leading() {
+        let (config, warnings) = parse(
+            r#"
+            tabs = [{ name = "agents", label = "Agents", entries = [
+              { label = "Claude here", group = "claude", run = "claude" },
+              { label = "Loose", run = "date" },
+              { label = "Codex here", group = " codex ", run = "codex" },
+              { label = "Claude in rozi", group = "claude", run = "claude" },
+              { label = "Blank group", group = "  ", run = "date" },
+            ] }]
+        "#,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let SidebarTab::Launcher { entries, .. } = &config.tabs[0] else {
+            panic!("launcher tab");
+        };
+        // Ungrouped first in config order, then each group in first-appearance order with its own
+        // entries kept in config order. A whitespace-only group is no group at all.
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.label.as_str(), entry.group.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Loose", None),
+                ("Blank group", None),
+                ("Claude here", Some("claude")),
+                ("Claude in rozi", Some("claude")),
+                ("Codex here", Some("codex")),
+            ]
+        );
+    }
+
+    #[test]
+    fn group_prefix_belongs_to_command_tabs_and_must_not_be_empty() {
+        let (config, warnings) = parse(
+            r#"
+            tabs = [
+              { name = "todos", label = "Todos", command = "task list", group_prefix = "-- " },
+              { name = "empty", label = "Empty", command = "task list", group_prefix = "" },
+              { name = "launch", label = "Launch", group_prefix = "-- ", entries = [
+                { label = "Date", run = "date" },
+              ] },
+            ]
+        "#,
+        );
+        assert!(matches!(
+            &config.tabs[0],
+            SidebarTab::Command { group_prefix: Some(prefix), .. } if prefix == "-- "
+        ));
+        assert!(matches!(
+            &config.tabs[1],
+            SidebarTab::Command {
+                group_prefix: None,
+                ..
+            }
+        ));
+        assert!(matches!(&config.tabs[2], SidebarTab::Launcher { .. }));
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("must not be empty")));
+        assert!(warnings.iter().any(|w| w.contains("is a launcher")));
     }
 }

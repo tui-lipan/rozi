@@ -1,12 +1,14 @@
 use std::collections::HashSet;
 use std::path::Path;
+use std::str::FromStr;
 
 use crate::config::{
-    NamedCommand, ServiceConfig, ServiceLaunch, ServiceRestart, UserCommandAction,
+    NamedCommand, ServiceConfig, ServiceLaunch, ServiceRestart, SidebarTab, SidebarTabId,
+    UserCommandAction,
 };
 
 use super::super::commands::valid_command_segment;
-use super::manifest::{ExtensionCommandFile, ExtensionServiceFile};
+use super::manifest::{ExtensionCommandFile, ExtensionServiceFile, ExtensionSidebarTabFile};
 use super::paths::{normalize_direct_argv, resolve_declared_path};
 use super::{ExtensionInfo, RESERVED_EXTENSION_ENV, RESERVED_EXTENSION_IDS, clean_optional};
 
@@ -38,7 +40,10 @@ pub(super) fn validate_extension_id(id: Option<&str>, errors: &mut Vec<String>) 
     true
 }
 
-pub(crate) fn is_extension_command_id(id: &str) -> bool {
+/// Whether an id has the `<extension>.<local>` shape every extension contribution is namespaced
+/// with. Also the test for "this id belongs to some extension, loaded or not", which is what lets a
+/// sidebar panel keep a placement for a tab whose extension is not here right now.
+pub(crate) fn is_extension_scoped_id(id: &str) -> bool {
     let mut segments = id.split('.');
     let (Some(extension), Some(command), None) =
         (segments.next(), segments.next(), segments.next())
@@ -131,6 +136,22 @@ pub(super) fn validate_command(
             None
         }
     };
+    // A chord that cannot be parsed is the extension's mistake and is reported, but it does not
+    // invalidate the extension: the command still works from the palette, which is where most
+    // people reach it anyway.
+    let default_key = clean_optional(raw.key).and_then(|key| {
+        if key.split_whitespace().all(|step| {
+            tui_lipan::input::KeyBinding::from_str(step).is_ok_and(|step| step.step_count() == 1)
+        }) && !key.split_whitespace().collect::<Vec<_>>().is_empty()
+        {
+            Some(key)
+        } else {
+            info.errors.push(format!(
+                "extension command `{id}` has an unparsable `key` (write the steps after the leader prefix, such as \"g b\")"
+            ));
+            None
+        }
+    });
     if let Some(action) = action {
         commands.push(NamedCommand {
             id,
@@ -138,7 +159,84 @@ pub(super) fn validate_command(
             action,
             category: category.to_string(),
             env: env.to_vec(),
+            default_key,
         });
+    }
+}
+
+/// Build one `[[sidebar_tabs]]` entry into a namespaced tab.
+///
+/// Recoverable problems inside the declaration (a clamped interval, one unusable entry) are dropped
+/// rather than reported: `ExtensionInfo` carries errors, and an error here would take the whole
+/// extension down over a detail the author can read in the docs. Anything that stops the tab
+/// existing is an error, matching how a malformed command or service is treated.
+pub(super) fn validate_sidebar_tab(
+    raw: ExtensionSidebarTabFile,
+    extension_id: &str,
+    directory: &str,
+    env: &[(String, String)],
+    seen: &mut HashSet<String>,
+    info: &mut ExtensionInfo,
+    tabs: &mut Vec<SidebarTab>,
+) {
+    let Some(local_name) = raw
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+    else {
+        info.errors
+            .push("sidebar tab missing required field `name`".to_string());
+        return;
+    };
+    if !valid_command_segment(&local_name) {
+        info.errors.push(format!(
+            "sidebar tab name `{local_name}` must match [a-z0-9_-]+"
+        ));
+        return;
+    }
+    let id = format!("{extension_id}.{local_name}");
+    if !seen.insert(local_name) {
+        info.errors.push(format!("duplicate sidebar tab `{id}`"));
+        return;
+    }
+    // A tab's strings are shell command lines and pane input, not argv, so `{extension_dir}` is
+    // substituted here rather than resolved as a path. Without it a contributed tab has no way to
+    // name its own program: the tab is not a command or a service, so it never had one.
+    let expand = |value: String| value.replace("{extension_dir}", directory);
+    let parts = super::super::sidebar::CustomTabParts {
+        label: raw.label.unwrap_or_default(),
+        entries: raw.entries.map(|entries| {
+            entries
+                .into_iter()
+                .map(|mut entry| {
+                    entry.run = entry.run.map(&expand);
+                    entry.send = entry.send.map(&expand);
+                    entry.popup = entry.popup.map(&expand);
+                    entry
+                })
+                .collect()
+        }),
+        command: raw.command.map(&expand),
+        interval: raw.interval,
+        on_click: raw.on_click.map(|mut action| {
+            action.run = action.run.map(&expand);
+            action.send = action.send.map(&expand);
+            action.popup = action.popup.map(&expand);
+            action.exec = action.exec.map(&expand);
+            action
+        }),
+        group_prefix: raw.group_prefix,
+        env: env.to_vec(),
+    };
+    let mut advisories = Vec::new();
+    match super::super::sidebar::build_custom_tab(SidebarTabId::new(&id), parts, &mut advisories) {
+        Ok(tab) => {
+            info.sidebar_tabs.push(id);
+            tabs.push(tab);
+        }
+        Err(error) => info.errors.push(error),
     }
 }
 

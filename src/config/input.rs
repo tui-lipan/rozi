@@ -82,7 +82,7 @@ pub(crate) fn build_key_overrides(
         let default_bindings = match crate::commands::default_shortcuts_for_action(input, &key) {
             Some(defaults) => defaults,
             None if named_ids.contains(&key) => Vec::new(),
-            None if super::extensions::is_extension_command_id(&key) => {
+            None if super::extensions::is_extension_scoped_id(&key) => {
                 warnings.push(format!(
                     "Extension command `{key}` is currently unavailable; its binding is preserved but inactive"
                 ));

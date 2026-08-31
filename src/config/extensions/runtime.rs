@@ -180,6 +180,7 @@ mod tests {
             ),
         ];
         let command = crate::config::NamedCommand {
+            default_key: None,
             id: "tools.open".to_string(),
             label: Some(label.to_string()),
             action: UserCommandAction::Exec {

@@ -14,6 +14,7 @@ mod discovery;
 mod manifest;
 mod paths;
 mod runtime;
+mod settings;
 mod validation;
 
 pub(crate) use authoring::create_extension_scaffold;
@@ -27,8 +28,9 @@ pub(crate) use runtime::{
     ExtensionRuntimeFingerprint, fingerprint, fingerprints_by_id, provenance_from_process,
     provenance_is_active, reconcile_generations,
 };
-pub(crate) use validation::is_extension_command_id;
-use validation::{validate_command, validate_extension_id, validate_service};
+pub use settings::{ExtensionSettingValue, ExtensionSettings};
+pub(crate) use validation::is_extension_scoped_id;
+use validation::{validate_command, validate_extension_id, validate_service, validate_sidebar_tab};
 
 /// The generation of Rozi's complete public extension contract.
 ///
@@ -40,8 +42,12 @@ const RESERVED_EXTENSION_IDS: &[&str] = &["app", "command", "rozi", "user", "wor
 const RESERVED_EXTENSION_ENV: &[&str] = &[
     "ROZI_EXTENSION",
     "ROZI_EXTENSION_DIR",
+    SETTINGS_ENV,
     runtime::GENERATION_ENV,
 ];
+
+/// Where an extension process reads its merged settings, as a compact JSON object.
+pub const SETTINGS_ENV: &str = "ROZI_EXTENSION_CONFIG";
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -81,6 +87,11 @@ pub struct ExtensionInfo {
     pub services: Vec<String>,
     /// Public ids of the agent definitions this extension contributes.
     pub agents: Vec<String>,
+    /// Namespaced ids of the sidebar tabs this extension contributes.
+    pub sidebar_tabs: Vec<String>,
+    /// Settings the manifest declares, at their default values. What the user's `config.toml`
+    /// overrides them to is not known here: a scan reads the extension, not the user.
+    pub settings: ExtensionSettings,
     pub command_details: Vec<ExtensionCommandDiagnostic>,
     pub service_details: Vec<ExtensionServiceDiagnostic>,
     pub command_paths: BTreeMap<String, String>,
@@ -145,6 +156,8 @@ pub(crate) struct DiscoveredExtension {
     commands: Vec<NamedCommand>,
     services: Vec<ServiceConfig>,
     agents: Vec<crate::agent_detection::AgentDefinition>,
+    sidebar_tabs: Vec<super::schema::SidebarTab>,
+    settings: ExtensionSettings,
 }
 
 #[derive(Debug, Default)]
@@ -180,9 +193,15 @@ impl ExtensionScan {
     pub(crate) fn into_contributions(
         self,
         disabled: &[String],
+        settings: &BTreeMap<String, toml::Value>,
     ) -> contributions::ExtensionContributions {
-        contributions::build(self, disabled)
+        contributions::build(self, disabled, settings)
     }
+}
+
+/// The directory extensions are installed in. Exposed so a report can name where it looked.
+pub(crate) fn extensions_dir_path() -> std::path::PathBuf {
+    crate::platform::paths::extensions_dir(&crate::platform::paths::PlatformEnv::from_process())
 }
 
 pub(crate) fn scan_extensions() -> ExtensionScan {
@@ -246,6 +265,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         commands: Vec::new(),
         services: Vec::new(),
         agents: Vec::new(),
+        sidebar_tabs: Vec::new(),
+        settings: ExtensionSettings::new(),
         command_details: Vec::new(),
         service_details: Vec::new(),
         command_paths: BTreeMap::new(),
@@ -269,6 +290,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 commands: Vec::new(),
                 services: Vec::new(),
                 agents: Vec::new(),
+                sidebar_tabs: Vec::new(),
+                settings: ExtensionSettings::new(),
             };
         }
     };
@@ -281,6 +304,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 commands: Vec::new(),
                 services: Vec::new(),
                 agents: Vec::new(),
+                sidebar_tabs: Vec::new(),
+                settings: ExtensionSettings::new(),
             };
         }
     };
@@ -294,6 +319,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 commands: Vec::new(),
                 services: Vec::new(),
                 agents: Vec::new(),
+                sidebar_tabs: Vec::new(),
+                settings: ExtensionSettings::new(),
             };
         }
     };
@@ -343,6 +370,21 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut commands,
         );
     }
+    let declared_settings = settings::declared(manifest.settings, &mut info.errors);
+    info.settings = declared_settings.clone();
+    let mut sidebar_tabs = Vec::new();
+    let mut seen_sidebar_tabs = HashSet::new();
+    for raw in manifest.sidebar_tabs {
+        validate_sidebar_tab(
+            raw,
+            &validation_id,
+            &extension_dir,
+            &command_env,
+            &mut seen_sidebar_tabs,
+            &mut info,
+            &mut sidebar_tabs,
+        );
+    }
     let mut seen_services = HashSet::new();
     for raw in manifest.services {
         validate_service(
@@ -374,6 +416,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         info.commands.clear();
         info.services.clear();
         info.agents.clear();
+        info.sidebar_tabs.clear();
+        info.settings.clear();
         info.command_details.clear();
         info.service_details.clear();
         info.command_paths.clear();
@@ -387,11 +431,13 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         commands.clear();
         services.clear();
         agents.clear();
+        sidebar_tabs.clear();
     } else if !info.errors.is_empty() {
         info.status = ExtensionStatus::Invalid;
         commands.clear();
         services.clear();
         agents.clear();
+        sidebar_tabs.clear();
     } else {
         info.status = ExtensionStatus::Loaded;
         info.enabled = true;
@@ -401,6 +447,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         commands,
         services,
         agents,
+        sidebar_tabs,
+        settings: declared_settings,
     }
 }
 
@@ -571,7 +619,7 @@ mod tests {
         assert_eq!(entries[0].services, ["git-tools.watch"]);
         assert_eq!(entries[0].path, directory.display().to_string());
 
-        let contributions = scan.into_contributions(&[]);
+        let contributions = scan.into_contributions(&[], &Default::default());
         let (commands, services, active, runtime, warnings) = (
             contributions.commands,
             contributions.services,
@@ -652,7 +700,7 @@ mod tests {
             .unwrap();
         assert_eq!(malformed.status, ExtensionStatus::Invalid);
         assert!(malformed.errors[0].contains("invalid extension.toml"));
-        let contributions = scan.into_contributions(&[]);
+        let contributions = scan.into_contributions(&[], &Default::default());
         let (commands, services, active) = (
             contributions.commands,
             contributions.services,
@@ -681,7 +729,7 @@ mod tests {
         assert_eq!(scan.entries()[0].status, ExtensionStatus::Loaded);
         assert_eq!(scan.entries()[0].agents, ["mytool.mytool"]);
 
-        let contributions = scan.into_contributions(&[]);
+        let contributions = scan.into_contributions(&[], &Default::default());
         assert_eq!(contributions.agents.len(), 1);
         assert_eq!(contributions.agents[0].id(), "mytool.mytool");
         assert_eq!(contributions.agents[0].label(), "My Tool");
@@ -715,7 +763,7 @@ mod tests {
             "{:?}",
             entry.errors
         );
-        let contributions = scan.into_contributions(&[]);
+        let contributions = scan.into_contributions(&[], &Default::default());
         assert!(
             contributions.commands.is_empty(),
             "one bad agent invalidates the extension atomically, commands included"
@@ -754,7 +802,7 @@ mod tests {
                 && entry.errors[0].contains(&one)
                 && entry.errors[0].contains(&two)
         }));
-        let contributions = scan.into_contributions(&[]);
+        let contributions = scan.into_contributions(&[], &Default::default());
         let (commands, services, active) = (
             contributions.commands,
             contributions.services,
@@ -772,7 +820,7 @@ mod tests {
         let mut scan = scan_extensions_in(temp.path());
         scan.apply_disabled(&["docker".to_string()]);
         assert_eq!(scan.entries()[0].status, ExtensionStatus::Disabled);
-        let contributions = scan.into_contributions(&["docker".to_string()]);
+        let contributions = scan.into_contributions(&["docker".to_string()], &Default::default());
         assert!(contributions.commands.is_empty());
         assert!(contributions.services.is_empty());
         assert!(contributions.agents.is_empty());
@@ -1070,8 +1118,8 @@ mod tests {
         let changed = scan_extensions_in(temp.path());
         assert_eq!(changed.entries()[0].commands, ["matrix.two"]);
 
-        let contributions =
-            scan_extensions_in(temp.path()).into_contributions(&["matrix".to_string()]);
+        let contributions = scan_extensions_in(temp.path())
+            .into_contributions(&["matrix".to_string()], &Default::default());
         assert!(contributions.commands.is_empty());
         assert!(contributions.active_ids.is_empty());
 
@@ -1118,5 +1166,312 @@ mod tests {
 
         std::fs::remove_dir_all(moved).unwrap();
         assert!(scan_extensions_in(temp.path()).extensions.is_empty());
+    }
+
+    #[test]
+    fn sidebar_tabs_are_namespaced_and_contributed_like_commands() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "git-tools",
+            &format!(
+                "{}[[sidebar_tabs]]\nname = \"agents\"\nlabel = \"Agents\"\nentries = [\n\
+                 {{ label = \"rozi\", group = \"claude\", run = \"claude\" }},\n\
+                 ]\n",
+                manifest("git-tools", "1")
+            ),
+        );
+
+        let scan = scan_extensions_in(temp.path());
+        let entries = scan.entries();
+        assert_eq!(entries[0].status, ExtensionStatus::Loaded);
+        assert_eq!(entries[0].sidebar_tabs, ["git-tools.agents"]);
+
+        let contributions = scan.into_contributions(&[], &Default::default());
+        assert!(
+            contributions.warnings.is_empty(),
+            "{:?}",
+            contributions.warnings
+        );
+        assert_eq!(contributions.sidebar_tabs.len(), 1);
+        assert_eq!(
+            contributions.sidebar_tabs[0].id(),
+            super::super::schema::SidebarTabId::new("git-tools.agents")
+        );
+        assert!(contributions.installed_ids.contains("git-tools"));
+    }
+
+    /// A tab that cannot be built takes the extension down with it, the same as a malformed command
+    /// or service — an extension is either wholly trustworthy or not loaded.
+    #[test]
+    fn a_malformed_sidebar_tab_invalidates_the_extension() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "broken",
+            &format!(
+                "{}[[sidebar_tabs]]\nname = \"tasks\"\nlabel = \"Tasks\"\n",
+                manifest("broken", "1")
+            ),
+        );
+        let entry = scan_extensions_in(temp.path()).entries().remove(0);
+        assert_eq!(entry.status, ExtensionStatus::Invalid);
+        assert!(entry.sidebar_tabs.is_empty());
+        assert!(
+            entry
+                .errors
+                .iter()
+                .any(|error| error.contains("exactly one of `entries` or `command`")),
+            "{:?}",
+            entry.errors
+        );
+    }
+
+    /// Settings travel to the process as one JSON environment variable, and because that variable is
+    /// part of the command and service environment, changing a setting is a process-facing change:
+    /// the fingerprint moves and the generation rotates, restarting whatever was reading the old
+    /// value. A metadata edit still must not.
+    #[test]
+    fn settings_reach_the_process_environment_and_move_the_runtime_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "tasks",
+            &format!(
+                "{}[[commands]]\nid = \"run\"\nsend = \"run\"\n\
+                 [[services]]\nname = \"watch\"\nshell = \"watch\"\n\
+                 [settings]\nrunner = \"auto\"\nrows = 50\n",
+                manifest("tasks", "1")
+            ),
+        );
+        let entry = scan_extensions_in(temp.path()).entries().remove(0);
+        assert_eq!(entry.status, ExtensionStatus::Loaded);
+        assert_eq!(
+            entry.settings["runner"],
+            ExtensionSettingValue::String("auto".to_string())
+        );
+
+        let defaults = scan_extensions_in(temp.path()).into_contributions(&[], &Default::default());
+        let value = |contributions: &contributions::ExtensionContributions| {
+            contributions.commands[0]
+                .env
+                .iter()
+                .find(|(key, _)| key == SETTINGS_ENV)
+                .map(|(_, value)| value.clone())
+                .expect("settings reach the command environment")
+        };
+        assert_eq!(value(&defaults), r#"{"rows":50,"runner":"auto"}"#);
+        assert_eq!(
+            defaults.services[0].env[SETTINGS_ENV],
+            r#"{"rows":50,"runner":"auto"}"#
+        );
+
+        let user: BTreeMap<String, toml::Value> = [(
+            "tasks".to_string(),
+            toml::from_str::<toml::Value>("runner = \"just\"").unwrap(),
+        )]
+        .into_iter()
+        .collect();
+        let overridden = scan_extensions_in(temp.path()).into_contributions(&[], &user);
+        assert!(overridden.warnings.is_empty(), "{:?}", overridden.warnings);
+        assert_eq!(value(&overridden), r#"{"rows":50,"runner":"just"}"#);
+        assert_ne!(
+            defaults.runtime["tasks"], overridden.runtime["tasks"],
+            "a changed setting is a process-facing change"
+        );
+    }
+
+    #[test]
+    fn settings_report_unknown_keys_wrong_types_and_orphan_tables() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "tasks",
+            &format!("{}[settings]\nrows = 50\n", manifest("tasks", "1")),
+        );
+        let user: BTreeMap<String, toml::Value> = [
+            (
+                "tasks".to_string(),
+                toml::from_str::<toml::Value>("rows = \"many\"\nnope = 1").unwrap(),
+            ),
+            (
+                "not-installed".to_string(),
+                toml::from_str::<toml::Value>("anything = 1").unwrap(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let warnings = scan_extensions_in(temp.path())
+            .into_contributions(&[], &user)
+            .warnings;
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("no setting `nope`")));
+        assert!(warnings.iter().any(|w| w.contains("is string")));
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no installed extension"))
+        );
+    }
+
+    /// A setting Rozi cannot carry is the extension's bug, not the user's, so it fails at load the
+    /// way a malformed command does rather than disappearing quietly.
+    #[test]
+    fn an_uncarriable_setting_invalidates_the_extension() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "tasks",
+            &format!("{}[settings]\nratio = 0.5\n", manifest("tasks", "1")),
+        );
+        let entry = scan_extensions_in(temp.path()).entries().remove(0);
+        assert_eq!(entry.status, ExtensionStatus::Invalid);
+        assert!(
+            entry.errors.iter().any(|error| error.contains("`ratio`")),
+            "{:?}",
+            entry.errors
+        );
+    }
+
+    /// The frozen shape of extension API 1.
+    ///
+    /// Every key here is a promise (`docs/extensions.md#stability`). Adding one is compatible and
+    /// means adding it to this list too; removing or renaming one is not, and needs `api = 2`. The
+    /// list is spelled out rather than derived so the diff, not the reader, catches a change.
+    #[test]
+    fn the_api_1_manifest_surface_is_frozen() {
+        let schema: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas/extension.schema.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let keys = |value: &serde_json::Value| {
+            let mut keys: Vec<String> = value
+                .as_object()
+                .expect("object schema")
+                .keys()
+                .cloned()
+                .collect();
+            keys.sort();
+            keys
+        };
+        let properties = &schema["properties"];
+        assert_eq!(
+            keys(properties),
+            [
+                "agents",
+                "commands",
+                "extension",
+                "services",
+                "settings",
+                "sidebar_tabs"
+            ]
+        );
+        assert_eq!(
+            keys(&properties["extension"]["properties"]),
+            ["api", "description", "id", "title", "version"]
+        );
+        assert_eq!(
+            keys(&properties["commands"]["items"]["properties"]),
+            ["exec", "id", "key", "label", "send", "shell"]
+        );
+        assert_eq!(
+            keys(&properties["services"]["items"]["properties"]),
+            ["cwd", "env", "exec", "name", "restart", "shell"]
+        );
+        assert_eq!(
+            keys(&properties["sidebar_tabs"]["items"]["properties"]),
+            [
+                "command",
+                "entries",
+                "group_prefix",
+                "interval",
+                "label",
+                "name",
+                "on_click"
+            ]
+        );
+        assert_eq!(
+            keys(
+                &properties["sidebar_tabs"]["items"]["properties"]["entries"]["items"]["properties"]
+            ),
+            ["group", "keep_open", "label", "popup", "run", "send"]
+        );
+        // The environment every extension process is promised, and the API and diagnostics
+        // generations that describe the whole contract.
+        assert_eq!(
+            RESERVED_EXTENSION_ENV,
+            [
+                "ROZI_EXTENSION",
+                "ROZI_EXTENSION_DIR",
+                "ROZI_EXTENSION_CONFIG",
+                "ROZI_EXTENSION_GENERATION"
+            ]
+        );
+        assert_eq!(EXTENSION_API_VERSION, 1);
+        assert_eq!(EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, 1);
+    }
+
+    /// A contributed tab is neither a command nor a service, so nothing else would tell it where it
+    /// lives or what the user configured. `{extension_dir}` is substituted into its command lines,
+    /// and the same environment a command receives rides along for the process behind them.
+    #[test]
+    fn a_sidebar_tab_is_told_where_it_lives_and_what_the_user_configured() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = write_manifest(
+            temp.path(),
+            "tasks",
+            &format!(
+                "{}[settings]\nrunner = \"just\"\n\
+                 [[sidebar_tabs]]\nname = \"list\"\nlabel = \"Tasks\"\n\
+                 command = \"python {{extension_dir}}/bin/tasks.py list\"\n\
+                 on_click = {{ run = \"python {{extension_dir}}/bin/tasks.py run\" }}\n",
+                manifest("tasks", "1")
+            ),
+        );
+        let contributions =
+            scan_extensions_in(temp.path()).into_contributions(&[], &Default::default());
+        let tab = &contributions.sidebar_tabs[0];
+        let crate::config::SidebarTab::Command {
+            command, on_click, ..
+        } = tab
+        else {
+            panic!("command tab");
+        };
+        let expected = directory.display().to_string();
+        assert_eq!(*command, format!("python {expected}/bin/tasks.py list"));
+        assert!(
+            on_click
+                .as_ref()
+                .is_some_and(|action| action.target().contains(&expected)),
+            "on_click keeps its resolved path"
+        );
+        let env: std::collections::HashMap<_, _> = tab.env().iter().cloned().collect();
+        assert_eq!(env["ROZI_EXTENSION"], "tasks");
+        assert_eq!(env["ROZI_EXTENSION_DIR"], expected);
+        assert_eq!(env[SETTINGS_ENV], r#"{"runner":"just"}"#);
+    }
+
+    /// Disabling an extension withdraws its tab but keeps the extension in `installed_ids`, which is
+    /// what lets a sidebar placement naming that tab survive until the extension is really gone.
+    #[test]
+    fn a_disabled_extension_contributes_nothing_but_stays_installed() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "git-tools",
+            &format!(
+                "{}[[sidebar_tabs]]\nname = \"agents\"\nlabel = \"Agents\"\n\
+                 entries = [{{ label = \"rozi\", run = \"claude\" }}]\n",
+                manifest("git-tools", "1")
+            ),
+        );
+        let contributions = scan_extensions_in(temp.path())
+            .into_contributions(&["git-tools".to_string()], &Default::default());
+        assert!(contributions.sidebar_tabs.is_empty());
+        assert!(!contributions.active_ids.contains("git-tools"));
+        assert!(contributions.installed_ids.contains("git-tools"));
     }
 }

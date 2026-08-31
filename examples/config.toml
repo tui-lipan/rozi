@@ -274,7 +274,10 @@
 #tabs = ["activity", "panes", "sessions", "files", "git"]
 # A tab may also be a table, which is how built-ins take options and how custom tabs are
 # defined. Fields: name, label, exactly one of entries (a launcher list of
-# { label, run|send|popup, keep_open }) or command (+ interval seconds), and on_click.
+# { label, group, run|send|popup, keep_open }) or command (+ interval seconds and
+# group_prefix), and on_click.
+# An entry's `group` files it under a section header; a command tab's `group_prefix` turns
+# every output line starting with it into one.
 # For the files/git trees: root, show_hidden, icons, explorer, diff_stats, max_entries.
 # A table cannot live in this file's `tabs` line without displacing the default above -
 # examples/sidebar.toml is a working two-panel setup using every form.
@@ -434,6 +437,13 @@
 # without deleting it; see docs/extensions.md.
 [extensions]
 #disabled = ["docker"]
+# Per-extension settings live in a subtable named after the extension's stable id. The keys
+# are whatever that extension declares; `rozi check-extension <path>` lists them with their
+# defaults. An unknown key, a wrong type, or a table naming nothing installed is reported and
+# ignored. Not shown as a setting here because it only validates against an installed
+# extension:
+#   [extensions.tasks]
+#   runner = "just"
 
 # Supervised background services started alongside rozi and restarted if they exit.
 # Services inherit ROZI_SOCKET and standard environment, with stdio discarded.

@@ -459,7 +459,7 @@ fn run_action(
 ) -> Update {
     let action = action_from_runtime_id(&ctx.state, action_id);
     let Some(action) = action else {
-        let error = if crate::config::is_extension_command_id(action_id) {
+        let error = if crate::config::is_extension_scoped_id(action_id) {
             let extension = action_id
                 .split_once('.')
                 .map(|(id, _)| id)
@@ -1028,6 +1028,7 @@ mod tests {
     fn runtime_action_ids_include_named_commands() {
         let mut config = crate::config::Config::default();
         config.commands.push(crate::config::NamedCommand {
+            default_key: None,
             id: "branches".to_string(),
             label: None,
             action: crate::config::UserCommandAction::Send("git branch\n".to_string()),

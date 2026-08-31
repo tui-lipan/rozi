@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Mutex;
 
 use serde::Deserialize;
+use tui_lipan::input::KeyBinding;
 
 #[cfg(test)]
 use crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
@@ -115,9 +117,14 @@ impl NamedCommandFileConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(crate) struct ExtensionsFileConfig {
     pub(crate) disabled: Vec<String>,
+    /// `[extensions.<id>]` settings tables, kept raw until the extension that declares them is
+    /// known. `deny_unknown_fields` is absent here because these keys are open by design; a table
+    /// naming no installed extension is reported when the two are matched up.
+    #[serde(flatten)]
+    pub(crate) settings: std::collections::BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,6 +216,8 @@ pub(super) struct SidebarTabTableSpec {
     pub(super) command: Option<String>,
     pub(super) interval: Option<u64>,
     pub(super) on_click: Option<UserCommandTableSpec>,
+    /// Command tabs only: the marker that turns an output line into a section header.
+    pub(super) group_prefix: Option<String>,
     // Built-in file-tree options; only meaningful when `name` is `files` or `git`.
     pub(super) root: Option<String>,
     pub(super) show_hidden: Option<bool>,
@@ -222,6 +231,7 @@ pub(super) struct SidebarTabTableSpec {
 #[serde(default, deny_unknown_fields)]
 pub(super) struct SidebarLauncherEntrySpec {
     pub(super) label: String,
+    pub(super) group: Option<String>,
     pub(super) run: Option<String>,
     pub(super) send: Option<String>,
     pub(super) popup: Option<String>,
@@ -575,13 +585,22 @@ fn load_config_from_text_with_extensions(
     let mut config = Config::default();
 
     let Some(parsed) = parse_file_config(text, path, &mut warnings) else {
-        let contributions = extensions.into_contributions(&[]);
+        let contributions = extensions.into_contributions(&[], &Default::default());
         warnings.extend(contributions.warnings);
         config.commands = contributions.commands;
         config.active_extensions = contributions.active_ids;
+        config.installed_extensions = contributions.installed_ids;
         config.extension_runtime = contributions.runtime;
         config.services = contributions.services;
         config.agents = contributions.agents;
+        // An unreadable config.toml is not a reason to lose an extension's tab: the defaults still
+        // apply, and this takes the same merge the normal path does.
+        apply_sidebar_config(
+            &mut config.sidebar,
+            SidebarFileConfig::default(),
+            contributions.sidebar_tabs,
+            &mut warnings,
+        );
         return LoadedConfig { config, warnings };
     };
 
@@ -901,14 +920,23 @@ fn load_config_from_text_with_extensions(
     }
 
     apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
-    apply_sidebar_config(&mut config.sidebar, parsed.sidebar, &mut warnings);
+    let contributions =
+        extensions.into_contributions(&parsed.extensions.disabled, &parsed.extensions.settings);
+    warnings.extend(contributions.warnings);
+    // Sidebar tabs are merged inside the sidebar pass rather than appended after it: placement is
+    // resolved there, and a tab that arrived too late to be placed would be unreachable.
+    apply_sidebar_config(
+        &mut config.sidebar,
+        parsed.sidebar,
+        contributions.sidebar_tabs,
+        &mut warnings,
+    );
     config.rules = build_rules(parsed.rules, &mut warnings);
     config.hints = build_hints(parsed.hints, &mut warnings);
     config.hooks = build_hooks(parsed.hooks, &mut warnings);
     config.commands = build_named_commands(parsed.commands, &mut warnings);
-    let contributions = extensions.into_contributions(&parsed.extensions.disabled);
-    warnings.extend(contributions.warnings);
     config.active_extensions = contributions.active_ids;
+    config.installed_extensions = contributions.installed_ids;
     config.extension_runtime = contributions.runtime;
     config.commands.extend(contributions.commands);
     // Config entries first: an id shared with a built-in replaces it, and an extension's ids are
@@ -936,8 +964,77 @@ fn load_config_from_text_with_extensions(
         &mut warnings,
     );
     config.user_commands = user_commands;
+    config.extension_key_defaults = resolve_extension_key_defaults(&config, &mut warnings);
 
     LoadedConfig { config, warnings }
+}
+
+/// Turn each extension's suggested chord into a real binding, unless something already answers to
+/// it.
+///
+/// A suggestion is the weakest claim in the system. It loses to a built-in default, to anything the
+/// user wrote in `[keys]`, and to an extension that asked first — and it loses to a chord that
+/// merely *starts* with an existing one, because typing that prefix would fire the other command
+/// before the second step arrived. Losing is reported and costs nothing else: the command is still
+/// in the palette and the user can bind it by hand.
+fn resolve_extension_key_defaults(
+    config: &Config,
+    warnings: &mut Vec<String>,
+) -> HashMap<String, Vec<KeyBinding>> {
+    let mut claimed: Vec<(String, String)> =
+        crate::commands::builtin_default_shortcuts(&config.input)
+            .into_iter()
+            .map(|(id, binding)| (binding.canonical_lowercase(), format!("`{id}`")))
+            .collect();
+    for (id, bindings) in &config.key_overrides {
+        for binding in bindings {
+            claimed.push((binding.canonical_lowercase(), format!("`{id}`")));
+        }
+    }
+    for command in &config.user_commands {
+        for binding in &command.bindings {
+            claimed.push((
+                binding.canonical_lowercase(),
+                "a `[keys]` command".to_string(),
+            ));
+        }
+    }
+
+    let prefix = format!(
+        "{} {}",
+        config.input.prefix.canonical_lowercase(),
+        crate::commands::EXTENSION_KEY_LEADER
+    );
+    let mut defaults: HashMap<String, Vec<KeyBinding>> = HashMap::new();
+    for command in &config.commands {
+        let Some(steps) = command.default_key.as_deref() else {
+            continue;
+        };
+        // An explicit `[keys]` entry for this very command already decided the question.
+        if config.key_overrides.contains_key(&command.id) {
+            continue;
+        }
+        let Ok(binding) = KeyBinding::from_str(&format!("{prefix} {steps}")) else {
+            continue;
+        };
+        let canonical = binding.canonical_lowercase();
+        let conflict = claimed.iter().find(|(existing, _)| {
+            existing == &canonical
+                || canonical.starts_with(&format!("{existing} "))
+                || existing.starts_with(&format!("{canonical} "))
+        });
+        match conflict {
+            Some((_, owner)) => warnings.push(format!(
+                "Extension command `{}` suggests `{canonical}`, which {owner} already uses; bind it in `[keys]` to use it anyway",
+                command.id
+            )),
+            None => {
+                claimed.push((canonical, format!("`{}`", command.id)));
+                defaults.insert(command.id.clone(), vec![binding]);
+            }
+        }
+    }
+    defaults
 }
 
 fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Option<FileConfig> {
@@ -1488,16 +1585,140 @@ mod file_tests {
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }
 
+    fn scan_with(temp: &Path, manifest: &str) -> super::super::extensions::ExtensionScan {
+        let directory = temp.join("tasks");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("extension.toml"), manifest).unwrap();
+        super::super::extensions::scan_extensions_in(temp)
+    }
+
+    const KEY_MANIFEST: &str = "[extension]\nid = \"tasks\"\napi = 1\n\
+         [[commands]]\nid = \"run\"\nsend = \"run\"\nkey = \"g r\"\n";
+
+    /// A suggested chord is taken when nothing answers to it, and it is reachable as the command's
+    /// shortcut rather than only from the palette.
+    #[test]
+    fn an_extension_chord_is_granted_when_the_prefix_space_is_free() {
+        let temp = tempfile::tempdir().unwrap();
+        let loaded = load_config_from_text_with_extensions(
+            "",
+            Path::new("config.toml"),
+            scan_with(temp.path(), KEY_MANIFEST),
+            Vec::new(),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let granted = &loaded.config.extension_key_defaults["tasks.run"];
+        assert_eq!(granted[0].canonical_lowercase(), "ctrl+a x g r");
+    }
+
+    /// The weakest claim in the system: anything that already answers to the chord keeps it, and the
+    /// extension is told rather than silently ignored.
+    #[test]
+    fn an_extension_chord_yields_to_builtins_and_to_the_user() {
+        // A user binding inside the extension space still outranks a suggestion.
+        let temp = tempfile::tempdir().unwrap();
+        let loaded = load_config_from_text_with_extensions(
+            "[keys]\ntoggle-sidebar = \"ctrl-a x g r\"\n",
+            Path::new("config.toml"),
+            scan_with(temp.path(), KEY_MANIFEST),
+            Vec::new(),
+        );
+        assert!(loaded.config.extension_key_defaults.is_empty());
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("already uses")),
+            "{:?}",
+            loaded.warnings
+        );
+
+        // A `[keys]` entry for the same command decides it outright: no suggestion, no warning.
+        let temp = tempfile::tempdir().unwrap();
+        let loaded = load_config_from_text_with_extensions(
+            "[keys]\n\"tasks.run\" = \"ctrl-a z\"\n",
+            Path::new("config.toml"),
+            scan_with(temp.path(), KEY_MANIFEST),
+            Vec::new(),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(loaded.config.extension_key_defaults.is_empty());
+        assert_eq!(
+            loaded.config.key_overrides["tasks.run"][0].canonical_lowercase(),
+            "ctrl+a z"
+        );
+    }
+
+    /// A chord that merely starts with an existing one is still a conflict: the first step would
+    /// fire the other command before the second arrived.
+    #[test]
+    fn an_extension_chord_yields_to_a_shorter_chord_it_extends() {
+        let temp = tempfile::tempdir().unwrap();
+        let loaded = load_config_from_text_with_extensions(
+            "[keys]\ntoggle-sidebar = \"ctrl-a x g\"\n",
+            Path::new("config.toml"),
+            scan_with(temp.path(), KEY_MANIFEST),
+            Vec::new(),
+        );
+        assert!(loaded.config.extension_key_defaults.is_empty());
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("already uses")),
+            "{:?}",
+            loaded.warnings
+        );
+    }
+
+    /// The whole path an installed extension travels: scanned from disk, merged into the tab
+    /// catalog, and placed in a panel so it is reachable without the user editing anything. The
+    /// order matters — placement is resolved during the sidebar pass, so a tab merged after it
+    /// would exist but belong to no panel.
+    #[test]
+    fn an_installed_extension_tab_is_merged_and_placed_by_the_loader() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("git-tools");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("extension.toml"),
+            "[extension]\nid = \"git-tools\"\napi = 1\n\
+             [[sidebar_tabs]]\nname = \"agents\"\nlabel = \"Agents\"\n\
+             entries = [{ label = \"rozi\", run = \"claude\" }]\n",
+        )
+        .unwrap();
+
+        let loaded = load_config_from_text_with_extensions(
+            "",
+            Path::new("config.toml"),
+            super::super::extensions::scan_extensions_in(temp.path()),
+            Vec::new(),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let id = SidebarTabId::new("git-tools.agents");
+        assert!(loaded.config.sidebar.tabs.iter().any(|tab| tab.id() == id));
+        assert!(
+            loaded
+                .config
+                .sidebar
+                .panels
+                .iter()
+                .flatten()
+                .any(|placed| *placed == id)
+        );
+        assert!(loaded.config.installed_extensions.contains("git-tools"));
+    }
+
     #[test]
     fn sidebar_example_is_a_valid_warning_free_config() {
         let parsed: FileConfig = toml::from_str(include_str!("../../examples/sidebar.toml"))
             .expect("sidebar example parses");
         let mut sidebar = SidebarConfig::default();
         let mut warnings = Vec::new();
-        apply_sidebar_config(&mut sidebar, parsed.sidebar, &mut warnings);
+        apply_sidebar_config(&mut sidebar, parsed.sidebar, Vec::new(), &mut warnings);
 
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(sidebar.tabs.len(), 7);
+        assert_eq!(sidebar.tabs.len(), 9);
         assert_eq!(sidebar.panels.len(), 2);
     }
 

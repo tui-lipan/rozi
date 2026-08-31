@@ -10,6 +10,9 @@ pub struct SidebarCommandRow {
     pub raw: String,
     pub display: String,
     pub error: bool,
+    /// An output line the tab's `group_prefix` marked as a section header. It labels the rows under
+    /// it rather than being one, so it is never selectable and never activates.
+    pub header: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -284,42 +287,75 @@ impl State {
                 });
                 items
             }
-            SidebarTab::Launcher { name, entries, .. } => entries
-                .iter()
-                .enumerate()
-                .map(|(entry_index, _)| SidebarItemProjection {
-                    target: RowTarget::Launcher {
-                        config_epoch: self.sidebar.config_epoch,
-                        tab_id: name.clone(),
-                        entry_index,
-                    },
-                    close: None,
-                })
-                .collect(),
+            // Mirrors `view::sidebar::user_tabs::launcher_rows`: a group change inserts a spacer
+            // (except at the top) and a header ahead of the entry that opened the section.
+            SidebarTab::Launcher { name, entries, .. } => {
+                let mut items = Vec::new();
+                let mut current: Option<&String> = None;
+                for (entry_index, entry) in entries.iter().enumerate() {
+                    if let Some(group) =
+                        entry.group.as_ref().filter(|group| Some(*group) != current)
+                    {
+                        if !items.is_empty() {
+                            items.push(SidebarItemProjection {
+                                target: RowTarget::Inert,
+                                close: None,
+                            });
+                        }
+                        items.push(SidebarItemProjection {
+                            target: RowTarget::Inert,
+                            close: None,
+                        });
+                        current = Some(group);
+                    }
+                    items.push(SidebarItemProjection {
+                        target: RowTarget::Launcher {
+                            config_epoch: self.sidebar.config_epoch,
+                            tab_id: name.clone(),
+                            entry_index,
+                        },
+                        close: None,
+                    });
+                }
+                items
+            }
             SidebarTab::Command { name, on_click, .. } => {
                 let Some(output) = self.sidebar.command_output.get(name) else {
                     return Vec::new();
                 };
-                output
-                    .rows
-                    .iter()
-                    .map(|row| {
-                        let target = if on_click.is_some() && !row.error {
-                            RowTarget::CommandRow {
-                                config_epoch: self.sidebar.config_epoch,
-                                tab_id: name.clone(),
-                                output_epoch: output.epoch,
-                                line: row.raw.clone(),
-                            }
-                        } else {
-                            RowTarget::Inert
-                        };
-                        SidebarItemProjection {
-                            target,
-                            close: None,
+                // Mirrors `view::sidebar::user_tabs::command_rows`: a header line becomes a
+                // header preceded by a spacer, except at the top of the list.
+                let mut items = Vec::new();
+                for row in &output.rows {
+                    if row.header {
+                        if !items.is_empty() {
+                            items.push(SidebarItemProjection {
+                                target: RowTarget::Inert,
+                                close: None,
+                            });
                         }
-                    })
-                    .collect()
+                        items.push(SidebarItemProjection {
+                            target: RowTarget::Inert,
+                            close: None,
+                        });
+                        continue;
+                    }
+                    let target = if on_click.is_some() && !row.error {
+                        RowTarget::CommandRow {
+                            config_epoch: self.sidebar.config_epoch,
+                            tab_id: name.clone(),
+                            output_epoch: output.epoch,
+                            line: row.raw.clone(),
+                        }
+                    } else {
+                        RowTarget::Inert
+                    };
+                    items.push(SidebarItemProjection {
+                        target,
+                        close: None,
+                    });
+                }
+                items
             }
             SidebarTab::Tree { .. } => Vec::new(),
         }
@@ -537,6 +573,9 @@ pub struct SidebarState {
     pub command_epoch: u64,
     pub next_output_epoch: u64,
     pub config_epoch: u64,
+    /// Focused pane directory the command tabs were last polled from. `None` until a pane reports
+    /// one, and under `--remote`, where the pane's path is not the client's to run in.
+    pub command_cwd: Option<String>,
     pub sessions: Vec<crate::session::discovery::DiscoveredSession>,
     pub sessions_epoch: u64,
     /// The `sessions_epoch` the auto-refresh loop is currently live for. When it lags behind

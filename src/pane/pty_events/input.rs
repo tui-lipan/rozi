@@ -162,18 +162,14 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     if std::mem::take(&mut ctx.state.consumed_pointer_click) {
         return Update::none();
     }
-    let before = ctx.state.focused_pane();
-    crate::input::routing::sync_focus_from_framework(ctx);
-    let focus_moved = ctx.state.focused_pane() != before;
     // Forwarded activity also means the pointer is over this pane, so re-apply the hover policy.
     let hover = crate::ops::focus::hover_focus_pane(ctx, id);
-    let focus_update = if focus_moved { Update::full() } else { hover };
     if let Some(blocked) = input_blocked(ctx) {
         // Pointer motion arrives continuously; a renewed rejection draws nothing new, so fall back
         // to whatever focus already asked for.
         return match blocked.notified {
             Notified::Pushed => Update::full(),
-            Notified::Renewed => focus_update,
+            Notified::Renewed => hover,
         };
     }
 
@@ -199,7 +195,7 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     if let Some(after) = hold {
         arm_pointer_flow(ctx, id, after);
     }
-    focus_update
+    hover
 }
 
 /// Ask to be woken when a pane's next pointer-motion interval begins.

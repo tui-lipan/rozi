@@ -5,7 +5,6 @@ use crate::input::Action;
 use crate::ops::focus::{focus_pane, request_current_pane_focus};
 use crate::ops::resize_move::resize_focused_in_direction;
 use crate::state::{Direction, Mode, PaneId, State};
-use crate::view;
 
 /// Route a key that reached rozi's own handling: app command chords (leader/modifier) are
 /// resolved natively by tui-lipan before this runs (see `App::key_dispatch_policy` /
@@ -169,22 +168,22 @@ fn handle_resize_mode_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (bool, U
     (true, Update::none())
 }
 
-fn framework_focused_pane(ctx: &Context<AppRoot>) -> Option<PaneId> {
-    let workspace = ctx.state.active_workspace_ref();
-    workspace
-        .panes
-        .iter()
-        .filter(|pane| !pane.closing)
-        .find(|pane| ctx.has_focus_within_key(view::pane_window_key(pane.id, pane.pty_generation)))
-        .map(|pane| pane.id)
-}
+pub(crate) fn framework_focus_entered_pane(
+    ctx: &mut Context<AppRoot>,
+    pane: Option<PaneId>,
+) -> Update {
+    let sidebar_was_focused = std::mem::replace(&mut ctx.state.sidebar.focused, false);
+    if sidebar_was_focused {
+        ctx.state.commands_dirty = true;
+    }
 
-pub(crate) fn sync_focus_from_framework(ctx: &mut Context<AppRoot>) {
     // Hint mode is pinned to the pane it scanned: every label names a position on that pane's
     // screen. A pane running mouse tracking takes the framework's focus with the click itself, so
-    // without this the mode would keep labelling a pane the app no longer considers focused.
+    // changing the app selection here would make the labels refer to the wrong screen.
     if ctx.state.mode == Mode::Hint {
-        return;
+        return sidebar_was_focused
+            .then(Update::full)
+            .unwrap_or_else(Update::none);
     }
     let workspace = ctx.state.active_workspace_ref();
     if let Some(id) = ctx.state.focused_pane()
@@ -193,12 +192,18 @@ pub(crate) fn sync_focus_from_framework(ctx: &mut Context<AppRoot>) {
             .iter()
             .any(|pane| pane.id == id && !pane.terminal_active && !pane.closing)
     {
-        return;
+        return sidebar_was_focused
+            .then(Update::full)
+            .unwrap_or_else(Update::none);
     }
 
-    let framework_focus = framework_focused_pane(ctx);
-    if let Some(id) = framework_focus {
+    if let Some(id) = pane {
         focus_pane(&mut ctx.state, id);
+        Update::full()
+    } else if sidebar_was_focused {
+        Update::full()
+    } else {
+        Update::none()
     }
 }
 

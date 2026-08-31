@@ -52,6 +52,9 @@ fn post_update_kind(msg: &Msg) -> PostUpdateKind {
 fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
     match msg {
         Msg::ClosePopup => panes::close_popup(ctx),
+        Msg::FrameworkFocusEnteredPane(pane) => {
+            crate::input::routing::framework_focus_entered_pane(ctx, pane)
+        }
         Msg::UserCommandFailed { message } => {
             crate::pane::pty_events::notify_error(ctx, "Command failed", message);
             Update::full()

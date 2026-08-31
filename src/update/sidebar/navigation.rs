@@ -30,8 +30,8 @@ pub(crate) fn visibility_changed(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 /// `focus-sidebar`: reveal the sidebar if it is hidden, then move keyboard focus into its row list.
-/// The body sits in a `FocusScope::Exclude` subtree, so an explicit keyed request is the only way
-/// in — Tab and clicks deliberately cannot do this.
+/// Sidebar targets opt out of Tab and their parent rejects pointer focus, so an explicit keyed
+/// request is the only way in.
 pub(crate) fn focus_body(ctx: &mut Context<AppRoot>) -> Update {
     let command = if ctx.state.sidebar_visible {
         None
@@ -43,9 +43,8 @@ pub(crate) fn focus_body(ctx: &mut Context<AppRoot>) -> Update {
     // fine even though the body has not mounted yet.
     let key = crate::view::sidebar_focus_key(ctx);
     ctx.request_focus(key);
-    // The request resolves after reconciliation, so record the intent now. Nothing can read this
-    // back off the framework — the body sits in a `FocusScope::Exclude` subtree, which is invisible
-    // to `has_focus_within_key` — so `ops::focus` retracts it whenever focus goes elsewhere.
+    // The request resolves after reconciliation, so record command-entered sidebar modality now.
+    // Pointer-entered explorer focus deliberately does not set this product-level state.
     ctx.state.sidebar.focused = true;
     if let Some(panel) = ctx.state.sidebar.active_panel_mut() {
         panel.suppress_row_hover = true;

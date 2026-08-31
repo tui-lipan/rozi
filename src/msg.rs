@@ -10,6 +10,9 @@ use crate::{control, session};
 #[derive(Clone)]
 pub enum Msg {
     CommandLinkReady(CommandLink<Msg>),
+    /// Framework widget focus entered a pane, or left command-entered sidebar modality without
+    /// entering one. Produced by the root focus-transition hook.
+    FrameworkFocusEnteredPane(Option<PaneId>),
     /// The controlling terminal or console asked this client to go away (Unix `SIGHUP`/`SIGTERM`,
     /// Windows console close/logoff/shutdown). Delivered from
     /// [`platform::server_lifecycle::on_hangup`]'s worker thread so the clean detach path runs

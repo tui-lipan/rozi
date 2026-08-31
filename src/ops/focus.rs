@@ -1267,9 +1267,6 @@ pub(crate) fn active_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane
 }
 
 pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {
-    if ctx.state.has_modal_overlay() {
-        return;
-    }
     if crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
         .is_some_and(|pane| pane.terminal_active && !pane.opening && !pane.closing)
     {
@@ -1285,10 +1282,8 @@ pub(crate) fn request_current_pane_focus(ctx: &mut Context<AppRoot>) {
 
 /// Every "give focus to something that is not the sidebar" goes through here.
 ///
-/// The sidebar body lives in a `FocusScope::Exclude` subtree, and an excluded subtree is invisible
-/// to `has_focus_within_key` — so rozi cannot ask the framework whether the sidebar still holds
-/// the keyboard. `sidebar.focused` is therefore app-owned intent, and this is the one place that
-/// has to retract it.
+/// `sidebar.focused` records command-entered sidebar modality rather than framework focus alone,
+/// so this is the one place that retracts it when an explicit request targets another region.
 fn focus_key(ctx: &mut Context<AppRoot>, key: impl Into<tui_lipan::Key>) {
     ctx.state.sidebar.focused = false;
     ctx.request_focus(key);

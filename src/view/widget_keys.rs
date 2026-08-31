@@ -4,6 +4,12 @@ pub fn pane_window_key(id: PaneId, generation: u64) -> String {
     format!("rozi-pane-{id}-{generation}")
 }
 
+pub fn pane_id_from_window_key(key: &str) -> Option<PaneId> {
+    let (id, generation) = key.strip_prefix("rozi-pane-")?.rsplit_once('-')?;
+    generation.parse::<u64>().ok()?;
+    id.parse().ok()
+}
+
 pub fn pane_body_key(id: PaneId) -> String {
     format!("rozi-pane-body-{id}")
 }
@@ -84,6 +90,11 @@ pub fn sidebar_body_key() -> &'static str {
     "rozi-sidebar-body"
 }
 
+/// Stable key for the complete sidebar focus region.
+pub fn sidebar_region_key() -> &'static str {
+    "rozi-sidebar"
+}
+
 pub fn settings_palette_key() -> &'static str {
     "rozi-settings-palette"
 }
@@ -101,4 +112,18 @@ pub fn help_scroll_key() -> &'static str {
 
 pub fn help_filter_key() -> &'static str {
     "rozi-help-filter"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pane_window_key_parser_requires_id_and_generation() {
+        assert_eq!(pane_id_from_window_key("rozi-pane-42-7"), Some(42));
+        assert_eq!(pane_id_from_window_key("rozi-pane-42"), None);
+        assert_eq!(pane_id_from_window_key("rozi-pane-x-7"), None);
+        assert_eq!(pane_id_from_window_key("rozi-pane-42-x"), None);
+        assert_eq!(pane_id_from_window_key("rozi-pane-body-42"), None);
+    }
 }

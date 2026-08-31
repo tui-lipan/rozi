@@ -13,13 +13,15 @@ pub(crate) use pane::{
     pane_has_tile_above, seam_title_element,
 };
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
+#[cfg(test)]
+pub use widget_keys::pane_window_key;
 pub use widget_keys::{
     askpass_input_key, collaboration_key, follow_prompt_key, help_filter_key, help_scroll_key,
-    layout_picker_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
-    pane_terminal_key, pane_window_key, pick_key, pick_prompt_input_key, profile_picker_key,
-    remote_picker_key, remote_target_input_key, rename_input_key, rename_session_input_key,
-    save_profile_key, search_input_key, session_picker_key, settings_palette_key, sidebar_body_key,
-    theme_picker_key,
+    layout_picker_key, palette_key, pane_id_from_window_key, pane_padding_horizontal_key,
+    pane_padding_vertical_key, pane_terminal_key, pick_key, pick_prompt_input_key,
+    profile_picker_key, remote_picker_key, remote_target_input_key, rename_input_key,
+    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
+    settings_palette_key, sidebar_body_key, sidebar_region_key, theme_picker_key,
 };
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
 

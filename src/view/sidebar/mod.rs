@@ -52,11 +52,6 @@ pub(super) fn sidebar(ctx: &Context<AppRoot>, width: u16) -> Element {
     Frame::new()
         .border(false)
         .padding(0)
-        // The whole sidebar sits outside automatic focus: Tab never enters it (the ring belongs to
-        // the panes) and, just as importantly, clicking a row never focuses it either — so a click
-        // stays a one-shot gesture and leaves no cursor behind. `request_focus` on the body key is
-        // the deliberate way in, and `Exclude` explicitly still honours that.
-        .focus_scope(FocusScope::Exclude)
         .style(
             ctx.state
                 .theme
@@ -66,7 +61,10 @@ pub(super) fn sidebar(ctx: &Context<AppRoot>, width: u16) -> Element {
         .width(Length::Px(width))
         .height(Length::Flex(1))
         .child(panels)
-        .into()
+        .key(super::sidebar_region_key())
+        // Sidebar bodies opt out of Tab individually. This region-level guard handles the other
+        // half: clicks still activate rows, but never move keyboard focus away from a pane.
+        .pointer_focus(false)
 }
 
 fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
@@ -181,6 +179,7 @@ pub(crate) fn panel_from_bar_id(id: &str) -> Option<usize> {
 fn empty_body(ctx: &Context<AppRoot>, panel: usize, text: Option<&str>) -> Element {
     let mut view = ScrollView::new()
         .focusable(true)
+        .tab_stop(false)
         .scroll_keys(ScrollKeymap::NONE);
     if let Some(text) = text {
         view = view.child(placeholder(ctx, text));
@@ -362,6 +361,7 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
         // Focusable so `focus-sidebar` has a target and the cursor can mean something, but its own
         // scroll keys are off: arrows move the cursor, and the view follows via `scroll_to_key`.
         .focusable(true)
+        .tab_stop(false)
         .scroll_keys(ScrollKeymap::NONE)
         .on_viewport_change(
             ctx.link()

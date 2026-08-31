@@ -573,6 +573,27 @@ impl AppRoot {
     }
 }
 
+fn framework_focus_message(change: &FocusChanged) -> Option<Msg> {
+    let new_pane = change.new.as_ref().and_then(|entry| {
+        entry
+            .keys()
+            .find_map(|key| view::pane_id_from_window_key(key.as_ref()))
+    });
+    if let Some(id) = new_pane {
+        return Some(Msg::FrameworkFocusEnteredPane(Some(id)));
+    }
+
+    let left_sidebar = change
+        .old
+        .as_ref()
+        .is_some_and(|entry| entry.is_within_key(view::sidebar_region_key()))
+        && !change
+            .new
+            .as_ref()
+            .is_some_and(|entry| entry.is_within_key(view::sidebar_region_key()));
+    left_sidebar.then_some(Msg::FrameworkFocusEnteredPane(None))
+}
+
 impl Component for AppRoot {
     type Message = Msg;
     type Properties = ();
@@ -632,7 +653,6 @@ impl Component for AppRoot {
     }
 
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context<Self>) -> KeyUpdate {
-        routing::sync_focus_from_framework(ctx);
         if let Some(update) = Self::handle_help_overlay_key(ctx, key) {
             return update;
         }
@@ -657,6 +677,10 @@ impl Component for AppRoot {
 
     fn on_window_focus_changed(&mut self, focused: bool, ctx: &mut Context<Self>) -> Update {
         ops::focus::window_focus_changed(ctx, focused)
+    }
+
+    fn on_focus_changed(&self, change: &FocusChanged) -> Option<Self::Message> {
+        framework_focus_message(change)
     }
 
     fn view(&self, ctx: &Context<Self>) -> Element {

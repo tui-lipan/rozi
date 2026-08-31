@@ -391,6 +391,12 @@ body {
     display: none !important;
 }
 
+/* `force-dark` leaves VitePress's responsive extra-menu wrapper mounted even
+   though it contains no controls. Do not reserve a button for an empty menu. */
+.VPNavBarExtra {
+    display: none !important;
+}
+
 /* Hide the dividers VitePress inserts around the (now-empty) appearance slot -
    they render as a short underlined gap to the right of the nav menu.
    NOTE: `.VPNavBar .divider` is the bottom-edge separator and is intentionally
@@ -1350,7 +1356,14 @@ body.scanlines::after {
    MOBILE
    ─────────────────────────────────────────────────────────────────────── */
 
-@media (max-width: 768px) {
+@media (max-width: 959px) {
+    .NavTitleVersion,
+    .NavGitHubLink {
+        display: none !important;
+    }
+}
+
+@media (max-width: 767px) {
     .VPNavBar > .wrapper {
         padding: 0 12px !important;
     }
@@ -1358,31 +1371,25 @@ body.scanlines::after {
         gap: 6px;
     }
     .VPNavBar .search {
-        flex: 0 0 auto !important;
+        flex: 1 1 250px !important;
+        min-width: 0;
         padding-left: 0 !important;
         margin-left: 0 !important;
+    }
+    .VPNavBarSearch #local-search {
+        width: 100%;
     }
     .DocSearch-Button {
         display: inline-flex !important;
         align-items: center !important;
-        justify-content: center !important;
-        width: 32px !important;
-        min-width: 32px !important;
-        max-width: 32px !important;
-        height: 32px !important;
-        padding: 0 !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 250px !important;
     }
-    .DocSearch-Button-Container {
-        gap: 0 !important;
+    .DocSearch-Button .DocSearch-Button-Placeholder {
+        display: inline-block !important;
     }
-    .DocSearch-Button .DocSearch-Search-Icon {
-        margin-right: 0 !important;
-    }
-    .DocSearch-Button .DocSearch-Button-Placeholder,
     .DocSearch-Button .DocSearch-Button-Keys {
-        display: none !important;
-    }
-    .NavGitHubLink {
         display: none !important;
     }
     .VPDoc .content-container {

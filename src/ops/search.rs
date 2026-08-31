@@ -3,9 +3,9 @@ use std::sync::Arc;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::GeometryAnimation;
+use crate::layout::anim::GeometryAnimation;
 use crate::ops::focus::{focus_pane, request_search_focus, switch_workspace};
-use crate::pane_lifecycle::{find_pane, find_pane_mut};
+use crate::pane::lifecycle::{find_pane, find_pane_mut};
 use crate::state::{
     MAX_MATCHES, PaneId, ScrollbackMatch, ScrollbackSearchScan, ScrollbackSearchState, SearchScope,
     State,
@@ -1434,14 +1434,20 @@ mod tests {
                     state.current_mut().workspaces[0]
                         .panes
                         .push(Pane::new(id, 100, rect));
-                    crate::tiling::append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                    crate::layout::tiling::append_tiled_window(
+                        &mut state.current_mut().workspaces[0],
+                        id,
+                    );
                 }
                 state.current_mut().workspaces[1].layout_kind =
                     crate::state::LayoutKind::Scrollable;
                 state.current_mut().workspaces[1]
                     .panes
                     .push(Pane::new(10, 100, rect));
-                crate::tiling::append_tiled_window(&mut state.current_mut().workspaces[1], 10);
+                crate::layout::tiling::append_tiled_window(
+                    &mut state.current_mut().workspaces[1],
+                    10,
+                );
                 focus_pane(state, 1);
                 state.animation = GeometryAnimation::None;
                 let mut search = ScrollbackSearchState::new(1);

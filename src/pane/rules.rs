@@ -1,5 +1,5 @@
 use crate::config::RuleConfig;
-use crate::pane_lifecycle::{SpawnFloat, SpawnPlacement};
+use crate::pane::lifecycle::{SpawnFloat, SpawnPlacement};
 
 pub(crate) fn placement_for_command(
     rules: &[RuleConfig],

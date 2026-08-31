@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use tui_lipan::prelude::*;
 
+use crate::layout::shared::{ClientId, SharedLayout};
 use crate::platform::ipc::{IpcConnection, IpcEndpoint};
 use crate::runtime_metrics::{
     ByteBufferMetrics, CachedServerRuntimeMetrics, QueueMetrics, TimedServerRuntimeMetrics,
@@ -17,7 +18,6 @@ use crate::session::protocol::{
     self, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
 use crate::session::queue::{ByteQueue, PushError};
-use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
 const MAX_CLIENT_INBOUND_BYTES: usize = 8 * 1024 * 1024;
@@ -131,7 +131,7 @@ pub struct SpawnPaneRequest {
     pub pane_id: PaneId,
     pub local: bool,
     pub generation: u64,
-    pub launch: Option<crate::pane_launch::PaneLaunch>,
+    pub launch: Option<crate::pane::launch::PaneLaunch>,
     pub cwd: Option<String>,
     pub cols: u16,
     pub rows: u16,

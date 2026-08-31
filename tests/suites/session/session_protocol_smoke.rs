@@ -5,13 +5,13 @@
 
 use std::process::{Command, Stdio};
 
+use rozi::layout::shared::{
+    SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis,
+    SharedWorkspace,
+};
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{
     ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
-};
-use rozi::shared_layout::{
-    SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis,
-    SharedWorkspace,
 };
 use tui_lipan::prelude::TerminalColorPalette;
 
@@ -73,7 +73,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
-        launch: Some(rozi::pane_launch::PaneLaunch::shell(format!(
+        launch: Some(rozi::pane::launch::PaneLaunch::shell(format!(
             "echo {}",
             String::from_utf8_lossy(OUTPUT_MARKER)
         ))),
@@ -138,7 +138,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
                 title: Some("protocol smoke".to_string()),
                 profile_name: None,
                 cwd: None,
-                launch: Some(rozi::pane_launch::PaneLaunch::shell(format!(
+                launch: Some(rozi::pane::launch::PaneLaunch::shell(format!(
                     "echo {}",
                     String::from_utf8_lossy(OUTPUT_MARKER)
                 ))),

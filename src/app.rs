@@ -4,14 +4,12 @@ use std::time::Duration;
 use tui_lipan::prelude::*;
 
 use crate::Msg;
-use crate::anim::GeometryAnimation;
 use crate::config::Config;
+use crate::input::routing;
+use crate::layout::anim::{self, GeometryAnimation};
 use crate::session::bootstrap::{SessionStart, attach_session_client};
 use crate::state::{Pane, PaneId, State, ThemePreset};
-use crate::{
-    anim, cli, commands, config, control, events, key_routing, ops, platform, profiles, state,
-    update, view,
-};
+use crate::{cli, commands, config, control, events, ops, platform, profiles, state, update, view};
 
 pub struct AppRoot {
     config: Config,
@@ -498,7 +496,7 @@ impl AppRoot {
         match ThemeWatcher::new(path, ThemePreset::Lipan.theme()) {
             Ok(watcher) => ctx.state.theme_watcher = Some(watcher),
             Err(err) => {
-                crate::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
+                crate::pane::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
             }
         }
     }
@@ -610,7 +608,7 @@ impl Component for AppRoot {
         commands::sync(ctx);
 
         for message in std::mem::take(&mut self.startup_messages) {
-            crate::pty_events::notify_info(ctx, message);
+            crate::pane::pty_events::notify_info(ctx, message);
         }
         Self::start_theme_watcher(ctx);
         let start = self.prepare_session_start(ctx);
@@ -634,11 +632,11 @@ impl Component for AppRoot {
     }
 
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context<Self>) -> KeyUpdate {
-        key_routing::sync_focus_from_framework(ctx);
+        routing::sync_focus_from_framework(ctx);
         if let Some(update) = Self::handle_help_overlay_key(ctx, key) {
             return update;
         }
-        let (handled, mut update) = key_routing::handle_key_routing(ctx, key, None);
+        let (handled, mut update) = routing::handle_key_routing(ctx, key, None);
         if ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
             let command = update.command.take();
             update = Update::with_command(command);
@@ -1250,7 +1248,7 @@ pub fn run() -> Result<()> {
             plan.want_picker,
             plan.last_session,
         ))
-        .exit_view(crate::exit_view::exit_view)
+        .exit_view(crate::view::exit::exit_view)
         .run();
     // The control socket has a guard the app owns; the askpass endpoint is reached from worker
     // threads with no such owner, so it is retired here.
@@ -2300,7 +2298,7 @@ mod tests {
                         index => format!("needle filler-{index:03}\r\n"),
                     })
                     .collect::<String>();
-                crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target)
+                crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target)
                     .expect("target pane")
                     .terminal
                     .process_server_output(output.as_bytes());
@@ -2393,7 +2391,7 @@ mod tests {
                     .expect("activate selected row");
                 assert!(backend.state().search.is_none());
                 assert_eq!(
-                    crate::pane_lifecycle::find_pane(backend.state(), target)
+                    crate::pane::lifecycle::find_pane(backend.state(), target)
                         .expect("target pane")
                         .terminal
                         .scrollback_offset(),
@@ -2419,7 +2417,7 @@ mod tests {
                 let output = (0..150)
                     .map(|index| format!("needle-{index:03}\r\n"))
                     .collect::<String>();
-                crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target)
+                crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target)
                     .expect("target pane")
                     .terminal
                     .process_server_output(output.as_bytes());
@@ -2485,7 +2483,7 @@ mod tests {
                     .expect("activate selected row");
                 assert!(backend.state().search.is_none());
                 assert_eq!(
-                    crate::pane_lifecycle::find_pane(backend.state(), target)
+                    crate::pane::lifecycle::find_pane(backend.state(), target)
                         .expect("target pane")
                         .terminal
                         .scrollback_offset(),
@@ -2511,7 +2509,7 @@ mod tests {
                     .current()
                     .focused_pane
                     .expect("focused pane");
-                let pane_end = crate::pane_lifecycle::find_pane(backend.state(), target)
+                let pane_end = crate::pane::lifecycle::find_pane(backend.state(), target)
                     .expect("target pane")
                     .terminal
                     .search_line_count();
@@ -2619,14 +2617,14 @@ mod tests {
                         }
                     })
                     .collect::<String>();
-                crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target)
+                crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target)
                     .expect("target pane")
                     .terminal
                     .process_server_output(output.as_bytes());
                 backend
                     .dispatch(Msg::RunAction(crate::input::Action::OpenSearch))
                     .expect("open search");
-                let pane_end = crate::pane_lifecycle::find_pane(backend.state(), target)
+                let pane_end = crate::pane::lifecycle::find_pane(backend.state(), target)
                     .expect("target pane")
                     .terminal
                     .search_line_count();
@@ -2690,7 +2688,7 @@ mod tests {
                     .expect("activate controlled selection");
                 assert!(backend.state().search.is_none());
                 assert_eq!(
-                    crate::pane_lifecycle::find_pane(backend.state(), target)
+                    crate::pane::lifecycle::find_pane(backend.state(), target)
                         .expect("target pane")
                         .terminal
                         .scrollback_offset(),

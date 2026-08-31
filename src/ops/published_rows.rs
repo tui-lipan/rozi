@@ -33,7 +33,7 @@ pub(crate) fn stream_opened(
         let _ = ack.send(Err("publish requires a live pane".to_string()));
         return Update::none();
     };
-    if crate::pane_lifecycle::find_pane(&ctx.state, pane_id).is_none() {
+    if crate::pane::lifecycle::find_pane(&ctx.state, pane_id).is_none() {
         let _ = ack.send(Err(format!("pane {pane_id} not found")));
         return Update::none();
     }
@@ -73,7 +73,7 @@ fn report_rows(
     pane_id: PaneId,
     rows: Vec<PublishedRow>,
 ) -> Update {
-    let Some(generation) = crate::pane_lifecycle::find_pane(state, pane_id)
+    let Some(generation) = crate::pane::lifecycle::find_pane(state, pane_id)
         .filter(|pane| !pane.closing)
         .map(|pane| pane.pty_generation)
     else {
@@ -83,7 +83,7 @@ fn report_rows(
         client.report_pane_rows(
             pane_id,
             generation,
-            crate::pane_lifecycle::pane_is_local(state, pane_id),
+            crate::pane::lifecycle::pane_is_local(state, pane_id),
             rows,
         );
     }

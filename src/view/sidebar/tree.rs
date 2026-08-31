@@ -254,7 +254,7 @@ fn empty_reason(ctx: &Context<AppRoot>, root: SidebarTreeRoot) -> &'static str {
             .state
             .current()
             .focused_pane
-            .and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id))
+            .and_then(|id| crate::pane::lifecycle::find_pane(&ctx.state, id))
             .is_some_and(|pane| pane.terminal.cwd_host.is_some());
     match (remote, root) {
         // Under `--remote` the tree is served by the session server, so the only way to have no

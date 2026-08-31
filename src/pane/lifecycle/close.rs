@@ -1,17 +1,17 @@
 use std::time::Duration;
 use tui_lipan::prelude::*;
 
-use crate::anim::{self, GeometryAnimation};
+use crate::layout::anim::{self, GeometryAnimation};
+use crate::layout::tiling::remove_tiled_window;
 use crate::ops::focus::{
     choose_fallback_focus, choose_fallback_focus_near, focus_pane, request_current_pane_focus,
     scrollable_close_neighbor,
 };
-use crate::pane_lifecycle::namespace::{
+use crate::pane::lifecycle::namespace::{
     clear_pane_local_state, find_pane, find_pane_in_namespace_mut, find_pane_mut, pane_is_local,
     remove_pane,
 };
 use crate::state::PaneId;
-use crate::tiling::remove_tiled_window;
 use crate::{AppRoot, Msg};
 
 /// Kill a live workspace pane and start its close animation.
@@ -290,7 +290,7 @@ pub(crate) fn prune_closed_pane(
         remove_tiled_window(&mut ctx.state.scratch, id);
         crate::scratchpad::after_pane_removed(ctx);
     } else {
-        let timeout = crate::anim::retained_pane_timeout(ctx.state.config.animations);
+        let timeout = crate::layout::anim::retained_pane_timeout(ctx.state.config.animations);
         // Take the pane out first so its terminal screen can be retired: a same-generation
         // reintroduction (a layout correction) restores its scrollback instead of starting blank.
         let removed = ctx

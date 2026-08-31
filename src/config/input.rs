@@ -188,13 +188,13 @@ pub(super) fn bind_user_command(
     // the rule that those two spellings are one keymap.
     let (bindings, hint) = if is_bare_key_step(key) {
         let hint = KeyBinding::from_str(key)
-            .map(|binding| crate::keys_display::format_binding(&binding))
+            .map(|binding| crate::view::keys_display::format_binding(&binding))
             .unwrap_or_else(|_| key.to_string());
         (scheme_shortcuts(input, key), hint)
     } else {
         match KeyBinding::from_str(key) {
             Ok(binding) => {
-                let hint = crate::keys_display::format_binding(&binding);
+                let hint = crate::view::keys_display::format_binding(&binding);
                 (vec![binding], hint)
             }
             Err(_) => (Vec::new(), String::new()),

@@ -923,7 +923,7 @@ fn create_session_starts_fresh_instead_of_carrying_current_panes() {
                     .insert("date".to_string(), 3);
                 // Simulate a profile-seeded session: the current pane carries a command.
                 state.current_mut().workspaces[0].panes[0].identity.launch =
-                    Some(crate::pane_launch::PaneLaunch::shell("nvim"));
+                    Some(crate::pane::launch::PaneLaunch::shell("nvim"));
                 state.rename_session =
                     Some(SessionRenameState::new(&name, NamingMode::CreateSession));
             }

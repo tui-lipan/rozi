@@ -59,7 +59,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
         match config.restart {
             ServiceRestart::Never => {
                 if !is_success {
-                    crate::pty_events::notify_error(
+                    crate::pane::pty_events::notify_error(
                         ctx,
                         "Service failed",
                         format!("Service '{name}' {failure_detail}; restart disabled"),
@@ -85,7 +85,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                 } else {
                     consecutive_failures += 1;
                     if consecutive_failures >= MAX_FAILURES {
-                        crate::pty_events::notify_error(
+                        crate::pane::pty_events::notify_error(
                             ctx,
                             "Service failed",
                             format!(
@@ -134,7 +134,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                 } else {
                     consecutive_failures += 1;
                     if consecutive_failures >= MAX_FAILURES {
-                        crate::pty_events::notify_error(
+                        crate::pane::pty_events::notify_error(
                             ctx,
                             "Service failed",
                             format!(
@@ -207,7 +207,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                         pending.backoff_delay,
                         &err.to_string(),
                     ) {
-                        crate::pty_events::notify_error(ctx, "Service failed", message);
+                        crate::pane::pty_events::notify_error(ctx, "Service failed", message);
                     }
                 }
             }

@@ -2,14 +2,14 @@ use tui_lipan::prelude::*;
 use tui_lipan::style::ThemeRole;
 
 use crate::config::{BadgeColor, PaneConfig};
+use crate::layout::tiling::PanePlacement;
 use crate::state::{
     AlertMode, LayoutKind, Pane, PaneBorderMode, PaneId, PaneTitlebarMode, TileGap, Workspace,
 };
-use crate::tiling::PanePlacement;
 use crate::{AppRoot, Msg};
 
 use super::integrated_scrollbar_config;
-use super::keys::{pane_body_key, pane_terminal_key, pane_window_key};
+use super::widget_keys::{pane_body_key, pane_terminal_key, pane_window_key};
 
 /// Caller-decided border-merge posture for one pane (see `view::render`).
 #[derive(Clone, Copy, Default)]
@@ -170,7 +170,7 @@ fn pane_alert_pulses(
     color: BadgeColor,
     config: &PaneConfig,
     armed: bool,
-    animations: crate::anim::WindowAnimationConfig,
+    animations: crate::layout::anim::WindowAnimationConfig,
 ) -> bool {
     config.alert_border == AlertMode::Pulse
         && armed
@@ -683,7 +683,7 @@ pub(crate) fn pane_element(
         } else {
             app.focus_chrome_transition_config(ctx)
         },
-        alert_pulses.then_some(crate::anim::ALERT_PULSE_FRAME_RATE),
+        alert_pulses.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
     );
     let frame_bg_target = crate::ops::theme::pane_frame_background(
         theme,
@@ -1148,7 +1148,7 @@ pub(crate) fn pane_element(
         .on_right_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
             Msg::BeginResize(
                 id,
-                crate::geometry::nearest_resize_corner(event),
+                crate::layout::geometry::nearest_resize_corner(event),
                 event.from_x,
                 event.from_y,
                 prefix_active || event.mods.alt || event.mods.super_key,
@@ -1157,7 +1157,7 @@ pub(crate) fn pane_element(
         .on_right_drag(ctx.link().callback(move |event: MouseDragEvent| {
             Msg::ResizePane(
                 id,
-                crate::geometry::nearest_resize_corner(event),
+                crate::layout::geometry::nearest_resize_corner(event),
                 event.from_x,
                 event.from_y,
                 event.x,
@@ -1178,7 +1178,7 @@ pub(crate) fn pane_element(
 
     // A sliding pane stays fully opaque; its clip, not its alpha, is what reveals it.
     let opacity = if (pane.closing || pane.opening)
-        && !crate::anim::pane_slides(ctx.state.config.animations, pane)
+        && !crate::layout::anim::pane_slides(ctx.state.config.animations, pane)
     {
         0.0
     } else {
@@ -1336,7 +1336,7 @@ fn search_match_style() -> Style {
 /// on screen; sliding it left onto the match's own tail is what it costs when the row is full.
 fn hint_label_placement(
     snapshot: &TerminalRenderSnapshot,
-    matched: &crate::hints::HintMatch,
+    matched: &crate::ops::hints::HintMatch,
     label: &str,
 ) -> (usize, usize) {
     let row = matched.end_row();
@@ -1739,7 +1739,7 @@ fn copy_mode_selection(ctx: &Context<AppRoot>, id: PaneId) -> Option<TerminalSel
         .copy_mode
         .as_ref()
         .filter(|copy| copy.target == id)?;
-    let total = crate::pane_lifecycle::find_pane(&ctx.state, id)
+    let total = crate::pane::lifecycle::find_pane(&ctx.state, id)
         .map(|pane| pane.terminal.total_scrollback_rows())
         .unwrap_or(0);
     let selection = copy.navigation.selection(total).unwrap_or_else(|| {
@@ -1874,14 +1874,14 @@ mod tests {
             BadgeColor::Error,
             &config,
             true,
-            crate::anim::WindowAnimationConfig::default(),
+            crate::layout::anim::WindowAnimationConfig::default(),
         ));
         assert_eq!(
             crate::ops::theme::pane_frame_alert_color(&theme, BadgeColor::Error, false, true),
             crate::ops::theme::pane_frame_alert_foreground(&theme, BadgeColor::Error)
         );
         config.alert_border = AlertMode::Pulse;
-        let mut animations = crate::anim::WindowAnimationConfig::default();
+        let mut animations = crate::layout::anim::WindowAnimationConfig::default();
         assert!(pane_alert_pulses(
             &theme,
             BadgeColor::Error,
@@ -1977,7 +1977,7 @@ mod tests {
             color_lines: std::sync::Arc::new([row(), row()]),
             ..Default::default()
         };
-        let hint = |spans: Vec<(usize, usize, usize)>| crate::hints::HintMatch {
+        let hint = |spans: Vec<(usize, usize, usize)>| crate::ops::hints::HintMatch {
             spans: spans
                 .into_iter()
                 .map(
@@ -1989,7 +1989,7 @@ mod tests {
                 )
                 .collect(),
             text: String::new(),
-            kind: crate::hints::HintKind::Url,
+            kind: crate::ops::hints::HintKind::Url,
         };
 
         // Room after the match: the label sits in the columns right after it.

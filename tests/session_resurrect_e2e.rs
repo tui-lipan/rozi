@@ -19,14 +19,14 @@ use std::fs;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use rozi::layout::shared::{
+    SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
+    SharedWorkspace,
+};
 use rozi::pane::TerminalPane;
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{
     ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
-};
-use rozi::shared_layout::{
-    SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
-    SharedWorkspace,
 };
 use tui_lipan::prelude::TerminalColorPalette;
 

@@ -1,9 +1,9 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::{find_pane_in_namespace_mut, pane_env};
+use crate::layout::tiling::append_tiled_window;
+use crate::pane::lifecycle::{find_pane_in_namespace_mut, pane_env};
 use crate::state::State;
-use crate::tiling::append_tiled_window;
 
 /// Clear all window-manager structure so the shared-layout reconciler can rebuild it from scratch
 /// as pure additions. Used only on attach to a session that already carries an authoritative
@@ -219,7 +219,7 @@ pub(crate) fn spawn_state_panes_on_session(
             // interactive shell and the command is injected as type-ahead input once the spawn
             // succeeds (see `Attachment::pending_replay_inputs`).
             let launch = match (pane.identity.replay, pane.identity.launch.clone()) {
-                (true, Some(crate::pane_launch::PaneLaunch::Shell { command })) => {
+                (true, Some(crate::pane::launch::PaneLaunch::Shell { command })) => {
                     replay_inserts.push(((pane.id, generation), command));
                     None
                 }

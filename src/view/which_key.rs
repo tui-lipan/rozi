@@ -25,8 +25,8 @@ use tui_lipan::prelude::*;
 
 use super::fg_only;
 use crate::AppRoot;
-use crate::keys_display::format_binding;
 use crate::state::WORKBAR_HEIGHT;
+use crate::view::keys_display::format_binding;
 
 /// Blank columns between two packed columns.
 const COLUMN_GAP: usize = 3;

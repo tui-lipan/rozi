@@ -4,8 +4,8 @@
 //! reconcile logical focus without also activating whatever the child drew under the pointer.
 
 use rozi::AppRoot;
+use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{Pane, PaneId};
-use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::{FloatRect, ManagedTerminalStatus, MouseEvent, Rect};

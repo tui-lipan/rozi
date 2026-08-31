@@ -64,7 +64,7 @@ fn populate_history(endpoint: &rozi::platform::ipc::IpcEndpoint, session: &str) 
         local: false,
         pane_id: PANE_ID,
         generation: GENERATION,
-        launch: Some(rozi::pane_launch::PaneLaunch::shell(format!(
+        launch: Some(rozi::pane::launch::PaneLaunch::shell(format!(
             "i=0; while [ $i -lt 30 ]; do printf 'line-%03d\\n' $i; i=$((i+1)); done; printf '{FINAL_MARKER}\\n'"
         ))),
         cwd: None,

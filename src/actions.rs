@@ -16,7 +16,7 @@ use crate::ops::resize_move::{
 };
 use crate::ops::search::open_search;
 use crate::ops::theme::{apply_terminal_palette_to_state, open_theme_picker};
-use crate::pane_lifecycle::{find_pane, spawn_floating_pane_at_cursor, spawn_pane};
+use crate::pane::lifecycle::{find_pane, spawn_floating_pane_at_cursor, spawn_pane};
 use crate::state::{
     Direction, Mode, PaneIdentity, ToastChannel, cap_style_id, next_badge_cap_style, next_cap_style,
 };
@@ -30,7 +30,7 @@ fn paste_from_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
     let text = match ctx.clipboard().read() {
         Ok(text) => text,
         Err(err) => {
-            crate::pty_events::notify_error(ctx, "Paste failed", err.to_string());
+            crate::pane::pty_events::notify_error(ctx, "Paste failed", err.to_string());
             return Update::full();
         }
     };
@@ -40,8 +40,9 @@ fn paste_from_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
     let modes = find_pane(&ctx.state, id).map_or(TerminalKeyModes::default(), |pane| {
         pane.terminal.snapshot().key_modes
     });
-    if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, encode_paste(&text, modes)) {
-        crate::pty_events::notify_error(ctx, "Paste failed", err);
+    if let Err(err) = crate::pane::pty_events::send_pane_bytes(ctx, id, encode_paste(&text, modes))
+    {
+        crate::pane::pty_events::notify_error(ctx, "Paste failed", err);
     }
     // The app-level paste action writes straight to the PTY, so it misses the widget input path
     // that acknowledges an ordinary paste. Same act, same answer.
@@ -53,7 +54,7 @@ fn toggle_pane_logging(ctx: &mut Context<AppRoot>) -> Update {
     let Some(id) = ctx.state.focused_pane() else {
         return Update::none();
     };
-    let Some(pane) = crate::pane_lifecycle::find_pane(&ctx.state, id) else {
+    let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, id) else {
         return Update::none();
     };
     let generation = pane.pty_generation;
@@ -62,7 +63,7 @@ fn toggle_pane_logging(ctx: &mut Context<AppRoot>) -> Update {
         client.set_pane_logging(
             id,
             generation,
-            crate::pane_lifecycle::pane_is_local(&ctx.state, id),
+            crate::pane::lifecycle::pane_is_local(&ctx.state, id),
             enabled,
         );
     }
@@ -123,23 +124,23 @@ pub(crate) fn execute_user_command_action_with_env(
     match action {
         UserCommandAction::Run { command, keep_open } => {
             let identity = PaneIdentity {
-                launch: Some(crate::pane_launch::PaneLaunch::shell(command.clone())),
+                launch: Some(crate::pane::launch::PaneLaunch::shell(command.clone())),
                 keep_open: *keep_open,
                 // `cargo build` means "build the project I am looking at"; without this the command
                 // runs wherever the session server was started.
-                cwd: crate::pane_lifecycle::focused_spawn_cwd(&ctx.state),
+                cwd: crate::pane::lifecycle::focused_spawn_cwd(&ctx.state),
                 env,
                 ..PaneIdentity::default()
             };
             if ctx.state.scratch_visible {
-                return crate::pane_lifecycle::spawn_pane_in_scratch(
+                return crate::pane::lifecycle::spawn_pane_in_scratch(
                     ctx,
                     ctx.state.scratch.focused_pane,
                     identity,
                 )
                 .1;
             }
-            crate::pane_lifecycle::spawn_interactive_pane(
+            crate::pane::lifecycle::spawn_interactive_pane(
                 ctx,
                 ctx.state.current().active_workspace,
                 None,
@@ -151,15 +152,16 @@ pub(crate) fn execute_user_command_action_with_env(
             let Some(id) = ctx.state.focused_pane() else {
                 return Update::full();
             };
-            if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, text.as_bytes().to_vec())
+            if let Err(err) =
+                crate::pane::pty_events::send_pane_bytes(ctx, id, text.as_bytes().to_vec())
             {
-                crate::pty_events::notify_error(ctx, "Command failed", err);
+                crate::pane::pty_events::notify_error(ctx, "Command failed", err);
             }
             Update::full()
         }
         UserCommandAction::Exec { command } => exec_user_command(ctx, command, env),
         UserCommandAction::ExecDirect { argv } => exec_direct_user_command(ctx, argv, env),
-        UserCommandAction::Popup { command, keep_open } => crate::popup::open(
+        UserCommandAction::Popup { command, keep_open } => crate::ops::popup::open(
             ctx,
             command.clone(),
             None,
@@ -170,7 +172,7 @@ pub(crate) fn execute_user_command_action_with_env(
             env,
         )
         .unwrap_or_else(|error| {
-            crate::pty_events::notify_error(ctx, "Popup failed", error);
+            crate::pane::pty_events::notify_error(ctx, "Popup failed", error);
             Update::full()
         }),
     }
@@ -216,10 +218,14 @@ fn exec_argv(
     env: Vec<(String, String)>,
 ) -> Update {
     let Some((program, args)) = argv.split_first() else {
-        crate::pty_events::notify_error(ctx, "Command failed", "direct command argv is empty");
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Command failed",
+            "direct command argv is empty",
+        );
         return Update::none();
     };
-    let cwd = crate::pane_lifecycle::focused_spawn_cwd(&ctx.state);
+    let cwd = crate::pane::lifecycle::focused_spawn_cwd(&ctx.state);
     let mut environment = vec![("ROZI".to_string(), "1".to_string())];
     if let Some(path) = ctx.state.control_socket_path.as_deref() {
         environment.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
@@ -273,7 +279,7 @@ fn smart_focus(ctx: &mut Context<AppRoot>, direction: Direction) -> Update {
     if let Some(id) = ctx.state.focused_pane()
         && focused_pane_forwards_navigation(&ctx.state, id)
     {
-        return crate::pty_events::forward_key_to_pane(ctx, id, navigation_key(direction));
+        return crate::pane::pty_events::forward_key_to_pane(ctx, id, navigation_key(direction));
     }
 
     let viewport = ctx.viewport();
@@ -310,7 +316,7 @@ fn navigation_key(direction: Direction) -> KeyEvent {
 
 fn persist_pane_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_pane_flag(key, value) {
-        crate::pty_events::notify_on(
+        crate::pane::pty_events::notify_on(
             ctx,
             ToastChannel::PreferenceSave,
             Some("Preference not saved".to_string()),
@@ -329,7 +335,7 @@ macro_rules! toggle_pane_flag {
 
 fn persist_animation_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_animation_flag(key, value) {
-        crate::pty_events::notify_on(
+        crate::pane::pty_events::notify_on(
             ctx,
             ToastChannel::PreferenceSave,
             Some("Preference not saved".to_string()),
@@ -340,7 +346,7 @@ fn persist_animation_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) 
 
 fn persist_nerd_icons_toggle(ctx: &mut Context<AppRoot>, value: bool) {
     if let Err(err) = crate::config::persist_top_level_flag("nerd_icons", value) {
-        crate::pty_events::notify_on(
+        crate::pane::pty_events::notify_on(
             ctx,
             ToastChannel::PreferenceSave,
             Some("Preference not saved".to_string()),
@@ -351,7 +357,7 @@ fn persist_nerd_icons_toggle(ctx: &mut Context<AppRoot>, value: bool) {
 
 fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
-        crate::pty_events::notify_on(
+        crate::pane::pty_events::notify_on(
             ctx,
             ToastChannel::PreferenceSave,
             Some("Preference not saved".to_string()),
@@ -362,7 +368,7 @@ fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &s
 
 fn persist_workbar_alert_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_workbar_alert_string(key, value) {
-        crate::pty_events::notify_on(
+        crate::pane::pty_events::notify_on(
             ctx,
             ToastChannel::PreferenceSave,
             Some("Preference not saved".to_string()),
@@ -491,11 +497,11 @@ fn execute_action_inner(
         }
         Action::Spawn => spawn_pane(ctx),
         Action::SpawnFloat => spawn_floating_pane_at_cursor(ctx),
-        Action::RespawnPane => crate::pane_lifecycle::respawn_focused_pane(ctx),
+        Action::RespawnPane => crate::pane::lifecycle::respawn_focused_pane(ctx),
         Action::TogglePaneLogging => toggle_pane_logging(ctx),
         Action::Close => {
             if ctx.state.popup.is_some() {
-                return crate::popup::close(ctx);
+                return crate::ops::popup::close(ctx);
             }
             crate::ops::exit::close_focused_pane_with_confirmation(ctx, confirmations_enabled)
         }
@@ -563,7 +569,7 @@ fn execute_action_inner(
         }
         Action::PromoteToMaster => {
             if promote_focused_to_master(&mut ctx.state) {
-                ctx.state.animation = crate::anim::GeometryAnimation::AxisChange;
+                ctx.state.animation = crate::layout::anim::GeometryAnimation::AxisChange;
             }
             request_current_pane_focus(ctx);
             Update::full()
@@ -589,8 +595,8 @@ fn execute_action_inner(
             Update::full()
         }
         Action::OpenLayoutPicker => crate::ops::layout_picker::open_layout_picker(ctx),
-        Action::EnterCopyMode => crate::copy_mode::enter(ctx),
-        Action::EnterHintMode => crate::hints::enter(ctx),
+        Action::EnterCopyMode => crate::input::copy_mode::enter(ctx),
+        Action::EnterHintMode => crate::ops::hints::enter(ctx),
         Action::ToggleScratchpad => crate::scratchpad::toggle(ctx),
         Action::OpenSearch => open_search(ctx),
         Action::SaveProfile => open_save_profile_prompt(ctx),
@@ -610,7 +616,7 @@ fn execute_action_inner(
             }
             crate::ops::session::release_current_session(ctx);
             let update = crate::ops::session::swap_to_fresh_ephemeral(ctx);
-            crate::pty_events::notify_info(ctx, "Started a fresh temporary session");
+            crate::pane::pty_events::notify_info(ctx, "Started a fresh temporary session");
             update
         }
         Action::RequestControl => crate::ops::session::request_control(ctx),
@@ -1197,8 +1203,10 @@ mod tests {
     }
 
     /// The slot a content-keyed toast lands in, so a test can look it up the way `notify` does.
-    fn content_slot(message: &str) -> crate::pty_events::ToastKey {
-        crate::pty_events::ToastKey::Content(crate::pty_events::notifications::content_key(message))
+    fn content_slot(message: &str) -> crate::pane::pty_events::ToastKey {
+        crate::pane::pty_events::ToastKey::Content(
+            crate::pane::pty_events::notifications::content_key(message),
+        )
     }
 
     #[test]
@@ -1324,7 +1332,7 @@ mod tests {
         use crate::Msg;
 
         with_backend(|mut backend| {
-            let layout_slot = crate::pty_events::ToastKey::Channel(ToastChannel::LayoutMode);
+            let layout_slot = crate::pane::pty_events::ToastKey::Channel(ToastChannel::LayoutMode);
 
             backend
                 .dispatch(Msg::RunAction(Action::ToggleLayout))
@@ -1412,7 +1420,7 @@ mod tests {
                     .state()
                     .replaceable_toasts
                     .get(&content_slot(NOT_ATTACHED_NAMED))
-                    .map(crate::pty_events::TrackedToast::id),
+                    .map(crate::pane::pty_events::TrackedToast::id),
                 Some(output_toast),
                 "an unrelated message must not disturb another slot",
             );

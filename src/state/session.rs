@@ -19,7 +19,7 @@ pub enum PendingSessionAction {
     },
     NewPane {
         source: Option<PaneId>,
-        launch: Option<crate::pane_launch::PaneLaunch>,
+        launch: Option<crate::pane::launch::PaneLaunch>,
         cwd: Option<String>,
         title: Option<String>,
         keep_open: bool,
@@ -183,14 +183,14 @@ impl OrphanOutputStore {
 /// reconciler needs. Present whenever [`super::State::session_attached`] is true under protocol v6.
 pub struct SharedSessionState {
     /// This client's server-assigned id.
-    pub client_id: crate::shared_layout::ClientId,
+    pub client_id: crate::layout::shared::ClientId,
     /// The last layout revision this client has applied.
     pub layout_rev: u64,
     /// Optimistic base for the next commit: bumped locally on each commit so pipelined commits
     /// carry increasing base revs without waiting for each echo.
     pub assumed_rev: u64,
     /// The current layout controller, or `None` between promotions.
-    pub controller: Option<crate::shared_layout::ClientId>,
+    pub controller: Option<crate::layout::shared::ClientId>,
     /// How many clients are attached to the session (including this one).
     pub clients: Vec<crate::session::protocol::ClientInfo>,
     pub input_locked: bool,
@@ -202,7 +202,7 @@ pub struct SharedSessionState {
     pub canonical_canvas: Option<(u16, u16)>,
     /// The last layout this client committed/applied, used as the dirty detector for the commit
     /// chokepoint (cheaper than re-serializing).
-    pub last_committed_layout: Option<crate::shared_layout::SharedLayout>,
+    pub last_committed_layout: Option<crate::layout::shared::SharedLayout>,
     /// Pane output that arrived before the pane's `LayoutCommitted` created it locally, keyed by
     /// `(pane_id, generation)`; drained into the pane once the reconciler adds it.
     orphan_output: OrphanOutputStore,
@@ -211,7 +211,7 @@ pub struct SharedSessionState {
 }
 
 impl SharedSessionState {
-    pub fn new(client_id: crate::shared_layout::ClientId) -> Self {
+    pub fn new(client_id: crate::layout::shared::ClientId) -> Self {
         Self {
             client_id,
             layout_rev: 0,

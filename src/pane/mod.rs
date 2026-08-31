@@ -1,3 +1,13 @@
+//! Panes: the client-side terminal widget and the machinery that spawns, feeds, and retires it.
+//!
+//! [`TerminalPane`] here is the screen a client draws; [`state::pane`](crate::state::pane) holds the
+//! per-pane app state and `view/pane.rs` renders it.
+
+pub mod launch;
+pub mod lifecycle;
+pub mod pty_events;
+pub mod rules;
+
 use std::cell::RefCell;
 use std::ops::ControlFlow;
 use std::rc::Rc;
@@ -75,8 +85,8 @@ pub struct TerminalPane {
     seen_bell_count: u64,
     scrollback_limit: usize,
     /// Holds forwarded pointer motion to one position in flight at a time. See
-    /// [`crate::pty_events::pointer_flow`].
-    pub(crate) pointer_flow: crate::pty_events::pointer_flow::PointerFlow,
+    /// [`crate::pane::pty_events::pointer_flow`].
+    pub(crate) pointer_flow: crate::pane::pty_events::pointer_flow::PointerFlow,
     /// Behind a `RefCell` so [`TerminalPane::snapshot`] can rebuild through a shared reference:
     /// the render snapshot is pulled by the view (which only ever holds `&State`), and rebuilding
     /// it at read time rather than at write time is what collapses a burst of output messages into
@@ -225,7 +235,7 @@ impl TerminalPane {
             media_policy: GraphicsMediaPolicy::SHARED,
             seen_bell_count: 0,
             scrollback_limit: scrollback,
-            pointer_flow: crate::pty_events::pointer_flow::PointerFlow::default(),
+            pointer_flow: crate::pane::pty_events::pointer_flow::PointerFlow::default(),
             screen: Rc::new(RefCell::new(screen)),
         }
     }

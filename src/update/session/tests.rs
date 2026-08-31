@@ -28,7 +28,7 @@ fn install_search_scan(
     target: crate::state::PaneId,
     query: &str,
 ) -> u64 {
-    let pane_end = crate::pane_lifecycle::find_pane(backend.state(), target)
+    let pane_end = crate::pane::lifecycle::find_pane(backend.state(), target)
         .expect("search target")
         .terminal
         .search_line_count();
@@ -124,7 +124,7 @@ fn pane_output_restarts_partial_search_and_rejects_its_stale_chunk() {
             let generation = 7;
             {
                 let pane =
-                    crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
                 pane.pty_generation = generation;
                 pane.terminal.bind_session(target, generation);
                 pane.terminal
@@ -187,7 +187,7 @@ fn pane_output_restarts_partial_search_and_rejects_its_stale_chunk() {
             );
 
             let offset_before_activation =
-                crate::pane_lifecycle::find_pane(backend.state(), target)
+                crate::pane::lifecycle::find_pane(backend.state(), target)
                     .unwrap()
                     .terminal
                     .scrollback_offset();
@@ -196,7 +196,7 @@ fn pane_output_restarts_partial_search_and_rejects_its_stale_chunk() {
                 .expect("refreshing result is not actionable");
             assert!(backend.state().search.is_some());
             assert_eq!(
-                crate::pane_lifecycle::find_pane(backend.state(), target)
+                crate::pane::lifecycle::find_pane(backend.state(), target)
                     .unwrap()
                     .terminal
                     .scrollback_offset(),
@@ -223,7 +223,7 @@ fn pane_output_restarts_a_completed_search() {
             let generation = 9;
             {
                 let pane =
-                    crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
                 pane.pty_generation = generation;
                 pane.terminal.bind_session(target, generation);
                 pane.terminal
@@ -307,7 +307,7 @@ fn bell_events_include_focused_for_current_panes() {
             let generation = 42;
             {
                 let pane =
-                    crate::pane_lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
                 pane.pty_generation = generation;
                 pane.terminal.bind_session(pane_id, generation);
             }
@@ -357,7 +357,7 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
             let generation = 42;
             {
                 let pane =
-                    crate::pane_lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
                 pane.pty_generation = generation;
                 pane.terminal.bind_session(pane_id, generation);
             }
@@ -379,14 +379,14 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
                 })
                 .expect("deliver BEL while unfocused");
             assert!(events.recv().unwrap().contains("\"focused\":\"true\""));
-            let pane = crate::pane_lifecycle::find_pane(backend.state(), pane_id).unwrap();
+            let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
             assert!(pane.activity.has_unseen_output);
             assert!(pane.activity.bell);
 
             backend
                 .set_window_focused(true)
                 .expect("gain host-window focus");
-            let pane = crate::pane_lifecycle::find_pane(backend.state(), pane_id).unwrap();
+            let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
             assert!(pane.activity.has_unseen_output);
             assert!(pane.activity.bell);
 
@@ -399,7 +399,7 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
                     },
                 ))
                 .expect("type into the focused pane");
-            let pane = crate::pane_lifecycle::find_pane(backend.state(), pane_id).unwrap();
+            let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
             assert!(!pane.activity.has_unseen_output);
             assert!(!pane.activity.bell);
         })
@@ -423,7 +423,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
             let generation = 42;
             {
                 let pane =
-                    crate::pane_lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
                 pane.pty_generation = generation;
                 pane.terminal.bind_session(pane_id, generation);
                 pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
@@ -470,7 +470,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
                 .dispatch(Msg::WorkbarTick)
                 .expect("ordinary post-update pass");
             assert!(
-                crate::pane_lifecycle::find_pane(backend.state(), pane_id)
+                crate::pane::lifecycle::find_pane(backend.state(), pane_id)
                     .expect("finished pane")
                     .terminal
                     .finished_unseen
@@ -485,7 +485,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
                 .dispatch(Msg::WorkbarTick)
                 .expect("ordinary post-update pass");
             assert!(
-                crate::pane_lifecycle::find_pane(backend.state(), pane_id)
+                crate::pane::lifecycle::find_pane(backend.state(), pane_id)
                     .expect("finished pane")
                     .terminal
                     .finished_unseen
@@ -501,7 +501,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
                 ))
                 .expect("type into the focused pane");
             assert!(
-                !crate::pane_lifecycle::find_pane(backend.state(), pane_id)
+                !crate::pane::lifecycle::find_pane(backend.state(), pane_id)
                     .expect("finished pane")
                     .terminal
                     .finished_unseen
@@ -1169,7 +1169,7 @@ fn failed_local_create_restores_the_parked_session() {
 
 /// Attaching where another client already holds the lease: the client must ask what to do
 /// instead of quietly becoming a follower. `controller` is who the server says holds it.
-fn attach_with_controller(controller: crate::shared_layout::ClientId, reconnect: bool) -> bool {
+fn attach_with_controller(controller: crate::layout::shared::ClientId, reconnect: bool) -> bool {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -1339,7 +1339,7 @@ fn colliding_namespace_backend() -> TestBackend<crate::AppRoot> {
 }
 
 fn namespace_text(backend: &TestBackend<crate::AppRoot>, local: bool) -> String {
-    crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, local)
+    crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, local)
         .expect("namespaced pane")
         .terminal
         .capture_text()
@@ -1409,14 +1409,14 @@ fn colliding_pane_ids_route_session_events_by_namespace() {
                 })
                 .expect("local resize");
             assert_eq!(
-                crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, false)
+                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, false)
                     .unwrap()
                     .terminal
                     .cols,
                 40
             );
             assert_eq!(
-                crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
                     .unwrap()
                     .terminal
                     .rows,
@@ -1434,12 +1434,12 @@ fn colliding_pane_ids_route_session_events_by_namespace() {
                 })
                 .expect("shared exit");
             assert!(
-                crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, false)
+                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, false)
                     .is_some_and(|pane| pane.closing),
                 "shared exit must close the attachment pane"
             );
             assert!(
-                crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
                     .is_some_and(|pane| !pane.closing),
                 "shared exit must not close the scratch pane"
             );
@@ -1454,7 +1454,7 @@ fn colliding_pane_ids_route_session_events_by_namespace() {
                 })
                 .expect("local exit");
             assert!(
-                crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
                     .is_some_and(|pane| pane.closing),
                 "local exit must close the scratch pane"
             );
@@ -1474,12 +1474,12 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                 let state = backend.state_mut();
                 let workspace = &mut state.current_mut().workspaces[0];
                 workspace.panes.retain(|pane| pane.id == 7);
-                workspace.tile_tree = Some(crate::tiling::DwindleTree::Leaf(7));
+                workspace.tile_tree = Some(crate::layout::tiling::DwindleTree::Leaf(7));
                 workspace.focused_pane = Some(7);
                 state.current_mut().focused_pane = Some(7);
                 state.scratch.panes[0].terminal.title = Some("scratch-title".into());
             }
-            let layout = crate::shared_layout::shared_layout_from_state(backend.state(), (80, 24));
+            let layout = crate::layout::shared::shared_layout_from_state(backend.state(), (80, 24));
             let (client, _rx) = SessionClient::test_channel();
             backend.state_mut().current_mut().pending_session_attach =
                 Some(crate::state::PendingSessionAttach {
@@ -1532,11 +1532,11 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                 })
                 .expect("attach shared pane");
 
-            let shared = crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, false)
+            let shared = crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, false)
                 .expect("shared pane");
             assert_eq!(shared.terminal.title.as_deref(), Some("shared-title"));
             assert_eq!(shared.terminal.published_rows[0].id, "shared-row");
-            let scratch = crate::pane_lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+            let scratch = crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
                 .expect("scratch pane");
             assert_eq!(scratch.terminal.title.as_deref(), Some("scratch-title"));
             assert!(scratch.terminal.published_rows.is_empty());
@@ -1672,8 +1672,8 @@ fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
 
 /// A minimal authoritative layout: one workspace of live tiled panes, the shape a server sends on
 /// attach.
-fn attached_layout(panes: &[crate::state::PaneId]) -> crate::shared_layout::SharedLayout {
-    use crate::shared_layout::{
+fn attached_layout(panes: &[crate::state::PaneId]) -> crate::layout::shared::SharedLayout {
+    use crate::layout::shared::{
         SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis,
         SharedWorkspace,
     };

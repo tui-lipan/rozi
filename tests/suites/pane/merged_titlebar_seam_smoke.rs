@@ -5,8 +5,8 @@
 //! above every tile; these tests pin that it survives and still looks like an in-frame titlebar.
 
 use rozi::AppRoot;
+use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{Pane, PaneBorderMode, PaneBorderStyle, PaneId, PaneTitlebarMode, SplitAxis};
-use rozi::tiling::build_dwindle_tree;
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 use tui_lipan::{CapturedFrame, TestBackend};
 

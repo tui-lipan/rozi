@@ -188,7 +188,7 @@ pub struct CollaborationState {
     /// roster position: the roster is server-pushed and can reorder under an armed row, and a
     /// confirmation that lands on whoever slid into that slot is the one mistake this arming exists
     /// to prevent. Cleared by moving the highlight or closing the dialog.
-    pub pending_kick: Option<crate::shared_layout::ClientId>,
+    pub pending_kick: Option<crate::layout::shared::ClientId>,
     /// The live filter text. Mirrored out of the palette so the dialog can rank the roster the same
     /// way the widget does and refuse to act on a client the filter has hidden — a `ctrl+k` that
     /// removed somebody scrolled off by a query would be indefensible.

@@ -1,15 +1,17 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::{self, GeometryAnimation};
-use crate::geometry::{canvas_local_point_from_mouse, clamp_float_rect, default_floating_rect};
+use crate::layout::anim::{self, GeometryAnimation};
+use crate::layout::geometry::{
+    canvas_local_point_from_mouse, clamp_float_rect, default_floating_rect,
+};
 use crate::layout::place_spawned_pane;
+use crate::layout::tiling::remove_tiled_window;
 use crate::ops::focus::request_pane_focus;
 use crate::ops::theme::pane_frame_background;
-use crate::pane_lifecycle::namespace::{find_pane, find_pane_mut, pane_env};
-use crate::pane_lifecycle::timers::open_timers_command;
+use crate::pane::lifecycle::namespace::{find_pane, find_pane_mut, pane_env};
+use crate::pane::lifecycle::timers::open_timers_command;
 use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
-use crate::tiling::remove_tiled_window;
 
 /// The focused pane's local working directory, if it has a usable one.
 ///
@@ -338,7 +340,7 @@ pub(crate) fn spawn_interactive_pane_with_focus(
     let rule_command = identity
         .launch
         .as_ref()
-        .map(crate::pane_launch::PaneLaunch::display);
+        .map(crate::pane::launch::PaneLaunch::display);
     let (workspace_index, previous_focused, placement) = interactive_spawn_target(
         &ctx.state,
         source_workspace,
@@ -359,7 +361,7 @@ pub(crate) fn interactive_spawn_target(
     workspace: Option<usize>,
 ) -> (usize, Option<PaneId>, SpawnPlacement) {
     let (rule_workspace, mut placement) = command
-        .map(|command| crate::rules::placement_for_command(&state.config.rules, command))
+        .map(|command| crate::pane::rules::placement_for_command(&state.config.rules, command))
         .unwrap_or_default();
     if let Some(focus) = focus {
         placement.focus = focus;
@@ -435,7 +437,7 @@ pub(crate) fn spawn_pane_in_workspace(
         .identity
         .launch
         .as_ref()
-        .map(crate::pane_launch::PaneLaunch::display);
+        .map(crate::pane::launch::PaneLaunch::display);
     let cwd = pane.identity.cwd.clone();
     let cols = pane.terminal.cols;
     let rows = pane.terminal.rows;
@@ -706,7 +708,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     // injected as type-ahead input after the spawn succeeds (see `State::pending_replay_inputs`),
     // so aliases/functions/rc-file PATH resolve and the prompt's title integration runs first.
     let launch = match launch {
-        Some(crate::pane_launch::PaneLaunch::Shell { command }) if replay && !scratch => {
+        Some(crate::pane::launch::PaneLaunch::Shell { command }) if replay && !scratch => {
             state
                 .current_mut()
                 .pending_replay_inputs

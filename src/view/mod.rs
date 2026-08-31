@@ -1,12 +1,19 @@
-mod keys;
+pub(crate) mod exit;
+pub(crate) mod keys_display;
 mod overlays;
 mod pane;
 pub(crate) mod session_status;
 pub(crate) mod sidebar;
 mod which_key;
+mod widget_keys;
 mod workbar;
 
-pub use keys::{
+pub(crate) use pane::{
+    PaneKind, PaneMerge, divider_title_element, has_pane_alert, pane_alert, pane_element,
+    pane_has_tile_above, seam_title_element,
+};
+pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
+pub use widget_keys::{
     askpass_input_key, collaboration_key, follow_prompt_key, help_filter_key, help_scroll_key,
     layout_picker_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
     pane_terminal_key, pane_window_key, pick_key, pick_prompt_input_key, profile_picker_key,
@@ -14,21 +21,16 @@ pub use keys::{
     save_profile_key, search_input_key, session_picker_key, settings_palette_key, sidebar_body_key,
     theme_picker_key,
 };
-pub(crate) use pane::{
-    PaneKind, PaneMerge, divider_title_element, has_pane_alert, pane_alert, pane_element,
-    pane_has_tile_above, seam_title_element,
-};
-pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
 
 use tui_lipan::prelude::*;
 
-use crate::geometry::{
+use crate::layout::geometry::{
     clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect, viewport_bounds,
 };
+use crate::layout::tiling::PanePlacement;
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding_with_visible};
 use crate::state::{PaneId, WORKBAR_HEIGHT};
-use crate::tiling::PanePlacement;
 use crate::{AppRoot, Msg};
 
 use pane::pane_title_bg;
@@ -189,7 +191,7 @@ pub(crate) fn render_workspace_panes(
         // A sliding pane is laid out at its real destination for the whole animation and carried in
         // by `slide_offset` below, so only the scale style rewrites the target here. A pane that
         // merely *would* slide is not sliding now - it still has to follow a drag.
-        let slides = crate::anim::pane_slides(ctx.state.config.animations, pane);
+        let slides = crate::layout::anim::pane_slides(ctx.state.config.animations, pane);
         // Read every frame the pane is drawn, so the transition key stays alive for the whole slide.
         let slide_progress = app.slide_progress(ctx, pane, layer.pane_slide_key(pane.id));
         let sliding_now = slides && (pane.opening || pane.closing);
@@ -324,7 +326,7 @@ pub(crate) fn render_workspace_panes(
         // terminal underneath it.
         let element: Element = if slides {
             let (offset_x, offset_y) =
-                crate::anim::slide_offset(render_rect, pane.slide_edge, slide_progress);
+                crate::layout::anim::slide_offset(render_rect, pane.slide_edge, slide_progress);
             Canvas::new()
                 // While the pane is only part-way in, the rest of the clip window is empty. Let a
                 // click there fall through to the layer beneath instead of being swallowed by a
@@ -495,7 +497,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let sidebar_progress = ctx.transition::<f32>(
         "rozi-sidebar-progress",
         if ctx.state.sidebar_visible { 1.0 } else { 0.0 },
-        crate::anim::sidebar_transition(ctx.state.config.animations),
+        crate::layout::anim::sidebar_transition(ctx.state.config.animations),
     );
     ctx.state.sidebar_slide.set(sidebar_progress);
     let content_viewport = ctx.state.content_viewport(viewport);
@@ -633,7 +635,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         .height(Length::Flex(1))
         .opacity(workspace_dim)
         .opacity_target(theme.surface.backdrop)
-        .transition(crate::anim::instant_transition())
+        .transition(crate::layout::anim::instant_transition())
         .into();
     let mut root = ZStack::new()
         // The always-mounted popup host is intentionally empty while no popup is open. Let an
@@ -680,7 +682,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             scratch_layer = Animated::new(scratch_layer)
                 .opacity(scratch_dim)
                 .opacity_target(theme.surface.backdrop)
-                .transition(crate::anim::instant_transition())
+                .transition(crate::layout::anim::instant_transition())
                 .into();
         }
         root = root.child(scratch_layer);
@@ -688,11 +690,11 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
 
     {
         let mut popup_canvas = Canvas::new().height(Length::Flex(1)).passthrough(true);
-        if let Some((rect, element)) = crate::popup::backdrop(ctx) {
+        if let Some((rect, element)) = crate::ops::popup::backdrop(ctx) {
             popup_canvas =
                 popup_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
-        if let Some((rect, element)) = crate::popup::placement(app, ctx) {
+        if let Some((rect, element)) = crate::ops::popup::placement(app, ctx) {
             popup_canvas =
                 popup_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
@@ -816,7 +818,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         let sidebar: Element = Canvas::new()
             .child_at(
                 FloatRect {
-                    x: crate::anim::sidebar_slide_offset(
+                    x: crate::layout::anim::sidebar_slide_offset(
                         sidebar_pane_width,
                         panel_width,
                         docked_right,
@@ -835,7 +837,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             .height(Length::Flex(1))
             .opacity(sidebar_dim)
             .opacity_target(theme.surface.backdrop)
-            .transition(crate::anim::instant_transition())
+            .transition(crate::layout::anim::instant_transition())
             .into();
         // Whatever the sidebar has not reserved. It shrinks as the panel arrives, which is what
         // keeps the pane column's far edge pinned to the far edge of the screen while its near edge

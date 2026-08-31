@@ -1,6 +1,6 @@
 use tui_lipan::prelude::FloatRect;
 
-use crate::tiling::DwindleTree;
+use crate::layout::tiling::DwindleTree;
 
 use super::{Direction, LayoutTarget, PaneId};
 

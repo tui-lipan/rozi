@@ -21,9 +21,9 @@ pub(crate) fn handle_key_routing(
         .popup
         .as_ref()
         .is_some_and(|pane| matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_)))
-        && crate::popup::dismisses_completed(key)
+        && crate::ops::popup::dismisses_completed(key)
     {
-        return (true, crate::popup::close(ctx));
+        return (true, crate::ops::popup::close(ctx));
     }
 
     // The sidebar's row list and file tree are ordinary focusable widgets, so they consume their
@@ -38,7 +38,10 @@ pub(crate) fn handle_key_routing(
     match ctx.state.mode {
         Mode::Normal => {
             if let Some(id) = source_pane {
-                return (true, crate::pty_events::forward_key_to_pane(ctx, id, key));
+                return (
+                    true,
+                    crate::pane::pty_events::forward_key_to_pane(ctx, id, key),
+                );
             }
             if launcher_start_key(&ctx.state, key) {
                 return (true, crate::actions::execute_action(ctx, Action::Spawn));
@@ -52,10 +55,10 @@ pub(crate) fn handle_key_routing(
             if ctx.state.search.is_some() {
                 (false, Update::none())
             } else {
-                crate::copy_mode::handle_copy_key(ctx, key)
+                crate::input::copy_mode::handle_copy_key(ctx, key)
             }
         }
-        Mode::Hint => crate::hints::handle_hint_key(ctx, key),
+        Mode::Hint => crate::ops::hints::handle_hint_key(ctx, key),
     }
 }
 

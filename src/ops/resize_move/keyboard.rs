@@ -1,13 +1,13 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::GeometryAnimation;
-use crate::geometry::workspace_tile_bounds;
-use crate::ops::focus::{active_pane_is_fullscreen, sync_scrollable_reveal};
-use crate::state::{self, Direction, LayoutKind};
-use crate::tiling::{
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::geometry::workspace_tile_bounds;
+use crate::layout::tiling::{
     focused_is_first_in_nearest_axis_split, nearest_split_available, resize_tiled_split,
 };
+use crate::ops::focus::{active_pane_is_fullscreen, sync_scrollable_reveal};
+use crate::state::{self, Direction, LayoutKind};
 
 use super::float::{ensure_tile_tree, layout_has_resizable_splits, resize_focused_float};
 use super::tiling::{
@@ -143,8 +143,8 @@ mod tests {
     /// A backend whose *scratch* workspace holds two panes split along `axis`, pane 1 focused and
     /// the dropdown deployed. The attachment workspace is left alone so a stray edit shows up.
     fn scratch_backend(axis: SplitAxis) -> TestBackend<AppRoot> {
+        use crate::layout::tiling::DwindleTree;
         use crate::state::Pane;
-        use crate::tiling::DwindleTree;
         use tui_lipan::prelude::FloatRect;
 
         let mut backend = TestBackend::new(AppRoot::default());

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use tui_lipan::prelude::*;
 
 use crate::control;
+use crate::layout::shared::{ClientId, SharedLayout};
 use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcEndpoint, IpcListener};
 use crate::runtime_metrics::{
     ByteBufferMetrics, QueueMetrics, ResurrectionMetrics, ServerOutboxMetrics,
@@ -18,7 +19,6 @@ use crate::session::protocol::{
     ServerMessage, WirePalette,
 };
 use crate::session::queue::{ByteQueue, PushError};
-use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
 mod browse;
@@ -223,7 +223,7 @@ pub struct ServerPane {
     /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
     /// what the pane was spawned with, before any live OSC report or process-inspector fallback.
     pub cwd: Option<String>,
-    pub launch: Option<crate::pane_launch::PaneLaunch>,
+    pub launch: Option<crate::pane::launch::PaneLaunch>,
     pub keep_open: bool,
     /// Set once a `keep_open` pane's command has finished and its PTY has been replaced by the
     /// interactive shell (see [`SessionServer::replace_with_keep_open_shell`]). Without it, the
@@ -1000,7 +1000,7 @@ struct SpawnRequest {
     pane_id: PaneId,
     owner: Option<ClientId>,
     generation: u64,
-    launch: Option<crate::pane_launch::PaneLaunch>,
+    launch: Option<crate::pane::launch::PaneLaunch>,
     cwd: Option<String>,
     title: Option<String>,
     cols: u16,
@@ -1094,7 +1094,7 @@ fn agent_catalog(
 }
 
 fn pty_config(
-    launch: Option<&crate::pane_launch::PaneLaunch>,
+    launch: Option<&crate::pane::launch::PaneLaunch>,
     shell: &[String],
     command_shell: &[String],
 ) -> TerminalPtyConfig {
@@ -1103,7 +1103,7 @@ fn pty_config(
     let env = crate::platform::command::ShellEnv::from_process();
 
     match launch {
-        Some(crate::pane_launch::PaneLaunch::Shell { command }) if !command.trim().is_empty() => {
+        Some(crate::pane::launch::PaneLaunch::Shell { command }) if !command.trim().is_empty() => {
             let runner = ShellCommand::from_argv(command_shell)
                 .unwrap_or_else(|| crate::platform::command::resolve_command_shell(None, &env));
             let mut config = TerminalPtyConfig::new(runner.program).term("xterm-256color");
@@ -1112,7 +1112,7 @@ fn pty_config(
             }
             config.arg(command.clone())
         }
-        Some(crate::pane_launch::PaneLaunch::Direct { argv }) if !argv.is_empty() => {
+        Some(crate::pane::launch::PaneLaunch::Direct { argv }) if !argv.is_empty() => {
             let mut config = TerminalPtyConfig::new(argv[0].clone()).term("xterm-256color");
             for arg in &argv[1..] {
                 config = config.arg(arg.clone());
@@ -1186,7 +1186,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
         loaded.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
     );
-    let client_scratch = crate::scratch_runtime::is_client_scratch_session(name);
+    let client_scratch = crate::scratchpad::runtime::is_client_scratch_session(name);
     let mut server = SessionServer::new_named_with_settings(
         name,
         ServerSettings {

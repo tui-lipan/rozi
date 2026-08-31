@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use tui_lipan::prelude::*;
 
-use crate::anim::WindowAnimationConfig;
+use crate::layout::anim::WindowAnimationConfig;
 use crate::state::{
     AlertMode, AlertPaint, DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderMode, PaneBorderStyle,
     PaneTitlebarMode, ThemePreset,

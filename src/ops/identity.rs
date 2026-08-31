@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::ops::focus::{request_rename_focus, request_rename_session_focus};
-use crate::pane_lifecycle::find_pane_mut;
+use crate::pane::lifecycle::find_pane_mut;
 use crate::state::{Mode, PaneId, PaneRenameState, SessionRenameState, Workspace};
 
 pub(crate) fn rename_pane_in_workspaces(workspaces: &mut [Workspace], id: PaneId, title: &str) {

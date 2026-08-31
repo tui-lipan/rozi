@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
-use rozi::layout_tree_ser::{SerializedLayoutKind, SerializedSplitAxis, SerializedTree};
+use rozi::layout::shared::{
+    FracRect, SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace,
+};
+use rozi::layout::tree_ser::{SerializedLayoutKind, SerializedSplitAxis, SerializedTree};
 use rozi::session::protocol::{
     ClientInfo, PROTOCOL_VERSION, PaneCommandPhase, PaneCwdSource, PaneMeta, PaneRuntimeState,
     ServerMessage,
-};
-use rozi::shared_layout::{
-    FracRect, SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace,
 };
 use tui_lipan::prelude::TerminalScreen;
 
@@ -212,7 +212,7 @@ fn large_layout() -> SharedLayout {
                             title: Some(format!("workspace-{index}-pane-{offset}")),
                             profile_name: Some(format!("benchmark-profile-{}", offset % 4)),
                             cwd: Some(format!("/workspace/project-{index}/module-{offset}")),
-                            launch: Some(rozi::pane_launch::PaneLaunch::shell(format!(
+                            launch: Some(rozi::pane::launch::PaneLaunch::shell(format!(
                                 "benchmark-worker --shard {offset} --verbose"
                             ))),
                             replay: false,

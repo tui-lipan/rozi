@@ -1,10 +1,10 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::GeometryAnimation;
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::shared::{ClientId, SharedLayout};
 use crate::session::client::SessionClient;
 use crate::session::protocol::{ClientInfo, PaneMeta};
-use crate::shared_layout::{ClientId, SharedLayout};
 use crate::update::attach::{
     apply_attached_panes, bind_attached_pane_backends, flush_pending_spawns,
     reset_state_for_shared_seed, spawn_state_panes_on_session,
@@ -59,7 +59,7 @@ pub(crate) fn transport_failed(
     name: String,
     message: String,
 ) -> Update {
-    crate::pty_events::notify_error(ctx, "Session transport", message);
+    crate::pane::pty_events::notify_error(ctx, "Session transport", message);
     disconnected(ctx, epoch, name)
 }
 
@@ -81,7 +81,7 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
         crate::state::ConnectionState::Disconnected
     };
     ctx.state.commands_dirty = true;
-    crate::pty_events::notify_on(
+    crate::pane::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::SessionLifecycle,
         Some("Attach failed".to_string()),
@@ -219,13 +219,13 @@ pub(crate) fn attached(
         if !reconnect {
             reset_state_for_shared_seed(&mut ctx.state);
         }
-        crate::shared_layout::apply_shared_layout(ctx, &layout, layout_rev);
+        crate::layout::shared::apply_shared_layout(ctx, &layout, layout_rev);
         // Attaching reveals an already-running session, so snap to its authoritative geometry
         // instead of interpolating from the previous session's pane rectangles.
         ctx.state.animation = GeometryAnimation::None;
         bind_attached_pane_backends(ctx, panes);
         flush_pending_spawns(ctx);
-        crate::pty_events::flush_pending_resizes(ctx);
+        crate::pane::pty_events::flush_pending_resizes(ctx);
         Update::full()
     } else if had_panes {
         // Defensive: a live server holding panes but no committed layout (should not occur under
@@ -233,7 +233,7 @@ pub(crate) fn attached(
         apply_attached_panes(ctx, panes);
         ctx.state.animation = GeometryAnimation::None;
         flush_pending_spawns(ctx);
-        crate::pty_events::flush_pending_resizes(ctx);
+        crate::pane::pty_events::flush_pending_resizes(ctx);
         Update::full()
     } else {
         // An empty server (fresh ephemeral, autostarted named session, or one whose panes all
@@ -241,13 +241,13 @@ pub(crate) fn attached(
         // (controller) commits rev 1 on the tail chokepoint pass.
         let spawned = spawn_state_panes_on_session(ctx);
         flush_pending_spawns(ctx);
-        crate::pty_events::flush_pending_resizes(ctx);
+        crate::pane::pty_events::flush_pending_resizes(ctx);
         if spawned.is_empty() {
             Update::full()
         } else {
-            let open_delay = crate::anim::open_delay(ctx.state.config.animations);
-            let activate_delay = crate::anim::activation_delay(ctx.state.config.animations);
-            Update::with_command(crate::pane_lifecycle::open_timers_batch_command(
+            let open_delay = crate::layout::anim::open_delay(ctx.state.config.animations);
+            let activate_delay = crate::layout::anim::activation_delay(ctx.state.config.animations);
+            Update::with_command(crate::pane::lifecycle::open_timers_batch_command(
                 epoch,
                 spawned,
                 open_delay,
@@ -289,7 +289,7 @@ pub(crate) fn attached(
         } else {
             format!("Detached from `{}`", left.name)
         };
-        crate::pty_events::notify_info(ctx, message);
+        crate::pane::pty_events::notify_info(ctx, message);
     }
     if let Some(origin) = ctx.state.current().created_from_profile.clone() {
         confirm_profile_origin(ctx, origin);
@@ -356,7 +356,7 @@ pub(crate) fn error(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -> 
     if message.trim().is_empty() {
         return Update::none();
     }
-    crate::pty_events::notify_error(ctx, "Session error", message);
+    crate::pane::pty_events::notify_error(ctx, "Session error", message);
     Update::full()
 }
 

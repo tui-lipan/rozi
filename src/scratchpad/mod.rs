@@ -1,11 +1,15 @@
+//! Scratchpads: the drop-down panes that live outside the tiling tree.
+
+pub mod runtime;
+
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::GeometryAnimation;
 use crate::config::{SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
-use crate::geometry::workspace_tile_bounds;
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::geometry::workspace_tile_bounds;
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
-use crate::pane_lifecycle::spawn_pane_in_scratch;
+use crate::pane::lifecycle::spawn_pane_in_scratch;
 use crate::state::PaneIdentity;
 use crate::view;
 
@@ -122,10 +126,14 @@ pub(crate) fn toggle(ctx: &mut Context<AppRoot>) -> Update {
                 ctx.state.scratch_return_focus = None;
                 return Update::none();
             };
-            match crate::scratch_runtime::ScratchRuntime::start(&ctx.state.config, link) {
+            match crate::scratchpad::runtime::ScratchRuntime::start(&ctx.state.config, link) {
                 Ok(runtime) => ctx.state.scratch_runtime = Some(runtime),
                 Err(error) => {
-                    crate::pty_events::notify_error(ctx, "Scratchpad failed", error.to_string());
+                    crate::pane::pty_events::notify_error(
+                        ctx,
+                        "Scratchpad failed",
+                        error.to_string(),
+                    );
                     ctx.state.scratch_visible = false;
                     ctx.state.scratch_return_focus = None;
                     return Update::full();
@@ -145,14 +153,14 @@ pub(crate) fn toggle(ctx: &mut Context<AppRoot>) -> Update {
                 .scratchpad
                 .command
                 .clone()
-                .map(crate::pane_launch::PaneLaunch::shell),
+                .map(crate::pane::launch::PaneLaunch::shell),
             cwd: ctx
                 .state
                 .config
                 .scratchpad
                 .cwd
                 .clone()
-                .or_else(|| crate::pane_lifecycle::focused_local_cwd(&ctx.state)),
+                .or_else(|| crate::pane::lifecycle::focused_local_cwd(&ctx.state)),
             ..PaneIdentity::default()
         };
         return spawn_pane_in_scratch(ctx, None, identity).1;
@@ -595,7 +603,7 @@ mod tests {
                 .scratch
                 .panes
                 .push(crate::state::Pane::new(*id, 100, FloatRect::default()));
-            crate::tiling::append_tiled_window(&mut state.scratch, *id);
+            crate::layout::tiling::append_tiled_window(&mut state.scratch, *id);
         }
         state.scratch.focused_pane = panes.last().copied();
         state.scratch_visible = true;
@@ -638,7 +646,7 @@ mod tests {
                         .scratch
                         .panes
                         .push(crate::state::Pane::new(1, 100, FloatRect::default()));
-                    crate::tiling::append_tiled_window(&mut state.scratch, 1);
+                    crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
                     state.scratch.focused_pane = Some(1);
                     state.scratch_visible = true;
                     state.animation = GeometryAnimation::TileFloat;
@@ -668,20 +676,20 @@ mod tests {
     #[test]
     fn only_panes_against_the_dropdown_top_edge_own_it() {
         let mut state = state_with_scratch(&[1, 2]);
-        state.scratch.tile_tree = Some(crate::tiling::DwindleTree::Split {
+        state.scratch.tile_tree = Some(crate::layout::tiling::DwindleTree::Split {
             axis: crate::state::SplitAxis::Vertical,
             ratio: 0.5,
-            first: Box::new(crate::tiling::DwindleTree::Leaf(1)),
-            second: Box::new(crate::tiling::DwindleTree::Leaf(2)),
+            first: Box::new(crate::layout::tiling::DwindleTree::Leaf(1)),
+            second: Box::new(crate::layout::tiling::DwindleTree::Leaf(2)),
         });
         assert!(pane_touches_top_edge(&state, 1));
         assert!(!pane_touches_top_edge(&state, 2));
 
-        state.scratch.tile_tree = Some(crate::tiling::DwindleTree::Split {
+        state.scratch.tile_tree = Some(crate::layout::tiling::DwindleTree::Split {
             axis: crate::state::SplitAxis::Horizontal,
             ratio: 0.5,
-            first: Box::new(crate::tiling::DwindleTree::Leaf(1)),
-            second: Box::new(crate::tiling::DwindleTree::Leaf(2)),
+            first: Box::new(crate::layout::tiling::DwindleTree::Leaf(1)),
+            second: Box::new(crate::layout::tiling::DwindleTree::Leaf(2)),
         });
         assert!(pane_touches_top_edge(&state, 1));
         assert!(pane_touches_top_edge(&state, 2));
@@ -705,7 +713,7 @@ mod tests {
                         let mut pane = crate::state::Pane::new(id, 100, FloatRect::default());
                         pane.opening = false;
                         state.scratch.panes.push(pane);
-                        crate::tiling::append_tiled_window(&mut state.scratch, id);
+                        crate::layout::tiling::append_tiled_window(&mut state.scratch, id);
                     }
                     state.scratch.focused_pane = Some(2);
                     state.scratch_visible = true;
@@ -771,15 +779,15 @@ mod tests {
                         state.scratch.panes.push(pane);
                     }
                     // 1 | (2 over 3): closing 3 must land on 2, its own split partner, not on 1.
-                    state.scratch.tile_tree = Some(crate::tiling::DwindleTree::Split {
+                    state.scratch.tile_tree = Some(crate::layout::tiling::DwindleTree::Split {
                         axis: crate::state::SplitAxis::Horizontal,
                         ratio: 0.5,
-                        first: Box::new(crate::tiling::DwindleTree::Leaf(1)),
-                        second: Box::new(crate::tiling::DwindleTree::Split {
+                        first: Box::new(crate::layout::tiling::DwindleTree::Leaf(1)),
+                        second: Box::new(crate::layout::tiling::DwindleTree::Split {
                             axis: crate::state::SplitAxis::Vertical,
                             ratio: 0.5,
-                            first: Box::new(crate::tiling::DwindleTree::Leaf(2)),
-                            second: Box::new(crate::tiling::DwindleTree::Leaf(3)),
+                            first: Box::new(crate::layout::tiling::DwindleTree::Leaf(2)),
+                            second: Box::new(crate::layout::tiling::DwindleTree::Leaf(3)),
                         }),
                     });
                     state.scratch.focused_pane = Some(3);
@@ -812,9 +820,8 @@ mod tests {
             .terminal
             .process_server_output(b"client-scratch-marker\r\n");
         let (client, receiver) = crate::session::client::SessionClient::test_channel();
-        state.scratch_runtime = Some(crate::scratch_runtime::ScratchRuntime::from_test_client(
-            client,
-        ));
+        state.scratch_runtime =
+            Some(crate::scratchpad::runtime::ScratchRuntime::from_test_client(client));
         (state, receiver)
     }
 

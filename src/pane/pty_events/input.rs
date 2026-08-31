@@ -3,8 +3,8 @@ use std::time::Duration;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::find_pane_mut;
-use crate::pty_events::notifications::{Notified, input_blocked};
+use crate::pane::lifecycle::find_pane_mut;
+use crate::pane::pty_events::notifications::{Notified, input_blocked};
 use crate::state::PaneId;
 
 pub(crate) fn forward_key_to_pane(ctx: &mut Context<AppRoot>, id: PaneId, key: KeyEvent) -> Update {
@@ -23,7 +23,7 @@ pub(crate) fn forward_key_to_pane(ctx: &mut Context<AppRoot>, id: PaneId, key: K
 fn forward_key_to_targets(ctx: &mut Context<AppRoot>, targets: &[PaneId], key: KeyEvent) -> Update {
     let mut repaint = false;
     for id in targets {
-        let local = crate::pane_lifecycle::pane_is_local(&ctx.state, *id);
+        let local = crate::pane::lifecycle::pane_is_local(&ctx.state, *id);
         let scratch = crate::scratchpad::contains(&ctx.state, *id);
         let client = ctx.state.pty_client_for_pane(*id);
         if !scratch {
@@ -68,7 +68,7 @@ pub(crate) fn send_pane_bytes(
     if let Some(blocked) = input_blocked(ctx) {
         return Err(blocked.reason);
     }
-    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     let scratch = crate::scratchpad::contains(&ctx.state, id);
     let client = ctx.state.pty_client_for_pane(id);
     if !scratch {
@@ -136,7 +136,7 @@ pub(crate) fn handle_pane_input(
         // are the terminal reporting on itself and answer nothing.
         crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     }
-    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
             client.send_input(id, pane.pty_generation, local, input.bytes.to_vec());
@@ -163,7 +163,7 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
         return Update::none();
     }
     let before = ctx.state.focused_pane();
-    crate::key_routing::sync_focus_from_framework(ctx);
+    crate::input::routing::sync_focus_from_framework(ctx);
     let focus_moved = ctx.state.focused_pane() != before;
     // Forwarded activity also means the pointer is over this pane, so re-apply the hover policy.
     let hover = crate::ops::focus::hover_focus_pane(ctx, id);
@@ -178,9 +178,9 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     }
 
     let client = ctx.state.pty_client_for_pane(id);
-    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     let interval =
-        crate::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);
+        crate::pane::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);
     let mut hold = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
@@ -211,12 +211,12 @@ pub(crate) fn arm_pointer_flow(ctx: &mut Context<AppRoot>, id: PaneId, after: Du
 
 /// A pane's pointer wakeup fired. Forward its newest held position when the cadence permits.
 pub(crate) fn pointer_flow_tick(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
-    use crate::pty_events::pointer_flow::Paced;
+    use crate::pane::pty_events::pointer_flow::Paced;
 
     let client = ctx.state.pty_client_for_pane(id);
-    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     let interval =
-        crate::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);
+        crate::pane::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);
     let mut retry = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         match pane.terminal.pointer_flow.paced(interval) {

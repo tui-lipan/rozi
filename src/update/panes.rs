@@ -1,24 +1,24 @@
 use tui_lipan::prelude::*;
 
-use crate::anim::GeometryAnimation;
-use crate::key_routing::handle_key_routing;
+use crate::input::routing::handle_key_routing;
+use crate::layout::anim::GeometryAnimation;
 use crate::ops::focus::{acknowledge_pane_input, focus_pane as focus, request_pane_focus};
-use crate::pane_lifecycle::find_pane_mut;
-use crate::pty_events::{
+use crate::pane::lifecycle::find_pane_mut;
+use crate::pane::pty_events::{
     handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
 };
 use crate::state::{AlertMode, PaneId, ResizeCorner, State};
 use crate::{AppRoot, control, schedule_alert_pulse_tick};
 
 pub(super) fn close_popup(ctx: &mut Context<AppRoot>) -> Update {
-    crate::popup::close(ctx)
+    crate::ops::popup::close(ctx)
 }
 
 pub(super) fn focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     // A click while hint mode is up dismisses it and stops there: the labels belong to the pane
     // that was focused when the mode was entered, so moving focus out from under them would leave
     // a pane wearing another pane's hints.
-    if crate::hints::cancel_for_pointer(ctx) {
+    if crate::ops::hints::cancel_for_pointer(ctx) {
         return Update::full();
     }
     focus(&mut ctx.state, id);
@@ -232,7 +232,7 @@ pub(super) fn copy_feedback_expired(
     id: PaneId,
     epoch: u64,
 ) -> Update {
-    crate::copy_mode::expire_copy_feedback(ctx, attachment, id, epoch)
+    crate::input::copy_mode::expire_copy_feedback(ctx, attachment, id, epoch)
 }
 
 pub(super) fn pane_input(
@@ -258,7 +258,7 @@ pub(super) fn pane_link_activate(ctx: &mut Context<AppRoot>, event: TerminalLink
     match tui_lipan::utils::open_url(&event.uri) {
         Ok(()) => Update::none(),
         Err(error) => {
-            crate::pty_events::notify_error(ctx, "Link failed", error.to_string());
+            crate::pane::pty_events::notify_error(ctx, "Link failed", error.to_string());
             Update::full()
         }
     }
@@ -268,7 +268,7 @@ pub(super) fn forward_prefix(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Updat
     let Some(id) = ctx.state.focused_pane() else {
         return Update::none();
     };
-    crate::pty_events::forward_key_to_pane(ctx, id, key)
+    crate::pane::pty_events::forward_key_to_pane(ctx, id, key)
 }
 
 pub(super) fn pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {
@@ -300,7 +300,7 @@ pub(crate) fn arm_alert_pulse(ctx: &mut Context<AppRoot>) {
     };
     ctx.state.alert_pulse_armed = true;
     link.send_after(
-        crate::anim::alert_pulse_half_period(ctx.state.config.animations),
+        crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations),
         crate::Msg::AlertPulseTick,
     );
 }
@@ -324,7 +324,7 @@ pub(super) fn alert_pulse_tick(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.alert_pulse_calm_phase = !ctx.state.alert_pulse_calm_phase;
     }
     Update::with_command(schedule_alert_pulse_tick(
-        crate::anim::alert_pulse_half_period(ctx.state.config.animations),
+        crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations),
     ))
 }
 

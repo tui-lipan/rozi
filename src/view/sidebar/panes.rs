@@ -153,8 +153,8 @@ fn prompt_echo_path(title: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::tiling::{build_dwindle_tree, swap_tree_leaves};
     use crate::state::Pane;
-    use crate::tiling::{build_dwindle_tree, swap_tree_leaves};
     use tui_lipan::prelude::FloatRect;
 
     fn pane(title: Option<&str>, cwd: Option<&str>) -> Pane {

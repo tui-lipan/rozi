@@ -1,8 +1,8 @@
 //! Render-level regression coverage for pane alert colors across border modes.
 
 use rozi::AppRoot;
+use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{Pane, PaneBorderMode, SplitAxis};
-use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{Color, FloatRect, Rect};
 

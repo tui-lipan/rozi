@@ -25,7 +25,7 @@ fn padding_value(value: &str) -> Option<u16> {
 }
 
 fn padding_error(ctx: &mut Context<AppRoot>) {
-    crate::pty_events::notify_error(ctx, "Invalid padding", "Enter one digit");
+    crate::pane::pty_events::notify_error(ctx, "Invalid padding", "Enter one digit");
 }
 
 pub(super) fn command_link_ready(ctx: &mut Context<AppRoot>, link: CommandLink<Msg>) -> Update {
@@ -508,7 +508,7 @@ fn settings_activate_dir(
 }
 
 fn preference_error(ctx: &mut Context<AppRoot>, err: String) {
-    crate::pty_events::notify_on(
+    crate::pane::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::PreferenceSave,
         Some("Preference not saved".to_string()),
@@ -518,7 +518,7 @@ fn preference_error(ctx: &mut Context<AppRoot>, err: String) {
 
 fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
-        crate::pty_events::notify_on(
+        crate::pane::pty_events::notify_on(
             ctx,
             crate::state::ToastChannel::PreferenceSave,
             Some("Preference not saved".to_string()),
@@ -595,7 +595,7 @@ pub(super) fn submit_pane_padding(ctx: &mut Context<AppRoot>) -> Update {
     };
     ctx.state.config.pane.padding = (vertical, horizontal, vertical, horizontal);
     if let Err(error) = crate::config::persist_pane_padding(vertical, horizontal) {
-        crate::pty_events::notify_error(ctx, "Padding not saved", error);
+        crate::pane::pty_events::notify_error(ctx, "Padding not saved", error);
     }
     ctx.state.pane_padding_editor = None;
     if ctx.state.show_settings {
@@ -648,7 +648,7 @@ pub(super) fn workbar_tick(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(super) fn theme_error(ctx: &mut Context<AppRoot>, message: String) -> Update {
-    crate::pty_events::notify_error(ctx, "Theme reload failed", message);
+    crate::pane::pty_events::notify_error(ctx, "Theme reload failed", message);
     Update::full()
 }
 

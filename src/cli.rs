@@ -658,7 +658,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         "--keep-open" if !passthrough => keep_open = true,
                         "--argv" if !passthrough && command.is_none() => {
                             let direct: Vec<String> = iter.by_ref().collect();
-                            crate::pane_launch::PaneLaunch::direct(direct.clone())?;
+                            crate::pane::launch::PaneLaunch::direct(direct.clone())?;
                             argv = Some(direct);
                             break;
                         }

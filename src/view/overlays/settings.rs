@@ -261,7 +261,7 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
         Animated::new(panel)
             .opacity(crate::scratchpad::backdrop_dim(dim_progress))
             .opacity_target(ctx.state.theme.surface.backdrop)
-            .transition(crate::anim::instant_transition())
+            .transition(crate::layout::anim::instant_transition())
             .into()
     } else {
         panel

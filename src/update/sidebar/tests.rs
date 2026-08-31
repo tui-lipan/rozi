@@ -530,7 +530,7 @@ fn tree_run_actions_pass_the_path_as_env_never_in_the_command() {
         let command = spawn
             .launch
             .as_ref()
-            .and_then(crate::pane_launch::PaneLaunch::shell_command);
+            .and_then(crate::pane::launch::PaneLaunch::shell_command);
         assert_eq!(command, Some("git diff -- \"$ROZI_FILE\""));
         assert!(
             !command.unwrap().contains("rm -rf"),
@@ -791,7 +791,8 @@ fn the_close_affordance_takes_two_clicks_and_is_disarmed_by_acting_elsewhere() {
             "acting on the row disarms the pending close"
         );
         assert!(
-            crate::pane_lifecycle::find_pane(backend.state(), id).is_some_and(|pane| !pane.closing),
+            crate::pane::lifecycle::find_pane(backend.state(), id)
+                .is_some_and(|pane| !pane.closing),
             "an abandoned confirmation leaves the pane alone"
         );
 
@@ -812,7 +813,7 @@ fn the_close_affordance_takes_two_clicks_and_is_disarmed_by_acting_elsewhere() {
             "committing consumes the arming"
         );
         assert!(
-            crate::pane_lifecycle::find_pane(backend.state(), id).is_none_or(|pane| pane.closing),
+            crate::pane::lifecycle::find_pane(backend.state(), id).is_none_or(|pane| pane.closing),
             "the confirming click closes the pane"
         );
     });
@@ -1342,7 +1343,7 @@ fn launcher_run_inherits_the_focused_pane_cwd_and_holds_the_pane_open() {
             spawn
                 .launch
                 .as_ref()
-                .and_then(crate::pane_launch::PaneLaunch::shell_command),
+                .and_then(crate::pane::launch::PaneLaunch::shell_command),
             Some("cargo build")
         );
         assert_eq!(spawn.cwd.as_deref(), Some("/home/x/work/rozi"));

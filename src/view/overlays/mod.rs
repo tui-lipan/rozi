@@ -13,7 +13,7 @@ use crate::state::{
 };
 use crate::{AppRoot, Msg};
 
-use super::keys::{
+use super::widget_keys::{
     askpass_input_key, collaboration_key, help_filter_key, help_scroll_key, layout_picker_key,
     palette_key, pane_padding_horizontal_key, pane_padding_vertical_key, pick_key,
     pick_prompt_input_key, profile_picker_key, remote_picker_key, remote_target_input_key,

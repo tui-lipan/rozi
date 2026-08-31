@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-pub const SKILL_MD: &str = include_str!("../skills/rozi/SKILL.md");
+pub const SKILL_MD: &str = include_str!("SKILL.md");
 
 #[cfg(windows)]
 mod windows;
@@ -673,8 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_skill_matches_the_repository_file() {
-        assert_eq!(SKILL_MD, include_str!("../skills/rozi/SKILL.md"));
+    fn embedded_skill_is_a_well_formed_skill_document() {
         assert!(SKILL_MD.starts_with("---\nname: rozi"));
         assert!(SKILL_MD.contains("ROZI=1"));
         assert!(SKILL_MD.contains("rozi list-panes"));
@@ -842,7 +841,6 @@ mod tests {
 
     #[test]
     fn print_skill_emits_only_the_embedded_document() {
-        assert_eq!(SKILL_MD, include_str!("../skills/rozi/SKILL.md"));
         let mut buffer = Vec::new();
         {
             use std::io::Write;

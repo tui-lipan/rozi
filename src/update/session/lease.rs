@@ -1,8 +1,8 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
+use crate::layout::shared::ClientId;
 use crate::session::protocol::{ClientInfo, ControllerChangeReason};
-use crate::shared_layout::ClientId;
 
 pub(crate) fn controller_changed(
     ctx: &mut Context<AppRoot>,
@@ -57,7 +57,7 @@ pub(crate) fn controller_changed(
         let who = controller
             .map(|id| format!("client {id}"))
             .unwrap_or_else(|| "another client".to_string());
-        crate::pty_events::notify_on(
+        crate::pane::pty_events::notify_on(
             ctx,
             crate::state::ToastChannel::LayoutControl,
             None,
@@ -70,7 +70,7 @@ pub(crate) fn controller_changed(
         crate::ops::session::apply_pending_background_closes(ctx);
     }
     if now_controller && !ctx.state.current().pending_resizes.is_empty() {
-        crate::pty_events::flush_pending_resizes(ctx);
+        crate::pane::pty_events::flush_pending_resizes(ctx);
     }
     ctx.state.commands_dirty = true;
     Update::full()
@@ -139,7 +139,7 @@ pub(crate) fn control_requested(ctx: &mut Context<AppRoot>, epoch: u64, from: Cl
     let how = crate::commands::command_prefix_chord(ctx, "grant-control")
         .map(|chord| format!("{chord} to grant"))
         .unwrap_or_else(|| "grant from Manage collaborators".to_string());
-    crate::pty_events::notify_info(ctx, format!("{who} requests layout control\n{how}"));
+    crate::pane::pty_events::notify_info(ctx, format!("{who} requests layout control\n{how}"));
     ctx.state.commands_dirty = true;
     Update::full()
 }
@@ -148,7 +148,7 @@ pub(crate) fn control_declined(ctx: &mut Context<AppRoot>, epoch: u64) -> Update
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    crate::pty_events::notify_info(ctx, "Your control request was declined");
+    crate::pane::pty_events::notify_info(ctx, "Your control request was declined");
     Update::full()
 }
 
@@ -172,7 +172,7 @@ pub(crate) fn evicted(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -
     // The attachment was ended by the server, not parked; retaining it would render a session we
     // are no longer welcome in as merely offline.
     ctx.state.background.remove(&epoch);
-    crate::pty_events::notify_on(
+    crate::pane::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::SessionLifecycle,
         Some("Removed from session".to_string()),

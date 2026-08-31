@@ -1,8 +1,8 @@
 //! Pins borderless headers, internal Divider rendering, and the config-only special-pane frame.
 
 use rozi::AppRoot;
+use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{MoveSession, Pane, PaneBorderMode, PaneTitlebarMode, SplitAxis};
-use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 

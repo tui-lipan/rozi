@@ -7,7 +7,7 @@ pub struct PaneIdentity {
     pub custom_title: Option<String>,
     pub profile_name: Option<String>,
     pub cwd: Option<String>,
-    pub launch: Option<crate::pane_launch::PaneLaunch>,
+    pub launch: Option<crate::pane::launch::PaneLaunch>,
     pub keep_open: bool,
     /// Run a shell launch by typing it into the pane's interactive shell instead of handing it to the
     /// deterministic command-runner shell. Set for profile-restored panes: a captured command is

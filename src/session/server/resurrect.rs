@@ -240,7 +240,7 @@ struct SnapshotMeta {
 struct SnapshotPane {
     pane_id: PaneId,
     generation: u64,
-    launch: Option<crate::pane_launch::PaneLaunch>,
+    launch: Option<crate::pane::launch::PaneLaunch>,
     cwd: Option<String>,
     keep_open: bool,
     title: Option<String>,

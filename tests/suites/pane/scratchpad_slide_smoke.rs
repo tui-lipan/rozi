@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use rozi::AppRoot;
-use rozi::anim::GeometryAnimation;
+use rozi::layout::anim::GeometryAnimation;
 use rozi::state::{Pane, PaneBorderMode};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};

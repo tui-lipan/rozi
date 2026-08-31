@@ -206,7 +206,7 @@ pub(crate) fn start_services(ctx: &mut Context<AppRoot>) -> Update {
                     INITIAL_BACKOFF,
                     &err.to_string(),
                 ) {
-                    crate::pty_events::notify_error(ctx, "Service failed", message);
+                    crate::pane::pty_events::notify_error(ctx, "Service failed", message);
                 }
             }
         }
@@ -240,7 +240,7 @@ pub(crate) fn reconcile_services(ctx: &mut Context<AppRoot>) {
         control_socket.as_deref(),
     );
     for message in failures {
-        crate::pty_events::notify_error(ctx, "Service failed", message);
+        crate::pane::pty_events::notify_error(ctx, "Service failed", message);
     }
 }
 

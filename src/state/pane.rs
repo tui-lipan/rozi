@@ -18,10 +18,10 @@ pub struct Pane {
     pub scrollable_width: f32,
     pub opening: bool,
     /// Tile edge this pane slides in from and back out toward, under
-    /// [`PaneAnimationStyle::Slide`](crate::anim::PaneAnimationStyle::Slide). Set from the split that
+    /// [`PaneAnimationStyle::Slide`](crate::layout::anim::PaneAnimationStyle::Slide). Set from the split that
     /// placed the pane and never changed after, so the close is the open in reverse. Purely local
     /// view state: it is never shared, persisted, or sent over the session protocol.
-    pub slide_edge: crate::anim::SlideEdge,
+    pub slide_edge: crate::layout::anim::SlideEdge,
     pub terminal_active: bool,
     /// Removed from the layout but still described, so its close animation can run.
     pub closing: bool,
@@ -49,7 +49,7 @@ impl Pane {
             floating_rect,
             scrollable_width: DEFAULT_SCROLLABLE_WIDTH,
             opening: true,
-            slide_edge: crate::anim::SlideEdge::default(),
+            slide_edge: crate::layout::anim::SlideEdge::default(),
             terminal_active: false,
             closing: false,
             logging: false,

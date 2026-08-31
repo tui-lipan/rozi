@@ -1,8 +1,9 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::GeometryAnimation;
-use crate::geometry::{closest_pane_to_rect, directional_score, workspace_tile_bounds};
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::geometry::{closest_pane_to_rect, directional_score, workspace_tile_bounds};
+use crate::layout::tiling::{self, append_tiled_window, remove_tiled_window};
 use crate::layout::{
     placement_for, scrollable_viewport_anchor, workspace_target_rects,
     workspace_target_rects_with_visible_bounds,
@@ -11,7 +12,6 @@ use crate::state::{
     Direction, DirectionalFocusHint, LayoutKind, Pane, PaneId, ScrollableRevealEdge, State,
     Workspace,
 };
-use crate::tiling::{self, append_tiled_window, remove_tiled_window};
 use crate::view;
 
 pub(crate) fn split_axis_for_direction(direction: Direction) -> crate::state::SplitAxis {
@@ -71,7 +71,7 @@ pub(crate) fn acknowledge_pane_input(state: &mut State, pane_id: PaneId) -> bool
 /// Clear one pane's attention marks. Resolved across every namespace, so a popup or scratchpad pane
 /// answers input the same way a workspace pane does.
 fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
-    let Some(pane) = crate::pane_lifecycle::find_pane_mut(state, pane_id) else {
+    let Some(pane) = crate::pane::lifecycle::find_pane_mut(state, pane_id) else {
         return false;
     };
 
@@ -629,7 +629,7 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
         let Some(tree) = workspace.tile_tree.as_mut() else {
             return false;
         };
-        crate::tiling::swap_tree_leaves(tree, focused, master)
+        crate::layout::tiling::swap_tree_leaves(tree, focused, master)
     };
     if !swapped {
         return false;
@@ -1270,7 +1270,7 @@ pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {
     if ctx.state.has_modal_overlay() {
         return;
     }
-    if crate::pane_lifecycle::find_pane_mut(&mut ctx.state, id)
+    if crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
         .is_some_and(|pane| pane.terminal_active && !pane.opening && !pane.closing)
     {
         focus_key(ctx, view::pane_terminal_key(id));
@@ -1359,8 +1359,8 @@ pub(crate) fn request_pick_prompt_focus(ctx: &mut Context<AppRoot>) {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::layout::tiling::{append_tiled_window, collect_tree_leaves};
     use crate::state::{LayoutKind, Pane};
-    use crate::tiling::{append_tiled_window, collect_tree_leaves};
     use tui_lipan::prelude::Theme;
 
     fn state_with_tiled(ids: &[PaneId]) -> State {
@@ -2601,7 +2601,7 @@ mod tests {
         {
             let workspace = &mut state.current_mut().workspaces[0];
             workspace.layout_kind = LayoutKind::Scrollable;
-            workspace.tile_tree = crate::tiling::build_dwindle_tree(
+            workspace.tile_tree = crate::layout::tiling::build_dwindle_tree(
                 &[10, 30, 20],
                 crate::state::SplitAxis::Horizontal,
                 &[0.5, 0.5],

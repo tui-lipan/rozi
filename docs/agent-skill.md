@@ -1,6 +1,6 @@
 # Agent skill
 
-Rozi includes an [Agent Skill](../skills/rozi/SKILL.md) that tells coding agents how to inspect and
+Rozi includes an [Agent Skill](../src/skill/SKILL.md) that tells coding agents how to inspect and
 control Rozi panes with the CLI.
 
 ## Install for one project

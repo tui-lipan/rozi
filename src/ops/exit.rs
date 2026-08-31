@@ -3,9 +3,9 @@ use std::time::Instant;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::close_pane;
+use crate::pane::lifecycle::close_pane;
+use crate::pane::pty_events::confirm_toast;
 use crate::profiles;
-use crate::pty_events::confirm_toast;
 use crate::state::{PendingDestructive, PendingDestructiveConfirmation, SessionDisposition, State};
 
 pub(crate) fn clear_pending(ctx: &mut Context<AppRoot>) {
@@ -58,7 +58,7 @@ fn confirm_second_press(
 /// Both `quit` and `detach` land here. Cancelling the prompt (`Esc`) returns to the session with
 /// nothing torn down.
 pub(crate) fn leave_client(ctx: &mut Context<AppRoot>) -> Update {
-    crate::popup::kill_if_open(ctx);
+    crate::ops::popup::kill_if_open(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     clear_pending(ctx);
     let temporary = keepable_temporary_count(&ctx.state);
@@ -85,7 +85,7 @@ pub(crate) fn leave_client(ctx: &mut Context<AppRoot>) -> Update {
 pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool) -> Update {
     clear_pending(ctx);
     crate::ops::pick::cancel_pick(ctx, Some("detached"));
-    crate::popup::kill_if_open(ctx);
+    crate::ops::popup::kill_if_open(ctx);
     let shutdown_current = shutdown_on_exit(ctx.state.current(), close_temporary);
     mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
@@ -204,7 +204,7 @@ pub(crate) fn close_focused_pane_with_confirmation(
     };
     let needs_confirm = confirmations_enabled
         && ctx.state.config.confirm.close_pane
-        && crate::pane_lifecycle::find_pane(&ctx.state, id)
+        && crate::pane::lifecycle::find_pane(&ctx.state, id)
             .is_some_and(|pane| !pane.closing && pane.terminal.is_running());
 
     if needs_confirm
@@ -233,7 +233,7 @@ pub(crate) fn kill_workspace_with_confirmation(
     let workspace = &ctx.state.current().workspaces[workspace_index];
     let pane_count = workspace.panes.iter().filter(|pane| !pane.closing).count();
     if pane_count == 0 {
-        crate::pty_events::notify_info(ctx, "Workspace is already empty");
+        crate::pane::pty_events::notify_info(ctx, "Workspace is already empty");
         return Update::full();
     }
 
@@ -267,7 +267,7 @@ pub(crate) fn kill_workspace_with_confirmation(
     let targets: Vec<(crate::state::PaneId, u64)> = pane_ids
         .into_iter()
         .filter_map(|id| {
-            crate::pane_lifecycle::close_pane_inner_without_focus(ctx, id, true)
+            crate::pane::lifecycle::close_pane_inner_without_focus(ctx, id, true)
                 .map(|generation| (id, generation))
         })
         .collect();
@@ -288,10 +288,10 @@ pub(crate) fn kill_workspace_with_confirmation(
     }
     crate::ops::focus::request_current_pane_focus(ctx);
 
-    Update::with_command(crate::pane_lifecycle::prune_closed_batch_command(
+    Update::with_command(crate::pane::lifecycle::prune_closed_batch_command(
         ctx.state.runtime_epoch,
         targets,
-        crate::anim::retained_pane_timeout(ctx.state.config.animations),
+        crate::layout::anim::retained_pane_timeout(ctx.state.config.animations),
     ))
 }
 
@@ -300,7 +300,7 @@ pub(crate) fn kill_session_with_confirmation(
     confirmations_enabled: bool,
 ) -> Update {
     if !ctx.state.current().session_attached {
-        crate::pty_events::notify_info(ctx, "Not attached to a named session");
+        crate::pane::pty_events::notify_info(ctx, "Not attached to a named session");
         return Update::full();
     }
     if !ctx.state.is_controller() {
@@ -339,7 +339,7 @@ pub(crate) fn restart_session_with_confirmation(
     confirmations_enabled: bool,
 ) -> Update {
     if !ctx.state.current().session_attached {
-        crate::pty_events::notify_info(ctx, "Not attached to a session");
+        crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
         return Update::full();
     }
     if !ctx.state.is_controller() {
@@ -780,7 +780,7 @@ mod tests {
                     pane.terminal_active = true;
                     workspace.panes.push(pane);
                 }
-                workspace.tile_tree = crate::tiling::build_dwindle_tree(
+                workspace.tile_tree = crate::layout::tiling::build_dwindle_tree(
                     &[10, 30, 20],
                     crate::state::SplitAxis::Horizontal,
                     &[0.5, 0.5],
@@ -794,7 +794,10 @@ mod tests {
                 inactive.opening = false;
                 inactive.terminal_active = true;
                 state.current_mut().workspaces[1].panes.push(inactive);
-                crate::tiling::append_tiled_window(&mut state.current_mut().workspaces[1], 90);
+                crate::layout::tiling::append_tiled_window(
+                    &mut state.current_mut().workspaces[1],
+                    90,
+                );
             }
             backend.render();
             let focus_events = backend

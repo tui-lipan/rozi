@@ -142,7 +142,7 @@ pub(crate) fn failed(ctx: &mut Context<AppRoot>, message: String) -> Update {
         pane.terminal.status = ManagedTerminalStatus::Error("scratch runtime disconnected".into());
     }
     ctx.state.scratch_visible = false;
-    crate::pty_events::notify_error(ctx, "Scratchpad disconnected", message);
+    crate::pane::pty_events::notify_error(ctx, "Scratchpad disconnected", message);
     Update::full()
 }
 

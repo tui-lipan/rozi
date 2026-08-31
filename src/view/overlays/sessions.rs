@@ -22,7 +22,7 @@ pub(crate) fn session_picker_overlay(ctx: &Context<AppRoot>) -> Element {
 struct CollaboratorItem {
     /// Index into the shared roster, which is what the grant/decline/evict ops address.
     roster_index: usize,
-    client_id: crate::shared_layout::ClientId,
+    client_id: crate::layout::shared::ClientId,
     position: usize,
     grantable: bool,
     requesting: bool,
@@ -205,7 +205,7 @@ pub(crate) fn collaboration_overlay(ctx: &Context<AppRoot>) -> Element {
 }
 
 /// One client as a compact token: `razuer #2077`.
-fn client_tag(label: &str, id: crate::shared_layout::ClientId) -> String {
+fn client_tag(label: &str, id: crate::layout::shared::ClientId) -> String {
     format!("{label} #{id}")
 }
 

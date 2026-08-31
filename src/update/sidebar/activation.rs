@@ -31,7 +31,7 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
     match close {
         crate::state::SidebarClose::Pane(id) => {
             crate::ops::exit::clear_pending(ctx);
-            crate::pane_lifecycle::close_pane(ctx, id)
+            crate::pane::lifecycle::close_pane(ctx, id)
         }
         // The row carries the live discovered entry the identity was built from, so the kill acts
         // on what is actually on screen rather than re-looking it up and risking a stale match.
@@ -202,7 +202,7 @@ pub(crate) fn activate_published_row(
     let update = focus_pane(ctx, pane_id);
     // Looking at a row acknowledges its finish, exactly as focusing a pane acknowledges the
     // pane's. The pane-wide chokepoint cannot do this: it does not know which row was asked for.
-    if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, pane_id)
+    if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, pane_id)
         && let Some(ui) = pane.terminal.published_row_ui.get_mut(&row_id)
     {
         ui.finished_unseen = false;

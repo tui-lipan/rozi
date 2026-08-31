@@ -16,7 +16,7 @@ fn hint_pill(theme: &Theme, label: &str, key: &str) -> Element {
                 .style(fg_only(&theme.primary).bold()),
         )
         .child(
-            Text::new(crate::keys_display::format_keys(key))
+            Text::new(crate::view::keys_display::format_keys(key))
                 .overflow(Overflow::Clip)
                 .style(fg_only(&theme.muted)),
         )

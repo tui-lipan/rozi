@@ -2,7 +2,7 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 
-use crate::shared_layout::SHARED_LAYOUT_VERSION;
+use crate::layout::shared::SHARED_LAYOUT_VERSION;
 
 /// Minimal placeholder palette for spawn requests in tests.
 fn test_palette() -> WirePalette {
@@ -1382,17 +1382,17 @@ fn shared_layout_for_panes(panes: &[(PaneId, u64)]) -> SharedLayout {
         version: SHARED_LAYOUT_VERSION,
         canvas_cols: 80,
         canvas_rows: 24,
-        workspaces: vec![crate::shared_layout::SharedWorkspace {
+        workspaces: vec![crate::layout::shared::SharedWorkspace {
             index: 0,
             name: None,
             synchronized: false,
-            layout: crate::shared_layout::SharedLayoutKind::Dwindle,
-            start_axis: crate::shared_layout::SharedSplitAxis::Horizontal,
+            layout: crate::layout::shared::SharedLayoutKind::Dwindle,
+            start_axis: crate::layout::shared::SharedSplitAxis::Horizontal,
             split_ratios: Vec::new(),
             tree: None,
             panes: panes
                 .iter()
-                .map(|(pane_id, generation)| crate::shared_layout::SharedPane {
+                .map(|(pane_id, generation)| crate::layout::shared::SharedPane {
                     pane_id: *pane_id,
                     generation: *generation,
                     title: None,
@@ -1700,7 +1700,7 @@ fn local_spawn(pane_id: PaneId, generation: u64) -> ClientMessage {
         pane_id,
         local: true,
         generation,
-        launch: Some(crate::pane_launch::PaneLaunch::shell("true")),
+        launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
         cwd: None,
         cols: 20,
         rows: 5,
@@ -1780,7 +1780,7 @@ fn colliding_spawn(pane_id: PaneId, local: bool, generation: u64, command: &str)
         pane_id,
         local,
         generation,
-        launch: Some(crate::pane_launch::PaneLaunch::shell(command)),
+        launch: Some(crate::pane::launch::PaneLaunch::shell(command)),
         cwd: None,
         cols: 40,
         rows: 10,
@@ -2595,7 +2595,7 @@ fn exited_pane_can_be_respawned() {
         owner: None,
         pane_id: 1,
         generation: 3,
-        launch: Some(crate::pane_launch::PaneLaunch::shell("true")),
+        launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
         cwd: None,
         title: None,
         cols: 20,
@@ -2884,11 +2884,11 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 title: Some(format!("pane-{id}")),
                 cwd: None,
                 launch: Some(if id == 1 {
-                    crate::pane_launch::PaneLaunch::Direct {
+                    crate::pane::launch::PaneLaunch::Direct {
                         argv: vec!["printf".into(), "literal argument".into()],
                     }
                 } else {
-                    crate::pane_launch::PaneLaunch::shell("true")
+                    crate::pane::launch::PaneLaunch::shell("true")
                 }),
                 keep_open: false,
                 command_completed: false,
@@ -2947,7 +2947,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     assert!(!restored.panes.contains_key(&crate::state::POPUP_PANE_ID));
     assert_eq!(
         restored.panes[&1].launch,
-        Some(crate::pane_launch::PaneLaunch::Direct {
+        Some(crate::pane::launch::PaneLaunch::Direct {
             argv: vec!["printf".into(), "literal argument".into()]
         })
     );
@@ -2976,7 +2976,7 @@ fn structured_argv_reaches_the_child_without_shell_interpretation() {
         owner: None,
         pane_id: 1,
         generation: 1,
-        launch: Some(crate::pane_launch::PaneLaunch::Direct {
+        launch: Some(crate::pane::launch::PaneLaunch::Direct {
             argv: vec!["printf".into(), "%s".into(), literal.into()],
         }),
         cwd: None,
@@ -3037,7 +3037,7 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
         owner: None,
         pane_id: 1,
         generation: 1,
-        launch: Some(crate::pane_launch::PaneLaunch::shell(
+        launch: Some(crate::pane::launch::PaneLaunch::shell(
             "printf 'hello from the command\\n'; exit 3",
         )),
         cwd: None,
@@ -3126,7 +3126,7 @@ fn keep_open_recovers_terminal_modes_before_starting_the_shell() {
         owner: None,
         pane_id: 1,
         generation: 1,
-        launch: Some(crate::pane_launch::PaneLaunch::shell(
+        launch: Some(crate::pane::launch::PaneLaunch::shell(
             "printf 'primary marker\\n\\033[?1049h\\033[?1003h\\033[?1006h\\033[?1004h\\033[?2004h\\033[?1h\\033=stale app'; exit 3",
         )),
         cwd: None,
@@ -3201,7 +3201,7 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
         owner: None,
         pane_id,
         generation: 1,
-        launch: Some(crate::pane_launch::PaneLaunch::shell(
+        launch: Some(crate::pane::launch::PaneLaunch::shell(
             "printf 'popup result\\n'; exit 3",
         )),
         cwd: None,

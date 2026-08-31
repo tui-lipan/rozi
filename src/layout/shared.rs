@@ -11,11 +11,11 @@
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::*;
 
-use crate::layout_tree_ser::{
+use crate::layout::tiling::DwindleTree;
+use crate::layout::tree_ser::{
     SerializedLayoutKind, SerializedSplitAxis, SerializedTree, from_dwindle, to_dwindle,
 };
 use crate::state::{PaneId, State};
-use crate::tiling::DwindleTree;
 
 /// Stable identity for an attached client, assigned by the server on attach.
 pub type ClientId = u64;
@@ -54,7 +54,7 @@ pub struct SharedPane {
     pub title: Option<String>,
     pub profile_name: Option<String>,
     pub cwd: Option<String>,
-    pub launch: Option<crate::pane_launch::PaneLaunch>,
+    pub launch: Option<crate::pane::launch::PaneLaunch>,
     /// See [`crate::state::PaneIdentity::replay`]. Shared so a follower that takes control
     /// respawns an exited profile pane through the interactive shell, not the command runner.
     /// Defaulted so layout documents committed before this field existed still parse.
@@ -377,7 +377,9 @@ fn shared_workspace_from_state(
                     w: pane.floating_rect.w / cols,
                     h: pane.floating_rect.h / rows,
                 }),
-                scrollable_width: crate::tiling::sanitize_scrollable_width(pane.scrollable_width),
+                scrollable_width: crate::layout::tiling::sanitize_scrollable_width(
+                    pane.scrollable_width,
+                ),
             })
             .collect(),
     }
@@ -512,7 +514,7 @@ fn rebuild_shared_workspaces(
                 .rect
                 .map(|rect| frac_rect_to_float(rect, canvas_cols, canvas_rows))
                 .unwrap_or_else(|| {
-                    crate::geometry::default_floating_rect(bounds, shared_pane.pane_id)
+                    crate::layout::geometry::default_floating_rect(bounds, shared_pane.pane_id)
                 });
             let existing = reusable.remove(&shared_pane.pane_id).or_else(|| {
                 ctx.state
@@ -744,14 +746,14 @@ pub(crate) fn apply_shared_layout(
         }
     }
     if !pruned.is_empty() {
-        ctx.state.animation = crate::anim::GeometryAnimation::Close;
-        return Update::with_command(crate::pane_lifecycle::prune_closed_batch_command(
+        ctx.state.animation = crate::layout::anim::GeometryAnimation::Close;
+        return Update::with_command(crate::pane::lifecycle::prune_closed_batch_command(
             ctx.state.runtime_epoch,
             pruned,
-            crate::anim::retained_pane_timeout(ctx.state.config.animations),
+            crate::layout::anim::retained_pane_timeout(ctx.state.config.animations),
         ));
     }
-    ctx.state.animation = crate::anim::GeometryAnimation::TileFloat;
+    ctx.state.animation = crate::layout::anim::GeometryAnimation::TileFloat;
 
     Update::full()
 }
@@ -795,10 +797,11 @@ fn apply_shared_pane_fields(
     pane.identity.replay = shared_pane.replay
         && matches!(
             pane.identity.launch.as_ref(),
-            Some(crate::pane_launch::PaneLaunch::Shell { .. })
+            Some(crate::pane::launch::PaneLaunch::Shell { .. })
         );
     pane.identity.keep_open = shared_pane.keep_open;
-    pane.scrollable_width = crate::tiling::sanitize_scrollable_width(shared_pane.scrollable_width);
+    pane.scrollable_width =
+        crate::layout::tiling::sanitize_scrollable_width(shared_pane.scrollable_width);
 }
 
 #[cfg(test)]
@@ -815,7 +818,7 @@ mod tests {
             .scratch
             .panes
             .push(Pane::new(scratch_id, 100, FloatRect::default()));
-        crate::tiling::append_tiled_window(&mut state.scratch, scratch_id);
+        crate::layout::tiling::append_tiled_window(&mut state.scratch, scratch_id);
 
         let layout = shared_layout_from_state(&state, (100, 30));
         assert!(layout.workspaces.iter().all(|workspace| {
@@ -1030,7 +1033,7 @@ mod reconciler_tests {
     use crate::Msg;
     use crate::input::Action;
     use crate::ops::focus::focus_pane;
-    use crate::pane_lifecycle::{find_pane, find_pane_mut};
+    use crate::pane::lifecycle::{find_pane, find_pane_mut};
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::ClientMessage;
     use crate::state::{Direction, DirectionalFocusHint, SharedSessionState};
@@ -1246,7 +1249,7 @@ mod reconciler_tests {
             assert!(find_pane(backend.state_mut(), 1).is_some(), "survivor kept");
             assert_eq!(
                 backend.state_mut().animation,
-                crate::anim::GeometryAnimation::TileFloat,
+                crate::layout::anim::GeometryAnimation::TileFloat,
                 "live layout commits should retain geometry transitions"
             );
         });
@@ -1381,14 +1384,14 @@ mod reconciler_tests {
             {
                 let state = backend.state_mut();
                 focus_pane(state, 4);
-                state.animation = crate::anim::GeometryAnimation::None;
+                state.animation = crate::layout::anim::GeometryAnimation::None;
             }
             backend.render();
             // Focus a still-visible pane so the right anchor survives when that focus is removed.
             {
                 let state = backend.state_mut();
                 focus_pane(state, 3);
-                state.animation = crate::anim::GeometryAnimation::None;
+                state.animation = crate::layout::anim::GeometryAnimation::None;
             }
             backend.render();
             assert_eq!(
@@ -1420,7 +1423,7 @@ mod reconciler_tests {
             );
             assert_eq!(
                 backend.state().animation,
-                crate::anim::GeometryAnimation::Close,
+                crate::layout::anim::GeometryAnimation::Close,
                 "removing a pane keeps reconciler Close animation"
             );
             backend.render();
@@ -1430,8 +1433,9 @@ mod reconciler_tests {
                 let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
                 let local = state.canvas_bounds_from_terminal_viewport(viewport);
                 let top_gap = state.workspace_top_gap();
-                let tile_letterbox = crate::geometry::workspace_tile_bounds(letterbox, top_gap);
-                let tile_local = crate::geometry::workspace_tile_bounds(local, top_gap);
+                let tile_letterbox =
+                    crate::layout::geometry::workspace_tile_bounds(letterbox, top_gap);
+                let tile_local = crate::layout::geometry::workspace_tile_bounds(local, top_gap);
                 let left = tile_letterbox.x.max(tile_local.x);
                 let right = (tile_letterbox.x + tile_letterbox.w).min(tile_local.x + tile_local.w);
                 FloatRect {
@@ -1545,13 +1549,13 @@ mod reconciler_tests {
                 let state = backend.state_mut();
                 state.current_mut().active_workspace = 1;
                 focus_pane(state, 4);
-                state.animation = crate::anim::GeometryAnimation::None;
+                state.animation = crate::layout::anim::GeometryAnimation::None;
             }
             backend.render();
             {
                 let state = backend.state_mut();
                 focus_pane(state, 3);
-                state.animation = crate::anim::GeometryAnimation::None;
+                state.animation = crate::layout::anim::GeometryAnimation::None;
                 state.current_mut().active_workspace = 0;
                 state.current_mut().focused_pane = Some(99);
                 state.current_mut().workspaces[0].focused_pane = Some(99);
@@ -1591,7 +1595,7 @@ mod reconciler_tests {
             assert_eq!(backend.state().current().active_workspace, 1);
             assert_eq!(
                 backend.state().animation,
-                crate::anim::GeometryAnimation::None
+                crate::layout::anim::GeometryAnimation::None
             );
             assert_eq!(backend.state().current().focused_pane, Some(1));
             assert_eq!(
@@ -1613,8 +1617,9 @@ mod reconciler_tests {
                 let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
                 let local = state.canvas_bounds_from_terminal_viewport(viewport);
                 let top_gap = state.workspace_top_gap();
-                let tile_letterbox = crate::geometry::workspace_tile_bounds(letterbox, top_gap);
-                let tile_local = crate::geometry::workspace_tile_bounds(local, top_gap);
+                let tile_letterbox =
+                    crate::layout::geometry::workspace_tile_bounds(letterbox, top_gap);
+                let tile_local = crate::layout::geometry::workspace_tile_bounds(local, top_gap);
                 let left = tile_letterbox.x.max(tile_local.x);
                 let right = (tile_letterbox.x + tile_letterbox.w).min(tile_local.x + tile_local.w);
                 FloatRect {
@@ -1858,7 +1863,10 @@ mod reconciler_tests {
             let state = backend.state_mut();
             assert!(find_pane(state, 1).is_some());
             assert!(find_pane(state, 2).is_some());
-            assert_eq!(state.animation, crate::anim::GeometryAnimation::None);
+            assert_eq!(
+                state.animation,
+                crate::layout::anim::GeometryAnimation::None
+            );
         });
     }
 

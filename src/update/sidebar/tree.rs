@@ -255,10 +255,10 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
     // link, and `root_for` already falls back to the cwd when there is no repo root.
     let source_changed = ctx.state.sidebar.tree_source_epoch != Some(ctx.state.runtime_epoch);
     if source_changed
-        || crate::pane_lifecycle::focused_server_cwd_ref(&ctx.state)
+        || crate::pane::lifecycle::focused_server_cwd_ref(&ctx.state)
             != ctx.state.sidebar.tree_cwd.as_deref()
     {
-        let cwd = crate::pane_lifecycle::focused_server_cwd_ref(&ctx.state).map(str::to_string);
+        let cwd = crate::pane::lifecycle::focused_server_cwd_ref(&ctx.state).map(str::to_string);
         ctx.state.sidebar.tree_repo = if ctx.state.current().remote_host.is_some() {
             None
         } else {
@@ -284,7 +284,7 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
     // better refresh trigger than a timer: no polling while the user reads, immediate feedback
     // after a build, commit, or checkout.
     let phase = ctx.state.current().focused_pane.and_then(|id| {
-        crate::pane_lifecycle::find_pane(&ctx.state, id)
+        crate::pane::lifecycle::find_pane(&ctx.state, id)
             .map(|pane| (id, pane.terminal.command_phase))
     });
     if phase != ctx.state.sidebar.last_command_phase {

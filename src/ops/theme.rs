@@ -198,7 +198,7 @@ pub(crate) fn select_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let system_theme = ctx.state.system_theme.clone();
     let resolved = crate::config::resolve_theme(&name, system_theme.as_ref());
     for warning in &resolved.warnings {
-        crate::pty_events::notify_error(ctx, "Theme warning", warning.clone());
+        crate::pane::pty_events::notify_error(ctx, "Theme warning", warning.clone());
     }
 
     // Watch the active theme's file only when it is a custom file; start the reload tick loop
@@ -213,7 +213,7 @@ pub(crate) fn select_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
                 start_tick = !had_watcher;
             }
             Err(err) => {
-                crate::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
+                crate::pane::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
             }
         }
     }
@@ -232,7 +232,7 @@ pub(crate) fn select_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     ctx.state.commands_dirty = true;
     let closed = close_after_theme_pick(ctx);
     if let Err(err) = crate::config::persist_theme_name(&name) {
-        crate::pty_events::notify_error(ctx, "Theme not saved", err);
+        crate::pane::pty_events::notify_error(ctx, "Theme not saved", err);
     }
 
     if start_tick {
@@ -370,7 +370,7 @@ pub(crate) fn pane_frame_alert_trough(theme: &Theme, color: BadgeColor) -> Color
         peak,
         pane_frame_foreground(theme, false, false),
         pane_frame_background(theme, false, false),
-        crate::anim::ALERT_PULSE_BLEND,
+        crate::layout::anim::ALERT_PULSE_BLEND,
     )
 }
 
@@ -401,10 +401,10 @@ pub(crate) fn pane_frame_alert_color(
 /// where a recoloured glyph is too quiet to catch peripheral vision. Tinting rather than filling
 /// keeps it short of the active tab's solid pill.
 pub(crate) fn tab_alert_background(theme: &Theme, color: BadgeColor) -> Color {
-    theme
-        .surface
-        .panel
-        .blend_toward(badge_role_color(theme, color), crate::anim::ALERT_TAB_TINT)
+    theme.surface.panel.blend_toward(
+        badge_role_color(theme, color),
+        crate::layout::anim::ALERT_TAB_TINT,
+    )
 }
 
 /// The trough background: the plain panel surface, so the tab breathes between neutral and its role

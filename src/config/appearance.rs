@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::anim::{PaneAnimationStyle, WindowAnimationConfig};
+use crate::layout::anim::{PaneAnimationStyle, WindowAnimationConfig};
 
 use super::file::{AnimationFileConfig, PaddingSpec};
 

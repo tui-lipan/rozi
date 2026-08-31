@@ -1,4 +1,4 @@
-use crate::tiling::{DwindleTree, collect_tree_leaves};
+use crate::layout::tiling::{DwindleTree, collect_tree_leaves};
 
 use super::{DEFAULT_RATIO, Direction, LayoutKind, MoveSwapHint, Pane, PaneId, SplitAxis};
 

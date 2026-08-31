@@ -1,11 +1,11 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::GeometryAnimation;
-use crate::geometry::{close_rect, workspace_tile_bounds};
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::geometry::{close_rect, workspace_tile_bounds};
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
 use crate::ops::theme::pane_frame_background;
-use crate::pane_lifecycle::{
+use crate::pane::lifecycle::{
     PaneSpawnRequest, focused_spawn_cwd, open_timers_command, pane_env, request_pane_spawn,
 };
 use crate::state::{POPUP_PANE_ID, Pane, PaneIdentity};
@@ -53,7 +53,7 @@ pub(crate) fn open(
     let mut pane = Pane::new(POPUP_PANE_ID, ctx.state.config.scrollback, rect);
     pane.pty_generation = generation;
     pane.identity = PaneIdentity {
-        launch: Some(crate::pane_launch::PaneLaunch::shell(command)),
+        launch: Some(crate::pane::launch::PaneLaunch::shell(command)),
         // A popup runs where the user is looking, not where the server happens to live; an explicit
         // cwd from the control socket still wins.
         cwd: cwd.or_else(|| focused_spawn_cwd(&ctx.state)),
@@ -84,8 +84,8 @@ pub(crate) fn open(
     ctx.state.popup_return_focus = ctx.state.focused_pane();
     ctx.state.popup = Some(pane);
     ctx.state.animation = GeometryAnimation::Spawn;
-    let open_delay = crate::anim::open_delay(ctx.state.config.animations);
-    let activate_delay = crate::anim::activation_delay(ctx.state.config.animations);
+    let open_delay = crate::layout::anim::open_delay(ctx.state.config.animations);
+    let activate_delay = crate::layout::anim::activation_delay(ctx.state.config.animations);
     request_pane_spawn(
         &mut ctx.state,
         PaneSpawnRequest {
@@ -121,13 +121,13 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     // Stay described so the popup scales out the way it scaled in; `prune_closed_pane` drops it.
     pane.closing = true;
     pane.terminal.kill();
-    ctx.state.animation = crate::anim::GeometryAnimation::Close;
+    ctx.state.animation = crate::layout::anim::GeometryAnimation::Close;
     restore_focus(ctx);
-    Update::with_command(crate::pane_lifecycle::prune_closed_command(
+    Update::with_command(crate::pane::lifecycle::prune_closed_command(
         ctx.state.runtime_epoch,
         POPUP_PANE_ID,
         generation,
-        crate::anim::retained_pane_timeout(ctx.state.config.animations),
+        crate::layout::anim::retained_pane_timeout(ctx.state.config.animations),
     ))
 }
 

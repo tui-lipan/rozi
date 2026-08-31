@@ -1,10 +1,11 @@
 use tui_lipan::prelude::*;
 
 use crate::input::Action;
+use crate::layout::shared::{ClientId, SharedLayout};
 use crate::state::{PaneId, ResizeCorner};
 #[allow(unused_imports)]
 use crate::{config, platform};
-use crate::{control, session, shared_layout};
+use crate::{control, session};
 
 #[derive(Clone)]
 pub enum Msg {
@@ -48,7 +49,7 @@ pub enum Msg {
     /// Advance the shared alert-border/workspace-marker breathe phase.
     AlertPulseTick,
     /// Forward a pane's newest held pointer position when its next frame interval begins.
-    /// See [`crate::pty_events::pointer_flow`].
+    /// See [`crate::pane::pty_events::pointer_flow`].
     PointerFlowTick(crate::state::PaneId),
     /// The config watcher saw `config.toml` change on disk; reload it if the content differs.
     ConfigFileChanged,
@@ -413,11 +414,11 @@ pub enum Msg {
     SessionAttached {
         epoch: u64,
         session: String,
-        client_id: shared_layout::ClientId,
+        client_id: ClientId,
         panes: Vec<session::protocol::PaneMeta>,
         layout_rev: u64,
-        layout: Option<shared_layout::SharedLayout>,
-        controller: Option<shared_layout::ClientId>,
+        layout: Option<SharedLayout>,
+        controller: Option<ClientId>,
         clients: Vec<session::protocol::ClientInfo>,
         input_locked: bool,
         allow_takeover: bool,
@@ -431,17 +432,17 @@ pub enum Msg {
     SessionLayoutCommitted {
         epoch: u64,
         rev: u64,
-        author: shared_layout::ClientId,
-        layout: shared_layout::SharedLayout,
+        author: ClientId,
+        layout: SharedLayout,
     },
     SessionLayoutRejected {
         epoch: u64,
         current_rev: u64,
-        layout: Option<shared_layout::SharedLayout>,
+        layout: Option<SharedLayout>,
     },
     SessionControllerChanged {
         epoch: u64,
-        controller: Option<shared_layout::ClientId>,
+        controller: Option<ClientId>,
         reason: session::protocol::ControllerChangeReason,
     },
     SessionClientsChanged {
@@ -453,7 +454,7 @@ pub enum Msg {
     /// Another client asked this (controller) client for the layout-control lease.
     SessionControlRequested {
         epoch: u64,
-        from: shared_layout::ClientId,
+        from: ClientId,
     },
     /// This client's pending control request was declined by the controller.
     SessionControlDeclined {

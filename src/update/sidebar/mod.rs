@@ -206,7 +206,7 @@ pub(crate) fn persist_sidebar_preference(
     result: std::result::Result<std::path::PathBuf, String>,
 ) {
     if let Err(error) = result {
-        crate::pty_events::notify_on(
+        crate::pane::pty_events::notify_on(
             ctx,
             ToastChannel::PreferenceSave,
             Some("Sidebar preference not saved".to_string()),

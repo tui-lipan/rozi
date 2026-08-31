@@ -1,11 +1,11 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::GeometryAnimation;
-use crate::geometry::workspace_tile_bounds;
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::geometry::workspace_tile_bounds;
+use crate::layout::tiling::{SplitEdge, axis_split_path_for_edge, resize_tiled_split_for_edge};
 use crate::ops::focus::active_pane_is_fullscreen;
 use crate::state::{self, LayoutKind, PaneId, SplitDragKind, SplitDragSession, Workspace};
-use crate::tiling::{SplitEdge, axis_split_path_for_edge, resize_tiled_split_for_edge};
 
 use super::float::{ensure_tile_tree, layout_has_resizable_splits};
 use super::tiling::{master_available_width, resize_master_split_by_pixels};
@@ -270,12 +270,12 @@ fn distinct_split_representatives(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::tiling::{DwindleTree, nearest_split_available, resize_tiled_split};
     use crate::ops::resize_move::test_util::{
         TEST_VIEWPORT, assert_ratio_close, balanced_grid_ratios, balanced_grid_tree, divider_cell,
         first_pane_extent, in_test_stack, root_ratio, steps, two_pane_backend,
     };
     use crate::state::{Pane, SplitAxis, TileGap, Workspace};
-    use crate::tiling::{DwindleTree, nearest_split_available, resize_tiled_split};
     use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
 

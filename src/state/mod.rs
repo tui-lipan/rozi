@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 use tui_lipan::prelude::{FloatRect, Rect, TextInput, Theme, ThemeWatcher};
 
-use crate::anim::GeometryAnimation;
 use crate::config::Config;
-use crate::tiling::append_tiled_window;
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::tiling::append_tiled_window;
 
 mod appearance;
 mod attachment;
@@ -204,7 +204,7 @@ pub struct State {
     /// Toasts still young enough to be de-duplicated against, keyed by the slot they occupy.
     /// Pruned on every notification, so it holds only what was raised in the last few seconds.
     pub(crate) replaceable_toasts:
-        HashMap<crate::pty_events::ToastKey, crate::pty_events::TrackedToast>,
+        HashMap<crate::pane::pty_events::ToastKey, crate::pane::pty_events::TrackedToast>,
     /// Incremented each time the session picker opens; tags the off-thread auto-refresh watcher so
     /// stale ticks from a previous opening (or after close) are ignored.
     pub session_picker_epoch: u64,
@@ -224,7 +224,7 @@ pub struct State {
     pub scratch: Workspace,
     /// Private PTY host shared by every scratch pane owned by this UI client. It is deliberately
     /// independent of `attachment` and `background`, so changing sessions cannot drop it.
-    pub(crate) scratch_runtime: Option<crate::scratch_runtime::ScratchRuntime>,
+    pub(crate) scratch_runtime: Option<crate::scratchpad::runtime::ScratchRuntime>,
     pub(crate) next_scratch_pane_id: PaneId,
     pub(crate) next_scratch_pty_generation: u64,
     pub scratch_visible: bool,
@@ -498,7 +498,7 @@ impl State {
     pub(crate) fn scratch_client(&self) -> Option<crate::session::client::SessionClient> {
         self.scratch_runtime
             .as_ref()
-            .and_then(crate::scratch_runtime::ScratchRuntime::client)
+            .and_then(crate::scratchpad::runtime::ScratchRuntime::client)
     }
 
     /// Transport owning `pane_id`. Scratch panes use the client runtime; popups and attachment
@@ -926,7 +926,7 @@ impl State {
     }
 
     pub fn canvas_bounds_from_terminal_viewport(&self, viewport: Rect) -> FloatRect {
-        crate::geometry::canvas_bounds_from_content_viewport(
+        crate::layout::geometry::canvas_bounds_from_content_viewport(
             self.content_viewport(viewport),
             self.top_chrome_height(),
         )
@@ -972,7 +972,7 @@ impl State {
     /// The panel is always drawn at this width and clipped, never squeezed into the part of it the
     /// layout has reserved so far - squeezing would reflow its tabs and rows on every frame.
     pub fn sidebar_slide_width(&self, terminal_viewport: Rect) -> u16 {
-        crate::geometry::effective_sidebar_width(
+        crate::layout::geometry::effective_sidebar_width(
             terminal_viewport.w,
             self.sidebar_requested_width(),
             true,

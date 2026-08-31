@@ -1,14 +1,25 @@
+//! Window-manager layout: tile trees and their geometry.
+//!
+//! This module owns the placement math itself; [`state::layout`](crate::state::layout) owns the
+//! per-workspace layout state it reads, and `view/` renders the rects it produces.
+
+pub mod anim;
+pub mod geometry;
+pub mod shared;
+pub mod tiling;
+pub mod tree_ser;
+
 use tui_lipan::prelude::FloatRect;
 
-use crate::anim::SlideEdge;
-use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
-use crate::state::{EVEN_SPLIT_RATIO, LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
-pub use crate::tiling::effective_tile_tree;
-use crate::tiling::{
+use self::anim::SlideEdge;
+use self::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
+pub use self::tiling::effective_tile_tree;
+use self::tiling::{
     PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
     allocate_monocle, allocate_rows, allocate_scrollable_with_visible, append_tiled_window,
     insert_leaf_around_target, ratio_at,
 };
+use crate::state::{EVEN_SPLIT_RATIO, LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
 
 pub fn workspace_target_rects(
     workspace: &Workspace,
@@ -348,7 +359,7 @@ pub enum SpawnPlacement {
 
 impl SpawnPlacement {
     /// The tile edge a pane placed this way slides in from under
-    /// [`PaneAnimationStyle::Slide`](crate::anim::PaneAnimationStyle::Slide).
+    /// [`PaneAnimationStyle::Slide`](crate::layout::anim::PaneAnimationStyle::Slide).
     ///
     /// A split reads its own axis. Order-driven layouts have no split to read, so the edge follows
     /// where the layout grows as panes are appended.
@@ -432,7 +443,7 @@ pub fn place_spawned_pane(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiling::DwindleTree;
+    use crate::layout::tiling::DwindleTree;
 
     #[test]
     fn spawn_split_direction_follows_focused_tile_aspect() {

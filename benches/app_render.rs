@@ -19,9 +19,9 @@ mod support;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
 use rozi::AppRoot;
+use rozi::layout::tiling::build_dwindle_tree;
 use rozi::session::protocol::Frame;
 use rozi::state::{Pane, PaneId};
-use rozi::tiling::build_dwindle_tree;
 use std::hint::black_box;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};

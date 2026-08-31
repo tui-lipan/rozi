@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::ops::focus::request_current_pane_focus;
-use crate::pane_lifecycle::find_pane_mut;
+use crate::pane::lifecycle::find_pane_mut;
 use crate::state::{CopyModeState, Mode};
 
 /// Enter copy mode on the focused pane: seed tui-lipan's navigator at the live cursor position
@@ -59,7 +59,7 @@ pub(crate) fn exit(ctx: &mut Context<AppRoot>, copy: bool) -> Update {
             match ctx.clipboard().copy(&text) {
                 Ok(()) => copied_selection = projected,
                 Err(err) => {
-                    crate::pty_events::notify_error(ctx, "Copy failed", err.to_string());
+                    crate::pane::pty_events::notify_error(ctx, "Copy failed", err.to_string());
                 }
             }
         }

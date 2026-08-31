@@ -1,7 +1,7 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::find_pane_mut;
+use crate::pane::lifecycle::find_pane_mut;
 use crate::state::PaneId;
 
 pub(crate) fn handle_pane_resize(
@@ -13,7 +13,7 @@ pub(crate) fn handle_pane_resize(
     // Followers never drive shared PTY size: they letterbox to the controller's canonical canvas
     // and their screens reshape only via the server's broadcast `Resized`. Owner-local panes
     // (scratch/popup) do not affect canonical shared sizing, so their owner may resize them.
-    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     if ctx.state.current().shared.is_some() && !ctx.state.is_controller() && !local {
         return Update::none();
     }
@@ -100,7 +100,7 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
     ctx.state.current_mut().pending_resizes.extend(retained);
     for ((local, id), (cols, rows)) in pending {
         if let Some(pane) =
-            crate::pane_lifecycle::find_pane_in_namespace_mut(&mut ctx.state, id, local)
+            crate::pane::lifecycle::find_pane_in_namespace_mut(&mut ctx.state, id, local)
         {
             client.resize(id, pane.pty_generation, local, cols.max(1), rows.max(1));
         }

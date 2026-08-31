@@ -706,7 +706,7 @@ fn workspace_tabs_element(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                 let transition = if pulse && state.alert_pulse_armed {
                     app.alert_pulse_transition_config(ctx, calm)
                 } else {
-                    crate::anim::instant_transition()
+                    crate::layout::anim::instant_transition()
                 };
                 tab = tab.style(
                     Style::new()
@@ -715,14 +715,14 @@ fn workspace_tabs_element(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                             format!("rozi-workspace-tab-{idx}-fg"),
                             fg_target,
                             transition,
-                            pulse.then_some(crate::anim::ALERT_PULSE_FRAME_RATE),
+                            pulse.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
                         ))
                         .bg(app.chrome_paint_with_frame_rate(
                             ctx,
                             format!("rozi-workspace-tab-{idx}"),
                             target,
                             transition,
-                            pulse.then_some(crate::anim::ALERT_PULSE_FRAME_RATE),
+                            pulse.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
                         ))
                         .contrast_policy(ContrastPolicy::Off),
                 );
@@ -903,7 +903,7 @@ fn workspace_tab_count(state: &crate::state::State) -> usize {
 }
 
 pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Element {
-    let prefix = crate::keys_display::format_binding(&input.prefix);
+    let prefix = crate::view::keys_display::format_binding(&input.prefix);
     let spawn_hint = if input.modifier_shortcuts {
         format!(
             "Press {}+Enter or {prefix} Enter to spawn a shell.",
@@ -937,7 +937,7 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// spawning a pane — here there is nothing to spawn a pane *into* yet, so it points at the ways
 /// out: pick a session, start a shell, or leave the client.
 ///
-/// A bare `Enter` starts the shell here (`key_routing::launcher_start_key`) because no pane is
+/// A bare `Enter` starts the shell here (`input::routing::launcher_start_key`) because no pane is
 /// competing for it; the ordinary `spawn` binding is listed beside it, since that is what works
 /// everywhere else. Spawn and session-picker rows spell their default binding the prefix way:
 /// `scheme_shortcuts` generates one table entry per key as both `<prefix> <key>` and
@@ -950,7 +950,7 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// still aligns.
 pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     let input = &ctx.state.config.input;
-    let prefix = crate::keys_display::format_binding(&input.prefix);
+    let prefix = crate::view::keys_display::format_binding(&input.prefix);
     let mut leave_keys: Vec<_> = ["quit", "detach"]
         .into_iter()
         .filter_map(|id| crate::commands::command_prefix_chord(ctx, id))
@@ -970,11 +970,11 @@ pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
         .map(crate::session::remote::RemoteTarget::display_label);
     let rows = [
         (
-            crate::keys_display::format_keys(&format!("enter / {prefix} enter")),
+            crate::view::keys_display::format_keys(&format!("enter / {prefix} enter")),
             "ephemeral shell",
         ),
         (
-            crate::keys_display::format_keys(&format!("{prefix} s")),
+            crate::view::keys_display::format_keys(&format!("{prefix} s")),
             "pick a session",
         ),
         (leave_keys, "leave"),

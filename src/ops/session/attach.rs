@@ -9,7 +9,7 @@ use crate::ops::session::discovery::immediate_picker_rows;
 /// clients detach so they cannot destroy another client's session.
 pub(crate) fn release_current_session(ctx: &mut Context<AppRoot>) {
     ctx.state.sidebar.invalidate_sessions();
-    crate::popup::kill_if_open(ctx);
+    crate::ops::popup::kill_if_open(ctx);
     crate::scratchpad::hide_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     let Some(client) = ctx.state.current().session_client.clone() else {
@@ -33,7 +33,7 @@ pub(crate) fn park_current_session(ctx: &mut Context<AppRoot>) {
     ctx.state.sidebar.invalidate_sessions();
     // The popup is bound to the current server and cannot cross the switch. The client-owned
     // scratchpad only hides while the attachment under it changes.
-    crate::popup::kill_if_open(ctx);
+    crate::ops::popup::kill_if_open(ctx);
     crate::scratchpad::hide_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     let disposition = current_disposition(ctx);
@@ -111,7 +111,7 @@ pub(crate) fn switch_to_parked(
     parked: crate::state::AttachmentId,
 ) -> Update {
     ctx.state.sidebar.invalidate_sessions();
-    crate::popup::kill_if_open(ctx);
+    crate::ops::popup::kill_if_open(ctx);
     crate::scratchpad::hide_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     let disposition = current_disposition(ctx);
@@ -130,10 +130,10 @@ pub(crate) fn switch_to_parked(
     dismiss_session_pickers(ctx);
     ctx.state.commands_dirty = true;
     // Snap to the restored session's geometry rather than interpolating from the previous view.
-    ctx.state.animation = crate::anim::GeometryAnimation::None;
+    ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
     if let Some((rev, layout)) = ctx.state.current_mut().pending_background_layout.take() {
-        crate::shared_layout::apply_shared_layout(ctx, &layout, rev);
-        ctx.state.animation = crate::anim::GeometryAnimation::None;
+        crate::layout::shared::apply_shared_layout(ctx, &layout, rev);
+        ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
     }
     apply_pending_background_closes(ctx);
     // The whole screen just became the other session and the workbar badge carries its name; a
@@ -160,7 +160,7 @@ pub(crate) fn apply_pending_background_closes(ctx: &mut Context<AppRoot>) {
             .find_pane_mut(pane_id)
             .is_some_and(|pane| pane.pty_generation == generation)
         {
-            crate::pane_lifecycle::remove_pane_after_exit(ctx, pane_id, false);
+            crate::pane::lifecycle::remove_pane_after_exit(ctx, pane_id, false);
         }
     }
 }
@@ -261,7 +261,7 @@ pub(crate) fn dismiss_session_pickers(ctx: &mut Context<AppRoot>) {
 /// hide the client-owned scratchpad, close the selection overlays that led here, and mark the
 /// Sessions tab stale so the post-update chokepoint re-sweeps for the new current.
 pub(crate) fn prepare_session_install(ctx: &mut Context<AppRoot>) {
-    crate::popup::kill_if_open(ctx);
+    crate::ops::popup::kill_if_open(ctx);
     crate::scratchpad::hide_for_session_switch(ctx);
     dismiss_session_pickers(ctx);
     ctx.state.sidebar.invalidate_sessions();
@@ -271,7 +271,7 @@ pub(crate) fn prepare_session_install(ctx: &mut Context<AppRoot>) {
 /// terminal palette.
 pub(crate) fn finish_session_install(ctx: &mut Context<AppRoot>) {
     // Snap to the new session's geometry rather than interpolating from the previous layout.
-    ctx.state.animation = crate::anim::GeometryAnimation::None;
+    ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
     ctx.state.commands_dirty = true;
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
 }
@@ -365,7 +365,7 @@ pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>, name: String) -> 
     if let Some((session_name, target)) = killed_identity {
         crate::ops::session::lifecycle::remove_cached_remote_session(ctx, &session_name, &target);
     }
-    crate::pty_events::notify_info(ctx, format!("Killed session `{name}`"));
+    crate::pane::pty_events::notify_info(ctx, format!("Killed session `{name}`"));
     if picker_was_open {
         return refresh_picker_after_kill(ctx);
     }
@@ -376,7 +376,7 @@ pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>, name: String) -> 
 /// to the replacement. Distinct from kill (which leaves the client sessionless).
 pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(name) = ctx.state.current().session_name.clone() else {
-        crate::pty_events::notify_info(ctx, "Not attached to a session");
+        crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
         return Update::full();
     };
     let remote_host = ctx.state.current().remote_host.clone();
@@ -392,7 +392,7 @@ pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
     }
     if ephemeral && remote_target.is_none() {
         let update = swap_to_fresh_ephemeral(ctx);
-        crate::pty_events::notify_info(ctx, "Restarted temporary session");
+        crate::pane::pty_events::notify_info(ctx, "Restarted temporary session");
         return update;
     }
     let restart_name = if ephemeral {
@@ -401,7 +401,7 @@ pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
         name.clone()
     };
     let update = attach_session_by_name(ctx, restart_name, remote_host, remote_target, true);
-    crate::pty_events::notify_info(ctx, format!("Restarted session `{name}`"));
+    crate::pane::pty_events::notify_info(ctx, format!("Restarted session `{name}`"));
     update
 }
 
@@ -425,7 +425,7 @@ pub(crate) fn enter_launcher(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn enter_sessionless(ctx: &mut Context<AppRoot>) {
-    crate::popup::kill_if_open(ctx);
+    crate::ops::popup::kill_if_open(ctx);
     crate::scratchpad::hide_for_session_switch(ctx);
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
@@ -508,7 +508,7 @@ fn parse_attach_remote(
         (None, Some(host)) => match crate::session::remote::parse_remote_target(host) {
             Ok(target) => Ok(Some(target)),
             Err(err) => {
-                crate::pty_events::notify_error(
+                crate::pane::pty_events::notify_error(
                     ctx,
                     "Invalid remote host",
                     format!("`{host}`: {err}"),
@@ -597,7 +597,7 @@ pub(crate) fn attach_session_by_name(
     autostart: bool,
 ) -> Update {
     if !crate::session::discovery::valid_attach_target(&name) {
-        crate::pty_events::notify_error(
+        crate::pane::pty_events::notify_error(
             ctx,
             "Invalid session name",
             "Use letters, numbers, _ or -",
@@ -853,7 +853,7 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<AppRoot>) -> Update {
             title,
             keep_open,
         } => {
-            let result = crate::popup::open(
+            let result = crate::ops::popup::open(
                 ctx,
                 command,
                 cwd,
@@ -874,7 +874,7 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<AppRoot>) -> Update {
                     if let Some(reply) = ctx.state.pending_control_reply.take() {
                         let _ = reply.send(crate::control::ControlResponse::error(error.clone()));
                     }
-                    crate::pty_events::notify_error(ctx, "Popup failed", error);
+                    crate::pane::pty_events::notify_error(ctx, "Popup failed", error);
                     Update::full()
                 }
             }
@@ -952,17 +952,17 @@ pub(crate) fn disconnect_host(
         // recognizes. Attachments on this host are already gone from the background above, so the
         // candidates are exactly the sessions that survive the disconnect.
         let update = land_on_surviving_session(ctx);
-        crate::pty_events::notify_info(
+        crate::pane::pty_events::notify_info(
             ctx,
             format!("Disconnected from `{host_label}` — {closed} closed, servers still running"),
         );
         return update;
     }
     if closed == 0 {
-        crate::pty_events::notify_info(ctx, format!("Not connected to `{host_label}`"));
+        crate::pane::pty_events::notify_info(ctx, format!("Not connected to `{host_label}`"));
         return Update::full();
     }
-    crate::pty_events::notify_info(
+    crate::pane::pty_events::notify_info(
         ctx,
         format!("Disconnected from `{host_label}` — {closed} closed, servers still running"),
     );

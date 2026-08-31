@@ -8,9 +8,9 @@
 use std::time::Duration;
 
 use rozi::AppRoot;
-use rozi::anim::{GeometryAnimation, PaneAnimationStyle, SlideEdge};
+use rozi::layout::anim::{GeometryAnimation, PaneAnimationStyle, SlideEdge};
+use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{Pane, PaneBorderMode, SplitAxis};
-use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::{FloatRect, MouseEvent, Rect};

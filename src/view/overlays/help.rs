@@ -227,7 +227,7 @@ fn collapse_ws(text: &str) -> String {
 }
 
 fn scheme_rows(input: &crate::config::InputConfig) -> Vec<HelpRow> {
-    let prefix = crate::keys_display::format_binding(&input.prefix);
+    let prefix = crate::view::keys_display::format_binding(&input.prefix);
     let mut rows = vec![HelpRow {
         extra: "prefix then key scheme".to_string(),
         ..HelpRow::global("", &prefix, "Prefix · then key")
@@ -406,7 +406,7 @@ fn help_row(keys: &str, desc: &str, theme: &Theme) -> Element {
         ("—".to_string(), fg_only(&theme.muted))
     } else {
         (
-            crate::keys_display::format_keys(keys),
+            crate::view::keys_display::format_keys(keys),
             Style::new().fg(theme.border_active).bold(),
         )
     };

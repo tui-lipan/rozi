@@ -111,7 +111,7 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
                 start_theme_tick = !had_theme_watcher;
             }
             Err(err) => {
-                crate::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
+                crate::pane::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
             }
         }
     }
@@ -173,10 +173,10 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
         !ctx.state.services.running.is_empty() || !ctx.state.services.pending.is_empty();
 
     for warning in loaded.warnings.iter().chain(&resolved.warnings) {
-        crate::pty_events::notify_error(ctx, "Config warning", warning.clone());
+        crate::pane::pty_events::notify_error(ctx, "Config warning", warning.clone());
     }
     if loaded.warnings.is_empty() && resolved.warnings.is_empty() {
-        crate::pty_events::notify_info(ctx, "Config reloaded");
+        crate::pane::pty_events::notify_info(ctx, "Config reloaded");
         crate::events::emit(
             &ctx.state,
             crate::events::Event::new(
@@ -216,7 +216,7 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
 pub(crate) fn open_config_file(ctx: &mut Context<AppRoot>) -> Update {
     let editor = config_editor();
     if let Some(command) = missing_editor_command(&editor) {
-        crate::pty_events::notify_error(
+        crate::pane::pty_events::notify_error(
             ctx,
             "Editor not found",
             format!("`{command}` is not available\nSet $EDITOR"),
@@ -233,10 +233,10 @@ pub(crate) fn open_config_file(ctx: &mut Context<AppRoot>) -> Update {
     let command = format!("{editor} {}", quote_shell_arg(&path.to_string_lossy()));
 
     let identity = PaneIdentity {
-        launch: Some(crate::pane_launch::PaneLaunch::shell(command)),
+        launch: Some(crate::pane::launch::PaneLaunch::shell(command)),
         ..PaneIdentity::default()
     };
-    crate::pane_lifecycle::spawn_interactive_pane(
+    crate::pane::lifecycle::spawn_interactive_pane(
         ctx,
         ctx.state.current().active_workspace,
         None,

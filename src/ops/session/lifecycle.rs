@@ -179,7 +179,7 @@ pub(crate) fn activate_discovered_session(
         entry.status,
         crate::session::discovery::DiscoveredSessionStatus::Unknown
     ) {
-        crate::pty_events::notify_error(
+        crate::pane::pty_events::notify_error(
             ctx,
             "Attach failed",
             format!(
@@ -457,7 +457,7 @@ fn apply_session_name(
     if leave.is_some() {
         crate::ops::overlay_return::leave(ctx);
         let Some(client) = ctx.state.current().session_client.clone() else {
-            crate::pty_events::notify_error(ctx, "Rename failed", "Session connection lost");
+            crate::pane::pty_events::notify_error(ctx, "Rename failed", "Session connection lost");
             return Update::full();
         };
         crate::ops::session::flush_layout_commit(ctx);
@@ -611,7 +611,7 @@ pub(crate) fn restart_discovered_session(
     detach_parked_instance(ctx, &entry.name, entry.remote_target.as_ref());
     let remote_config = ctx.state.config.remote.clone();
     if let Err(err) = shutdown_discovered_session(&entry, &remote_config) {
-        crate::pty_events::notify_error(ctx, "Restart failed", err.to_string());
+        crate::pane::pty_events::notify_error(ctx, "Restart failed", err.to_string());
         return Update::full();
     }
     if let Some(target) = entry.remote_target.as_ref() {
@@ -631,7 +631,7 @@ pub(crate) fn restart_discovered_session(
         entry.remote_target.clone(),
         true,
     );
-    crate::pty_events::notify_info(ctx, format!("Restarted session `{display}`"));
+    crate::pane::pty_events::notify_info(ctx, format!("Restarted session `{display}`"));
     update
 }
 
@@ -673,7 +673,7 @@ pub(crate) fn kill_discovered_session(
             Update::full()
         }
         Err(err) => {
-            crate::pty_events::notify_error(ctx, "Kill failed", err.to_string());
+            crate::pane::pty_events::notify_error(ctx, "Kill failed", err.to_string());
             Update::full()
         }
     }
@@ -742,7 +742,7 @@ pub(crate) fn disconnect_discovered_attachment(
     {
         client.detach();
     }
-    crate::pty_events::notify_info(
+    crate::pane::pty_events::notify_info(
         ctx,
         format!("Disconnected from `{display}` — server still running"),
     );

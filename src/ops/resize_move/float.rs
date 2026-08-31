@@ -1,10 +1,14 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::GeometryAnimation;
-use crate::geometry::{
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::geometry::{
     canvas_local_point_from_mouse, clamp_floating_rect, grabbed_edge_on_outer_border,
     resize_float_rect_from_corner, workspace_tile_bounds,
+};
+use crate::layout::tiling::{
+    SplitEdge, allocate_dwindle, move_tiled_window_around_target, redock_split_ratio,
+    resize_tiled_split_for_edge,
 };
 use crate::layout::{
     self, placement_for, target_tiled_pane_for_drop, workspace_target_rects,
@@ -14,10 +18,6 @@ use crate::ops::focus::{active_pane_mut, focus_pane, request_pane_focus, sync_sc
 use crate::state::{
     self, Direction, EVEN_SPLIT_RATIO, LayoutKind, MoveSession, PaneId, ResizeCorner,
     ResizeSession, State, TileGap, Workspace,
-};
-use crate::tiling::{
-    SplitEdge, allocate_dwindle, move_tiled_window_around_target, redock_split_ratio,
-    resize_tiled_split_for_edge,
 };
 
 use super::tiling::{
@@ -557,9 +557,9 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::tiling::DwindleTree;
     use crate::ops::resize_move::test_util::in_test_stack;
     use crate::state::{Pane, SharedSessionState, SplitAxis};
-    use crate::tiling::DwindleTree;
     use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
 
@@ -792,7 +792,7 @@ mod tests {
             workspace.panes.clear();
             for id in 1..=4 {
                 workspace.panes.push(Pane::new(id, 100, bounds));
-                crate::tiling::append_tiled_window(workspace, id);
+                crate::layout::tiling::append_tiled_window(workspace, id);
             }
             workspace.focused_pane = Some(focus);
             workspace.scrollable_anchor = Some(focus);
@@ -930,14 +930,15 @@ mod tests {
                     .expect("resize step");
             }
             let width = backend.state().current().workspaces[0].panes[0].scrollable_width;
-            let expected =
-                crate::tiling::sanitize_scrollable_width(crate::tiling::cell_split_ratio(
-                    crate::tiling::scrollable_column_width(
+            let expected = crate::layout::tiling::sanitize_scrollable_width(
+                crate::layout::tiling::cell_split_ratio(
+                    crate::layout::tiling::scrollable_column_width(
                         100.0,
                         crate::state::DEFAULT_SCROLLABLE_WIDTH,
                     ) + 20.0,
                     100.0,
-                ));
+                ),
+            );
             assert!(
                 (width - expected).abs() < 1e-5,
                 "absolute delta from start, got {width} expected ~{expected}"
@@ -1211,7 +1212,7 @@ mod tests {
                 let mut pane = Pane::new(1, 100, FloatRect::default());
                 pane.opening = false;
                 state.scratch.panes.push(pane);
-                crate::tiling::append_tiled_window(&mut state.scratch, 1);
+                crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
                 state.scratch.focused_pane = Some(1);
                 state.scratch_visible = true;
             }
@@ -1261,11 +1262,11 @@ mod tests {
                     state.scratch.panes.push(pane);
                 }
                 // Stacked, so only pane 1 sits against the dropdown's top edge.
-                state.scratch.tile_tree = Some(crate::tiling::DwindleTree::Split {
+                state.scratch.tile_tree = Some(crate::layout::tiling::DwindleTree::Split {
                     axis: SplitAxis::Vertical,
                     ratio: 0.5,
-                    first: Box::new(crate::tiling::DwindleTree::Leaf(1)),
-                    second: Box::new(crate::tiling::DwindleTree::Leaf(2)),
+                    first: Box::new(crate::layout::tiling::DwindleTree::Leaf(1)),
+                    second: Box::new(crate::layout::tiling::DwindleTree::Leaf(2)),
                 });
                 state.scratch.focused_pane = Some(1);
                 state.scratch_visible = true;

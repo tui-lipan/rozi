@@ -9,7 +9,7 @@ pub use tui_lipan::utils::hints::{HintKind, HintMatch};
 
 use crate::AppRoot;
 use crate::ops::focus::request_current_pane_focus;
-use crate::pane_lifecycle::find_pane;
+use crate::pane::lifecycle::find_pane;
 use crate::state::{HintModeState, Mode};
 
 /// Scan one visible snapshot for hints, rejoining soft-wrapped rows first.
@@ -61,11 +61,11 @@ pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
         &ctx.state.config.hints,
     );
     if matches.is_empty() {
-        crate::pty_events::notify_info(ctx, "No hints in this pane");
+        crate::pane::pty_events::notify_info(ctx, "No hints in this pane");
         return Update::full();
     }
     let offset = pane.terminal.scrollback_offset();
-    crate::copy_mode::clear_copy_feedback(ctx);
+    crate::input::copy_mode::clear_copy_feedback(ctx);
     let labels = assign_labels(matches.len(), HOME_ROW_HINT_KEYS);
     ctx.state.hint_mode = Some(HintModeState {
         target,
@@ -142,11 +142,11 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
         // Success needs no toast: an opened URL raises the browser and a copy flashes below.
         Ok(()) => {}
         Err(error) => {
-            crate::pty_events::notify_error(ctx, "Hint failed", error);
+            crate::pane::pty_events::notify_error(ctx, "Hint failed", error);
         }
     };
     let feedback = copied.then(|| {
-        crate::copy_mode::flash_copy_feedback(
+        crate::input::copy_mode::flash_copy_feedback(
             ctx,
             target,
             tui_lipan::utils::GridSelection {
@@ -312,7 +312,7 @@ mod tests {
                         state.current_mut().workspaces[0]
                             .panes
                             .push(Pane::new(id, 100, rect));
-                        crate::tiling::append_tiled_window(
+                        crate::layout::tiling::append_tiled_window(
                             &mut state.current_mut().workspaces[0],
                             id,
                         );

@@ -89,7 +89,7 @@ pub struct Attachment {
     pub pending_replay_inputs: HashMap<(PaneId, u64), String>,
     /// Latest authoritative layout received while this attachment was in the background. Applied
     /// when it becomes current so background protocol traffic never mutates the visible session.
-    pub pending_background_layout: Option<(u64, crate::shared_layout::SharedLayout)>,
+    pub pending_background_layout: Option<(u64, crate::layout::shared::SharedLayout)>,
     /// Structural closes deferred while this attachment is parked. Applied after it returns to the
     /// foreground and regains layout control.
     pub pending_background_closes: Vec<(PaneId, u64)>,
@@ -148,9 +148,11 @@ impl Attachment {
             pending_background_closes: Vec::new(),
             pending_resizes: HashMap::new(),
             resize_flush_scheduled: false,
-            retired_panes: ExitQueue::with_exit_timeout(crate::anim::retained_pane_timeout(
-                crate::anim::WindowAnimationConfig::default(),
-            )),
+            retired_panes: ExitQueue::with_exit_timeout(
+                crate::layout::anim::retained_pane_timeout(
+                    crate::layout::anim::WindowAnimationConfig::default(),
+                ),
+            ),
             shared: None,
             auto_created: false,
             engaged: false,
@@ -203,7 +205,7 @@ impl Attachment {
             .retain(|key, _| queued.contains(key));
     }
 
-    /// Find a workspace pane by id within this attachment. Unlike [`crate::pane_lifecycle::find_pane_mut`]
+    /// Find a workspace pane by id within this attachment. Unlike [`crate::pane::lifecycle::find_pane_mut`]
     /// it does not consult the popup or the client-owned scratchpad on `State`, so this is the
     /// finder used to apply a *background* attachment's server output to its own screens.
     pub fn find_pane_mut(&mut self, id: PaneId) -> Option<&mut Pane> {

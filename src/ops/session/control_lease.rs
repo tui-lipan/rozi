@@ -7,7 +7,7 @@ pub(crate) fn require_attached(ctx: &mut Context<AppRoot>) -> Option<()> {
     if ctx.state.current().session_attached {
         Some(())
     } else {
-        crate::pty_events::notify_info(ctx, "Not attached to a session");
+        crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
         None
     }
 }
@@ -15,11 +15,11 @@ pub(crate) fn require_attached(ctx: &mut Context<AppRoot>) -> Option<()> {
 pub(crate) fn require_writable(ctx: &mut Context<AppRoot>) -> Option<()> {
     require_attached(ctx)?;
     let Some(shared) = ctx.state.current().shared.as_ref() else {
-        crate::pty_events::notify_info(ctx, "Not attached to a session");
+        crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
         return None;
     };
     if shared.read_only {
-        crate::pty_events::notify_info(ctx, "Attached read-only");
+        crate::pane::pty_events::notify_info(ctx, "Attached read-only");
         return None;
     }
     Some(())
@@ -51,7 +51,7 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<AppRoot>) -> bool {
     let how = crate::commands::command_prefix_chord(ctx, "request-control")
         .map(|chord| format!("{chord} to {verb} control"))
         .unwrap_or_else(|| format!("Try to {verb} control"));
-    crate::pty_events::notify_on(
+    crate::pane::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::LayoutControl,
         None,
@@ -67,7 +67,7 @@ pub(crate) fn request_control(ctx: &mut Context<AppRoot>) -> Update {
         return Update::full();
     };
     if ctx.state.is_controller() {
-        crate::pty_events::notify_info(ctx, "You already control the layout");
+        crate::pane::pty_events::notify_info(ctx, "You already control the layout");
         return Update::full();
     }
     let Some(()) = require_writable(ctx) else {
@@ -101,7 +101,7 @@ pub(crate) fn request_control(ctx: &mut Context<AppRoot>) -> Update {
             (false, None) => "Requested layout control".to_string(),
         }
     };
-    crate::pty_events::notify_on(
+    crate::pane::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::LayoutControl,
         None,
@@ -164,7 +164,7 @@ pub(crate) fn evict_client(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if let Some(client) = ctx.state.current().session_client.as_ref() {
         client.evict_client(target_id);
     }
-    crate::pty_events::notify_info(ctx, format!("Removed {label} from the session"));
+    crate::pane::pty_events::notify_info(ctx, format!("Removed {label} from the session"));
     Update::full()
 }
 
@@ -248,7 +248,7 @@ pub(crate) fn resolve_follow_prompt(
             // detached, so retaining it would make discovery render the still-live server offline.
             ctx.state.background.remove(&detached_epoch);
             if let Some(name) = name {
-                crate::pty_events::notify_info(ctx, format!("Left `{name}` alone"));
+                crate::pane::pty_events::notify_info(ctx, format!("Left `{name}` alone"));
             }
             update
         }
@@ -307,7 +307,7 @@ pub(crate) fn grant_control(ctx: &mut Context<AppRoot>, index: usize) -> Update 
     if !ctx.state.is_controller() {
         nudge_if_follower(ctx);
     } else if target.read_only {
-        crate::pty_events::notify_info(ctx, "Read-only clients cannot control the layout");
+        crate::pane::pty_events::notify_info(ctx, "Read-only clients cannot control the layout");
     } else if target.id != shared.client_id
         && let Some(client) = ctx.state.current().session_client.as_ref()
     {
@@ -344,7 +344,7 @@ pub(crate) fn grant_control_to_requester(ctx: &mut Context<AppRoot>) -> Update {
             ctx.state.collaboration = None;
         }
         None => {
-            crate::pty_events::notify_info(ctx, "No pending control requests");
+            crate::pane::pty_events::notify_info(ctx, "No pending control requests");
         }
     }
     Update::full()
@@ -423,7 +423,7 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>) {
         bounds.w.round().max(1.0) as u16,
         bounds.h.round().max(1.0) as u16,
     );
-    let layout = crate::shared_layout::shared_layout_from_state(&ctx.state, canvas);
+    let layout = crate::layout::shared::shared_layout_from_state(&ctx.state, canvas);
     let Some(shared) = ctx.state.current_mut().shared.as_mut() else {
         return;
     };

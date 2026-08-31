@@ -3,7 +3,7 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::find_pane_mut;
+use crate::pane::lifecycle::find_pane_mut;
 
 /// Resolve `last_command_output_range`, copy the text, and confirm with a toast.
 ///
@@ -17,20 +17,23 @@ pub(crate) fn copy_last_output(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     };
     let Some(text) = pane.terminal.capture_last_command_output() else {
-        crate::pty_events::notify_info(ctx, "No last command output (enable shell integration)");
+        crate::pane::pty_events::notify_info(
+            ctx,
+            "No last command output (enable shell integration)",
+        );
         return Update::full();
     };
     if text.is_empty() {
-        crate::pty_events::notify_info(ctx, "Last command produced no output");
+        crate::pane::pty_events::notify_info(ctx, "Last command produced no output");
         return Update::full();
     }
     match ctx.clipboard().copy(&text) {
         Ok(()) => {
-            crate::pty_events::notify_info(ctx, "Copied last command output");
+            crate::pane::pty_events::notify_info(ctx, "Copied last command output");
             Update::full()
         }
         Err(err) => {
-            crate::pty_events::notify_error(ctx, "Copy failed", err.to_string());
+            crate::pane::pty_events::notify_error(ctx, "Copy failed", err.to_string());
             Update::full()
         }
     }

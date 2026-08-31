@@ -1,6 +1,6 @@
+use crate::layout::tiling::remove_tiled_window;
 use crate::ops::focus::{first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect};
 use crate::state::{Pane, PaneId, State};
-use crate::tiling::remove_tiled_window;
 
 pub(crate) fn find_pane(state: &State, id: PaneId) -> Option<&Pane> {
     if let Some(pane) = state.popup.as_ref().filter(|pane| pane.id == id) {

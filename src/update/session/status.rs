@@ -1,8 +1,8 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::{find_pane_in_namespace, find_pane_in_namespace_mut};
-use crate::pty_events::maybe_notify_pane_status;
+use crate::pane::lifecycle::{find_pane_in_namespace, find_pane_in_namespace_mut};
+use crate::pane::pty_events::maybe_notify_pane_status;
 use crate::session::protocol::PaneRuntimeState;
 use crate::state::PaneId;
 use crate::update::session::control_replies::{flush_attachment_replay_input, flush_replay_input};
@@ -232,7 +232,7 @@ pub(crate) fn pane_runtime_changed(
                     false,
                     pane_id,
                     &title,
-                    crate::pty_events::PaneStatusNotification {
+                    crate::pane::pty_events::PaneStatusNotification {
                         blocked: false,
                         done: true,
                         reported_status: None,
@@ -255,7 +255,7 @@ pub(crate) fn pane_runtime_changed(
                 attended,
                 pane_id,
                 &title,
-                crate::pty_events::PaneStatusNotification {
+                crate::pane::pty_events::PaneStatusNotification {
                     blocked: edges.became_blocked,
                     done: edges.finished,
                     reported_status: reported_status.as_ref(),

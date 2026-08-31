@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+use crate::layout::shared::{ClientId, SharedLayout};
 use crate::runtime_metrics::ServerRuntimeMetrics;
 use crate::session::protocol::pane_runtime::{
     PaneMeta, PaneRuntimeState, PublishedRow, WirePalette,
 };
-use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,7 +70,7 @@ pub enum ClientMessage {
         /// operable by their owner without the layout lease, and die with that client.
         local: bool,
         generation: u64,
-        launch: Option<crate::pane_launch::PaneLaunch>,
+        launch: Option<crate::pane::launch::PaneLaunch>,
         cwd: Option<String>,
         cols: u16,
         rows: u16,
@@ -89,7 +89,7 @@ pub enum ClientMessage {
         shell: Vec<String>,
         /// Resolved command-runner argv (non-empty; program then fixed args), resolved
         /// client-side via `platform::command::resolve_command_shell`. Only used for
-        /// [`PaneLaunch::Shell`](crate::pane_launch::PaneLaunch::Shell).
+        /// [`PaneLaunch::Shell`](crate::pane::launch::PaneLaunch::Shell).
         command_shell: Vec<String>,
         /// Host cell size in pixels, so the PTY reports pixel dimensions a child that draws
         /// images can use. Zero (the pre-17 default) leaves the PTY's own default in place.

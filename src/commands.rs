@@ -24,11 +24,11 @@ use tui_lipan::prelude::*;
 
 use crate::config::Config;
 use crate::input::Action;
-use crate::keys_display::format_binding;
 use crate::state::{
     Direction::{Down, Left, Right, Up},
     Mode, Pane, State, cap_style_label,
 };
+use crate::view::keys_display::format_binding;
 use crate::{AppRoot, Msg};
 
 /// One built-in, individually rebindable command: default key steps (mirrored into a leader

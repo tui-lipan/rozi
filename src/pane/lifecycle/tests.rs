@@ -1,7 +1,7 @@
 use super::namespace::*;
 use super::spawn::*;
-use crate::anim::GeometryAnimation;
-use crate::geometry::canvas_local_point_from_mouse;
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::geometry::canvas_local_point_from_mouse;
 use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
 use tui_lipan::Theme;
 use tui_lipan::prelude::*;
@@ -56,7 +56,7 @@ fn scrollable_close_backend(focus: PaneId) -> tui_lipan::TestBackend<crate::AppR
         let workspace = &mut state.current_mut().workspaces[0];
         workspace.layout_kind = crate::state::LayoutKind::Scrollable;
         workspace.panes.clear();
-        workspace.tile_tree = crate::tiling::build_dwindle_tree(
+        workspace.tile_tree = crate::layout::tiling::build_dwindle_tree(
             &[10, 30, 20],
             crate::state::SplitAxis::Horizontal,
             &[0.5, 0.5],
@@ -97,7 +97,7 @@ fn replay_spawn_queues_the_command_as_input_instead_of_a_wire_command() {
             7,
             3,
             PaneIdentity {
-                launch: Some(crate::pane_launch::PaneLaunch::shell("n")),
+                launch: Some(crate::pane::launch::PaneLaunch::shell("n")),
                 replay: true,
                 ..PaneIdentity::default()
             },
@@ -123,14 +123,14 @@ fn replay_spawn_queues_the_command_as_input_instead_of_a_wire_command() {
             8,
             4,
             PaneIdentity {
-                launch: Some(crate::pane_launch::PaneLaunch::shell("htop")),
+                launch: Some(crate::pane::launch::PaneLaunch::shell("htop")),
                 ..PaneIdentity::default()
             },
         ),
     );
     assert_eq!(
         state.current().pending_spawns[1].launch,
-        Some(crate::pane_launch::PaneLaunch::shell("htop")),
+        Some(crate::pane::launch::PaneLaunch::shell("htop")),
         "deterministic command panes must keep command-shell semantics"
     );
     assert!(!state.current().pending_replay_inputs.contains_key(&(8, 4)));
@@ -172,7 +172,7 @@ fn replay_inputs_survive_teardown_only_while_their_spawn_is_still_queued() {
             7,
             3,
             PaneIdentity {
-                launch: Some(crate::pane_launch::PaneLaunch::shell("n")),
+                launch: Some(crate::pane::launch::PaneLaunch::shell("n")),
                 replay: true,
                 ..PaneIdentity::default()
             },
@@ -318,7 +318,7 @@ fn closing_the_last_scrollable_tile_clears_its_anchor() {
             let state = backend.state_mut();
             let workspace = &mut state.current_mut().workspaces[0];
             workspace.panes.retain(|pane| pane.id == 30);
-            workspace.tile_tree = Some(crate::tiling::DwindleTree::Leaf(30));
+            workspace.tile_tree = Some(crate::layout::tiling::DwindleTree::Leaf(30));
             workspace.focused_pane = Some(30);
             workspace.scrollable_anchor = Some(30);
             workspace.scrollable_reveal_edge = ScrollableRevealEdge::Right;
@@ -453,7 +453,7 @@ fn closing_an_inactive_scrollable_anchor_remaps_its_workspace_only() {
                 pane.terminal_active = true;
                 workspace.panes.push(pane);
             }
-            workspace.tile_tree = crate::tiling::build_dwindle_tree(
+            workspace.tile_tree = crate::layout::tiling::build_dwindle_tree(
                 &[110, 130, 120],
                 crate::state::SplitAxis::Horizontal,
                 &[0.5, 0.5],
@@ -618,7 +618,10 @@ fn workspace_switch_replaces_the_canvas_host_without_retaining_old_panes() {
         backend.state_mut().current_mut().workspaces[1]
             .panes
             .push(pane);
-        crate::tiling::append_tiled_window(&mut backend.state_mut().current_mut().workspaces[1], 2);
+        crate::layout::tiling::append_tiled_window(
+            &mut backend.state_mut().current_mut().workspaces[1],
+            2,
+        );
         backend.render();
 
         backend
@@ -707,12 +710,12 @@ fn non_focusing_spawn_on_active_scrollable_keeps_viewport_anchor() {
         workspace.layout_kind = crate::state::LayoutKind::Scrollable;
         for id in [1_u32, 2] {
             workspace.panes.push(Pane::new(id, 100, bounds));
-            crate::tiling::append_tiled_window(workspace, id);
+            crate::layout::tiling::append_tiled_window(workspace, id);
         }
         workspace.focused_pane = Some(1);
         workspace.scrollable_anchor = Some(1);
         workspace.panes.push(Pane::new(3, 100, bounds));
-        crate::tiling::append_tiled_window(workspace, 3);
+        crate::layout::tiling::append_tiled_window(workspace, 3);
     }
     state.current_mut().active_workspace = 0;
     state.current_mut().focused_pane = Some(1);
@@ -761,14 +764,14 @@ fn non_focusing_tiled_spawn_with_floating_focus_anchors_existing_tiled() {
         let workspace = &mut state.current_mut().workspaces[0];
         workspace.layout_kind = crate::state::LayoutKind::Scrollable;
         workspace.panes.push(Pane::new(1, 100, bounds));
-        crate::tiling::append_tiled_window(workspace, 1);
+        crate::layout::tiling::append_tiled_window(workspace, 1);
         let mut floating = Pane::new(2, 100, bounds);
         floating.floating = true;
         workspace.panes.push(floating);
         workspace.focused_pane = Some(2);
         workspace.scrollable_anchor = Some(99);
         workspace.panes.push(Pane::new(3, 100, bounds));
-        crate::tiling::append_tiled_window(workspace, 3);
+        crate::layout::tiling::append_tiled_window(workspace, 3);
     }
     state.current_mut().active_workspace = 0;
     state.current_mut().focused_pane = Some(2);
@@ -950,7 +953,7 @@ fn spawning_into_the_scratchpad_parks_the_scrollable_anchor_on_the_new_pane() {
                 let mut pane = Pane::new(1, 100, FloatRect::default());
                 pane.opening = false;
                 state.scratch.panes.push(pane);
-                crate::tiling::append_tiled_window(&mut state.scratch, 1);
+                crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
                 state.scratch.focused_pane = Some(1);
                 state.scratch.scrollable_anchor = Some(1);
                 state.scratch_visible = true;

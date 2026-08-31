@@ -1,9 +1,9 @@
 use super::*;
-use crate::runtime_metrics::ServerRuntimeMetrics;
-use crate::shared_layout::{
+use crate::layout::shared::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
     SharedWorkspace,
 };
+use crate::runtime_metrics::ServerRuntimeMetrics;
 use tui_lipan::Color;
 
 #[test]
@@ -63,7 +63,7 @@ fn golden_layout_commit_json_shape() {
                 title: Some("editor".to_string()),
                 profile_name: None,
                 cwd: Some("/repo".to_string()),
-                launch: Some(crate::pane_launch::PaneLaunch::shell("nvim")),
+                launch: Some(crate::pane::launch::PaneLaunch::shell("nvim")),
                 replay: false,
                 keep_open: false,
                 floating: false,
@@ -413,7 +413,7 @@ fn oversized_write_frame_is_rejected() {
         pane_id: 1,
         local: false,
         generation: 1,
-        launch: Some(crate::pane_launch::PaneLaunch::shell(
+        launch: Some(crate::pane::launch::PaneLaunch::shell(
             "x".repeat(MAX_FRAME_SIZE),
         )),
         cwd: None,
@@ -668,7 +668,7 @@ fn golden_client_spawn_json_shape() {
         pane_id: 7,
         local: false,
         generation: 9,
-        launch: Some(crate::pane_launch::PaneLaunch::Direct {
+        launch: Some(crate::pane::launch::PaneLaunch::Direct {
             argv: vec!["printf".into(), "space $literal".into()],
         }),
         cwd: Some("/repo".into()),

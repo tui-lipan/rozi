@@ -7,12 +7,12 @@ use crate::control::{
     CaptureScrollback, CaptureScrollbackNamed, ControlCommand, ControlEnvelope, ControlResponse,
 };
 use crate::input::Action;
+use crate::input::send_keys::{SendKeysItem, parse_send_keys_arg};
 use crate::ops::focus::{
     focus_pane_anywhere, move_focused_to_workspace, request_current_pane_focus, switch_workspace,
 };
-use crate::pane_lifecycle::{find_pane_mut, spawn_interactive_pane_with_focus};
-use crate::pty_events::terminal_key_event_bytes;
-use crate::send_keys::{SendKeysItem, parse_send_keys_arg};
+use crate::pane::lifecycle::{find_pane_mut, spawn_interactive_pane_with_focus};
+use crate::pane::pty_events::terminal_key_event_bytes;
 use crate::state::{PaneId, PaneIdentity, WORKSPACE_COUNT};
 
 #[derive(Serialize)]
@@ -148,7 +148,7 @@ pub(crate) fn handle_control_request(
                 ctx.state.pending_control_reply = Some(envelope.reply);
                 return update;
             }
-            match crate::popup::open(
+            match crate::ops::popup::open(
                 ctx,
                 command,
                 cwd,
@@ -178,13 +178,13 @@ pub(crate) fn handle_control_request(
             let id = target
                 .or(envelope.request.source_pane)
                 .or(ctx.state.focused_pane());
-            match id.and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id)) {
+            match id.and_then(|id| crate::pane::lifecycle::find_pane(&ctx.state, id)) {
                 Some(pane) => {
                     if let Some(client) = ctx.state.pty_client_for_pane(pane.id) {
                         client.set_pane_logging(
                             pane.id,
                             pane.pty_generation,
-                            crate::pane_lifecycle::pane_is_local(&ctx.state, pane.id),
+                            crate::pane::lifecycle::pane_is_local(&ctx.state, pane.id),
                             enabled.unwrap_or(!pane.logging),
                         );
                     }
@@ -233,13 +233,13 @@ impl PaneInfo {
                 .identity
                 .launch
                 .as_ref()
-                .and_then(crate::pane_launch::PaneLaunch::shell_command)
+                .and_then(crate::pane::launch::PaneLaunch::shell_command)
                 .map(str::to_string),
             argv: pane
                 .identity
                 .launch
                 .as_ref()
-                .and_then(crate::pane_launch::PaneLaunch::argv)
+                .and_then(crate::pane::launch::PaneLaunch::argv)
                 .map(<[String]>::to_vec),
             foreground_program: pane.terminal.foreground_program.clone(),
             foreground_arguments: pane.terminal.foreground_arguments.clone(),
@@ -291,12 +291,12 @@ fn set_status(
     let Some(id) = target else {
         return ControlResponse::error("no target pane and no focused pane");
     };
-    let Some(pane) = crate::pane_lifecycle::find_pane(&ctx.state, id).filter(|pane| !pane.closing)
+    let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, id).filter(|pane| !pane.closing)
     else {
         return ControlResponse::error(format!("pane {id} not found"));
     };
     let generation = pane.pty_generation;
-    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     let scratch = crate::scratchpad::contains(&ctx.state, id);
     if !scratch && !ctx.state.current().session_attached {
         return ControlResponse::error(format!("pane {id} session is not attached"));
@@ -364,7 +364,7 @@ fn control_input_target(
         return Err(ControlResponse::error("no target pane and no focused pane"));
     };
     let client = ctx.state.pty_client_for_pane(id);
-    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
         return Err(ControlResponse::error(format!("pane {id} not found")));
     };
@@ -562,14 +562,14 @@ fn notify_command(
         // `title` is meaningful only here: a titled toast is drawn in the error style, so an
         // `info` carrying one would read as a failure. Info stays the single-line form.
         crate::control::NotifyLevel::Error => {
-            crate::pty_events::notify_error(
+            crate::pane::pty_events::notify_error(
                 ctx,
                 title.unwrap_or_else(|| "Notice".to_string()),
                 message,
             );
         }
         crate::control::NotifyLevel::Info => {
-            crate::pty_events::notify_info(ctx, message);
+            crate::pane::pty_events::notify_info(ctx, message);
         }
     }
     ControlResponse::empty()
@@ -616,7 +616,7 @@ fn validate_workspace_index(index: usize) -> Option<ControlResponse> {
 
 struct PreparedNewPane {
     workspace: Option<usize>,
-    launch: Option<crate::pane_launch::PaneLaunch>,
+    launch: Option<crate::pane::launch::PaneLaunch>,
     scratch_source: bool,
 }
 
@@ -703,7 +703,7 @@ fn new_pane(
             identity.set_custom_title(title);
         }
         let previous = source.or(ctx.state.scratch.focused_pane);
-        let (id, update) = crate::pane_lifecycle::spawn_pane_in_scratch(ctx, previous, identity);
+        let (id, update) = crate::pane::lifecycle::spawn_pane_in_scratch(ctx, previous, identity);
         if !focus && let Some(previous) = previous {
             crate::ops::focus::focus_pane(&mut ctx.state, previous);
         }
@@ -746,8 +746,8 @@ pub(crate) fn hold_spawn_reply(
     id: PaneId,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) {
-    let local = crate::pane_lifecycle::pane_is_local(&ctx.state, id);
-    let generation = crate::pane_lifecycle::find_pane_in_namespace(&ctx.state, id, local)
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
+    let generation = crate::pane::lifecycle::find_pane_in_namespace(&ctx.state, id, local)
         .map(|pane| pane.pty_generation);
     let (Some(generation), Some(link)) = (generation, ctx.state.command_link.clone()) else {
         let _ = reply.send(ControlResponse::ok(NewPaneAccepted {
@@ -808,7 +808,7 @@ pub(crate) fn resolve_spawn_reply(
 pub(crate) fn new_pane_after_session(
     ctx: &mut Context<AppRoot>,
     source: Option<PaneId>,
-    launch: Option<crate::pane_launch::PaneLaunch>,
+    launch: Option<crate::pane::launch::PaneLaunch>,
     cwd: Option<String>,
     title: Option<String>,
     keep_open: bool,
@@ -839,7 +839,7 @@ fn spawn_new_pane(
     ctx: &mut Context<AppRoot>,
     source_workspace: usize,
     source: Option<PaneId>,
-    launch: Option<crate::pane_launch::PaneLaunch>,
+    launch: Option<crate::pane::launch::PaneLaunch>,
     cwd: Option<String>,
     title: Option<String>,
     keep_open: bool,
@@ -868,13 +868,13 @@ fn spawn_new_pane(
 fn requested_pane_launch(
     command: Option<String>,
     argv: Option<Vec<String>>,
-) -> std::result::Result<Option<crate::pane_launch::PaneLaunch>, String> {
+) -> std::result::Result<Option<crate::pane::launch::PaneLaunch>, String> {
     match (command, argv) {
         (Some(_), Some(_)) => {
             Err("new-pane accepts either `command` or `argv`, not both".to_string())
         }
-        (Some(command), None) => Ok(Some(crate::pane_launch::PaneLaunch::shell(command))),
-        (None, Some(argv)) => crate::pane_launch::PaneLaunch::direct(argv).map(Some),
+        (Some(command), None) => Ok(Some(crate::pane::launch::PaneLaunch::shell(command))),
+        (None, Some(argv)) => crate::pane::launch::PaneLaunch::direct(argv).map(Some),
         (None, None) => Ok(None),
     }
 }
@@ -909,7 +909,7 @@ mod tests {
         assert_eq!(
             requested_pane_launch(None, Some(vec!["tool".into(), "space; $literal".into()]))
                 .unwrap(),
-            Some(crate::pane_launch::PaneLaunch::Direct {
+            Some(crate::pane::launch::PaneLaunch::Direct {
                 argv: vec!["tool".into(), "space; $literal".into()]
             })
         );

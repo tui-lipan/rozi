@@ -1,8 +1,8 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::{find_pane_in_namespace_mut, remove_pane_after_exit};
-use crate::pty_events::maybe_notify_pane_exit;
+use crate::pane::lifecycle::{find_pane_in_namespace_mut, remove_pane_after_exit};
+use crate::pane::pty_events::maybe_notify_pane_exit;
 use crate::state::PaneId;
 
 struct PaneOutputEffects {
@@ -307,7 +307,7 @@ pub(crate) fn exited(
     // closes it directly. Shared exits never consult overlay membership: a colliding numeric id
     // must not close the owner's scratch or popup.
     if local && pane_id == crate::state::POPUP_PANE_ID {
-        return crate::popup::handle_exit(ctx);
+        return crate::ops::popup::handle_exit(ctx);
     }
     if local && crate::scratchpad::contains(&ctx.state, pane_id) {
         return remove_pane_after_exit(ctx, pane_id, true);
@@ -328,7 +328,7 @@ pub(crate) fn exited(
     }
     // A clean exit closes the pane on its own; only a failure code is worth surfacing.
     if code != 0 {
-        crate::pty_events::notify_info(ctx, format!("Pane {pane_id} exited ({code})"));
+        crate::pane::pty_events::notify_info(ctx, format!("Pane {pane_id} exited ({code})"));
     }
     remove_pane_after_exit(ctx, pane_id, false)
 }
@@ -356,10 +356,10 @@ pub(crate) fn pane_logging_changed(
     // server and knowable nowhere else. Stopping reveals nothing the user did not just ask for.
     match error {
         Some(error) => {
-            crate::pty_events::notify_error(ctx, "Logging failed", error);
+            crate::pane::pty_events::notify_error(ctx, "Logging failed", error);
         }
         None if enabled => {
-            crate::pty_events::notify_info(
+            crate::pane::pty_events::notify_info(
                 ctx,
                 format!(
                     "Logging pane {pane_id} to {}",
@@ -374,9 +374,9 @@ pub(crate) fn pane_logging_changed(
 
 pub(crate) fn flush_pane_resizes(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if epoch != ctx.state.runtime_epoch {
-        return crate::pty_events::flush_background_resizes(&mut ctx.state, epoch);
+        return crate::pane::pty_events::flush_background_resizes(&mut ctx.state, epoch);
     }
-    crate::pty_events::flush_pending_resizes(ctx);
+    crate::pane::pty_events::flush_pending_resizes(ctx);
     Update::none()
 }
 

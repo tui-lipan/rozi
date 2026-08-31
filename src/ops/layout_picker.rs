@@ -99,7 +99,7 @@ pub(crate) fn layout_picker_set_default(ctx: &mut Context<AppRoot>) -> Update {
     match crate::config::persist_layout_default(kind) {
         Ok(_) => ctx.state.config.layout.default = kind,
         Err(message) => {
-            crate::pty_events::notify_error(ctx, "Default not set", message);
+            crate::pane::pty_events::notify_error(ctx, "Default not set", message);
         }
     }
     Update::full()

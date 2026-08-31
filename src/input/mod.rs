@@ -1,3 +1,10 @@
+//! Input: the app-level [`Action`] vocabulary and the routing that decides whether a key runs one
+//! or is forwarded to the focused pane's PTY.
+
+pub mod copy_mode;
+pub mod routing;
+pub mod send_keys;
+
 use crate::state::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -12,7 +12,7 @@ pub enum Mode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HintModeState {
     pub target: PaneId,
-    pub matches: Vec<crate::hints::HintMatch>,
+    pub matches: Vec<crate::ops::hints::HintMatch>,
     pub labels: Vec<String>,
     pub input: String,
     pub offset: usize,

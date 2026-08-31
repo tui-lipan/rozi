@@ -58,7 +58,7 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
         .as_ref()
         .and_then(|prompt| normalize_profile_name(prompt.input.text()))
     else {
-        crate::pty_events::notify_error(
+        crate::pane::pty_events::notify_error(
             ctx,
             "Invalid profile name",
             "Use letters, numbers, _ or -",
@@ -95,7 +95,7 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
                     ],
                 ),
             );
-            crate::pty_events::notify_info(
+            crate::pane::pty_events::notify_info(
                 ctx,
                 format!(
                     "{} profile `{name}`",
@@ -104,7 +104,7 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
             );
         }
         Err(message) => {
-            crate::pty_events::notify_error(ctx, "Capture failed", message);
+            crate::pane::pty_events::notify_error(ctx, "Capture failed", message);
         }
     }
 
@@ -292,7 +292,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
         .as_ref()
         .is_some_and(|shared| shared.read_only)
     {
-        crate::pty_events::notify_error(ctx, "Replace failed", "Client is read-only");
+        crate::pane::pty_events::notify_error(ctx, "Replace failed", "Client is read-only");
         return Update::full();
     }
     if crate::ops::session::nudge_if_follower(ctx) {
@@ -317,14 +317,14 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
     let profile = match load_profile(&entry.path) {
         Ok(profile) => profile,
         Err(message) => {
-            crate::pty_events::notify_error(ctx, "Replace failed", message);
+            crate::pane::pty_events::notify_error(ctx, "Replace failed", message);
             return Update::full();
         }
     };
-    crate::popup::kill_if_open(ctx);
+    crate::ops::popup::kill_if_open(ctx);
     crate::ops::exit::clear_pending(ctx);
     ctx.state.copy_mode = None;
-    crate::copy_mode::clear_copy_feedback(ctx);
+    crate::input::copy_mode::clear_copy_feedback(ctx);
     ctx.state.hint_mode = None;
     ctx.state.search = None;
     ctx.state.mode = Mode::Normal;
@@ -370,11 +370,11 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
     if spawned.is_empty() {
         Update::full()
     } else {
-        Update::with_command(crate::pane_lifecycle::open_timers_batch_command(
+        Update::with_command(crate::pane::lifecycle::open_timers_batch_command(
             ctx.state.runtime_epoch,
             spawned,
-            crate::anim::open_delay(ctx.state.config.animations),
-            crate::anim::activation_delay(ctx.state.config.animations),
+            crate::layout::anim::open_delay(ctx.state.config.animations),
+            crate::layout::anim::activation_delay(ctx.state.config.animations),
         ))
     }
 }
@@ -395,7 +395,7 @@ fn reset_startup_mode_without_default(ctx: &mut Context<AppRoot>) -> bool {
     let fallback = crate::config::SessionStartup::default();
     ctx.state.config.session.startup = fallback;
     if let Err(message) = crate::config::persist_session_string("startup", fallback.id()) {
-        crate::pty_events::notify_error(ctx, "Startup mode not saved", message);
+        crate::pane::pty_events::notify_error(ctx, "Startup mode not saved", message);
         return false;
     }
     true
@@ -421,11 +421,11 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<AppRoot>) -> Update {
             // Starring is visible in the list itself, but taking the star away can invalidate the
             // startup mode, which lives on another screen. Say so where the key was pressed.
             if unset && reset_startup_mode_without_default(ctx) {
-                crate::pty_events::notify_info(ctx, "Startup mode is back to Picker");
+                crate::pane::pty_events::notify_info(ctx, "Startup mode is back to Picker");
             }
         }
         Err(message) => {
-            crate::pty_events::notify_error(ctx, "Default not set", message);
+            crate::pane::pty_events::notify_error(ctx, "Default not set", message);
         }
     }
     Update::full()
@@ -469,17 +469,17 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<AppRoot>) -> Update {
                         // One toast for both consequences: the deleted row is already gone from the
                         // list, so what is worth saying is what changed off screen.
                         if reset_startup_mode_without_default(ctx) {
-                            crate::pty_events::notify_info(
+                            crate::pane::pty_events::notify_info(
                                 ctx,
                                 "Cleared startup default, startup mode is back to Picker",
                             );
                         } else {
-                            crate::pty_events::notify_info(ctx, "Cleared startup default");
+                            crate::pane::pty_events::notify_info(ctx, "Cleared startup default");
                         }
                     }
                     Ok(None) => {}
                     Err(message) => {
-                        crate::pty_events::notify_error(ctx, "Default not cleared", message);
+                        crate::pane::pty_events::notify_error(ctx, "Default not cleared", message);
                     }
                 }
             }
@@ -487,7 +487,7 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<AppRoot>) -> Update {
             refresh_profile_picker_entries(ctx);
         }
         Err(message) => {
-            crate::pty_events::notify_error(ctx, "Delete failed", message);
+            crate::pane::pty_events::notify_error(ctx, "Delete failed", message);
             if let Some(picker) = ctx.state.profile_picker.as_mut() {
                 picker.pending_delete = None;
             }
@@ -556,7 +556,7 @@ pub(crate) fn open_named_target(
     intent: OpenNamedIntent,
 ) -> Update {
     if !crate::session::discovery::valid_session_name(&name) {
-        crate::pty_events::notify_error(ctx, "Invalid name", "Use letters, numbers, _ or -");
+        crate::pane::pty_events::notify_error(ctx, "Invalid name", "Use letters, numbers, _ or -");
         return Update::full();
     }
     let exists = crate::session::discovery::discover_session(&name)
@@ -568,7 +568,7 @@ pub(crate) fn open_named_target(
         OpenNamedIntent::CreateFresh | OpenNamedIntent::CreateFromProfile { .. }
     );
     if explicit_create && exists {
-        crate::pty_events::notify_error(
+        crate::pane::pty_events::notify_error(
             ctx,
             "Create failed",
             format!("Session `{name}` is already running"),
@@ -585,7 +585,7 @@ pub(crate) fn open_named_target(
         if pending.name == name {
             return Update::none();
         }
-        crate::pty_events::notify_info(ctx, "Attach already in progress");
+        crate::pane::pty_events::notify_info(ctx, "Attach already in progress");
         return Update::full();
     }
     // Past the guards this session is being opened, which retires any dialog we were raised from -
@@ -595,7 +595,7 @@ pub(crate) fn open_named_target(
     let seed = match intent {
         OpenNamedIntent::ResolveProfile { profile, path } => {
             if !path.exists() {
-                crate::pty_events::notify_error(
+                crate::pane::pty_events::notify_error(
                     ctx,
                     "Not found",
                     format!("No session or profile `{name}`"),
@@ -611,7 +611,7 @@ pub(crate) fn open_named_target(
         let profile = match load_profile(&path) {
             Ok(profile) => profile,
             Err(message) => {
-                crate::pty_events::notify_error(ctx, "Profile load failed", message);
+                crate::pane::pty_events::notify_error(ctx, "Profile load failed", message);
                 return Update::full();
             }
         };
@@ -695,7 +695,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
     let profile = match load_profile(&entry.path) {
         Ok(profile) => profile,
         Err(message) => {
-            crate::pty_events::notify_error(ctx, "Profile load failed", message);
+            crate::pane::pty_events::notify_error(ctx, "Profile load failed", message);
             ctx.state.show_profile_picker = false;
             ctx.state.profile_picker = None;
             ctx.state.commands_dirty = true;

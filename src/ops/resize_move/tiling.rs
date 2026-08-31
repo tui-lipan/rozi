@@ -1,9 +1,15 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::anim::GeometryAnimation;
-use crate::geometry::{
+use crate::layout::anim::GeometryAnimation;
+use crate::layout::geometry::{
     clamp_float_rect, directional_score, lift_off_float_rect, workspace_tile_bounds,
+};
+use crate::layout::tiling::{
+    append_tiled_window, cell_split_ratio, flip_tree_split_for_focused, innermost_split_for,
+    move_tiled_window_around_target, ratio_at, redock_split_ratio, remove_tiled_window,
+    resize_tiled_split, sanitize_scrollable_width, scrollable_column_width, swap_tree_leaves,
+    usable_axis_extent,
 };
 use crate::layout::{
     self, insert_tiled_pane_at_point, placement_for, workspace_target_rects,
@@ -14,12 +20,6 @@ use crate::ops::focus::{
 };
 use crate::state::{
     Direction, EVEN_SPLIT_RATIO, LayoutKind, MoveSwapHint, PaneId, State, TileGap, Workspace,
-};
-use crate::tiling::{
-    append_tiled_window, cell_split_ratio, flip_tree_split_for_focused, innermost_split_for,
-    move_tiled_window_around_target, ratio_at, redock_split_ratio, remove_tiled_window,
-    resize_tiled_split, sanitize_scrollable_width, scrollable_column_width, swap_tree_leaves,
-    usable_axis_extent,
 };
 
 use super::float::{
@@ -49,7 +49,7 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
         pane.fullscreen = false;
         if pane.floating {
             pane.floating_rect = clamp_float_rect(pane.floating_rect, bounds);
-            insert_tiled_at = Some(crate::geometry::rect_center(pane.floating_rect));
+            insert_tiled_at = Some(crate::layout::geometry::rect_center(pane.floating_rect));
             pane.floating = false;
             ctx.state.animation = GeometryAnimation::TileFloat;
         } else {
@@ -228,7 +228,7 @@ pub(crate) fn set_layout(
     };
     ctx.state.animation = GeometryAnimation::AxisChange;
     if show_toast {
-        crate::pty_events::notify_on(
+        crate::pane::pty_events::notify_on(
             ctx,
             crate::state::ToastChannel::LayoutMode,
             None,
@@ -439,7 +439,7 @@ fn swap_tiled_neighbor_in_direction(
 
 fn remembered_swap_target(
     workspace: &Workspace,
-    placements: &[crate::tiling::PanePlacement],
+    placements: &[crate::layout::tiling::PanePlacement],
     focused: PaneId,
     direction: Direction,
 ) -> Option<PaneId> {
@@ -458,7 +458,7 @@ fn remembered_swap_target(
 }
 
 fn strict_directional_neighbor(
-    placements: &[crate::tiling::PanePlacement],
+    placements: &[crate::layout::tiling::PanePlacement],
     focused: PaneId,
     direction: Direction,
 ) -> Option<PaneId> {
@@ -539,13 +539,13 @@ fn opposite_direction(direction: Direction) -> Direction {
 mod tests {
     use super::*;
     use crate::input::Action;
+    use crate::layout::tiling::DwindleTree;
     use crate::layout::workspace_target_rects_excluding;
     use crate::ops::resize_move::test_util::{
         TEST_VIEWPORT, first_pane_extent, in_test_stack, pane_extent, steps, three_pane_stack_tree,
         three_pane_stack_workspace, two_pane_backend,
     };
     use crate::state::{Pane, SplitAxis};
-    use crate::tiling::DwindleTree;
     use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
 
@@ -829,8 +829,8 @@ mod tests {
                 let drop_placements =
                     workspace_target_rects_excluding(workspace, bounds, Some(1), top_gap, tile_gap);
                 let target = placement_for(&drop_placements, 3).expect("pane 3 drop placement");
-                let start_pointer = crate::geometry::rect_center(start);
-                let target_pointer = crate::geometry::rect_center(target);
+                let start_pointer = crate::layout::geometry::rect_center(start);
+                let target_pointer = crate::layout::geometry::rect_center(target);
                 (
                     FloatRect {
                         y: start.y + f32::from(top_offset),
@@ -963,11 +963,11 @@ mod tests {
     #[test]
     fn scrollable_move_and_swap_reveal_focused_under_non_focus_anchor() {
         in_test_stack(|| {
-            use crate::geometry::workspace_tile_bounds;
+            use crate::layout::geometry::workspace_tile_bounds;
+            use crate::layout::tiling::append_tiled_window;
             use crate::layout::workspace_target_rects_with_visible_bounds;
             use crate::ops::focus::focus_pane;
             use crate::state::{LayoutKind, ScrollableRevealEdge};
-            use crate::tiling::append_tiled_window;
 
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);
@@ -1109,11 +1109,11 @@ mod tests {
     #[test]
     fn scrollable_grow_non_anchor_pane_syncs_reveal_when_clipped() {
         in_test_stack(|| {
-            use crate::geometry::workspace_tile_bounds;
+            use crate::layout::geometry::workspace_tile_bounds;
+            use crate::layout::tiling::append_tiled_window;
             use crate::layout::workspace_target_rects_with_visible_bounds;
             use crate::ops::focus::focus_pane;
             use crate::state::{LayoutKind, ScrollableRevealEdge};
-            use crate::tiling::append_tiled_window;
 
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);

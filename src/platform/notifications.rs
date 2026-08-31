@@ -1,6 +1,6 @@
 //! Cross-platform desktop notifications (cross-platform plan Phase 10).
 //!
-//! One user-visible behavior - "a pane exited" ([`crate::pty_events::maybe_notify_pane_exit`],
+//! One user-visible behavior - "a pane exited" ([`crate::pane::pty_events::maybe_notify_pane_exit`],
 //! gated on `[notifications] enabled` / `pane_exit`) - reached through whatever the host actually
 //! has:
 //!

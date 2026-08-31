@@ -53,7 +53,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
     match msg {
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::UserCommandFailed { message } => {
-            crate::pty_events::notify_error(ctx, "Command failed", message);
+            crate::pane::pty_events::notify_error(ctx, "Command failed", message);
             Update::full()
         }
         Msg::CommandLinkReady(link) => overlays::command_link_ready(ctx, link),
@@ -90,7 +90,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::WorkbarTick => overlays::workbar_tick(ctx),
         Msg::AgentTick => sidebar::agent_tick(ctx),
         Msg::AlertPulseTick => panes::alert_pulse_tick(ctx),
-        Msg::PointerFlowTick(id) => crate::pty_events::input::pointer_flow_tick(ctx, id),
+        Msg::PointerFlowTick(id) => crate::pane::pty_events::input::pointer_flow_tick(ctx, id),
         Msg::WorkbarCommandPoll { epoch, command } => workbar::poll_command(ctx, epoch, command),
         Msg::WorkbarCommandOutput {
             epoch,
@@ -314,7 +314,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::EndScratchResize => panes::end_scratch_resize(ctx),
         Msg::FinishOpen(epoch, id, generation) => panes::finish_open(ctx, epoch, id, generation),
         Msg::PruneClosed(epoch, id, generation) => {
-            crate::pane_lifecycle::prune_closed_pane(ctx, epoch, id, generation)
+            crate::pane::lifecycle::prune_closed_pane(ctx, epoch, id, generation)
         }
         Msg::ActivatePane(epoch, id, generation) => {
             panes::activate_pane(ctx, epoch, id, generation)
@@ -406,7 +406,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             name,
             client,
         } => session::connected(ctx, epoch, name, client),
-        Msg::ScratchRuntimeFailed(message) => crate::scratch_runtime::failed(ctx, message),
+        Msg::ScratchRuntimeFailed(message) => crate::scratchpad::runtime::failed(ctx, message),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
         Msg::DrainSessionFrames { epoch, mailbox } => {
             drain_session_frames(_app, ctx, epoch, mailbox).update
@@ -641,10 +641,11 @@ fn inbound_event_update(
     mailbox: &crate::session::client::InboundMailbox,
     event: crate::session::client::InboundEvent,
 ) -> HandledUpdate {
-    if epoch == crate::scratch_runtime::SCRATCH_RUNTIME_EPOCH {
+    if epoch == crate::scratchpad::runtime::SCRATCH_RUNTIME_EPOCH {
         return match event {
             crate::session::client::InboundEvent::Frame(frame) => {
-                match crate::scratch_runtime::message_for_frame(ctx.state.runtime_epoch, *frame) {
+                match crate::scratchpad::runtime::message_for_frame(ctx.state.runtime_epoch, *frame)
+                {
                     Some(message) => HandledUpdate {
                         post_update: post_update_kind(&message),
                         update: handle_msg_inner(app, message, ctx),
@@ -656,14 +657,14 @@ fn inbound_event_update(
                 }
             }
             crate::session::client::InboundEvent::Disconnected => HandledUpdate {
-                update: crate::scratch_runtime::failed(
+                update: crate::scratchpad::runtime::failed(
                     ctx,
                     "private PTY host disconnected".to_string(),
                 ),
                 post_update: PostUpdateKind::Full,
             },
             crate::session::client::InboundEvent::Failed(message) => HandledUpdate {
-                update: crate::scratch_runtime::failed(ctx, message),
+                update: crate::scratchpad::runtime::failed(ctx, message),
                 post_update: PostUpdateKind::Full,
             },
         };
@@ -752,7 +753,7 @@ fn post_update_sync(
         attachment.retired_panes.expire();
     }
     let stale_search = ctx.state.search.as_ref().is_some_and(|search| {
-        crate::pane_lifecycle::find_pane(&ctx.state, search.target).is_none()
+        crate::pane::lifecycle::find_pane(&ctx.state, search.target).is_none()
     });
     if stale_search {
         ctx.state.search = None;

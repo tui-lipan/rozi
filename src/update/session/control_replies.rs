@@ -1,10 +1,10 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane_lifecycle::{
+use crate::layout::shared::{ClientId, SharedLayout};
+use crate::pane::lifecycle::{
     find_pane_in_namespace, find_pane_in_namespace_mut, remove_pane_after_exit,
 };
-use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
 pub(crate) fn layout_committed(
@@ -40,7 +40,7 @@ pub(crate) fn layout_committed(
         }
         Update::none()
     } else {
-        crate::shared_layout::apply_shared_layout(ctx, &layout, rev)
+        crate::layout::shared::apply_shared_layout(ctx, &layout, rev)
     }
 }
 
@@ -63,7 +63,7 @@ pub(crate) fn layout_rejected(
         return Update::none();
     }
     let update = if let Some(layout) = layout {
-        crate::shared_layout::apply_shared_layout(ctx, &layout, current_rev)
+        crate::layout::shared::apply_shared_layout(ctx, &layout, current_rev)
     } else {
         Update::full()
     };
@@ -396,7 +396,7 @@ pub(crate) fn spawn_result(
     }
     ctx.state.commands_dirty = true;
     if let Some(error) = toast_error {
-        crate::pty_events::notify_error(ctx, "Spawn failed", error);
+        crate::pane::pty_events::notify_error(ctx, "Spawn failed", error);
     }
     if should_close {
         // The popup lives outside every workspace, so the generic teardown cannot reach it: with a
@@ -404,7 +404,7 @@ pub(crate) fn spawn_result(
         // dead pane on screen. `exited` intercepts popups the same way. `close` rather than
         // `handle_exit` - a spawn that never started has nothing for `keep_open` to keep.
         if local && pane_id == crate::state::POPUP_PANE_ID {
-            return crate::popup::close(ctx);
+            return crate::ops::popup::close(ctx);
         }
         remove_pane_after_exit(ctx, pane_id, local)
     } else if let Some(command) = replay_deadline {

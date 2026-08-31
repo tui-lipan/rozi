@@ -150,6 +150,7 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
                     files.clone(),
                     SidebarCommandOutput {
                         epoch: 1,
+                        cwd: None,
                         rows: vec![SidebarCommandRow {
                             raw: "file-row".to_string(),
                             display: "file-row".to_string(),
@@ -164,6 +165,19 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
             }
             backend.render();
             assert!(!backend.capture_frame().to_fixed_grid().contains("file-row"));
+
+            // Cached output is only shown while it still describes the focused pane's directory,
+            // which the first update resolves. Stamping it afterwards is what the real poll does.
+            backend
+                .dispatch(Msg::SidebarTabSelected { panel: 0, index: 0 })
+                .expect("re-select the active tab so the per-message sync resolves the cwd");
+            {
+                let state = backend.state_mut();
+                let cwd = state.sidebar.command_cwd.clone();
+                if let Some(output) = state.sidebar.command_output.get_mut(&files) {
+                    output.cwd = cwd;
+                }
+            }
 
             backend
                 .dispatch(Msg::SidebarTabSelected { panel: 0, index: 1 })

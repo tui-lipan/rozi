@@ -19,6 +19,10 @@ pub struct SidebarCommandRow {
 pub struct SidebarCommandOutput {
     pub epoch: u64,
     pub rows: Vec<SidebarCommandRow>,
+    /// Directory the command was run in. Output describes one project, so it stops being an answer
+    /// the moment the focused pane moves to another one - including while the tab is off screen,
+    /// where nothing else would notice before it is shown again.
+    pub cwd: Option<String>,
 }
 
 /// What activating a row does. Rows are built as a pure function of `State`, so the update side can
@@ -107,6 +111,19 @@ impl SidebarItemProjection {
 }
 
 impl State {
+    /// Cached output for a command tab, as long as it still describes where the focused pane is.
+    ///
+    /// A tab that is not on screen keeps polling nothing, so its cache can outlive the directory it
+    /// was collected in. Treating that as absent is what stops a hidden tab from flashing the last
+    /// project's rows when it is shown again, and keeps a visible one from answering for a project
+    /// you have already left.
+    pub fn fresh_command_output(&self, id: &SidebarTabId) -> Option<&SidebarCommandOutput> {
+        self.sidebar
+            .command_output
+            .get(id)
+            .filter(|output| output.cwd == self.sidebar.command_cwd)
+    }
+
     pub fn active_sidebar_tab(&self, panel: usize) -> Option<&SidebarTab> {
         let id = self.sidebar.active_tab_in(panel)?;
         self.config.sidebar.tabs.iter().find(|tab| tab.id() == *id)
@@ -320,7 +337,7 @@ impl State {
                 items
             }
             SidebarTab::Command { name, on_click, .. } => {
-                let Some(output) = self.sidebar.command_output.get(name) else {
+                let Some(output) = self.fresh_command_output(name) else {
                     return Vec::new();
                 };
                 // Mirrors `view::sidebar::user_tabs::command_rows`: a header line becomes a
@@ -902,6 +919,7 @@ mod tests {
             SidebarTabId::new("removed"),
             SidebarCommandOutput {
                 epoch: 1,
+                cwd: None,
                 rows: Vec::new(),
             },
         );

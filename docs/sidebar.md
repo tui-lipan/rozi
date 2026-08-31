@@ -169,7 +169,9 @@ actions receive a path in `ROZI_FILE`. Quote `"$ROZI_ROW"` when passing it to an
 is command output and must never compose a command line.
 
 Command tabs also run where the focused pane is, so a tab describes the project you are working in
-and re-lists when you `cd`. Under `--remote` the pane's directory belongs to the server, so the
+and re-lists when you `cd`. Output belongs to the directory it was collected in: a tab that was off
+screen while you moved shows its placeholder until the next result arrives, rather than the previous
+project's rows. Under `--remote` the pane's directory belongs to the server, so the
 client's own directory stands.
 
 Tree `send` actions may use `{path}`. Tree `run` and `popup` actions receive the selected path in

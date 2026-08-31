@@ -71,7 +71,7 @@ pub(super) fn command_rows(
     tab_id: &SidebarTabId,
     clickable: bool,
 ) -> Vec<SidebarRow> {
-    let Some(output) = ctx.state.sidebar.command_output.get(tab_id) else {
+    let Some(output) = ctx.state.fresh_command_output(tab_id) else {
         return Vec::new();
     };
     let config_epoch = ctx.state.sidebar.config_epoch;

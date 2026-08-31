@@ -178,6 +178,7 @@ fn read_only_command_output_has_one_cell_of_leading_padding() {
                     tab_id,
                     SidebarCommandOutput {
                         epoch: 1,
+                        cwd: None,
                         rows: vec![SidebarCommandRow {
                             raw: "master".into(),
                             display: "master".into(),

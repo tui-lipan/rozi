@@ -50,6 +50,7 @@ fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
                 id.clone(),
                 SidebarCommandOutput {
                     epoch: 1,
+                    cwd: None,
                     rows: vec![row("stale")],
                 },
             );
@@ -84,6 +85,46 @@ fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
         );
         // The rows already on screen stay until the new ones arrive: a re-list, not a blank tab.
         assert_eq!(state.sidebar.command_output[&id].rows, vec![row("stale")]);
+    });
+}
+
+/// A tab that is off screen stops polling, so its cache outlives the directory it was collected in.
+/// Showing it again must not answer for the project you left, even for the frame before the next
+/// poll lands.
+#[test]
+fn a_hidden_command_tab_never_shows_output_from_a_directory_it_has_left() {
+    on_test_thread(|| {
+        let mut backend = settled_backend();
+        let id = SidebarTabId::new("rows");
+        let tab = SidebarTab::Command {
+            name: id.clone(),
+            label: "Rows".to_string(),
+            command: "printf row".to_string(),
+            interval_secs: 30,
+            on_click: None,
+            group_prefix: None,
+            env: Vec::new(),
+        };
+        backend.state_mut().config.sidebar.tabs = vec![tab.clone()];
+        let cwd = backend.state().sidebar.command_cwd.clone();
+        backend.state_mut().sidebar.command_output.insert(
+            id.clone(),
+            SidebarCommandOutput {
+                epoch: 1,
+                cwd: cwd.clone(),
+                rows: vec![row("first-project")],
+            },
+        );
+        // While the pane has not moved, the cache is the answer.
+        assert!(backend.state().fresh_command_output(&id).is_some());
+        assert_eq!(backend.state().sidebar_item_projections(&tab).len(), 1);
+
+        backend.state_mut().sidebar.command_cwd = Some("/somewhere/else".to_string());
+        // The rows are still cached - a poll may yet return the same ones - but nothing renders
+        // them, so the tab shows its placeholder instead of the last project's tasks.
+        assert!(backend.state().sidebar.command_output.contains_key(&id));
+        assert!(backend.state().fresh_command_output(&id).is_none());
+        assert!(backend.state().sidebar_item_projections(&tab).is_empty());
     });
 }
 
@@ -1590,11 +1631,15 @@ fn group_prefix_lines_become_inert_headers_with_the_marker_stripped() {
             env: Vec::new(),
         };
         backend.state_mut().config.sidebar.tabs = vec![tab.clone()];
-        backend
-            .state_mut()
-            .sidebar
-            .command_output
-            .insert(id, SidebarCommandOutput { epoch: 1, rows });
+        let cwd = backend.state().sidebar.command_cwd.clone();
+        backend.state_mut().sidebar.command_output.insert(
+            id,
+            SidebarCommandOutput {
+                epoch: 1,
+                cwd,
+                rows,
+            },
+        );
         let selectable: Vec<bool> = backend
             .state()
             .sidebar_item_projections(&tab)
@@ -1667,10 +1712,13 @@ fn command_click_rejects_stale_output_epoch_and_changed_raw_line() {
             env: Vec::new(),
         }];
         backend.state_mut().sidebar.config_epoch = 2;
+        // Cached output only counts while it still describes where the focused pane is.
+        let cwd = backend.state().sidebar.command_cwd.clone();
         backend.state_mut().sidebar.command_output.insert(
             id.clone(),
             SidebarCommandOutput {
                 epoch: 9,
+                cwd,
                 rows: vec![row("safe")],
             },
         );
@@ -1716,6 +1764,7 @@ fn stale_command_result_clears_only_its_run_and_cannot_replace_output() {
                 id.clone(),
                 SidebarCommandOutput {
                     epoch: 3,
+                    cwd: None,
                     rows: vec![row("current")],
                 },
             );

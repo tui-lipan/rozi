@@ -211,7 +211,7 @@ pub(crate) fn command_output(
         .sidebar
         .command_output
         .get(&tab_id)
-        .is_none_or(|output| output.rows != rows);
+        .is_none_or(|output| output.rows != rows || output.cwd != ctx.state.sidebar.command_cwd);
     if changed {
         ctx.state.sidebar.next_output_epoch = ctx.state.sidebar.next_output_epoch.wrapping_add(1);
         ctx.state.sidebar.command_output.insert(
@@ -219,6 +219,7 @@ pub(crate) fn command_output(
             SidebarCommandOutput {
                 epoch: ctx.state.sidebar.next_output_epoch,
                 rows,
+                cwd: ctx.state.sidebar.command_cwd.clone(),
             },
         );
     }

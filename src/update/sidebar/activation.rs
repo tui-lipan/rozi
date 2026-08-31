@@ -141,7 +141,9 @@ pub(crate) fn command_row_activate(
     if config_epoch != ctx.state.sidebar.config_epoch {
         return Update::none();
     }
-    let current = ctx.state.sidebar.command_output.get(&tab_id);
+    // Freshness, not just identity: a click resolved against output collected in a directory the
+    // pane has since left would run the wrong project's row.
+    let current = ctx.state.fresh_command_output(&tab_id);
     if current.is_none_or(|output| {
         output.epoch != output_epoch || !output.rows.iter().any(|row| !row.error && row.raw == line)
     }) {

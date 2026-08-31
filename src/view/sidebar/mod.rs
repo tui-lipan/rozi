@@ -331,7 +331,7 @@ fn empty_text(ctx: &Context<AppRoot>, tab: &SidebarTab) -> &'static str {
         SidebarTab::Sessions => "No sessions discovered",
         SidebarTab::Launcher { .. } => "No launcher entries",
         SidebarTab::Command { name, .. } => {
-            if ctx.state.sidebar.command_output.contains_key(name) {
+            if ctx.state.fresh_command_output(name).is_some() {
                 "No output"
             } else {
                 "Loading…"

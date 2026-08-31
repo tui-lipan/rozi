@@ -87,25 +87,39 @@ fn expect_cli_stream_accepted(
     generation: &str,
     args: &[&str],
 ) {
-    let mut child = open_cli_stream(backend, socket, generation, args);
+    let mut child = open_cli_stream(backend, socket, generation, args, |backend| {
+        backend.state().pick.is_some()
+    });
     child.kill().unwrap();
     child.wait().unwrap();
 }
 
+/// Spawn a streaming CLI and return once the app has actually registered its stream.
+///
+/// `accepted` is what the app records when the request gets past the generation fence, so the
+/// caller can act on a stream that exists rather than on one that is merely still being opened.
+/// Waiting a fixed span instead raced the CLI's own start-up: launching the debug binary and
+/// reaching the socket costs most of half a second, so the round trip could still be in flight
+/// when the caller moved on and rotated the generation out from under it.
 fn open_cli_stream(
     backend: &mut TestBackend<AppRoot>,
     socket: &Path,
     generation: &str,
     args: &[&str],
+    accepted: impl Fn(&TestBackend<AppRoot>) -> bool,
 ) -> Child {
     let mut child = spawn_cli(socket, generation, args);
-    let deadline = Instant::now() + Duration::from_millis(500);
-    while Instant::now() < deadline {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !accepted(backend) {
         backend.render();
         let _ = backend.pump();
         assert!(
             child.try_wait().unwrap().is_none(),
             "{args:?} was rejected instead of opening a stream"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "{args:?} never opened its stream"
         );
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -220,7 +234,10 @@ fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
             );
             expect_cli_exit(&mut backend, &socket, &token_b, &["publish"], true);
             expect_cli_stream_accepted(&mut backend, &socket, &token_b, &["pick"]);
-            let mut subscription = open_cli_stream(&mut backend, &socket, &token_b, &["subscribe"]);
+            let mut subscription =
+                open_cli_stream(&mut backend, &socket, &token_b, &["subscribe"], |backend| {
+                    !backend.state().extension_subscriptions.is_empty()
+                });
 
             write_manifest(&root, "a");
             backend

@@ -7,8 +7,7 @@ use crate::layout::geometry::{
     resize_float_rect_from_corner, workspace_tile_bounds,
 };
 use crate::layout::tiling::{
-    SplitEdge, allocate_dwindle, move_tiled_window_around_target, redock_split_ratio,
-    resize_tiled_split_for_edge,
+    SplitEdge, allocate_dwindle, move_tiled_window_around_target, resize_tiled_split_for_edge,
 };
 use crate::layout::{
     self, placement_for, target_tiled_pane_for_drop, workspace_target_rects,
@@ -537,21 +536,19 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
     };
 
     let (axis, moving_first) = layout::drop_split_for_target(target_rect, drop_point);
-    // `target_rect` above comes from the layout with the dragged pane already taken out, which is
-    // both what the drop edge is measured against and the slot the new split will divide. Only the
-    // dragged pane's own extent reads the layout as it stood before the drag, so it keeps its size.
-    let before = {
-        let workspace = state.active_workspace_ref();
-        workspace_target_rects(workspace, bounds, top_gap, tile_gap)
-    };
-    let ratio = match placement_for(&before, id) {
-        Some(moving_rect) => {
-            redock_split_ratio(moving_rect, target_rect, axis, moving_first, tile_gap)
-        }
-        None => EVEN_SPLIT_RATIO,
-    };
+    // `target_rect` comes from the layout with the dragged pane already taken out, which is both
+    // what the drop edge is measured against and the slot the new split will divide. That slot is
+    // always halved: dropping a pane onto another is a fresh split, so it reads as one regardless
+    // of how wide or tall either pane happened to be beforehand.
     let workspace = state.active_workspace_mut();
-    move_tiled_window_around_target(workspace, id, target_id, axis, moving_first, ratio);
+    move_tiled_window_around_target(
+        workspace,
+        id,
+        target_id,
+        axis,
+        moving_first,
+        EVEN_SPLIT_RATIO,
+    );
 }
 
 #[cfg(test)]
@@ -1336,6 +1333,71 @@ mod tests {
                 height
             );
             assert_ne!(backend.state().scratch.tile_tree, tree, "the split moved");
+        });
+    }
+
+    /// A dropped pane halves whatever slot it lands in. The drop is a fresh split, so a deliberate
+    /// 75/25 on the pair the pane is leaving does not ride along to the pane it lands on.
+    #[test]
+    fn dropping_a_tiled_pane_halves_the_slot_it_lands_in() {
+        in_test_stack(|| {
+            let viewport = Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            };
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(viewport);
+            {
+                let state = backend.state_mut();
+                let workspace = state.active_workspace_mut();
+                workspace.panes.clear();
+                for id in [1, 2] {
+                    let mut pane = Pane::new(id, 100, FloatRect::default());
+                    pane.opening = false;
+                    workspace.panes.push(pane);
+                }
+                workspace.layout_kind = LayoutKind::Dwindle;
+                workspace.tile_tree = Some(DwindleTree::Split {
+                    axis: SplitAxis::Horizontal,
+                    ratio: 0.75,
+                    first: Box::new(DwindleTree::Leaf(1)),
+                    second: Box::new(DwindleTree::Leaf(2)),
+                });
+                workspace.focused_pane = Some(1);
+                state.current_mut().focused_pane = Some(1);
+            }
+            backend.render();
+
+            // Aim at the right third of pane 2's slot, so pane 1 docks after it on the horizontal
+            // axis - the direction is incidental, the ratio is what the test is about.
+            let (x, y) = {
+                let state = backend.state_mut();
+                let bounds = state.layout_bounds(viewport);
+                let top_gap = state.layout_top_gap();
+                let tile_gap = state.tile_gap();
+                let left_offset = state.terminal_content_left_offset(viewport);
+                let top_offset = state.content_top_offset();
+                let workspace = state.active_workspace_ref();
+                let placements =
+                    workspace_target_rects_excluding(workspace, bounds, Some(1), top_gap, tile_gap);
+                let slot = placement_for(&placements, 2).expect("pane 2 drop slot");
+                (
+                    (slot.x + slot.w * 0.8).round() as u16 + left_offset,
+                    (slot.y + slot.h * 0.5).round() as u16 + top_offset,
+                )
+            };
+            drop_tiled_pane_at(backend.state_mut(), 1, x, y, viewport);
+
+            let tree = backend.state().active_workspace_ref().tile_tree.clone();
+            let Some(DwindleTree::Split { ratio, .. }) = tree else {
+                panic!("the drop leaves a two-pane split: {tree:?}");
+            };
+            assert!(
+                (ratio - EVEN_SPLIT_RATIO).abs() < 1e-3,
+                "the dropped pane halves its new slot, got {ratio}"
+            );
         });
     }
 }

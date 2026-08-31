@@ -93,8 +93,10 @@ entries = [
 - A command declares exactly one of `exec`, `shell`, or `send`.
 - A service declares exactly one of `exec` or `shell`; restart is `on-failure` (default), `always`,
   or `never`.
-- `{extension_dir}` is the only substitution in direct argv. Generic `$VAR`, `${VAR}`, and `%VAR%`
-  expansion does not occur there.
+- `{extension_dir}` is the only substitution in direct argv, and it is also substituted into a
+  `[[sidebar_tabs]]` `command`, entry action, and `on_click` — a tab is neither a command nor a
+  service, so nothing else would tell it where its own program lives. Generic `$VAR`, `${VAR}`, and
+  `%VAR%` expansion does not occur in argv.
 - `./` and `../` executable paths resolve from the extension directory. Commands run in the focused
   pane's live cwd. Services default to the extension directory; a relative service `cwd` resolves
   there.
@@ -109,6 +111,18 @@ entries = [
   values are clamped silently here rather than warned about. Full format in `docs/extensions.md`.
 - A user may drag an extension tab anywhere; that placement is persisted and survives the extension
   being disabled or failing to load, and is only dropped once the extension leaves the disk.
+- A tab's processes receive the same `ROZI_EXTENSION*` environment a command does, settings
+  included.
+- A command tab runs in the focused pane's working directory and re-lists when that changes. Its
+  cached rows belong to the directory they were collected in and are dropped when the pane moves, so
+  never treat one poll's output as still on screen later.
+- Every line a command tab prints is a clickable row unless it starts with `group_prefix`, which
+  makes it an inert section header. Print status and empty-state lines with the prefix, or clicking
+  one types it into the user's shell.
+- `on_click` `send` may substitute `{line}`; `run`, `popup`, and `exec` receive the clicked row in
+  `ROZI_ROW` instead and reject `{line}`, the same bargain tree actions make with `ROZI_FILE`. Quote
+  `"$ROZI_ROW"`: a row is command output and must never compose a command line. Send no trailing
+  newline unless a stray click should execute.
 - `[settings]` values are strings, integers, booleans, or string lists. Read them from
   `ROZI_EXTENSION_CONFIG` (compact JSON, `{}` when none are declared), never from a file the
   extension writes into its own directory. A user's unknown key or wrong type is reported and
@@ -118,6 +132,11 @@ entries = [
   a warning rather than a failure. Do not assume it was granted.
 - Any invalid command, service, agent, sidebar tab, or setting invalidates the whole extension
   atomically.
+- A non-zero exit from a command raises Rozi's own error toast. If the program already called
+  `rozi notify`, exit 0 — otherwise the user gets the specific message and a vaguer duplicate.
+- Extensions install under the data directory (`${XDG_DATA_HOME:-~/.local/share}/rozi/extensions`),
+  not beside `config.toml`, and that data directory must stay owner-only or Rozi refuses to start.
+  `rozi list-extensions` names the directory it scanned when it finds nothing.
 - Disable an installed extension with `[extensions] disabled = ["git-tools"]` in `config.toml`.
 - Extension API 1 is frozen: manifest keys, id namespacing, the `ROZI_EXTENSION*` variables, the
   control commands, atomic validity, the `<prefix> x` chord space, and `schema_version: 1`

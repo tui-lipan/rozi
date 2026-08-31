@@ -1,5 +1,101 @@
 # Changelog
 
+## 0.0.14 - 2026-09-01
+
+Reaches other machines: a picker for remote hosts, ssh prompts answered inside the UI, and one
+rule for which machine a key acts on. Extensions gain the user-visible surfaces that previously
+needed a hand-edited `config.toml`, and API 1 is frozen.
+
+### Added
+
+- A remote host picker. Hosts are browsed and their sessions listed from inside rozi, `^N`
+  connects one, and the target is persisted in canonical form so the same host reached by two
+  spellings is one entry. A host is remembered only once a connection to it succeeded, and a
+  remembered host can be forgotten from the picker. Discovery on a host runs when the picker asks
+  for it rather than for every host up front.
+- Rozi answers ssh's own prompts. `ssh` reads a password, a key passphrase, or a host-key question
+  from `/dev/tty`, not from the stdin rozi hands it, so a prompt raised while the TUI owned the
+  terminal painted over the running UI and swallowed the keystrokes meant for it. Rozi is now its
+  own `SSH_ASKPASS` helper: the prompt is relayed to a modal, a password is masked, and a host-key
+  fingerprint is shown in clear, because the fingerprint is the whole point of the question. One
+  Esc covers that connection's retries rather than being asked three times. Command-line runs,
+  where no TUI is up, keep their terminal prompt.
+- Opening a host authenticates once. It is four ssh invocations - two probes, a re-check, the
+  attach - which on a password host meant typing the password four times. They share one
+  authenticated connection now (ControlMaster, Unix only).
+- Extensions declare settings, suggest chords, and contribute sidebar tabs. `[settings]` carries
+  defaults that users override per extension under `[extensions.<id>]`, and the merged result
+  reaches every command, service, and tab as JSON in `ROZI_EXTENSION_CONFIG`. A command may suggest
+  a chord with `key`, in a reserved `<prefix> x` space that no built-in ever claims, so a
+  suggestion can never collide with rozi or be taken away by a later release. `[[sidebar_tabs]]`
+  contributes tabs whose placement is durable: a tab the user drags somewhere keeps that spot, and
+  a panel entry naming an absent extension is pruned only once the extension leaves the disk.
+  API 1 is frozen - `docs/extensions.md` states what that covers, and a test spells out the
+  accepted manifest keys so a change to the surface shows up in the diff as a deliberate edit.
+- The website's install box opens on the visitor's own platform. It always opened on `curl`, so
+  every Windows visitor arrived at a command their shell cannot run.
+
+### Changed
+
+- Every action operates on the scope its surface shows. The global Sessions picker's `^T` used to
+  read the host off whatever session happened to be attached behind the overlay, so the same key
+  on the same screen meant local or remote depending on what was underneath it. Sessions stays
+  global and its footer reads `new local` once any host is in play; a host-scoped picker acts on
+  that host. Startup policy runs inside the scope the launch names, so `--remote <host>` applies
+  the configured `[session] startup` value there instead of skipping it. `last` reopens a session
+  and never revives one; `profile` still creates its session, and that is now the difference
+  between the two.
+  **Breaking change:** the remembered session name is kept per workplace, so `last-session` is
+  replaced by `last-sessions.json` and one remembered name is lost on the first launch after this.
+- `rozi` is the default theme. It shipped wearing `lipan`, tui-lipan's signature palette rather
+  than this app's. An unknown `[theme].name` and the `default` alias both resolve to rozi now. A
+  custom theme file whose `extends` is omitted still starts from lipan, because that is the base
+  those overlays are written against.
+- Focus routing is built on the tui-lipan 0.4 primitives. Pane selection is driven by queued
+  framework focus transitions, sidebar pointer and Tab acquisition stay independent, and a
+  capturing overlay can defer a pane focus request.
+- An idle session server costs less. Its loop backs off, queues wake idle consumers rather than
+  being polled, and idle waits are capped at four milliseconds so the backoff cannot delay a
+  wake-up that matters. Inbound UI draining is batched, reuses its queue weights across a drain,
+  and fast-paths the single-entry case; the dispatch result and per-output bookkeeping were trimmed
+  to match.
+
+### Fixed
+
+- The Windows client no longer overflows its stack. Opening the sidebar while attached to a remote
+  host killed it with `thread 'main' has overflowed its stack`. Rendering recurses through the
+  whole view tree, and Windows hands the first thread 1 MiB where Linux and macOS hand it 8 MiB -
+  a budget smaller than the one this repository's own render tests had already found too small.
+  The UI now runs on a stack sized for it.
+- App chords no longer reach a picker, for every overlay rather than one at a time. Two lists
+  enumerated the overlays that own the keyboard and had already drifted apart, and the command
+  registry was resynced by a flag set by hand in about seventy places - opening a picker set the
+  flag without rebuilding, so a leader prefix put rozi into PREFIX mode behind the modal. There is
+  one list now, and the gate is compared against what the registry was last built with, so an
+  overlay written later is covered whether its author thinks about this or not.
+- A `pick` row keeps its label when the description is long. `pick` is the only picker relaying
+  arbitrary text from another program, and a description such as a full build command line pushed
+  the label out of its own row. The label is served first, the description takes what is left and
+  loses its tail to an ellipsis, and the fit is applied in the renderer the palette actually draws
+  rather than on an entry that never reaches the screen. The gap between the two is the three cells
+  the reader sees, not six cells of stacked chrome guesses.
+- A sidebar command tab never shows output from a directory the pane has left. A tab stops polling
+  off screen, so its cached rows outlived the directory they were collected in; moving to another
+  project and showing the tab again rendered the previous project's rows until the next poll. Rows
+  now record their directory and count as absent once the focused pane is elsewhere.
+- Abandoned snapshot staging directories are no longer offered as sessions. A writer killed after
+  `meta.json` lands but before the rename leaves a complete-looking `.<session>.tmp-*` behind, and
+  it listed as restorable; forgetting it deleted a path that never existed and silently succeeded,
+  so the row survived every refresh. Identity comes from the directory a snapshot is published
+  under, and deleting one sweeps its staging and backup leftovers.
+- Dropping a tiled pane onto another halves the slot it lands in. The new split used to size itself
+  so the dragged pane kept the width or height it had before the drag; a drop reads as a fresh
+  split.
+- The which-key strip is dismissed while the mouse is reshaping the layout. A pending prefix owns
+  mouse gestures and the chord clears only on release, so a prefix drag left a table of keys
+  sitting over the very panes being moved. The `PREFIX` badge is deliberately left alone.
+- The documentation site keeps its navbar controls and layout breakpoints aligned when narrow.
+
 ## 0.0.13 - 2026-08-28
 
 Brings `install.sh` up to the Windows installer it is supposed to mirror.

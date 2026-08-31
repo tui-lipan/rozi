@@ -433,8 +433,9 @@ body {
         padding-right: 0 !important;
     }
     .VPNavBar.has-sidebar .title {
-        padding: 0 24px 0 8px !important;
-        width: var(--vp-sidebar-width) !important;
+        left: 24px !important;
+        padding: 0 !important;
+        width: calc(var(--vp-sidebar-width) - 24px) !important;
     }
 }
 /* Nav menu links - match landing #topbar .nav-links a (5px 10px, 12px, 3px radius) */
@@ -465,7 +466,7 @@ body {
     }
 
     .VPNavBar.has-sidebar .title {
-        padding: 0 24px 0 8px !important;
+        padding: 0 !important;
     }
 }
 
@@ -473,6 +474,10 @@ body {
     .VPNavBar.has-sidebar .content {
         padding-left: var(--vp-sidebar-width) !important;
         padding-right: 0 !important;
+    }
+    .VPNavBar.has-sidebar .title {
+        left: 24px !important;
+        width: calc(var(--vp-sidebar-width) - 24px) !important;
     }
 }
 .VPNavBarMenuLink {
@@ -636,6 +641,17 @@ body {
 .NavGitHubLink:hover {
     color: var(--vp-c-text-1);
     border-color: var(--vp-c-border);
+}
+
+.VPNavScreen .NavGitHubLink {
+    display: block;
+    border-width: 0 0 1px;
+    border-radius: 0;
+    padding: 12px 0 11px;
+    line-height: 24px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--vp-c-text-1);
 }
 
 /* Social link (GitHub) - match landing github-link */
@@ -1356,28 +1372,23 @@ body.scanlines::after {
    MOBILE
    ─────────────────────────────────────────────────────────────────────── */
 
-@media (max-width: 959px) {
-    .NavTitleVersion,
-    .NavGitHubLink {
-        display: none !important;
-    }
-}
-
-@media (max-width: 767px) {
-    .VPNavBar > .wrapper {
-        padding: 0 12px !important;
-    }
+/* Replace VitePress's split desktop/mobile transitions with one navbar
+   breakpoint. Search stays in the bar; every other action moves to the drawer. */
+@media (max-width: 839px) {
     .VPNavBar .content-body {
         gap: 6px;
     }
     .VPNavBar .search {
         flex: 1 1 250px !important;
+        justify-content: flex-end;
         min-width: 0;
         padding-left: 0 !important;
         margin-left: 0 !important;
     }
     .VPNavBarSearch #local-search {
         width: 100%;
+        max-width: 250px;
+        margin-left: auto;
     }
     .DocSearch-Button {
         display: inline-flex !important;
@@ -1388,9 +1399,39 @@ body.scanlines::after {
     }
     .DocSearch-Button .DocSearch-Button-Placeholder {
         display: inline-block !important;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
-    .DocSearch-Button .DocSearch-Button-Keys {
+    .VPNavBar .menu,
+    .VPNavBar .NavGitHubLink {
         display: none !important;
+    }
+    .VPNavBarHamburger {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        order: 4;
+        width: 32px !important;
+        height: 48px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    .VPNavBarHamburger .container {
+        width: 16px !important;
+        height: 14px !important;
+    }
+    .VPNavScreen {
+        display: block !important;
+    }
+}
+
+/* The sidebar becoming a drawer is the mobile content transition too. Keep
+   VitePress's internal 768px breakpoint from introducing a third layout. */
+@media (max-width: 959px) {
+    .VPLocalNav .menu,
+    .VPLocalNav .VPOutlineDropdown {
+        padding-right: 24px !important;
+        padding-left: 24px !important;
     }
     .VPDoc .content-container {
         padding: 24px 20px 60px !important;
@@ -1409,20 +1450,5 @@ body.scanlines::after {
     }
     .vp-doc h4 {
         font-size: 15px !important;
-    }
-
-    /* Keep the mobile hamburger aligned with the navbar's right padding. */
-    .VPNavBarHamburger {
-        display: flex !important;
-        align-items: center !important;
-        justify-content: flex-end !important;
-        width: 32px !important;
-        height: 48px !important;
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-    .VPNavBarHamburger .container {
-        width: 16px !important;
-        height: 14px !important;
     }
 }

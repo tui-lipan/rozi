@@ -1243,16 +1243,6 @@ html.rozi-intro-pending .lp {
     .lp-main {
         padding: 0 16px;
     }
-    .lp-top {
-        padding: 0 10px 0 12px;
-    }
-    .lp-top-link {
-        padding: 5px 7px;
-    }
-    .lp-sponsor span,
-    .lp-top-github {
-        display: none;
-    }
     .lp-wordmark {
         font-size: 56px;
     }

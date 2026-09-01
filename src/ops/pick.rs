@@ -919,7 +919,9 @@ mod tests {
             assert!(ack_rx.recv().unwrap().ok);
 
             backend
-                .dispatch(crate::Msg::RunAction(crate::input::Action::ReloadConfig))
+                .dispatch(crate::Msg::RunAction(
+                    crate::input::Action::ReloadExtensions,
+                ))
                 .expect("reload without extension");
             assert!(!backend.state().show_pick);
             let response = rx.try_recv().expect("picker cancelled");

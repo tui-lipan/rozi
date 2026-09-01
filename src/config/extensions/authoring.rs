@@ -116,7 +116,7 @@ fn write_scaffold(id: &str, destination: &Path, python: &PythonLaunch) -> Result
          ```bash\n\
          rozi check-extension .\n\
          # Copy this directory below Rozi's user extension directory, then:\n\
-         rozi run-action reload-config\n\
+         rozi run-action reload-extensions\n\
          rozi list-extensions --verbose\n\
          rozi run-action {id}.hello\n\
          ```\n\n\

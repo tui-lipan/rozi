@@ -243,7 +243,7 @@ events.
 ### Run actions and panes
 
 ```bash
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi run-action git-tools.branches
 rozi new-pane --cwd /project --focus --argv ssh -- devbox
 ```
@@ -260,7 +260,7 @@ rozi new-extension my-extension
 cd my-extension
 rozi check-extension .
 # copy or clone below the user extension directory
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi list-extensions --verbose
 rozi run-action my-extension.hello
 ```

@@ -89,8 +89,19 @@ pub(crate) fn config_file_changed(ctx: &mut Context<AppRoot>) -> Update {
 /// (including switching the theme file watcher), and pane chrome - the same result a restart
 /// would produce, without losing running panes/workspaces/session state.
 pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
-    // Manual reloads are how extension manifest changes reach the runtime; command registration
-    // must be refreshed even when config.toml itself did not change.
+    reload(ctx, "Config reloaded")
+}
+
+/// Rescans installed extension manifests and reconciles their runtime contributions.
+///
+/// Extension discovery is part of config loading, so this necessarily re-reads `config.toml` too.
+pub(crate) fn reload_extensions(ctx: &mut Context<AppRoot>) -> Update {
+    reload(ctx, "Extensions reloaded")
+}
+
+fn reload(ctx: &mut Context<AppRoot>, success_message: &'static str) -> Update {
+    // Extension reloads must refresh command registration even when config.toml itself did not
+    // change.
     ctx.state.commands_dirty = true;
     let loaded = crate::config::load_config();
     let mut new_config = loaded.config;
@@ -176,7 +187,7 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
         crate::pane::pty_events::notify_error(ctx, "Config warning", warning.clone());
     }
     if loaded.warnings.is_empty() && resolved.warnings.is_empty() {
-        crate::pane::pty_events::notify_info(ctx, "Config reloaded");
+        crate::pane::pty_events::notify_info(ctx, success_message);
         crate::events::emit(
             &ctx.state,
             crate::events::Event::new(

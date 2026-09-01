@@ -24,7 +24,7 @@ directory may be renamed; `id = "git-tools"` remains its public identity.
 
 ```bash
 rozi check-extension ./git-tools
-rozi run-action reload-config
+rozi run-action reload-extensions
 ```
 
 ## Controls and safety

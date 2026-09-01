@@ -107,7 +107,7 @@ pub enum Action {
     CycleWorkbarStyle,
     TogglePaneSynchronization,
     OpenConfigFile,
-    ReloadConfig,
+    ReloadExtensions,
     EditScrollback,
     CopyLastOutput,
     /// Runs `config.commands[index]`. The stable runtime id lives in config and is registered
@@ -217,7 +217,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::CycleWorkbarStyle,
     Action::TogglePaneSynchronization,
     Action::OpenConfigFile,
-    Action::ReloadConfig,
+    Action::ReloadExtensions,
     Action::EditScrollback,
     Action::CopyLastOutput,
 ];
@@ -326,7 +326,7 @@ impl Action {
             Action::CycleWorkbarStyle => "cycle-workbar-style",
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
             Action::OpenConfigFile => "open-config",
-            Action::ReloadConfig => "reload-config",
+            Action::ReloadExtensions => "reload-extensions",
             Action::EditScrollback => "edit-scrollback",
             Action::CopyLastOutput => "copy-last-output",
             Action::SwitchWorkspace(_)

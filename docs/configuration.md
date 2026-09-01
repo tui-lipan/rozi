@@ -33,11 +33,12 @@ Relative `XDG_*` values are ignored. Rozi requires absolute roots.
 
 ## Reloading and editing
 
-Rozi watches the config file and applies changes without replacing panes or workspaces. The
-`reload-config` action also reloads the file and rescans extensions:
+Rozi watches the config file and applies changes without replacing panes or workspaces. It does not
+watch installed extension directories; rescan them after installing, updating, or removing an
+extension:
 
 ```bash
-rozi run-action reload-config
+rozi run-action reload-extensions
 ```
 
 Most settings apply immediately. These settings have narrower behavior:
@@ -57,7 +58,8 @@ Most settings apply immediately. These settings have narrower behavior:
 | `rules` | New command-carrying pane spawns. |
 | `services` | Reload reconciles definitions. Changed services restart, removed services stop, and unchanged services continue. |
 | `agents` | Reload updates detection in the controlled session server and the local scratch session. |
-| `extensions.disabled` and extension manifests | Explicit reload. Rozi does not watch extension directories. |
+| `extensions.disabled` | When the config file changes. |
+| Extension manifests | `reload-extensions`. Rozi does not watch extension directories. |
 
 Settings changed in Rozi's own Settings, Appearance, Profiles, or Themes UI are written to the file
 and are already active.

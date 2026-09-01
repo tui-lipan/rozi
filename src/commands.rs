@@ -356,8 +356,8 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
-        action: Action::ReloadConfig,
-        label: "Reload config",
+        action: Action::ReloadExtensions,
+        label: "Reload extensions",
         category: "App",
         default_keys: &[],
         palette: true,

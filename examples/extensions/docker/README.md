@@ -34,7 +34,7 @@ destination="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/docker"
 mkdir -p "$(dirname "$destination")"
 cp -R ./docker "$destination"
 rozi check-extension "$destination"
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi list-extensions --verbose
 ```
 

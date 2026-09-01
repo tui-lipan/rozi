@@ -108,7 +108,7 @@ These actions are available in the command palette or can be bound under `[keys]
 - `smart-focus-left`, `smart-focus-down`, `smart-focus-up`, `smart-focus-right`
 - `settings`
 - `open-config`
-- `reload-config`
+- `reload-extensions`
 - `apply-profile`
 - `collaborators`
 - `new-temporary-session`

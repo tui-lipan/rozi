@@ -33,7 +33,7 @@ data_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
 install -d -m 700 "$data_root" "$data_root/extensions"
 cp -R ./tasks "$data_root/extensions/tasks"
 rozi check-extension "$data_root/extensions/tasks"
-rozi run-action reload-config
+rozi run-action reload-extensions
 ```
 
 Extensions go under the data directory, not beside `config.toml`. The `install -d -m 700` matters:

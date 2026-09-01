@@ -29,7 +29,7 @@ Copy or clone this directory anywhere below Rozi's user extension directory, the
 
 ```bash
 rozi check-extension ./ssh-tools
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi run-action ssh-tools.hosts
 ```
 

@@ -18,7 +18,7 @@ It requires Python 3 available as `python`. Install the directory manually, vali
 rozi check-extension ./activity-dashboard
 cp -R ./activity-dashboard \
   "${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/activity-dashboard"
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi list-extensions --verbose
 ```
 

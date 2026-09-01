@@ -232,7 +232,7 @@ const extensionSurfaces = [
 const authorLoop = [
   ["rozi new-extension", "scaffold"],
   ["rozi check-extension", "validate"],
-  ["rozi reload-config", "install"],
+  ["rozi reload-extensions", "install"],
   ["rozi list-extensions", "confirm"],
 ];
 

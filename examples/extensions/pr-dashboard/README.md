@@ -58,7 +58,7 @@ python -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_te
 mkdir -p "$dst"
 cp -R "$src/." "$dst/"
 rozi check-extension "$dst"
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi list-extensions --verbose
 ```
 
@@ -70,7 +70,7 @@ $dst = Join-Path $env:LOCALAPPDATA "rozi\extensions\pr-dashboard"
 New-Item -ItemType Directory -Force $dst | Out-Null
 Copy-Item -Recurse -Force (Join-Path $src "*") $dst
 rozi check-extension $dst
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi list-extensions --verbose
 ```
 

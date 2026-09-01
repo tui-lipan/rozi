@@ -190,7 +190,7 @@ fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
                 .id();
 
             backend
-                .dispatch(Msg::RunAction(rozi::input::Action::ReloadConfig))
+                .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
                 .unwrap();
             pump_until(&mut backend, Duration::from_secs(5), |backend| {
                 backend.state().services.running["generation-e2e.watch"]
@@ -206,7 +206,7 @@ fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
 
             write_manifest(&root, "b");
             backend
-                .dispatch(Msg::RunAction(rozi::input::Action::ReloadConfig))
+                .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
                 .unwrap();
             pump_until(&mut backend, Duration::from_secs(5), |backend| {
                 backend.state().extension_generations[EXTENSION_ID] != token_a
@@ -241,7 +241,7 @@ fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
 
             write_manifest(&root, "a");
             backend
-                .dispatch(Msg::RunAction(rozi::input::Action::ReloadConfig))
+                .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
                 .unwrap();
             pump_until(&mut backend, Duration::from_secs(5), |backend| {
                 let token = &backend.state().extension_generations[EXTENSION_ID];

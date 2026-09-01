@@ -784,7 +784,7 @@ fn execute_action_inner(
         Action::RunUserCommand(index) => run_user_command(ctx, index),
         Action::RunNamedCommand(index) => run_named_command(ctx, index),
         Action::OpenConfigFile => crate::ops::config::open_config_file(ctx),
-        Action::ReloadConfig => crate::ops::config::reload_config(ctx),
+        Action::ReloadExtensions => crate::ops::config::reload_extensions(ctx),
         Action::EditScrollback => crate::ops::scrollback::edit_scrollback(ctx),
         Action::CopyLastOutput => crate::ops::last_output::copy_last_output(ctx),
         Action::TogglePaneSynchronization => {

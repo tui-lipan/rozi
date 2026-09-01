@@ -366,7 +366,9 @@ mod tests {
                 Some("dashboard")
             );
             backend
-                .dispatch(crate::Msg::RunAction(crate::input::Action::ReloadConfig))
+                .dispatch(crate::Msg::RunAction(
+                    crate::input::Action::ReloadExtensions,
+                ))
                 .expect("reload without extension");
             assert!(matches!(
                 rx.recv_timeout(std::time::Duration::from_secs(1)),

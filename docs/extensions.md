@@ -48,7 +48,7 @@ install_root="$data_root/extensions"
 install -d -m 700 "$data_root" "$install_root"
 cp -R ./rozi-git-tools "$install_root/git-tools"
 rozi check-extension "$install_root/git-tools"
-rozi run-action reload-config
+rozi run-action reload-extensions
 ```
 
 Extensions live under the **data** directory, not next to `config.toml`. Only the `[extensions]`
@@ -93,10 +93,9 @@ Disable an extension by stable ID:
 disabled = ["git-tools"]
 ```
 
-Run `rozi run-action reload-config` after changing the setting. Rozi removes the extension's
-commands, agents, and sidebar tabs, stops its services, and closes its owned picker, publisher, and
-subscription streams. A disabled extension's sidebar placement is remembered, so re-enabling it puts
-its tab back where you had it.
+When the config file is saved, Rozi removes the extension's commands, agents, and sidebar tabs,
+stops its services, and closes its owned picker, publisher, and subscription streams. A disabled
+extension's sidebar placement is remembered, so re-enabling it puts its tab back where you had it.
 
 To remove an extension, delete its installed directory and reload. Disable it first if you want the
 running client to stop its processes before deleting files.
@@ -122,7 +121,7 @@ git -C "$install_root/git-tools" fetch --all
 git -C "$install_root/git-tools" diff HEAD..origin/main
 git -C "$install_root/git-tools" pull --ff-only
 rozi check-extension "$install_root/git-tools"
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi list-extensions --verbose
 ```
 
@@ -426,7 +425,7 @@ copying unfinished code into the normal extension directory.
 For an installed extension:
 
 ```sh
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi list-extensions --verbose
 ```
 

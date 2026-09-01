@@ -148,7 +148,7 @@ See [Control](control.md#published-activity) for fields and lifecycle.
 
 ## Test a definition
 
-Reload config and inspect:
+Save the config file and inspect:
 
 ```bash
 rozi list-panes --format json

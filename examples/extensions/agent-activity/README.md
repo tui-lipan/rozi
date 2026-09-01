@@ -27,12 +27,12 @@ directory, then reload Rozi explicitly:
 rozi check-extension ./agent-activity
 cp -R ./agent-activity \
   "${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/agent-activity"
-rozi run-action reload-config
+rozi run-action reload-extensions
 rozi list-extensions --verbose
 ```
 
 Rozi does not watch extension source trees. After editing the installed copy, run
-`rozi run-action reload-config` again.
+`rozi run-action reload-extensions` again.
 
 ## Manual simulation
 

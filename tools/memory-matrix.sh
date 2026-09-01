@@ -14,8 +14,9 @@ Usage: tools/memory-matrix.sh [--quick|--full|--lifecycle|--smoke] [--case ROWS 
 
 Linux-only, opt-in PSS benchmark. --quick is the default; --smoke runs a bounded
 image lifecycle to validate dependencies, replay, cleanup, and shutdown.
-CONTENT is plain, styled, or images. STATE is steady (default), closed,
-disconnected, reconnected, or killed. --lifecycle records the full cleanup matrix.
+CONTENT is plain, styled, images, or image-stress. The stress variant emits enough
+decoded pixels to exercise the client image budget. STATE is steady (default),
+closed, disconnected, reconnected, or killed. --lifecycle records the full cleanup matrix.
 EOF
 }
 
@@ -53,7 +54,7 @@ JSONL="$OUTPUT_DIR/scenarios.jsonl"
 
 echo "Building release binary..." >&2
 cargo build --release
-BIN="/target/release/rozi"
+BIN="$REPO/target/release/rozi"
 
 ROOT=
 SERVER_PID=
@@ -198,6 +199,12 @@ wait_for_marker() {
   done
   "$BIN" --socket "$socket" list-panes >&2 || true
   "$BIN" --socket "$socket" capture-pane --target "$pane" --scrollback full >&2 || true
+  local log
+  for log in "$ROOT"/server.log "$ROOT"/client-*.log; do
+    [[ -s $log ]] || continue
+    printf '%s:\n' "$log" >&2
+    while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <"$log"
+  done
   echo "timed out waiting for pane $pane marker $marker" >&2
   return 1
 }
@@ -219,15 +226,16 @@ wait_for_absent() {
   return 1
 }
 
-send_when_ready() {
-  local socket=$1 text=$2 deadline=$((SECONDS + 15))
+wait_for_pane() {
+  local socket=$1 pane=$2 deadline=$((SECONDS + 15)) panes
   while ((SECONDS < deadline)); do
-    if "$BIN" --socket "$socket" send-text "$text" >/dev/null 2>&1; then
+    if panes=$("$BIN" --socket "$socket" list-panes --format json 2>/dev/null) &&
+      python3 -c 'import json,sys; rows=json.load(sys.stdin)["data"]; sys.exit(0 if any(row["id"] == int(sys.argv[1]) for row in rows) else 1)' "$pane" <<<"$panes"; then
       return 0
     fi
     sleep 0.05
   done
-  echo "timed out waiting for the initial pane PTY" >&2
+  echo "timed out waiting for pane $pane on $socket" >&2
   return 1
 }
 
@@ -271,8 +279,14 @@ start_client() {
 
 pane_command() {
   local history=$1 content=$2 marker=$3 marker_suffix=${3#M}
-  if [[ $content == images ]]; then
-    printf '%s' "python3 -c 'import base64,sys,time; w=384; h=256; marker=\"M\"+\"${marker_suffix}\"; raw=bytes((index * 17 + 23) % 251 for index in range(w * h * 3)); payload=base64.b64encode(raw).decode(); [sys.stdout.write(\"\\x1b_Ga=T,f=24,s=%d,v=%d,t=d,i=%d;%s\\x1b\\\\\\n\" % (w,h,image,payload)) for image in range(1,9)]; sys.stdout.write(marker+\"\\n\"); sys.stdout.flush(); time.sleep(3600)'"
+  if [[ $content == images || $content == image-stress ]]; then
+    local width=384 height=256 image_count=8
+    if [[ $content == image-stress ]]; then
+      width=1536
+      height=1024
+      image_count=12
+    fi
+    printf '%s' "python3 -c 'import base64,sys,time; w=$width; h=$height; count=$image_count; marker=\"M\"+\"${marker_suffix}\"; raw=bytes((index * 17 + 23) % 251 for index in range(w * h * 3)); payload=base64.b64encode(raw).decode(); [sys.stdout.write(\"\\x1b_Ga=T,f=24,s=%d,v=%d,t=d,i=%d;%s\\x1b\\\\\\n\" % (w,h,image,payload)) for image in range(1,count+1)]; sys.stdout.write(marker+\"\\n\"); sys.stdout.flush(); time.sleep(3600)'"
   elif [[ $content == styled ]]; then
     printf "i=0; while [ \$i -lt %s ]; do printf '\\033[3%%dmrozi-%%06d styled\\033[0m\\n' \$((\$i%%7+1)) \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
   else
@@ -407,8 +421,8 @@ PY
 
 run_scenario() {
   local rows=$1 cols=$2 panes=$3 history=$4 content=$5 clients=$6 state=${7:-steady}
-  [[ $content =~ ^(plain|styled|images)$ ]] ||
-    { echo "CONTENT must be plain, styled, or images" >&2; return 2; }
+  [[ $content =~ ^(plain|styled|images|image-stress)$ ]] ||
+    { echo "CONTENT must be plain, styled, images, or image-stress" >&2; return 2; }
   [[ $state =~ ^(steady|closed|disconnected|reconnected|killed)$ ]] ||
     { echo "STATE must be steady, closed, disconnected, reconnected, or killed" >&2; return 2; }
   local label="${cols}x${rows}-p${panes}-h${history}-${content}-c${clients}-${state}"
@@ -416,12 +430,21 @@ run_scenario() {
   cleanup_scenario
   ROOT=$(mktemp -d "${TMPDIR:-/tmp}/rozi-memory.XXXXXX")
   chmod 700 "$ROOT"
-  mkdir -p "$ROOT"/{home,config,state,cache,runtime,work}
+  mkdir -p "$ROOT"/{home,config,state,cache,data,runtime,work}
+  local command marker=M01
+  command=$(pane_command "$history" "$content" "$marker")
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf 'while [ ! -e %q ]; do sleep 0.05; done\n' "$ROOT/work/start"
+    printf '%s\n' "$command"
+  } >"$ROOT/work/initial-workload.sh"
+  chmod 700 "$ROOT/work/initial-workload.sh"
   export HOME="$ROOT/home" XDG_CONFIG_HOME="$ROOT/config" XDG_STATE_HOME="$ROOT/state"
-  export XDG_CACHE_HOME="$ROOT/cache" XDG_RUNTIME_DIR="$ROOT/runtime"
+  export XDG_CACHE_HOME="$ROOT/cache" XDG_DATA_HOME="$ROOT/data"
+  export XDG_RUNTIME_DIR="$ROOT/runtime"
   export ROZI_CONFIG="$ROOT/config/config.toml" TERM=xterm-256color LANG=C LC_ALL=C SHELL=/bin/sh
   cat >"$ROZI_CONFIG" <<EOF
-shell = ["/bin/sh"]
+shell = ["/bin/sh", "$ROOT/work/initial-workload.sh"]
 command_shell = ["/bin/sh", "-c"]
 cwd = "$ROOT/work"
 scrollback = $history
@@ -442,14 +465,17 @@ EOF
   SESSION="memory-$RANDOM-$$"
   "$BIN" --session "$SESSION" --fresh-server >"$ROOT/server.log" 2>&1 &
   SERVER_PID=$!
-  wait_for_glob "$XDG_RUNTIME_DIR/rozi/session-*.sock" >/dev/null
+  if ! wait_for_glob "$XDG_RUNTIME_DIR/rozi/session-*.sock" >/dev/null; then
+    [[ -s $ROOT/server.log ]] &&
+      while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <"$ROOT/server.log"
+    return 1
+  fi
   local client
   for ((client=0; client<clients; client++)); do start_client "$rows" "$cols"; done
   ACTIVE_CLIENTS=$clients
-  local control=${CONTROL_SOCKETS[0]} command marker response pane id
-  marker=M01
-  command=$(pane_command "$history" "$content" "$marker")
-  send_when_ready "$control" "$command"$'\n'
+  local control=${CONTROL_SOCKETS[0]} response pane id probe_socket
+  for probe_socket in "${CONTROL_SOCKETS[@]}"; do wait_for_pane "$probe_socket" 1; done
+  : >"$ROOT/work/start"
   wait_for_marker "$control" 1 "$marker"
   PANE_IDS=(1)
   PANE_MARKERS=("$marker")
@@ -462,7 +488,6 @@ EOF
     PANE_MARKERS+=("$marker")
     wait_for_marker "$control" "$id" "$marker"
   done
-  local probe_socket
   for probe_socket in "${CONTROL_SOCKETS[@]}"; do wait_for_replay "$probe_socket"; done
   if [[ $state == closed ]]; then
     for id in "${PANE_IDS[@]:$((panes / 2))}"; do

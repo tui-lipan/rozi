@@ -136,7 +136,8 @@ Images follow terminal scrolling and alternate-screen lifetime. These limits app
 - Images drawn before a client attaches are not replayed.
 - Kitty protocol animation frames are not supported. Programs that redraw an image can still
   animate.
-- Decoded pixels are capped per pane and old images are evicted when needed.
+- Each attached client keeps up to 32 MiB of decoded pixels per pane; old images are evicted when
+  needed. The server tracks image dimensions but does not keep another pixel copy.
 - Remote panes cannot use a server-side file path as an image handoff to the local client, so they
   use inline image data.
 - Temporary-file and shared-memory handoff forms that can only be consumed once are refused in a

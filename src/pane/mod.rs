@@ -17,6 +17,13 @@ use tui_lipan::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// Decoded Kitty graphics retained by one pane in one client.
+///
+/// `tui-lipan` defaults to 96 MiB per screen, which is appropriate for a standalone terminal but
+/// multiplies by both pane count and attached-client count in Rozi. Thirty-two MiB keeps several
+/// full-screen plots while bounding an eight-pane attachment to 256 MiB of decoded pixels.
+const CLIENT_IMAGE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+
 /// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes
 /// broadcast from the session server; the server owns the actual PTY.
 pub struct TerminalPane {
@@ -82,6 +89,7 @@ pub struct TerminalPane {
     /// client on the machine that wrote them, so a `--remote` attachment allows none of it and a
     /// path arriving anyway must not be opened here.
     media_policy: GraphicsMediaPolicy,
+    image_budget_bytes: usize,
     seen_bell_count: u64,
     scrollback_limit: usize,
     /// Holds forwarded pointer motion to one position in flight at a time. See
@@ -203,6 +211,7 @@ impl TerminalPane {
         // many rows a picture takes.
         screen.set_cell_size(tui_lipan::host_cell_size());
         screen.set_image_media_policy(GraphicsMediaPolicy::SHARED);
+        screen.set_image_budget(CLIENT_IMAGE_BUDGET_BYTES);
         Self {
             pane_id: 0,
             generation: 0,
@@ -233,6 +242,7 @@ impl TerminalPane {
             runtime_sequence: 0,
             last_palette: None,
             media_policy: GraphicsMediaPolicy::SHARED,
+            image_budget_bytes: CLIENT_IMAGE_BUDGET_BYTES,
             seen_bell_count: 0,
             scrollback_limit: scrollback,
             pointer_flow: crate::pane::pty_events::pointer_flow::PointerFlow::default(),
@@ -270,6 +280,12 @@ impl TerminalPane {
         self.screen.borrow().has_images()
     }
 
+    #[cfg(test)]
+    fn set_image_budget(&mut self, bytes: usize) {
+        self.image_budget_bytes = bytes;
+        self.screen.borrow_mut().set_image_budget(bytes);
+    }
+
     pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         if self.pane_id != pane_id || self.generation != generation {
             // A position held for the process that just went away belongs to nothing: the pointer
@@ -301,6 +317,7 @@ impl TerminalPane {
         *screen = TerminalScreen::new(self.rows, self.cols, self.scrollback_limit);
         screen.set_cell_size(tui_lipan::host_cell_size());
         screen.set_image_media_policy(self.media_policy);
+        screen.set_image_budget(self.image_budget_bytes);
         self.seen_bell_count = screen.bell_count();
         if let Some(palette) = self.last_palette {
             screen.set_palette(palette);
@@ -822,6 +839,27 @@ mod tests {
 
         pane.process_server_output(b"\x1b_Ga=d,d=A\x1b\\");
         assert!(!pane.has_images());
+    }
+
+    #[test]
+    fn client_image_budget_survives_server_backend_rebinds() {
+        assert_eq!(CLIENT_IMAGE_BUDGET_BYTES, 32 * 1024 * 1024);
+        let mut pane = TerminalPane::new(100);
+        pane.set_image_budget(4);
+
+        let overflow_budget = |pane: &mut TerminalPane| {
+            pane.process_server_output(b"\x1b_Ga=T,f=24,s=1,v=1,t=d,i=1,C=1;gICA\x1b\\");
+            pane.process_server_output(b"\x1b_Ga=T,f=24,s=1,v=1,t=d,i=2,C=1;gICA\x1b\\");
+            pane.process_server_output(b"\x1b_Ga=d,d=I,i=2;\x1b\\");
+            assert!(
+                !pane.has_images(),
+                "the first image must have been evicted before the second was deleted"
+            );
+        };
+        overflow_budget(&mut pane);
+
+        pane.bind_server_backend(1, 2);
+        overflow_budget(&mut pane);
     }
 
     /// The snapshot is rebuilt on read, so every path that changes what the pane should display

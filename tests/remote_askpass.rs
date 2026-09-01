@@ -9,12 +9,20 @@
 //! The broker side is played by hand here (the real one needs a mounted `AppRoot`), speaking the
 //! same framed JSON over the same platform IPC endpoint the client binds.
 
+mod common;
+
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use rozi::platform::ipc::{IpcEndpoint, IpcListener};
 use rozi::session::protocol::{read_frame, write_frame};
+
+// Not `tempfile::tempdir`: the platform layer requires an endpoint's parent to be private to the
+// current user, and on Windows a temp directory carries its container's inheritable ACEs rather
+// than a protected DACL of its own, so `bind` refuses it with `PermissionDenied`. Creating the
+// directory the way the runtime does is what lets a test endpoint bind at all.
+use common::private_temp_dir;
 
 /// One prompt, answered by `reply`. Returns the request the helper sent, so a test can assert the
 /// prompt and kind reached the UI intact.
@@ -75,9 +83,9 @@ fn run_helper_in_session(
 /// terminal is never involved.
 #[test]
 fn the_helper_prints_the_answer_the_ui_gave_it() {
-    let dir = tempfile::tempdir().expect("temp dir");
+    let dir = private_temp_dir();
     let run = run_helper(
-        dir.path(),
+        &dir,
         "dev@workbox's password: ",
         "0123456789abcdef",
         serde_json::json!({ "answer": { "text": "hunter2" } }),
@@ -98,12 +106,12 @@ fn the_helper_prints_the_answer_the_ui_gave_it() {
 /// it — the text is all the helper has to go on.
 #[test]
 fn a_host_key_question_is_classified_as_a_confirmation() {
-    let dir = tempfile::tempdir().expect("temp dir");
+    let dir = private_temp_dir();
     let prompt = "The authenticity of host 'workbox (192.0.2.7)' can't be established.\n\
          ED25519 key fingerprint is SHA256:qJv1zH.\n\
          Are you sure you want to continue connecting (yes/no/[fingerprint])? ";
     let run = run_helper(
-        dir.path(),
+        &dir,
         prompt,
         "token",
         serde_json::json!({ "answer": { "text": "yes" } }),
@@ -119,9 +127,9 @@ fn a_host_key_question_is_classified_as_a_confirmation() {
 /// prompt this whole path exists to keep off the screen.
 #[test]
 fn cancelling_fails_the_connection_instead_of_answering_it() {
-    let dir = tempfile::tempdir().expect("temp dir");
+    let dir = private_temp_dir();
     let run = run_helper(
-        dir.path(),
+        &dir,
         "dev@workbox's password: ",
         "token",
         serde_json::json!("cancel"),
@@ -136,9 +144,9 @@ fn cancelling_fails_the_connection_instead_of_answering_it() {
 /// sees it, or a prompt shaped like a flag would run that flag instead of being asked.
 #[test]
 fn the_environment_puts_the_binary_in_helper_mode_before_cli_parsing() {
-    let dir = tempfile::tempdir().expect("temp dir");
+    let dir = private_temp_dir();
     let run = run_helper(
-        dir.path(),
+        &dir,
         "--version",
         "token",
         serde_json::json!({ "answer": { "text": "answered" } }),
@@ -174,8 +182,8 @@ fn without_the_endpoint_variable_the_binary_is_not_a_helper() {
 /// a closed connection. It must fail its ssh rather than print something ssh would try to use.
 #[test]
 fn a_broker_that_answers_nothing_fails_the_connection() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let endpoint = IpcEndpoint::at_path(dir.path().join("askpass-reject.sock"));
+    let dir = private_temp_dir();
+    let endpoint = IpcEndpoint::at_path(dir.join("askpass-reject.sock"));
     let listener = endpoint.bind().expect("bind").into_listener();
     // What the real broker does with a token that is not its own: read the request, say nothing,
     // drop the connection.
@@ -205,11 +213,11 @@ fn a_broker_that_answers_nothing_fails_the_connection() {
 /// arrive as one conversation. Losing this would put the UI back to guessing from elapsed time.
 #[test]
 fn every_helper_from_one_invocation_reports_the_same_session() {
-    let dir = tempfile::tempdir().expect("temp dir");
+    let dir = private_temp_dir();
     let answer = serde_json::json!({ "answer": { "text": "hunter2" } });
-    let first = run_helper_in_session(dir.path(), "p: ", "t", "ssh-7", answer.clone());
-    let retry = run_helper_in_session(dir.path(), "p: ", "t", "ssh-7", answer.clone());
-    let next = run_helper_in_session(dir.path(), "p: ", "t", "ssh-8", answer);
+    let first = run_helper_in_session(&dir, "p: ", "t", "ssh-7", answer.clone());
+    let retry = run_helper_in_session(&dir, "p: ", "t", "ssh-7", answer.clone());
+    let next = run_helper_in_session(&dir, "p: ", "t", "ssh-8", answer);
 
     assert_eq!(first.request["session"], retry.request["session"]);
     assert_ne!(first.request["session"], next.request["session"]);

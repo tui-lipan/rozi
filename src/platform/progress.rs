@@ -322,6 +322,22 @@ const LABEL_WIDTH: usize = 12;
 /// motion, slow enough that a gigabit link does not format thousands of rows a second.
 const REPAINT_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Replace the active row with one write.
+///
+/// Windows Terminal may render between separate console writes. Sending `CLEAR_ROW` through one
+/// formatting argument and the replacement through another therefore exposes a blank frame on
+/// every repaint, even though a Unix terminal commonly coalesces the same writes. Build the whole
+/// frame first, like `install.ps1` does for its working progress row.
+fn replace_row(output: &mut impl Write, hide_cursor: bool, row: &str) -> io::Result<()> {
+    let hide = if hide_cursor { ansi::HIDE_CURSOR } else { "" };
+    let mut frame = String::with_capacity(hide.len() + ansi::CLEAR_ROW.len() + row.len());
+    frame.push_str(hide);
+    frame.push_str(ansi::CLEAR_ROW);
+    frame.push_str(row);
+    output.write_all(frame.as_bytes())?;
+    output.flush()
+}
+
 impl StatusRow {
     /// A row that draws only when stderr can render it. A redirected or `NO_COLOR` stream gets a
     /// silent sink, matching the install scripts, which keep a plain append-only transcript.
@@ -470,9 +486,7 @@ impl relswap::ProgressObserver for StatusRow {
             // restore even if the process is killed between this write and the next.
             super::cursor::hide();
         }
-        let hide = if first { super::ansi::HIDE_CURSOR } else { "" };
-        let _ = write!(err, "{hide}{}{row}", super::ansi::CLEAR_ROW);
-        let _ = err.flush();
+        let _ = replace_row(&mut err, first, &row);
     }
 }
 
@@ -730,6 +744,36 @@ mod tests {
         assert_eq!(&frames[..SPINNER.len()], &SPINNER);
         // Wrapping rather than running off the end of the table.
         assert_eq!(&frames[SPINNER.len()..], &SPINNER);
+    }
+
+    #[test]
+    fn a_repaint_sends_clear_and_replacement_in_one_write() {
+        #[derive(Default)]
+        struct WriteProbe {
+            writes: Vec<Vec<u8>>,
+            flushes: usize,
+        }
+
+        impl Write for WriteProbe {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.writes.push(bytes.to_vec());
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                self.flushes += 1;
+                Ok(())
+            }
+        }
+
+        let mut output = WriteProbe::default();
+        replace_row(&mut output, true, "Downloading").expect("write replacement row");
+
+        assert_eq!(
+            output.writes,
+            vec![format!("{}{}Downloading", ansi::HIDE_CURSOR, ansi::CLEAR_ROW).into_bytes()]
+        );
+        assert_eq!(output.flushes, 1);
     }
 
     #[test]

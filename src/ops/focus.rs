@@ -1317,6 +1317,14 @@ pub(crate) fn request_layout_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::layout_picker_key());
 }
 
+pub(crate) fn request_extensions_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::extensions_key());
+}
+
+pub(crate) fn request_extension_detail_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::extension_detail_key());
+}
+
 pub(crate) fn request_palette_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::palette_key());
 }

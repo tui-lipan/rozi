@@ -19,8 +19,11 @@ pub use extensions::{
     ExtensionStatus, GENERATION_ENV, SETTINGS_ENV,
 };
 pub(crate) use extensions::{
-    check_extension, create_extension_scaffold, extensions_dir_path, is_extension_scoped_id,
-    provenance_from_process, provenance_is_active, reconcile_generations, scan_extensions_for_cli,
+    ReportKind, ReportRow, ReportSection, ReportTone, UserExtensionConfig, check_extension,
+    create_extension_scaffold, extensions_dir_path, is_extension_scoped_id,
+    merge_extension_settings, provenance_from_process, provenance_is_active,
+    read_user_extension_config, reconcile_generations, report_sections, report_text,
+    scan_extensions_for_cli, scan_extensions_with_user_config,
 };
 pub use file::*;
 pub use persist::*;

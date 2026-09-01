@@ -63,6 +63,13 @@ pub(crate) fn layout_picker_selection_changed(ctx: &mut Context<AppRoot>, index:
     Update::full()
 }
 
+pub(crate) fn layout_picker_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
+    if let Some(picker) = ctx.state.layout_picker.as_mut() {
+        picker.query = query;
+    }
+    Update::none()
+}
+
 /// Enter on a row: commit the highlighted layout and close the picker. Live preview has usually
 /// already applied it; this is the point the change becomes permanent (survives cancel).
 pub(crate) fn select_layout(ctx: &mut Context<AppRoot>, index: usize) -> Update {
@@ -96,6 +103,17 @@ pub(crate) fn layout_picker_set_default(ctx: &mut Context<AppRoot>) -> Update {
     let Some(kind) = LayoutKind::all().get(picker.selected).copied() else {
         return Update::none();
     };
+    let items = [SearchItem::new(kind.label(), ())];
+    if tui_lipan::rank_search_palette_indices_with_mode(
+        &items,
+        &picker.query,
+        SearchMatchMode::Hybrid,
+        |_, _, score| score as f64,
+    )
+    .is_empty()
+    {
+        return Update::none();
+    }
     match crate::config::persist_layout_default(kind) {
         Ok(_) => ctx.state.config.layout.default = kind,
         Err(message) => {

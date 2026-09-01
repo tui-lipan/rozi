@@ -78,7 +78,7 @@ pub(super) fn declared(
 /// user's mistakes, reported and skipped, and the extension still runs on its own defaults. That
 /// keeps a stale line in `config.toml` from breaking an extension after an update removes a
 /// setting.
-pub(super) fn merge(
+pub(crate) fn merge(
     declared: &ExtensionSettings,
     id: &str,
     user: Option<&toml::Value>,

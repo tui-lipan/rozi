@@ -34,6 +34,16 @@ pub enum Msg {
     SettingsStep {
         reverse: bool,
     },
+    CloseExtensions,
+    ExtensionsQueryChanged(String),
+    ExtensionsSelect(usize),
+    ExtensionsToggleSelected,
+    ExtensionsOpenDetail,
+    ExtensionsReload,
+    ExtensionsOpenManifest,
+    ExtensionsCopyReport,
+    ExtensionsRemoveSelected,
+    CloseExtensionDetail,
     ClosePanePaddingEditor,
     PanePaddingVerticalChanged(InputEvent),
     PanePaddingHorizontalChanged(InputEvent),
@@ -196,6 +206,7 @@ pub enum Msg {
     ProfilePickerNew,
     SelectProfile(usize),
     CloseLayoutPicker,
+    LayoutPickerQueryChanged(String),
     /// Highlight moved to a different layout row (keeps `set default` acting on the visible row).
     LayoutPickerSelect(usize),
     /// Enter: switch the active workspace to the highlighted layout and close the picker.

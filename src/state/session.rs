@@ -13,6 +13,7 @@ use super::PaneId;
 #[derive(Clone, Debug, PartialEq)]
 pub enum PendingSessionAction {
     OpenConfigFile,
+    OpenFile(PathBuf),
     UserCommand {
         action: UserCommandAction,
         env: Vec<(String, String)>,

@@ -76,6 +76,18 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SettingsSelect(action) => overlays::settings_select(ctx, action),
         Msg::SettingsActivate(action) => overlays::settings_activate(ctx, action),
         Msg::SettingsStep { reverse } => overlays::settings_step(ctx, reverse),
+        Msg::CloseExtensions => crate::ops::extensions_manager::close(ctx),
+        Msg::ExtensionsQueryChanged(query) => {
+            crate::ops::extensions_manager::query_changed(ctx, query)
+        }
+        Msg::ExtensionsSelect(index) => crate::ops::extensions_manager::select(ctx, index),
+        Msg::ExtensionsToggleSelected => crate::ops::extensions_manager::toggle_selected(ctx),
+        Msg::ExtensionsOpenDetail => crate::ops::extensions_manager::open_detail(ctx),
+        Msg::ExtensionsReload => crate::ops::extensions_manager::reload(ctx),
+        Msg::ExtensionsOpenManifest => crate::ops::extensions_manager::open_manifest(ctx),
+        Msg::ExtensionsCopyReport => crate::ops::extensions_manager::copy_report(ctx),
+        Msg::ExtensionsRemoveSelected => crate::ops::extensions_manager::remove_selected(ctx),
+        Msg::CloseExtensionDetail => crate::ops::extensions_manager::close_detail(ctx),
         Msg::ClosePanePaddingEditor => overlays::close_pane_padding_editor(ctx),
         Msg::PanePaddingVerticalChanged(event) => {
             overlays::pane_padding_vertical_changed(ctx, event)
@@ -201,6 +213,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ProfilePickerNew => prompts::profile_picker_new(ctx),
         Msg::SelectProfile(index) => prompts::select_profile(ctx, index),
         Msg::CloseLayoutPicker => crate::ops::layout_picker::cancel_layout_picker(ctx),
+        Msg::LayoutPickerQueryChanged(query) => {
+            crate::ops::layout_picker::layout_picker_query_changed(ctx, query)
+        }
         Msg::LayoutPickerSelect(index) => {
             crate::ops::layout_picker::layout_picker_selection_changed(ctx, index)
         }

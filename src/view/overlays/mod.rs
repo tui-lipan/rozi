@@ -14,11 +14,11 @@ use crate::state::{
 use crate::{AppRoot, Msg};
 
 use super::widget_keys::{
-    askpass_input_key, collaboration_key, help_filter_key, help_scroll_key, layout_picker_key,
-    palette_key, pane_padding_horizontal_key, pane_padding_vertical_key, pick_key,
-    pick_prompt_input_key, profile_picker_key, remote_picker_key, remote_target_input_key,
-    rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
-    session_picker_key, settings_palette_key, theme_picker_key,
+    askpass_input_key, collaboration_key, extension_detail_key, extensions_key, help_filter_key,
+    help_scroll_key, layout_picker_key, palette_key, pane_padding_horizontal_key,
+    pane_padding_vertical_key, pick_key, pick_prompt_input_key, profile_picker_key,
+    remote_picker_key, remote_target_input_key, rename_input_key, rename_session_input_key,
+    save_profile_key, search_input_key, session_picker_key, settings_palette_key, theme_picker_key,
 };
 use super::{
     action_palette_frame, action_palette_modal, action_palette_modal_with_width, fg_only,
@@ -27,6 +27,7 @@ use super::{
 
 include!("search.rs");
 include!("prompts.rs");
+include!("palette.rs");
 include!("profiles.rs");
 include!("sessions.rs");
 include!("remotes.rs");
@@ -34,6 +35,7 @@ include!("commands.rs");
 include!("settings.rs");
 include!("layout.rs");
 include!("pick.rs");
+include!("extensions.rs");
 // Last: help.rs ends in a `#[cfg(test)]` module, and `include!` splices these files into one
 // module, so any include after it would put items behind that test module.
 include!("help.rs");

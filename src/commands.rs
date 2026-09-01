@@ -349,6 +349,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::OpenExtensions,
+        label: "Extensions…",
+        category: "App",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::OpenConfigFile,
         label: "Open config file",
         category: "App",
@@ -1886,7 +1893,14 @@ mod tests {
         assert_eq!(actions("Workspace")[0], Action::RenameWorkspace);
 
         let app = actions("App");
-        assert_eq!(&app[..2], &[Action::OpenSettings, Action::OpenConfigFile]);
+        assert_eq!(
+            &app[..3],
+            &[
+                Action::OpenSettings,
+                Action::OpenExtensions,
+                Action::OpenConfigFile,
+            ]
+        );
         assert_eq!(app.last(), Some(&Action::ToggleDevtools));
 
         assert_eq!(actions("Profile")[0], Action::OpenProfilePicker);

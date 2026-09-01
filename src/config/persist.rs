@@ -2,12 +2,19 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use super::ExtensionSettingValue;
 use super::file::{config_home, config_path, note_config_text};
 use super::schema::ProfileEntry;
 
 /// Writes an updated config text, creating the config directory when needed, and records the
 /// text as last-seen so the live-reload watcher does not treat our own write as an edit.
 fn write_config_text(path: &Path, updated: String) -> std::result::Result<(), String> {
+    toml::from_str::<toml::Value>(&updated).map_err(|error| {
+        format!(
+            "Refusing to write invalid config {}: {error}",
+            path.display()
+        )
+    })?;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -46,13 +53,12 @@ fn upsert_theme_name(text: &str, name: &str) -> String {
 
     for line in text.lines() {
         let trimmed = line.trim();
-        let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
-        if section_starts {
+        if let Some(section) = table_header_path(trimmed) {
             if in_theme && !wrote_name {
                 output.push_str(&format!("name = \"{name}\"\n"));
                 wrote_name = true;
             }
-            in_theme = trimmed == "[theme]";
+            in_theme = section.len() == 1 && section[0] == "theme";
             saw_theme |= in_theme;
         }
 
@@ -298,6 +304,67 @@ fn persist_sidebar_value(key: &str, value: &str) -> std::result::Result<PathBuf,
     Ok(path)
 }
 
+pub fn persist_extensions_disabled(ids: &[String]) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+    let updated = upsert_extensions_disabled(&text, ids);
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
+fn upsert_extensions_disabled(text: &str, ids: &[String]) -> String {
+    if ids.is_empty() {
+        return remove_value_in_section(text, "extensions", "disabled");
+    }
+    let value = ids
+        .iter()
+        .map(|id| toml::Value::String(id.clone()).to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    upsert_value_in_section(text, "extensions", "disabled", &format!("[{value}]"))
+}
+
+pub fn persist_extension_setting(
+    id: &str,
+    key: &str,
+    value: &ExtensionSettingValue,
+) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+    let updated = upsert_value_in_section(
+        &text,
+        &format!("extensions.{id}"),
+        key,
+        &extension_setting_toml(value),
+    );
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
+fn extension_setting_toml(value: &ExtensionSettingValue) -> String {
+    match value {
+        ExtensionSettingValue::Bool(value) => value.to_string(),
+        ExtensionSettingValue::Integer(value) => value.to_string(),
+        ExtensionSettingValue::String(value) => toml::Value::String(value.clone()).to_string(),
+        ExtensionSettingValue::List(values) => {
+            let values = values
+                .iter()
+                .map(|value| toml::Value::String(value.clone()).to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{values}]")
+        }
+    }
+}
+
 fn upsert_bool_in_section(text: &str, section: &str, key: &str, value: bool) -> String {
     upsert_value_in_section(text, section, key, if value { "true" } else { "false" })
 }
@@ -314,8 +381,7 @@ fn upsert_top_level_value(text: &str, key: &str, line_value: &str) -> String {
 
     while let Some(line) = lines.next() {
         let trimmed = line.trim();
-        let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
-        if section_starts {
+        if table_header_path(trimmed).is_some() {
             if !wrote_key {
                 output.push_str(&assignment);
                 output.push('\n');
@@ -364,6 +430,7 @@ fn upsert_top_level_value(text: &str, key: &str, line_value: &str) -> String {
 /// assignment rather than leaving continuation lines behind.
 fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &str) -> String {
     let section_header = format!("[{section}]");
+    let target = section.split('.').map(str::to_string).collect::<Vec<_>>();
     let mut output = String::new();
     let mut in_section = false;
     let mut saw_section = false;
@@ -372,13 +439,22 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
 
     while let Some(line) = lines.next() {
         let trimmed = line.trim();
-        let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
-        if section_starts {
+        if let Some(current) = table_header_path(trimmed) {
+            if !saw_section && current.starts_with(&target) && current.len() > target.len() {
+                if !output.is_empty() && !output.ends_with("\n\n") {
+                    output.push('\n');
+                }
+                output.push_str(&section_header);
+                output.push('\n');
+                output.push_str(&format!("{key} = {line_value}\n\n"));
+                saw_section = true;
+                wrote_key = true;
+            }
             if in_section && !wrote_key {
                 output.push_str(&format!("{key} = {line_value}\n"));
                 wrote_key = true;
             }
-            in_section = trimmed == section_header;
+            in_section = current == target;
             saw_section |= in_section;
         }
 
@@ -410,6 +486,69 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
     }
 
     output
+}
+
+fn remove_value_in_section(text: &str, section: &str, key: &str) -> String {
+    let target = section.split('.').map(str::to_string).collect::<Vec<_>>();
+    let mut output = String::new();
+    let mut in_section = false;
+    let mut lines = text.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if let Some(current) = table_header_path(trimmed) {
+            in_section = current == target;
+        }
+
+        if in_section
+            && let Some((candidate, old_value)) = trimmed.split_once('=')
+            && candidate.trim() == key
+        {
+            consume_toml_value(old_value.trim(), &mut lines);
+            continue;
+        }
+
+        output.push_str(line);
+        output.push('\n');
+    }
+
+    output
+}
+
+fn table_header_path(line: &str) -> Option<Vec<String>> {
+    const PROBE: &str = "__rozi_persist_section_probe__";
+
+    if !line.trim_start().starts_with('[') {
+        return None;
+    }
+    let parsed = toml::from_str::<toml::Value>(&format!("{line}\n{PROBE} = true")).ok()?;
+    find_table_probe(&parsed, PROBE, &mut Vec::new())
+}
+
+fn find_table_probe(
+    value: &toml::Value,
+    probe: &str,
+    path: &mut Vec<String>,
+) -> Option<Vec<String>> {
+    match value {
+        toml::Value::Table(table) => {
+            if table.contains_key(probe) {
+                return Some(path.clone());
+            }
+            for (key, child) in table {
+                path.push(key.clone());
+                if let Some(found) = find_table_probe(child, probe, path) {
+                    return Some(found);
+                }
+                path.pop();
+            }
+            None
+        }
+        toml::Value::Array(values) => values
+            .iter()
+            .find_map(|value| find_table_probe(value, probe, path)),
+        _ => None,
+    }
 }
 
 fn consume_toml_value<'a>(first_line: &str, lines: &mut std::iter::Peekable<std::str::Lines<'a>>) {
@@ -895,6 +1034,99 @@ mod tests {
             "\"off\"",
         );
         assert!(bare.contains("[workbar.alert]\nmode = \"off\""));
+    }
+
+    #[test]
+    fn extensions_disabled_uses_toml_strings_and_preserves_comments_and_subtables() {
+        let source = "# extension choices\n\
+                      [ \"extensions\" ] # inline table comment\n\
+                      disabled = [\"old\"] # replaced\n\
+                      # task settings survive\n\
+                      [extensions.\"tasks\"]\n\
+                      runner = \"just\"\n";
+        let updated = upsert_extensions_disabled(
+            source,
+            &["quote\"slash\\newline\n".to_string(), "tasks".to_string()],
+        );
+        let parsed: toml::Value = toml::from_str(&updated).expect("updated config remains valid");
+        assert_eq!(
+            parsed["extensions"]["disabled"][0].as_str(),
+            Some("quote\"slash\\newline\n")
+        );
+        assert_eq!(parsed["extensions"]["disabled"][1].as_str(), Some("tasks"));
+        assert_eq!(
+            parsed["extensions"]["tasks"]["runner"].as_str(),
+            Some("just")
+        );
+        assert!(updated.contains("# extension choices"));
+        assert!(updated.contains("# task settings survive"));
+    }
+
+    #[test]
+    fn empty_extensions_disabled_removes_only_that_key() {
+        let source = "[extensions]\n\
+                      # keep this comment\n\
+                      disabled = [\n\
+                        \"tasks\",\n\
+                        \"git-tools\",\n\
+                      ]\n\
+                      [extensions.tasks]\n\
+                      rows = 50\n";
+        let updated = upsert_extensions_disabled(source, &[]);
+        let parsed: toml::Value = toml::from_str(&updated).expect("updated config remains valid");
+        assert!(parsed["extensions"].get("disabled").is_none());
+        assert_eq!(parsed["extensions"]["tasks"]["rows"].as_integer(), Some(50));
+        assert!(updated.contains("# keep this comment"));
+    }
+
+    #[test]
+    fn missing_extensions_parent_is_inserted_before_its_first_subtable() {
+        let source = "# user settings\n[extensions.tasks]\nrows = 50\n";
+        let updated = upsert_extensions_disabled(source, &["tasks".to_string()]);
+        let parent = updated.find("[extensions]").expect("parent table");
+        let child = updated.find("[extensions.tasks]").expect("child table");
+        assert!(parent < child, "{updated}");
+        let parsed: toml::Value = toml::from_str(&updated).expect("updated config remains valid");
+        assert_eq!(parsed["extensions"]["disabled"][0].as_str(), Some("tasks"));
+        assert_eq!(parsed["extensions"]["tasks"]["rows"].as_integer(), Some(50));
+    }
+
+    #[test]
+    fn extension_setting_values_are_safe_toml_and_preserve_neighboring_tables() {
+        let source = "[extensions]\ndisabled = []\n\n\
+                      [extensions.tasks]\n# keep\nrows = 20\n\n\
+                      [extensions.other]\nenabled = true\n";
+        let cases = [
+            (
+                "runner",
+                ExtensionSettingValue::String("a \"quoted\" \\ path\nnext".to_string()),
+            ),
+            (
+                "ignore",
+                ExtensionSettingValue::List(vec!["target".to_string(), "a\"b\\c".to_string()]),
+            ),
+            ("rows", ExtensionSettingValue::Integer(50)),
+            ("notify", ExtensionSettingValue::Bool(true)),
+        ];
+        let updated = cases.iter().fold(source.to_string(), |text, (key, value)| {
+            upsert_value_in_section(
+                &text,
+                "extensions.tasks",
+                key,
+                &extension_setting_toml(value),
+            )
+        });
+        let parsed: toml::Value = toml::from_str(&updated).expect("updated config remains valid");
+        let tasks = &parsed["extensions"]["tasks"];
+        assert_eq!(tasks["runner"].as_str(), Some("a \"quoted\" \\ path\nnext"));
+        assert_eq!(tasks["ignore"][1].as_str(), Some("a\"b\\c"));
+        assert_eq!(tasks["rows"].as_integer(), Some(50));
+        assert_eq!(tasks["notify"].as_bool(), Some(true));
+        assert_eq!(
+            parsed["extensions"]["other"]["enabled"].as_bool(),
+            Some(true)
+        );
+        assert!(updated.contains("# keep"));
     }
 
     /// The Settings dialog's Startup/Sessions rows write into `[session]`, a section a config that

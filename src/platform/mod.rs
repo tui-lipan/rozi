@@ -55,6 +55,7 @@ pub mod ansi;
 pub mod command;
 pub mod cursor;
 pub mod environment;
+pub(crate) mod extensions;
 pub mod ipc;
 pub mod notifications;
 pub mod process;

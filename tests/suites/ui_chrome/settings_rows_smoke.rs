@@ -152,6 +152,7 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                 "General",
                 &[
                     "Theme",
+                    "Extensions",
                     "Terminal padding",
                     "Animations",
                     "Nerd icons",

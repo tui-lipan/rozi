@@ -167,6 +167,7 @@ pub struct State {
     pub layout_picker: Option<LayoutPickerState>,
     pub show_pick: bool,
     pub pick: Option<PickState>,
+    pub extensions: Option<ExtensionsState>,
     pub next_pick_id: u64,
     pub theme: Theme,
     pub system_theme: Option<Theme>,
@@ -407,6 +408,7 @@ impl State {
             layout_picker: None,
             show_pick: false,
             pick: None,
+            extensions: None,
             next_pick_id: 1,
             theme,
             system_theme: None,
@@ -848,6 +850,7 @@ impl State {
             || self.show_help
             || self.show_theme_picker
             || self.show_layout_picker
+            || self.extensions.is_some()
             || self.search.is_some()
             || self.rename.is_some()
             || self.rename_session.is_some()

@@ -21,6 +21,7 @@ pub(crate) struct ExtensionContributions {
     pub(crate) installed_ids: HashSet<String>,
     pub(crate) runtime: BTreeMap<String, ExtensionRuntimeFingerprint>,
     pub(crate) warnings: Vec<String>,
+    pub(crate) problem_count: usize,
 }
 
 pub(super) fn build(
@@ -36,6 +37,7 @@ pub(super) fn build(
     let mut active_ids = HashSet::new();
     let mut installed_ids = HashSet::new();
     let mut runtime = Vec::new();
+    let mut problem_count = 0;
     let mut warnings = scan.root_errors;
     for extension in scan.extensions {
         if let Some(id) = extension.info.id.clone() {
@@ -85,6 +87,7 @@ pub(super) fn build(
             agents.extend(extension.agents);
             sidebar_tabs.extend(extension_tabs);
         } else if extension.info.status != ExtensionStatus::Disabled {
+            problem_count += 1;
             warnings.extend(
                 extension
                     .info
@@ -113,5 +116,6 @@ pub(super) fn build(
         installed_ids,
         runtime: fingerprints_by_id(runtime),
         warnings,
+        problem_count,
     }
 }

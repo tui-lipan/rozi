@@ -2,19 +2,7 @@ pub(crate) fn session_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Text::new("").into();
     };
-    let body = VStack::new()
-        .height(Length::Auto)
-        .child(session_picker_palette(ctx, picker))
-        .child(session_picker_hints(ctx));
-
-    action_palette(
-        ctx,
-        "Sessions",
-        session_picker_key(),
-        Msg::CloseSessionPicker,
-        body,
-        64,
-    )
+    session_picker_palette(ctx, picker)
 }
 
 /// A row in the collaborators roster: one other client, plus what may be done to it from here.
@@ -38,45 +26,7 @@ pub(crate) fn collaboration_overlay(ctx: &Context<AppRoot>) -> Element {
         return Text::new("").into();
     };
     let can_evict = crate::ops::session::can_evict(&ctx.state);
-    let mut rows: Vec<SearchItem<CollaboratorItem>> = Vec::new();
-    let mut items = Vec::new();
-    for (roster_index, client) in shared.clients.iter().enumerate() {
-        if client.id == shared.client_id {
-            continue;
-        }
-        let position = items.len();
-        let item = CollaboratorItem {
-            roster_index,
-            client_id: client.id,
-            position,
-            grantable: !shared.read_only
-                && shared.is_controller()
-                && !client.read_only
-                && !client.parked,
-            requesting: client.requesting_control,
-            kickable: can_evict,
-        };
-        let mut markers = Vec::new();
-        if Some(client.id) == shared.controller {
-            markers.push("ctrl");
-        }
-        if client.read_only {
-            markers.push("ro");
-        }
-        // A parked client is connected but not here: it holds no control and is not competing
-        // for the session, which is worth flagging rather than listing it like an active viewer.
-        if client.parked {
-            markers.push("parked");
-        }
-        if client.requesting_control && Some(client.id) != shared.controller {
-            markers.push("wants ctrl");
-        }
-        rows.push(
-            SearchItem::new(client_tag(&client.label, client.id), item)
-                .description(ItemDescription::new().right(markers.join(" · "))),
-        );
-        items.push(item);
-    }
+    let (rows, items) = collaborator_rows(shared, can_evict);
     let entries: Vec<_> = rows.iter().cloned().map(SearchEntry::Item).collect();
 
     // Rank the roster exactly as the widget does, so "the highlighted client" means the same thing
@@ -107,101 +57,139 @@ pub(crate) fn collaboration_overlay(ctx: &Context<AppRoot>) -> Element {
     } else {
         format!("No client matches `{query}`")
     };
-    // The query input owns focus here, so every action key is a Ctrl chord: a bare letter has to
-    // reach the filter. Enter is the exception the list already owns.
-    let interceptor = ctx.link().key_handler(move |key_event| {
-        if key_event.is(KeyCode::Esc) {
-            Some(Msg::CloseCollaboration)
-        } else if let Some(item) = selected_item.filter(|item| item.grantable && item.requesting)
-            && ctrl_letter(&key_event, 'd')
-        {
-            Some(Msg::CollaborationDecline(item.roster_index))
-        } else if let Some(item) = selected_item.filter(|item| item.kickable)
-            && ctrl_letter(&key_event, 'k')
-        {
-            Some(Msg::CollaborationKick(item.roster_index))
-        } else {
-            None
-        }
+    let actions = collaborator_actions(ctx, selected_item, armed.is_some());
+    let fallback = ctx.link().key_handler(|key_event| {
+        key_event
+            .is(KeyCode::Esc)
+            .then_some(Msg::CloseCollaboration)
     });
-    let error_bg = ctx.state.theme.status.error;
-    let mut palette = shared_search_palette::<CollaboratorItem>(ctx, Length::Auto, false)
-        .width(Length::Flex(1))
-        .entries(entries)
-        .placeholder("Search other clients…")
-        .empty_text(empty_text)
-        .initial_query(state.query.clone())
-        .initial_selected_item_index(Some(selected))
-        .sync_selection(true)
-        .description_placement(DescriptionPlacement::Right)
-        .input_key_interceptor(interceptor)
-        .on_query_change(
-            ctx.link()
-                .callback(|query: Arc<str>| Msg::CollaborationQueryChanged(query.to_string())),
-        )
-        .on_select(ctx.link().callback(|event: SearchEvent<CollaboratorItem>| {
-            Msg::CollaborationSelect(event.item.value.position)
-        }))
-        .on_activate(ctx.link().callback(|event: SearchEvent<CollaboratorItem>| {
-            match event.item.value {
-                CollaboratorItem {
-                    roster_index,
-                    grantable: true,
-                    ..
-                } => Msg::CollaborationGrant(roster_index),
-                CollaboratorItem { position, .. } => Msg::CollaborationSelect(position),
-            }
-        }));
-    if let Some(armed) = armed {
-        palette = palette.render_item(Arc::new(move |item: &SearchItem<CollaboratorItem>, _hl| {
-            (item.value.client_id == armed).then(|| {
-                render_pending_confirm_item(item.label.as_ref(), error_bg, "again to confirm", true)
-            })
-        }));
-    }
 
-    let mut body = VStack::new().height(Length::Auto).child(palette);
-    if let Some(item) = selected_item {
-        let mut hints = hint_row();
-        if item.grantable {
-            hints = hints.child(hint_pill(&ctx.state.theme, "grant control", "enter"));
+    OverlayPalette::new(
+        "Manage collaborators",
+        collaboration_key(),
+        Msg::CloseCollaboration,
+        64,
+    )
+    .header_right(self_tag(shared))
+    .entries(entries)
+    .actions(actions)
+    .armed_row(armed.and(selected_item))
+    .placeholder("Search other clients…")
+    .empty_text(empty_text)
+    .initial_query(state.query.clone())
+    .selected(Some(selected))
+    .fallback_interceptor(fallback)
+    .on_query_change(
+        ctx.link()
+            .callback(|query: Arc<str>| Msg::CollaborationQueryChanged(query.to_string())),
+    )
+    .on_select(ctx.link().callback(|event: SearchEvent<CollaboratorItem>| {
+        Msg::CollaborationSelect(event.item.value.position)
+    }))
+    .on_activate(ctx.link().callback(
+        |event: SearchEvent<CollaboratorItem>| match event.item.value {
+            CollaboratorItem {
+                roster_index,
+                grantable: true,
+                ..
+            } => Msg::CollaborationGrant(roster_index),
+            CollaboratorItem { position, .. } => Msg::CollaborationSelect(position),
+        },
+    ))
+    .render(ctx)
+}
+
+fn collaborator_rows(
+    shared: &crate::state::SharedSessionState,
+    can_evict: bool,
+) -> (
+    Vec<SearchItem<CollaboratorItem>>,
+    Vec<CollaboratorItem>,
+) {
+    let mut rows = Vec::new();
+    let mut items = Vec::new();
+    for (roster_index, client) in shared.clients.iter().enumerate() {
+        if client.id == shared.client_id {
+            continue;
         }
-        if item.grantable && item.requesting {
-            hints = hints.child(hint_pill(&ctx.state.theme, "decline", "ctrl+d"));
-        }
-        if item.kickable {
-            let label = if armed.is_some() {
-                "confirm kick"
-            } else {
-                "kick"
-            };
-            hints = hints.child(hint_pill(&ctx.state.theme, label, "ctrl+k"));
-        }
-        body = body.child(hints);
+        let item = CollaboratorItem {
+            roster_index,
+            client_id: client.id,
+            position: items.len(),
+            grantable: !shared.read_only
+                && shared.is_controller()
+                && !client.read_only
+                && !client.parked,
+            requesting: client.requesting_control,
+            kickable: can_evict,
+        };
+        rows.push(
+            SearchItem::new(client_tag(&client.label, client.id), item).description(
+                picker_description(collaborator_markers(shared, client).join(" · ")),
+            ),
+        );
+        items.push(item);
     }
-    // This client's own identity and role ride the top border as a right header rather than a line
-    // of prose above the input — see the overlay convention in AGENTS.md.
-    let panel: Element = Frame::new()
-        .header_left("Manage collaborators")
-        .header_right(self_tag(shared))
-        .header_style(ctx.state.theme.accent.bold())
-        .border_style(BorderStyle::Rounded)
-        .padding(0)
-        .style(Style::new().bg(ctx.state.theme.surface.element))
-        .height(Length::Auto)
-        .child(action_palette_frame(body))
-        .into();
-    Modal::new()
-        .width(Length::Px(64))
-        .height(Length::Auto)
-        .max_height(Length::Percent(65))
-        .reserve_height(Length::Percent(65))
-        .border(false)
-        .padding(0)
-        .frame_style(Style::new().bg(ctx.state.theme.surface.element))
-        .on_close(ctx.link().callback(|_| Msg::CloseCollaboration))
-        .child(panel)
-        .key(collaboration_key())
+    (rows, items)
+}
+
+fn collaborator_markers(
+    shared: &crate::state::SharedSessionState,
+    client: &crate::session::protocol::ClientInfo,
+) -> Vec<&'static str> {
+    let mut markers = Vec::new();
+    if Some(client.id) == shared.controller {
+        markers.push("ctrl");
+    }
+    if client.read_only {
+        markers.push("ro");
+    }
+    // A parked client is connected but not here: it holds no control and is not competing
+    // for the session, which is worth flagging rather than listing it like an active viewer.
+    if client.parked {
+        markers.push("parked");
+    }
+    if client.requesting_control && Some(client.id) != shared.controller {
+        markers.push("wants ctrl");
+    }
+    markers
+}
+
+fn collaborator_actions(
+    ctx: &Context<AppRoot>,
+    selected: Option<CollaboratorItem>,
+    armed: bool,
+) -> Vec<OverlayAction> {
+    let Some(item) = selected else {
+        return Vec::new();
+    };
+    vec![
+        OverlayAction::new(
+            "enter",
+            "grant control",
+            Msg::CollaborationGrant(item.roster_index),
+            item.grantable,
+        )
+        .hint_only(),
+        OverlayAction::new(
+            "ctrl-d",
+            "decline",
+            Msg::CollaborationDecline(item.roster_index),
+            item.grantable && item.requesting,
+        ),
+        OverlayAction::new(
+            "ctrl-k",
+            if armed { "confirm kick" } else { "kick" },
+            Msg::CollaborationKick(item.roster_index),
+            item.kickable,
+        )
+        .confirm_if(
+            armed,
+            "again to confirm",
+            ctx.state.theme.status.error,
+            true,
+        ),
+    ]
 }
 
 /// One client as a compact token: `razuer #2077`.
@@ -237,13 +225,13 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
         .enumerate()
         .map(|(index, choice)| {
             SearchEntry::item(choice.label(prompt.allow_takeover).to_string(), index).description(
-                ItemDescription::new().right(choice.description(prompt.allow_takeover).to_string()),
+                picker_description(choice.description(prompt.allow_takeover)),
             )
         })
         .collect::<Vec<_>>();
     let selected = prompt.selected;
     let last = crate::state::FollowChoice::ALL.len() - 1;
-    let interceptor = ctx.link().key_handler(move |key_event| {
+    let fallback = ctx.link().key_handler(move |key_event| {
         if key_event.is(KeyCode::Esc) {
             // Backing out of the prompt is itself a choice: cancel, not a silent follow.
             Some(Msg::FollowPromptChoose(last))
@@ -255,31 +243,26 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
             None
         }
     });
-    let palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
-        .width(Length::Flex(1))
-        .entries(entries)
-        .placeholder("")
-        .initial_selected_item_index(Some(selected))
-        .sync_selection(true)
-        .description_placement(DescriptionPlacement::Right)
-        .input_key_interceptor(interceptor)
-        .on_select(
-            ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::FollowPromptSelect(event.item.value)),
-        )
-        .on_activate(
-            ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::FollowPromptChoose(event.item.value)),
-        );
     let title = format!("`{}` in use by {}", prompt.session, prompt.controller_label);
-    action_palette(
-        ctx,
-        &title,
+    OverlayPalette::new(
+        title,
         crate::view::follow_prompt_key(),
         Msg::FollowPromptChoose(last),
-        palette,
         64,
     )
+    .entries(entries)
+    .placeholder("")
+    .selected(Some(selected))
+    .fallback_interceptor(fallback)
+    .on_select(
+        ctx.link()
+            .callback(|event: SearchEvent<usize>| Msg::FollowPromptSelect(event.item.value)),
+    )
+    .on_activate(
+        ctx.link()
+            .callback(|event: SearchEvent<usize>| Msg::FollowPromptChoose(event.item.value)),
+    )
+    .render(ctx)
 }
 
 /// Non-dismissible progress chrome while an automatic reconnect preserves the panes underneath.
@@ -334,83 +317,184 @@ fn remote_is_in_play(state: &crate::state::State) -> bool {
             .any(|attachment| attachment.remote_target.is_some())
 }
 
-fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
-    let theme = &ctx.state.theme;
+fn session_picker_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
-        return Text::new("").into();
+        return Vec::new();
     };
     let selected = selected_session(picker);
     let restorable = selected.is_some_and(crate::ops::session::session_row_is_restorable);
+    let mut actions = Vec::new();
+    push_session_activation(ctx, picker, selected, restorable, &mut actions);
+    push_session_creation_actions(ctx, picker, &mut actions);
+    push_session_management_actions(ctx, picker, selected, restorable, &mut actions);
+    actions
+}
 
-    let mut row = hint_row();
+fn push_session_activation(
+    ctx: &Context<AppRoot>,
+    picker: &SessionPickerState,
+    selected: Option<&crate::session::discovery::DiscoveredSession>,
+    restorable: bool,
+    actions: &mut Vec<OverlayAction>,
+) {
     if picker_list_is_empty(picker) {
-        row = row.child(hint_pill(
-            theme,
-            if remote_is_in_play(&ctx.state) {
-                "local ephemeral"
-            } else {
-                "ephemeral shell"
-            },
-            "enter",
-        ));
+        actions.push(
+            OverlayAction::new(
+                "enter",
+                if remote_is_in_play(&ctx.state) {
+                    "local ephemeral"
+                } else {
+                    "ephemeral shell"
+                },
+                Msg::SessionPickerEphemeral,
+                true,
+            ),
+        );
     }
-    if let Some(entry) = selected {
-        if restorable {
-            row = row.child(hint_pill(theme, "restore", "enter"));
-            row = row.child(hint_pill(theme, "forget", "ctrl+k"));
-        } else if !crate::ops::session::session_row_is_current(&ctx.state, entry) {
-            let held = ctx
-                .state
-                .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
-                .map(|attachment| attachment.connection);
-            let label = match held {
-                Some(crate::state::ConnectionState::Connected) => "switch",
-                _ => "connect",
-            };
-            row = row.child(hint_pill(theme, label, "enter"));
-        }
+    let Some(entry) = selected else {
+        return;
+    };
+    if restorable {
+        actions.push(
+            OverlayAction::new(
+                "enter",
+                "restore",
+                Msg::SessionPickerActivate(picker.selected),
+                true,
+            )
+            .hint_only(),
+        );
+        actions.push(
+            OverlayAction::new("ctrl-k", "forget", Msg::SessionPickerKillSelected, true).confirm_if(
+                picker.pending_kill == Some(picker.selected),
+                "again to forget",
+                ctx.state.theme.status.error,
+                true,
+            ),
+        );
+    } else if !crate::ops::session::session_row_is_current(&ctx.state, entry) {
+        let held = ctx
+            .state
+            .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
+            .map(|attachment| attachment.connection);
+        let label = match held {
+            Some(crate::state::ConnectionState::Connected) => "switch",
+            _ => "connect",
+        };
+        actions.push(
+            OverlayAction::new(
+                "enter",
+                label,
+                Msg::SessionPickerActivate(picker.selected),
+                true,
+            )
+            .hint_only(),
+        );
     }
+}
+
+fn push_session_creation_actions(
+    ctx: &Context<AppRoot>,
+    picker: &SessionPickerState,
+    actions: &mut Vec<OverlayAction>,
+) {
     // Both keys act on this surface's scope, which is global — so they act locally. Saying "local"
     // is only worth the width once a remote host is in play; with nothing remote anywhere, "new"
     // has nothing to be mistaken for.
     let remote_in_play = remote_is_in_play(&ctx.state);
-    row = row.child(hint_pill(
-        theme,
-        if remote_in_play { "new local" } else { "new" },
-        "ctrl+n",
-    ));
-    if !picker_list_is_empty(picker)
-        && crate::ops::session::held_ephemeral_session_in(&ctx.state, None).is_none()
-    {
-        row = row.child(hint_pill(
-            theme,
+    actions.push(
+        OverlayAction::new(
+            "ctrl-n",
+            if remote_in_play { "new local" } else { "new" },
+            Msg::SessionPickerCreateFromQuery,
+            true,
+        ),
+    );
+    let show_ephemeral = !picker_list_is_empty(picker)
+        && crate::ops::session::held_ephemeral_session_in(&ctx.state, None).is_none();
+    actions.push(
+        OverlayAction::new(
+            "ctrl-t",
             if remote_in_play {
                 "local ephemeral"
             } else {
                 "ephemeral shell"
             },
-            "ctrl+t",
-        ));
-    }
+            Msg::SessionPickerEphemeral,
+            show_ephemeral,
+        ),
+    );
     if ctx.state.current().session_attached && ctx.state.is_ephemeral_session() {
-        row = row.child(hint_pill(theme, "name current", "ctrl+s"));
+        actions.push(
+            OverlayAction::new(
+                "ctrl-s",
+                "name current",
+                Msg::SessionPickerNameCurrent,
+                true,
+            ),
+        );
     }
-    row = row.child(hint_pill(theme, "remote hosts", "ctrl+r"));
+    actions.push(
+        OverlayAction::new(
+            "ctrl-r",
+            "remote hosts",
+            Msg::SessionPickerRemoteHosts,
+            true,
+        ),
+    );
+}
+
+fn push_session_management_actions(
+    ctx: &Context<AppRoot>,
+    picker: &SessionPickerState,
+    selected: Option<&crate::session::discovery::DiscoveredSession>,
+    restorable: bool,
+    actions: &mut Vec<OverlayAction>,
+) {
     if let Some(entry) = selected
         && !restorable
     {
         if crate::ops::session::session_row_can_disconnect(&ctx.state, entry) {
-            row = row.child(hint_pill(theme, "disconnect", "ctrl+w"));
+            actions.push(OverlayAction::new(
+                "ctrl-w",
+                "disconnect",
+                Msg::SessionPickerDisconnectAttachment,
+                true,
+            ));
         }
-        row = row.child(hint_pill(theme, "restart", "ctrl+e"));
-        row = row.child(hint_pill(theme, "kill", "ctrl+k"));
+        actions.push(
+            OverlayAction::new(
+                "ctrl-e",
+                "restart",
+                Msg::SessionPickerRestartSelected,
+                crate::ops::session::session_row_can_restart(entry),
+            )
+            .confirm_if(
+                picker.pending_restart == Some(picker.selected),
+                "again to restart",
+                ctx.state.theme.status.warning,
+                false,
+            ),
+        );
+        actions.push(
+            OverlayAction::new("ctrl-k", "kill", Msg::SessionPickerKillSelected, true).confirm_if(
+                picker.pending_kill == Some(picker.selected),
+                "again to kill",
+                ctx.state.theme.status.error,
+                true,
+            ),
+        );
     }
     if selected.is_some_and(|entry| {
         crate::ops::session::session_row_can_disconnect_host(&ctx.state, entry)
     }) {
-        row = row.child(hint_pill(theme, "disconnect host", "ctrl+x"));
+        actions.push(OverlayAction::new(
+            "ctrl-x",
+            "disconnect host",
+            Msg::SessionPickerDisconnectHost,
+            true,
+        ));
     }
-    row.into()
 }
 
 use crate::view::session_status::{
@@ -453,10 +537,7 @@ fn picker_list_is_empty(picker: &SessionPickerState) -> bool {
         .any(|entry| matches_session_query(entry, &query))
 }
 
-fn session_picker_palette(
-    ctx: &Context<AppRoot>,
-    picker: &SessionPickerState,
-) -> SearchPalette<usize> {
+fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -> Element {
     let theme = &ctx.state.theme;
     let query = picker.input.text().trim().to_ascii_lowercase();
     let current_name = ctx.state.current().session_name.as_deref();
@@ -530,87 +611,62 @@ fn session_picker_palette(
 
     let pending_kill = picker.pending_kill;
     let pending_restart = picker.pending_restart;
-    let pending_kill_forgets = pending_kill.is_some_and(|index| {
-        picker
-            .entries
-            .get(index)
-            .is_some_and(crate::ops::session::session_row_is_restorable)
-    });
-    let error_bg = theme.status.error;
-    let warn_bg = theme.status.warning;
     let ephemeral_style = fg_only(&theme.primary).italic();
     let description_style = fg_only(&theme.muted);
-    let pending_accent = if pending_kill.is_some() {
-        Some(error_bg)
-    } else if pending_restart.is_some() {
-        Some(warn_bg)
-    } else {
-        None
-    };
-    let selection_style = picker_selection_style(theme, pending_accent);
     let status_styles = crate::view::session_status::SessionStatusStyles::from_theme(theme);
+    let fallback = ctx.link().key_handler(|key| {
+        if key.is(KeyCode::Esc) {
+            Some(Msg::CloseSessionPicker)
+        } else if ctrl_letter(&key, 't') {
+            // This remains intentionally usable when its redundant footer pill is hidden.
+            Some(Msg::SessionPickerEphemeral)
+        } else {
+            None
+        }
+    });
+    let render_item = (!ephemeral_entries.is_empty()).then(|| {
+        Arc::new(move |item: &SearchItem<usize>, _hl: &SearchHighlight| {
+            ephemeral_entries
+                .contains(&item.value)
+                .then(|| render_ephemeral_session_item(item, &ephemeral_style, &description_style))
+        }) as OverlayItemRenderer<usize>
+    });
 
-    let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
-        .width(Length::Flex(1))
-        .entries(entries)
-        .placeholder("Search sessions...")
-        .initial_query(picker.input.text().to_string())
-        .initial_selected_item_index(Some(picker.selected))
-        .sync_selection(true)
-        .empty_text(empty_text)
-        .description_placement(DescriptionPlacement::Right)
-        .list_selection_style(selection_style)
-        .list_unfocused_selection_style(selection_style)
-        .input_key_interceptor(session_picker_key_interceptor(ctx))
-        .on_query_change(
-            ctx.link()
-                .callback(|query: Arc<str>| Msg::SessionPickerQueryChanged(query.to_string())),
-        )
-        .on_select(
-            ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::SessionPickerSelect(event.item.value)),
-        )
-        .on_activate(
-            ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
-        )
-        // Leading space indents the marker; list item left padding is the gap before the label.
-        .item_gutter(Arc::new(move |item: &SearchItem<usize>, _hl| {
-            let status = *statuses.get(item.value)?;
-            session_status_gutter(status, status_styles, reserve_discovered_gutter)
-        }));
-    if pending_kill.is_some() || pending_restart.is_some() || !ephemeral_entries.is_empty() {
-        palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
-            if pending_kill == Some(item.value) {
-                Some(render_pending_confirm_item(
-                    item.label.as_ref(),
-                    error_bg,
-                    if pending_kill_forgets {
-                        "again to forget"
-                    } else {
-                        "again to kill"
-                    },
-                    true,
-                ))
-            } else if pending_restart == Some(item.value) {
-                Some(render_pending_confirm_item(
-                    item.label.as_ref(),
-                    warn_bg,
-                    "again to restart",
-                    false,
-                ))
-            } else if ephemeral_entries.contains(&item.value) {
-                Some(render_ephemeral_session_item(
-                    item,
-                    &ephemeral_style,
-                    &description_style,
-                ))
-            } else {
-                None
-            }
-        }));
+    let mut overlay = OverlayPalette::new(
+        "Sessions",
+        session_picker_key(),
+        Msg::CloseSessionPicker,
+        64,
+    )
+    .entries(entries)
+    .actions(session_picker_actions(ctx))
+    .armed_row(pending_kill.or(pending_restart))
+    .placeholder("Search sessions...")
+    .initial_query(picker.input.text().to_string())
+    .selected(Some(picker.selected))
+    .empty_text(empty_text)
+    .fallback_interceptor(fallback)
+    .on_query_change(
+        ctx.link()
+            .callback(|query: Arc<str>| Msg::SessionPickerQueryChanged(query.to_string())),
+    )
+    .on_select(
+        ctx.link()
+            .callback(|event: SearchEvent<usize>| Msg::SessionPickerSelect(event.item.value)),
+    )
+    .on_activate(
+        ctx.link()
+            .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
+    )
+    // Leading space indents the marker; list item left padding is the gap before the label.
+    .item_gutter(Arc::new(move |item: &SearchItem<usize>, _hl| {
+        let status = *statuses.get(item.value)?;
+        session_status_gutter(status, status_styles, reserve_discovered_gutter)
+    }));
+    if let Some(render_item) = render_item {
+        overlay = overlay.render_item(render_item);
     }
-    palette
+    overlay.render(ctx)
 }
 
 fn session_description(
@@ -642,61 +698,10 @@ fn session_description(
             if let Some(profile) = created_from_profile {
                 label.push_str(&format!(" · from {profile}"));
             }
-            ItemDescription::new().right(label)
+            picker_description(label)
         }
-        DiscoveredSessionStatus::Restorable => ItemDescription::new().right("restorable"),
-        DiscoveredSessionStatus::Busy => ItemDescription::new().right("busy"),
-        DiscoveredSessionStatus::Unknown => ItemDescription::new().right("unavailable"),
+        DiscoveredSessionStatus::Restorable => picker_description("restorable"),
+        DiscoveredSessionStatus::Busy => picker_description("busy"),
+        DiscoveredSessionStatus::Unknown => picker_description("unavailable"),
     }
-}
-
-fn session_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
-    let is_ephemeral = ctx.state.is_ephemeral_session();
-    let is_attached = ctx.state.current().session_attached;
-    // With no row on the list, Enter has nothing to activate, so it carries the scratch session
-    // instead of doing nothing. With rows present it must stay the list's own key.
-    let list_is_empty = ctx
-        .state
-        .session_picker
-        .as_ref()
-        .is_some_and(picker_list_is_empty);
-    let selected = ctx
-        .state
-        .session_picker
-        .as_ref()
-        .and_then(selected_session)
-        .cloned();
-    let can_kill = selected.is_some();
-    let can_restart = selected
-        .as_ref()
-        .is_some_and(crate::ops::session::session_row_can_restart);
-    let can_disconnect = selected
-        .as_ref()
-        .is_some_and(|entry| crate::ops::session::session_row_can_disconnect(&ctx.state, entry));
-    let can_disconnect_host = selected.as_ref().is_some_and(|entry| {
-        crate::ops::session::session_row_can_disconnect_host(&ctx.state, entry)
-    });
-    ctx.link().key_handler(move |key| {
-        if key.is(KeyCode::Esc) {
-            Some(Msg::CloseSessionPicker)
-        } else if ctrl_letter(&key, 't') || (list_is_empty && key.is(KeyCode::Enter)) {
-            Some(Msg::SessionPickerEphemeral)
-        } else if ctrl_letter(&key, 'n') {
-            Some(Msg::SessionPickerCreateFromQuery)
-        } else if is_attached && is_ephemeral && ctrl_letter(&key, 's') {
-            Some(Msg::SessionPickerNameCurrent)
-        } else if can_kill && ctrl_letter(&key, 'k') {
-            Some(Msg::SessionPickerKillSelected)
-        } else if can_restart && ctrl_letter(&key, 'e') {
-            Some(Msg::SessionPickerRestartSelected)
-        } else if can_disconnect && ctrl_letter(&key, 'w') {
-            Some(Msg::SessionPickerDisconnectAttachment)
-        } else if can_disconnect_host && ctrl_letter(&key, 'x') {
-            Some(Msg::SessionPickerDisconnectHost)
-        } else if ctrl_letter(&key, 'r') {
-            Some(Msg::SessionPickerRemoteHosts)
-        } else {
-            None
-        }
-    })
 }

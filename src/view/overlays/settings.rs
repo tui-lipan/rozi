@@ -7,7 +7,19 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
             "General",
             vec![
                 ("Theme", current_theme_label(ctx), Theme),
-                ("Terminal padding", padding_summary(pane.padding), EditPadding),
+                (
+                    "Extensions",
+                    extension_summary(
+                        ctx.state.config.active_extensions.len(),
+                        ctx.state.config.extension_problems,
+                    ),
+                    Extensions,
+                ),
+                (
+                    "Terminal padding",
+                    padding_summary(pane.padding),
+                    EditPadding,
+                ),
                 (
                     "Animations",
                     enabled_status(ctx.state.config.animations.enabled),
@@ -23,7 +35,11 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                     ctx.state.config.input.which_key.label().to_string(),
                     CycleWhichKey,
                 ),
-                ("Focus on hover", enabled_status(pane.focus_on_hover), ToggleFocusOnHover),
+                (
+                    "Focus on hover",
+                    enabled_status(pane.focus_on_hover),
+                    ToggleFocusOnHover,
+                ),
                 (
                     "Background follows terminal",
                     enabled_status(pane.background_follows_terminal),
@@ -34,15 +50,27 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
         settings_group(
             "Titlebar",
             vec![
-                ("Show titlebar", enabled_status(pane.show_titles), ToggleTitles),
+                (
+                    "Show titlebar",
+                    enabled_status(pane.show_titles),
+                    ToggleTitles,
+                ),
                 ("Layout", pane.titlebar.label().to_string(), CycleTitlebar),
-                ("Style", cap_style_label(pane.title_style).to_string(), CycleTitleStyle),
+                (
+                    "Style",
+                    cap_style_label(pane.title_style).to_string(),
+                    CycleTitleStyle,
+                ),
             ],
         ),
         settings_group(
             "Workbar",
             vec![
-                ("Show workbar", enabled_status(pane.show_workbar), ToggleWorkbar),
+                (
+                    "Show workbar",
+                    enabled_status(pane.show_workbar),
+                    ToggleWorkbar,
+                ),
                 (
                     "Position",
                     if pane.workbar_at_bottom {
@@ -54,7 +82,11 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                     ToggleWorkbarPosition,
                 ),
                 ("Gap", enabled_status(pane.workbar_gap), ToggleWorkbarGap),
-                ("Style", cap_style_label(pane.workbar_style).to_string(), CycleWorkbarStyle),
+                (
+                    "Style",
+                    cap_style_label(pane.workbar_style).to_string(),
+                    CycleWorkbarStyle,
+                ),
                 (
                     "Badge style",
                     cap_style_label(pane.workbar_badge_style).to_string(),
@@ -65,7 +97,11 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                     cap_style_label(pane.workbar_tab_style).to_string(),
                     CycleWorkbarTabStyle,
                 ),
-                ("Powerline", enabled_status(pane.workbar_powerline), ToggleWorkbarPowerline),
+                (
+                    "Powerline",
+                    enabled_status(pane.workbar_powerline),
+                    ToggleWorkbarPowerline,
+                ),
             ],
         ),
         settings_group(
@@ -86,8 +122,16 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                     enabled_status(pane.highlight_focused_titlebar),
                     ToggleHighlightFocusedTitlebar,
                 ),
-                ("Border mode", pane.border_mode.label().to_string(), CycleBorderMode),
-                ("Border style", pane.border_style.label().to_string(), CycleBorderStyle),
+                (
+                    "Border mode",
+                    pane.border_mode.label().to_string(),
+                    CycleBorderMode,
+                ),
+                (
+                    "Border style",
+                    pane.border_style.label().to_string(),
+                    CycleBorderStyle,
+                ),
                 (
                     "Open/close animation",
                     ctx.state.config.animations.pane_style.label().to_string(),
@@ -124,7 +168,11 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                     ctx.state.config.workbar.alert.paint.label().to_string(),
                     CycleWorkbarAlertPaint,
                 ),
-                ("Bell mark", enabled_status(ctx.state.config.workbar.alert.bell), ToggleMarkBell),
+                (
+                    "Bell mark",
+                    enabled_status(ctx.state.config.workbar.alert.bell),
+                    ToggleMarkBell,
+                ),
                 (
                     "Blocked mark",
                     enabled_status(ctx.state.config.workbar.alert.blocked),
@@ -140,27 +188,71 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                     enabled_status(ctx.state.config.workbar.alert.working),
                     ToggleMarkWorking,
                 ),
-                ("Idle mark", enabled_status(ctx.state.config.workbar.alert.idle), ToggleMarkIdle),
+                (
+                    "Idle mark",
+                    enabled_status(ctx.state.config.workbar.alert.idle),
+                    ToggleMarkIdle,
+                ),
             ],
         ),
         settings_group(
             "Desktop notifications",
             vec![
-                ("Show notifications", enabled_status(ctx.state.config.notifications.enabled), ToggleDesktopEnabled),
-                ("Blocked", enabled_status(ctx.state.config.notifications.pane_blocked), ToggleDesktopBlocked),
-                ("Finished", enabled_status(ctx.state.config.notifications.pane_done), ToggleDesktopDone),
-                ("Exit", enabled_status(ctx.state.config.notifications.pane_exit), ToggleDesktopExit),
-                ("Exit with error", enabled_status(ctx.state.config.notifications.pane_exit_error), ToggleDesktopExitError),
+                (
+                    "Show notifications",
+                    enabled_status(ctx.state.config.notifications.enabled),
+                    ToggleDesktopEnabled,
+                ),
+                (
+                    "Blocked",
+                    enabled_status(ctx.state.config.notifications.pane_blocked),
+                    ToggleDesktopBlocked,
+                ),
+                (
+                    "Finished",
+                    enabled_status(ctx.state.config.notifications.pane_done),
+                    ToggleDesktopDone,
+                ),
+                (
+                    "Exit",
+                    enabled_status(ctx.state.config.notifications.pane_exit),
+                    ToggleDesktopExit,
+                ),
+                (
+                    "Exit with error",
+                    enabled_status(ctx.state.config.notifications.pane_exit_error),
+                    ToggleDesktopExitError,
+                ),
             ],
         ),
         settings_group(
             "Sounds",
             vec![
-                ("Play sounds", enabled_status(ctx.state.config.sounds.enabled), ToggleSoundEnabled),
-                ("Bell", enabled_status(ctx.state.config.sounds.bell), ToggleSoundBell),
-                ("Blocked", enabled_status(ctx.state.config.sounds.blocked), ToggleSoundBlocked),
-                ("Finished", enabled_status(ctx.state.config.sounds.done), ToggleSoundDone),
-                ("Exit with error", enabled_status(ctx.state.config.sounds.error), ToggleSoundError),
+                (
+                    "Play sounds",
+                    enabled_status(ctx.state.config.sounds.enabled),
+                    ToggleSoundEnabled,
+                ),
+                (
+                    "Bell",
+                    enabled_status(ctx.state.config.sounds.bell),
+                    ToggleSoundBell,
+                ),
+                (
+                    "Blocked",
+                    enabled_status(ctx.state.config.sounds.blocked),
+                    ToggleSoundBlocked,
+                ),
+                (
+                    "Finished",
+                    enabled_status(ctx.state.config.sounds.done),
+                    ToggleSoundDone,
+                ),
+                (
+                    "Exit with error",
+                    enabled_status(ctx.state.config.sounds.error),
+                    ToggleSoundError,
+                ),
             ],
         ),
         // Last group: unlike everything above, these change what a *later* launch or server does, so
@@ -191,6 +283,7 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
     let item_style = fg_only(&ctx.state.theme.primary);
     let description_style = fg_only(&ctx.state.theme.muted);
     let disabled_style = fg_only(&ctx.state.theme.muted);
+    let actions = settings_actions(ctx);
     let selected_index = ctx.state.settings_selected.and_then(|selected| {
         entries
             .iter()
@@ -206,7 +299,7 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
         .preserve_groups(true)
         .initial_selected_item_index(selected_index)
         .sync_selection(true)
-        .input_key_interceptor(settings_palette_key_interceptor(ctx))
+        .input_key_interceptor(overlay_interceptor(ctx, &actions))
         .render_item(Arc::new(
             move |item: &SearchItem<(SettingsAction, String)>, _highlight| {
                 let disabled_reason = item.value.0.disabled_reason(&config);
@@ -216,14 +309,16 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                 } else {
                     item_style
                 };
-                ListItem::from_spans(vec![Span::new(item.label.as_ref()).style(style)])
-                    .description(status)
-                    .description_style(if disabled_reason.is_some() {
+                picker_row(
+                    [Span::new(item.label.as_ref()).style(style)],
+                    status,
+                    if disabled_reason.is_some() {
                         disabled_style
                     } else {
                         description_style
-                    })
-                    .into()
+                    },
+                )
+                .into()
             },
         ))
         .on_select(
@@ -239,6 +334,10 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                 }),
         );
 
+    let mut body = VStack::new().height(Length::Auto).child(palette);
+    if actions.iter().any(|action| action.enabled) {
+        body = body.child(overlay_hints(&ctx.state.theme, &actions));
+    }
     let panel: Element = Frame::new()
         .header_left("Settings")
         .header_style(ctx.state.theme.accent.bold())
@@ -246,7 +345,7 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))
         .height(Length::Auto)
-        .child(action_palette_frame(palette))
+        .child(action_palette_frame(body))
         .into();
     let dim_progress = ctx.transition::<f32>(
         "rozi-settings-padding-dim",
@@ -296,21 +395,25 @@ fn settings_group(
     (group, entries)
 }
 
-fn settings_palette_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
-    let selected = ctx.state.settings_selected;
-    ctx.link().key_handler(move |key| {
-        if key.mods != KeyMods::default() {
-            return None;
-        }
-        if !selected.is_some_and(SettingsAction::steps_horizontally) {
-            return None;
-        }
-        match key.code {
-            KeyCode::Left => Some(Msg::SettingsStep { reverse: true }),
-            KeyCode::Right => Some(Msg::SettingsStep { reverse: false }),
-            _ => None,
-        }
-    })
+fn settings_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
+    let enabled = ctx
+        .state
+        .settings_selected
+        .is_some_and(SettingsAction::steps_horizontally);
+    vec![
+        OverlayAction::new(
+            "left",
+            "previous",
+            Msg::SettingsStep { reverse: true },
+            enabled,
+        ),
+        OverlayAction::new(
+            "right",
+            "next",
+            Msg::SettingsStep { reverse: false },
+            enabled,
+        ),
+    ]
 }
 
 fn padding_summary((top, right, bottom, left): (u16, u16, u16, u16)) -> String {
@@ -423,6 +526,13 @@ fn enabled_status(enabled: bool) -> String {
     if enabled { "Enabled" } else { "Disabled" }.to_string()
 }
 
+fn extension_summary(active: usize, problems: usize) -> String {
+    format!(
+        "{active} active · {problems} problem{}",
+        if problems == 1 { "" } else { "s" }
+    )
+}
+
 fn current_theme_label(ctx: &Context<AppRoot>) -> String {
     let current = &ctx.state.config.theme.name;
     crate::config::theme_choices()
@@ -493,7 +603,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<AppRoot>) -> Element {
             (false, false) => None,
         };
         if let Some(description) = description {
-            entry = entry.description(ItemDescription::new().right(description));
+            entry = entry.description(picker_description(description));
         }
         entries.push(entry);
     }

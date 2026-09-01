@@ -114,7 +114,7 @@ fn check_extension_has_deterministic_success_and_failure_exit_codes() {
     assert!(
         String::from_utf8(success.stdout)
             .unwrap()
-            .contains("✓ manifest valid")
+            .contains("Status  loaded")
     );
 
     let failure = rozi(
@@ -200,7 +200,7 @@ fn check_extension_explains_launch_cwd_and_safe_environment_details() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains(r#"launch: ["python","#));
     assert!(stdout.contains("arg with space"));
-    assert!(stdout.contains("cwd:    focused-pane"));
+    assert!(stdout.contains("cwd: focused-pane"));
     assert!(stdout.contains("ROZI_EXTENSION=diagnostic"));
     assert!(stdout.contains("ROZI_EXTENSION_GENERATION=<assigned-at-load>"));
     assert!(stdout.contains("manifest env: TOKEN (values redacted)"));

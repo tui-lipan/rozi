@@ -53,6 +53,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     if matches!(
         action,
         Action::OpenSettings
+            | Action::OpenExtensions
             | Action::OpenAppearance
             | Action::OpenAlerts
             | Action::TogglePalette
@@ -76,6 +77,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
         Action::RenamePane => request_rename_focus(ctx),
         Action::RenameWorkspace | Action::RenameSession => request_rename_session_focus(ctx),
         Action::OpenSettings
+        | Action::OpenExtensions
         | Action::OpenAppearance
         | Action::OpenAlerts
         | Action::OpenThemePicker
@@ -209,6 +211,10 @@ fn settings_activate_dir(
     match action {
         Theme => {
             execute_action(ctx, Action::OpenThemePicker);
+        }
+        Extensions => {
+            ctx.state.overlay_return = Some(crate::state::OverlayOrigin::Settings);
+            crate::ops::extensions_manager::open(ctx);
         }
         EditPadding => {
             ctx.state.pane_padding_editor = Some(crate::state::PanePaddingEditorState::new(
@@ -499,7 +505,7 @@ fn settings_activate_dir(
             preference_error(ctx, err);
         }
     }
-    if !matches!(action, Theme | EditPadding) {
+    if !matches!(action, Theme | Extensions | EditPadding) {
         ctx.state.show_settings = true;
         ctx.state.settings_selected = Some(action);
         ctx.request_focus(crate::view::settings_palette_key());

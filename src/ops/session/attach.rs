@@ -820,6 +820,13 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<AppRoot>) -> Update {
         crate::state::PendingSessionAction::OpenConfigFile => {
             crate::ops::config::open_config_file(ctx)
         }
+        crate::state::PendingSessionAction::OpenFile(path) => {
+            crate::ops::config::open_file_in_editor(
+                ctx,
+                path.clone(),
+                crate::state::PendingSessionAction::OpenFile(path),
+            )
+        }
         crate::state::PendingSessionAction::UserCommand { action, env } => {
             crate::actions::execute_user_command_action_with_env(ctx, &action, env)
         }

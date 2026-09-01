@@ -559,7 +559,7 @@ branches = "i"
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `disabled` | array of strings | `[]` | Stable manifest IDs to disable. Directory names are not extension IDs. |
+| `disabled` | array of strings | `[]` | Stable manifest IDs to disable. Directory names are not extension IDs. The Extensions overlay writes this key when you enable or disable a row. |
 
 A `[extensions.<id>]` subtable configures one installed extension. Keys are the settings that
 extension declares; an undeclared key, a value of the wrong type, and a table naming nothing

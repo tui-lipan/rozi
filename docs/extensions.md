@@ -52,8 +52,9 @@ rozi run-action reload-extensions
 ```
 
 Extensions live under the **data** directory, not next to `config.toml`. Only the `[extensions]`
-settings go in the config file. If a freshly copied extension does not appear, run
-`rozi list-extensions` — it names the directory it scanned.
+settings go in the config file. If a freshly copied extension does not appear, open
+**Extensions…** to see its status and validation error. `rozi list-extensions` is the scripting
+equivalent and names the directory it scanned.
 
 If Rozi refuses to start with `managed installation ... permissions must not allow group/other
 access`, the data directory was created with default permissions. Fix it with:
@@ -66,6 +67,13 @@ The installation directory name is not the extension identity. Identity comes fr
 `extension.id`. Two installed directories declaring the same ID are both rejected.
 
 ## List and inspect installed extensions
+
+Open the command palette and choose **Extensions…**. The overlay groups installed extensions by
+status. `Enter` enables or disables the selected extension, `Ctrl+D` opens its full report,
+`Ctrl+R` rescans extension manifests, `Ctrl+O` opens `extension.toml`, and `Ctrl+Y` copies the
+report. The detail view is read-only and wraps long command, path, and diagnostic lines.
+
+Use the CLI when a script or external tool needs the same information:
 
 ```sh
 rozi list-extensions
@@ -86,7 +94,13 @@ rozi list-extensions --json
 
 ## Disable or remove
 
-Disable an extension by stable ID:
+Open **Extensions…** and press `Enter` on a loaded extension to disable it. Press `Enter` again to
+enable it. Rozi writes the stable ID to `config.toml`, reloads extension contributions, and keeps
+the overlay open.
+
+`Ctrl+K` removes the selected installation after a second press. A linked development checkout is
+unlinked; Rozi does not delete the checkout the link points to. You can also disable an extension
+by editing the stable ID list:
 
 ```toml
 [extensions]
@@ -97,8 +111,8 @@ When the config file is saved, Rozi removes the extension's commands, agents, an
 stops its services, and closes its owned picker, publisher, and subscription streams. A disabled
 extension's sidebar placement is remembered, so re-enabling it puts its tab back where you had it.
 
-To remove an extension, delete its installed directory and reload. Disable it first if you want the
-running client to stop its processes before deleting files.
+For scripted removal, disable the extension first, delete its installed directory, then run
+`rozi run-action reload-extensions`.
 
 Bindings may refer to an unavailable extension:
 

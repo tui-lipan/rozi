@@ -851,6 +851,8 @@ pub struct Config {
     /// [`Self::active_extensions`] on purpose: a durable sidebar placement naming a tab from a
     /// disabled or currently broken extension is kept, and only one that is gone gets pruned.
     pub installed_extensions: HashSet<String>,
+    /// Installed candidates that are invalid, incompatible, or ambiguous.
+    pub extension_problems: usize,
     /// Process-facing definitions used to preserve or rotate opaque runtime fencing tokens.
     pub(crate) extension_runtime:
         std::collections::BTreeMap<String, super::extensions::ExtensionRuntimeFingerprint>,
@@ -1470,6 +1472,7 @@ impl Default for Config {
             agents: Vec::new(),
             active_extensions: HashSet::new(),
             installed_extensions: HashSet::new(),
+            extension_problems: 0,
             extension_key_defaults: HashMap::new(),
             extension_runtime: std::collections::BTreeMap::new(),
             logging: LoggingConfig::default(),

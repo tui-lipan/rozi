@@ -21,13 +21,18 @@ pub(crate) use authoring::create_extension_scaffold;
 pub use diagnostics::{
     EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, ExtensionCheckDocument, ExtensionListDocument,
 };
-use manifest::{ExtensionManifestFile, ExtensionSettingsOnly};
+pub(crate) use diagnostics::{
+    ReportKind, ReportRow, ReportSection, ReportTone, report_sections, report_text,
+};
+use manifest::ExtensionManifestFile;
+pub(crate) use manifest::UserExtensionConfig;
 use paths::{absolute_path, normalize_path};
 pub use runtime::{ExtensionProvenance, GENERATION_ENV};
 pub(crate) use runtime::{
     ExtensionRuntimeFingerprint, fingerprint, fingerprints_by_id, provenance_from_process,
     provenance_is_active, reconcile_generations,
 };
+pub(crate) use settings::merge as merge_extension_settings;
 pub use settings::{ExtensionSettingValue, ExtensionSettings};
 pub(crate) use validation::is_extension_scoped_id;
 use validation::{validate_command, validate_extension_id, validate_service, validate_sidebar_tab};
@@ -210,14 +215,36 @@ pub(crate) fn scan_extensions() -> ExtensionScan {
 }
 
 pub(crate) fn scan_extensions_for_cli() -> ExtensionScan {
+    let user = read_user_extension_config().unwrap_or_default();
+    scan_extensions_with_user_config(&user)
+}
+
+pub(crate) fn scan_extensions_with_user_config(user: &UserExtensionConfig) -> ExtensionScan {
     let mut scan = scan_extensions();
-    let disabled = std::fs::read_to_string(super::config_path())
-        .ok()
-        .and_then(|text| toml::from_str::<ExtensionSettingsOnly>(&text).ok())
-        .map(|settings| settings.extensions.disabled)
-        .unwrap_or_default();
-    scan.apply_disabled(&disabled);
+    scan.apply_disabled(&user.disabled);
     scan
+}
+
+pub(crate) fn parse_user_extension_config(
+    text: &str,
+) -> Result<UserExtensionConfig, toml::de::Error> {
+    super::file::parse_extensions_config(text).map(|config| UserExtensionConfig {
+        disabled: config.disabled,
+        settings: config.settings,
+    })
+}
+
+pub(crate) fn read_user_extension_config() -> Result<UserExtensionConfig, String> {
+    let path = super::config_path();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(error) => {
+            return Err(format!("Could not read config {}: {error}", path.display()));
+        }
+    };
+    parse_user_extension_config(&text)
+        .map_err(|error| format!("Could not parse config {}: {error}", path.display()))
 }
 
 /// Validate one extension directory without installing it.
@@ -1311,6 +1338,28 @@ mod tests {
             warnings
                 .iter()
                 .any(|w| w.contains("no installed extension"))
+        );
+    }
+
+    #[test]
+    fn user_extension_config_parser_keeps_disabled_ids_and_raw_setting_tables() {
+        let parsed = parse_user_extension_config(
+            "[extensions]\n\
+             disabled = [\"git-tools\"]\n\
+             [extensions.tasks]\n\
+             runner = \"just\"\n\
+             rows = 50\n",
+        )
+        .expect("extension config parses");
+        assert_eq!(parsed.disabled, ["git-tools"]);
+        assert_eq!(parsed.settings["tasks"]["runner"].as_str(), Some("just"));
+        assert_eq!(parsed.settings["tasks"]["rows"].as_integer(), Some(50));
+        assert!(
+            parse_user_extension_config(
+                "unknown_top_level = true\n[extensions]\ndisabled = [\"tasks\"]\n"
+            )
+            .is_err(),
+            "manager parsing must reject the same document as the runtime loader"
         );
     }
 

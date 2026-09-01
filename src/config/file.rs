@@ -80,6 +80,10 @@ struct FileConfig {
     keys: HashMap<String, KeyBindingSpec>,
 }
 
+pub(crate) fn parse_extensions_config(text: &str) -> Result<ExtensionsFileConfig, toml::de::Error> {
+    toml::from_str::<FileConfig>(text).map(|config| config.extensions)
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ServiceFileConfig {
@@ -590,6 +594,7 @@ fn load_config_from_text_with_extensions(
         config.commands = contributions.commands;
         config.active_extensions = contributions.active_ids;
         config.installed_extensions = contributions.installed_ids;
+        config.extension_problems = contributions.problem_count;
         config.extension_runtime = contributions.runtime;
         config.services = contributions.services;
         config.agents = contributions.agents;
@@ -922,6 +927,7 @@ fn load_config_from_text_with_extensions(
     apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
     let contributions =
         extensions.into_contributions(&parsed.extensions.disabled, &parsed.extensions.settings);
+    config.extension_problems = contributions.problem_count;
     warnings.extend(contributions.warnings);
     // Sidebar tabs are merged inside the sidebar pass rather than appended after it: placement is
     // resolved there, and a tab that arrived too late to be placed would be unreachable.
@@ -1594,6 +1600,18 @@ mod file_tests {
 
     const KEY_MANIFEST: &str = "[extension]\nid = \"tasks\"\napi = 1\n\
          [[commands]]\nid = \"run\"\nsend = \"run\"\nkey = \"g r\"\n";
+
+    #[test]
+    fn extension_problem_count_survives_a_config_parse_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let loaded = load_config_from_text_with_extensions(
+            "[",
+            Path::new("config.toml"),
+            scan_with(temp.path(), "[extension]\nid = \"invalid.id\"\napi = 1\n"),
+            Vec::new(),
+        );
+        assert_eq!(loaded.config.extension_problems, 1);
+    }
 
     /// A suggested chord is taken when nothing answers to it, and it is reachable as the command's
     /// shortcut rather than only from the palette.

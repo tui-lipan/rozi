@@ -89,17 +89,21 @@ pub(crate) fn config_file_changed(ctx: &mut Context<AppRoot>) -> Update {
 /// (including switching the theme file watcher), and pane chrome - the same result a restart
 /// would produce, without losing running panes/workspaces/session state.
 pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
-    reload(ctx, "Config reloaded")
+    reload(ctx, Some("Config reloaded"))
 }
 
 /// Rescans installed extension manifests and reconciles their runtime contributions.
 ///
 /// Extension discovery is part of config loading, so this necessarily re-reads `config.toml` too.
 pub(crate) fn reload_extensions(ctx: &mut Context<AppRoot>) -> Update {
-    reload(ctx, "Extensions reloaded")
+    reload(ctx, Some("Extensions reloaded"))
 }
 
-fn reload(ctx: &mut Context<AppRoot>, success_message: &'static str) -> Update {
+pub(crate) fn reload_extensions_quiet(ctx: &mut Context<AppRoot>) -> Update {
+    reload(ctx, None)
+}
+
+fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> Update {
     // Extension reloads must refresh command registration even when config.toml itself did not
     // change.
     ctx.state.commands_dirty = true;
@@ -156,6 +160,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: &'static str) -> Update {
     );
     ctx.state.extension_generations = extension_generations;
     ctx.state.config = new_config;
+    crate::ops::extensions_manager::config_reloaded(ctx);
     // Agent detection runs in the session server against the server's own config load, so the
     // reload has to be forwarded rather than applied here. Only the controller may: `detected_agent`
     // is one answer shared by every attached client, not a per-client view.
@@ -187,7 +192,9 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: &'static str) -> Update {
         crate::pane::pty_events::notify_error(ctx, "Config warning", warning.clone());
     }
     if loaded.warnings.is_empty() && resolved.warnings.is_empty() {
-        crate::pane::pty_events::notify_info(ctx, success_message);
+        if let Some(message) = success_message {
+            crate::pane::pty_events::notify_info(ctx, message);
+        }
         crate::events::emit(
             &ctx.state,
             crate::events::Event::new(
@@ -225,6 +232,18 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: &'static str) -> Update {
 /// Opens `config.toml` in `$EDITOR` (falling back to `$VISUAL`, then `vi`) in a new pane, so
 /// hand-editing the config doesn't require remembering or typing its path.
 pub(crate) fn open_config_file(ctx: &mut Context<AppRoot>) -> Update {
+    open_file_in_editor(
+        ctx,
+        crate::config::config_path(),
+        crate::state::PendingSessionAction::OpenConfigFile,
+    )
+}
+
+pub(crate) fn open_file_in_editor(
+    ctx: &mut Context<AppRoot>,
+    path: std::path::PathBuf,
+    pending: crate::state::PendingSessionAction,
+) -> Update {
     let editor = config_editor();
     if let Some(command) = missing_editor_command(&editor) {
         crate::pane::pty_events::notify_error(
@@ -234,13 +253,9 @@ pub(crate) fn open_config_file(ctx: &mut Context<AppRoot>) -> Update {
         );
         return Update::none();
     }
-    if let Some(update) = crate::ops::session::ensure_session_for_pty(
-        ctx,
-        crate::state::PendingSessionAction::OpenConfigFile,
-    ) {
+    if let Some(update) = crate::ops::session::ensure_session_for_pty(ctx, pending) {
         return update;
     }
-    let path = crate::config::config_path();
     let launch = match editor_launch(&editor, &path) {
         Ok(launch) => launch,
         Err(error) => {

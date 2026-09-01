@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
 use tui_lipan::prelude::{OverlayId, TextInput};
@@ -505,11 +505,16 @@ impl SaveProfileState {
 pub struct LayoutPickerState {
     pub selected: usize,
     pub original: super::LayoutKind,
+    pub query: String,
 }
 
 impl LayoutPickerState {
     pub fn new(selected: usize, original: super::LayoutKind) -> Self {
-        Self { selected, original }
+        Self {
+            selected,
+            original,
+            query: String::new(),
+        }
     }
 }
 
@@ -564,6 +569,25 @@ pub struct PickPrompt {
     pub action: usize,
     pub title: String,
     pub input: TextInput,
+}
+
+pub struct ExtensionsState {
+    pub entries: Vec<crate::config::ExtensionInfo>,
+    pub merged: BTreeMap<String, crate::config::ExtensionSettings>,
+    pub selected: usize,
+    pub query: String,
+    pub restore_query: String,
+    /// Installation path awaiting a second Ctrl+K. The path survives rescans that reorder rows
+    /// and distinguishes duplicate manifest ids.
+    pub pending_remove: Option<String>,
+    pub detail: Option<ExtensionDetailState>,
+    pub(crate) manifest_entries: BTreeSet<String>,
+    pub(crate) removable_entries: BTreeSet<String>,
+}
+
+pub struct ExtensionDetailState {
+    pub path: String,
+    pub(crate) sections: Vec<crate::config::ReportSection>,
 }
 
 pub struct PickState {

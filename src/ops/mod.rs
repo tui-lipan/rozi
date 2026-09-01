@@ -3,6 +3,7 @@ pub(crate) mod confirm;
 pub(crate) mod control;
 pub(crate) mod exit;
 pub(crate) mod extensions;
+pub(crate) mod extensions_manager;
 pub(crate) mod focus;
 pub(crate) mod hints;
 pub(crate) mod identity;

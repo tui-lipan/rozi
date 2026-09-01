@@ -1,28 +1,4 @@
 pub(crate) fn layout_picker_overlay(ctx: &Context<AppRoot>) -> Element {
-    let body = VStack::new()
-        .height(Length::Auto)
-        .child(layout_picker_palette(ctx))
-        .child(layout_picker_hints(ctx));
-
-    action_palette(
-        ctx,
-        "Choose layout",
-        layout_picker_key(),
-        Msg::CloseLayoutPicker,
-        body,
-        52,
-    )
-}
-
-fn layout_picker_hints(ctx: &Context<AppRoot>) -> Element {
-    let theme = &ctx.state.theme;
-    hint_row()
-        .child(hint_pill(theme, "switch", "enter"))
-        .child(hint_pill(theme, "set default", "ctrl+f"))
-        .into()
-}
-
-fn layout_picker_palette(ctx: &Context<AppRoot>) -> SearchPalette<usize> {
     let workspace_index = ctx.state.current().active_workspace;
     // The real applied layout is the one the picker opened on and will revert to on cancel — not the
     // live-previewed layout under the highlight, which changes as the user browses. `current`
@@ -34,8 +10,12 @@ fn layout_picker_palette(ctx: &Context<AppRoot>) -> SearchPalette<usize> {
         .map(|picker| picker.original)
         .unwrap_or_else(|| ctx.state.current().workspaces[workspace_index].layout_kind);
     let default = ctx.state.config.layout.default;
-    let selected = ctx.state.layout_picker.as_ref().map(|picker| picker.selected);
-
+    let selected = ctx
+        .state
+        .layout_picker
+        .as_ref()
+        .map(|picker| picker.selected);
+    let selected_action = selected.unwrap_or_default();
     let entries = crate::state::LayoutKind::all()
         .iter()
         .enumerate()
@@ -48,35 +28,45 @@ fn layout_picker_palette(ctx: &Context<AppRoot>) -> SearchPalette<usize> {
                 (false, false) => "",
             };
             if !description.is_empty() {
-                entry = entry.description(ItemDescription::new().right(description));
+                entry = entry.description(picker_description(description));
             }
             entry
         })
         .collect::<Vec<_>>();
+    let actions = vec![
+        OverlayAction::new("enter", "switch", Msg::SelectLayout(selected_action), true).hint_only(),
+        OverlayAction::new("ctrl-f", "set default", Msg::LayoutPickerSetDefault, true),
+    ];
 
-    shared_search_palette::<usize>(ctx, Length::Auto, false)
-        .entries(entries)
-        .placeholder("Search layouts…")
-        .preserve_groups(false)
-        .initial_selected_item_index(selected)
-        .sync_selection(true)
-        .input_key_interceptor(layout_picker_key_interceptor(ctx))
-        .on_select(
-            ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::LayoutPickerSelect(event.item.value)),
-        )
-        .on_activate(
-            ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::SelectLayout(event.item.value)),
-        )
-}
-
-fn layout_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
-    ctx.link().key_handler(|key| {
-        if ctrl_letter(&key, 'f') {
-            Some(Msg::LayoutPickerSetDefault)
-        } else {
-            None
-        }
-    })
+    OverlayPalette::new(
+        "Choose layout",
+        layout_picker_key(),
+        Msg::CloseLayoutPicker,
+        52,
+    )
+    .entries(entries)
+    .actions(actions)
+    .placeholder("Search layouts…")
+    .preserve_groups(false)
+    .selected(selected)
+    .initial_query(
+        ctx.state
+            .layout_picker
+            .as_ref()
+            .map(|picker| picker.query.clone())
+            .unwrap_or_default(),
+    )
+    .on_query_change(
+        ctx.link()
+            .callback(|query: Arc<str>| Msg::LayoutPickerQueryChanged(query.to_string())),
+    )
+    .on_select(
+        ctx.link()
+            .callback(|event: SearchEvent<usize>| Msg::LayoutPickerSelect(event.item.value)),
+    )
+    .on_activate(
+        ctx.link()
+            .callback(|event: SearchEvent<usize>| Msg::SelectLayout(event.item.value)),
+    )
+    .render(ctx)
 }

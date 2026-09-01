@@ -76,13 +76,9 @@ pub(super) struct ExtensionMetadataFile {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub(super) struct ExtensionSettingsOnly {
+pub(crate) struct UserExtensionConfig {
     #[serde(default)]
-    pub(super) extensions: ExtensionDisabledOnly,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct ExtensionDisabledOnly {
-    #[serde(default)]
-    pub(super) disabled: Vec<String>,
+    pub(crate) disabled: Vec<String>,
+    #[serde(flatten)]
+    pub(crate) settings: BTreeMap<String, toml::Value>,
 }

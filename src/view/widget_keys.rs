@@ -99,6 +99,14 @@ pub fn settings_palette_key() -> &'static str {
     "rozi-settings-palette"
 }
 
+pub fn extensions_key() -> &'static str {
+    "rozi-extensions"
+}
+
+pub fn extension_detail_key() -> &'static str {
+    "rozi-extension-detail"
+}
+
 pub fn pane_padding_vertical_key() -> &'static str {
     "rozi-pane-padding-vertical"
 }

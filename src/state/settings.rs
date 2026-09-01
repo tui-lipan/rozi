@@ -7,6 +7,7 @@ use super::PaneBorderMode;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsAction {
     Theme,
+    Extensions,
     EditPadding,
     ToggleAnimations,
     ToggleNerdIcons,
@@ -61,6 +62,7 @@ impl SettingsAction {
         &[
             // General
             Self::Theme,
+            Self::Extensions,
             Self::EditPadding,
             Self::ToggleAnimations,
             Self::ToggleNerdIcons,
@@ -118,7 +120,7 @@ impl SettingsAction {
     /// Rows whose value can be nudged with Left/Right. Theme and padding open nested UI, so arrows
     /// stay with the search caret there.
     pub const fn steps_horizontally(self) -> bool {
-        !matches!(self, Self::Theme | Self::EditPadding)
+        !matches!(self, Self::Theme | Self::Extensions | Self::EditPadding)
     }
 
     /// Dependent settings stay visible but inert while their parent feature is unavailable.

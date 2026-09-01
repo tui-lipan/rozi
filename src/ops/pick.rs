@@ -225,9 +225,7 @@ pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update 
     };
 
     if action.confirm {
-        let row = pick
-            .rows
-            .get(pick.selected)
+        let row = visible_selected_row(pick)
             .map(|row| row.id.clone().unwrap_or_else(|| row.label.clone()));
         let Some(row) = row else {
             return Update::none();
@@ -311,10 +309,8 @@ fn report_action(ctx: &mut Context<AppRoot>, index: usize, input: Option<String>
     };
     // The row under the cursor rides along, so an action can be about a row without the caller
     // tracking the highlight itself.
-    let selected = pick
-        .rows
-        .get(pick.selected)
-        .map(|row| row.id.clone().unwrap_or_else(|| row.label.clone()));
+    let selected =
+        visible_selected_row(pick).map(|row| row.id.clone().unwrap_or_else(|| row.label.clone()));
 
     let mut payload = serde_json::json!({ "action": action.id });
     if let Some(map) = payload.as_object_mut() {
@@ -340,6 +336,28 @@ fn report_action(ctx: &mut Context<AppRoot>, index: usize, input: Option<String>
         request_pick_focus(ctx);
     }
     Update::full()
+}
+
+fn visible_selected_row(pick: &crate::state::PickState) -> Option<&crate::state::PickRow> {
+    let row = pick.rows.get(pick.selected)?;
+    if pick.query.trim().is_empty() {
+        return Some(row);
+    }
+    let description = row
+        .disabled
+        .as_deref()
+        .or(row.description.as_deref())
+        .unwrap_or("");
+    let items = [SearchItem::new(row.label.as_str(), ())
+        .description(ItemDescription::new().right(description))];
+    (!tui_lipan::rank_search_palette_indices_with_mode(
+        &items,
+        &pick.query,
+        SearchMatchMode::Hybrid,
+        |_, _, score| score as f64,
+    )
+    .is_empty())
+    .then_some(row)
 }
 
 #[cfg(test)]
@@ -597,6 +615,22 @@ mod tests {
             let line = rx.try_recv().expect("action written");
             assert_eq!(line.trim(), r#"{"action":"delete","selected":"feat/x"}"#);
             assert!(backend.state().show_pick, "picker closed on a plain action");
+        });
+    }
+
+    #[test]
+    fn an_action_cannot_report_a_filtered_out_row() {
+        with_backend(|backend| {
+            let rx = open_with(backend, vec![action("create", "ctrl-n", None, false)], None);
+            backend
+                .dispatch(crate::Msg::PickQueryChanged("no-match".into()))
+                .expect("filter out selected row");
+            backend
+                .dispatch(crate::Msg::PickActionKey(0))
+                .expect("dispatch global action");
+
+            let line = rx.try_recv().expect("action written");
+            assert_eq!(line.trim(), r#"{"action":"create","selected":null}"#);
         });
     }
 

@@ -107,6 +107,7 @@ These actions are available in the command palette or can be bound under `[keys]
 - `focus-next-blocked-pane`
 - `smart-focus-left`, `smart-focus-down`, `smart-focus-up`, `smart-focus-right`
 - `settings`
+- `extensions`
 - `open-config`
 - `reload-extensions`
 - `apply-profile`
@@ -242,6 +243,10 @@ the selected row or submits a prompt.
   `Esc` closes help.
 - Settings: arrows move through rows. `Left` and `Right` change a setting where the row supports
   stepping.
+- Extensions: `Enter` enables or disables the selected extension, `Ctrl+D` opens details,
+  `Ctrl+R` reloads, `Ctrl+O` opens the manifest, `Ctrl+Y` copies the report, and `Ctrl+K` twice
+  removes the installation. Details are read-only; use the arrow and paging keys to scroll,
+  `Ctrl+Y` to copy the report, and `Ctrl+O` to open the manifest.
 - Collaborators: `Enter` grants control, `Ctrl+D` declines a request, `Ctrl+K` twice removes a
   client, and `Esc` closes.
 - Rename prompts: `Enter` submits. An empty pane or workspace name clears it.

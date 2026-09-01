@@ -30,7 +30,7 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
         item_index += 1;
         let hint = entry.keybinding_hint.as_deref().unwrap_or("");
         if !hint.is_empty() {
-            item = item.description(ItemDescription::new().right(hint.to_string()));
+            item = item.description(picker_description(hint));
         }
         match groups.iter_mut().find(|(name, _)| *name == category) {
             Some((_, items)) => items.push(item),
@@ -185,6 +185,7 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
 
     let mut aliases = match action {
         Theme => alias_list(&["themes", "color scheme", "colour scheme"]),
+        Extensions => alias_list(&["plugins", "addons", "extension manager"]),
         EditPadding => {
             alias_list(&["pane padding", "terminal insets", "pane margins"])
         }

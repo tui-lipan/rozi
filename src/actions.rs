@@ -638,6 +638,10 @@ fn execute_action_inner(
         Action::OpenSettings | Action::OpenAppearance => {
             open_settings(ctx, crate::state::SettingsAction::Theme)
         }
+        Action::OpenExtensions => {
+            ctx.state.overlay_return = None;
+            crate::ops::extensions_manager::open(ctx)
+        }
         Action::OpenAlerts => open_settings(ctx, crate::state::SettingsAction::ToggleBellUrgency),
         Action::ToggleDoNotDisturb => {
             // A persistent in-session mode earns a workbar chip, not a redundant toast.
@@ -815,6 +819,7 @@ fn closes_settings(action: Action) -> bool {
             | Action::ApplyProfile
             | Action::OpenSessionPicker
             | Action::OpenCollaborators
+            | Action::OpenExtensions
     )
 }
 
@@ -848,6 +853,7 @@ fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
+    ctx.state.extensions = None;
     ctx.state.collaboration = None;
     ctx.state.follow_prompt = None;
     ctx.state.overlay_return = None;

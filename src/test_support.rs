@@ -83,9 +83,11 @@ fn scratch_root() -> &'static Path {
 /// A [`PlatformEnv`] whose persisted-data directories - on either platform - sit under
 /// [`scratch_root`].
 ///
-/// The runtime directory is deliberately left alone. It holds per-run socket endpoints rather than
+/// `XDG_RUNTIME_DIR` is deliberately left alone. It holds per-run socket endpoints rather than
 /// anything a developer keeps, and a Unix socket path is capped at `SUN_LEN` (~108 bytes): a
-/// session endpoint that fits under `/run/user/<uid>/rozi` does not fit under a temp root.
+/// session endpoint that fits under `/run/user/<uid>/rozi` does not fit under a temp root. Windows
+/// derives its runtime directory from `%LOCALAPPDATA%` instead, so there it does move with the
+/// rest - see [`ensure_isolated_runtime_dir`].
 pub(crate) fn isolated_env() -> PlatformEnv {
     let root = scratch_root();
     PlatformEnv {
@@ -107,7 +109,32 @@ pub(crate) fn isolated_env() -> PlatformEnv {
 /// Call it before building anything that can persist - see the module docs.
 pub fn isolate_user_dirs() -> &'static Path {
     crate::platform::paths::install_process_env_override(isolated_env());
+    ensure_isolated_runtime_dir();
     scratch_root()
+}
+
+/// Create the isolated runtime directory up front, exactly once, before anything can race for it.
+///
+/// `ensure_private_dir` looks the directory up and then creates it, and on Windows that create is a
+/// `FILE_CREATE`: two threads that both find it missing both try, and the loser fails with
+/// `ERROR_ALREADY_EXISTS` instead of validating the directory that now exists. A real client never
+/// notices - `%LOCALAPPDATA%\rozi\run` outlives the process - but isolation moves the runtime
+/// directory under the scratch root, so every test process starts without it and the first two
+/// threads that want an endpoint race to make it. In `launcher_smoke` those are the askpass
+/// listener, started as soon as the command link arrives, and the ephemeral attach; the attach
+/// losing surfaces as `Invalid session name`, which clears the deferred action the test asserts on.
+///
+/// Only when isolation actually moved the directory: on Unix it stays the real
+/// `$XDG_RUNTIME_DIR/rozi`, which is not ours to create as a side effect of isolating a test.
+fn ensure_isolated_runtime_dir() {
+    static READY: OnceLock<()> = OnceLock::new();
+    READY.get_or_init(|| {
+        let dir = crate::platform::paths::runtime_dir_path(&isolated_env());
+        if dir.starts_with(scratch_root()) {
+            crate::platform::fs_security::ensure_private_dir(&dir)
+                .expect("isolated runtime directory");
+        }
+    });
 }
 
 /// A per-test directory carrying the private permissions an endpoint parent must have.

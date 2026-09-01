@@ -2,7 +2,16 @@
 set -eu
 
 message_file=$1
-signoff='Signed-off-by: Adam Mikołajczyk <adam@tui-lipan.dev>'
+
+name=$(git config user.name || true)
+email=$(git config user.email || true)
+
+if [ -z "$name" ] || [ -z "$email" ]; then
+    echo "prepare-commit-msg: set user.name and user.email to sign off commits." >&2
+    exit 1
+fi
+
+signoff="Signed-off-by: $name <$email>"
 
 if ! grep -Fqx "$signoff" "$message_file"; then
     git interpret-trailers --in-place --trailer "$signoff" "$message_file"

@@ -14,12 +14,13 @@ Use concise conventional prefixes, for example `fix: improve toast confirmation 
 `feat: live reload config changes`.
 
 Every commit needs a `Signed-off-by` trailer matching its author identity. The tracked
-`.githooks/prepare-commit-msg` hook adds the repository maintainer's trailer automatically. The
+`.githooks/prepare-commit-msg` hook adds that trailer automatically from your own `user.name` and
+`user.email`, and refuses the commit when either is unset. The
 tracked `.githooks/pre-commit` hook additionally refuses a `Cargo.lock` whose entries have lost
 their registry `source`, which is what a local `[patch.crates-io]` in a gitignored
 `.cargo/config.toml` does to it. Regenerate the lockfile with that override moved aside rather than
-committing through with `--no-verify`; `--locked` CI fails on such an entry immediately. Other
-contributors should use `git commit -s` with their own identity. See `CONTRIBUTING.md` and `DCO`.
+committing through with `--no-verify`; `--locked` CI fails on such an entry immediately. Without the
+hooks enabled, use `git commit -s`. See `CONTRIBUTING.md` and `DCO`.
 
 Repair a missing sign-off automatically when that is the only history change:
 

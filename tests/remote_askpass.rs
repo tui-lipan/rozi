@@ -13,6 +13,7 @@ mod common;
 
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use rozi::platform::ipc::{IpcEndpoint, IpcListener};
@@ -41,6 +42,22 @@ struct HelperRun {
     success: bool,
 }
 
+/// A socket name no other endpoint in this binary shares.
+///
+/// A private directory per test is not enough on Windows: the pipe name is derived from the path's
+/// file *stem* alone (see `IpcEndpoint::pipe_name`), so two endpoints under different directories
+/// but with the same file name are one pipe, and `FILE_FLAG_FIRST_PIPE_INSTANCE` fails whichever
+/// binds second with `Access is denied`. These tests run in parallel in one binary, so the name has
+/// to carry the uniqueness the directory cannot.
+fn unique_socket(prefix: &str) -> String {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    format!(
+        "{prefix}-{}-{}.sock",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// Run the real binary the way `ssh` runs an askpass program: prompt as the argument, endpoint and
 /// token in the environment.
 fn run_helper(dir: &Path, prompt: &str, token: &str, reply: serde_json::Value) -> HelperRun {
@@ -54,7 +71,7 @@ fn run_helper_in_session(
     session: &str,
     reply: serde_json::Value,
 ) -> HelperRun {
-    let endpoint = IpcEndpoint::at_path(dir.join("askpass-test.sock"));
+    let endpoint = IpcEndpoint::at_path(dir.join(unique_socket("askpass-test")));
     let listener = endpoint
         .bind()
         .expect("bind broker endpoint")
@@ -183,7 +200,7 @@ fn without_the_endpoint_variable_the_binary_is_not_a_helper() {
 #[test]
 fn a_broker_that_answers_nothing_fails_the_connection() {
     let dir = private_temp_dir();
-    let endpoint = IpcEndpoint::at_path(dir.join("askpass-reject.sock"));
+    let endpoint = IpcEndpoint::at_path(dir.join(unique_socket("askpass-reject")));
     let listener = endpoint.bind().expect("bind").into_listener();
     // What the real broker does with a token that is not its own: read the request, say nothing,
     // drop the connection.

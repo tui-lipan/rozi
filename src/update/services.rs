@@ -62,7 +62,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                     crate::pane::pty_events::notify_error(
                         ctx,
                         "Service failed",
-                        format!("Service '{name}' {failure_detail}; restart disabled"),
+                        format!("`{name}` {failure_detail}\nRestart is disabled"),
                     );
                 }
                 ctx.state.services.dormant.insert(
@@ -89,8 +89,8 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                             ctx,
                             "Service failed",
                             format!(
-                                "Service '{name}' failed {MAX_FAILURES} times: \
-                                 {failure_detail}; stopping"
+                                "`{name}` failed {MAX_FAILURES} times\n\
+                                 Last result: {failure_detail}"
                             ),
                         );
                         ctx.state.services.dormant.insert(
@@ -138,8 +138,8 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                             ctx,
                             "Service failed",
                             format!(
-                                "Service '{name}' failed {MAX_FAILURES} times: \
-                                 {failure_detail}; stopping"
+                                "`{name}` failed {MAX_FAILURES} times\n\
+                                 Last result: {failure_detail}"
                             ),
                         );
                         ctx.state.services.dormant.insert(

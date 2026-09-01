@@ -827,7 +827,7 @@ impl State {
                 .shared
                 .as_ref()
                 .filter(|shared| shared.read_only)
-                .map(|_| "Attached read-only")
+                .map(|_| "This session is read-only")
         } else {
             self.current().pane_input_block_reason()
         }

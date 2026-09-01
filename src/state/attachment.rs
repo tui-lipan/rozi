@@ -350,7 +350,7 @@ impl Attachment {
     pub fn pane_input_block_reason(&self) -> Option<&'static str> {
         let shared = self.shared.as_ref()?;
         if shared.read_only {
-            Some("Attached read-only")
+            Some("This session is read-only")
         } else if shared.input_locked && !shared.is_controller() {
             Some("Input locked to the controller")
         } else {

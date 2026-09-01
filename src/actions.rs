@@ -615,9 +615,7 @@ fn execute_action_inner(
                 return Update::full();
             }
             crate::ops::session::release_current_session(ctx);
-            let update = crate::ops::session::swap_to_fresh_ephemeral(ctx);
-            crate::pane::pty_events::notify_info(ctx, "Started a fresh temporary session");
-            update
+            crate::ops::session::swap_to_fresh_ephemeral(ctx)
         }
         Action::RequestControl => crate::ops::session::request_control(ctx),
         Action::GrantControl => crate::ops::session::grant_control_to_requester(ctx),
@@ -1324,8 +1322,8 @@ mod tests {
     // fresh backend. Anything gated on a focused pane would race the async first spawn, and
     // anything `command_available` gates (RequestControl, GrantControl, ...) never reaches its
     // handler at all here, since no shared session exists to enable it.
-    const NOT_ATTACHED_NAMED: &str = "Not attached to a named session";
-    const FRESH_TEMPORARY: &str = "Started a fresh temporary session";
+    const NOT_ATTACHED: &str = "Not attached to a session";
+    const COMMAND_FAILED: &str = "Command failed\0toast test failure";
 
     #[test]
     fn a_channel_replaces_its_own_toast_when_the_state_behind_it_changes() {
@@ -1364,6 +1362,36 @@ mod tests {
     }
 
     #[test]
+    fn layout_cycle_stays_quiet_when_the_workbar_names_the_layout() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            backend
+                .state_mut()
+                .config
+                .workbar
+                .left
+                .push(crate::config::WorkbarItem {
+                    segment: crate::config::WorkbarSegment::Layout,
+                    color: None,
+                });
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch layout cycle");
+
+            let layout_slot = crate::pane::pty_events::ToastKey::Channel(ToastChannel::LayoutMode);
+            assert!(
+                !backend
+                    .state()
+                    .replaceable_toasts
+                    .contains_key(&layout_slot),
+                "the workbar already reports the active layout"
+            );
+        });
+    }
+
+    #[test]
     fn an_identical_toast_renews_the_one_already_on_screen() {
         use crate::Msg;
 
@@ -1374,7 +1402,7 @@ mod tests {
             let first = backend
                 .state()
                 .replaceable_toasts
-                .get(&content_slot(NOT_ATTACHED_NAMED))
+                .get(&content_slot(NOT_ATTACHED))
                 .expect("the rejection toast is tracked")
                 .id();
 
@@ -1384,7 +1412,7 @@ mod tests {
             let second = backend
                 .state()
                 .replaceable_toasts
-                .get(&content_slot(NOT_ATTACHED_NAMED))
+                .get(&content_slot(NOT_ATTACHED))
                 .expect("the rejection toast is still tracked")
                 .id();
 
@@ -1405,13 +1433,15 @@ mod tests {
             let output_toast = backend
                 .state()
                 .replaceable_toasts
-                .get(&content_slot(NOT_ATTACHED_NAMED))
+                .get(&content_slot(NOT_ATTACHED))
                 .expect("the rejection toast is tracked")
                 .id();
 
             backend
-                .dispatch(Msg::RunAction(Action::NewTemporarySession))
-                .expect("dispatch new-temporary-session");
+                .dispatch(Msg::UserCommandFailed {
+                    message: "toast test failure".to_string(),
+                })
+                .expect("dispatch command failure");
 
             // Asserted per slot rather than on the map size: startup spawns can raise their own
             // toasts asynchronously, and a total count would make this test depend on them.
@@ -1419,7 +1449,7 @@ mod tests {
                 backend
                     .state()
                     .replaceable_toasts
-                    .get(&content_slot(NOT_ATTACHED_NAMED))
+                    .get(&content_slot(NOT_ATTACHED))
                     .map(crate::pane::pty_events::TrackedToast::id),
                 Some(output_toast),
                 "an unrelated message must not disturb another slot",
@@ -1428,7 +1458,7 @@ mod tests {
                 backend
                     .state()
                     .replaceable_toasts
-                    .contains_key(&content_slot(FRESH_TEMPORARY)),
+                    .contains_key(&content_slot(COMMAND_FAILED)),
                 "the second message gets its own slot",
             );
         });
@@ -1454,7 +1484,7 @@ mod tests {
                 !backend
                     .state()
                     .replaceable_toasts
-                    .contains_key(&content_slot("Again to kill pane")),
+                    .contains_key(&content_slot("Press again to kill pane")),
                 "confirm toasts must never be tracked for de-duplication",
             );
         });

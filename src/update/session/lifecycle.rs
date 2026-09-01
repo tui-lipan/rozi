@@ -59,7 +59,7 @@ pub(crate) fn transport_failed(
     name: String,
     message: String,
 ) -> Update {
-    crate::pane::pty_events::notify_error(ctx, "Session transport", message);
+    crate::pane::pty_events::notify_error(ctx, "Session connection lost", message);
     disconnected(ctx, epoch, name)
 }
 

@@ -200,12 +200,12 @@ fn signed_step(grow: bool, available: f32) -> f32 {
     if grow { step } else { -step }
 }
 
-/// Cycle the active workspace's layout, naming the new mode unless `show_toast` is false.
+/// Cycle the active workspace's layout, naming the new mode unless another surface already does.
 ///
-/// The tiles re-flow visibly, but that does not say *which* layout took over — and a lone pane
-/// looks identical under all of them — so the name is worth a toast. It rides
-/// [`ToastChannel::LayoutMode`], so cycling several steps replaces one message instead of stacking
-/// a name per press.
+/// The tiles re-flow visibly, but that does not say *which* layout took over. A lone pane also looks
+/// identical under all modes. The name is worth a toast when the workbar does not include its
+/// `layout` segment. It rides [`ToastChannel::LayoutMode`], so cycling several steps replaces one
+/// message instead of stacking a name per press.
 pub(crate) fn toggle_layout(ctx: &mut Context<AppRoot>, show_toast: bool) {
     let next = ctx.state.active_workspace_ref().layout_kind.toggled();
     set_layout(ctx, next, show_toast);
@@ -219,6 +219,14 @@ pub(crate) fn set_layout(
     show_toast: bool,
 ) {
     finish_pointer_layout_interaction(ctx);
+    let layout_is_in_workbar = ctx
+        .state
+        .config
+        .workbar
+        .left
+        .iter()
+        .chain(&ctx.state.config.workbar.right)
+        .any(|item| matches!(&item.segment, crate::config::WorkbarSegment::Layout));
     let layout_label = {
         let workspace = ctx.state.active_workspace_mut();
         workspace.layout_kind = kind;
@@ -227,12 +235,12 @@ pub(crate) fn set_layout(
         workspace.layout_kind.label()
     };
     ctx.state.animation = GeometryAnimation::AxisChange;
-    if show_toast {
+    if show_toast && !layout_is_in_workbar {
         crate::pane::pty_events::notify_on(
             ctx,
             crate::state::ToastChannel::LayoutMode,
             None,
-            format!("Layout mode: {layout_label}"),
+            format!("Layout: {layout_label}"),
         );
     }
 }

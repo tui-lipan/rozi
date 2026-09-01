@@ -629,7 +629,7 @@ impl Component for AppRoot {
         commands::sync(ctx);
 
         for message in std::mem::take(&mut self.startup_messages) {
-            crate::pane::pty_events::notify_info(ctx, message);
+            crate::pane::pty_events::notify_error(ctx, "Startup warning", message);
         }
         Self::start_theme_watcher(ctx);
         let start = self.prepare_session_start(ctx);

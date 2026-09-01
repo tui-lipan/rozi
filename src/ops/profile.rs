@@ -83,6 +83,13 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
         return Update::full();
     }
     let profile = profile_from_state(&ctx.state);
+    // A newly captured profile appears in the picker as soon as the prompt closes. Captures from
+    // elsewhere and overwrites have no visible result, so they still need the toast.
+    let new_row_will_be_visible = !existed
+        && matches!(
+            ctx.state.overlay_return,
+            Some(crate::state::OverlayOrigin::ProfilePicker { .. })
+        );
     match save_profile(&path, &profile) {
         Ok(()) => {
             crate::events::emit(
@@ -95,13 +102,15 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
                     ],
                 ),
             );
-            crate::pane::pty_events::notify_info(
-                ctx,
-                format!(
-                    "{} profile `{name}`",
-                    if existed { "Overwrote" } else { "Captured" },
-                ),
-            );
+            if !new_row_will_be_visible {
+                crate::pane::pty_events::notify_info(
+                    ctx,
+                    format!(
+                        "{} profile `{name}`",
+                        if existed { "Overwrote" } else { "Captured" },
+                    ),
+                );
+            }
         }
         Err(message) => {
             crate::pane::pty_events::notify_error(ctx, "Capture failed", message);
@@ -421,7 +430,7 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<AppRoot>) -> Update {
             // Starring is visible in the list itself, but taking the star away can invalidate the
             // startup mode, which lives on another screen. Say so where the key was pressed.
             if unset && reset_startup_mode_without_default(ctx) {
-                crate::pane::pty_events::notify_info(ctx, "Startup mode is back to Picker");
+                crate::pane::pty_events::notify_info(ctx, "Startup mode reset to Picker");
             }
         }
         Err(message) => {
@@ -471,10 +480,10 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<AppRoot>) -> Update {
                         if reset_startup_mode_without_default(ctx) {
                             crate::pane::pty_events::notify_info(
                                 ctx,
-                                "Cleared startup default, startup mode is back to Picker",
+                                "Startup default cleared\nStartup mode reset to Picker",
                             );
                         } else {
-                            crate::pane::pty_events::notify_info(ctx, "Cleared startup default");
+                            crate::pane::pty_events::notify_info(ctx, "Startup default cleared");
                         }
                     }
                     Ok(None) => {}

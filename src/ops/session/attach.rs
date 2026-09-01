@@ -348,7 +348,7 @@ pub(crate) fn park_current_and_install(
 /// Kill the current session's server (its PTYs die with it) but keep the UI alive. Does not quit
 /// and does not auto-attach elsewhere: the client lands on the session picker when another choice
 /// remains, otherwise the sessionless launcher.
-pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>, name: String) -> Update {
+pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>) -> Update {
     let killed_identity = ctx
         .state
         .current()
@@ -365,7 +365,6 @@ pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>, name: String) -> 
     if let Some((session_name, target)) = killed_identity {
         crate::ops::session::lifecycle::remove_cached_remote_session(ctx, &session_name, &target);
     }
-    crate::pane::pty_events::notify_info(ctx, format!("Killed session `{name}`"));
     if picker_was_open {
         return refresh_picker_after_kill(ctx);
     }
@@ -391,18 +390,14 @@ pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
         crate::ops::session::lifecycle::remove_cached_remote_session(ctx, &name, target);
     }
     if ephemeral && remote_target.is_none() {
-        let update = swap_to_fresh_ephemeral(ctx);
-        crate::pane::pty_events::notify_info(ctx, "Restarted temporary session");
-        return update;
+        return swap_to_fresh_ephemeral(ctx);
     }
     let restart_name = if ephemeral {
         crate::state::remote_ephemeral_session_name()
     } else {
         name.clone()
     };
-    let update = attach_session_by_name(ctx, restart_name, remote_host, remote_target, true);
-    crate::pane::pty_events::notify_info(ctx, format!("Restarted session `{name}`"));
-    update
+    attach_session_by_name(ctx, restart_name, remote_host, remote_target, true)
 }
 
 /// Land after the active session is taken away rather than left — killed, disconnected, or
@@ -902,7 +897,6 @@ pub(crate) fn disconnect_host(
     ctx: &mut Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> Update {
-    let host_label = target.display_label();
     // Back to `Idle`, which is what stops the sweep probing it — done here rather than at each call
     // site so disconnecting from the picker stops the ssh traffic the same way the sidebar does.
     if let Some(entry) = ctx.state.hosts.get_mut(target) {
@@ -921,17 +915,15 @@ pub(crate) fn disconnect_host(
         .filter(|(_, attachment)| attachment.remote_target.as_ref() == Some(target))
         .map(|(id, _)| *id)
         .collect();
-    let mut closed = 0usize;
     for id in ids {
-        if let Some(attachment) = ctx.state.background.remove(&id) {
-            if let Some(client) = attachment.session_client.as_ref() {
-                if attachment.disposition() == crate::state::SessionDisposition::Discard {
-                    client.shutdown();
-                } else {
-                    client.detach();
-                }
+        if let Some(attachment) = ctx.state.background.remove(&id)
+            && let Some(client) = attachment.session_client.as_ref()
+        {
+            if attachment.disposition() == crate::state::SessionDisposition::Discard {
+                client.shutdown();
+            } else {
+                client.detach();
             }
-            closed += 1;
         }
     }
     let current_on_host = ctx.state.current().session_attached
@@ -947,24 +939,10 @@ pub(crate) fn disconnect_host(
                 client.detach();
             }
         }
-        closed += 1;
         // The session on screen is being taken away rather than left, so land somewhere the user
         // recognizes. Attachments on this host are already gone from the background above, so the
         // candidates are exactly the sessions that survive the disconnect.
-        let update = land_on_surviving_session(ctx);
-        crate::pane::pty_events::notify_info(
-            ctx,
-            format!("Disconnected from `{host_label}` — {closed} closed, servers still running"),
-        );
-        return update;
+        return land_on_surviving_session(ctx);
     }
-    if closed == 0 {
-        crate::pane::pty_events::notify_info(ctx, format!("Not connected to `{host_label}`"));
-        return Update::full();
-    }
-    crate::pane::pty_events::notify_info(
-        ctx,
-        format!("Disconnected from `{host_label}` — {closed} closed, servers still running"),
-    );
     Update::full()
 }

@@ -617,22 +617,16 @@ pub(crate) fn restart_discovered_session(
     if let Some(target) = entry.remote_target.as_ref() {
         remove_cached_remote_session(ctx, &entry.name, target);
     }
-    let display = if entry.ephemeral {
-        "ephemeral".to_string()
-    } else {
-        entry.name.clone()
-    };
     let restart_name = restart_session_name(&mut ctx.state, &entry);
-    // Recreate and make it active immediately — never leave a silent background reconnect.
-    let update = attach_session_by_name(
+    // Recreate and make it active immediately. The picker giving way to the restarted session is
+    // the confirmation, so a success toast would only repeat the visible state change.
+    attach_session_by_name(
         ctx,
         restart_name,
         entry.host.clone(),
         entry.remote_target.clone(),
         true,
-    );
-    crate::pane::pty_events::notify_info(ctx, format!("Restarted session `{display}`"));
-    update
+    )
 }
 
 /// Kill a discovered session outright: shut its server down, so its PTYs die with it.
@@ -644,16 +638,11 @@ pub(crate) fn kill_discovered_session(
     ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
-    let display = if entry.ephemeral {
-        "ephemeral".to_string()
-    } else {
-        entry.name.clone()
-    };
     if ctx.state.current().session_attached
         && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
         && ctx.state.current().remote_target == entry.remote_target
     {
-        return kill_current_session(ctx, display);
+        return kill_current_session(ctx);
     }
     let remote_config = ctx.state.config.remote.clone();
     match shutdown_discovered_session(&entry, &remote_config) {
@@ -726,11 +715,6 @@ pub(crate) fn disconnect_discovered_attachment(
     if !session_row_can_disconnect(&ctx.state, &entry) {
         return Update::none();
     }
-    let display = if entry.ephemeral {
-        "ephemeral".to_string()
-    } else {
-        entry.name.clone()
-    };
     let Some(id) = ctx
         .state
         .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
@@ -742,10 +726,6 @@ pub(crate) fn disconnect_discovered_attachment(
     {
         client.detach();
     }
-    crate::pane::pty_events::notify_info(
-        ctx,
-        format!("Disconnected from `{display}` — server still running"),
-    );
     if ctx.state.show_session_picker {
         refresh_session_picker(ctx)
     } else {

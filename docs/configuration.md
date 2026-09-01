@@ -228,6 +228,15 @@ See [Profiles](profiles.md).
 
 See [Terminal features](terminal.md#select-copy-and-paste).
 
+## In-app toasts
+
+Rozi uses toasts for failures, rejected actions, destructive confirmations, and results that have
+no other visible feedback. Successful changes that already update the workbar, pane layout, picker,
+or sidebar stay quiet.
+
+Repeated messages renew the existing toast instead of stacking copies. Scripts can report an
+off-screen result with [`rozi notify`](control.md#actions-status-and-notifications).
+
 ## `[notifications]`
 
 | Key | Type | Default | Constraints and behavior |

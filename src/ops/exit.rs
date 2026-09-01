@@ -214,7 +214,7 @@ pub(crate) fn close_focused_pane_with_confirmation(
             confirm_toast(
                 &ctx.state.theme,
                 ctx.state.config.pane.toast_opacity,
-                "Again to kill pane",
+                "Press again to kill pane",
             ),
         )
     {
@@ -246,7 +246,7 @@ pub(crate) fn kill_workspace_with_confirmation(
                 &ctx.state.theme,
                 ctx.state.config.pane.toast_opacity,
                 format!(
-                    "Again to kill {pane_count} {} on workspace {label}",
+                    "Press again to kill {pane_count} {} on workspace {label}",
                     if pane_count == 1 { "pane" } else { "panes" }
                 ),
             ),
@@ -300,7 +300,7 @@ pub(crate) fn kill_session_with_confirmation(
     confirmations_enabled: bool,
 ) -> Update {
     if !ctx.state.current().session_attached {
-        crate::pane::pty_events::notify_info(ctx, "Not attached to a named session");
+        crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
         return Update::full();
     }
     if !ctx.state.is_controller() {
@@ -323,7 +323,7 @@ pub(crate) fn kill_session_with_confirmation(
             confirm_toast(
                 &ctx.state.theme,
                 ctx.state.config.pane.toast_opacity,
-                format!("Again to kill session `{session_name}`"),
+                format!("Press again to kill session `{session_name}`"),
             ),
         )
     {
@@ -331,7 +331,7 @@ pub(crate) fn kill_session_with_confirmation(
     }
 
     clear_pending(ctx);
-    crate::ops::session::kill_current_session(ctx, session_name)
+    crate::ops::session::kill_current_session(ctx)
 }
 
 pub(crate) fn restart_session_with_confirmation(
@@ -362,7 +362,7 @@ pub(crate) fn restart_session_with_confirmation(
             confirm_toast(
                 &ctx.state.theme,
                 ctx.state.config.pane.toast_opacity,
-                format!("Again to restart session `{session_name}`"),
+                format!("Press again to restart session `{session_name}`"),
             ),
         )
     {
@@ -378,7 +378,7 @@ pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<AppRoot>) -> bool 
     let toast = confirm_toast(
         &ctx.state.theme,
         ctx.state.config.pane.toast_opacity,
-        "Again to start a fresh temporary session\nCurrent session is discarded",
+        "Press again to start a fresh temporary session\nCurrent session will be discarded",
     );
     confirm_second_press(ctx, pending, toast)
 }

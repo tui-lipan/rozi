@@ -40,7 +40,7 @@ pub(crate) fn record_spawn_failure(
     detail: &str,
 ) -> Option<String> {
     if config.restart == crate::config::ServiceRestart::Never {
-        let message = format!("Service '{name}' failed to start: {detail}; restart disabled");
+        let message = format!("`{name}` did not start\n{detail}\nRestart is disabled");
         state.services.dormant.insert(
             name,
             DormantService {
@@ -51,8 +51,7 @@ pub(crate) fn record_spawn_failure(
         return Some(message);
     }
     if failures >= MAX_FAILURES {
-        let message =
-            format!("Service '{name}' failed to start {MAX_FAILURES} times: {detail}; stopping");
+        let message = format!("`{name}` did not start after {MAX_FAILURES} attempts\n{detail}");
         state.services.dormant.insert(
             name,
             DormantService {
@@ -589,7 +588,7 @@ mod tests {
         );
         assert!(
             message.is_some_and(|message| {
-                message.contains("permission denied") && message.contains("restart disabled")
+                message.contains("permission denied") && message.contains("Restart is disabled")
             }),
             "a non-restarting service reports its launch failure immediately"
         );

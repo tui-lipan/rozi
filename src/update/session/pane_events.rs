@@ -328,7 +328,11 @@ pub(crate) fn exited(
     }
     // A clean exit closes the pane on its own; only a failure code is worth surfacing.
     if code != 0 {
-        crate::pane::pty_events::notify_info(ctx, format!("Pane {pane_id} exited ({code})"));
+        crate::pane::pty_events::notify_error(
+            ctx,
+            format!("Pane {pane_id} exited"),
+            format!("Status {code}"),
+        );
     }
     remove_pane_after_exit(ctx, pane_id, false)
 }

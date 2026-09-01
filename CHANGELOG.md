@@ -7,6 +7,9 @@
 - `rozi update` no longer flickers its download row in Windows Terminal. Each repaint now sends the
   erase sequence and its replacement in one console write, matching the working progress row in
   `install.ps1` instead of exposing a blank frame between two writes.
+- Toasts no longer repeat session changes already shown by the picker, workbar, pane set, or
+  collaborator list. In particular, disconnecting an SSH host no longer ends with a stale
+  `Not connected to <host>` message.
 
 ## 0.0.14 - 2026-09-01
 

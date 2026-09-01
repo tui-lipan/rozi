@@ -19,7 +19,7 @@ pub(crate) fn require_writable(ctx: &mut Context<AppRoot>) -> Option<()> {
         return None;
     };
     if shared.read_only {
-        crate::pane::pty_events::notify_info(ctx, "Attached read-only");
+        crate::pane::pty_events::notify_info(ctx, "This session is read-only");
         return None;
     }
     Some(())
@@ -67,8 +67,7 @@ pub(crate) fn request_control(ctx: &mut Context<AppRoot>) -> Update {
         return Update::full();
     };
     if ctx.state.is_controller() {
-        crate::pane::pty_events::notify_info(ctx, "You already control the layout");
-        return Update::full();
+        return Update::none();
     }
     let Some(()) = require_writable(ctx) else {
         return Update::full();
@@ -143,7 +142,6 @@ pub(crate) fn evict_client(ctx: &mut Context<AppRoot>, index: usize) -> Update {
         return Update::full();
     }
     let target_id = target.id;
-    let label = format!("{} #{}", target.label, target.id);
     let armed = ctx
         .state
         .collaboration
@@ -164,7 +162,6 @@ pub(crate) fn evict_client(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if let Some(client) = ctx.state.current().session_client.as_ref() {
         client.evict_client(target_id);
     }
-    crate::pane::pty_events::notify_info(ctx, format!("Removed {label} from the session"));
     Update::full()
 }
 
@@ -236,7 +233,6 @@ pub(crate) fn resolve_follow_prompt(
             request_control(ctx)
         }
         crate::state::FollowChoice::Cancel => {
-            let name = ctx.state.current().session_name.clone();
             let detached_epoch = ctx.state.runtime_epoch;
             flush_layout_commit(ctx);
             crate::ops::exit::mark_session_detached(ctx, None);
@@ -247,9 +243,6 @@ pub(crate) fn resolve_follow_prompt(
             // Switching back temporarily parks the cancelled attachment. It was intentionally
             // detached, so retaining it would make discovery render the still-live server offline.
             ctx.state.background.remove(&detached_epoch);
-            if let Some(name) = name {
-                crate::pane::pty_events::notify_info(ctx, format!("Left `{name}` alone"));
-            }
             update
         }
     }

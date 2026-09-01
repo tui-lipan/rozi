@@ -258,7 +258,7 @@ pub(super) fn pane_link_activate(ctx: &mut Context<AppRoot>, event: TerminalLink
     match tui_lipan::utils::open_url(&event.uri) {
         Ok(()) => Update::none(),
         Err(error) => {
-            crate::pane::pty_events::notify_error(ctx, "Link failed", error.to_string());
+            crate::pane::pty_events::notify_error(ctx, "Could not open link", error.to_string());
             Update::full()
         }
     }

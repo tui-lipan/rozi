@@ -564,7 +564,7 @@ fn notify_command(
         crate::control::NotifyLevel::Error => {
             crate::pane::pty_events::notify_error(
                 ctx,
-                title.unwrap_or_else(|| "Notice".to_string()),
+                title.unwrap_or_else(|| "Error".to_string()),
                 message,
             );
         }

@@ -1686,6 +1686,10 @@ fn disconnecting_a_host_keeps_named_sessions_and_drops_only_the_disposable_scrat
                 state.launcher_scope.is_none(),
                 "the launcher stops being scoped to a host we just disconnected from"
             );
+            assert!(
+                state.replaceable_toasts.is_empty(),
+                "the picker and host status already show the disconnect"
+            );
         })
         .expect("spawn disconnect-host test")
         .join()

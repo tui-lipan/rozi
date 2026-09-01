@@ -230,10 +230,16 @@ pub(crate) fn open_config_file(ctx: &mut Context<AppRoot>) -> Update {
         return update;
     }
     let path = crate::config::config_path();
-    let command = format!("{editor} {}", quote_shell_arg(&path.to_string_lossy()));
+    let launch = match editor_launch(&editor, &path) {
+        Ok(launch) => launch,
+        Err(error) => {
+            crate::pane::pty_events::notify_error(ctx, "Editor not found", error);
+            return Update::none();
+        }
+    };
 
     let identity = PaneIdentity {
-        launch: Some(crate::pane::launch::PaneLaunch::shell(command)),
+        launch: Some(launch),
         ..PaneIdentity::default()
     };
     crate::pane::lifecycle::spawn_interactive_pane(
@@ -245,10 +251,54 @@ pub(crate) fn open_config_file(ctx: &mut Context<AppRoot>) -> Update {
     .1
 }
 
-/// Single-quotes a shell argument so a config path containing spaces (or other shell
-/// metacharacters) survives being spliced into a `sh -c` command string.
-pub(crate) fn quote_shell_arg(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
+/// Builds the direct argv that opens `path` in `editor`.
+///
+/// Direct execution rather than a shell command string: a `PaneLaunch::Shell` command runs through
+/// the command shell, which on Windows defaults to `cmd.exe /D /S /C`, and `cmd.exe` does not strip
+/// the POSIX single quotes a `sh -c` string needs. Quoting the path for one shell corrupts it in
+/// the other - the editor opens a file whose name still carries the quotes - so the path is passed
+/// as its own process argument and never quoted at all.
+pub(crate) fn editor_launch(
+    editor: &str,
+    path: &std::path::Path,
+) -> std::result::Result<crate::pane::launch::PaneLaunch, String> {
+    let mut argv = editor_words(editor);
+    argv.push(path.to_string_lossy().into_owned());
+    crate::pane::launch::PaneLaunch::direct(argv)
+}
+
+/// Splits an `$EDITOR` value into argv words, honoring the quotes people put around a program path
+/// that contains spaces (`"/opt/my editor/bin/edit" --wait`).
+fn editor_words(value: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut started = false;
+    let mut quote = None;
+
+    for ch in value.chars() {
+        match quote {
+            Some(open) if ch == open => quote = None,
+            Some(_) => current.push(ch),
+            None if ch == '\'' || ch == '"' => {
+                quote = Some(ch);
+                started = true;
+            }
+            None if ch.is_whitespace() => {
+                if started {
+                    words.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            None => {
+                current.push(ch);
+                started = true;
+            }
+        }
+    }
+    if started {
+        words.push(current);
+    }
+    words
 }
 
 pub(crate) fn config_editor() -> String {
@@ -264,7 +314,8 @@ pub(crate) fn config_editor() -> String {
 }
 
 pub(crate) fn missing_editor_command(editor: &str) -> Option<String> {
-    let command = first_shell_word(editor.trim()).unwrap_or(editor.trim());
+    let words = editor_words(editor);
+    let command = words.first().map_or("", String::as_str);
     if command.is_empty() || command_exists(command) {
         None
     } else {
@@ -276,54 +327,57 @@ fn command_exists(command: &str) -> bool {
     crate::platform::command::program_exists(command)
 }
 
-fn first_shell_word(value: &str) -> Option<&str> {
-    let mut chars = value.char_indices();
-    let (_, first) = chars.next()?;
-    let quote = match first {
-        '\'' | '"' => Some(first),
-        _ => None,
-    };
-    let start = if quote.is_some() { first.len_utf8() } else { 0 };
-
-    for (index, ch) in chars {
-        if quote.is_some_and(|quote| ch == quote) {
-            return Some(&value[start..index]);
-        }
-        if quote.is_none() && ch.is_whitespace() {
-            return Some(&value[..index]);
-        }
-    }
-
-    Some(&value[start..])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn quote_shell_arg_wraps_plain_paths() {
+    fn editor_words_reads_bare_command() {
+        assert_eq!(editor_words("nvim --clean"), ["nvim", "--clean"]);
+    }
+
+    #[test]
+    fn editor_words_reads_quoted_command() {
         assert_eq!(
-            quote_shell_arg("/home/me/.config/config.toml"),
-            "'/home/me/.config/config.toml'"
+            editor_words("'/opt/my editor/bin/edit' --wait"),
+            ["/opt/my editor/bin/edit", "--wait"]
         );
     }
 
     #[test]
-    fn quote_shell_arg_escapes_embedded_single_quotes() {
-        assert_eq!(quote_shell_arg("it's/a/path"), "'it'\\''s/a/path'");
-    }
-
-    #[test]
-    fn first_shell_word_reads_bare_command() {
-        assert_eq!(first_shell_word("nvim --clean"), Some("nvim"));
-    }
-
-    #[test]
-    fn first_shell_word_reads_quoted_command() {
+    fn editor_launch_passes_the_path_as_its_own_argument() {
+        let launch = editor_launch(
+            "nvim",
+            std::path::Path::new(r"C:\Users\me\rozi\config.toml"),
+        )
+        .expect("editor launch");
         assert_eq!(
-            first_shell_word("'/opt/my editor/bin/edit' --wait"),
-            Some("/opt/my editor/bin/edit")
+            launch.argv(),
+            Some(
+                &[
+                    "nvim".to_string(),
+                    r"C:\Users\me\rozi\config.toml".to_string()
+                ][..]
+            )
+        );
+    }
+
+    #[test]
+    fn editor_launch_keeps_spaced_paths_unquoted() {
+        let launch = editor_launch(
+            "code -w",
+            std::path::Path::new("/home/me/my dir/config.toml"),
+        )
+        .expect("editor launch");
+        assert_eq!(
+            launch.argv(),
+            Some(
+                &[
+                    "code".to_string(),
+                    "-w".to_string(),
+                    "/home/me/my dir/config.toml".to_string(),
+                ][..]
+            )
         );
     }
 }

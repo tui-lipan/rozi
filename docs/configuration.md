@@ -68,6 +68,11 @@ The `open-config` action opens the selected file with `EDITOR`, then `VISUAL`, t
 rozi run-action open-config
 ```
 
+The editor runs directly rather than through a shell. Rozi splits the variable into a program and
+its arguments, honoring quotes around a path that contains spaces (`"/opt/my editor/bin/edit"
+--wait`), then passes the config path as a separate argument. Shell syntax in `EDITOR` - pipes,
+redirection, variable expansion - is not interpreted.
+
 ## Minimal example
 
 ```toml

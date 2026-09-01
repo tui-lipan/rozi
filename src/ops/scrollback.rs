@@ -3,7 +3,7 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::ops::config::{config_editor, missing_editor_command, quote_shell_arg};
+use crate::ops::config::{config_editor, editor_launch, missing_editor_command};
 use crate::pane::lifecycle::find_pane_mut;
 use crate::platform::paths::{PlatformEnv, write_scrollback_dump};
 use crate::state::PaneIdentity;
@@ -35,9 +35,15 @@ pub(crate) fn edit_scrollback(ctx: &mut Context<AppRoot>) -> Update {
         );
         return Update::none();
     }
-    let command = format!("{editor} {}", quote_shell_arg(&path.to_string_lossy()));
+    let launch = match editor_launch(&editor, &path) {
+        Ok(launch) => launch,
+        Err(error) => {
+            crate::pane::pty_events::notify_error(ctx, "Editor not found", error);
+            return Update::none();
+        }
+    };
     let identity = PaneIdentity {
-        launch: Some(crate::pane::launch::PaneLaunch::shell(command)),
+        launch: Some(launch),
         ..PaneIdentity::default()
     };
     crate::pane::lifecycle::spawn_interactive_pane(

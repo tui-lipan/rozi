@@ -474,6 +474,32 @@ mod tests {
     }
 
     #[test]
+    fn powershell_does_not_restore_conptys_startup_cursor_after_each_command() {
+        let windows_guard = "if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {";
+        let guard_start = POWERSHELL_SCRIPT
+            .find(windows_guard)
+            .expect("PowerShell alternate-screen reset has a Windows guard");
+        let reset = POWERSHELL_SCRIPT[guard_start..]
+            .find("[?1049l")
+            .map(|offset| guard_start + offset)
+            .expect("PowerShell still recovers the alternate screen outside Windows");
+        let guard_end = POWERSHELL_SCRIPT[guard_start..]
+            .find("\n        }")
+            .map(|offset| guard_start + offset)
+            .expect("Windows guard is closed");
+
+        assert!(
+            reset < guard_end,
+            "ConPTY must not receive an unconditional ?1049l cursor restore"
+        );
+        assert_eq!(
+            POWERSHELL_SCRIPT.matches("'[?1049l'").count(),
+            1,
+            "another PowerShell alternate-screen reset would reintroduce the ConPTY cursor bug"
+        );
+    }
+
+    #[test]
     fn off_mode_never_touches_argv_or_env() {
         let shell = ShellCommand::new("bash");
         let (shell, extra_env) = inject(

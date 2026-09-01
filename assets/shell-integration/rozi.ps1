@@ -86,8 +86,16 @@ function Global:Prompt() {
         __rozi_emit "]133;D;$code"
         # A crashed foreground TUI can leave its alternate screen and input modes active. Restore
         # shell-safe modes before the prompt; PSReadLine can then enable what it actually uses.
-        Write-Host -NoNewline ($Global:__roziEsc + '[?1049l' +
-            $Global:__roziEsc + '[?1000l' + $Global:__roziEsc + '[?1002l' +
+        #
+        # ConPTY treats `?1049l` as a saved-cursor restore even when no alternate screen is active.
+        # Its startup cursor is row 1, so emitting this after every command makes PowerShell redraw
+        # each prompt over the first line. Keep the recovery on direct-VT platforms, but leave
+        # alternate-screen recovery to ConPTY on Windows.
+        if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+            Write-Host -NoNewline ($Global:__roziEsc + '[?1049l')
+        }
+        Write-Host -NoNewline ($Global:__roziEsc + '[?1000l' +
+            $Global:__roziEsc + '[?1002l' +
             $Global:__roziEsc + '[?1003l' + $Global:__roziEsc + '[?1004l' +
             $Global:__roziEsc + '[?1005l' + $Global:__roziEsc + '[?1006l' +
             $Global:__roziEsc + '[?2004l' + $Global:__roziEsc + '[?1l' +

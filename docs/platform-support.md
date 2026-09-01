@@ -57,6 +57,10 @@ The default direct modifier is `Alt`. It works on all supported platforms. Many 
 do not deliver `Super` or Windows-key combinations to terminal applications, so prefix mode is the
 reliable choice there.
 
+Windows Terminal and the classic console also keep some `Alt` chords for themselves, including
+`Alt+Enter` for fullscreen. Those never reach rozi. Prefer the `Ctrl+A` prefix, unbind the host
+shortcut, or rebind the command in rozi.
+
 `Ctrl+C` goes to the program in the focused pane on every platform. It does not quit rozi.
 
 See [Keybindings](keybindings.md#platform-caveats).

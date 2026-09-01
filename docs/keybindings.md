@@ -252,6 +252,11 @@ the selected row or submits a prompt.
 environments reserve `Super`, and Windows intercepts most Windows-key chords before a console
 application can receive them.
 
+Windows Terminal and the classic console also intercept some `Alt` chords before Rozi sees them.
+`Alt+Enter` toggles fullscreen. `Alt+Space` opens the window menu. Other host bindings can collide
+with Rozi's direct shortcuts. The `Ctrl+A` prefix avoids those collisions. You can also unbind the
+host keys you want Rozi to receive, or rebind the commands under `[keys]`.
+
 Rozi runs Windows consoles in raw mode, so `Ctrl+C` reaches the focused pane. Closing the console
 window detaches the client. Modified arrow and shifted-symbol reporting varies by terminal, so Rozi
 registers the common forms used by its defaults.

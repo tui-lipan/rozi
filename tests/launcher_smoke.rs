@@ -45,6 +45,10 @@ impl Drop for EditorEnv {
 }
 
 fn launcher_backend() -> TestBackend<AppRoot> {
+    // Before the root is built, per the rule every other `AppRoot` test follows: an unisolated root
+    // reads - and lets other tests write - the real config and state directories, so what the
+    // launcher believes about existing sessions depends on what else has run on the machine.
+    rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,

@@ -2,14 +2,34 @@
 
 ## Unreleased
 
+## 0.0.15 - 2026-09-01
+
+Windows fixes found while testing the installer and updater.
+
+### Changed
+
+- Decoded terminal images are capped per pane, so panes and attached clients can no longer multiply
+  into an unbounded pixel cache.
+
 ### Fixed
 
+- PowerShell keeps its scrollback on Windows. Rozi restored ConPTY's startup cursor after every
+  command, which sent the cursor back up the screen and let the next command overwrite the output
+  above it.
+- Opening the config file or a scrollback dump works when `EDITOR` is set. Both actions built a
+  shell command string and single-quoted the path into it, but on Windows the command shell is
+  `cmd.exe`, which does not strip those quotes - the editor opened a file whose name still carried
+  them, under the home directory, and it could not be saved. The editor is now launched directly
+  and the path is passed as its own argument. Shell syntax in `EDITOR` is no longer interpreted;
+  quoted program paths still work.
 - `rozi update` no longer flickers its download row in Windows Terminal. Each repaint now sends the
   erase sequence and its replacement in one console write, matching the working progress row in
   `install.ps1` instead of exposing a blank frame between two writes.
 - Toasts no longer repeat session changes already shown by the picker, workbar, pane set, or
   collaborator list. In particular, disconnecting an SSH host no longer ends with a stale
   `Not connected to <host>` message.
+- A Claude pane stays marked as working while a long prompt is being edited. A tall draft pushes
+  the activity chrome off screen, which read as the run having finished.
 
 ## 0.0.14 - 2026-09-01
 

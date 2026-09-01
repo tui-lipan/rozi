@@ -59,6 +59,7 @@ BIN="$REPO/target/release/rozi"
 ROOT=
 SERVER_PID=
 WRAPPER_PIDS=()
+CLIENT_PIDS=()
 SESSION=
 CONTROL_SOCKETS=()
 ACTIVE_CLIENTS=0
@@ -144,19 +145,19 @@ cleanup_scenario() {
   local attempt pid
   for attempt in {1..40}; do
     local live=0
-    for pid in "${WRAPPER_PIDS[@]:-}" "${SERVER_PID:-}" "${PTY_DESCENDANT_PIDS[@]:-}"; do
+    for pid in "${WRAPPER_PIDS[@]:-}" "${CLIENT_PIDS[@]:-}" "${SERVER_PID:-}" "${PTY_DESCENDANT_PIDS[@]:-}"; do
       [[ -n $pid ]] && owned_pid_alive "$pid" && live=1
     done
     ((live == 0)) && break
     sleep 0.05
   done
-  for pid in "${WRAPPER_PIDS[@]:-}" "${SERVER_PID:-}" "${PTY_DESCENDANT_PIDS[@]:-}"; do
+  for pid in "${WRAPPER_PIDS[@]:-}" "${CLIENT_PIDS[@]:-}" "${SERVER_PID:-}" "${PTY_DESCENDANT_PIDS[@]:-}"; do
     if [[ -n $pid ]] && owned_pid_alive "$pid"; then
       kill "$pid" >/dev/null 2>&1
     fi
   done
   sleep 0.1
-  for pid in "${WRAPPER_PIDS[@]:-}" "${SERVER_PID:-}" "${PTY_DESCENDANT_PIDS[@]:-}"; do
+  for pid in "${WRAPPER_PIDS[@]:-}" "${CLIENT_PIDS[@]:-}" "${SERVER_PID:-}" "${PTY_DESCENDANT_PIDS[@]:-}"; do
     if [[ -n $pid ]] && owned_pid_alive "$pid"; then
       kill -9 "$pid" >/dev/null 2>&1
     fi
@@ -166,6 +167,7 @@ cleanup_scenario() {
   ROOT= SERVER_PID= SESSION=
   ACTIVE_CLIENTS=0
   WRAPPER_PIDS=()
+  CLIENT_PIDS=()
   CONTROL_SOCKETS=()
   PANE_IDS=()
   PANE_MARKERS=()
@@ -240,7 +242,7 @@ wait_for_pane() {
 }
 
 start_client() {
-  local rows=$1 cols=$2 after socket wrapper state status
+  local rows=$1 cols=$2 after socket wrapper state status client_pid
   local deadline=$((SECONDS + 15)) log="$ROOT/client-${#WRAPPER_PIDS[@]}.log"
   script -qefc "stty rows $rows cols $cols; exec '$BIN' attach '$SESSION'" /dev/null </dev/null >"$log" 2>&1 &
   wrapper=$!
@@ -252,6 +254,9 @@ start_client() {
     for socket in "${after[@]}"; do
       if [[ ! " ${CONTROL_SOCKETS[*]:-} " =~ " $socket " ]]; then
         CONTROL_SOCKETS+=("$socket")
+        client_pid=${socket##*/control-}
+        client_pid=${client_pid%.sock}
+        [[ $client_pid =~ ^[0-9]+$ ]] && CLIENT_PIDS+=("$client_pid")
         return 0
       fi
     done

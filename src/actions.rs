@@ -288,11 +288,14 @@ fn smart_focus(ctx: &mut Context<AppRoot>, direction: Direction) -> Update {
     Update::full()
 }
 
-/// Whether the pane's foreground program is one that should receive navigation keys itself.
+/// Whether any process eligible to read from the pane is a split-aware navigation target.
 fn focused_pane_forwards_navigation(state: &crate::state::State, id: crate::state::PaneId) -> bool {
-    find_pane(state, id)
-        .and_then(|pane| pane.terminal.foreground_command())
-        .is_some_and(|command| state.config.navigation.is_split_editor(&command))
+    let Some(pane) = find_pane(state, id) else {
+        return false;
+    };
+    pane.terminal
+        .foreground_commands()
+        .any(|program| state.config.navigation.is_split_editor(program))
 }
 
 /// The `Ctrl-h/j/k/l` convention shared by the split-aware editor integrations.
@@ -860,6 +863,7 @@ fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pane::lifecycle::find_pane_mut;
 
     #[test]
     fn layout_mutating_classification_gates_structure_not_navigation() {
@@ -896,6 +900,18 @@ mod tests {
                 "{action:?} should not be gated"
             );
         }
+    }
+
+    #[test]
+    fn smart_focus_recognizes_an_editor_behind_a_foreground_wrapper() {
+        let mut state =
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
+        let pane_id = state.focused_pane().expect("default pane is focused");
+        let pane = find_pane_mut(&mut state, pane_id).expect("focused pane exists");
+        pane.terminal.foreground_program = Some("npm".into());
+        pane.terminal.foreground_programs = vec!["npm".into(), "nvim".into()];
+
+        assert!(focused_pane_forwards_navigation(&state, pane_id));
     }
 
     #[test]

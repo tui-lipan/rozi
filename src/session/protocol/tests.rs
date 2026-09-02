@@ -378,6 +378,7 @@ fn pane_runtime_status_is_optional_for_serde_compatibility() {
     });
     let decoded: PaneRuntimeState = serde_json::from_value(old_shape).unwrap();
     assert_eq!(decoded.display_path, None);
+    assert!(decoded.foreground_programs.is_empty());
     assert_eq!(decoded.status, None);
     assert_eq!(decoded.detected_agent, None);
     assert_eq!(decoded.work_started_at, None);
@@ -388,6 +389,7 @@ fn pane_runtime_status_is_optional_for_serde_compatibility() {
             reason: None,
             set_at: 123,
         }),
+        foreground_programs: vec!["npm".into(), "nvim".into()].into_boxed_slice(),
         work_started_at: Some(120),
         sequence: 5,
         ..PaneRuntimeState::default()

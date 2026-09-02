@@ -5,10 +5,9 @@
 //! runtime and rely on careful reading of the Darwin `libproc.h` contract.
 //!
 //! `cwd` uses `proc_pidinfo(PROC_PIDVNODEPATHINFO)` to read the child's current-directory vnode
-//! path. `foreground_program` treats the PTY's foreground process-group id as a pid (a process
-//! group id is by definition the pid of its group leader) and resolves its name with `proc_name`,
-//! mirroring the Linux backend's `/proc/<pgid>/comm` approach without needing a pgid -> member-pids
-//! lookup.
+//! path. Foreground inspection starts from the PTY's process-group id and uses
+//! `proc_listpgrppids` so wrappers, pipelines, and groups whose original leader exited retain the
+//! same process-set semantics as Linux.
 
 use std::ffi::CStr;
 use std::os::raw::c_void;
@@ -17,6 +16,8 @@ use std::path::PathBuf;
 use tui_lipan::prelude::TerminalPty;
 
 use super::{ForegroundJob, ForegroundLaunch, ForegroundProcess, ProcessInspector};
+
+const MAX_FOREGROUND_PROCESSES: usize = 64;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MacosProcessInspector;
@@ -29,7 +30,11 @@ impl ProcessInspector for MacosProcessInspector {
 
     fn foreground_program(&self, pty: &TerminalPty) -> Option<String> {
         let pgid = pty.foreground_process_group_id()?;
-        name_for_pid(pgid)
+        process_for_pid(pgid).map(|process| process.name)
+    }
+
+    fn foreground_process(&self, pty: &TerminalPty) -> Option<ForegroundProcess> {
+        process_for_pid(pty.foreground_process_group_id()?)
     }
 
     /// Path only: reading another process's arguments on Darwin means `KERN_PROCARGS2`, which is
@@ -44,17 +49,58 @@ impl ProcessInspector for MacosProcessInspector {
 
     fn foreground_job(&self, pty: &TerminalPty) -> Option<ForegroundJob> {
         let process_group_id = pty.foreground_process_group_id()?.try_into().ok()?;
-        Some(ForegroundJob {
+        let mut processes: Vec<_> = process_group_pids(process_group_id)
+            .into_iter()
+            .filter_map(process_for_pid)
+            .collect();
+        if processes.is_empty()
+            && let Some(leader) = process_for_pid(process_group_id as i32)
+        {
+            processes.push(leader);
+        }
+        processes.sort_unstable_by_key(|process| (process.pid != process_group_id, process.pid));
+        (!processes.is_empty()).then_some(ForegroundJob {
             process_group_id,
-            processes: vec![ForegroundProcess {
-                pid: process_group_id,
-                name: name_for_pid(process_group_id as i32)?,
-                executable: None,
-                argv: Vec::new(),
-                agent_hint: None,
-            }],
+            processes,
         })
     }
+}
+
+fn process_group_pids(process_group_id: u32) -> Vec<i32> {
+    let process_group_id = process_group_id as libc::pid_t;
+    let needed = unsafe { libc::proc_listpgrppids(process_group_id, std::ptr::null_mut(), 0) };
+    if needed <= 0 {
+        return Vec::new();
+    }
+    let pid_size = std::mem::size_of::<libc::pid_t>();
+    let capacity = ((needed as usize / pid_size) + 8).min(MAX_FOREGROUND_PROCESSES);
+    let mut pids = vec![0 as libc::pid_t; capacity];
+    let buffer_bytes = (pids.len() * pid_size).min(libc::c_int::MAX as usize) as libc::c_int;
+    let written = unsafe {
+        libc::proc_listpgrppids(process_group_id, pids.as_mut_ptr().cast(), buffer_bytes)
+    };
+    if written <= 0 {
+        return Vec::new();
+    }
+    pids.truncate((written as usize / pid_size).min(pids.len()));
+    pids.into_iter().filter(|pid| *pid > 0).collect()
+}
+
+fn process_for_pid(pid: i32) -> Option<ForegroundProcess> {
+    let executable = path_for_pid(pid);
+    let name = executable
+        .as_deref()
+        .and_then(std::path::Path::file_name)
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .or_else(|| name_for_pid(pid))?;
+    Some(ForegroundProcess {
+        pid: pid.try_into().ok()?,
+        name,
+        executable: executable.map(|path| path.to_string_lossy().into_owned()),
+        argv: Vec::new(),
+        agent_hint: None,
+    })
 }
 
 /// Read `pid`'s current working directory via `proc_pidinfo(PROC_PIDVNODEPATHINFO)`.
@@ -89,9 +135,6 @@ fn cwd_for_pid(pid: u32) -> Option<PathBuf> {
     (!text.is_empty()).then(|| PathBuf::from(text))
 }
 
-/// Resolve a process name via `proc_name(3)`, truncated by the kernel to `MAXCOMLEN` (16 bytes) -
-/// acceptable here since only a normalized executable basename is ever surfaced, never a full path
-/// or command line.
 /// Read `pid`'s executable path via `proc_pidpath`.
 ///
 /// The buffer is `PROC_PIDPATHINFO_MAXSIZE` (4 * `MAXPATHLEN`), the size Darwin documents as
@@ -111,6 +154,8 @@ fn path_for_pid(pid: i32) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
+/// Resolve a fallback process name via `proc_name(3)`. The executable path above is preferred
+/// because this value may be truncated by the kernel.
 fn name_for_pid(pid: i32) -> Option<String> {
     let mut buf = [0u8; 64];
     let written =

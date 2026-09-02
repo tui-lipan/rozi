@@ -159,6 +159,7 @@ pub fn attached_message() -> ServerMessage {
                     cwd_source: PaneCwdSource::ShellReport,
                     command_phase: PaneCommandPhase::Executing,
                     foreground_program: Some("benchmark-worker".to_string()),
+                    foreground_programs: vec!["benchmark-worker".to_string()].into_boxed_slice(),
                     foreground_executable: None,
                     foreground_arguments: Vec::new(),
                     last_exit_status: Some(0),

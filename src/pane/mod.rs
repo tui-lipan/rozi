@@ -50,6 +50,10 @@ pub struct TerminalPane {
     /// [`crate::session::protocol::ServerMessage::PaneRuntimeChanged`] rather than inspected
     /// locally, since the server (not necessarily this client's host) owns the PTY.
     pub foreground_program: Option<String>,
+    /// Basename-only identities sampled from every process in the terminal's foreground group.
+    /// Split-aware routing checks all of them because a wrapper may remain group leader while the
+    /// editor receiving input is another member.
+    pub foreground_programs: Vec<String>,
     /// Absolute path of that same program, sent only when its name would not resolve on the
     /// session server's `PATH` (a shell alias, a build-tree binary). Profile capture replays this
     /// instead of the name, which is all a restored pane could otherwise fail to find.
@@ -227,6 +231,7 @@ impl TerminalPane {
             git_branch: None,
             child_pid: None,
             foreground_program: None,
+            foreground_programs: Vec::new(),
             foreground_executable: None,
             foreground_arguments: Vec::new(),
             reported_status: None,
@@ -600,12 +605,19 @@ impl TerminalPane {
     /// (e.g. `bash` at a prompt, `nvim` while editing).
     ///
     /// Server-authoritative (cross-platform plan Phase 6/7), same rationale as
-    /// [`working_directory`](Self::working_directory). This is the terminal's foreground process
-    /// group leader, so it reflects the actually-running program regardless of shell/process-tree
-    /// depth - the signal split-aware navigation uses to decide whether a key should move pane
-    /// focus or be forwarded to the program. Returns `None` when it cannot be determined.
+    /// [`working_directory`](Self::working_directory). This is the reconciled logical identity used
+    /// for display and replay; split-aware navigation uses
+    /// [`foreground_commands`](Self::foreground_commands) because a POSIX foreground group may
+    /// contain multiple eligible input readers.
     pub fn foreground_command(&self) -> Option<String> {
         self.foreground_program.clone()
+    }
+
+    pub fn foreground_commands(&self) -> impl Iterator<Item = &str> {
+        self.foreground_programs
+            .iter()
+            .map(String::as_str)
+            .chain(self.foreground_program.as_deref())
     }
 
     /// The title the running program set via OSC 0/2 (shell `$PWD`, `vim`, etc.),

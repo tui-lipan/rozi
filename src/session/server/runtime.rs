@@ -8,7 +8,8 @@
 
 use super::*;
 use crate::platform::process::{
-    ForegroundLaunch, LazyProcessScan, PlatformProcessInspector, ProcessInspector,
+    ForegroundJob, ForegroundLaunch, ForegroundProcess, LazyProcessScan, PlatformProcessInspector,
+    ProcessInspector,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -388,10 +389,9 @@ fn derive_path_runtime(
 fn derive_detected_agent(
     pane: &mut ServerPane,
     agents: Option<&AgentCatalog>,
-    inspector: &impl ProcessInspector,
     foreground_program: Option<&str>,
-    command_phase: PaneCommandPhase,
-    scan: &mut LazyProcessScan,
+    foreground_job: Option<&ForegroundJob>,
+    process_refreshed: bool,
 ) -> Option<DetectedAgent> {
     // Published rows describe all sessions, while screen detection sees only the session in view.
     if !pane.runtime.rows.is_empty() {
@@ -411,24 +411,8 @@ fn derive_detected_agent(
     let Some(agents) = agents else {
         return pane.runtime.detected_agent.clone();
     };
-
-    let probe = AgentProbe {
-        foreground_program: foreground_program.map(str::to_string),
-        command_phase,
-    };
-    // A changed foreground program invalidates state held for the previous process.
-    if pane.agent.probe.as_ref().is_some_and(|last| *last != probe) {
-        pane.agent.hold = None;
-    }
-    let stale = pane.agent.probe.as_ref().is_none_or(|last| *last != probe)
-        || pane
-            .agent
-            .detected_at
-            .is_none_or(|at| at.elapsed() >= AGENT_DETECT_REFRESH);
-    if stale {
-        pane.agent.probe = Some(probe);
-        pane.agent.detected_at = Some(Instant::now());
-        let identity = identify_pane_agent(pane, agents, inspector, foreground_program, scan)
+    if process_refreshed {
+        let identity = identify_pane_agent(pane, agents, foreground_program, foreground_job)
             .map(|definition| definition.id().to_string());
         if identity != pane.agent.identity {
             pane.agent.read = None;
@@ -447,6 +431,7 @@ fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeStat
         || candidate.cwd_source != current.cwd_source
         || candidate.command_phase != current.command_phase
         || candidate.foreground_program != current.foreground_program
+        || candidate.foreground_programs != current.foreground_programs
         || candidate.foreground_executable != current.foreground_executable
         || candidate.foreground_arguments != current.foreground_arguments
         || candidate.last_exit_status != current.last_exit_status
@@ -476,24 +461,27 @@ fn compute_runtime_state(
     // pane exits, its own exit code is at least as informative a fallback as leaving this `None`.
     let last_exit_status = last_exit_status.or(pane.exited);
     let path = derive_path_runtime(pane, semantic.cwd.as_ref(), inspector);
-    let foreground_program = semantic
-        .executable
-        .as_deref()
-        .map(str::to_string)
-        .or_else(|| {
-            pane.pty
-                .as_ref()
-                .and_then(|pty| inspector.foreground_program(pty))
-        });
+    let (foreground_job, process_refreshed) = foreground_job_evidence(
+        pane,
+        inspector,
+        command_phase,
+        semantic.executable.as_deref(),
+        agents.is_some(),
+        scan,
+    );
+    let foreground =
+        derive_foreground_evidence(semantic.executable.as_deref(), foreground_job.as_ref());
     // How the foreground program was invoked - where it lives when its name cannot find it, and
     // the arguments it was given. Read afresh every poll while something is running, because the
     // program name is not enough to tell two runs apart: `sleep 1 && sleep 444` never changes it,
     // and a cached answer would describe the run that already finished. A pane sitting at its
     // prompt is not running anything worth replaying, so it reads nothing at all.
     let (foreground_executable, foreground_arguments) = match command_phase {
-        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => {
-            foreground_launch(pane, inspector, foreground_program.as_deref())
-        }
+        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => foreground_launch(
+            pane,
+            foreground.program.as_deref(),
+            foreground.launch.as_ref(),
+        ),
         PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. } => {
             (None, Vec::new())
         }
@@ -501,10 +489,9 @@ fn compute_runtime_state(
     let detected_agent = derive_detected_agent(
         pane,
         agents,
-        inspector,
-        foreground_program.as_deref(),
-        command_phase,
-        scan,
+        foreground.program.as_deref(),
+        foreground_job.as_ref(),
+        process_refreshed,
     );
 
     let work_started_at = next_work_started_at(
@@ -520,7 +507,8 @@ fn compute_runtime_state(
         git_branch: path.git_branch,
         cwd_source: path.cwd_source,
         command_phase,
-        foreground_program,
+        foreground_program: foreground.program,
+        foreground_programs: foreground.programs.into_boxed_slice(),
         foreground_executable,
         foreground_arguments,
         last_exit_status,
@@ -542,6 +530,209 @@ fn compute_runtime_state(
     }
 }
 
+struct ForegroundEvidence {
+    program: Option<String>,
+    programs: Vec<String>,
+    launch: Option<ForegroundLaunch>,
+}
+
+/// Refresh the complete foreground process group on command changes and at the slower process
+/// cadence, reusing it between polls. The group walk is shared by navigation and agent detection.
+fn foreground_job_evidence(
+    pane: &mut ServerPane,
+    inspector: &impl ProcessInspector,
+    command_phase: PaneCommandPhase,
+    shell_program: Option<&str>,
+    allow_refresh: bool,
+    scan: &mut LazyProcessScan,
+) -> (Option<ForegroundJob>, bool) {
+    let active = matches!(
+        command_phase,
+        PaneCommandPhase::Executing | PaneCommandPhase::Unknown
+    );
+    let leader = active
+        .then(|| {
+            pane.pty
+                .as_ref()
+                .and_then(|pty| inspect_foreground_leader(pty, inspector))
+        })
+        .flatten();
+    let leader_program = derive_foreground_evidence(shell_program, leader.as_ref()).program;
+    let probe = AgentProbe {
+        foreground_program: leader_program,
+        command_phase,
+    };
+    let changed = pane.agent.probe.as_ref().is_none_or(|last| *last != probe);
+    if changed {
+        pane.agent.foreground_job = None;
+        pane.agent.hold = None;
+    }
+    if !allow_refresh {
+        return (leader, false);
+    }
+    if !active {
+        remember_process_probe(pane, probe, None);
+        return (None, changed);
+    }
+    if !process_probe_is_stale(pane, &probe) {
+        return (pane.agent.foreground_job.clone().or(leader), false);
+    }
+
+    let observed = pane
+        .pty
+        .as_ref()
+        .and_then(|pty| inspector.foreground_job_in(pty, scan.get()))
+        .or(leader);
+    remember_process_probe(pane, probe, observed.clone());
+    (observed, true)
+}
+
+fn process_probe_is_stale(pane: &ServerPane, probe: &AgentProbe) -> bool {
+    pane.agent.probe.as_ref() != Some(probe)
+        || pane
+            .agent
+            .detected_at
+            .is_none_or(|at| at.elapsed() >= AGENT_DETECT_REFRESH)
+}
+
+fn remember_process_probe(
+    pane: &mut ServerPane,
+    probe: AgentProbe,
+    foreground_job: Option<ForegroundJob>,
+) {
+    pane.agent.probe = Some(probe);
+    pane.agent.detected_at = Some(Instant::now());
+    pane.agent.foreground_job = foreground_job;
+}
+
+fn inspect_foreground_leader(
+    pty: &tui_lipan::prelude::TerminalPty,
+    inspector: &impl ProcessInspector,
+) -> Option<ForegroundJob> {
+    let process = inspector.foreground_process(pty)?;
+    Some(ForegroundJob {
+        process_group_id: process.pid,
+        processes: vec![process],
+    })
+}
+
+/// Keep logical command identity, sampled process identities, and replay evidence distinct.
+///
+/// A shell-reported script name remains logical identity when it matches an inspected member's
+/// executable or argv. Otherwise a platform with argv evidence can replace an alias/function name
+/// with the foreground group leader. `programs` always retains every observed group member so
+/// split-aware routing does not depend on choosing one "real" input process from a pipeline.
+fn derive_foreground_evidence(
+    shell_program: Option<&str>,
+    job: Option<&ForegroundJob>,
+) -> ForegroundEvidence {
+    let selected = select_foreground_process(shell_program, job);
+    let program = selected
+        .as_ref()
+        .map(|(program, _)| program.clone())
+        .or_else(|| shell_program.map(normalized_program_name));
+    let launch = selected.map(|(_, process)| launch_from_process(process));
+    let programs = collect_foreground_programs(job, program.as_deref());
+    ForegroundEvidence {
+        program,
+        programs,
+        launch,
+    }
+}
+
+fn select_foreground_process<'a>(
+    shell_program: Option<&str>,
+    job: Option<&'a ForegroundJob>,
+) -> Option<(String, &'a ForegroundProcess)> {
+    let job = job?;
+    if let Some(shell_program) = shell_program
+        && let Some(process) = job
+            .processes
+            .iter()
+            .find(|process| process_matches_program(process, shell_program))
+    {
+        return Some((normalized_program_name(shell_program), process));
+    }
+    if shell_program.is_some() && job.processes.iter().all(|process| process.argv.is_empty()) {
+        return None;
+    }
+    primary_foreground_process(job).map(|process| (process_name(process), process))
+}
+
+fn primary_foreground_process(job: &ForegroundJob) -> Option<&ForegroundProcess> {
+    job.processes
+        .iter()
+        .find(|process| process.pid == job.process_group_id)
+        .or_else(|| job.processes.first())
+}
+
+fn process_matches_program(process: &ForegroundProcess, program: &str) -> bool {
+    program_position(program, &launch_from_process(process)).is_some()
+}
+
+fn launch_from_process(process: &ForegroundProcess) -> ForegroundLaunch {
+    ForegroundLaunch {
+        executable: process.executable.as_deref().map(std::path::PathBuf::from),
+        argv: process.argv.clone(),
+    }
+}
+
+fn process_name(process: &ForegroundProcess) -> String {
+    process
+        .executable
+        .as_deref()
+        .and_then(path_program_name)
+        .or_else(|| {
+            process
+                .argv
+                .first()
+                .and_then(|value| path_program_name(value))
+        })
+        .map(normalized_program_name)
+        .unwrap_or_else(|| normalized_program_name(&process.name))
+}
+
+fn path_program_name(path: &str) -> Option<&str> {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+}
+
+fn collect_foreground_programs(
+    job: Option<&ForegroundJob>,
+    logical_program: Option<&str>,
+) -> Vec<String> {
+    let mut programs = Vec::new();
+    for process in job.into_iter().flat_map(|job| &job.processes) {
+        push_program(&mut programs, &process.name);
+        if let Some(name) = process.executable.as_deref().and_then(path_program_name) {
+            push_program(&mut programs, name);
+        }
+        if let Some(name) = process
+            .argv
+            .first()
+            .and_then(|value| path_program_name(value))
+        {
+            push_program(&mut programs, name);
+        }
+    }
+    if let Some(program) = logical_program {
+        push_program(&mut programs, program);
+    }
+    programs
+}
+
+fn push_program(programs: &mut Vec<String>, program: &str) {
+    let program = normalized_program_name(program);
+    if !program.is_empty() && !programs.iter().any(|item| item == &program) {
+        programs.push(program);
+    }
+}
+
+fn normalized_program_name(program: &str) -> String {
+    crate::platform::command::normalized_program_name(program)
+}
+
 /// How to launch the foreground program again: where it lives, and what it was given.
 ///
 /// The path is empty for the ordinary pane, because a program on `PATH` is reachable by name and a
@@ -557,24 +748,21 @@ fn compute_runtime_state(
 /// dropped rather than guessed at.
 fn foreground_launch(
     pane: &mut ServerPane,
-    inspector: &impl ProcessInspector,
     foreground_program: Option<&str>,
+    inspected_launch: Option<&ForegroundLaunch>,
 ) -> (Option<String>, Vec<String>) {
     let empty = (None, Vec::new());
-    let (Some(program), Some(pty)) = (foreground_program, pane.pty.as_ref()) else {
+    let (Some(program), Some(launch)) = (foreground_program, inspected_launch) else {
         return empty;
     };
-    let Some(launch) = inspector.foreground_launch(pty) else {
-        return empty;
-    };
-    let Some(position) = program_position(program, &launch) else {
+    let Some(position) = program_position(program, launch) else {
         return empty;
     };
     // Past the program word, the executable behind the process is the interpreter rather than the
     // program - `/usr/bin/python3`, not the script the user ran - so the argument naming the
     // program is the path worth keeping.
     let executable = match position {
-        0 => launch.executable,
+        0 => launch.executable.clone(),
         position => Some(std::path::PathBuf::from(&launch.argv[position])),
     };
     let executable = executable
@@ -804,53 +992,52 @@ fn resolve_detected_agent(
 fn identify_pane_agent<'a>(
     pane: &ServerPane,
     agents: &'a AgentCatalog,
-    inspector: &impl ProcessInspector,
     foreground_program: Option<&str>,
-    scan: &mut LazyProcessScan,
+    foreground_job: Option<&ForegroundJob>,
 ) -> Option<&'a crate::agent_detection::AgentDefinition> {
-    let mut foreground_job = pane
-        .pty
-        .as_ref()
-        .and_then(|pty| inspector.foreground_job_in(pty, scan.get()));
     let configured_hint = ["ROZI_AGENT", "HERDR_AGENT"].into_iter().find_map(|key| {
         pane.env
             .iter()
             .rev()
             .find_map(|(candidate, value)| (candidate == key).then(|| value.clone()))
     });
-    if let Some(hint) = configured_hint {
-        if let Some(process) = foreground_job
-            .as_mut()
-            .and_then(|job| job.processes.first_mut())
-        {
-            process.agent_hint.get_or_insert(hint);
-        } else {
-            foreground_job = Some(crate::platform::process::ForegroundJob {
-                process_group_id: 0,
-                processes: vec![crate::platform::process::ForegroundProcess {
-                    pid: 0,
-                    name: foreground_program.unwrap_or_default().to_string(),
-                    executable: None,
-                    argv: Vec::new(),
-                    agent_hint: Some(hint),
-                }],
-            });
-        }
-    } else if foreground_job.is_none()
-        && let Some(program) = foreground_program
-    {
-        foreground_job = Some(crate::platform::process::ForegroundJob {
-            process_group_id: 0,
-            processes: vec![crate::platform::process::ForegroundProcess {
-                pid: 0,
-                name: program.to_string(),
-                executable: None,
-                argv: vec![program.to_string()],
-                agent_hint: None,
-            }],
-        });
-    }
+    let foreground_job = agent_detection_job(
+        foreground_job,
+        foreground_program,
+        configured_hint.as_deref(),
+    );
     crate::agent_detection::identify(agents, foreground_job.as_ref())
+}
+
+fn agent_detection_job(
+    foreground_job: Option<&ForegroundJob>,
+    foreground_program: Option<&str>,
+    configured_hint: Option<&str>,
+) -> Option<ForegroundJob> {
+    let mut job = foreground_job.cloned().or_else(|| {
+        (foreground_program.is_some() || configured_hint.is_some()).then(|| {
+            synthetic_foreground_job(foreground_program.unwrap_or_default(), configured_hint)
+        })
+    })?;
+    if let Some(hint) = configured_hint
+        && let Some(process) = job.processes.first_mut()
+    {
+        process.agent_hint.get_or_insert_with(|| hint.to_string());
+    }
+    Some(job)
+}
+
+fn synthetic_foreground_job(program: &str, agent_hint: Option<&str>) -> ForegroundJob {
+    ForegroundJob {
+        process_group_id: 0,
+        processes: vec![ForegroundProcess {
+            pid: 0,
+            name: program.to_string(),
+            executable: None,
+            argv: vec![program.to_string()],
+            agent_hint: agent_hint.map(str::to_string),
+        }],
+    }
 }
 
 /// Re-read the state of the agent the last sweep named, from this pane's own screen and title.
@@ -1127,6 +1314,154 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn foreground_evidence_replaces_a_shell_function_name() {
+        let job = ForegroundJob {
+            process_group_id: 42,
+            processes: vec![ForegroundProcess {
+                pid: 42,
+                name: "nvim".into(),
+                executable: Some("/usr/bin/nvim".into()),
+                argv: vec!["nvim".into(), ".".into()],
+                agent_hint: None,
+            }],
+        };
+
+        let evidence = derive_foreground_evidence(Some("n"), Some(&job));
+        assert_eq!(evidence.program.as_deref(), Some("nvim"));
+        assert_eq!(evidence.programs, ["nvim"]);
+        assert_eq!(
+            evidence.launch,
+            Some(ForegroundLaunch {
+                executable: Some("/usr/bin/nvim".into()),
+                argv: vec!["nvim".into(), ".".into()],
+            })
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_process_inspection_replaces_a_shell_function_hint() {
+        let pty = TerminalPty::spawn(
+            tui_lipan::prelude::TerminalPtyConfig::new("/bin/sh")
+                .arg("-c")
+                .arg("exec sleep 5"),
+            |_| {},
+        )
+        .expect("spawn foreground process");
+        std::thread::sleep(Duration::from_millis(200));
+
+        let mut pane = make_pane();
+        pane.pty = Some(pty);
+        pane.terminal.process_bytes(b"\x1b]133;C;rozi_exe=n\x07");
+        let mut first_scan = LazyProcessScan::default();
+        let state = compute_runtime_state(
+            &mut pane,
+            &crate::platform::process::linux::LinuxProcessInspector,
+            Some(&catalog()),
+            &mut first_scan,
+        );
+
+        assert!(first_scan.captured());
+        assert_eq!(state.foreground_program.as_deref(), Some("sleep"));
+        assert_eq!(state.foreground_programs.as_ref(), ["sleep"]);
+
+        pane.runtime = state;
+        let mut next_scan = LazyProcessScan::default();
+        let _ = compute_runtime_state(
+            &mut pane,
+            &crate::platform::process::linux::LinuxProcessInspector,
+            Some(&catalog()),
+            &mut next_scan,
+        );
+        assert!(
+            !next_scan.captured(),
+            "the cached process group must serve unchanged fast polls"
+        );
+    }
+
+    #[test]
+    fn interpreted_program_keeps_its_shell_reported_name() {
+        let job = ForegroundJob {
+            process_group_id: 42,
+            processes: vec![ForegroundProcess {
+                pid: 42,
+                name: "python3".into(),
+                executable: Some("/usr/bin/python3".into()),
+                argv: vec!["python3".into(), "/opt/bin/agent".into(), "--go".into()],
+                agent_hint: None,
+            }],
+        };
+
+        let evidence = derive_foreground_evidence(Some("agent"), Some(&job));
+        assert_eq!(evidence.program.as_deref(), Some("agent"));
+        assert_eq!(evidence.programs, ["python3", "agent"]);
+    }
+
+    #[test]
+    fn process_set_preserves_a_wrapped_editor_member() {
+        let job = ForegroundJob {
+            process_group_id: 40,
+            processes: vec![
+                ForegroundProcess {
+                    pid: 40,
+                    name: "npm".into(),
+                    executable: Some("/usr/bin/npm".into()),
+                    argv: vec!["npm".into(), "exec".into(), "nvim".into()],
+                    agent_hint: None,
+                },
+                ForegroundProcess {
+                    pid: 41,
+                    name: "nvim".into(),
+                    executable: Some("/usr/bin/nvim".into()),
+                    argv: vec!["nvim".into(), ".".into()],
+                    agent_hint: None,
+                },
+            ],
+        };
+
+        let evidence = derive_foreground_evidence(Some("npm"), Some(&job));
+        assert_eq!(evidence.program.as_deref(), Some("npm"));
+        assert_eq!(evidence.programs, ["npm", "nvim"]);
+    }
+
+    #[test]
+    fn missing_group_leader_still_exposes_remaining_members() {
+        let job = ForegroundJob {
+            process_group_id: 40,
+            processes: vec![ForegroundProcess {
+                pid: 41,
+                name: "nvim".into(),
+                executable: Some("/usr/bin/nvim".into()),
+                argv: vec!["nvim".into()],
+                agent_hint: None,
+            }],
+        };
+
+        let evidence = derive_foreground_evidence(None, Some(&job));
+        assert_eq!(evidence.program.as_deref(), Some("nvim"));
+        assert_eq!(evidence.programs, ["nvim"]);
+    }
+
+    #[test]
+    fn platforms_without_argv_keep_shell_identity_but_expose_observed_processes() {
+        let job = ForegroundJob {
+            process_group_id: 42,
+            processes: vec![ForegroundProcess {
+                pid: 42,
+                name: "python3".into(),
+                executable: Some("/usr/bin/python3".into()),
+                argv: Vec::new(),
+                agent_hint: None,
+            }],
+        };
+
+        let evidence = derive_foreground_evidence(Some("agent"), Some(&job));
+        assert_eq!(evidence.program.as_deref(), Some("agent"));
+        assert_eq!(evidence.programs, ["python3", "agent"]);
+        assert_eq!(evidence.launch, None);
     }
 
     /// The path only travels when it is the same program the pane reports; a wrapper or a shell

@@ -202,8 +202,9 @@ programs = ["vim", "nvim", "view", "vimdiff"]
 ```
 
 `name` identifies the declaration within the extension and must match `[a-z0-9_-]+`. `programs`
-contains executable basenames, not paths. Names are trimmed and matched case-insensitively;
-duplicates within one declaration or across built-in and extension targets are harmless.
+contains executable basenames, not paths. Names are trimmed and matched as normalized executable
+basenames (case-insensitively and without a Windows `.exe` suffix); duplicates within one
+declaration or across built-in and extension targets are harmless.
 
 Rozi validates these declarations when the extension loads and compiles enabled targets into its
 in-memory split-aware program set. The extension does not run code, receive key events, or

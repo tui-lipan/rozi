@@ -144,9 +144,12 @@ The explicit block above is optional after installing that extension. Keep it wh
 keys regardless of extension state, or to override a conflicting binding. An explicit entry for an
 action, including `[]` to leave it unbound, suppresses the extension suggestion.
 
-Rozi keeps the synchronous routing mechanism in core. When the focused pane's foreground process
-appears in `[navigation] editors`, Rozi forwards `Ctrl-h/j/k/l` to that process; otherwise it moves
-pane focus itself. The editor plugin handles its own split layout and calls a public
+Rozi keeps the synchronous routing mechanism in core. On Linux and macOS it compares
+`[navigation] editors` with every program sampled from the terminal's foreground process group, so
+an editor remains discoverable behind a shell function, package runner, or other wrapper. On
+platforms without process-group inspection, it falls back to the shell-reported command name. A
+match forwards `Ctrl-h/j/k/l` to the terminal; otherwise Rozi moves pane focus itself. The editor
+plugin handles its own split layout and calls a public
 `rozi run-action focus-<direction>` action only when it reaches an outer edge. Integrations can use
 the corresponding `-no-wrap` actions when focus should stay put at Rozi's outer edge.
 

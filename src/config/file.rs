@@ -1921,6 +1921,7 @@ mod file_tests {
     fn default_navigation_recognizes_vim_family_case_insensitively() {
         let nav = NavigationConfig::default();
         assert!(nav.is_split_editor("nvim"));
+        assert!(nav.is_split_editor("NVIM.EXE"));
         assert!(nav.is_split_editor("VIM"));
         assert!(nav.is_split_editor("vimdiff"));
         assert!(!nav.is_split_editor("bash"));

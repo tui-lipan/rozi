@@ -307,6 +307,9 @@ pub struct AgentScratch {
     pub probe: Option<AgentProbe>,
     /// When the process sweep last actually ran, for the periodic refresh.
     pub detected_at: Option<std::time::Instant>,
+    /// Last sampled foreground process group, shared by split-aware navigation and agent identity.
+    /// Keeping it across fast polls avoids re-walking the host process table every 250 ms.
+    pub foreground_job: Option<crate::platform::process::ForegroundJob>,
     /// The agent that sweep named, held so the pane's *state* can be re-read on every poll without
     /// repeating the walk that found it. Only the identity is expensive; see
     /// [`read_agent_state`](super::runtime::read_agent_state).

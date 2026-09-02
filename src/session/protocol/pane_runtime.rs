@@ -3,6 +3,10 @@ use tui_lipan::prelude::*;
 
 use crate::state::PaneId;
 
+fn boxed_strings_are_empty(values: &[String]) -> bool {
+    values.is_empty()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WirePalette {
     pub foreground: Option<Color>,
@@ -269,10 +273,18 @@ pub struct PaneRuntimeState {
     pub git_branch: Option<String>,
     pub cwd_source: PaneCwdSource,
     pub command_phase: PaneCommandPhase,
-    /// Normalized executable basename only - never a full command line (shell integrations are
-    /// expected to emit just the name; the process-inspector fallbacks read a `comm`/`proc_name`
-    /// value that is inherently already just a basename).
+    /// Reconciled logical foreground identity as a normalized executable basename, never a path or
+    /// command line. Shell intent is retained for interpreted commands; native evidence replaces a
+    /// shell alias or function when the platform can prove which executable took over.
     pub foreground_program: Option<String>,
+    /// Basename-only identities observed across the PTY's current foreground process group.
+    ///
+    /// POSIX terminals arbitrate input at process-group granularity, so there is no universally
+    /// correct single "input process" for pipelines or wrappers. Split-aware input routing checks
+    /// this complete, sampled set and falls back to [`Self::foreground_program`] when native
+    /// process inspection is unavailable (notably on Windows).
+    #[serde(default, skip_serializing_if = "boxed_strings_are_empty")]
+    pub foreground_programs: Box<[String]>,
     /// Absolute path of the foreground executable, set **only** when [`Self::foreground_program`]
     /// does not resolve on the session server's own `PATH`.
     ///

@@ -681,9 +681,10 @@ impl NavigationConfig {
     /// Whether `command` (a pane's foreground process name) is a program that handles its own
     /// splits, so `smart-focus-*` should forward the navigation key to it rather than move focus.
     pub fn is_split_editor(&self, command: &str) -> bool {
+        let command = crate::platform::command::normalized_program_name(command);
         self.editors
             .iter()
-            .any(|name| name.eq_ignore_ascii_case(command))
+            .any(|name| crate::platform::command::normalized_program_name(name) == command)
     }
 
     pub(crate) fn replace_with_user_editors(&mut self, editors: Vec<String>) {

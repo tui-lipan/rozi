@@ -28,6 +28,7 @@ struct PaneInfo {
     argv: Option<Vec<String>>,
     /// Live foreground process, which is what the pane is running now rather than what launched it.
     foreground_program: Option<String>,
+    foreground_programs: Vec<String>,
     foreground_arguments: Vec<String>,
     cwd: Option<String>,
     status: String,
@@ -242,6 +243,7 @@ impl PaneInfo {
                 .and_then(crate::pane::launch::PaneLaunch::argv)
                 .map(<[String]>::to_vec),
             foreground_program: pane.terminal.foreground_program.clone(),
+            foreground_programs: pane.terminal.foreground_programs.clone(),
             foreground_arguments: pane.terminal.foreground_arguments.clone(),
             cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
             status: pane.terminal.status_text(),
@@ -1457,6 +1459,7 @@ mod tests {
                 let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
                 pane.terminal.title = Some("build".into());
                 pane.terminal.foreground_program = Some("cargo".into());
+                pane.terminal.foreground_programs = vec!["cargo".into(), "rustc".into()];
                 pane.terminal.foreground_arguments = vec!["test".into()];
                 pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
                     value: "working".into(),
@@ -1483,6 +1486,7 @@ mod tests {
                 assert_eq!(data[0]["session"], "dev");
                 assert_eq!(data[0]["title"], "build");
                 assert_eq!(data[0]["foreground_program"], "cargo");
+                assert_eq!(data[0]["foreground_programs"][1], "rustc");
                 assert_eq!(data[0]["foreground_arguments"][0], "test");
             })
             .expect("spawn list panes test thread")

@@ -83,9 +83,10 @@ The shape inside `data` depends on `cmd`. CLI JSON output preserves this envelop
 | Other one-shot commands | Absent on success. |
 
 A `list-panes` object has `session`, `id`, `title`, `workspace`, `command`, `argv`,
-`foreground_program`, `foreground_arguments`, `cwd`, `status`, `reported_status`,
+`foreground_program`, `foreground_programs`, `foreground_arguments`, `cwd`, `status`, `reported_status`,
 `status_reason`, `agent`, and `agent_state`. Optional values are JSON null. Scratch panes use
-workspace `0`.
+workspace `0`. `foreground_programs` contains the normalized basename-only process-group evidence
+used by split-aware navigation; it may contain more than one entry for wrappers and pipelines.
 
 The metrics object has `sampled_at_unix_ms`, `client_inbound`, `client_outbound`, `piped_remote`,
 `orphan_output`, and `server`. Queue and byte-buffer objects report current, high-water, and

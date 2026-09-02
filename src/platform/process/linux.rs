@@ -95,6 +95,11 @@ impl ProcessInspector for LinuxProcessInspector {
         (!name.is_empty()).then(|| name.to_string())
     }
 
+    fn foreground_process(&self, pty: &TerminalPty) -> Option<ForegroundProcess> {
+        let process_group_id = pty.foreground_process_group_id()?.try_into().ok()?;
+        process_group_member(process_group_id, process_group_id)
+    }
+
     fn foreground_launch(&self, pty: &TerminalPty) -> Option<ForegroundLaunch> {
         let pgid = pty.foreground_process_group_id()?;
         // `/proc/<pid>/exe` resolves to the real file even when the process was started through a

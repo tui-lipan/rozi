@@ -2,13 +2,13 @@
 //!
 //! [`ProcessInspector`] is the trait the plan specifies; [`PlatformProcessInspector`] resolves to
 //! whichever per-OS implementation applies to the current build target. Every implementation is
-//! best-effort and server-side only (the server owns the PTY and process identity) - CWD/foreground
-//! precedence (OSC report first, this trait second, launch config last) is decided by
+//! best-effort and server-side only (the server owns the PTY and process identity). Shell intent,
+//! foreground process-group evidence, and replayable launch details are reconciled by
 //! `session::server`'s pane-runtime-state computation (Phase 6), not here.
 //!
 //! - [`linux`] - **implemented**: `/proc/<pid>/cwd` plus bounded foreground process-group records.
 //! - [`macos`] - **implemented, unverified** (no macOS runtime in this environment; cross-compile
-//!   checked only): `proc_pidvnodepathinfo` for cwd, `proc_name` for the foreground executable.
+//!   checked only): `proc_pidvnodepathinfo` for cwd and `libproc` foreground-group enumeration.
 //! - [`windows`] - **implemented as explicit unavailable**, per the plan (no PEB/process-tree
 //!   probing on Windows).
 
@@ -50,8 +50,8 @@ pub struct ProcessScan {
 }
 
 impl ProcessScan {
-    /// Walk the process table now. Platforms whose `foreground_job` does not enumerate processes
-    /// (macOS reads the group leader directly; Windows reports unavailable) capture nothing.
+    /// Walk the process table now. Linux reuses this host-wide scan; macOS queries one process
+    /// group directly and Windows reports process inspection unavailable.
     pub fn capture() -> Self {
         Self {
             #[cfg(target_os = "linux")]
@@ -83,14 +83,35 @@ pub mod macos;
 #[cfg(windows)]
 pub mod windows;
 
-/// Best-effort native fallback for a pane's working directory and foreground executable, used
-/// when the child has not (yet) reported either via shell-integration OSC sequences.
+/// Best-effort native view of a pane's working directory and foreground executable.
+///
+/// Runtime tracking reconciles this with shell-integration reports: the shell preserves logical
+/// command identity, while native inspection reports every process eligible to read from a POSIX
+/// terminal's foreground group. There is deliberately no claim that one member is the unique input
+/// receiver.
 pub trait ProcessInspector {
     /// The PTY child's current working directory, if the platform can determine one.
     fn cwd(&self, pty: &TerminalPty) -> Option<PathBuf>;
     /// The normalized basename of the process currently in the PTY's foreground process group, if
     /// the platform can determine one. Never a full command line.
     fn foreground_program(&self, pty: &TerminalPty) -> Option<String>;
+    /// Group leader identity and invocation read as one observation.
+    ///
+    /// Platform backends should override this when separate name/launch reads can race a process
+    /// group transition. The default preserves compatibility for lightweight/test inspectors.
+    fn foreground_process(&self, pty: &TerminalPty) -> Option<ForegroundProcess> {
+        let name = self.foreground_program(pty)?;
+        let launch = self.foreground_launch(pty).unwrap_or_default();
+        Some(ForegroundProcess {
+            pid: 0,
+            name,
+            executable: launch
+                .executable
+                .map(|path| path.to_string_lossy().into_owned()),
+            argv: launch.argv,
+            agent_hint: None,
+        })
+    }
     /// How the process leading that same foreground process group was invoked.
     ///
     /// [`foreground_program`](Self::foreground_program) names what is running; this says where it

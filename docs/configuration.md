@@ -281,7 +281,7 @@ Desktop notifications use the platform notification implementation and are best 
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `editors` | array of strings | built-in and extension targets | When omitted, enabled extension targets augment Rozi's built-in foreground-process list. When present, replaces that complete resolved list; `[]` disables split-aware detection. Empty names are removed. Matching is case-insensitive. |
+| `editors` | array of strings | built-in and extension targets | When omitted, enabled extension targets augment Rozi's built-in foreground-process list. When present, replaces that complete resolved list; `[]` disables split-aware detection. Empty names are removed. Matching uses normalized executable basenames, case-insensitively and without a Windows `.exe` suffix. |
 
 See [Split-aware navigation](keybindings.md#split-aware-navigation).
 

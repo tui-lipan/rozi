@@ -31,9 +31,9 @@ After `Shift+B` focuses the sidebar:
 Clicking a row runs its action without moving keyboard focus away from the pane. The sidebar is not
 part of the normal `Tab` focus order.
 
-Drag the outside edge to resize the sidebar. Drag the panel divider to change the split. Tab order,
-panel assignment, width, split state, and split ratio are saved to `config.toml`. Runtime visibility
-and the selected tab are not.
+Drag the outside edge to resize the sidebar; it stops at the same `16..=80` columns `width` is
+clamped to. Drag the panel divider to change the split. Tab order, panel assignment, width, split
+state, and split ratio are saved to `config.toml`. Runtime visibility and the selected tab are not.
 
 ## Configure tabs and panels
 

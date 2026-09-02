@@ -978,6 +978,29 @@ impl State {
         if reserved <= 1 { 0 } else { reserved }
     }
 
+    /// What the sidebar's configured width bounds leave the shell splitter's sidebar pane right
+    /// now: the window [`set_width`](crate::update) clamps to, put through the terminal's cap and
+    /// the slide the same way [`effective_sidebar_width`](Self::effective_sidebar_width) is, less
+    /// the column the splitter spends on its own handle.
+    ///
+    /// The splitter drags against these, so the handle stops where the sidebar stops. A drag that
+    /// ran past them would leave the panel drawn at its clamped width inside a wider allocation -
+    /// an empty strip beside the sidebar - and hand the pane column a rect narrower than the width
+    /// its panes were laid out for, clipping them.
+    pub fn sidebar_pane_bounds(&self, terminal_viewport: Rect) -> (u16, u16) {
+        let slide = self.sidebar_slide.get().clamp(0.0, 1.0);
+        let reserve = |width: u16| {
+            let deployed =
+                crate::layout::geometry::effective_sidebar_width(terminal_viewport.w, width, true);
+            let reserved = (f32::from(deployed) * slide).round() as u16;
+            reserved.saturating_sub(1)
+        };
+        (
+            reserve(crate::config::SIDEBAR_MIN_WIDTH),
+            reserve(crate::config::SIDEBAR_MAX_WIDTH),
+        )
+    }
+
     /// The width the sidebar occupies once deployed, whether or not it is currently visible or
     /// settled.
     ///

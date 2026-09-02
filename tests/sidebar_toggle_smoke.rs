@@ -363,6 +363,79 @@ fn split_sidebar_junction_resizes_both_splitters_without_entering_pane_content()
         .expect("sidebar junction completes");
 }
 
+/// Dragging the splitter past the width the sidebar is allowed to take stops at that width
+/// instead of running to the pointer.
+///
+/// The columns beyond it would belong to nobody: the panel is drawn at its clamped width, so the
+/// rest of its allocation is an empty strip, and the pane column is laid out for the space the
+/// sidebar released but handed a rect that starts past it, clipping the panes. The splitter is
+/// told the same window `set_width` clamps to, so neither end can be dragged through.
+#[test]
+fn sidebar_splitter_drag_stops_at_the_configured_width_bounds() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            const ROW: u16 = 3;
+            let mut backend = sidebar_backend(200, 20);
+            backend.state_mut().sidebar_visible = true;
+            backend.render();
+
+            let divider = |backend: &TestBackend<AppRoot>| {
+                let frame = backend.capture_frame();
+                (0..200)
+                    .find(|x| frame.cell(*x, ROW).symbol == "│")
+                    .expect("sidebar divider")
+            };
+            let drag_to = |backend: &mut TestBackend<AppRoot>, target: u16| {
+                let from = divider(backend);
+                backend
+                    .send_mouse(mouse(from, ROW, MouseKind::Down(MouseButton::Left)))
+                    .expect("grab sidebar splitter");
+                backend
+                    .send_mouse(mouse(target, ROW, MouseKind::Drag(MouseButton::Left)))
+                    .expect("drag sidebar splitter");
+                backend.render();
+            };
+
+            // Well past the maximum: the divider parks one column short of it (its own column
+            // completes the reservation) while the drag is still live, and the pane column starts
+            // right after it - the width the panes were laid out for.
+            drag_to(&mut backend, 130);
+            assert_eq!(divider(&backend), rozi::config::SIDEBAR_MAX_WIDTH - 1);
+            assert_eq!(
+                backend.state().content_viewport(backend.viewport()).w,
+                200 - rozi::config::SIDEBAR_MAX_WIDTH
+            );
+            backend
+                .send_mouse(mouse(130, ROW, MouseKind::Up(MouseButton::Left)))
+                .expect("release sidebar splitter");
+            backend.render();
+            assert_eq!(
+                backend.state().config.sidebar.width,
+                rozi::config::SIDEBAR_MAX_WIDTH
+            );
+
+            // And the same at the other end.
+            drag_to(&mut backend, 3);
+            assert_eq!(divider(&backend), rozi::config::SIDEBAR_MIN_WIDTH - 1);
+            assert_eq!(
+                backend.state().content_viewport(backend.viewport()).w,
+                200 - rozi::config::SIDEBAR_MIN_WIDTH
+            );
+            backend
+                .send_mouse(mouse(3, ROW, MouseKind::Up(MouseButton::Left)))
+                .expect("release sidebar splitter");
+            backend.render();
+            assert_eq!(
+                backend.state().config.sidebar.width,
+                rozi::config::SIDEBAR_MIN_WIDTH
+            );
+        })
+        .expect("spawn sidebar bounds thread")
+        .join()
+        .expect("sidebar bounds drag completes");
+}
+
 #[test]
 fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
     std::thread::Builder::new()

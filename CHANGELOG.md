@@ -23,6 +23,11 @@
 
 ### Fixed
 
+- Dragging the sidebar splitter stops at the width the sidebar is allowed to take, at both ends,
+  instead of following the pointer past it. The handle used to keep travelling while the panel
+  stayed at its clamped width: an empty strip opened between the sidebar and the pane column, and
+  the panes were clipped because they had been laid out for the columns the sidebar released but
+  never got. The splitter now carries the same bounds `[sidebar] width` is clamped to.
 - `rozi sessions kill <NAME>` exits with an error when no live or restorable session has that name
   instead of succeeding silently.
 - The extension detail overlay scrolls its own document with an integrated scrollbar and even side

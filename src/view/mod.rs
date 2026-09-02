@@ -876,7 +876,20 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             .element
             .blend_toward(theme.surface.backdrop, 1.0 - sidebar_dim);
         let divider_style = Style::new().fg(divider_bg.elevate_by(0.15)).bg(divider_bg);
+        // The same window `set_width` clamps to, handed to the splitter so the drag stops there
+        // too. Without it the handle follows the pointer past the widest sidebar rozi will draw,
+        // and the columns between the panel and the pane column belong to nobody: an empty strip
+        // beside the sidebar, with the pane column clipped because it was laid out for the width
+        // it was denied.
+        let (min_pane, max_pane) = ctx.state.sidebar_pane_bounds(viewport);
+        let sidebar_limits = SplitterPaneLimits::range(min_pane, max_pane);
+        let pane_limits = if docked_right {
+            vec![SplitterPaneLimits::UNBOUNDED, sidebar_limits]
+        } else {
+            vec![sidebar_limits, SplitterPaneLimits::UNBOUNDED]
+        };
         let mut splitter = Splitter::vertical()
+            .pane_limits(pane_limits)
             .split_id("rozi-sidebar-shell")
             .weights_nonce(ctx.state.sidebar.outer_splitter_nonce(
                 viewport.w,

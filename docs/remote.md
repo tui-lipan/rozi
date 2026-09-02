@@ -219,6 +219,9 @@ Temporary servers still follow their no-client recovery timer.
   nothing can reattach to it by name;
 - a launcher scoped to that host stops being scoped to it.
 
+The last point is reason enough on its own: `Ctrl+X` is offered whenever this client is tied to the
+host, so a launcher reading `REMOTE · workbox` with nothing attached can still walk away from it.
+
 Only `Ctrl+K` kills a session. Disconnecting never does, even for a named session this client
 created. Use the session picker or Sessions sidebar to reconnect.
 

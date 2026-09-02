@@ -108,6 +108,12 @@ Browsing a host is an explicit request to look at it, so it always lands on that
 The same is true of `Ctrl+N` on Remote hosts: a new target that discovers successfully opens
 `Sessions · <host>` and waits.
 
+That request outlives the overlay. `Esc` steps back to Remote hosts to let you look at the other
+machines; it does not withdraw the host you opened, so a client with nothing attached is still
+scoped to it once the picker closes. `Ctrl+X` is what leaves a host, and it is offered on
+`Sessions · <host>` whenever this client is tied to that machine at all — including when the only
+tie is the scope itself.
+
 Only offline Recent hosts can be forgotten. Configured hosts remain defined by configuration, and
 a host with a live or connecting attachment must be disconnected first. Forgetting also removes
 its cached session metadata.
@@ -170,8 +176,9 @@ and where dismissing `Sessions · workbox` leaves a client with nothing attached
 starts a temporary shell on `workbox`. Opening Sessions from it is still global.
 
 The scope follows the session you are working in, so killing a session leaves you in that
-machine's launcher rather than silently back on this one. Disconnecting the host (`Ctrl+X`) or
-forgetting it clears the scope.
+machine's launcher rather than silently back on this one. Three things change it: opening another
+host, disconnecting this one (`Ctrl+X`), and forgetting it. Browsing the host list, or closing the
+picker without choosing anything, leaves it where it is.
 
 ## Name or rename a session
 

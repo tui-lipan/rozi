@@ -41,17 +41,32 @@ pub(crate) fn session_row_can_disconnect(state: &State, entry: &DiscoveredSessio
             .is_some()
 }
 
-/// Host-wide disconnect is only offered when this client actually holds a connection to that
-/// remote — the current session, or one parked in the background.
-pub(crate) fn session_row_can_disconnect_host(state: &State, entry: &DiscoveredSession) -> bool {
-    let Some(target) = entry.remote_target.as_ref() else {
-        return false;
-    };
+/// Whether this client is tied to `target` at all, and so has something for a host-wide disconnect
+/// to undo: the session on screen, one parked in the background, or — with nothing attached
+/// anywhere — the launcher scope still pointing at that machine.
+///
+/// The scope counts because it is a tie the user can see and cannot otherwise cut: a launcher
+/// reading `REMOTE · workbox` is where the next shell lands, and `Ctrl+X` is the key that says
+/// "I am done with this host". Without it the one state the badge exists to describe would be the
+/// one state that could not be left.
+pub(crate) fn host_can_disconnect(
+    state: &State,
+    target: &crate::session::remote::RemoteTarget,
+) -> bool {
     state.current().remote_target.as_ref() == Some(target)
         || state
             .background
             .values()
             .any(|attachment| attachment.remote_target.as_ref() == Some(target))
+        || state.active_launcher_scope() == Some(target)
+}
+
+/// Host-wide disconnect for a picker row, which offers it for the row's own host.
+pub(crate) fn session_row_can_disconnect_host(state: &State, entry: &DiscoveredSession) -> bool {
+    let Some(target) = entry.remote_target.as_ref() else {
+        return false;
+    };
+    host_can_disconnect(state, target)
 }
 
 /// Clear any armed session-picker kill and dismiss its confirmation toast. Called from every path

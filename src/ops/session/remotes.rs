@@ -160,7 +160,7 @@ pub(crate) fn restore_remote_host_sessions(
 ) -> Update {
     install_remote_hosts(ctx, String::new(), Some(target.clone()));
     let rows = immediate_rows_for_target(&ctx.state, &target);
-    scope_launcher_to(ctx, Some(&target));
+    scope_launcher_to(ctx, &target);
     if let Some(entry) = ctx.state.hosts.get_mut(&target) {
         entry.probe = crate::state::HostProbe::Reached;
     }
@@ -186,9 +186,10 @@ pub(crate) fn close_remote_picker(ctx: &mut Context<AppRoot>) -> Update {
     match mode {
         Some(RemotePickerMode::HostSessions { .. }) => {
             abandon_remote_probe(&mut ctx.state);
-            // Back out of the host and the launcher stops being scoped to it: the surface the user
-            // is on is the host *list* again, which names no machine.
-            scope_launcher_to(ctx, None);
+            // The scope survives backing out. It belongs to the launcher, not to this overlay:
+            // opening a host was the explicit request to work there, and stepping back to the host
+            // list to look at the others does not withdraw it. Leaving a host is `Ctrl+X`, and
+            // forgetting or attaching elsewhere moves the scope on its own.
             if let Some(picker) = ctx.state.remote_picker.as_mut() {
                 picker.return_to_hosts();
             }
@@ -238,9 +239,9 @@ pub(crate) fn cancel_host_probe(ctx: &mut Context<AppRoot>) -> bool {
 /// Only while in the launcher. With a session on screen the picker is something the user is looking
 /// *through*, and browsing a host would otherwise quietly decide where they land after killing a
 /// session they have not killed yet.
-fn scope_launcher_to(ctx: &mut Context<AppRoot>, target: Option<&RemoteTarget>) {
+fn scope_launcher_to(ctx: &mut Context<AppRoot>, target: &RemoteTarget) {
     if ctx.state.is_launcher() {
-        ctx.state.launcher_scope = target.cloned();
+        ctx.state.launcher_scope = Some(target.clone());
     }
 }
 
@@ -408,7 +409,7 @@ pub(crate) fn apply_host_discovery(
             );
             crate::session::record_recent_remote(&target);
             crate::ops::session::seed_host_registry(ctx);
-            scope_launcher_to(ctx, Some(&target));
+            scope_launcher_to(ctx, &target);
             if let Some(entry) = ctx.state.hosts.get_mut(&target) {
                 entry.probe = crate::state::HostProbe::Reached;
             }

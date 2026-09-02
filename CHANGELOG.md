@@ -11,6 +11,12 @@
   Remote hosts must run this same release for `sessions list --remote` and
   `sessions kill --remote`.
 - CLI help and the final detach summary now use the same palette as Rozi's interface and updater.
+- A launcher scoped to a remote host keeps that scope when `Esc` steps back from `Sessions · <host>`
+  to the host list. Opening a host is a request to work there, and browsing the other machines does
+  not withdraw it; leaving a host is `Ctrl+X`, forgetting it, or opening another one.
+- `Ctrl+X` (disconnect host) is offered whenever this client is tied to a host, which now includes a
+  launcher scoped to it with nothing attached. That state could previously only be left by
+  forgetting the host.
 - Takes tui-lipan 0.4.1, which requires a `termina` that no longer panics the input worker on a
   mouse report at column or row 0. Rozi's `[patch.crates-io]` for that fix is gone, so builds from
   the published crate - `cargo install rozi` included - carry it like every other build.

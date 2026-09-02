@@ -272,7 +272,7 @@ fn remote_host_sessions_overlay(
     let can_disconnect = selected_session.as_ref().is_some_and(|session| {
         crate::ops::session::session_row_can_disconnect(&ctx.state, session)
     });
-    let can_disconnect_host = !remote_host_connections(ctx, target).is_empty();
+    let can_disconnect_host = crate::ops::session::host_can_disconnect(&ctx.state, target);
     let selected_identity = picker.selected_session.clone();
     let selected_is_current = selected_session
         .as_ref()

@@ -48,6 +48,9 @@ pub struct AppRoot {
     /// mid-test arrives inside whatever `pump` happens to be running, which is what made
     /// assertions about panes, hosts, and in-flight polls flake under load.
     startup_tasks: bool,
+    /// Whether real startup tasks include the public release check. Integration apps keep their
+    /// session/control workers but must never contact GitHub.
+    startup_update_check: bool,
     event_hub: events::EventHub,
 }
 
@@ -61,6 +64,7 @@ struct StartupProfile {
 
 struct StartupTasks {
     enabled: bool,
+    update_check: bool,
     watch_hangup: bool,
     control_listener: Option<crate::platform::ipc::IpcListener>,
     event_hub: events::EventHub,
@@ -77,6 +81,19 @@ impl StartupTasks {
         link.send(Msg::CommandLinkReady(link.clone()));
         if !self.enabled {
             return;
+        }
+        if self.update_check {
+            let update_link = link.clone();
+            std::thread::spawn(move || {
+                if let Some(update) = ops::update_check::check_startup() {
+                    let compatibility_warning = update.compatibility_warning();
+                    update_link.send(Msg::StartupUpdateAvailable {
+                        latest: update.latest,
+                        hint: update.hint,
+                        compatibility_warning,
+                    });
+                }
+            });
         }
         ops::config::spawn_config_watcher(&link);
         if self.watch_hangup {
@@ -417,6 +434,7 @@ impl Default for AppRoot {
             startup_last_session: None,
             watch_hangup: false,
             startup_tasks: false,
+            startup_update_check: false,
             event_hub: events::EventHub::default(),
         }
     }
@@ -457,6 +475,7 @@ impl AppRoot {
             startup_last_session,
             watch_hangup: true,
             startup_tasks: true,
+            startup_update_check: true,
             event_hub: events::EventHub::default(),
         }
     }
@@ -466,7 +485,7 @@ impl AppRoot {
         listener: crate::platform::ipc::IpcListener,
         guard: control::ControlSocketGuard,
     ) -> Self {
-        Self::new(
+        let mut app = Self::new(
             config,
             ThemePreset::Lipan.theme(),
             None,
@@ -481,7 +500,9 @@ impl AppRoot {
             None,
             false,
             None,
-        )
+        );
+        app.startup_update_check = false;
+        app
     }
 
     fn start_theme_watcher(ctx: &mut Context<Self>) {
@@ -635,6 +656,7 @@ impl Component for AppRoot {
         let start = self.prepare_session_start(ctx);
         let tasks = StartupTasks {
             enabled: self.startup_tasks,
+            update_check: self.startup_update_check,
             watch_hangup: self.watch_hangup,
             control_listener: self.control_listener.take(),
             event_hub: self.event_hub.clone(),

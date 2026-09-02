@@ -10,6 +10,11 @@ use crate::{control, session};
 #[derive(Clone)]
 pub enum Msg {
     CommandLinkReady(CommandLink<Msg>),
+    StartupUpdateAvailable {
+        latest: semver::Version,
+        hint: String,
+        compatibility_warning: Option<String>,
+    },
     /// Framework widget focus entered a pane, or left command-entered sidebar modality without
     /// entering one. Produced by the root focus-transition hook.
     FrameworkFocusEnteredPane(Option<PaneId>),

@@ -175,6 +175,28 @@ pub(crate) fn notify_error(
     )
 }
 
+/// Report a compatibility or other non-fatal risk with warning-colored chrome.
+pub(crate) fn notify_warning(
+    ctx: &mut Context<AppRoot>,
+    title: impl Into<String>,
+    message: impl Into<String>,
+) -> Notified {
+    let (title, message) = (title.into(), message.into());
+    let content = toast_content(Some(&title), &message);
+    let toast = warning_toast(
+        &ctx.state.theme,
+        ctx.state.config.pane.toast_opacity,
+        title,
+        message,
+    );
+    notify(
+        ctx,
+        ToastKey::Content(content_key(&content)),
+        content,
+        toast,
+    )
+}
+
 /// Report the newest state of `channel`, superseding whatever that channel last showed.
 pub(crate) fn notify_on(
     ctx: &mut Context<AppRoot>,
@@ -219,8 +241,27 @@ pub(crate) fn confirm_toast(theme: &Theme, opacity: f32, message: impl Into<Stri
         .padding((0, 0, 0, 0))
 }
 
+pub(crate) fn warning_toast(
+    theme: &Theme,
+    opacity: f32,
+    title: impl Into<String>,
+    message: impl Into<String>,
+) -> Toast {
+    titled_toast(theme, theme.status.warning, opacity, title, message)
+}
+
 pub(crate) fn error_toast(
     theme: &Theme,
+    opacity: f32,
+    title: impl Into<String>,
+    message: impl Into<String>,
+) -> Toast {
+    titled_toast(theme, theme.status.error, opacity, title, message)
+}
+
+fn titled_toast(
+    theme: &Theme,
+    accent: Color,
     opacity: f32,
     title: impl Into<String>,
     message: impl Into<String>,
@@ -232,7 +273,7 @@ pub(crate) fn error_toast(
         .min_width(Length::Px(10))
         .max_width(Length::Px(64))
         .border(true)
-        .frame_style(toast_frame_style(theme, theme.status.error, opacity))
+        .frame_style(toast_frame_style(theme, accent, opacity))
         .title_style(toast_text_style(theme).bold())
         .message_style(toast_text_style(theme))
         .copyable(true)

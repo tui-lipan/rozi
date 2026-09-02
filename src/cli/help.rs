@@ -270,7 +270,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "-h, --help [--advanced]",
                 "Print help; --advanced adds internals",
             ),
-            row("-V, --version", "Print version and protocol range"),
+            row(
+                "-V, --version",
+                "Print version, extension API, and protocol range",
+            ),
             row(
                 "    --session <NAME>",
                 "Session target, same as a positional TARGET",
@@ -415,8 +418,10 @@ pub(super) fn endpoint_help() -> String {
 }
 
 pub(crate) fn print_version() {
+    use crate::config::EXTENSION_API_VERSION;
     use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
     println!("rozi {}", env!("CARGO_PKG_VERSION"));
+    println!("extension_api={EXTENSION_API_VERSION}");
     println!("protocol_min={MIN_SUPPORTED_PROTOCOL}");
     println!("protocol_max={PROTOCOL_VERSION}");
 }

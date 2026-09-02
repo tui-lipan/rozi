@@ -4,8 +4,7 @@
 use super::args::UpdateCommand;
 use super::output::{OutputStyles, OutputTone};
 use crate::platform::install::InstallError;
-use crate::platform::install_source::{InstallSource, SourceEnv};
-use crate::platform::paths::{self, PlatformEnv};
+use crate::platform::install_source::InstallSource;
 
 pub(crate) fn recover_managed_installation() -> std::result::Result<(), String> {
     crate::platform::install::from_process()
@@ -40,24 +39,13 @@ pub(crate) fn run_install_cli() -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// Classify the running binary's distribution channel.
-///
-/// Falls back to [`InstallSource::Unknown`] when the platform will not name the executable, which
-/// is the same answer as an unrecognised layout: say nothing rather than guess a command.
-fn detect_install_source() -> InstallSource {
-    let source_env = SourceEnv::from_platform_env(&PlatformEnv::from_process());
-    paths::current_binary()
-        .map(|executable| InstallSource::detect(&executable, &source_env))
-        .unwrap_or(InstallSource::Unknown)
-}
-
 /// Name what owns an install `relswap` does not.
 ///
 /// `relswap` refuses these correctly but can only say "managed installation is not present", which
 /// tells the user what did not happen and nothing about what would. Reaching the real command is
 /// the entire point of detecting the channel.
 fn unmanaged_channel_clause() -> String {
-    let source = detect_install_source();
+    let source = crate::platform::install_source::detect_current();
     match source.upgrade_command() {
         Some(command) => format!(
             "this rozi was installed with {}, which owns its updates - run: {command}",
@@ -86,7 +74,7 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
             let current = result.current.as_ref().unwrap_or(&running);
             // `result.managed` is the authority on whether `rozi update` can act; the detected
             // channel only names what does own this install when it cannot.
-            let channel = (!result.managed).then(detect_install_source);
+            let channel = (!result.managed).then(crate::platform::install_source::detect_current);
             println!(
                 "{}  {} ({})",
                 styles.paint("Current", OutputTone::Muted),

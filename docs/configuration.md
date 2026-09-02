@@ -244,6 +244,10 @@ or sidebar stay quiet.
 Repeated messages renew the existing toast instead of stacking copies. Scripts can report an
 off-screen result with [`rozi notify`](control.md#actions-status-and-notifications).
 
+At client startup, a short informational toast reports a newer rozi release. A release that raises
+the extension API or session protocol uses a longer warning toast instead. Failed checks stay
+silent, and each release is announced only once across clients.
+
 ## `[notifications]`
 
 | Key | Type | Default | Constraints and behavior |

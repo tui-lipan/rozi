@@ -72,6 +72,12 @@ rozi update --rollback
 and activates the current release, drawing a progress meter on stderr while the archive arrives.
 `rozi update --rollback` activates the previously installed version without another download.
 
+The TUI also checks in the background when a client starts. It stays silent when rozi is current or
+the network is unavailable. A newer release gets a short toast with the command for the detected
+install channel. If the release raises the extension API or session protocol, the toast becomes a
+longer warning and names the compatibility change. Rozi records the announced version in its state
+directory, so other clients and later launches do not repeat the same release.
+
 The meter is written to stderr, so redirecting stdout keeps a clean stream while the row still
 reaches a watching terminal. It is suppressed entirely when stderr is not a terminal, or when
 `NO_COLOR` is set - a redirected or scripted update stays quiet.
@@ -92,9 +98,9 @@ On Windows the managed root also contains `state\`, `cache\`, `run\`, and `exten
 private to your user account, and rozi creates it that way whichever of those it makes first.
 
 The installer refuses to replace a command it does not own. It retains installed versions and does
-not currently provide automatic pruning. Update checks are explicit. Updating a local client does
-not restart or change sessions on a remote host. On Windows, rerun the bootstrap installer when an
-update needs to replace the stable launcher itself.
+not currently provide automatic pruning. The startup check never installs anything. Updating a
+local client does not restart or change sessions on a remote host. On Windows, rerun the bootstrap
+installer when an update needs to replace the stable launcher itself.
 
 ## Installs rozi does not manage
 

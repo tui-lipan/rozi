@@ -2807,6 +2807,7 @@ dependencies = [
  "tui-lipan",
  "unicode-segmentation",
  "unicode-width",
+ "url",
  "windows-sys 0.59.0",
 ]
 

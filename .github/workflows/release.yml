@@ -448,6 +448,24 @@ jobs:
           linux_stem="rozi-${version}-x86_64-unknown-linux-gnu"
           tar -xzf "dist/${linux_stem}.tar.gz" -C "$verify_dir"
           "$verify_dir/${linux_stem}/rozi" --version | grep -F "$version"
+          python3 - "$version" "$verify_dir/${linux_stem}/rozi" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          version, binary = sys.argv[1:]
+          lines = subprocess.check_output([binary, "--version"], text=True).splitlines()
+          fields = dict(line.split("=", 1) for line in lines[1:])
+          document = {
+              "schema_version": 1,
+              "version": version,
+              "extension_api": int(fields["extension_api"]),
+              "session_protocol": int(fields["protocol_max"]),
+          }
+          with open("dist/rozi-compatibility.json", "w", encoding="utf-8") as output:
+              json.dump(document, output, separators=(",", ":"))
+              output.write("\n")
+          PY
 
       # The environment is protected, but the private value is deliberately scoped to this one
       # step. No Cargo command, compiler, or checkout runs after it becomes available.
@@ -487,6 +505,7 @@ jobs:
           path: |
             dist/rozi-release.json
             dist/rozi-release.signatures.json
+            dist/rozi-compatibility.json
             dist/*.tar.gz
             dist/*.zip
             dist/*.sha256
@@ -523,6 +542,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               dist/rozi-release.json \
               dist/rozi-release.signatures.json \
+              dist/rozi-compatibility.json \
               dist/*.tar.gz \
               dist/*.zip \
               dist/*.sha256 \
@@ -537,6 +557,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               dist/rozi-release.json \
               dist/rozi-release.signatures.json \
+              dist/rozi-compatibility.json \
               dist/*.tar.gz \
               dist/*.zip \
               dist/*.sha256 \

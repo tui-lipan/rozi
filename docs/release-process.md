@@ -131,6 +131,7 @@ The publication bundle also contains:
 ```text
 rozi-release.json
 rozi-release.signatures.json
+rozi-compatibility.json
 <archive>.sha256
 ```
 
@@ -139,6 +140,11 @@ target archive names, SHA-256 values, byte sizes, payload metadata, and Windows 
 `relswap sign` signs the exact manifest bytes with Ed25519. Do not reformat or reserialize the
 manifest after signing. `relswap verify` requires a trusted signature and rechecks archives and
 adjacent checksums.
+
+`rozi-compatibility.json` records the release's extension API and session protocol. The workflow
+derives it from the packaged Linux binary's `--version` output. Clients use it only to choose
+between an informational update toast and a compatibility warning; installation still trusts the
+signed release manifest and archive hash.
 
 The adjacent `.sha256` files let bootstrap installers detect corruption. They come from the same
 release location as the archives, so they are not an independent authenticity check. Managed
@@ -150,8 +156,8 @@ release is the durable public copy.
 ## Publication
 
 After signing succeeds, the GitHub publication job runs `gh release create` with `--verify-tag`
-and generated release notes. It uploads only the verified manifest, signature envelope, archives,
-and checksums.
+and generated release notes. It uploads the manifest, signature envelope, compatibility document,
+archives, and checksums.
 
 The workflow publishes the crate to crates.io only after the signed GitHub release succeeds.
 crates.io versions cannot be replaced or deleted. A publication failure leaves the GitHub release
@@ -164,9 +170,9 @@ gh run list --workflow Release --limit 5
 gh release view "v$VERSION"
 ```
 
-Check that all five archives, all five adjacent checksums, `rozi-release.json`, and
-`rozi-release.signatures.json` are present. Confirm that crates.io lists the same version only after
-the final workflow job succeeds.
+Check that all five archives, all five adjacent checksums, `rozi-release.json`,
+`rozi-release.signatures.json`, and `rozi-compatibility.json` are present. Confirm that crates.io
+lists the same version only after the final workflow job succeeds.
 
 ## Smoke verification after publication
 

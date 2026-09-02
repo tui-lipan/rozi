@@ -60,6 +60,24 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             Update::full()
         }
         Msg::CommandLinkReady(link) => overlays::command_link_ready(ctx, link),
+        Msg::StartupUpdateAvailable {
+            latest,
+            hint,
+            compatibility_warning,
+        } => {
+            let notified = match compatibility_warning {
+                Some(message) => crate::pane::pty_events::notify_warning(
+                    ctx,
+                    format!("Compatibility change in v{latest}"),
+                    format!("{message} {hint}"),
+                ),
+                None => crate::pane::pty_events::notify_info(
+                    ctx,
+                    format!("rozi v{latest} is available. {hint}"),
+                ),
+            };
+            notified.update()
+        }
         Msg::Hangup => overlays::hangup(ctx),
         Msg::RunAction(action) => overlays::run_action(ctx, action),
         Msg::ClosePalette => overlays::close_palette(ctx),

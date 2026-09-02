@@ -139,6 +139,15 @@ impl InstallSource {
     }
 }
 
+/// Classify the running executable using one consistent process-environment snapshot.
+pub fn detect_current() -> InstallSource {
+    let platform_env = PlatformEnv::from_process();
+    let source_env = SourceEnv::from_platform_env(&platform_env);
+    paths::current_binary()
+        .map(|executable| InstallSource::detect(&executable, &source_env))
+        .unwrap_or(InstallSource::Unknown)
+}
+
 fn cargo_bin(env: &SourceEnv) -> Option<PathBuf> {
     env.cargo_home
         .clone()

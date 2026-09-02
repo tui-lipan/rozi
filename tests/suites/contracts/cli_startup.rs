@@ -1,9 +1,11 @@
 #[cfg(unix)]
 mod unix {
     use std::fs;
+    use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
-    use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::os::unix::net::UnixListener;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     fn isolated_home(label: &str) -> std::path::PathBuf {
         let nonce = SystemTime::now()
@@ -140,6 +142,59 @@ mod unix {
                 "{argument} printed nothing"
             );
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn control_clients_skip_managed_installation_recovery() {
+        let root = isolated_home("control-client");
+        fs::write(root.join("data").join("rozi"), b"not a directory").unwrap();
+
+        let socket = root.join("control.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut child = command(&root)
+            .args([
+                "--socket",
+                socket.to_str().unwrap(),
+                "run-action",
+                "focus-left",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(connection) => break connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        child.try_wait().unwrap().is_none(),
+                        "control client exited before connecting"
+                    );
+                    assert!(Instant::now() < deadline, "control client did not connect");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("control listener failed: {error}"),
+            }
+        };
+
+        let mut request = String::new();
+        BufReader::new(stream.try_clone().unwrap())
+            .read_line(&mut request)
+            .unwrap();
+        assert!(request.contains(r#""cmd":"run-action""#), "{request}");
+        assert!(request.contains(r#""action":"focus-left""#), "{request}");
+        writeln!(stream, r#"{{"ok":true}}"#).unwrap();
+
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "control client failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

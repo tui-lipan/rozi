@@ -1179,6 +1179,18 @@ pub fn run() -> Result<()> {
         parsed => parsed,
     };
 
+    // Control clients only bridge one request to an already-running UI. Managed-installation
+    // recovery verifies retained binaries and can take hundreds of milliseconds; doing that before
+    // every `run-action` makes editor edge navigation visibly stall without making the request any
+    // safer. The serving UI already passed recovery when it started.
+    let parsed = match parsed {
+        cli::ParsedCli::Control(command) => return cli::run_control_cli(command),
+        cli::ParsedCli::Publish(command) => return cli::run_publish_cli(command),
+        cli::ParsedCli::Subscribe(command) => return cli::run_subscribe_cli(command),
+        cli::ParsedCli::Pick(command) => return cli::run_pick_cli(command),
+        parsed => parsed,
+    };
+
     // Reconcile a managed pointer before commands can update or start the application. This keeps
     // updater recovery ahead of ConPTY checks, endpoints, sessions, and the TUI.
     if let Err(message) = cli::recover_managed_installation() {
@@ -1212,10 +1224,6 @@ pub fn run() -> Result<()> {
     }
 
     let cli = match parsed {
-        cli::ParsedCli::Control(command) => return cli::run_control_cli(command),
-        cli::ParsedCli::Publish(command) => return cli::run_publish_cli(command),
-        cli::ParsedCli::Subscribe(command) => return cli::run_subscribe_cli(command),
-        cli::ParsedCli::Pick(command) => return cli::run_pick_cli(command),
         cli::ParsedCli::Server {
             name,
             fresh,
@@ -1244,7 +1252,11 @@ pub fn run() -> Result<()> {
             }
         },
         cli::ParsedCli::Run(args) => args,
-        cli::ParsedCli::Help { .. }
+        cli::ParsedCli::Control(_)
+        | cli::ParsedCli::Publish(_)
+        | cli::ParsedCli::Subscribe(_)
+        | cli::ParsedCli::Pick(_)
+        | cli::ParsedCli::Help { .. }
         | cli::ParsedCli::Version
         | cli::ParsedCli::Skill(_)
         | cli::ParsedCli::SkillHelp

@@ -80,14 +80,73 @@ fn scratch_root() -> &'static Path {
     })
 }
 
-/// A [`PlatformEnv`] whose persisted-data directories - on either platform - sit under
-/// [`scratch_root`].
+/// This process's scratch *runtime* directory, which is where endpoints go.
 ///
-/// `XDG_RUNTIME_DIR` is deliberately left alone. It holds per-run socket endpoints rather than
-/// anything a developer keeps, and a Unix socket path is capped at `SUN_LEN` (~108 bytes): a
-/// session endpoint that fits under `/run/user/<uid>/rozi` does not fit under a temp root. Windows
-/// derives its runtime directory from `%LOCALAPPDATA%` instead, so there it does move with the
-/// rest.
+/// Separate from [`scratch_root`] because a Unix socket path is capped at `SUN_LEN` (~108 bytes)
+/// and a session endpoint under a temp root does not fit. It is therefore carved out of the real
+/// `XDG_RUNTIME_DIR` - one per-pid directory inside it - which keeps the path as short as the one
+/// rozi normally uses while still being this process's own.
+///
+/// It has to be isolated at all because the runtime directory is what session discovery *reads*:
+/// left pointing at the developer's own, a test sweep enumerates the sessions they are running
+/// right now. Those arrive asynchronously, so a list the test had already measured grows a row
+/// under it mid-assertion - which is a failure that only ever reproduces on a machine with rozi
+/// open, and never on CI.
+///
+/// Private to this user like the runtime directory it sits in: the endpoints inside it are the
+/// same kind of thing as a real one's, and `ensure_private_dir` rejects a permissive parent.
+fn runtime_scratch_root() -> &'static Path {
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        let base = PlatformEnv::snapshot()
+            .xdg_runtime_dir
+            .unwrap_or_else(std::env::temp_dir);
+        sweep_stale_runtime_roots(&base);
+        let root = base.join(format!("rozi-test-run-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::create_dir_all(&root);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700));
+        }
+        root
+    })
+}
+
+/// Remove runtime roots left behind by test processes that are long gone.
+///
+/// One root per test binary per run, and `XDG_RUNTIME_DIR` is not swept by `cargo clean` or a
+/// tmpwatch - a day of `cargo test` would otherwise leave hundreds of directories in the place a
+/// developer's live rozi keeps its own endpoints. Age rather than liveness because a pid check is
+/// not portable and `cargo test` runs its binaries in parallel: a sibling minutes old may well be
+/// running right now, and deleting its endpoints would break it.
+fn sweep_stale_runtime_roots(base: &Path) {
+    const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("rozi-test-run-"))
+            && entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .and_then(|at| at.elapsed().map_err(std::io::Error::other))
+                .is_ok_and(|age| age > STALE_AFTER);
+        if stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// A [`PlatformEnv`] whose persisted-data directories - on either platform - sit under
+/// [`scratch_root`], and whose endpoints sit under [`runtime_scratch_root`].
+///
+/// Windows derives its runtime directory from `%LOCALAPPDATA%` rather than `XDG_RUNTIME_DIR`, so
+/// there it already moves with the rest and the `xdg_runtime_dir` below is inert.
 pub(crate) fn isolated_env() -> PlatformEnv {
     let root = scratch_root();
     PlatformEnv {
@@ -96,9 +155,9 @@ pub(crate) fn isolated_env() -> PlatformEnv {
         xdg_state_home: Some(root.join("state")),
         xdg_cache_home: Some(root.join("cache")),
         xdg_data_home: Some(root.join("data")),
+        xdg_runtime_dir: Some(runtime_scratch_root().to_path_buf()),
         appdata: Some(root.join("AppData").join("Roaming")),
         local_appdata: Some(root.join("AppData").join("Local")),
-        ..PlatformEnv::snapshot()
     }
 }
 
@@ -171,6 +230,28 @@ mod tests {
             state.starts_with(root),
             "session autosave escaped the scratch root: {}",
             state.display()
+        );
+    }
+
+    /// Endpoints live somewhere else - a socket path has to stay short - but they are isolated too,
+    /// and for a second reason: the runtime directory is the one a session sweep *reads*. Pointed
+    /// at the developer's own, a test enumerates the sessions they have open right now, and a row
+    /// list the test had already measured grows underneath it.
+    #[test]
+    fn endpoints_resolve_inside_this_process_runtime_root() {
+        let runtime = crate::platform::paths::runtime_dir_path(&PlatformEnv::from_process());
+        assert!(
+            runtime.starts_with(runtime_scratch_root()),
+            "endpoints escaped this process's runtime root: {}",
+            runtime.display()
+        );
+        // The reason it is not simply under the scratch root: `sockaddr_un.sun_path` is ~108 bytes,
+        // and a session endpoint has to fit with room for its name.
+        let endpoint = runtime.join(format!("session-{}.sock", "a".repeat(32)));
+        assert!(
+            endpoint.as_os_str().len() < 100,
+            "a test session endpoint is too long for a Unix socket: {}",
+            endpoint.display()
         );
     }
 }

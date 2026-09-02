@@ -9,6 +9,10 @@ Tests must not write to the developer's config, state, cache, or runtime directo
 can persist sidebar preferences, session autosaves, and shell integration, while a running client
 live-reloads config. An unisolated test can alter the UI the developer is using.
 
+- Isolation covers reads as well as writes. The runtime directory is what session discovery
+  enumerates, so an unisolated sweep lists the developer's live sessions and grows a row list a test
+  has already measured. Endpoints go in a per-process directory inside the real `XDG_RUNTIME_DIR`
+  rather than under the scratch root, because a socket path must stay under `SUN_LEN`.
 - Unit tests get a per-process scratch root through `PlatformEnv::from_process` under `cfg(test)`.
 - An integration helper that builds `AppRoot` must call
   `rozi::test_support::isolate_user_dirs()` before constructing its `TestBackend`.

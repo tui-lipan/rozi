@@ -199,30 +199,18 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
         .wrap(true)
         .line_numbers(false)
         .border(false)
-        .height(Length::Auto)
-        // ScrollView currently reserves one content column for a standalone scrollbar even when
-        // its renderer mounts the integrated scrollbar on the ancestor frame. Left-only padding
-        // keeps the visible inset balanced until tui-lipan uses the same mode in both passes.
-        .padding((0, 0, 0, 1))
-        .scrollbar(false)
+        .height(Length::Flex(1))
+        .padding((0, 1, 0, 1))
+        .scrollbar(true)
+        .scrollbar_config(modal_scrollbar_config(&ctx.state.theme))
         .focusable(true)
         .tab_stop(false)
         .style(fg_only(&ctx.state.theme.primary))
         .focus_content_style(fg_only(&ctx.state.theme.primary))
         .on_key(overlay_interceptor(ctx, &actions))
         .key(extension_detail_key());
-    let report = ScrollView::new()
-        .children(vec![document])
-        .scrollbar(true)
-        .scrollbar_config(
-            modal_scrollbar_config(&ctx.state.theme).variant(ScrollbarVariant::Integrated),
-        )
-        .scroll_keys(ScrollKeymap::DEFAULT)
-        .focusable(false)
-        .ambient_page_scroll(true)
-        .height(Length::Flex(1));
     let content = VStack::new()
-        .child(report)
+        .child(document)
         .child(overlay_hints(&ctx.state.theme, &actions));
     let title = format!("Extensions · {}", entry.display_name());
 

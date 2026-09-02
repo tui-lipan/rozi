@@ -38,4 +38,6 @@ ignore = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/helix-editor/termina"]
+# Every dependency comes from the registry. Add a host here only alongside a documented
+# `[patch.crates-io]` or git dependency, and remove it when that patch goes away.
+allow-git = []

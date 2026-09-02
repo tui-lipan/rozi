@@ -28,7 +28,10 @@ exclude = [
 ]
 
 [dependencies]
-tui-lipan = { version = "0.4", features = [
+# 0.4.1 is the first release to require termina ^0.4, whose mouse decoder no longer panics the
+# input worker on a report at column or row 0. Anything older needs a `[patch.crates-io]` to be
+# safe, and cargo strips those when publishing.
+tui-lipan = { version = "0.4.1", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
@@ -49,14 +52,6 @@ semver = { version = "1", features = ["serde"] }
 unicode-width = "0.2.2"
 unicode-segmentation = "1.13.3"
 getrandom = "0.4.3"
-
-[patch.crates-io]
-# termina 0.3.3 subtracts the protocol's one-based origin from SGR and rxvt mouse coordinates
-# without a guard, so a report of column or row 0 - which SGR-pixels (mode 1016) makes ordinary,
-# and which terminals also send for a drag that leaves the window - panics the input worker and
-# takes the client down with it. Fixed upstream in 38047a2 and unreleased; drop this once a
-# release carrying it exists and tui-lipan's `=0.3.3` pin moves to it.
-termina = { git = "https://github.com/helix-editor/termina", rev = "38047a2491f4cf65eb4b2a3ed69cca87a98a10fc" }
 
 [features]
 # Headless PNG/JSON capture for visual review. Opt-in so release builds do not

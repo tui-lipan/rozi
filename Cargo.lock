@@ -2615,7 +2615,7 @@ checksum = "c0bf912d9e66f057a759d92e386a280ea886b352ab757d6ac4d653c7ed2c43c2"
 dependencies = [
  "instability",
  "ratatui-core",
- "termina",
+ "termina 0.3.3",
 ]
 
 [[package]]
@@ -3350,7 +3350,21 @@ dependencies = [
 [[package]]
 name = "termina"
 version = "0.3.3"
-source = "git+https://github.com/helix-editor/termina?rev=38047a2491f4cf65eb4b2a3ed69cca87a98a10fc#38047a2491f4cf65eb4b2a3ed69cca87a98a10fc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9048a889effe34a5cddee0af7f53285198b16dca3be510858d38dfdb3e62a04e"
+dependencies = [
+ "bitflags 2.13.1",
+ "parking_lot",
+ "rustix 1.1.4",
+ "signal-hook 0.3.18",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "termina"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "881a7f20ade48167027822c52a0aeca879afa3174b15c71997827826bce669f9"
 dependencies = [
  "bitflags 2.13.1",
  "parking_lot",
@@ -3615,9 +3629,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ea9206212823c1711c3ba9751191fc57346857fd5c7ba4cfb818c4387062bf"
+checksum = "85f196efc77157a41794a202ec0ed5802f29c31f2c39eece48c52b11f99676b6"
 dependencies = [
  "alacritty_terminal",
  "arboard",
@@ -3642,7 +3656,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "smallvec",
- "termina",
+ "termina 0.4.0",
  "thiserror 2.0.20",
  "toml",
  "tui-lipan-macro",
@@ -3655,9 +3669,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan-macro"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16a317af480d13e9d135b3a872d79f6b5c073f9c7b6a5a40c60af1cff97ee5d2"
+checksum = "3e26dc83bb8c9c199b45cb781e858e84a832800c6a043f20cefb20fb8f68363b"
 dependencies = [
  "prettyplease",
  "proc-macro-crate",

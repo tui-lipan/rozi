@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed
+
+- Takes tui-lipan 0.4.1, which requires a `termina` that no longer panics the input worker on a
+  mouse report at column or row 0. Rozi's `[patch.crates-io]` for that fix is gone, so builds from
+  the published crate - `cargo install rozi` included - carry it like every other build.
+
+### Fixed
+
+- The extension detail overlay scrolls its own document with an integrated scrollbar and even side
+  padding. It had been wrapped in an outer `ScrollView` with a one-column left inset to work around
+  a tui-lipan scrollbar reservation the 0.4.1 renderer no longer needs.
+
 ## 0.0.15 - 2026-09-01
 
 Windows fixes found while testing the installer and updater.

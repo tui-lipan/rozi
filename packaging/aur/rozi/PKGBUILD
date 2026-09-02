@@ -8,7 +8,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/tui-lipan/rozi'
 license=('MPL-2.0')
 depends=('gcc-libs' 'glibc')
-makedepends=('cargo' 'git')
+makedepends=('cargo')
 provides=("$pkgname=$pkgver")
 conflicts=("$pkgname-bin")
 # !lto: makepkg's LTO adds `-flto` to the C flags, and `ring` - reached through the release
@@ -18,14 +18,10 @@ conflicts=("$pkgname-bin")
 # !debug: the release profile strips, so a debug package would be built and shipped empty.
 options=('!lto' '!debug')
 
-# The repository tarball, deliberately, and not the crates.io crate. rozi carries a
-# `[patch.crates-io]` for termina - upstream panics the input worker on a mouse report at column or
-# row 0, which SGR-pixel mode makes ordinary - and cargo strips `[patch]` when publishing. Building
-# from the crate would silently produce a rozi with that panic in it; building from the repository
-# applies the patch, because a patch section takes effect for the workspace it is written in.
-#
-# `git` is a makedepend for the same reason: the patched termina is a git dependency, fetched in
-# prepare() so that build() can stay offline.
+# The repository tarball at the tag, which is the exact tree upstream CI builds, tests, and
+# releases from. Until tui-lipan 0.4.1 this was load-bearing - rozi patched termina, and cargo
+# strips `[patch]` when publishing, so the crate would have built without the fix - and it stays
+# the source because it is the artifact the tag actually names.
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('3d180355cb498ae5c0f70d40d230edc93723c3d8ff3222435de7bccc09037d12')
 

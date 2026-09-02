@@ -13,12 +13,14 @@ so rather than fighting your package manager — see "Installs rozi does not man
 
 ## Why `rozi` builds from the repository tarball, not the crate
 
-rozi carries a `[patch.crates-io]` for `termina`: upstream panics the input worker on a mouse report
-at column or row 0, which SGR-pixel mode makes ordinary. **Cargo strips `[patch]` when publishing**,
-so a build from `rozi-0.0.2.crate` would silently contain that panic. A patch section applies to the
-workspace it is written in, so building from the repository tarball gets the fix.
+The tag tarball is the exact tree upstream CI builds, tests, and releases from, so a source build
+here matches what upstream verified.
 
-The same stripping is why `cargo install rozi` is not a recommended install path.
+This used to be a correctness requirement rather than a preference: rozi carried a
+`[patch.crates-io]` for `termina`, whose mouse decoder panicked the input worker on a report at
+column or row 0, and **cargo strips `[patch]` when publishing** — a build from the crate would have
+silently contained that panic. tui-lipan 0.4.1 requires a fixed `termina` on its own, so the patch
+is gone and `cargo install rozi` is a supported install path again.
 
 ## Publishing
 

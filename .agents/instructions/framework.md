@@ -25,8 +25,13 @@ changes. If `Cargo.lock` was clean before your work and only the override change
 own lockfile change before handoff. Never discard pre-existing lockfile changes.
 
 At framework release time, publish the framework, update Rozi's version requirement, remove any
-committed git patch, and confirm the lockfile again has registry sources and checksums. Preserve
-unrelated dependency patches such as the documented `termina` revision.
+committed git patch, and confirm the lockfile again has registry sources and checksums.
+
+The manifest currently carries no `[patch.crates-io]`, and `deny.toml` allows no git source. A
+patch is a last resort for an upstream bug with no released fix: cargo strips `[patch]` when
+publishing, so a patched crates.io release silently loses the fix. Whenever one is added, document
+why in the manifest, add its host to `deny.toml`'s `allow-git`, and drop both as soon as a release
+carries the fix.
 
 ## Cross-repository checks
 

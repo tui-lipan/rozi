@@ -67,6 +67,35 @@ pub(crate) fn run_remove_extension_cli(id: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn run_update_extension_cli(id: &str) -> Result<()> {
+    let updated = crate::extension_installation::update(id).map_err(std::io::Error::other)?;
+    let styles = OutputStyles::detect();
+    println!(
+        "{} {}",
+        styles.paint(
+            if updated.changed {
+                "Updated"
+            } else {
+                "Up to date"
+            },
+            if updated.changed {
+                OutputTone::Success
+            } else {
+                OutputTone::Muted
+            }
+        ),
+        styles.paint(&updated.id, OutputTone::Accent)
+    );
+    if updated.changed {
+        println!(
+            "{}  {}",
+            styles.paint("Reload", OutputTone::Muted),
+            styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {
     let styles = OutputStyles::detect();
     let parent = std::env::current_dir()?;

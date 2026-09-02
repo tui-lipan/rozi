@@ -274,8 +274,9 @@ the selected row or submits a prompt.
 - Settings: arrows move through rows. `Left` and `Right` change a setting where the row supports
   stepping.
 - Extensions: `Enter` enables or disables the selected extension, `Ctrl+D` opens details,
-  `Ctrl+R` reloads, `Ctrl+O` opens the manifest, `Ctrl+Y` copies the report, and `Ctrl+K` twice
-  removes the installation. Details are read-only; use the arrow and paging keys to scroll,
+  `Ctrl+I` opens the install prompt, `Ctrl+U` updates a Git-managed installation, `Ctrl+R` reloads,
+  `Ctrl+O` opens the manifest, `Ctrl+Y` copies the report, and `Ctrl+K` twice removes the
+  installation. Details are read-only; use the arrow and paging keys to scroll, `Ctrl+U` to update,
   `Ctrl+Y` to copy the report, and `Ctrl+O` to open the manifest.
 - Collaborators: `Enter` grants control, `Ctrl+D` declines a request, `Ctrl+K` twice removes a
   client, and `Esc` closes.

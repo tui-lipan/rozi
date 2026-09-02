@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tui_lipan::prelude::*;
 
@@ -7,8 +8,20 @@ use crate::AppRoot;
 use crate::config::{ExtensionInfo, ExtensionSettings, ExtensionStatus};
 use crate::state::{ExtensionDetailState, ExtensionsState};
 
+static NEXT_UPDATE_CHECK_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+struct ManagerScan {
+    entries: Vec<ExtensionInfo>,
+    merged: BTreeMap<String, ExtensionSettings>,
+    manifest_entries: BTreeSet<String>,
+    removable_entries: BTreeSet<String>,
+    installation_kinds: BTreeMap<String, crate::extension_installation::InstallKind>,
+}
+
 pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
-    let (entries, merged, manifest_entries, removable_entries) = scan(ctx);
+    let scan = scan(ctx);
+    let update_check_epoch = next_update_check_epoch();
+    let git_ids = git_installation_ids(&scan.installation_kinds);
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
     ctx.state.show_settings = false;
@@ -20,18 +33,24 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     }
     ctx.state.pane_padding_editor = None;
     ctx.state.extensions = Some(ExtensionsState {
-        entries,
-        merged,
+        entries: scan.entries,
+        merged: scan.merged,
         selected: 0,
         query: String::new(),
         restore_query: String::new(),
         pending_remove: None,
         detail: None,
-        manifest_entries,
-        removable_entries,
+        install_prompt: None,
+        installation_kinds: scan.installation_kinds,
+        available_updates: BTreeSet::new(),
+        update_check_epoch,
+        updating_id: None,
+        manifest_entries: scan.manifest_entries,
+        removable_entries: scan.removable_entries,
     });
     ctx.state.commands_dirty = true;
     crate::ops::focus::request_extensions_focus(ctx);
+    request_update_checks(ctx, update_check_epoch, git_ids);
     Update::full()
 }
 
@@ -110,6 +129,202 @@ pub(crate) fn toggle_selected(ctx: &mut Context<AppRoot>) -> Update {
 
 pub(crate) fn reload(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::config::reload_extensions(ctx)
+}
+
+pub(crate) fn open_install(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return Update::none();
+    };
+    state.restore_query = state.query.clone();
+    state.install_prompt = Some(crate::state::ExtensionInstallPromptState {
+        input: TextInput::new(""),
+        error: None,
+        installing: false,
+    });
+    crate::ops::focus::request_extension_install_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn install_source_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
+    let Some(prompt) = ctx
+        .state
+        .extensions
+        .as_mut()
+        .and_then(|state| state.install_prompt.as_mut())
+    else {
+        return Update::none();
+    };
+    if prompt.installing {
+        return Update::none();
+    }
+    event.apply_to(&mut prompt.input);
+    prompt.error = None;
+    Update::full()
+}
+
+pub(crate) fn close_install(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return Update::none();
+    };
+    if state
+        .install_prompt
+        .as_ref()
+        .is_some_and(|prompt| prompt.installing)
+    {
+        return Update::none();
+    }
+    state.install_prompt = None;
+    crate::ops::focus::request_extensions_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn submit_install(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(prompt) = ctx
+        .state
+        .extensions
+        .as_mut()
+        .and_then(|state| state.install_prompt.as_mut())
+    else {
+        return Update::none();
+    };
+    if prompt.installing {
+        return Update::none();
+    }
+    let source = prompt.input.text().trim().to_string();
+    if source.is_empty() {
+        prompt.error = Some("Enter a local path or Git URL".to_string());
+        return Update::full();
+    }
+    prompt.error = None;
+    prompt.installing = true;
+    Update::with_command(Command::spawn(move |link| {
+        std::thread::spawn(move || {
+            let result = crate::extension_installation::install(
+                crate::extension_installation::InstallRequest::Source(source),
+            )
+            .map(|installed| installed.id);
+            link.send(crate::Msg::ExtensionsInstallFinished(result));
+        });
+    }))
+}
+
+pub(crate) fn install_finished(
+    ctx: &mut Context<AppRoot>,
+    result: std::result::Result<String, String>,
+) -> Update {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return Update::none();
+    };
+    if let Some(prompt) = state.install_prompt.as_mut() {
+        prompt.installing = false;
+    }
+    match result {
+        Ok(id) => {
+            state.install_prompt = None;
+            let update = crate::ops::config::reload_extensions_quiet(ctx);
+            select_by_id(ctx, &id);
+            update
+        }
+        Err(error) => {
+            if let Some(prompt) = ctx
+                .state
+                .extensions
+                .as_mut()
+                .and_then(|state| state.install_prompt.as_mut())
+            {
+                prompt.error = Some(prompt_error(&error));
+                crate::ops::focus::request_extension_install_focus(ctx);
+                Update::full()
+            } else {
+                notify_error(ctx, "Extension not installed", error);
+                Update::full()
+            }
+        }
+    }
+}
+
+pub(crate) fn update_selected(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(entry) = selected_entry(&ctx.state).cloned() else {
+        return Update::none();
+    };
+    let Some(id) = entry.id.clone() else {
+        return Update::none();
+    };
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return Update::none();
+    };
+    if state.updating_id.is_some()
+        || state.installation_kinds.get(&id)
+            != Some(&crate::extension_installation::InstallKind::Git)
+    {
+        return Update::none();
+    }
+    state.updating_id = Some(id.clone());
+    state.update_check_epoch = next_update_check_epoch();
+    Update::with_command(Command::spawn(move |link| {
+        std::thread::spawn(move || {
+            let result = crate::extension_installation::update(&id).map(|updated| updated.changed);
+            link.send(crate::Msg::ExtensionsUpdateFinished { id, result });
+        });
+    }))
+}
+
+pub(crate) fn update_finished(
+    ctx: &mut Context<AppRoot>,
+    id: String,
+    result: std::result::Result<bool, String>,
+) -> Update {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return match result {
+            Ok(true) => {
+                notify_info(ctx, &format!("Updated {id}"));
+                crate::ops::config::reload_extensions_quiet(ctx)
+            }
+            Ok(false) => {
+                notify_info(ctx, &format!("{id} is up to date"));
+                Update::full()
+            }
+            Err(error) => {
+                notify_error(ctx, "Extension not updated", error);
+                Update::full()
+            }
+        };
+    };
+    if state.updating_id.as_deref() != Some(&id) {
+        return Update::none();
+    }
+    state.updating_id = None;
+    state.available_updates.remove(&id);
+    match result {
+        Ok(true) => {
+            let update = crate::ops::config::reload_extensions_quiet(ctx);
+            select_by_id(ctx, &id);
+            update
+        }
+        Ok(false) => {
+            notify_info(ctx, &format!("{id} is up to date"));
+            Update::full()
+        }
+        Err(error) => {
+            notify_error(ctx, "Extension not updated", error);
+            Update::full()
+        }
+    }
+}
+
+pub(crate) fn updates_checked(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    available: Vec<String>,
+) -> Update {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return Update::none();
+    };
+    if state.update_check_epoch != epoch {
+        return Update::none();
+    }
+    state.available_updates = available.into_iter().collect();
+    Update::full()
 }
 
 pub(crate) fn open_manifest(ctx: &mut Context<AppRoot>) -> Update {
@@ -209,6 +424,12 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
         );
         return stopped.unwrap_or_else(Update::full);
     }
+    if let Some(id) = entry.id.as_deref()
+        && !duplicate_installation_remains(&ctx.state, &entry)
+        && let Err(error) = crate::extension_installation::forget_installation_record(id)
+    {
+        notify_error(ctx, "Extension metadata not removed", error);
+    }
     cleanup_disabled_after_removal(ctx, &entry);
 
     let update = crate::ops::config::reload_extensions_quiet(ctx);
@@ -247,6 +468,7 @@ pub(crate) fn config_reloaded(ctx: &mut Context<AppRoot>) {
     }
     let selected = selected_entry(&ctx.state).map(identity);
     refresh(ctx, selected);
+    start_update_check(ctx);
 }
 
 fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
@@ -256,14 +478,18 @@ fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
         .as_ref()
         .and_then(|state| state.detail.as_ref())
         .map(|detail| detail.path.clone());
-    let (entries, merged, manifest_entries, removable_entries) = scan(ctx);
+    let scan = scan(ctx);
     let Some(state) = ctx.state.extensions.as_mut() else {
         return;
     };
-    state.entries = entries;
-    state.merged = merged;
-    state.manifest_entries = manifest_entries;
-    state.removable_entries = removable_entries;
+    state.entries = scan.entries;
+    state.merged = scan.merged;
+    state.manifest_entries = scan.manifest_entries;
+    state.removable_entries = scan.removable_entries;
+    state.installation_kinds = scan.installation_kinds;
+    state
+        .available_updates
+        .retain(|id| state.installation_kinds.contains_key(id));
     state.selected = selected
         .as_deref()
         .and_then(|selected| {
@@ -292,14 +518,7 @@ fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
     });
 }
 
-fn scan(
-    ctx: &mut Context<AppRoot>,
-) -> (
-    Vec<ExtensionInfo>,
-    BTreeMap<String, ExtensionSettings>,
-    BTreeSet<String>,
-    BTreeSet<String>,
-) {
+fn scan(ctx: &mut Context<AppRoot>) -> ManagerScan {
     let user: crate::config::UserExtensionConfig = match crate::config::read_user_extension_config()
     {
         Ok(user) => user,
@@ -326,6 +545,13 @@ fn scan(
         .filter(|entry| installation_path(entry).is_ok())
         .map(identity)
         .collect();
+    let installation_kinds = entries
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.id.as_ref()?;
+            crate::extension_installation::installation_kind(id).map(|kind| (id.clone(), kind))
+        })
+        .collect();
     for entry in &mut entries {
         let Some(id) = entry.id.clone() else {
             continue;
@@ -344,7 +570,63 @@ fn scan(
         );
         merged.insert(identity(entry), effective);
     }
-    (entries, merged, manifest_entries, removable_entries)
+    ManagerScan {
+        entries,
+        merged,
+        manifest_entries,
+        removable_entries,
+        installation_kinds,
+    }
+}
+
+fn next_update_check_epoch() -> u64 {
+    NEXT_UPDATE_CHECK_EPOCH.fetch_add(1, Ordering::Relaxed)
+}
+
+fn git_installation_ids(
+    kinds: &BTreeMap<String, crate::extension_installation::InstallKind>,
+) -> Vec<String> {
+    kinds
+        .iter()
+        .filter(|(_, kind)| **kind == crate::extension_installation::InstallKind::Git)
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
+fn start_update_check(ctx: &mut Context<AppRoot>) {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return;
+    };
+    let epoch = next_update_check_epoch();
+    state.update_check_epoch = epoch;
+    let ids = git_installation_ids(&state.installation_kinds);
+    request_update_checks(ctx, epoch, ids);
+}
+
+fn request_update_checks(ctx: &Context<AppRoot>, epoch: u64, ids: Vec<String>) {
+    let Some(link) = ctx.state.command_link.clone() else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let available = ids
+            .into_iter()
+            .filter(|id| crate::extension_installation::update_available(id).unwrap_or(false))
+            .collect();
+        link.send(crate::Msg::ExtensionsUpdatesChecked { epoch, available });
+    });
+}
+
+fn select_by_id(ctx: &mut Context<AppRoot>, id: &str) {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return;
+    };
+    if let Some(index) = state
+        .entries
+        .iter()
+        .position(|entry| entry.id.as_deref() == Some(id))
+    {
+        state.selected = index;
+    }
 }
 
 fn selected_entry(state: &crate::state::State) -> Option<&ExtensionInfo> {
@@ -396,13 +678,7 @@ fn cleanup_disabled_after_removal(ctx: &mut Context<AppRoot>, entry: &ExtensionI
     let Some(id) = entry.id.as_deref() else {
         return;
     };
-    let duplicate_remains = ctx.state.extensions.as_ref().is_some_and(|state| {
-        state
-            .entries
-            .iter()
-            .any(|candidate| candidate.path != entry.path && candidate.id.as_deref() == Some(id))
-    });
-    if duplicate_remains {
+    if duplicate_installation_remains(&ctx.state, entry) {
         return;
     }
     let mut user = match crate::config::read_user_extension_config() {
@@ -419,6 +695,18 @@ fn cleanup_disabled_after_removal(ctx: &mut Context<AppRoot>, entry: &ExtensionI
     {
         notify_error(ctx, "Disabled list not updated", error);
     }
+}
+
+fn duplicate_installation_remains(state: &crate::state::State, entry: &ExtensionInfo) -> bool {
+    let Some(id) = entry.id.as_deref() else {
+        return false;
+    };
+    state.extensions.as_ref().is_some_and(|state| {
+        state
+            .entries
+            .iter()
+            .any(|candidate| candidate.path != entry.path && candidate.id.as_deref() == Some(id))
+    })
 }
 
 fn stop_before_removal(
@@ -448,6 +736,17 @@ fn copy(ctx: &mut Context<AppRoot>, text: &str, success: &str) -> Update {
         Err(error) => notify_error(ctx, "Copy failed", error.to_string()),
     }
     Update::full()
+}
+
+fn prompt_error(error: &str) -> String {
+    const MAX_CHARS: usize = 160;
+    let line = error.lines().next().unwrap_or(error);
+    if line.chars().count() <= MAX_CHARS {
+        return line.to_string();
+    }
+    let mut compact = line.chars().take(MAX_CHARS - 1).collect::<String>();
+    compact.push('…');
+    compact
 }
 
 fn notify_info(ctx: &mut Context<AppRoot>, message: &str) {

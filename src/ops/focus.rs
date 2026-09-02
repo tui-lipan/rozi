@@ -1325,6 +1325,10 @@ pub(crate) fn request_extension_detail_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::extension_detail_key());
 }
 
+pub(crate) fn request_extension_install_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::extension_install_input_key());
+}
+
 pub(crate) fn request_palette_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::palette_key());
 }

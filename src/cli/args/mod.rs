@@ -17,6 +17,7 @@ pub(crate) use extensions::print_check_help as print_extensions_check_help;
 pub(crate) use extensions::print_help as print_extensions_help;
 pub(crate) use extensions::print_install_help as print_extensions_install_help;
 pub(crate) use extensions::print_remove_help as print_extensions_remove_help;
+pub(crate) use extensions::print_update_help as print_extensions_update_help;
 #[cfg(test)]
 pub(super) use sessions::HELP_SECTIONS as SESSIONS_HELP_SECTIONS;
 pub(crate) use sessions::print_help as print_sessions_help;
@@ -98,6 +99,7 @@ pub(crate) enum ParsedCli {
     ExtensionsCheckHelp,
     ExtensionsInstallHelp,
     ExtensionsRemoveHelp,
+    ExtensionsUpdateHelp,
     Install,
     Update(UpdateCommand),
     Run(CliArgs),
@@ -150,6 +152,10 @@ pub(crate) enum ExtensionsCommand {
         config_path: Option<String>,
     },
     Remove {
+        id: String,
+        config_path: Option<String>,
+    },
+    Update {
         id: String,
         config_path: Option<String>,
     },

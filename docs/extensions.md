@@ -63,8 +63,14 @@ The installation directory is private Rozi data. Users do not need to create or 
 
 Open the command palette and choose **Extensions…**. The overlay groups installed extensions by
 status. `Enter` enables or disables the selected extension, `Ctrl+D` opens its full report,
-`Ctrl+R` rescans extension manifests, `Ctrl+O` opens `extension.toml`, and `Ctrl+Y` copies the
-report. The detail view is read-only and wraps long command, path, and diagnostic lines.
+`Ctrl+I` opens a source prompt, `Ctrl+U` updates a selected Git-managed extension, `Ctrl+R` rescans
+extension manifests, `Ctrl+O` opens `extension.toml`, and `Ctrl+Y` copies the report. Linked
+checkouts show `linked`; Git installs whose remote HEAD changed show `update available`.
+
+The install prompt accepts the same local paths and Git HTTPS/SSH URLs as
+`rozi extensions install <SOURCE>`. Use the CLI's `--link` option when the checkout must remain
+user-owned. The detail view is read-only and wraps long command, path, and diagnostic lines; it
+also exposes `Ctrl+U` for Git-managed installations.
 
 Use the CLI when a script or external tool needs the same information:
 
@@ -126,20 +132,22 @@ disabled or absent.
 
 ## Update
 
-Rozi does not update extensions automatically, and this release does not provide
-`rozi extensions update` yet. Review upstream changes, then remove and reinstall the extension
-explicitly:
+Rozi does not update extensions automatically. Update one Git-managed installation explicitly:
 
 ```sh
-rozi extensions remove git-tools
-rozi extensions install https://github.com/user/rozi-git-tools.git
+rozi extensions update git-tools
 rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
 
-Git installs retain their original remote and installed revision so a later update command can
-fetch and report changes without changing the installation model. An explicit reload is required
-because Rozi does not watch extension directories.
+The command clones the recorded remote into staging, validates it, and replaces the old checkout
+only when the new extension is valid. It refuses to replace a managed checkout with local changes.
+Copied local extensions and linked development checkouts do not expose update actions.
+
+The Extensions picker checks Git remotes in the background and marks changed installations with
+`update available`. `Ctrl+U` runs the same update operation as the CLI. An explicit CLI reload is
+required because Rozi does not watch extension directories; picker updates reload the current
+client after a successful replacement.
 
 ## Create an extension
 

@@ -277,7 +277,9 @@ rozi run-action my-extension.hello
 
 Use `rozi extensions install <SOURCE>` for a local directory or Git HTTPS/SSH URL. Rozi owns the
 installed copy or clone. Use `--link <PATH>` only for a development checkout that should remain
-user-owned, and remove either form with `rozi extensions remove <ID>`.
+user-owned. Update a Rozi-managed Git clone with `rozi extensions update <ID>` and remove any
+installation with `rozi extensions remove <ID>`. Linked and copied local extensions do not update
+from their original source.
 
 ## Debug failures
 

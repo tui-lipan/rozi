@@ -31,6 +31,18 @@ fn extensions_root(root: &Path) -> PathBuf {
     }
 }
 
+fn mark_git_managed(extensions: &Path, id: &str) {
+    let records = extensions.join(".rozi/installations");
+    std::fs::create_dir_all(&records).expect("create installation records");
+    std::fs::write(
+        records.join(format!("{id}.toml")),
+        format!(
+            "schema_version = 1\nid = \"{id}\"\n\n[source]\nkind = \"git\"\nremote = \"https://example.invalid/{id}.git\"\nrevision = \"0123456789012345678901234567890123456789\"\n"
+        ),
+    )
+    .expect("write Git installation record");
+}
+
 fn frame(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
     backend.capture_frame().to_fixed_grid_lines().join("\n")
@@ -51,6 +63,7 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             let mut text = std::fs::read_to_string(&manifest).expect("read copied manifest");
             text.push_str("\n[settings]\nrunner = \"auto\"\n");
             std::fs::write(&manifest, text).expect("add fixture setting");
+            mark_git_managed(&extensions, "fixture-direct");
 
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
@@ -63,12 +76,53 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
                 .expect("open extensions");
 
+            let epoch = backend
+                .state()
+                .extensions
+                .as_ref()
+                .expect("extensions state")
+                .update_check_epoch;
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdatesChecked {
+                    epoch,
+                    available: vec!["fixture-direct".to_string()],
+                })
+                .expect("mark fixture update available");
             let list = frame(&mut backend);
             assert!(list.contains("Active"), "{list}");
             assert!(list.contains("fixture-direct"), "{list}");
+            assert!(list.contains("update available"), "{list}");
+            assert!(list.contains("install"), "{list}");
             assert!(list.contains("Problems"), "{list}");
             assert!(list.contains("future-a"), "{list}");
             assert!(list.contains("requires extension API 2"), "{list}");
+
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('i'),
+                    mods: KeyMods::CTRL,
+                })
+                .expect("open extension install prompt");
+            let install_prompt = frame(&mut backend);
+            assert!(
+                install_prompt.contains("Install extension"),
+                "{install_prompt}"
+            );
+            assert!(
+                install_prompt.contains("Local path or Git HTTPS/SSH URL"),
+                "{install_prompt}"
+            );
+            assert!(
+                backend
+                    .focused_key()
+                    .is_some_and(|key| key.as_ref() == "rozi-extension-install-source")
+            );
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Esc,
+                    mods: KeyMods::NONE,
+                })
+                .expect("close extension install prompt");
 
             for character in "no-match".chars() {
                 backend
@@ -198,6 +252,7 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             for group in ["Overview", "Commands", "Settings"] {
                 assert!(detail.contains(group), "missing {group}:\n{detail}");
             }
+            assert!(detail.contains("update"), "{detail}");
             assert!(!detail.contains("Search report"), "{detail}");
             assert!(detail.contains("command.py"), "{detail}");
             assert!(

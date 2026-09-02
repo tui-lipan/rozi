@@ -239,6 +239,39 @@ fn prompt_overlay(
     modal.into()
 }
 
+pub(crate) fn extension_install_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
+    let Some(prompt) = ctx
+        .state
+        .extensions
+        .as_ref()
+        .and_then(|extensions| extensions.install_prompt.as_ref())
+    else {
+        return Text::new("").into();
+    };
+    let caption = if prompt.installing {
+        Some(PromptCaption::Note("Installing…"))
+    } else {
+        prompt.error.as_deref().map(PromptCaption::Note)
+    };
+    prompt_overlay(
+        ctx,
+        PromptChrome {
+            caption,
+            dim_behind: true,
+            ..PromptChrome::new(
+                "Install extension",
+                "Local path or Git HTTPS/SSH URL",
+                &[("install", "enter")],
+            )
+        },
+        &prompt.input,
+        extension_install_input_key(),
+        Msg::ExtensionsInstallSourceChanged,
+        Msg::ExtensionsCloseInstall,
+        Msg::ExtensionsSubmitInstall,
+    )
+}
+
 pub(crate) fn rename_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(rename) = ctx.state.rename.as_ref() else {
         return Text::new("").into();

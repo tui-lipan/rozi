@@ -97,6 +97,11 @@ fn local_install_copies_enables_and_removes_without_touching_the_source() {
     let conflict = rozi(&temp, &["extensions", "install", source.to_str().unwrap()]);
     assert!(!conflict.status.success());
     assert!(String::from_utf8_lossy(&conflict.stderr).contains("already installed"));
+    let update = rozi(&temp, &["extensions", "update", "disabled"]);
+    assert!(!update.status.success());
+    assert!(
+        String::from_utf8_lossy(&update.stderr).contains("not a Rozi-managed Git installation")
+    );
 
     let removed = rozi(&temp, &["extensions", "remove", "disabled"]);
     assert!(
@@ -232,16 +237,12 @@ fn git_install_records_the_original_remote_and_exact_revision() {
     let remote = "https://example.invalid/git-source.git";
     let local_url = url::Url::from_directory_path(&source).unwrap().to_string();
     let rewrite_key = format!("url.{local_url}.insteadOf");
-    let installed = rozi_in_with_env(
-        &temp,
-        &["extensions", "install", remote],
-        None,
-        &[
-            ("GIT_CONFIG_COUNT", "1"),
-            ("GIT_CONFIG_KEY_0", &rewrite_key),
-            ("GIT_CONFIG_VALUE_0", remote),
-        ],
-    );
+    let git_env = [
+        ("GIT_CONFIG_COUNT", "1"),
+        ("GIT_CONFIG_KEY_0", rewrite_key.as_str()),
+        ("GIT_CONFIG_VALUE_0", remote),
+    ];
+    let installed = rozi_in_with_env(&temp, &["extensions", "install", remote], None, &git_env);
     assert!(
         installed.status.success(),
         "stdout: {}\nstderr: {}",
@@ -259,6 +260,90 @@ fn git_install_records_the_original_remote_and_exact_revision() {
     assert_eq!(metadata["source"]["kind"].as_str(), Some("git"));
     assert_eq!(metadata["source"]["remote"].as_str(), Some(remote));
     assert_eq!(metadata["source"]["revision"].as_str(), Some(revision));
+
+    std::fs::write(source.join("updated"), "new revision").unwrap();
+    run_git(&["add", "."]);
+    run_git(&[
+        "-c",
+        "user.name=Rozi Test",
+        "-c",
+        "user.email=rozi@example.invalid",
+        "commit",
+        "-m",
+        "update fixture",
+    ]);
+    let updated_revision = String::from_utf8(run_git(&["rev-parse", "HEAD"]).stdout).unwrap();
+    let updated_revision = updated_revision.trim();
+    let updated = rozi_in_with_env(
+        &temp,
+        &["extensions", "update", "git-source"],
+        None,
+        &git_env,
+    );
+    assert!(
+        updated.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&updated.stdout),
+        String::from_utf8_lossy(&updated.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(destination.join("updated")).unwrap(),
+        "new revision"
+    );
+    let metadata = std::fs::read_to_string(
+        temp.path()
+            .join("data/rozi/extensions/.rozi/installations/git-source.toml"),
+    )
+    .unwrap();
+    let metadata: toml::Value = toml::from_str(&metadata).unwrap();
+    assert_eq!(
+        metadata["source"]["revision"].as_str(),
+        Some(updated_revision)
+    );
+
+    std::fs::write(destination.join("local-edit"), "keep").unwrap();
+    let refused = rozi_in_with_env(
+        &temp,
+        &["extensions", "update", "git-source"],
+        None,
+        &git_env,
+    );
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("local changes"));
+    assert_eq!(
+        std::fs::read_to_string(destination.join("local-edit")).unwrap(),
+        "keep"
+    );
+    std::fs::remove_file(destination.join("local-edit")).unwrap();
+
+    let manifest = source.join("extension.toml");
+    let invalid_manifest = std::fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("api = 1", "api = 2");
+    std::fs::write(&manifest, invalid_manifest).unwrap();
+    run_git(&["add", "extension.toml"]);
+    run_git(&[
+        "-c",
+        "user.name=Rozi Test",
+        "-c",
+        "user.email=rozi@example.invalid",
+        "commit",
+        "-m",
+        "invalid update",
+    ]);
+    let rejected = rozi_in_with_env(
+        &temp,
+        &["extensions", "update", "git-source"],
+        None,
+        &git_env,
+    );
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("not installable"));
+    assert!(
+        std::fs::read_to_string(destination.join("extension.toml"))
+            .unwrap()
+            .contains("api = 1")
+    );
 }
 
 #[test]

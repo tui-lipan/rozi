@@ -581,8 +581,19 @@ pub struct ExtensionsState {
     /// and distinguishes duplicate manifest ids.
     pub pending_remove: Option<String>,
     pub detail: Option<ExtensionDetailState>,
+    pub install_prompt: Option<ExtensionInstallPromptState>,
+    pub(crate) installation_kinds: BTreeMap<String, crate::extension_installation::InstallKind>,
+    pub(crate) available_updates: BTreeSet<String>,
+    pub update_check_epoch: u64,
+    pub(crate) updating_id: Option<String>,
     pub(crate) manifest_entries: BTreeSet<String>,
     pub(crate) removable_entries: BTreeSet<String>,
+}
+
+pub struct ExtensionInstallPromptState {
+    pub input: TextInput,
+    pub error: Option<String>,
+    pub installing: bool,
 }
 
 pub struct ExtensionDetailState {

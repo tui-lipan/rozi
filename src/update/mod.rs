@@ -105,6 +105,22 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ExtensionsOpenManifest => crate::ops::extensions_manager::open_manifest(ctx),
         Msg::ExtensionsCopyReport => crate::ops::extensions_manager::copy_report(ctx),
         Msg::ExtensionsRemoveSelected => crate::ops::extensions_manager::remove_selected(ctx),
+        Msg::ExtensionsOpenInstall => crate::ops::extensions_manager::open_install(ctx),
+        Msg::ExtensionsInstallSourceChanged(event) => {
+            crate::ops::extensions_manager::install_source_changed(ctx, event)
+        }
+        Msg::ExtensionsCloseInstall => crate::ops::extensions_manager::close_install(ctx),
+        Msg::ExtensionsSubmitInstall => crate::ops::extensions_manager::submit_install(ctx),
+        Msg::ExtensionsInstallFinished(result) => {
+            crate::ops::extensions_manager::install_finished(ctx, result)
+        }
+        Msg::ExtensionsUpdateSelected => crate::ops::extensions_manager::update_selected(ctx),
+        Msg::ExtensionsUpdateFinished { id, result } => {
+            crate::ops::extensions_manager::update_finished(ctx, id, result)
+        }
+        Msg::ExtensionsUpdatesChecked { epoch, available } => {
+            crate::ops::extensions_manager::updates_checked(ctx, epoch, available)
+        }
         Msg::CloseExtensionDetail => crate::ops::extensions_manager::close_detail(ctx),
         Msg::ClosePanePaddingEditor => overlays::close_pane_padding_editor(ctx),
         Msg::PanePaddingVerticalChanged(event) => {

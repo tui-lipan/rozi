@@ -107,6 +107,10 @@ pub fn extension_detail_key() -> &'static str {
     "rozi-extension-detail"
 }
 
+pub fn extension_install_input_key() -> &'static str {
+    "rozi-extension-install-source"
+}
+
 pub fn pane_padding_vertical_key() -> &'static str {
     "rozi-pane-padding-vertical"
 }

@@ -139,6 +139,8 @@ pub(crate) fn open_install(ctx: &mut Context<AppRoot>) -> Update {
     state.install_prompt = Some(crate::state::ExtensionInstallPromptState {
         input: TextInput::new(""),
         error: None,
+        error_scroll_offset: 0,
+        error_scroll_max: None,
         installing: false,
     });
     crate::ops::focus::request_extension_install_focus(ctx);
@@ -159,6 +161,58 @@ pub(crate) fn install_source_changed(ctx: &mut Context<AppRoot>, event: InputEve
     }
     event.apply_to(&mut prompt.input);
     prompt.error = None;
+    prompt.error_scroll_offset = 0;
+    prompt.error_scroll_max = None;
+    Update::full()
+}
+
+pub(crate) fn scroll_install_error_by(ctx: &mut Context<AppRoot>, delta: isize) -> Update {
+    let Some(prompt) = ctx
+        .state
+        .extensions
+        .as_mut()
+        .and_then(|state| state.install_prompt.as_mut())
+        .filter(|prompt| prompt.error.is_some())
+    else {
+        return Update::none();
+    };
+    let offset = if delta < 0 {
+        prompt
+            .error_scroll_offset
+            .saturating_sub(delta.unsigned_abs())
+    } else {
+        prompt.error_scroll_offset.saturating_add(delta as usize)
+    };
+    let offset = prompt
+        .error_scroll_max
+        .map_or(offset, |max| offset.min(max));
+    if offset == prompt.error_scroll_offset {
+        return Update::none();
+    }
+    prompt.error_scroll_offset = offset;
+    Update::full()
+}
+
+pub(crate) fn install_error_scrolled(
+    ctx: &mut Context<AppRoot>,
+    offset: usize,
+    max_offset: usize,
+) -> Update {
+    let Some(prompt) = ctx
+        .state
+        .extensions
+        .as_mut()
+        .and_then(|state| state.install_prompt.as_mut())
+        .filter(|prompt| prompt.error.is_some())
+    else {
+        return Update::none();
+    };
+    let offset = offset.min(max_offset);
+    if prompt.error_scroll_offset == offset && prompt.error_scroll_max == Some(max_offset) {
+        return Update::none();
+    }
+    prompt.error_scroll_offset = offset;
+    prompt.error_scroll_max = Some(max_offset);
     Update::full()
 }
 
@@ -193,9 +247,13 @@ pub(crate) fn submit_install(ctx: &mut Context<AppRoot>) -> Update {
     let source = prompt.input.text().trim().to_string();
     if source.is_empty() {
         prompt.error = Some("Enter a local path or Git URL".to_string());
+        prompt.error_scroll_offset = 0;
+        prompt.error_scroll_max = None;
         return Update::full();
     }
     prompt.error = None;
+    prompt.error_scroll_offset = 0;
+    prompt.error_scroll_max = None;
     prompt.installing = true;
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
@@ -233,7 +291,9 @@ pub(crate) fn install_finished(
                 .as_mut()
                 .and_then(|state| state.install_prompt.as_mut())
             {
-                prompt.error = Some(prompt_error(&error));
+                prompt.error = Some(error);
+                prompt.error_scroll_offset = 0;
+                prompt.error_scroll_max = None;
                 crate::ops::focus::request_extension_install_focus(ctx);
                 Update::full()
             } else {
@@ -741,17 +801,6 @@ fn copy(ctx: &mut Context<AppRoot>, text: &str, success: &str) -> Update {
         Err(error) => notify_error(ctx, "Copy failed", error.to_string()),
     }
     Update::full()
-}
-
-fn prompt_error(error: &str) -> String {
-    const MAX_CHARS: usize = 160;
-    let line = error.lines().next().unwrap_or(error);
-    if line.chars().count() <= MAX_CHARS {
-        return line.to_string();
-    }
-    let mut compact = line.chars().take(MAX_CHARS - 1).collect::<String>();
-    compact.push('…');
-    compact
 }
 
 fn notify_info(ctx: &mut Context<AppRoot>, message: &str) {

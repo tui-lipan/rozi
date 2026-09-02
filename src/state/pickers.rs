@@ -593,6 +593,8 @@ pub struct ExtensionsState {
 pub struct ExtensionInstallPromptState {
     pub input: TextInput,
     pub error: Option<String>,
+    pub error_scroll_offset: usize,
+    pub error_scroll_max: Option<usize>,
     pub installing: bool,
 }
 

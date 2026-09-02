@@ -1,5 +1,6 @@
 const EXTENSIONS_WIDTH: u16 = 84;
 const EXTENSION_DETAIL_WIDTH: u16 = 76;
+const EXTENSION_UPDATING_LABEL: &str = "updating…";
 
 pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(state) = ctx.state.extensions.as_ref() else {
@@ -72,7 +73,6 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
         ),
         OverlayAction::new("ctrl-r", "reload", Msg::ExtensionsReload, true),
         OverlayAction::new("ctrl-o", "open manifest", Msg::ExtensionsOpenManifest, manifest),
-        OverlayAction::new("ctrl-y", "copy report", Msg::ExtensionsCopyReport, selected.is_some()),
         OverlayAction::new(
             "ctrl-k",
             if armed.is_some() {
@@ -96,6 +96,7 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     let installation_kinds = state.installation_kinds.clone();
     let available_updates = state.available_updates.clone();
     let updating_id = state.updating_id.clone();
+    let updating_style = Style::new().fg(ctx.state.theme.status.info);
     let selected_index = entries
         .iter()
         .filter_map(|entry| match entry {
@@ -135,7 +136,11 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
             } else {
                 item_style
             };
-            Some(picker_row(
+            let updating = entry
+                .id
+                .as_deref()
+                .is_some_and(|id| updating_id.as_deref() == Some(id));
+            let row = picker_row(
                 [Span::new(item.label.as_ref()).style(label_style)],
                 fit_description(
                     item.label.as_ref(),
@@ -148,7 +153,16 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
                     EXTENSIONS_WIDTH,
                 ),
                 description_style,
-            ))
+            );
+            Some(if updating {
+                row.description(EXTENSION_UPDATING_LABEL)
+                    .description_style(description_style)
+                    .description_spinner(crate::view::session_status::picker_circle_spinner(
+                        updating_style,
+                    ))
+            } else {
+                row
+            })
         }))
         .on_query_change(
             ctx.link()
@@ -203,22 +217,19 @@ fn extension_description(
     updating_id: Option<&str>,
 ) -> String {
     let id = entry.id.as_deref();
-    let linked = id.is_some_and(|id| {
-        installation_kinds.get(id) == Some(&crate::extension_installation::InstallKind::Link)
-    });
+    if id.is_some_and(|id| updating_id == Some(id)) {
+        return EXTENSION_UPDATING_LABEL.to_string();
+    }
     let mut parts = Vec::new();
     if let Some(version) = entry.version.as_deref() {
         parts.push(version.to_string());
     }
-    if !linked || entry.status != crate::config::ExtensionStatus::Loaded {
+    let source = installation_kind_label(id.and_then(|id| installation_kinds.get(id)));
+    parts.push(source.to_string());
+    if entry.status != crate::config::ExtensionStatus::Loaded {
         parts.push(entry.status_detail());
     }
-    if linked {
-        parts.push("linked".to_string());
-    }
-    if id.is_some_and(|id| updating_id == Some(id)) {
-        parts.push("updating…".to_string());
-    } else if id.is_some_and(|id| available_updates.contains(id)) {
+    if id.is_some_and(|id| available_updates.contains(id)) {
         parts.push("update available".to_string());
     }
     let active = entry
@@ -250,6 +261,17 @@ fn extension_description(
     parts.join(" · ")
 }
 
+fn installation_kind_label(
+    kind: Option<&crate::extension_installation::InstallKind>,
+) -> &'static str {
+    match kind {
+        Some(crate::extension_installation::InstallKind::Git) => "git",
+        Some(crate::extension_installation::InstallKind::Local) => "copied",
+        Some(crate::extension_installation::InstallKind::Link) => "linked",
+        None => "manual",
+    }
+}
+
 pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some((state, detail)) = ctx
         .state
@@ -266,23 +288,8 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     else {
         return Text::new("").into();
     };
-    let updatable = entry.id.as_deref().is_some_and(|id| {
-        state.installation_kinds.get(id)
-            == Some(&crate::extension_installation::InstallKind::Git)
-            && state.updating_id.is_none()
-    });
     let actions = vec![
         OverlayAction::new("ctrl-y", "copy report", Msg::ExtensionsCopyReport, true),
-        OverlayAction::new(
-            "ctrl-u",
-            if state.updating_id.is_some() {
-                "updating"
-            } else {
-                "update"
-            },
-            Msg::ExtensionsUpdateSelected,
-            updatable,
-        ),
         OverlayAction::new(
             "ctrl-o",
             "open manifest",
@@ -516,7 +523,7 @@ fn push_report_line(
 
 #[cfg(test)]
 mod extension_report_tests {
-    use super::compact_home_paths;
+    use super::{compact_home_paths, installation_kind_label};
 
     #[test]
     fn report_paths_collapse_home_prefixes_without_touching_sibling_names() {
@@ -535,5 +542,21 @@ mod extension_report_tests {
             compact_home_paths("/prefix/home/you/project", Some("/home/you")),
             "/prefix/home/you/project"
         );
+    }
+
+    #[test]
+    fn installation_kinds_have_compact_distinct_picker_labels() {
+        use crate::extension_installation::InstallKind;
+
+        assert_eq!(installation_kind_label(Some(&InstallKind::Git)), "git");
+        assert_eq!(
+            installation_kind_label(Some(&InstallKind::Local)),
+            "copied"
+        );
+        assert_eq!(
+            installation_kind_label(Some(&InstallKind::Link)),
+            "linked"
+        );
+        assert_eq!(installation_kind_label(None), "manual");
     }
 }

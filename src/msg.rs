@@ -50,6 +50,11 @@ pub enum Msg {
     ExtensionsRemoveSelected,
     ExtensionsOpenInstall,
     ExtensionsInstallSourceChanged(InputEvent),
+    ExtensionsInstallErrorScrollBy(isize),
+    ExtensionsInstallErrorScrolled {
+        offset: usize,
+        max_offset: usize,
+    },
     ExtensionsCloseInstall,
     ExtensionsSubmitInstall,
     ExtensionsInstallFinished(std::result::Result<String, String>),

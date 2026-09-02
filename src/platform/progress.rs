@@ -9,8 +9,9 @@
 //! thing a progress bar exists to show.
 
 use std::io::{self, Write};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::ansi::{self, Rgb, palette};
@@ -157,6 +158,83 @@ pub struct StatusRow {
 /// Spinner frames, one eighth-circle apart. Braille is the densest way to show rotation in a
 /// single cell, and every terminal that renders the meter's box-drawing glyphs renders these.
 const SPINNER: [char; 8] = ['⠋', '⠙', '⠸', '⠼', '⠴', '⠦', '⠧', '⠏'];
+
+/// A rewritten stderr row for work that has no byte-level progress to report.
+///
+/// Git and local filesystem extension operations are synchronous APIs, so there is no meaningful
+/// percentage to draw. This keeps one animated row visible until the operation returns, then
+/// erases it before the durable result is printed. Redirected and `NO_COLOR` output stays silent.
+pub struct ActivityRow {
+    stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl ActivityRow {
+    pub fn new(label: impl Into<String>) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        if !super::ansi::stderr_supports_color() {
+            return Self { stop, worker: None };
+        }
+
+        let label = label.into();
+        let worker_stop = Arc::clone(&stop);
+        let truecolor = super::ansi::supports_truecolor();
+        let worker = thread::Builder::new()
+            .name("rozi-cli-activity".to_string())
+            .spawn(move || {
+                let accent = ansi::fg(palette::ROSE, truecolor);
+                let text = ansi::fg(palette::LAVENDER, truecolor);
+                let mut frame = 0;
+                let mut painted = false;
+                let mut cursor_claimed = false;
+                while !worker_stop.load(Ordering::Relaxed) {
+                    let row = format!(
+                        "  {accent}{}{reset} {text}{label}{reset}",
+                        SPINNER[frame % SPINNER.len()],
+                        reset = ansi::RESET,
+                    );
+                    let mut err = io::stderr().lock();
+                    if !cursor_claimed {
+                        super::cursor::hide();
+                        cursor_claimed = true;
+                    }
+                    if replace_row(&mut err, !painted, &row).is_ok() {
+                        painted = true;
+                    }
+                    drop(err);
+                    frame += 1;
+                    thread::park_timeout(Duration::from_millis(80));
+                }
+                if cursor_claimed {
+                    let mut err = io::stderr().lock();
+                    let cleanup = if painted {
+                        format!("{}{}", super::ansi::CLEAR_ROW, super::ansi::SHOW_CURSOR)
+                    } else {
+                        super::ansi::SHOW_CURSOR.to_string()
+                    };
+                    let _ = err.write_all(cleanup.as_bytes());
+                    let _ = err.flush();
+                    super::cursor::show();
+                }
+            })
+            .ok();
+        Self { stop, worker }
+    }
+
+    pub fn finish(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            worker.thread().unpark();
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for ActivityRow {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
 
 /// Below this a rate is guesswork: the first chunks of a transfer arrive at whatever speed the
 /// connection ramps to, and reporting that as a steady figure is worse than reporting nothing.

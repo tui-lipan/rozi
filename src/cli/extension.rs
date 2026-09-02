@@ -11,8 +11,10 @@ pub(crate) fn run_install_extension_cli(source: &str, link: bool) -> Result<()> 
     } else {
         crate::extension_installation::InstallRequest::Source(source.to_string())
     };
-    let installed =
-        crate::extension_installation::install(request).map_err(std::io::Error::other)?;
+    let mut progress = crate::platform::progress::ActivityRow::new("Installing extension");
+    let installed = crate::extension_installation::install(request);
+    progress.finish();
+    let installed = installed.map_err(std::io::Error::other)?;
     let styles = OutputStyles::detect();
     let action = match installed.kind {
         crate::extension_installation::InstallKind::Local => "Copied",
@@ -152,7 +154,10 @@ pub(crate) fn run_remove_extension_cli(id: &str) -> Result<()> {
 }
 
 pub(crate) fn run_update_extension_cli(id: &str) -> Result<()> {
-    let updated = crate::extension_installation::update(id).map_err(std::io::Error::other)?;
+    let mut progress = crate::platform::progress::ActivityRow::new("Updating extension");
+    let updated = crate::extension_installation::update(id);
+    progress.finish();
+    let updated = updated.map_err(std::io::Error::other)?;
     let styles = OutputStyles::detect();
     println!(
         "{} {}",

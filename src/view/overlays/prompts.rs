@@ -66,22 +66,37 @@ enum PromptCaption<'a> {
     /// Something the user needs to know before answering — a rejected password, a name that will
     /// not do. Stated in the warning colour; the chrome stays as it was.
     Note(&'a str),
+    /// Work is in progress. The label is paired with a real animated spinner.
+    Busy(&'a str),
 }
 
 impl<'a> PromptCaption<'a> {
     fn text(self) -> &'a str {
         match self {
-            Self::Armed(text) | Self::Note(text) => text,
+            Self::Armed(text) | Self::Note(text) | Self::Busy(text) => text,
         }
     }
 
     fn arms_chrome(self) -> bool {
         matches!(self, Self::Armed(_))
     }
+
+    fn is_busy(self) -> bool {
+        matches!(self, Self::Busy(_))
+    }
 }
 
 /// What one single-input prompt differs by. Grouped so [`prompt_overlay`] keeps a readable
 /// signature as prompts grow options: the messages stay positional, the appearance does not.
+struct PromptDocument {
+    key: &'static str,
+    max_height: u16,
+    scroll_offset: usize,
+    on_scroll: Callback<ScrollEvent>,
+    scroll_up: Msg,
+    scroll_down: Msg,
+}
+
 struct PromptChrome<'a> {
     title: &'a str,
     placeholder: &'a str,
@@ -93,6 +108,9 @@ struct PromptChrome<'a> {
     /// An inline caption above the hints, so what the modal has to say reads off the modal itself
     /// rather than a separate toast. See [`PromptCaption`] for what each kind costs the chrome.
     caption: Option<PromptCaption<'a>>,
+    /// Render the caption as a selectable, scrollable document capped at this many rows. Ordinary
+    /// one-line prompt feedback stays as text; detailed failures opt in.
+    caption_document: Option<PromptDocument>,
     submit_hints: &'a [(&'a str, &'a str)],
     /// Spell out `cancel esc` even when a nested-dialog return is set. A prompt raised by a
     /// background event is not part of that chain, so the escape hatch has to be stated.
@@ -112,6 +130,7 @@ impl<'a> PromptChrome<'a> {
             detail: None,
             mask: None,
             caption: None,
+            caption_document: None,
             submit_hints,
             always_cancel_hint: false,
             dim_behind: false,
@@ -138,11 +157,19 @@ fn prompt_overlay(
         detail,
         mask,
         caption,
+        caption_document,
         submit_hints,
         always_cancel_hint,
         dim_behind,
     } = chrome;
     let theme = &ctx.state.theme;
+    let busy = caption.is_some_and(PromptCaption::is_busy);
+    let scroll_up = caption_document
+        .as_ref()
+        .map(|document| document.scroll_up.clone());
+    let scroll_down = caption_document
+        .as_ref()
+        .map(|document| document.scroll_down.clone());
     let close_on_key = close.clone();
     let input = Input::bound(input_state)
         .placeholder(placeholder)
@@ -161,6 +188,14 @@ fn prompt_overlay(
         .on_key(ctx.link().key_handler(move |key| {
             if key.is(KeyCode::Esc) {
                 Some(close_on_key.clone())
+            } else if key.code == KeyCode::Up
+                && let Some(scroll) = scroll_up.as_ref()
+            {
+                Some(scroll.clone())
+            } else if key.code == KeyCode::Down
+                && let Some(scroll) = scroll_down.as_ref()
+            {
+                Some(scroll.clone())
             } else if key.code == KeyCode::Enter
                 && !key.mods.ctrl
                 && !key.mods.alt
@@ -193,26 +228,58 @@ fn prompt_overlay(
     if let Some(caption) = caption {
         let accent = if caption.arms_chrome() {
             theme.status.error
+        } else if caption.is_busy() {
+            theme.status.info
         } else {
             theme.status.warning
+        };
+        let caption_content: Element = if caption.is_busy() {
+            Spinner::new()
+                .spinner_style(SpinnerStyle::Dots)
+                .label(caption.text())
+                .style(Style::new().fg(accent))
+                .label_style(fg_only(&theme.primary))
+                .into()
+        } else {
+            match caption_document {
+                Some(document) => DocumentView::new(caption.text())
+                    .wrap(true)
+                    .line_numbers(false)
+                    .border(false)
+                    .height(Length::Auto)
+                    .padding((0, 0, 0, 0))
+                    .scroll_offset(document.scroll_offset)
+                    .scrollbar(true)
+                    .scrollbar_config(modal_scrollbar_config(theme))
+                    .focusable(false)
+                    .tab_stop(false)
+                    .style(Style::new().fg(accent).italic())
+                    .focus_content_style(Style::new().fg(accent).italic())
+                    .selection_style(theme.text_selection)
+                    .on_scroll(document.on_scroll)
+                    .key(document.key)
+                    .max_height(Length::Px(document.max_height)),
+                None => Text::new(caption.text())
+                    .overflow(Overflow::Wrap)
+                    .width(Length::Flex(1))
+                    .style(Style::new().fg(accent).italic())
+                    .into(),
+            }
         };
         body = body.child(
             HStack::new()
                 .height(Length::Auto)
                 .padding((1, 1, 0, 1))
-                .child(
-                    Text::new(caption.text())
-                        .overflow(Overflow::Wrap)
-                        .width(Length::Flex(1))
-                        .style(Style::new().fg(accent).italic()),
-                ),
+                .child(caption_content),
         );
     }
-    body = body.child(prompt_hints(
-        ctx,
-        submit_hints,
-        always_cancel_hint || ctx.state.overlay_return.is_none(),
-    ));
+    if !busy {
+        body = body.child(prompt_hints(
+            ctx,
+            submit_hints,
+            always_cancel_hint || ctx.state.overlay_return.is_none(),
+        ));
+    }
 
     let mut modal = action_palette_modal(ctx, title)
         .on_close(ctx.link().callback(move |_| close.clone()))
@@ -249,14 +316,28 @@ pub(crate) fn extension_install_prompt_overlay(ctx: &Context<AppRoot>) -> Elemen
         return Text::new("").into();
     };
     let caption = if prompt.installing {
-        Some(PromptCaption::Note("Installing…"))
+        Some(PromptCaption::Busy("Installing"))
     } else {
         prompt.error.as_deref().map(PromptCaption::Note)
     };
+    let caption_document = prompt.error.as_ref().map(|_| PromptDocument {
+        key: extension_install_error_key(),
+        max_height: 6,
+        scroll_offset: prompt.error_scroll_offset,
+        on_scroll: ctx.link().callback(|event: ScrollEvent| {
+            Msg::ExtensionsInstallErrorScrolled {
+                offset: event.offset,
+                max_offset: event.metrics.max_offset,
+            }
+        }),
+        scroll_up: Msg::ExtensionsInstallErrorScrollBy(-1),
+        scroll_down: Msg::ExtensionsInstallErrorScrollBy(1),
+    });
     prompt_overlay(
         ctx,
         PromptChrome {
             caption,
+            caption_document,
             dim_behind: true,
             ..PromptChrome::new(
                 "Install extension",

@@ -28,10 +28,9 @@ exclude = [
 ]
 
 [dependencies]
-# 0.4.1 is the first release to require termina ^0.4, whose mouse decoder no longer panics the
-# input worker on a report at column or row 0. Anything older needs a `[patch.crates-io]` to be
-# safe, and cargo strips those when publishing.
-tui-lipan = { version = "0.4.1", features = [
+# 0.5.0 adds per-row description spinners while retaining termina ^0.4, whose mouse decoder no
+# longer panics the input worker on a report at column or row 0.
+tui-lipan = { version = "0.5.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

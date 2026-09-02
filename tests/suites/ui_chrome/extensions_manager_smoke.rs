@@ -99,9 +99,12 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             let list = frame(&mut backend);
             assert!(list.contains("Active"), "{list}");
             assert!(list.contains("fixture-direct"), "{list}");
+            assert!(list.contains("git"), "{list}");
+            assert!(list.contains("manual"), "{list}");
             assert!(list.contains("update available"), "{list}");
             assert!(list.contains("1 key active"), "{list}");
             assert!(list.contains("install"), "{list}");
+            assert!(!list.contains("copy report"), "{list}");
             assert!(list.contains("Problems"), "{list}");
             assert!(list.contains("future-a"), "{list}");
             assert!(list.contains("requires extension API 2"), "{list}");
@@ -140,6 +143,76 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 backend
                     .focused_key()
                     .is_some_and(|key| key.as_ref() == "rozi-extension-install-source")
+            );
+            let install_error = (1..=10)
+                .map(|line| format!("Installation failure detail {line:02}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            backend
+                .dispatch(rozi::Msg::ExtensionsInstallFinished(Err(
+                    install_error.clone()
+                )))
+                .expect("show extension installation failure");
+            assert_eq!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .and_then(|state| state.install_prompt.as_ref())
+                    .and_then(|prompt| prompt.error.as_deref()),
+                Some(install_error.as_str()),
+                "installation errors must remain lossless for copying"
+            );
+            let first_error_page = frame(&mut backend);
+            assert!(
+                first_error_page.contains("Installation failure detail 01"),
+                "{first_error_page}"
+            );
+            assert!(
+                !first_error_page.contains("Installation failure detail 10"),
+                "the error document should be capped before scrolling:\n{first_error_page}"
+            );
+            for _ in 0..10 {
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Down,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("scroll install error document down");
+            }
+            assert!(
+                backend
+                    .focused_key()
+                    .is_some_and(|key| key.as_ref() == "rozi-extension-install-source"),
+                "the source input keeps focus while its arrow keys scroll the error"
+            );
+            let last_error_page = frame(&mut backend);
+            assert!(
+                last_error_page.contains("Installation failure detail 10"),
+                "{last_error_page}"
+            );
+            let scrolled_offset = backend
+                .state()
+                .extensions
+                .as_ref()
+                .and_then(|state| state.install_prompt.as_ref())
+                .map(|prompt| prompt.error_scroll_offset)
+                .unwrap();
+            assert!(scrolled_offset > 0);
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Up,
+                    mods: KeyMods::NONE,
+                })
+                .expect("scroll install error document up");
+            assert_eq!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .and_then(|state| state.install_prompt.as_ref())
+                    .map(|prompt| prompt.error_scroll_offset),
+                Some(scrolled_offset - 1)
             );
             backend
                 .send_key(KeyEvent {
@@ -281,7 +354,8 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 assert!(detail.contains(group), "missing {group}:\n{detail}");
             }
             assert!(detail.contains("suppressed"), "{detail}");
-            assert!(detail.contains("update"), "{detail}");
+            assert!(detail.contains("copy report"), "{detail}");
+            assert!(!detail.contains("Ctrl+u"), "{detail}");
             assert!(!detail.contains("Search report"), "{detail}");
             assert!(detail.contains("command.py"), "{detail}");
             assert!(

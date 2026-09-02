@@ -109,6 +109,12 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ExtensionsInstallSourceChanged(event) => {
             crate::ops::extensions_manager::install_source_changed(ctx, event)
         }
+        Msg::ExtensionsInstallErrorScrollBy(delta) => {
+            crate::ops::extensions_manager::scroll_install_error_by(ctx, delta)
+        }
+        Msg::ExtensionsInstallErrorScrolled { offset, max_offset } => {
+            crate::ops::extensions_manager::install_error_scrolled(ctx, offset, max_offset)
+        }
         Msg::ExtensionsCloseInstall => crate::ops::extensions_manager::close_install(ctx),
         Msg::ExtensionsSubmitInstall => crate::ops::extensions_manager::submit_install(ctx),
         Msg::ExtensionsInstallFinished(result) => {

@@ -4,7 +4,7 @@ Seamless navigation between Vim/Neovim splits and rozi panes.
 
 ## Setup
 
-Enable rozi's editor-aware bindings in `~/.config/rozi/config.toml`:
+Enable rozi's split-aware bindings in `~/.config/rozi/config.toml`:
 
 ```toml
 [keys]
@@ -14,7 +14,28 @@ smart-focus-up = "ctrl-k"
 smart-focus-right = "ctrl-l"
 ```
 
-Install this directory as a Vim package. For example, from a rozi checkout:
+### Register the Rozi extension
+
+Link or copy this repository into Rozi's extension directory:
+
+```bash
+data_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
+install -d -m 700 "$data_root" "$data_root/extensions"
+ln -s "/absolute/path/to/rozi/integrations/vim-rozi-navigator" \
+  "$data_root/extensions/vim-rozi-navigator"
+rozi check-extension "$data_root/extensions/vim-rozi-navigator"
+rozi run-action reload-extensions
+```
+
+The manifest contributes the Vim-family foreground program names. Rozi currently ships the same
+common names as compatibility defaults, so identical registrations are deduplicated. If
+`[navigation] editors` appears in `config.toml`, that explicit list replaces both defaults and
+extension targets.
+
+### Install the Vim or Neovim plugin
+
+Registering the Rozi extension does not install the editor plugin. Install this same repository
+through Vim's package mechanism. For example, from a Rozi checkout:
 
 ```bash
 ln -s "$PWD/integrations/vim-rozi-navigator" \
@@ -42,6 +63,12 @@ otherwise replace the plugin's mappings later during startup.
 
 The defaults are `Ctrl-h/j/k/l` for left/down/up/right and `Ctrl-\` for the previous split or
 pane. Directional mappings also work in Vim/Neovim terminal mode.
+
+The repository contains two independently installed parts. `extension.toml` teaches Rozi which
+foreground programs are split-aware; `plugin/` and `doc/` teach Vim how to cross an outer split
+edge. Rozi compiles the static manifest declaration when extensions load, while the editor plugin
+crosses the edge through Rozi's public `run-action` CLI. No extension process or callback runs in
+the key-input path.
 
 ## Configuration
 

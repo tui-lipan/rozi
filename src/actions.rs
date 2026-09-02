@@ -270,11 +270,10 @@ fn exec_argv(
     Update::none()
 }
 
-/// vim-tmux-navigator-style directional focus: if the focused pane runs a split-aware program
-/// (see `[navigation] editors`), forward the matching `Ctrl-h/j/k/l` so that program moves its
-/// own split; otherwise move rozi pane focus. The forwarded program is expected to hand focus
-/// back at its split edge via the control socket (`rozi run-action focus-<dir>`), which yields
-/// the seamless "one keymap crosses both" behavior.
+/// Split-aware directional focus: if the focused pane runs a program in the resolved navigation
+/// target set, forward the matching `Ctrl-h/j/k/l` so that program moves its own split; otherwise
+/// move rozi pane focus. An editor-specific integration hands focus back at its outer edge through
+/// `rozi run-action focus-<dir>`.
 fn smart_focus(ctx: &mut Context<AppRoot>, direction: Direction) -> Update {
     if let Some(id) = ctx.state.focused_pane()
         && focused_pane_forwards_navigation(&ctx.state, id)
@@ -296,8 +295,7 @@ fn focused_pane_forwards_navigation(state: &crate::state::State, id: crate::stat
         .is_some_and(|command| state.config.navigation.is_split_editor(&command))
 }
 
-/// The `Ctrl-h/j/k/l` key a split-aware program expects for the given navigation direction,
-/// matching vim-tmux-navigator's default mappings.
+/// The `Ctrl-h/j/k/l` convention shared by the split-aware editor integrations.
 fn navigation_key(direction: Direction) -> KeyEvent {
     let ch = match direction {
         Direction::Left => 'h',

@@ -1,0 +1,10 @@
+[extension]
+id = "vim-rozi-navigator"
+title = "Vim and Neovim navigator"
+description = "Split-aware navigation policy for the Vim and Neovim editor plugin"
+version = "0.1.0"
+api = 1
+
+[[navigation_targets]]
+name = "vim"
+programs = ["vim", "nvim", "vi", "view", "vimdiff", "nvim-wrapped"]

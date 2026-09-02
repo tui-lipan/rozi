@@ -645,23 +645,34 @@ impl SoundsConfig {
     }
 }
 
-/// Seamless-navigation policy for the `smart-focus-*` actions: the set of foreground programs
-/// that manage their own splits and should receive `Ctrl-h/j/k/l` themselves instead of having
-/// rozi move pane focus. Modeled on vim-tmux-navigator's `is_vim` check (see
-/// [docs/keybindings.md]); matching is case-insensitive against the pane's foreground process
-/// name.
+/// Resolved seamless-navigation policy for `smart-focus-*`: built-in and enabled extension
+/// declarations unless an explicit `[navigation] editors` list replaces them. Matching is
+/// case-insensitive against the foreground process name. Editor-specific edge behavior stays
+/// outside core and returns through public focus actions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NavigationConfig {
     pub editors: Vec<String>,
+    /// All declarations behind the resolved editor set. Runtime matching only needs `editors`,
+    /// but retaining provenance makes extension policy explainable without putting extensions on
+    /// the input path.
+    pub(crate) registrations: Vec<NavigationProgramRegistration>,
 }
 
 impl Default for NavigationConfig {
     fn default() -> Self {
+        let editors: Vec<_> = DEFAULT_SPLIT_EDITORS
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect();
         Self {
-            editors: DEFAULT_SPLIT_EDITORS
+            registrations: editors
                 .iter()
-                .map(|name| (*name).to_string())
+                .map(|program| NavigationProgramRegistration {
+                    program: program.clone(),
+                    sources: vec![NavigationTargetSource::Builtin],
+                })
                 .collect(),
+            editors,
         }
     }
 }
@@ -674,11 +685,68 @@ impl NavigationConfig {
             .iter()
             .any(|name| name.eq_ignore_ascii_case(command))
     }
+
+    pub(crate) fn replace_with_user_editors(&mut self, editors: Vec<String>) {
+        self.registrations = editors
+            .iter()
+            .map(|program| NavigationProgramRegistration {
+                program: program.clone(),
+                sources: vec![NavigationTargetSource::User],
+            })
+            .collect();
+        self.editors = editors;
+    }
+
+    pub(crate) fn add_extension_targets(&mut self, targets: &[NavigationTargetContribution]) {
+        for target in targets {
+            for program in &target.programs {
+                let source = NavigationTargetSource::Extension {
+                    id: target.extension_id.clone(),
+                    target: target.name.clone(),
+                };
+                if let Some(registration) = self
+                    .registrations
+                    .iter_mut()
+                    .find(|entry| entry.program.eq_ignore_ascii_case(program))
+                {
+                    if !registration.sources.contains(&source) {
+                        registration.sources.push(source);
+                    }
+                    continue;
+                }
+                self.editors.push(program.clone());
+                self.registrations.push(NavigationProgramRegistration {
+                    program: program.clone(),
+                    sources: vec![source],
+                });
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NavigationTargetContribution {
+    pub(crate) name: String,
+    pub(crate) programs: Vec<String>,
+    pub(crate) extension_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NavigationProgramRegistration {
+    pub(crate) program: String,
+    pub(crate) sources: Vec<NavigationTargetSource>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NavigationTargetSource {
+    Builtin,
+    Extension { id: String, target: String },
+    User,
 }
 
 /// Foreground programs that `smart-focus-*` forwards navigation keys to by default. Names match
-/// `/proc/<pid>/comm` (the truncated executable basename), covering the common vim family plus a
-/// few other split-aware TUIs; extend or replace via `[navigation] editors`.
+/// the platform's foreground executable basename and cover common split-aware editors and TUIs;
+/// extensions augment these, while `[navigation] editors` replaces the complete resolved list.
 const DEFAULT_SPLIT_EDITORS: &[&str] = &[
     "vim",
     "nvim",

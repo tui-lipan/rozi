@@ -598,6 +598,9 @@ fn load_config_from_text_with_extensions(
         config.extension_runtime = contributions.runtime;
         config.services = contributions.services;
         config.agents = contributions.agents;
+        config
+            .navigation
+            .add_extension_targets(&contributions.navigation_targets);
         // An unreadable config.toml is not a reason to lose an extension's tab: the defaults still
         // apply, and this takes the same merge the normal path does.
         apply_sidebar_config(
@@ -885,12 +888,15 @@ fn load_config_from_text_with_extensions(
     config.sounds.done_file = non_empty(parsed.sounds.done_file).map(expand_path);
     config.sounds.error_file = non_empty(parsed.sounds.error_file).map(expand_path);
     config.sounds.player = non_empty(parsed.sounds.player);
+    let has_explicit_navigation_editors = parsed.navigation.editors.is_some();
     if let Some(editors) = parsed.navigation.editors {
-        config.navigation.editors = editors
-            .into_iter()
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty())
-            .collect();
+        config.navigation.replace_with_user_editors(
+            editors
+                .into_iter()
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .collect(),
+        );
     }
     if let Some(close_pane) = parsed.confirm.close_pane {
         config.confirm.close_pane = close_pane;
@@ -927,6 +933,11 @@ fn load_config_from_text_with_extensions(
     apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
     let contributions =
         extensions.into_contributions(&parsed.extensions.disabled, &parsed.extensions.settings);
+    if !has_explicit_navigation_editors {
+        config
+            .navigation
+            .add_extension_targets(&contributions.navigation_targets);
+    }
     config.extension_problems = contributions.problem_count;
     warnings.extend(contributions.warnings);
     // Sidebar tabs are merged inside the sidebar pass rather than appended after it: placement is
@@ -1596,6 +1607,88 @@ mod file_tests {
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(directory.join("extension.toml"), manifest).unwrap();
         super::super::extensions::scan_extensions_in(temp)
+    }
+
+    const NAVIGATION_MANIFEST: &str = "[extension]\nid = \"vim-rozi\"\napi = 1\n\
+         [[navigation_targets]]\nname = \"vim\"\nprograms = [\"nvim\", \"zed\"]\n";
+
+    #[test]
+    fn extension_navigation_targets_augment_defaults_when_user_config_is_absent() {
+        let temp = tempfile::tempdir().unwrap();
+        let loaded = load_config_from_text_with_extensions(
+            "",
+            Path::new("config.toml"),
+            scan_with(temp.path(), NAVIGATION_MANIFEST),
+            Vec::new(),
+        );
+
+        assert!(loaded.config.navigation.is_split_editor("zed"));
+        assert_eq!(
+            loaded
+                .config
+                .navigation
+                .editors
+                .iter()
+                .filter(|program| program.eq_ignore_ascii_case("nvim"))
+                .count(),
+            1
+        );
+        let nvim = loaded
+            .config
+            .navigation
+            .registrations
+            .iter()
+            .find(|registration| registration.program == "nvim")
+            .unwrap();
+        assert_eq!(
+            nvim.sources,
+            [
+                NavigationTargetSource::Builtin,
+                NavigationTargetSource::Extension {
+                    id: "vim-rozi".to_string(),
+                    target: "vim".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_navigation_editors_completely_replace_extension_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        for (text, expected) in [
+            ("[navigation]\neditors = []\n", Vec::<String>::new()),
+            ("[navigation]\neditors = [\"hx\"]\n", vec!["hx".to_string()]),
+        ] {
+            let loaded = load_config_from_text_with_extensions(
+                text,
+                Path::new("config.toml"),
+                scan_with(temp.path(), NAVIGATION_MANIFEST),
+                Vec::new(),
+            );
+            assert_eq!(loaded.config.navigation.editors, expected);
+            assert!(!loaded.config.navigation.is_split_editor("zed"));
+            assert!(
+                loaded
+                    .config
+                    .navigation
+                    .registrations
+                    .iter()
+                    .all(|registration| registration.sources == [NavigationTargetSource::User])
+            );
+        }
+    }
+
+    #[test]
+    fn disabled_extensions_do_not_contribute_navigation_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let loaded = load_config_from_text_with_extensions(
+            "[extensions]\ndisabled = [\"vim-rozi\"]\n",
+            Path::new("config.toml"),
+            scan_with(temp.path(), NAVIGATION_MANIFEST),
+            Vec::new(),
+        );
+
+        assert!(!loaded.config.navigation.is_split_editor("zed"));
     }
 
     const KEY_MANIFEST: &str = "[extension]\nid = \"tasks\"\napi = 1\n\

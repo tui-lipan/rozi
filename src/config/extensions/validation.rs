@@ -8,9 +8,15 @@ use crate::config::{
 };
 
 use super::super::commands::valid_command_segment;
-use super::manifest::{ExtensionCommandFile, ExtensionServiceFile, ExtensionSidebarTabFile};
+use super::manifest::{
+    ExtensionCommandFile, ExtensionNavigationTargetFile, ExtensionServiceFile,
+    ExtensionSidebarTabFile,
+};
 use super::paths::{normalize_direct_argv, resolve_declared_path};
-use super::{ExtensionInfo, RESERVED_EXTENSION_ENV, RESERVED_EXTENSION_IDS, clean_optional};
+use super::{
+    ExtensionInfo, ExtensionNavigationTargetDiagnostic, RESERVED_EXTENSION_ENV,
+    RESERVED_EXTENSION_IDS, clean_optional,
+};
 
 pub(super) fn validate_requested_extension_id(id: &str) -> Result<(), String> {
     if id.trim() != id {
@@ -53,6 +59,102 @@ pub(crate) fn is_extension_scoped_id(id: &str) -> bool {
     valid_command_segment(extension)
         && !RESERVED_EXTENSION_IDS.contains(&extension)
         && valid_command_segment(command)
+}
+
+pub(super) fn validate_navigation_target(
+    raw: ExtensionNavigationTargetFile,
+    extension_id: &str,
+    seen: &mut HashSet<String>,
+    info: &mut ExtensionInfo,
+    targets: &mut Vec<crate::config::NavigationTargetContribution>,
+) {
+    let Some(name) = raw
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+    else {
+        info.errors
+            .push("navigation target missing required field `name`".to_string());
+        return;
+    };
+    if !valid_command_segment(&name) {
+        info.errors.push(format!(
+            "navigation target name `{name}` must match [a-z0-9_-]+"
+        ));
+        return;
+    }
+    if !seen.insert(name.clone()) {
+        info.errors.push(format!(
+            "duplicate navigation target `{extension_id}.{name}`"
+        ));
+        return;
+    }
+
+    let target_id = format!("{extension_id}.{name}");
+    let programs = validated_navigation_programs(raw.programs, &target_id, &mut info.errors);
+    if programs.is_empty() {
+        info.errors.push(format!(
+            "navigation target `{target_id}` requires at least one program"
+        ));
+        return;
+    }
+
+    info.navigation_targets
+        .push(ExtensionNavigationTargetDiagnostic {
+            name: name.clone(),
+            programs: programs.clone(),
+        });
+    targets.push(crate::config::NavigationTargetContribution {
+        name,
+        programs,
+        extension_id: extension_id.to_string(),
+    });
+}
+
+fn validated_navigation_programs(
+    raw: Option<Vec<String>>,
+    target_id: &str,
+    errors: &mut Vec<String>,
+) -> Vec<String> {
+    let mut programs = Vec::new();
+    let mut seen = HashSet::new();
+    for program in raw.unwrap_or_default() {
+        if let Some(program) = validated_navigation_program(program, target_id, errors)
+            && seen.insert(program.to_ascii_lowercase())
+        {
+            programs.push(program);
+        }
+    }
+    programs
+}
+
+fn validated_navigation_program(
+    program: String,
+    target_id: &str,
+    errors: &mut Vec<String>,
+) -> Option<String> {
+    let program = program.trim();
+    if program.is_empty() {
+        errors.push(format!(
+            "navigation target `{target_id}` contains an empty program"
+        ));
+        return None;
+    }
+    if !is_executable_basename(program) {
+        errors.push(format!(
+            "navigation target `{target_id}` program `{program}` must be an executable basename"
+        ));
+        return None;
+    }
+    Some(program.to_string())
+}
+
+fn is_executable_basename(program: &str) -> bool {
+    program
+        .chars()
+        .all(|character| !character.is_control() && !matches!(character, '/' | '\\'))
 }
 
 #[allow(clippy::too_many_arguments)]

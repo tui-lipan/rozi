@@ -145,6 +145,32 @@
         ]
       }
     },
+    "navigation_targets": {
+      "type": "array",
+      "description": "Static foreground-program registrations for split-aware smart-focus routing.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "programs"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$"
+          },
+          "programs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
     "agents": {
       "type": "array",
       "description": "Agent definitions. Ids are namespaced <extension>.<id> once loaded.",

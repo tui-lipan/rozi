@@ -68,6 +68,7 @@ pub(super) fn mark_duplicate_ids(extensions: &mut [DiscoveredExtension]) {
             extension.services.clear();
             extension.agents.clear();
             extension.sidebar_tabs.clear();
+            extension.navigation_targets.clear();
         }
     }
 }

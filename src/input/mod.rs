@@ -18,10 +18,9 @@ pub enum Action {
     Focus(Direction),
     /// Directional focus that stays on the current pane when no spatial candidate exists.
     FocusNoWrap(Direction),
-    /// Move focus in `Direction`, unless the focused pane runs a split-aware program (see
-    /// `[navigation] editors`), in which case forward the matching `Ctrl-h/j/k/l` to it. Lets a
-    /// single `Ctrl-h/j/k/l` binding navigate rozi panes and vim/neovim splits seamlessly
-    /// (vim-tmux-navigator style).
+    /// Move focus in `Direction`, unless the focused pane runs a split-aware program from the
+    /// resolved built-in, extension, or user policy, in which case forward the matching
+    /// `Ctrl-h/j/k/l` to it. Lets one binding navigate rozi panes and editor-managed splits.
     SmartFocus(Direction),
     FocusNextBlockedPane,
     Move(Direction),

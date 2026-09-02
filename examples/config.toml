@@ -206,7 +206,8 @@
 [navigation]
 # Foreground programs that handle their own splits: smart-focus-* forwards Ctrl-h/j/k/l to
 # them instead of moving pane focus. Matched case-insensitively against the executable
-# basename. Setting this replaces the list rather than extending it.
+# basename. When omitted, extension targets augment the built-in list. Setting this replaces
+# the complete built-in and extension-provided list; use [] to disable detection.
 #editors = ["vim", "nvim", "vi", "view", "vimdiff", "nvim-wrapped", "hx", "helix", "kak", "emacs", "emacsclient", "fzf"]
 
 [confirm]

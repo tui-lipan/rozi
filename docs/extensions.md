@@ -1,8 +1,9 @@
 # Extensions
 
-Rozi extensions are directories containing `extension.toml` and out-of-process programs. They add
-commands, supervised services, agent definitions, and sidebar tabs, and they take settings from the
-user's `config.toml`. Runtime interaction uses the same
+Rozi extensions are directories containing `extension.toml` and, when needed, out-of-process
+programs. They add commands, supervised services, agent definitions, sidebar tabs, and static
+navigation targets, and they take settings from the user's `config.toml`. Runtime interaction uses
+the same
 [`rozi` control commands](control.md) available to scripts.
 
 ## Inspect before installing
@@ -82,8 +83,8 @@ rozi list-extensions --json
 ```
 
 The report includes loaded, disabled, invalid, incompatible, and duplicate candidates. Verbose
-output adds paths, public command, service, agent, and sidebar tab IDs, resolved executables, and
-validation errors.
+output adds paths, public command, service, agent, and sidebar tab IDs, navigation targets,
+resolved executables, and validation errors.
 
 `check-extension --json` and `list-extensions --json` are available for tooling:
 
@@ -107,9 +108,10 @@ by editing the stable ID list:
 disabled = ["git-tools"]
 ```
 
-When the config file is saved, Rozi removes the extension's commands, agents, and sidebar tabs,
-stops its services, and closes its owned picker, publisher, and subscription streams. A disabled
-extension's sidebar placement is remembered, so re-enabling it puts its tab back where you had it.
+When the config file is saved, Rozi removes the extension's commands, agents, sidebar tabs, and
+navigation targets, stops its services, and closes its owned picker, publisher, and subscription
+streams. A disabled extension's sidebar placement is remembered, so re-enabling it puts its tab
+back where you had it.
 
 For scripted removal, disable the extension first, delete its installed directory, then run
 `rozi run-action reload-extensions`.
@@ -184,6 +186,36 @@ api = 1
 
 The schema is [`schemas/extension.schema.json`](../schemas/extension.schema.json).
 
+### Navigation targets
+
+An extension can teach Rozi which foreground programs manage their own splits:
+
+```toml
+[[navigation_targets]]
+name = "vim"
+programs = ["vim", "nvim", "view", "vimdiff"]
+```
+
+`name` identifies the declaration within the extension and must match `[a-z0-9_-]+`. `programs`
+contains executable basenames, not paths. Names are trimmed and matched case-insensitively;
+duplicates within one declaration or across built-in and extension targets are harmless.
+
+Rozi validates these declarations when the extension loads and compiles enabled targets into its
+in-memory split-aware program set. The extension does not run code, receive key events, or
+participate in foreground-process lookup. Disabling or removing it drops its target declarations
+on the next extension reload.
+
+An explicit user list wins completely:
+
+```toml
+[navigation]
+editors = []
+```
+
+When `editors` is present, Rozi uses exactly that normalized list and ignores built-in and
+extension-provided targets. When it is absent, enabled extension targets augment the built-in list.
+See [Split-aware navigation](keybindings.md#split-aware-navigation).
+
 ### Commands
 
 ```toml
@@ -251,8 +283,8 @@ Use a service for long-lived work such as [`rozi subscribe`](control.md#subscrip
 
 An extension may include `[[agents]]` entries in the same format as
 [user agent definitions](agents.md). Rozi namespaces each local ID under the extension ID. An
-extension cannot replace a built-in agent. One invalid command, service, agent, sidebar tab, or
-setting declaration makes the whole extension invalid.
+extension cannot replace a built-in agent. One invalid command, service, agent, sidebar tab,
+navigation target, or setting declaration makes the whole extension invalid.
 
 ### Settings
 
@@ -381,6 +413,8 @@ Extension API 1 is frozen. Everything below is a contract Rozi will not break in
   [`schemas/extension.schema.json`](../schemas/extension.schema.json);
 - namespacing: every contributed id is `<extension-id>.<local-id>`, and an extension can only add,
   never replace a built-in;
+- navigation targets are static load-time declarations; core owns foreground-process matching and
+  key forwarding, and an explicit `[navigation] editors` list replaces all declarations;
 - the `ROZI_EXTENSION*` environment variables and their meanings;
 - the `rozi` control commands documented in [Control](control.md), and their exit codes;
 - atomic validity: an extension is loaded whole or not at all;

@@ -15,8 +15,8 @@ pub use appearance::*;
 pub use extensions::{
     EXTENSION_API_VERSION, EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, ExtensionCheckDocument,
     ExtensionCommandDiagnostic, ExtensionInfo, ExtensionLaunchDiagnostic, ExtensionListDocument,
-    ExtensionProvenance, ExtensionServiceDiagnostic, ExtensionSettingValue, ExtensionSettings,
-    ExtensionStatus, GENERATION_ENV, SETTINGS_ENV,
+    ExtensionNavigationTargetDiagnostic, ExtensionProvenance, ExtensionServiceDiagnostic,
+    ExtensionSettingValue, ExtensionSettings, ExtensionStatus, GENERATION_ENV, SETTINGS_ENV,
 };
 pub(crate) use extensions::{
     ReportKind, ReportRow, ReportSection, ReportTone, UserExtensionConfig, check_extension,

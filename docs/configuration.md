@@ -277,9 +277,9 @@ Desktop notifications use the platform notification implementation and are best 
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `editors` | array of strings | vim family, Helix, Kakoune, Emacs, and fzf | Replaces the process-name list used by `smart-focus-*`. Empty names are removed. Matching is case-insensitive. |
+| `editors` | array of strings | built-in and extension targets | When omitted, enabled extension targets augment Rozi's built-in foreground-process list. When present, replaces that complete resolved list; `[]` disables split-aware detection. Empty names are removed. Matching is case-insensitive. |
 
-See [Commands without default keys](keybindings.md#commands-without-default-keys).
+See [Split-aware navigation](keybindings.md#split-aware-navigation).
 
 ## `[confirm]`
 

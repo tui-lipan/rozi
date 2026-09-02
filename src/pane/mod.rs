@@ -602,9 +602,8 @@ impl TerminalPane {
     /// Server-authoritative (cross-platform plan Phase 6/7), same rationale as
     /// [`working_directory`](Self::working_directory). This is the terminal's foreground process
     /// group leader, so it reflects the actually-running program regardless of shell/process-tree
-    /// depth - the signal a vim-tmux-navigator-style binding uses to decide whether
-    /// `Ctrl-h/j/k/l` should move focus or be forwarded to the program. Returns `None` when it
-    /// cannot be determined.
+    /// depth - the signal split-aware navigation uses to decide whether a key should move pane
+    /// focus or be forwarded to the program. Returns `None` when it cannot be determined.
     pub fn foreground_command(&self) -> Option<String> {
         self.foreground_program.clone()
     }

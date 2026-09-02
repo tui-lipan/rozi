@@ -44,6 +44,12 @@ description = "Branch and worktree workflows"
 version = "0.1.0"
 api = 1
 
+# Optional: register foreground executable basenames that manage their own splits. This is static
+# policy compiled by Rozi at load time; no extension process receives navigation keys.
+[[navigation_targets]]
+name = "vim"
+programs = ["vim", "nvim", "view", "vimdiff"]
+
 [[commands]]
 id = "branches"
 label = "Branches…"
@@ -87,6 +93,10 @@ entries = [
   installation directory.
 - Use the API generation printed in current docs/scaffolds. An absent or different generation is
   incompatible and contributes nothing.
+- `[[navigation_targets]]` names must match `[a-z0-9_-]+`. Programs are executable basenames, not
+  paths. Enabled targets augment built-ins only when the user omitted `[navigation] editors`; an
+  explicit list, including `[]`, replaces every built-in and extension target. Declarations are
+  data only and never put an extension process on the input path.
 - Use `exec = ["program", "arg"]` for direct, argument-preserving execution.
 - Use `shell = "..."` only when shell syntax is intentional. Never put a shell command string in
   `exec`.
@@ -130,8 +140,8 @@ entries = [
 - A command's `key` is a suggestion inside `<prefix> x`, never a bare key and never the held
   modifier. It loses to any existing binding, including a chord it merely extends, and losing is
   a warning rather than a failure. Do not assume it was granted.
-- Any invalid command, service, agent, sidebar tab, or setting invalidates the whole extension
-  atomically.
+- Any invalid command, service, agent, sidebar tab, navigation target, or setting invalidates the
+  whole extension atomically.
 - A non-zero exit from a command raises Rozi's own error toast. If the program already called
   `rozi notify`, exit 0 — otherwise the user gets the specific message and a vaguer duplicate.
 - Extensions install under the data directory (`${XDG_DATA_HOME:-~/.local/share}/rozi/extensions`),

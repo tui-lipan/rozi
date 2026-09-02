@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use crate::config::{NamedCommand, ServiceConfig, SidebarTab};
+use crate::config::{NamedCommand, NavigationTargetContribution, ServiceConfig, SidebarTab};
 
 use super::{
     EXTENSION_API_VERSION, ExtensionRuntimeFingerprint, ExtensionScan, ExtensionStatus,
@@ -14,6 +14,7 @@ pub(crate) struct ExtensionContributions {
     pub(crate) services: Vec<ServiceConfig>,
     pub(crate) agents: Vec<crate::agent_detection::AgentDefinition>,
     pub(crate) sidebar_tabs: Vec<SidebarTab>,
+    pub(crate) navigation_targets: Vec<NavigationTargetContribution>,
     pub(crate) active_ids: HashSet<String>,
     /// Every extension present on disk, whatever its status. A sidebar placement naming a tab from
     /// one of these is kept rather than pruned: the extension is here, it just is not contributing
@@ -34,6 +35,7 @@ pub(super) fn build(
     let mut services = Vec::new();
     let mut agents = Vec::new();
     let mut sidebar_tabs = Vec::new();
+    let mut navigation_targets = Vec::new();
     let mut active_ids = HashSet::new();
     let mut installed_ids = HashSet::new();
     let mut runtime = Vec::new();
@@ -86,6 +88,7 @@ pub(super) fn build(
             services.extend(extension_services);
             agents.extend(extension.agents);
             sidebar_tabs.extend(extension_tabs);
+            navigation_targets.extend(extension.navigation_targets);
         } else if extension.info.status != ExtensionStatus::Disabled {
             problem_count += 1;
             warnings.extend(
@@ -112,6 +115,7 @@ pub(super) fn build(
         services,
         agents,
         sidebar_tabs,
+        navigation_targets,
         active_ids,
         installed_ids,
         runtime: fingerprints_by_id(runtime),

@@ -155,6 +155,16 @@ pub(super) fn format_extensions_text(
                 out.push('\n');
             }
         }
+        if !extension.navigation_targets.is_empty() {
+            out.push_str("  navigation targets\n");
+            for target in &extension.navigation_targets {
+                out.push_str("    ");
+                out.push_str(&target.name);
+                out.push_str("  ");
+                out.push_str(&target.programs.join(", "));
+                out.push('\n');
+            }
+        }
         for error in &extension.errors {
             out.push_str("  error     ");
             out.push_str(error);

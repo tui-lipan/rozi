@@ -54,4 +54,9 @@ g:rozi_navigator_wrap
 The plugin invokes `rozi run-action` only when movement reaches an editor
 edge. It uses ROZI_SOCKET from the pane environment.
 
+This repository also contains a Rozi extension manifest that declares the
+Vim-family foreground program names. Installing this Vim package does not
+register that manifest with Rozi; the two installation lifecycles are
+independent.
+
 vim:tw=78:ts=8:noet:ft=help:norl:

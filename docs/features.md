@@ -57,7 +57,8 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
 - Inspect panes and run actions from scripts.
 - Send keys or text, open panes, capture terminal content, and switch workspaces.
 - Run hooks when pane, focus, workspace, session, or profile events occur.
-- Build out-of-process extensions with commands, services, pickers, activity rows, and notifications.
+- Build extensions with static navigation targets plus out-of-process commands, services, pickers,
+  activity rows, and notifications.
 
 See [Scripting](scripting.md), [Control CLI](control.md), [Hooks](hooks.md), and
 [Automation recipes](recipes.md).

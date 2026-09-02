@@ -125,6 +125,36 @@ Appearance actions are managed in **Settings** and remain bindable by their acti
 `rozi run-action <id>` to invoke a stable action from automation. User-defined `[keys]` commands do
 not have stable ids. Named `[[commands]]` entries do.
 
+## Split-aware navigation
+
+The `smart-focus-left`, `smart-focus-down`, `smart-focus-up`, and `smart-focus-right` actions let
+one key set cross both editor splits and rozi panes. Bind them explicitly:
+
+```toml
+[keys]
+smart-focus-left = "ctrl-h"
+smart-focus-down = "ctrl-j"
+smart-focus-up = "ctrl-k"
+smart-focus-right = "ctrl-l"
+```
+
+Rozi keeps the synchronous routing mechanism in core. When the focused pane's foreground process
+appears in `[navigation] editors`, Rozi forwards `Ctrl-h/j/k/l` to that process; otherwise it moves
+pane focus itself. The editor plugin handles its own split layout and calls a public
+`rozi run-action focus-<direction>` action only when it reaches an outer edge. Integrations can use
+the corresponding `-no-wrap` actions when focus should stay put at Rozi's outer edge.
+
+An enabled extension may add static foreground-program names through `[[navigation_targets]]`.
+Rozi validates and merges those declarations while loading configuration; no extension process
+intercepts keys or participates in the input hot path. An explicit `[navigation] editors` entry,
+including an empty list, replaces both built-in and extension-provided names completely.
+
+Editor-specific behavior remains in normal editor packages. The package owns its split layout and
+uses the same CLI action boundary for local and attached sessions, while the Rozi extension
+manifest only describes routing policy. See the
+[Vim and Neovim navigator](../integrations/vim-rozi-navigator/) for an integration whose repository
+contains both sides without making either installation own the other.
+
 ## Rebind a command
 
 A bare command key follows the current prefix and modifier scheme:

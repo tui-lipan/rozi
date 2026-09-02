@@ -292,30 +292,30 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::SmartFocus(Left),
-        label: "Smart focus left (vim-aware)",
+        label: "Smart focus left (split-aware)",
         category: "Focus",
         // Unbound by default: opt in with e.g. `[keys] smart-focus-left = "ctrl-h"` to wire
-        // seamless vim/neovim split navigation. See docs/keybindings.md.
+        // seamless editor split navigation. See docs/keybindings.md.
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::SmartFocus(Down),
-        label: "Smart focus down (vim-aware)",
+        label: "Smart focus down (split-aware)",
         category: "Focus",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::SmartFocus(Up),
-        label: "Smart focus up (vim-aware)",
+        label: "Smart focus up (split-aware)",
         category: "Focus",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::SmartFocus(Right),
-        label: "Smart focus right (vim-aware)",
+        label: "Smart focus right (split-aware)",
         category: "Focus",
         default_keys: &[],
         palette: false,

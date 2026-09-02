@@ -189,6 +189,7 @@ fn check_extension_explains_launch_cwd_and_safe_environment_details() {
     std::fs::write(
         extension.join("extension.toml"),
         "[extension]\nid = \"diagnostic\"\napi = 1\n\
+         [[navigation_targets]]\nname = \"vim\"\nprograms = [\"vim\", \"nvim\"]\n\
          [[commands]]\nid = \"open\"\nexec = [\"python\", \"{extension_dir}/bin/tool.py\", \"arg with space\"]\n\
          [[services]]\nname = \"watch\"\nshell = \"echo ready\"\ncwd = \".\"\nrestart = \"never\"\n\
          [services.env]\nTOKEN = \"do-not-print\"\n",
@@ -203,6 +204,8 @@ fn check_extension_explains_launch_cwd_and_safe_environment_details() {
     assert!(stdout.contains("cwd: focused-pane"));
     assert!(stdout.contains("ROZI_EXTENSION=diagnostic"));
     assert!(stdout.contains("ROZI_EXTENSION_GENERATION=<assigned-at-load>"));
+    assert!(stdout.contains("NAVIGATION TARGETS"));
+    assert!(stdout.contains("vim  vim, nvim"));
     assert!(stdout.contains("manifest env: TOKEN (values redacted)"));
     assert!(!stdout.contains("do-not-print"));
 
@@ -219,6 +222,10 @@ fn check_extension_explains_launch_cwd_and_safe_environment_details() {
     assert_eq!(
         document["extension"]["service_details"][0]["configured_env_keys"][0],
         "TOKEN"
+    );
+    assert_eq!(
+        document["extension"]["navigation_targets"][0]["programs"],
+        serde_json::json!(["vim", "nvim"])
     );
     assert!(
         !String::from_utf8(json.stdout)

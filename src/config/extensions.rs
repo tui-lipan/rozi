@@ -35,7 +35,10 @@ pub(crate) use runtime::{
 pub(crate) use settings::merge as merge_extension_settings;
 pub use settings::{ExtensionSettingValue, ExtensionSettings};
 pub(crate) use validation::is_extension_scoped_id;
-use validation::{validate_command, validate_extension_id, validate_service, validate_sidebar_tab};
+use validation::{
+    validate_command, validate_extension_id, validate_navigation_target, validate_service,
+    validate_sidebar_tab,
+};
 
 /// The generation of Rozi's complete public extension contract.
 ///
@@ -94,6 +97,8 @@ pub struct ExtensionInfo {
     pub agents: Vec<String>,
     /// Namespaced ids of the sidebar tabs this extension contributes.
     pub sidebar_tabs: Vec<String>,
+    /// Static split-aware foreground-program declarations from the manifest.
+    pub navigation_targets: Vec<ExtensionNavigationTargetDiagnostic>,
     /// Settings the manifest declares, at their default values. What the user's `config.toml`
     /// overrides them to is not known here: a scan reads the extension, not the user.
     pub settings: ExtensionSettings,
@@ -102,6 +107,12 @@ pub struct ExtensionInfo {
     pub command_paths: BTreeMap<String, String>,
     pub service_paths: BTreeMap<String, String>,
     pub errors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ExtensionNavigationTargetDiagnostic {
+    pub name: String,
+    pub programs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -162,6 +173,7 @@ pub(crate) struct DiscoveredExtension {
     services: Vec<ServiceConfig>,
     agents: Vec<crate::agent_detection::AgentDefinition>,
     sidebar_tabs: Vec<super::schema::SidebarTab>,
+    navigation_targets: Vec<super::schema::NavigationTargetContribution>,
     settings: ExtensionSettings,
 }
 
@@ -293,6 +305,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         services: Vec::new(),
         agents: Vec::new(),
         sidebar_tabs: Vec::new(),
+        navigation_targets: Vec::new(),
         settings: ExtensionSettings::new(),
         command_details: Vec::new(),
         service_details: Vec::new(),
@@ -318,6 +331,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 services: Vec::new(),
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
+                navigation_targets: Vec::new(),
                 settings: ExtensionSettings::new(),
             };
         }
@@ -332,6 +346,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 services: Vec::new(),
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
+                navigation_targets: Vec::new(),
                 settings: ExtensionSettings::new(),
             };
         }
@@ -347,6 +362,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 services: Vec::new(),
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
+                navigation_targets: Vec::new(),
                 settings: ExtensionSettings::new(),
             };
         }
@@ -424,6 +440,17 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut services,
         );
     }
+    let mut navigation_targets = Vec::new();
+    let mut seen_navigation_targets = HashSet::new();
+    for raw in manifest.navigation_targets {
+        validate_navigation_target(
+            raw,
+            &validation_id,
+            &mut seen_navigation_targets,
+            &mut info,
+            &mut navigation_targets,
+        );
+    }
     // Agent definitions are declarative data rather than a launchable process, so they need no
     // path resolution or environment - only the same validation `config.toml` entries get. An
     // invalid one invalidates the extension, matching how a bad command or service is treated.
@@ -444,6 +471,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         info.services.clear();
         info.agents.clear();
         info.sidebar_tabs.clear();
+        info.navigation_targets.clear();
         info.settings.clear();
         info.command_details.clear();
         info.service_details.clear();
@@ -459,12 +487,14 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         services.clear();
         agents.clear();
         sidebar_tabs.clear();
+        navigation_targets.clear();
     } else if !info.errors.is_empty() {
         info.status = ExtensionStatus::Invalid;
         commands.clear();
         services.clear();
         agents.clear();
         sidebar_tabs.clear();
+        navigation_targets.clear();
     } else {
         info.status = ExtensionStatus::Loaded;
         info.enabled = true;
@@ -475,6 +505,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         services,
         agents,
         sidebar_tabs,
+        navigation_targets,
         settings: declared_settings,
     }
 }
@@ -620,6 +651,59 @@ mod tests {
         format!(
             "[extension]\nid = \"{id}\"\ntitle = \"Git tools\"\nversion = \"0.1.0\"\napi = {api}\n"
         )
+    }
+
+    #[test]
+    fn navigation_targets_are_validated_and_contributed_as_static_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "vim-rozi",
+            &format!(
+                "{}[[navigation_targets]]\nname = \"vim\"\nprograms = [\"vim\", \"nvim\", \"NVIM\"]\n",
+                manifest("vim-rozi", "1")
+            ),
+        );
+
+        let scan = scan_extensions_in(temp.path());
+        let entries = scan.entries();
+        assert_eq!(entries[0].status, ExtensionStatus::Loaded);
+        assert_eq!(entries[0].navigation_targets.len(), 1);
+        assert_eq!(entries[0].navigation_targets[0].name, "vim");
+        assert_eq!(entries[0].navigation_targets[0].programs, ["vim", "nvim"]);
+
+        let contributions = scan.into_contributions(&[], &Default::default());
+        assert_eq!(contributions.navigation_targets.len(), 1);
+        assert_eq!(contributions.navigation_targets[0].extension_id, "vim-rozi");
+        assert_eq!(contributions.navigation_targets[0].name, "vim");
+    }
+
+    #[test]
+    fn an_invalid_navigation_target_invalidates_the_extension_atomically() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "bad-navigation",
+            &format!(
+                "{}[[commands]]\nid = \"run\"\nsend = \"run\"\n\
+                 [[navigation_targets]]\nname = \"vim\"\nprograms = [\"bin/vim\"]\n",
+                manifest("bad-navigation", "1")
+            ),
+        );
+
+        let scan = scan_extensions_in(temp.path());
+        let entries = scan.entries();
+        let entry = &entries[0];
+        assert_eq!(entry.status, ExtensionStatus::Invalid);
+        assert!(
+            entry
+                .errors
+                .iter()
+                .any(|error| error.contains("must be an executable basename"))
+        );
+        let contributions = scan.into_contributions(&[], &Default::default());
+        assert!(contributions.commands.is_empty());
+        assert!(contributions.navigation_targets.is_empty());
     }
 
     #[test]
@@ -1074,6 +1158,16 @@ mod tests {
                 extension.info.errors
             );
         }
+        let navigator = check_extension(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("integrations/vim-rozi-navigator"),
+        );
+        assert_eq!(
+            navigator.info.status,
+            ExtensionStatus::Loaded,
+            "{:?}",
+            navigator.info.errors
+        );
+        assert_eq!(navigator.info.navigation_targets[0].name, "vim");
     }
 
     #[test]
@@ -1104,6 +1198,10 @@ mod tests {
         assert_eq!(
             schema["properties"]["extension"]["properties"]["api"]["const"],
             EXTENSION_API_VERSION
+        );
+        assert_eq!(
+            schema["properties"]["navigation_targets"]["items"]["required"],
+            serde_json::json!(["name", "programs"])
         );
     }
 
@@ -1413,6 +1511,7 @@ mod tests {
                 "agents",
                 "commands",
                 "extension",
+                "navigation_targets",
                 "services",
                 "settings",
                 "sidebar_tabs"
@@ -1429,6 +1528,10 @@ mod tests {
         assert_eq!(
             keys(&properties["services"]["items"]["properties"]),
             ["cwd", "env", "exec", "name", "restart", "shell"]
+        );
+        assert_eq!(
+            keys(&properties["navigation_targets"]["items"]["properties"]),
+            ["name", "programs"]
         );
         assert_eq!(
             keys(&properties["sidebar_tabs"]["items"]["properties"]),

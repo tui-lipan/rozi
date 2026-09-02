@@ -150,6 +150,14 @@ pub(crate) fn report_sections(
     );
     push_section(
         &mut sections,
+        "Navigation targets",
+        info.navigation_targets
+            .iter()
+            .map(|target| info_row(&target.name, target.programs.join(", ")))
+            .collect(),
+    );
+    push_section(
+        &mut sections,
         "Settings",
         merged
             .iter()
@@ -291,6 +299,10 @@ mod tests {
             services: vec!["tasks.watch".to_string()],
             agents: vec!["tasks.worker".to_string()],
             sidebar_tabs: vec!["tasks.list".to_string()],
+            navigation_targets: vec![crate::config::ExtensionNavigationTargetDiagnostic {
+                name: "editor".to_string(),
+                programs: vec!["example-editor".to_string()],
+            }],
             settings: [(
                 "runner".to_string(),
                 ExtensionSettingValue::String("auto".to_string()),
@@ -341,6 +353,7 @@ mod tests {
                 "Services",
                 "Agents",
                 "Sidebar tabs",
+                "Navigation targets",
                 "Settings",
                 "Errors"
             ]
@@ -350,11 +363,11 @@ mod tests {
             ReportKind::Command("tasks.run".to_string())
         );
         assert_eq!(
-            sections[5].rows[0].kind,
+            sections[6].rows[0].kind,
             ReportKind::Setting("runner".to_string())
         );
-        assert_eq!(sections[6].rows[0].kind, ReportKind::Error);
-        assert_eq!(sections[5].rows[0].value, "\"just\"");
+        assert_eq!(sections[7].rows[0].kind, ReportKind::Error);
+        assert_eq!(sections[6].rows[0].value, "\"just\"");
     }
 
     #[test]
@@ -364,6 +377,7 @@ mod tests {
         empty.service_details.clear();
         empty.agents.clear();
         empty.sidebar_tabs.clear();
+        empty.navigation_targets.clear();
         empty.errors.clear();
         let sections = report_sections(&empty, &ExtensionSettings::new());
         assert_eq!(

@@ -23,6 +23,10 @@ pub(super) struct ExtensionManifestFile {
     /// `check-extension` something to show; an undeclared key is not a setting.
     #[serde(default)]
     pub(super) settings: BTreeMap<String, toml::Value>,
+    /// Static split-aware foreground-program declarations. Rozi compiles these into core
+    /// navigation policy when no explicit `[navigation] editors` list replaces the defaults.
+    #[serde(default)]
+    pub(super) navigation_targets: Vec<ExtensionNavigationTargetFile>,
 }
 
 /// One `[[sidebar_tabs]]` entry. The tree-only options `config.toml` tab tables accept are absent:
@@ -73,6 +77,13 @@ pub(super) struct ExtensionMetadataFile {
     pub(super) description: Option<String>,
     pub(super) version: Option<String>,
     pub(super) api: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExtensionNavigationTargetFile {
+    pub(super) name: Option<String>,
+    pub(super) programs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]

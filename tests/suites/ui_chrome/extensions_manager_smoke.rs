@@ -84,12 +84,20 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
                 .expect("open extensions");
 
-            let epoch = backend
-                .state()
+            // Opening the manager starts a real update check for the git-managed fixture, on its
+            // own thread and against an unreachable remote. Its answer ("nothing available") is
+            // addressed to the epoch this test would otherwise borrow, so whichever of the two
+            // lands second wins - and under a loaded `cargo test` that is usually the real check,
+            // wiping the injected update again. Claiming an epoch the in-flight check cannot hold
+            // uses the staleness guard the message already carries: the real answer is discarded
+            // as stale whenever it arrives, and this stops depending on the order.
+            let epoch = u64::MAX;
+            backend
+                .state_mut()
                 .extensions
-                .as_ref()
+                .as_mut()
                 .expect("extensions state")
-                .update_check_epoch;
+                .update_check_epoch = epoch;
             backend
                 .dispatch(rozi::Msg::ExtensionsUpdatesChecked {
                     epoch,

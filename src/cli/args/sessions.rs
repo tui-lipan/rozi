@@ -48,10 +48,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
 
 pub(crate) fn print_help() {
     let styles = HelpStyles::detect();
-    let mut out = format!(
-        "{}rozi sessions{} - manage named sessions\n",
-        styles.title, styles.reset
-    );
+    let mut out = styles.title_line("rozi sessions", "manage named sessions");
     append_help_sections(&mut out, HELP_SECTIONS, &styles, true);
     println!("{out}");
 }

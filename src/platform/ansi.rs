@@ -159,6 +159,8 @@ pub fn fg(color: Rgb, truecolor: bool) -> String {
 
 /// Reset every attribute. Paired with [`fg`] at the end of a styled run.
 pub const RESET: &str = "\x1b[0m";
+/// Bold text. Kept beside the colour helpers so command output never assembles SGR escapes itself.
+pub const BOLD: &str = "\x1b[1m";
 
 /// Move to column one and clear the line, so the next write replaces the current row.
 ///

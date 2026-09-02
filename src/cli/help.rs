@@ -12,48 +12,59 @@ pub(crate) fn print_help(advanced: bool) {
     );
 }
 
-/// SGR sequences for the help screen, all empty when the stream cannot render them.
-///
-/// The palette stays on the terminal's own eight colours instead of picking exact RGB, so help
-/// follows whatever theme the user already reads every other tool in.
-#[derive(Clone, Copy)]
+/// Rozi-palette SGR sequences for the help screen, all empty when the stream cannot render them.
+#[derive(Clone)]
 pub(super) struct HelpStyles {
-    pub(super) title: &'static str,
-    pub(super) heading: &'static str,
-    /// Text to type exactly as shown: command words and flags.
-    pub(super) literal: &'static str,
-    /// Text to replace with a value: `<PANE_ID>`, `[COMMAND]`.
-    pub(super) placeholder: &'static str,
-    pub(super) reset: &'static str,
+    pub(super) title: String,
+    pub(super) heading: String,
+    /// The leading command or option name, in the terminal's foreground.
+    command: String,
+    /// Signature syntax, descriptions, notes, and supporting text.
+    muted: String,
+    pub(super) reset: String,
 }
 
 impl HelpStyles {
-    pub(super) const fn plain() -> Self {
+    pub(super) fn plain() -> Self {
         Self {
-            title: "",
-            heading: "",
-            literal: "",
-            placeholder: "",
-            reset: "",
+            title: String::new(),
+            heading: String::new(),
+            command: String::new(),
+            muted: String::new(),
+            reset: String::new(),
         }
     }
 
-    pub(super) const fn colored() -> Self {
+    #[cfg(test)]
+    pub(super) fn colored() -> Self {
+        Self::palette(true)
+    }
+
+    fn palette(truecolor: bool) -> Self {
+        use crate::platform::ansi::{self, palette};
+
         Self {
-            title: "\x1b[1m",
-            heading: "\x1b[1;32m",
-            literal: "\x1b[1;36m",
-            placeholder: "\x1b[35m",
-            reset: "\x1b[0m",
+            title: format!("{}{}", ansi::BOLD, ansi::fg(palette::ROSE, truecolor)),
+            heading: format!("{}{}", ansi::BOLD, ansi::fg(palette::ROSE, truecolor)),
+            command: ansi::BOLD.to_string(),
+            muted: ansi::fg(palette::LAVENDER, truecolor),
+            reset: ansi::RESET.to_string(),
         }
     }
 
     pub(super) fn detect() -> Self {
         if crate::platform::ansi::stdout_supports_color() {
-            Self::colored()
+            Self::palette(crate::platform::ansi::supports_truecolor())
         } else {
             Self::plain()
         }
+    }
+
+    pub(super) fn title_line(&self, title: &str, description: &str) -> String {
+        format!(
+            "{}{title}{}{} - {description}{}\n",
+            self.title, self.reset, self.muted, self.reset
+        )
     }
 }
 
@@ -78,64 +89,29 @@ pub(super) struct HelpSection {
     pub(super) rows: &'static [HelpRow],
 }
 
-/// Write a row's name, styling each token by what the reader has to do with it.
+/// Write a row's name with its command prefix bold and its remaining syntax muted.
 ///
-/// Three kinds: a *literal* is typed exactly as shown (`focus`, `--remote`, `json`), a
-/// *placeholder* stands for a value the reader supplies (`<PANE_ID>`, `[COMMAND]`), and the
-/// brackets, pipes and commas that hold a signature together are left unstyled so the structure
-/// recedes behind both. Under `HelpStyles::plain` every sequence is empty, so this appends the name
-/// unchanged.
+/// The first `[` or `<` starts the supporting syntax. Everything before it is the command or
+/// option the user is looking for, including multiword namespaces and comma-separated short/long
+/// flags. Under [`HelpStyles::plain`] every sequence is empty, so this appends `name` unchanged.
 pub(super) fn push_styled_name(out: &mut String, name: &str, styles: &HelpStyles) {
-    let bytes = name.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if byte == b'<' {
-            // `<KEY|TEXT>` is one placeholder, alternatives and all; an unclosed `<` runs to the end.
-            let end = name[index..]
-                .find('>')
-                .map_or(name.len(), |offset| index + offset + 1);
-            out.push_str(styles.placeholder);
-            out.push_str(&name[index..end]);
-            out.push_str(styles.reset);
-            index = end;
-        } else if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' {
-            let mut end = index;
-            while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'-' || bytes[end] == b'_')
-            {
-                end += 1;
-            }
-            let word = &name[index..end];
-            let style = if is_placeholder_word(word) {
-                styles.placeholder
-            } else {
-                styles.literal
-            };
-            out.push_str(style);
-            out.push_str(word);
-            out.push_str(styles.reset);
-            index = end;
-        } else {
-            let character = name[index..]
-                .chars()
-                .next()
-                .expect("index is a char boundary");
-            out.push(character);
-            index += character.len_utf8();
-        }
-    }
-}
+    let leading = name.len() - name.trim_start().len();
+    out.push_str(&name[..leading]);
+    let syntax_start = name[leading..]
+        .find(['[', '<'])
+        .map_or(name.len(), |offset| leading + offset);
+    let command_end = leading + name[leading..syntax_start].trim_end().len();
 
-/// Whether a bare word stands for a value rather than something to type.
-///
-/// Bracketed placeholders are written in caps (`[COMMAND]`, `[ARGS]`), which separates them from
-/// the literal values that appear in the same position (`[--format text|json]`). A flag is never a
-/// placeholder however it is cased.
-fn is_placeholder_word(word: &str) -> bool {
-    !word.starts_with('-')
-        && word.bytes().any(|byte| byte.is_ascii_uppercase())
-        && !word.bytes().any(|byte| byte.is_ascii_lowercase())
+    if command_end > leading {
+        out.push_str(&styles.command);
+        out.push_str(&name[leading..command_end]);
+        out.push_str(&styles.reset);
+    }
+    if command_end < name.len() {
+        out.push_str(&styles.muted);
+        out.push_str(&name[command_end..]);
+        out.push_str(&styles.reset);
+    }
 }
 
 /// Width of the name column. Descriptions start at `HELP_INDENT + HELP_NAME_WIDTH`.
@@ -333,22 +309,24 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
 /// The help body, with the platform-specific endpoint paragraph passed in so a test can measure
 /// the template's own width without depending on how long this machine's runtime directory is.
 pub(super) fn help_text(styles: &HelpStyles, endpoint_help: &str, advanced: bool) -> String {
-    let HelpStyles {
-        title,
-        heading,
-        reset,
-        ..
-    } = *styles;
+    let title = &styles.title;
+    let heading = &styles.heading;
+    let muted = &styles.muted;
+    let reset = &styles.reset;
     let version = env!("CARGO_PKG_VERSION");
-    let mut out = format!("{title}rozi {version}{reset} - dynamic tiling terminal multiplexer\n");
+    let mut out = format!(
+        "{title}rozi {version}{reset}{muted} - dynamic tiling terminal multiplexer{reset}\n"
+    );
     append_help_sections(&mut out, HELP_SECTIONS, styles, advanced);
 
     if advanced {
         out.push_str(&format!(
-            "\n{heading}ENDPOINTS{reset}\n{HELP_INDENT}{endpoint_help}\n"
+            "\n{heading}ENDPOINTS{reset}\n{muted}{HELP_INDENT}{endpoint_help}{reset}\n"
         ));
     }
-    out.push_str("\nDetach with prefix d, or use a configured quit binding.");
+    out.push_str(&format!(
+        "\n{muted}Detach with prefix d, or use a configured quit binding.{reset}"
+    ));
     out
 }
 
@@ -358,14 +336,16 @@ pub(super) fn append_help_sections(
     styles: &HelpStyles,
     advanced: bool,
 ) {
-    let HelpStyles { heading, reset, .. } = *styles;
+    let heading = &styles.heading;
+    let muted = &styles.muted;
+    let reset = &styles.reset;
     for section in sections {
         if section.advanced_only && !advanced {
             continue;
         }
         out.push_str(&format!("\n{heading}{}{reset}\n", section.heading));
         if !section.note.is_empty() {
-            out.push_str(&format!("{HELP_INDENT}{}\n\n", section.note));
+            out.push_str(&format!("{muted}{HELP_INDENT}{}{reset}\n\n", section.note));
         }
         for HelpRow {
             name,
@@ -378,7 +358,7 @@ pub(super) fn append_help_sections(
             }
             if name.is_empty() {
                 out.push_str(&format!(
-                    "{HELP_INDENT}{:width$}{description}\n",
+                    "{HELP_INDENT}{:width$}{muted}{description}{reset}\n",
                     "",
                     width = HELP_NAME_WIDTH
                 ));
@@ -392,13 +372,13 @@ pub(super) fn append_help_sections(
             }
             if name.chars().count() < HELP_NAME_WIDTH {
                 out.push_str(&format!(
-                    "{:width$}{description}\n",
+                    "{:width$}{muted}{description}{reset}\n",
                     "",
                     width = HELP_NAME_WIDTH - name.chars().count()
                 ));
             } else {
                 out.push_str(&format!(
-                    "\n{HELP_INDENT}{:width$}{description}\n",
+                    "\n{HELP_INDENT}{:width$}{muted}{description}{reset}\n",
                     "",
                     width = HELP_NAME_WIDTH
                 ));
@@ -586,14 +566,14 @@ mod tests {
     }
 
     #[test]
-    fn cli_help_names_split_into_literals_and_placeholders() {
+    fn cli_help_names_split_commands_from_muted_syntax() {
         // Marker styles rather than real SGR, so a failure reads as the classification it is.
         let styles = HelpStyles {
-            title: "",
-            heading: "",
-            literal: "L<",
-            placeholder: "P<",
-            reset: ">",
+            title: String::new(),
+            heading: String::new(),
+            command: "C<".to_string(),
+            muted: "M<".to_string(),
+            reset: ">".to_string(),
         };
         let styled = |name: &str| {
             let mut out = String::new();
@@ -601,25 +581,23 @@ mod tests {
             out
         };
 
-        assert_eq!(styled("focus <PANE_ID>"), "L<focus> P<<PANE_ID>>");
-        // Brackets and pipes stay unstyled; what is inside them is classified on its own.
+        assert_eq!(styled("focus <PANE_ID>"), "C<focus>M< <PANE_ID>>");
+        // Multiword namespaces are one command prefix; every argument and flag after it recedes.
         assert_eq!(
             styled("sessions new <NAME> [--profile <PROFILE>]"),
-            "L<sessions> L<new> P<<NAME>> [L<--profile> P<<PROFILE>>]"
+            "C<sessions new>M< <NAME> [--profile <PROFILE>]>"
         );
-        // An all-caps bracketed word is a value to supply; a lowercase one is typed verbatim.
-        assert_eq!(styled("split [COMMAND]"), "L<split> [P<COMMAND>]");
+        assert_eq!(styled("split [COMMAND]"), "C<split>M< [COMMAND]>");
         assert_eq!(
             styled("sessions list [--format text|json]"),
-            "L<sessions> L<list> [L<--format> L<text>|L<json>]"
+            "C<sessions list>M< [--format text|json]>"
         );
-        // `-l` is a flag, not a placeholder, and `<KEY|TEXT>` is one placeholder including its
-        // alternatives.
         assert_eq!(
             styled("send-keys [-l|--literal] [--] <KEY|TEXT>..."),
-            "L<send-keys> [L<-l>|L<--literal>] [L<-->] P<<KEY|TEXT>>..."
+            "C<send-keys>M< [-l|--literal] [--] <KEY|TEXT>...>"
         );
-        assert_eq!(styled("-h, --help"), "L<-h>, L<--help>");
+        assert_eq!(styled("-h, --help"), "C<-h, --help>");
+        assert_eq!(styled("    --profile <NAME>"), "    C<--profile>M< <NAME>>");
 
         // Plain styling has to leave every name exactly as written.
         for section in HELP_SECTIONS {
@@ -651,5 +629,23 @@ mod tests {
         }
         stripped.push_str(rest);
         assert_eq!(stripped, plain);
+    }
+
+    #[test]
+    fn cli_help_uses_the_rozi_palette() {
+        use crate::platform::ansi::{self, palette};
+
+        let styles = HelpStyles::colored();
+        assert_eq!(
+            styles.title,
+            format!("{}{}", ansi::BOLD, ansi::fg(palette::ROSE, true))
+        );
+        assert_eq!(
+            styles.heading,
+            format!("{}{}", ansi::BOLD, ansi::fg(palette::ROSE, true))
+        );
+        assert_eq!(styles.command, ansi::BOLD);
+        assert_eq!(styles.muted, ansi::fg(palette::LAVENDER, true));
+        assert_eq!(styles.reset, ansi::RESET);
     }
 }

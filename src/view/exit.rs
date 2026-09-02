@@ -1,17 +1,55 @@
-use tui_lipan::prelude::{Context, Element, Text};
+use tui_lipan::prelude::{Color, Context, Element, Span, Style, Text};
 
 use crate::AppRoot;
+use crate::platform::ansi::{Rgb, palette};
 use crate::session::remote::{RemoteTarget, parse_remote_target};
 use crate::state::{Attachment, is_ephemeral_session_name};
 
 /// Build the one-shot view rendered after the client leaves the event loop.
 pub(crate) fn exit_view(_component: &AppRoot, ctx: &Context<AppRoot>) -> Element {
-    exit_summary(ctx.state.current())
-        .map_or_else(Element::default, |summary| Text::new(summary).into())
+    let Some(summary) = exit_summary_parts(ctx.state.current()) else {
+        return Element::default();
+    };
+    exit_text(summary, crate::platform::ansi::stdout_supports_color()).into()
+}
+
+fn exit_text(summary: ExitSummaryParts, color: bool) -> Text {
+    if !color {
+        return Text::new(summary.text());
+    }
+    let heading = Style::new().fg(tui_color(palette::ROSE)).bold();
+    let muted = Style::new().fg(tui_color(palette::LAVENDER));
+    let command = Style::new().bold();
+    Text::from_spans([
+        Span::new("Detached from ").style(muted),
+        Span::new(summary.identity).style(muted.bold()),
+        Span::new("\n"),
+        Span::new("Reattach: ").style(heading),
+        Span::new(summary.command).style(command),
+    ])
 }
 
 /// Return a reattach hint for the foreground named session, if there is one.
+#[cfg(test)]
 pub(crate) fn exit_summary(attachment: &Attachment) -> Option<String> {
+    exit_summary_parts(attachment).map(|summary| summary.text())
+}
+
+struct ExitSummaryParts {
+    identity: String,
+    command: String,
+}
+
+impl ExitSummaryParts {
+    fn text(&self) -> String {
+        format!(
+            "Detached from {}\nReattach: {}",
+            self.identity, self.command
+        )
+    }
+}
+
+fn exit_summary_parts(attachment: &Attachment) -> Option<ExitSummaryParts> {
     let name = attachment.session_name.as_deref()?;
     if is_ephemeral_session_name(name)
         || contains_terminal_control(name)
@@ -23,9 +61,10 @@ pub(crate) fn exit_summary(attachment: &Attachment) -> Option<String> {
 
     let has_remote_state = attachment.remote_host.is_some() || attachment.remote_target.is_some();
     if !has_remote_state {
-        return Some(format!(
-            "Detached from {name}\nReattach: rozi sessions attach {name}"
-        ));
+        return Some(ExitSummaryParts {
+            identity: name.to_string(),
+            command: format!("rozi sessions attach {name}"),
+        });
     }
 
     let remote_target = remote_target_argument(attachment)?;
@@ -38,9 +77,14 @@ pub(crate) fn exit_summary(attachment: &Attachment) -> Option<String> {
         return None;
     }
     let identity = remote_identity(attachment, &remote_target);
-    Some(format!(
-        "Detached from {name}@{identity}\nReattach: rozi --remote {remote_target} sessions attach {name}"
-    ))
+    Some(ExitSummaryParts {
+        identity: format!("{name}@{identity}"),
+        command: format!("rozi --remote {remote_target} sessions attach {name}"),
+    })
+}
+
+fn tui_color(Rgb(red, green, blue): Rgb) -> Color {
+    Color::rgb(red, green, blue)
 }
 
 fn contains_terminal_control(value: &str) -> bool {
@@ -152,6 +196,41 @@ mod tests {
             exit_summary(&attachment).as_deref(),
             Some("Detached from dev\nReattach: rozi sessions attach dev")
         );
+    }
+
+    #[test]
+    fn exit_text_uses_muted_context_and_a_default_foreground_command() {
+        let attachment = attachment(Some("dev"));
+        let plain = exit_text(exit_summary_parts(&attachment).unwrap(), false);
+        assert_eq!(plain.spans.len(), 1);
+        assert_eq!(
+            plain.spans[0].content.as_ref(),
+            "Detached from dev\nReattach: rozi sessions attach dev"
+        );
+        assert_eq!(plain.spans[0].style.fg, None);
+
+        let styled = exit_text(exit_summary_parts(&attachment).unwrap(), true);
+        assert_eq!(
+            styled
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "Detached from dev\nReattach: rozi sessions attach dev"
+        );
+        assert_eq!(
+            styled.spans[0].style.fg,
+            Some(tui_color(palette::LAVENDER).into())
+        );
+        assert_eq!(
+            styled.spans[1].style.fg,
+            Some(tui_color(palette::LAVENDER).into())
+        );
+        assert_eq!(
+            styled.spans[3].style.fg,
+            Some(tui_color(palette::ROSE).into())
+        );
+        assert_eq!(styled.spans[4].style.fg, None);
     }
 
     #[test]

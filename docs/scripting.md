@@ -19,6 +19,12 @@ ROZI_CMD=${ROZI_BIN:-rozi}
 The CLI discovers the endpoint from `ROZI_SOCKET`. Outside Rozi, pass one explicitly with
 `--socket PATH`, or let the CLI use the only live endpoint in the runtime directory.
 
+Human-readable CLI help and reports use Rozi's palette when written to a terminal.
+Redirected output stays plain. `NO_COLOR`, `CLICOLOR=0`, and `TERM=dumb` disable CLI styling;
+`CLICOLOR_FORCE` enables it for a consumer that renders ANSI color from a pipe. JSON,
+publish/subscribe streams, and version output never include styling. The one-shot detach summary
+uses the same palette when Rozi restores the terminal.
+
 ## Copyable tasks
 
 ### Run an action

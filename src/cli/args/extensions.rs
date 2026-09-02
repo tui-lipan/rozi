@@ -53,20 +53,14 @@ const CHECK_HELP_SECTIONS: &[HelpSection] = &[
 
 pub(crate) fn print_help() {
     let styles = HelpStyles::detect();
-    let mut out = format!(
-        "{}rozi extensions{} - manage extensions\n",
-        styles.title, styles.reset
-    );
+    let mut out = styles.title_line("rozi extensions", "manage extensions");
     append_help_sections(&mut out, HELP_SECTIONS, &styles, true);
     println!("{out}");
 }
 
 pub(crate) fn print_check_help() {
     let styles = HelpStyles::detect();
-    let mut out = format!(
-        "{}rozi extensions check{} - validate an unpacked extension\n",
-        styles.title, styles.reset
-    );
+    let mut out = styles.title_line("rozi extensions check", "validate an unpacked extension");
     append_help_sections(&mut out, CHECK_HELP_SECTIONS, &styles, true);
     println!("{out}");
 }

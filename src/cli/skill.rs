@@ -45,10 +45,7 @@ fn print_skill() {
 
 pub(crate) fn print_skill_help() {
     let styles = HelpStyles::detect();
-    let mut out = format!(
-        "{}rozi skill{} - install the built-in Rozi agent skill\n",
-        styles.title, styles.reset
-    );
+    let mut out = styles.title_line("rozi skill", "install the built-in Rozi agent skill");
     append_help_sections(&mut out, SKILL_HELP_SECTIONS, &styles, true);
     println!("{out}");
 }

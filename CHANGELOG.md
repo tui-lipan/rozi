@@ -10,6 +10,7 @@
   `extensions new`, and `extensions check`. The `new-pane` CLI alias is removed; use `split`.
   Remote hosts must run this same release for `sessions list --remote` and
   `sessions kill --remote`.
+- CLI help and the final detach summary now use the same palette as Rozi's interface and updater.
 - Takes tui-lipan 0.4.1, which requires a `termina` that no longer panics the input worker on a
   mouse report at column or row 0. Rozi's `[patch.crates-io]` for that fix is gone, so builds from
   the published crate - `cargo install rozi` included - carry it like every other build.

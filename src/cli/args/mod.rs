@@ -7,6 +7,18 @@ use std::path::PathBuf;
 
 use crate::{control, session};
 
+mod extensions;
+mod sessions;
+mod skill;
+
+#[cfg(test)]
+pub(super) use extensions::HELP_SECTIONS as EXTENSIONS_HELP_SECTIONS;
+pub(crate) use extensions::print_check_help as print_extensions_check_help;
+pub(crate) use extensions::print_help as print_extensions_help;
+#[cfg(test)]
+pub(super) use sessions::HELP_SECTIONS as SESSIONS_HELP_SECTIONS;
+pub(crate) use sessions::print_help as print_sessions_help;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CliArgs {
     pub(crate) session_command: SessionCommand,
@@ -77,6 +89,11 @@ pub(crate) enum ParsedCli {
     Version,
     Skill(SkillCommand),
     SkillHelp,
+    Sessions(SessionsCommand),
+    Extensions(ExtensionsCommand),
+    SessionsHelp,
+    ExtensionsHelp,
+    ExtensionsCheckHelp,
     Install,
     Update(UpdateCommand),
     Run(CliArgs),
@@ -93,27 +110,35 @@ pub(crate) enum ParsedCli {
     RemoteServe {
         name: String,
     },
-    ListSessions {
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionsCommand {
+    List {
         format: ListFormat,
         remote: Option<String>,
         config_path: Option<String>,
     },
-    ListExtensions {
+    Kill {
+        name: String,
+        remote: Option<String>,
+        config_path: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ExtensionsCommand {
+    List {
         json: bool,
         verbose: bool,
         config_path: Option<String>,
     },
-    NewExtension {
+    New {
         id: String,
     },
-    CheckExtension {
+    Check {
         path: PathBuf,
         json: bool,
-    },
-    KillSession {
-        name: String,
-        remote: Option<String>,
-        config_path: Option<String>,
     },
 }
 
@@ -139,6 +164,17 @@ pub(crate) enum ListFormat {
     Json,
 }
 
+const RETIRED: &[(&str, &str)] = &[
+    ("list-sessions", "sessions list"),
+    ("kill-session", "sessions kill"),
+    ("attach", "sessions attach"),
+    ("new", "sessions new"),
+    ("list-extensions", "extensions list"),
+    ("new-extension", "extensions new"),
+    ("check-extension", "extensions check"),
+    ("new-pane", "split"),
+];
+
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
     if args.first().is_some_and(|arg| arg == "--skill") {
         return if args.len() == 1 {
@@ -148,12 +184,16 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
         };
     }
     if args.first().is_some_and(|arg| arg == "skill") {
-        return parse_skill_args(&args[1..]);
+        return skill::parse_skill_args(&args[1..]);
     }
-    // Help wins over whatever else was typed, and from wherever it was typed: someone who has
-    // already mistyped the rest of the line is exactly who is asking for it. `--advanced` is only
-    // ever read here, so it can never be silently swallowed by another command.
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+    // Help wins over whatever else was typed unless a namespace comes first, in which case that
+    // namespace owns its help. `--advanced` is only ever read here, so it can never be silently
+    // swallowed by another command.
+    let help_index = args.iter().position(|arg| arg == "--help" || arg == "-h");
+    let namespace_index = args
+        .iter()
+        .position(|arg| matches!(arg.as_str(), "sessions" | "extensions" | "skill"));
+    if help_index.is_some_and(|help| namespace_index.is_none_or(|namespace| help < namespace)) {
         return Ok(ParsedCli::Help {
             advanced: args.iter().any(|arg| arg == "--advanced"),
         });
@@ -187,138 +227,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 };
                 return Ok(ParsedCli::Update(command));
             }
-            "list-sessions" => {
-                let mut format = ListFormat::Text;
-                let mut remote = None;
-                while let Some(flag) = iter.next() {
-                    match flag.as_str() {
-                        "--format" => {
-                            let value = require_value(&mut iter, "--format requires text or json")?;
-                            format = parse_list_format(&value, "list-sessions")?;
-                        }
-                        "--remote" => {
-                            let target = require_value(
-                                &mut iter,
-                                "list-sessions --remote requires a host alias or ssh:// URL",
-                            )?;
-                            session::remote::parse_remote_target(&target)?;
-                            remote = Some(target);
-                        }
-                        other => {
-                            return Err(format!(
-                                "unexpected argument `{other}` after list-sessions"
-                            ));
-                        }
-                    }
+            "sessions" => {
+                if let Some(parsed) = sessions::parse(&mut iter, &mut cli)? {
+                    return Ok(parsed);
                 }
-                return Ok(ParsedCli::ListSessions {
-                    format,
-                    remote,
-                    config_path: cli.config_path,
-                });
             }
-            "list-extensions" => {
-                let mut json = false;
-                let mut verbose = false;
-                for flag in iter.by_ref() {
-                    match flag.as_str() {
-                        "--json" if !json => json = true,
-                        "--json" => {
-                            return Err(
-                                "list-extensions --json specified more than once".to_string()
-                            );
-                        }
-                        "--verbose" if !verbose => verbose = true,
-                        "--verbose" => {
-                            return Err(
-                                "list-extensions --verbose specified more than once".to_string()
-                            );
-                        }
-                        other => {
-                            return Err(format!(
-                                "unexpected argument `{other}` after list-extensions"
-                            ));
-                        }
-                    }
-                }
-                return Ok(ParsedCli::ListExtensions {
-                    json,
-                    verbose,
-                    config_path: cli.config_path,
-                });
-            }
-            "new-extension" => {
-                let id = require_value(&mut iter, "new-extension requires an extension id")?;
-                reject_trailing_control_args(&mut iter, "new-extension")?;
-                return Ok(ParsedCli::NewExtension { id });
-            }
-            "check-extension" => {
-                let path = PathBuf::from(require_value(
-                    &mut iter,
-                    "check-extension requires an extension directory or extension.toml path",
-                )?);
-                let mut json = false;
-                for flag in iter.by_ref() {
-                    match flag.as_str() {
-                        "--json" if !json => json = true,
-                        "--json" => {
-                            return Err(
-                                "check-extension --json specified more than once".to_string()
-                            );
-                        }
-                        other => {
-                            return Err(format!(
-                                "unexpected argument `{other}` after check-extension"
-                            ));
-                        }
-                    }
-                }
-                return Ok(ParsedCli::CheckExtension { path, json });
-            }
-            "kill-session" => {
-                let name = require_value(&mut iter, "kill-session requires a session name")?;
-                if !session::discovery::valid_attach_target(&name) {
-                    return Err("invalid session name".to_string());
-                }
-                let mut remote = None;
-                while let Some(flag) = iter.next() {
-                    match flag.as_str() {
-                        "--remote" => {
-                            let target = require_value(
-                                &mut iter,
-                                "kill-session --remote requires a host alias or ssh:// URL",
-                            )?;
-                            session::remote::parse_remote_target(&target)?;
-                            remote = Some(target);
-                        }
-                        other => {
-                            return Err(format!(
-                                "unexpected argument `{other}` after kill-session"
-                            ));
-                        }
-                    }
-                }
-                return Ok(ParsedCli::KillSession {
-                    name,
-                    remote,
-                    config_path: cli.config_path,
-                });
-            }
-            "attach" => {
-                if cli.attach_session.is_some() {
-                    return Err("session target specified more than once".to_string());
-                }
-                cli.attach_session =
-                    Some(require_value(&mut iter, "attach requires a session name")?);
-                cli.session_command = SessionCommand::Attach;
-            }
-            "new" => {
-                if cli.attach_session.is_some() {
-                    return Err("session target specified more than once".to_string());
-                }
-                cli.attach_session = Some(require_value(&mut iter, "new requires a session name")?);
-                cli.session_command = SessionCommand::New;
-            }
+            "extensions" => return extensions::parse(&mut iter, cli.config_path),
             "--server" => {
                 if cli.remote.is_some() {
                     return Err("--remote cannot be combined with --server".to_string());
@@ -370,13 +284,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "--remote" => {
                 // Host is optional when `[remote] default_host` is set (resolved in app::run).
                 let target = match iter.peek().map(|s| s.as_str()) {
-                    Some(next)
-                        if !next.starts_with('-')
-                            && !matches!(
-                                next,
-                                "attach" | "new" | "list-sessions" | "kill-session"
-                            ) =>
-                    {
+                    Some(next) if !next.starts_with('-') && !matches!(next, "sessions") => {
                         let target = iter.next().expect("peeked");
                         session::remote::parse_remote_target(&target)?;
                         target
@@ -640,7 +548,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     json,
                 }));
             }
-            "split" | "new-pane" => {
+            "split" => {
                 let mut command = None;
                 let mut argv = None;
                 let mut cwd = None;
@@ -662,36 +570,35 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         }
                         "--argv" if !passthrough => {
                             return Err(
-                                "new-pane accepts either COMMAND or --argv, not both".to_string()
+                                "split accepts either COMMAND or --argv, not both".to_string()
                             );
                         }
                         "--cwd" if !passthrough && cwd.is_none() => {
                             cwd = Some(require_value(
                                 &mut iter,
-                                "new-pane --cwd requires a directory",
+                                "split --cwd requires a directory",
                             )?);
                         }
                         "--cwd" if !passthrough => {
-                            return Err("new-pane --cwd specified more than once".to_string());
+                            return Err("split --cwd specified more than once".to_string());
                         }
                         "--title" if !passthrough && title.is_none() => {
-                            title =
-                                Some(require_value(&mut iter, "new-pane --title requires text")?);
+                            title = Some(require_value(&mut iter, "split --title requires text")?);
                         }
                         "--title" if !passthrough => {
-                            return Err("new-pane --title specified more than once".to_string());
+                            return Err("split --title specified more than once".to_string());
                         }
                         "--workspace" if !passthrough && workspace.is_none() => {
                             let value = require_value(
                                 &mut iter,
-                                "new-pane --workspace requires a workspace number",
+                                "split --workspace requires a workspace number",
                             )?;
                             workspace = Some(value.parse().map_err(|_| {
-                                "new-pane --workspace requires a workspace number".to_string()
+                                "split --workspace requires a workspace number".to_string()
                             })?);
                         }
                         "--workspace" if !passthrough => {
-                            return Err("new-pane --workspace specified more than once".to_string());
+                            return Err("split --workspace specified more than once".to_string());
                         }
                         // A mistyped `--focu` must not become the command that gets run; `--` ends
                         // flag parsing for the rare command that really does start with a dash.
@@ -814,6 +721,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 if cli.attach_session.is_some() {
                     return Err(format!("unexpected argument `{name}`"));
                 }
+                if let Some((_, replacement)) = RETIRED.iter().find(|(retired, _)| *retired == name)
+                {
+                    return Err(format!("`{name}` was renamed to `{replacement}`"));
+                }
                 cli.attach_session = Some(name.to_string());
                 cli.session_command = SessionCommand::Dwim;
             }
@@ -826,10 +737,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
         return Err("--read-only requires a target or --session".to_string());
     }
     if cli.read_only && cli.session_command == SessionCommand::New {
-        return Err("--read-only cannot be used with new".to_string());
+        return Err("--read-only cannot be used with sessions new".to_string());
     }
     if cli.profile.is_some() && cli.session_command != SessionCommand::New {
-        return Err("--profile can only be used with new".to_string());
+        return Err("--profile can only be used with sessions new".to_string());
     }
     Ok(ParsedCli::Run(cli))
 }
@@ -837,7 +748,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
 /// Take the value that must follow a name-taking flag or verb, rejecting a flag-shaped one.
 ///
 /// The pane id after a `--target` flag, shared by every control command that accepts one.
-fn parse_target(
+pub(super) fn parse_target(
     iter: &mut impl Iterator<Item = String>,
 ) -> std::result::Result<crate::state::PaneId, String> {
     let value = require_value(iter, "--target requires a pane id")?;
@@ -847,10 +758,10 @@ fn parse_target(
 }
 
 /// Session names, profile names, and action ids all accept `-`, so a bare `next()` silently eats
-/// the following option: without this, `rozi attach --read-only` hunts for a session literally
-/// named `--read-only`, and `rozi --server --pick` starts a session server for one. A lone `-` is
-/// still a legal value; a real path that begins with a dash can be written `./-name`.
-fn require_value(
+/// the following option: without this, `rozi sessions attach --read-only` hunts for a session
+/// literally named `--read-only`, and `rozi --server --pick` starts a session server for one. A
+/// lone `-` is still a legal value; a real path that begins with a dash can be written `./-name`.
+pub(super) fn require_value(
     iter: &mut impl Iterator<Item = String>,
     missing: &str,
 ) -> std::result::Result<String, String> {
@@ -863,7 +774,10 @@ fn require_value(
     }
 }
 
-fn parse_list_format(value: &str, command: &str) -> std::result::Result<ListFormat, String> {
+pub(super) fn parse_list_format(
+    value: &str,
+    command: &str,
+) -> std::result::Result<ListFormat, String> {
     match value {
         "text" => Ok(ListFormat::Text),
         "json" => Ok(ListFormat::Json),
@@ -873,7 +787,7 @@ fn parse_list_format(value: &str, command: &str) -> std::result::Result<ListForm
     }
 }
 
-fn parse_output_format(
+pub(super) fn parse_output_format(
     iter: &mut impl Iterator<Item = String>,
     command: &str,
 ) -> std::result::Result<Option<ListFormat>, String> {
@@ -900,7 +814,7 @@ fn parse_output_format(
 /// A control command talks to the local UI endpoint named by `--socket`/`ROZI_SOCKET` and never
 /// loads config or attaches anything. Accepting these silently let `rozi --remote box list-panes`
 /// answer from the *local* rozi while the caller believed it had reached another host.
-fn reject_launch_flags(
+pub(super) fn reject_launch_flags(
     cli: &CliArgs,
     socket: Option<PathBuf>,
 ) -> std::result::Result<Option<PathBuf>, String> {
@@ -920,7 +834,7 @@ fn reject_launch_flags(
         return Ok(socket);
     };
     let hint = if offender == "--remote" {
-        " (use `list-sessions --remote` or `kill-session --remote` to reach another host)"
+        " (use `sessions list --remote` or `sessions kill --remote` to reach another host)"
     } else {
         ""
     };
@@ -929,7 +843,7 @@ fn reject_launch_flags(
     ))
 }
 
-fn reject_trailing_control_args(
+pub(super) fn reject_trailing_control_args(
     iter: &mut impl Iterator<Item = String>,
     command: &str,
 ) -> std::result::Result<(), String> {
@@ -948,79 +862,9 @@ pub(super) fn control_request(command: control::ControlCommand) -> control::Cont
     }
 }
 
-fn parse_skill_args(args: &[String]) -> std::result::Result<ParsedCli, String> {
-    let mut global = false;
-    let mut command = None;
-    for arg in args {
-        match arg.as_str() {
-            "-h" | "--help" => return Ok(ParsedCli::SkillHelp),
-            "--global" => {
-                if global {
-                    return Err("--global specified more than once".to_string());
-                }
-                global = true;
-            }
-            "install" | "uninstall" | "status" | "print" if command.is_none() => {
-                command = Some(arg.as_str());
-            }
-            other if command.is_none() => {
-                return Err(format!("unknown skill command `{other}`"));
-            }
-            other => {
-                return Err(format!("unexpected argument `{other}` after skill"));
-            }
-        }
-    }
-    match command {
-        None => {
-            if global {
-                return Err("--global requires a skill command".to_string());
-            }
-            Ok(ParsedCli::SkillHelp)
-        }
-        Some("print") => {
-            if global {
-                return Err("skill print does not accept --global".to_string());
-            }
-            Ok(ParsedCli::Skill(SkillCommand::Print))
-        }
-        Some("install") => Ok(ParsedCli::Skill(SkillCommand::Install { global })),
-        Some("uninstall") => Ok(ParsedCli::Skill(SkillCommand::Uninstall { global })),
-        Some("status") => Ok(ParsedCli::Skill(SkillCommand::Status { global })),
-        Some(other) => Err(format!("unknown skill command `{other}`")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cli_skill_is_a_strict_early_variant() {
-        assert!(matches!(
-            parse_cli_args(vec!["--skill".into()]).expect("parses"),
-            ParsedCli::Skill(SkillCommand::Print)
-        ));
-        assert!(parse_cli_args(vec!["--skill".into(), "extra".into()]).is_err());
-        assert!(parse_cli_args(vec!["target".into(), "--skill".into()]).is_err());
-        assert!(matches!(
-            parse_cli_args(vec!["skill".into(), "print".into()]).expect("parses"),
-            ParsedCli::Skill(SkillCommand::Print)
-        ));
-        assert!(matches!(
-            parse_cli_args(vec!["skill".into()]).expect("parses"),
-            ParsedCli::SkillHelp
-        ));
-        assert!(matches!(
-            parse_cli_args(vec!["skill".into(), "-h".into()]).expect("parses"),
-            ParsedCli::SkillHelp
-        ));
-        assert!(matches!(
-            parse_cli_args(vec!["skill".into(), "install".into(), "--global".into()])
-                .expect("parses"),
-            ParsedCli::Skill(SkillCommand::Install { global: true })
-        ));
-    }
 
     #[test]
     fn cli_parses_positional_target_and_rejects_removed_flags() {
@@ -1084,9 +928,15 @@ mod tests {
             parse_cli_args(vec!["--session".into(), "list-panes".into()]).expect("parses"),
         );
         assert_eq!(profile.attach_session.as_deref(), Some("list-panes"));
-        let reserved =
+        for reserved in ["sessions", "extensions"] {
+            let target = expect_run(
+                parse_cli_args(vec!["--session".into(), reserved.into()]).expect("parses"),
+            );
+            assert_eq!(target.attach_session.as_deref(), Some(reserved));
+        }
+        let retired =
             expect_run(parse_cli_args(vec!["--session".into(), "attach".into()]).expect("parses"));
-        assert_eq!(reserved.attach_session.as_deref(), Some("attach"));
+        assert_eq!(retired.attach_session.as_deref(), Some("attach"));
     }
 
     #[test]
@@ -1292,7 +1142,7 @@ mod tests {
         // A script that spawns into the workspace someone is working in re-tiles their layout on
         // every pane; naming a workspace keeps it out of the way and keeps the geometry stable.
         let ParsedCli::Control(elsewhere) = parse_cli_args(vec![
-            "new-pane".into(),
+            "split".into(),
             "--workspace".into(),
             "9".into(),
             "--argv".into(),
@@ -1313,14 +1163,9 @@ mod tests {
                 workspace: Some(9),
             }
         );
-        assert!(parse_cli_args(vec!["new-pane".into(), "--workspace".into()]).is_err());
+        assert!(parse_cli_args(vec!["split".into(), "--workspace".into()]).is_err());
         assert!(
-            parse_cli_args(vec![
-                "new-pane".into(),
-                "--workspace".into(),
-                "later".into()
-            ])
-            .is_err()
+            parse_cli_args(vec!["split".into(), "--workspace".into(), "later".into()]).is_err()
         );
 
         // Order-independent, like every other control command's flags.
@@ -1430,16 +1275,12 @@ mod tests {
             expected(Some("cargo test"), true)
         );
         assert_eq!(
-            split(vec![
-                "new-pane".into(),
-                "--focus".into(),
-                "cargo test".into()
-            ]),
+            split(vec!["split".into(), "--focus".into(), "cargo test".into()]),
             expected(Some("cargo test"), true)
         );
         assert_eq!(
             split(vec![
-                "new-pane".into(),
+                "split".into(),
                 "cargo test".into(),
                 "--cwd".into(),
                 "/repo with space".into(),
@@ -1470,9 +1311,9 @@ mod tests {
     }
 
     #[test]
-    fn cli_new_pane_preserves_structured_argv_without_parsing_child_flags() {
+    fn cli_split_preserves_structured_argv_without_parsing_child_flags() {
         let ParsedCli::Control(control) = parse_cli_args(vec![
-            "new-pane".into(),
+            "split".into(),
             "--cwd".into(),
             "/repo with spaces".into(),
             "--focus".into(),
@@ -1500,10 +1341,10 @@ mod tests {
                 workspace: None,
             }
         );
-        assert!(parse_cli_args(vec!["new-pane".into(), "--argv".into()]).is_err());
+        assert!(parse_cli_args(vec!["split".into(), "--argv".into()]).is_err());
         assert!(
             parse_cli_args(vec![
-                "new-pane".into(),
+                "split".into(),
                 "shell command".into(),
                 "--argv".into(),
                 "tool".into(),
@@ -1566,85 +1407,25 @@ mod tests {
     }
 
     #[test]
-    fn cli_parses_session_verbs_and_attach() {
-        assert!(matches!(
-            parse_cli_args(vec!["list-sessions".into()]).expect("parses"),
-            ParsedCli::ListSessions {
-                format: ListFormat::Text,
-                remote: None,
-                ..
-            }
-        ));
-        assert!(matches!(
-            parse_cli_args(vec!["kill-session".into(), "dev".into()]).expect("parses"),
-            ParsedCli::KillSession {
-                name,
-                remote: None,
-                ..
-            } if name == "dev"
-        ));
-        assert!(matches!(
-            parse_cli_args(vec![
-                "list-sessions".into(),
-                "--format".into(),
-                "json".into()
-            ])
-            .expect("parses"),
-            ParsedCli::ListSessions {
-                format: ListFormat::Json,
-                remote: None,
-                ..
-            }
-        ));
-        assert!(matches!(
-            parse_cli_args(vec!["list-extensions".into()]).expect("parses"),
-            ParsedCli::ListExtensions {
-                json: false,
-                verbose: false,
-                ..
-            }
-        ));
-        assert!(matches!(
-            parse_cli_args(vec![
-                "list-extensions".into(),
-                "--verbose".into(),
-                "--json".into()
-            ])
-            .expect("parses"),
-            ParsedCli::ListExtensions {
-                json: true,
-                verbose: true,
-                ..
-            }
-        ));
-        assert!(matches!(
-            parse_cli_args(vec![
-                "check-extension".into(),
-                "./git-tools".into(),
-                "--json".into()
-            ])
-            .expect("parses"),
-            ParsedCli::CheckExtension { path, json: true }
-                if path == std::path::Path::new("./git-tools")
-        ));
-        assert!(matches!(
-            parse_cli_args(vec!["new-extension".into(), "git-tools".into()]).expect("parses"),
-            ParsedCli::NewExtension { id } if id == "git-tools"
-        ));
-        assert!(parse_cli_args(vec!["new-extension".into()]).is_err());
-        assert!(parse_cli_args(vec!["new-extension".into(), "one".into(), "two".into()]).is_err());
+    fn cli_parses_positional_and_namespaced_session_targets() {
         let attached = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));
         assert_eq!(attached.session_command, SessionCommand::Dwim);
         let attached = expect_run(
-            parse_cli_args(vec!["attach".into(), "dev".into(), "--read-only".into()])
-                .expect("parses"),
+            parse_cli_args(vec![
+                "sessions".into(),
+                "attach".into(),
+                "dev".into(),
+                "--read-only".into(),
+            ])
+            .expect("parses"),
         );
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));
         assert_eq!(attached.session_command, SessionCommand::Attach);
         assert!(attached.read_only);
         let created = expect_run(
             parse_cli_args(vec![
+                "sessions".into(),
                 "new".into(),
                 "work".into(),
                 "--profile".into(),
@@ -1658,14 +1439,29 @@ mod tests {
         let session =
             expect_run(parse_cli_args(vec!["--session".into(), "dev".into()]).expect("parses"));
         assert_eq!(session.attach_session.as_deref(), Some("dev"));
-        assert!(parse_cli_args(vec!["kill-session".into()]).is_err());
-        assert!(parse_cli_args(vec!["kill-session".into(), "dev/../other".into()]).is_err());
-        assert!(parse_cli_args(vec!["kill-session".into(), "dev\nnext".into()]).is_err());
-        assert!(parse_cli_args(vec!["attach".into()]).is_err());
-        assert!(parse_cli_args(vec!["new".into()]).is_err());
-        assert!(parse_cli_args(vec!["new".into(), "dev".into(), "--read-only".into()]).is_err());
-        assert!(parse_cli_args(vec!["attach".into(), "dev".into(), "--server".into()]).is_err());
-        assert!(parse_cli_args(vec!["new".into(), "dev".into(), "--server".into()]).is_err());
+        assert!(parse_cli_args(vec!["sessions".into(), "kill".into()]).is_err());
+        assert!(
+            parse_cli_args(vec![
+                "sessions".into(),
+                "kill".into(),
+                "dev/../other".into()
+            ])
+            .is_err()
+        );
+        assert!(
+            parse_cli_args(vec!["sessions".into(), "kill".into(), "dev\nnext".into()]).is_err()
+        );
+        assert!(parse_cli_args(vec!["sessions".into(), "attach".into()]).is_err());
+        assert!(parse_cli_args(vec!["sessions".into(), "new".into()]).is_err());
+        assert!(
+            parse_cli_args(vec![
+                "sessions".into(),
+                "new".into(),
+                "dev".into(),
+                "--read-only".into(),
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -1746,19 +1542,19 @@ mod tests {
         // Every one of these used to consume the following flag as a literal name, so
         // `--server --pick` started a session server for a session called `--pick`.
         for args in [
-            vec!["attach", "--read-only"],
-            vec!["new", "--profile"],
+            vec!["sessions", "attach", "--read-only"],
+            vec!["sessions", "new", "--profile"],
             vec!["--session", "--pick"],
             vec!["--server", "--pick"],
             vec!["--session", "dev", "--fresh-server", "--pick"],
             vec!["--remote-serve", "--pick"],
-            vec!["kill-session", "--remote"],
+            vec!["sessions", "kill", "--remote"],
             vec!["--profile", "--read-only"],
             vec!["--config", "--read-only"],
             vec!["--socket", "--read-only", "list-panes"],
             vec!["run-action", "--focus"],
             vec!["status", "blocked", "--reason", "--clear"],
-            vec!["list-sessions", "--format", "--remote"],
+            vec!["sessions", "list", "--format", "--remote"],
         ] {
             let parsed = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect());
             assert!(parsed.is_err(), "accepted a flag as a value: {args:?}");
@@ -1766,6 +1562,7 @@ mod tests {
         // A lone `-` is still an ordinary value.
         let dash = expect_run(
             parse_cli_args(vec![
+                "sessions".into(),
                 "new".into(),
                 "x".into(),
                 "--profile".into(),
@@ -1895,7 +1692,7 @@ mod tests {
                 "list-panes".into()
             ])
             .expect_err("rejected")
-            .contains("list-sessions --remote"),
+            .contains("sessions list --remote"),
             "the remote rejection should point at the command that does reach a host"
         );
     }
@@ -1916,26 +1713,36 @@ mod tests {
         };
         assert_eq!(config_path.as_deref(), Some("/tmp/alt.toml"));
 
-        let ParsedCli::ListSessions { config_path, .. } = parse_cli_args(vec![
+        let ParsedCli::Sessions(SessionsCommand::List { config_path, .. }) = parse_cli_args(vec![
             "--config".into(),
             "/tmp/alt.toml".into(),
-            "list-sessions".into(),
+            "sessions".into(),
+            "list".into(),
         ])
         .expect("parses") else {
-            panic!("expected list-sessions");
+            panic!("expected sessions list");
         };
         assert_eq!(config_path.as_deref(), Some("/tmp/alt.toml"));
 
-        let ParsedCli::KillSession { config_path, .. } = parse_cli_args(vec![
+        let ParsedCli::Sessions(SessionsCommand::Kill { config_path, .. }) = parse_cli_args(vec![
             "--config".into(),
             "/tmp/alt.toml".into(),
-            "kill-session".into(),
+            "sessions".into(),
+            "kill".into(),
             "dev".into(),
         ])
         .expect("parses") else {
-            panic!("expected kill-session");
+            panic!("expected sessions kill");
         };
         assert_eq!(config_path.as_deref(), Some("/tmp/alt.toml"));
+    }
+
+    #[test]
+    fn retired_cli_spellings_report_their_replacements() {
+        for (retired, replacement) in RETIRED {
+            let error = parse_cli_args(vec![(*retired).to_string()]).expect_err("must be retired");
+            assert_eq!(error, format!("`{retired}` was renamed to `{replacement}`"));
+        }
     }
 
     #[test]

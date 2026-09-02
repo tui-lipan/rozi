@@ -176,17 +176,20 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("attach <NAME>", "Attach to a running session, never create"),
             row(
-                "new <NAME> [--profile <PROFILE>]",
+                "sessions attach <NAME>",
+                "Attach to a running session, never create",
+            ),
+            row(
+                "sessions new <NAME> [--profile <PROFILE>]",
                 "Create a session, optionally from a profile",
             ),
             row(
-                "list-sessions [--format text|json] [--remote <HOST>]",
+                "sessions list [--format text|json] [--remote <HOST>]",
                 "List connectable sessions",
             ),
             row(
-                "kill-session <NAME> [--remote <HOST>]",
+                "sessions kill <NAME> [--remote <HOST>]",
                 "Stop a session and all of its panes",
             ),
         ],
@@ -211,10 +214,6 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row(
                 "split [OPTIONS] [COMMAND | --argv PROGRAM [ARG...]]",
-                "Spawn a pane; new-pane alias",
-            ),
-            row(
-                "new-pane [--workspace <N>] [--focus] [--cwd <DIR>] [--title <TEXT>]",
                 "Spawn a pane, optionally in another workspace",
             ),
             row("capture-pane [OPTIONS]", "Print pane text; JSON when piped"),
@@ -258,12 +257,12 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
         note: "",
         rows: &[
             row(
-                "list-extensions [OPTIONS]",
+                "extensions list [--verbose] [--json]",
                 "Show discovery status (--verbose, --json)",
             ),
-            row("new-extension <ID>", "Create a valid extension scaffold"),
+            row("extensions new <ID>", "Create a valid extension scaffold"),
             row(
-                "check-extension PATH [OPTIONS]",
+                "extensions check <PATH> [--json]",
                 "Validate an unpacked extension (--json)",
             ),
         ],
@@ -302,7 +301,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row(
                 "    --profile <NAME>",
-                "Seed a `new` session from this profile",
+                "Seed a `sessions new` session from this profile",
             ),
             row("    --read-only", "Attach as a viewer; cannot type or tile"),
             row("    --pick", "Force the startup session picker, whatever"),
@@ -445,7 +444,9 @@ pub(crate) fn print_version() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::args::{ParsedCli, parse_cli_args};
+    use crate::cli::args::{
+        EXTENSIONS_HELP_SECTIONS, ParsedCli, SESSIONS_HELP_SECTIONS, parse_cli_args,
+    };
     use crate::cli::skill::SKILL_HELP_SECTIONS;
 
     #[test]
@@ -485,6 +486,24 @@ mod tests {
                 "skill help reaches {} columns: {line}",
                 line.chars().count()
             );
+        }
+        for (name, sections) in [
+            ("sessions", SESSIONS_HELP_SECTIONS),
+            ("extensions", EXTENSIONS_HELP_SECTIONS),
+        ] {
+            let mut namespace_help = format!("rozi {name}\n");
+            append_help_sections(&mut namespace_help, sections, &HelpStyles::plain(), true);
+            for line in namespace_help.lines() {
+                assert!(
+                    !line.ends_with(' '),
+                    "trailing whitespace in {name} help line: {line:?}"
+                );
+                assert!(
+                    line.chars().count() <= 80,
+                    "{name} help reaches {} columns: {line}",
+                    line.chars().count()
+                );
+            }
         }
     }
 
@@ -585,14 +604,14 @@ mod tests {
         assert_eq!(styled("focus <PANE_ID>"), "L<focus> P<<PANE_ID>>");
         // Brackets and pipes stay unstyled; what is inside them is classified on its own.
         assert_eq!(
-            styled("new <NAME> [--profile <PROFILE>]"),
-            "L<new> P<<NAME>> [L<--profile> P<<PROFILE>>]"
+            styled("sessions new <NAME> [--profile <PROFILE>]"),
+            "L<sessions> L<new> P<<NAME>> [L<--profile> P<<PROFILE>>]"
         );
         // An all-caps bracketed word is a value to supply; a lowercase one is typed verbatim.
         assert_eq!(styled("split [COMMAND]"), "L<split> [P<COMMAND>]");
         assert_eq!(
-            styled("list-sessions [--format text|json]"),
-            "L<list-sessions> [L<--format> L<text>|L<json>]"
+            styled("sessions list [--format text|json]"),
+            "L<sessions> L<list> [L<--format> L<text>|L<json>]"
         );
         // `-l` is a flag, not a placeholder, and `<KEY|TEXT>` is one placeholder including its
         // alternatives.

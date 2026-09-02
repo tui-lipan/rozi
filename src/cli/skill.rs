@@ -128,8 +128,8 @@ mod tests {
             "pty_ready:true",
             "does **not** move focus",
             "queued as type-ahead",
-            "rozi list-sessions",
-            "rozi kill-session <NAME>",
+            "rozi sessions list",
+            "rozi sessions kill <NAME>",
             "read-only",
             "Input lock",
         ] {

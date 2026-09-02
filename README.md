@@ -65,7 +65,7 @@ The default prefix is `Ctrl+A`. Press it, release it, then press the command key
 Attach to the named session again with:
 
 ```bash
-rozi attach dev
+rozi sessions attach dev
 ```
 
 ## Documentation

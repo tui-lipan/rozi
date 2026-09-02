@@ -34,7 +34,7 @@ ROZI_CMD=${ROZI_BIN:-rozi}
 
 ```sh
 ROZI_CMD=${ROZI_BIN:-rozi}
-"$ROZI_CMD" new-pane --workspace 9 --title Tests --focus --argv cargo test -- --nocapture
+"$ROZI_CMD" split --workspace 9 --title Tests --focus --argv cargo test -- --nocapture
 ```
 
 Place pane options before `--argv`. Everything after it is the executable and its arguments.

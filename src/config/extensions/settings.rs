@@ -95,7 +95,7 @@ pub(crate) fn merge(
     for (key, value) in table {
         let Some(default) = declared.get(key.as_str()) else {
             warnings.push(format!(
-                "`{id}` has no setting `{key}`; ignored (run `rozi check-extension` to see the ones it declares)"
+                "`{id}` has no setting `{key}`; ignored (run `rozi extensions check` to see the ones it declares)"
             ));
             continue;
         };

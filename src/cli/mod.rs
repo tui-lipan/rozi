@@ -4,7 +4,7 @@
 //! that run one. `main.rs` is the only caller — it matches on the parse and dispatches here.
 //!
 //! Human-facing report formatting lives in [`output`] rather than in each subcommand, so a table
-//! rendered by `list-sessions` and one rendered by `list-extensions` cannot drift apart.
+//! rendered by `sessions list` and one rendered by `extensions list` cannot drift apart.
 
 pub(crate) mod args;
 pub(crate) mod control;
@@ -15,7 +15,10 @@ pub(crate) mod session;
 pub(crate) mod skill;
 pub(crate) mod update;
 
-pub(crate) use args::{CliArgs, ParsedCli, SessionCommand, parse_cli_args};
+pub(crate) use args::{
+    CliArgs, ExtensionsCommand, ParsedCli, SessionCommand, SessionsCommand, parse_cli_args,
+    print_extensions_check_help, print_extensions_help, print_sessions_help,
+};
 pub(crate) use control::{run_control_cli, run_pick_cli, run_publish_cli, run_subscribe_cli};
 pub(crate) use extension::{
     run_check_extension_cli, run_list_extensions_cli, run_new_extension_cli,

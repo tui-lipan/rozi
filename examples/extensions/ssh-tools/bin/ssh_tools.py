@@ -206,14 +206,14 @@ def picker_rows(
 def open_host(ssh: str, alias: str) -> None:
     try:
         result = subprocess.run(
-            [ROZI, "new-pane", "--focus", "--argv", ssh, "--", alias],
+            [ROZI, "split", "--focus", "--argv", ssh, "--", alias],
             capture_output=True,
             encoding="utf-8",
             errors="replace",
             check=False,
         )
     except OSError as error:
-        notify_error(f"could not run rozi new-pane: {error}")
+        notify_error(f"could not run rozi split: {error}")
         return
     if result.returncode == 0:
         return

@@ -173,7 +173,7 @@ Start a named release session and attach a second client at the same terminal di
 
 ```bash
 target/release/rozi perf-audit
-target/release/rozi attach perf-audit --read-only
+target/release/rozi sessions attach perf-audit --read-only
 ```
 
 Run a bounded plain-output producer inside a pane:

@@ -26,20 +26,21 @@ processes.
 rozi                         # open the default picker
 rozi dev                     # attach to dev, or launch profile dev
 rozi --session dev           # same target, explicit spelling
-rozi attach dev              # attach only
-rozi attach dev --read-only  # attach without input or layout authority
-rozi new dev                 # create a fresh empty named session
-rozi new review --profile dev
-rozi list-sessions
-rozi kill-session dev
+rozi sessions attach dev              # attach only
+rozi sessions attach dev --read-only  # attach without input or layout authority
+rozi sessions new dev                 # create a fresh empty named session
+rozi sessions new review --profile dev
+rozi sessions list
+rozi sessions kill dev
 ```
 
 `rozi dev` first looks for a running session named `dev`. If none exists, it launches the
 same-name profile. It reports an error when neither exists. It never creates an unknown empty
-session silently.
+session silently. `rozi sessions kill <NAME>` also reports an error when no live or restorable
+session has that name.
 
-`attach` and `new` are reserved command words. Use `rozi --session attach` when the intended
-session or profile is literally named `attach`.
+Namespace names and retired CLI spellings cannot be bare session or profile targets. Use
+`rozi --session attach` when the intended session or profile is literally named `attach`.
 
 Remote targets use the same session commands. See [Remote sessions](remote.md).
 
@@ -148,9 +149,9 @@ lists it, so a session killed while Rozi was away stays dead and you land on the
 blocks on SSH before the first frame. `profile` does create its session — that is the difference
 between the two modes.
 
-Explicit session targets, `attach`, `new`, and `--pick` take precedence: a session you name is
-always the one you get. If `last` or `profile` cannot resolve its requested session, Rozi falls
-back to that scope's picker and reports why.
+Explicit session targets, `sessions attach`, `sessions new`, and `--pick` take precedence: a
+session you name is always the one you get. If `last` or `profile` cannot resolve its requested
+session, Rozi falls back to that scope's picker and reports why.
 
 From the sessionless launcher, bare `Enter` starts a temporary shell. The configured spawn command
 also works there.
@@ -226,8 +227,8 @@ Processes are not checkpointed. Each command starts again in a fresh PTY, and sa
 replayed above the new output. Missing directories, missing replay files, and individual spawn
 failures do not prevent the rest of the snapshot from loading.
 
-Use `Ctrl+K` twice on a restorable row to forget the snapshot. Explicit `rozi new <name>` also
-starts fresh rather than restoring an old snapshot with that name.
+Use `Ctrl+K` twice on a restorable row to forget the snapshot. Explicit
+`rozi sessions new <name>` also starts fresh rather than restoring an old snapshot with that name.
 
 ## Scratch panes
 
@@ -248,7 +249,7 @@ collaborator removal.
 
 ## Limits and failure cases
 
-- `list-sessions` lists connectable sessions. Stale or foreign endpoints are skipped.
+- `sessions list` lists connectable sessions. Stale or foreign endpoints are skipped.
 - If a server cannot be contacted, the client reports the failure instead of inventing a blank
   named session.
 - A named server and client must be compatible. After upgrading Rozi, restart an incompatible

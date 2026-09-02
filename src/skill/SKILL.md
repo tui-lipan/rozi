@@ -49,7 +49,8 @@ source pane and do not accept a pane-id argument.
 `--remote` is **not** a control-socket option. When the UI is attached with `--remote`, its
 `ROZI_SOCKET` is still the local UI endpoint and controls the session shown by that UI. Do not
 try to point `--socket` at an SSH transport or remote server endpoint. Remote session discovery and
-server shutdown use the separate `list-sessions --remote` and `kill-session --remote` helpers below.
+server shutdown use the separate helpers below: `sessions list --remote` and
+`sessions kill --remote`.
 Processes inside a remote pane intentionally do not receive that local `ROZI_SOCKET`, so the
 initial pane-control check fails there rather than exposing the local UI endpoint remotely.
 
@@ -72,7 +73,6 @@ rozi send-keys -l C-c
 rozi send-keys -- -n hello
 rozi split [COMMAND]
 rozi split [COMMAND] --focus  # also move focus to the new pane
-rozi new-pane [COMMAND]       # alias of split
 rozi capture-pane --format json
 rozi capture-pane --target <PANE_ID> --format json
 rozi capture-pane --scrollback 200 --format json
@@ -100,13 +100,14 @@ rozi, publishing one JSON row list per line and reading back `{"activate":"<id>"
 clicks a row. It runs until closed, and closing withdraws the pane's rows. See
 `docs/control.md`.
 
-`split`/`new-pane` waits for the pane's PTY and replies with a numeric `id`, `accepted:true`, and
+The CLI command is `split`; the control-protocol wire verb it sends is `new-pane`. `split` waits
+for the pane's PTY and replies with a numeric `id`, `accepted:true`, and
 `pty_ready`. `pty_ready:true` means input sent to that id will reach the shell. A slow spawn (a
 `--remote` session, say) can still answer `pty_ready:true` late or fall back to `pty_ready:false`
 after about five seconds; a `pty_ready:false` pane is starting, not broken. A spawn that fails
 answers with a JSON error instead.
 
-`split`/`new-pane` does **not** move focus. The user keeps typing wherever they were, and the new
+`split` does **not** move focus. The user keeps typing wherever they were, and the new
 pane is reachable by id. Pass `--focus` only when the user asked to be taken to the new pane. A
 matched `[[rules]]` entry still decides workspace, float, and fullscreen placement.
 
@@ -120,7 +121,7 @@ only an id listed by `rozi --help` or the command palette, never a guessed id.
 
 ## Controller, read-only, and input-lock limits
 
-- A layout controller is required for `split`/`new-pane`, layout-mutating `run-action` calls, and
+- A layout controller is required for `split`, layout-mutating `run-action` calls, and
   moving a pane to another workspace. A writable follower receives `not controller` until it takes
   control; do not repeatedly retry it.
 - Read-only clients cannot type, set pane status, or mutate shared layout.
@@ -133,23 +134,23 @@ only an id listed by `rozi --help` or the command palette, never a guessed id.
 Session lifecycle commands are separate from the local UI control endpoint:
 
 ```bash
-rozi list-sessions
-rozi list-sessions --format json
-rozi attach <NAME>
-rozi attach <NAME> --read-only
-rozi new <NAME>
-rozi new <NAME> --profile <PROFILE>
-rozi kill-session <NAME>
-rozi list-sessions --remote <HOST>
-rozi kill-session <NAME> --remote <HOST>
+rozi sessions list
+rozi sessions list --format json
+rozi sessions attach <NAME>
+rozi sessions attach <NAME> --read-only
+rozi sessions new <NAME>
+rozi sessions new <NAME> --profile <PROFILE>
+rozi sessions kill <NAME>
+rozi sessions list --remote <HOST>
+rozi sessions kill <NAME> --remote <HOST>
 ```
 
-`attach` is attach-only; `new` explicitly creates a named session. `kill-session <NAME>` is the
-sole canonical server-stop spelling. It destroys that one per-user named session server and its
-PTYs for every attached client. It is not a generic process killer; never use it for an arbitrary
-process, pane, or session that the user did not explicitly ask to destroy. Remote lifecycle helpers
-run the same command over SSH and never use a local forced-termination fallback against the SSH
-transport.
+`sessions attach` is attach-only; `sessions new` explicitly creates a named session.
+`sessions kill <NAME>` is the sole canonical server-stop spelling. It destroys that one per-user
+named session server and its PTYs for every attached client. It is not a generic process killer;
+never use it for an arbitrary process, pane, or session that the user did not explicitly ask to
+destroy. Remote lifecycle helpers run the same command over SSH and never use a local
+forced-termination fallback against the SSH transport.
 
 ## Safety rules
 
@@ -158,4 +159,4 @@ transport.
 - Avoid stealing focus with `focus`, `--focus`, or a layout command when the task does not require
   it.
 - Read `pty_ready` from the split response instead of assuming either answer.
-- Never treat `kill-session` as a generic process killer.
+- Never treat `sessions kill` as a generic process killer.

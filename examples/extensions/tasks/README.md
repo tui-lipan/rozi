@@ -4,7 +4,7 @@ Finds the project tasks around the focused pane and runs one in a new pane. Sour
 recipes, `make` targets, and `package.json` scripts, grouped by where they came from.
 
 This extension was written against the public extension surface only — `docs/`,
-`schemas/extension.schema.json`, `rozi check-extension`, and `rozi --help` — without reading Rozi's
+`schemas/extension.schema.json`, `rozi extensions check`, and `rozi --help` — without reading Rozi's
 source. It uses the Python standard library, the `rozi` CLI, and nothing else.
 
 ## What it gives you
@@ -18,7 +18,7 @@ source. It uses the Python standard library, the `rozi` CLI, and nothing else.
   rows carry `make build` rather than `build`.
 
 Both chords are suggestions. Rozi drops one silently if you have already bound it; see
-`rozi list-extensions --verbose` and bind them yourself in `[keys]` if so.
+`rozi extensions list --verbose` and bind them yourself in `[keys]` if so.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ Both chords are suggestions. Rozi drops one silently if you have already bound i
 data_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
 install -d -m 700 "$data_root" "$data_root/extensions"
 cp -R ./tasks "$data_root/extensions/tasks"
-rozi check-extension "$data_root/extensions/tasks"
+rozi extensions check "$data_root/extensions/tasks"
 rozi run-action reload-extensions
 ```
 
@@ -49,7 +49,7 @@ keep_open = true             # hold the pane after the task exits so output stay
 workspace = 0                # 0 runs in the current workspace, 1-9 pins it to one
 ```
 
-`rozi check-extension <path>` lists these with their defaults. An unknown key or a wrong type is
+`rozi extensions check <path>` lists these with their defaults. An unknown key or a wrong type is
 reported and ignored, so the extension always has a usable value.
 
 ## How task discovery works

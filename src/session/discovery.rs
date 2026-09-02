@@ -249,7 +249,7 @@ pub fn discover_sessions_from(
 /// Why a host probe failed, in words a user can act on.
 ///
 /// A failed probe carries whatever ssh, the remote shell, or the JSON parser said, which is a
-/// paragraph of plumbing (`remote list-sessions failed: ssh: connect to host winvm port 22:
+/// paragraph of plumbing (`remote sessions list failed: ssh: connect to host winvm port 22:
 /// Connection refused`) written for a terminal, not for a sidebar column narrow enough that it
 /// clips before reaching the part that matters. This maps the shapes that actually occur onto a
 /// short phrase that names the thing to go fix. The raw message is kept in
@@ -327,16 +327,19 @@ fn discover_remote_sessions(
     let mut command = crate::session::remote::ssh_base_command(&resolved, config);
     crate::session::remote::append_ssh_destination(&mut command, &resolved);
     command.arg(&remote_bin);
-    command.arg("list-sessions");
+    command.arg("sessions");
+    command.arg("list");
     command.arg("--format");
     command.arg("json");
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = command.output()?;
     if !output.status.success() {
-        return Err(std::io::Error::other(format!(
-            "remote list-sessions failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
+        return Err(std::io::Error::other(
+            crate::session::remote::sessions_command_failure(
+                "list",
+                &String::from_utf8_lossy(&output.stderr),
+            ),
+        ));
     }
     let mut rows = parse_remote_list_json(&output.stdout, Some(host_label))?;
     for row in &mut rows {
@@ -345,7 +348,7 @@ fn discover_remote_sessions(
     Ok(rows)
 }
 
-/// Parse `list-sessions --format json` output (also used by remote discovery).
+/// Parse `sessions list --format json` output (also used by remote discovery).
 pub fn parse_remote_list_json(
     bytes: &[u8],
     host: Option<String>,
@@ -391,7 +394,7 @@ pub fn parse_remote_list_json(
         .collect())
 }
 
-/// Serialize discovered sessions as JSON (for `list-sessions --format json`).
+/// Serialize discovered sessions as JSON (for `sessions list --format json`).
 pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json::Error> {
     let value: Vec<serde_json::Value> = rows
         .iter()
@@ -454,7 +457,7 @@ mod tests {
     #[test]
     fn probe_failures_name_what_to_go_fix_rather_than_quoting_ssh() {
         let reason = |raw: &str| probe_failure_reason(raw);
-        let remote = |stderr: &str| format!("remote list-sessions failed: {stderr}");
+        let remote = |stderr: &str| format!("remote sessions list failed: {stderr}");
 
         assert_eq!(
             reason(&remote(

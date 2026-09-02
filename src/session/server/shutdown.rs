@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
@@ -31,11 +32,32 @@ enum EndpointProbe {
 /// ever targeting an SSH transport. A successful protocol stop lets the server retire its own
 /// endpoint; the client never unlinks a live endpoint after that path.
 pub(crate) fn shutdown_named_session(name: &str) -> io::Result<()> {
+    shutdown_named_session_if_present(name).map(|_| ())
+}
+
+/// Stop a named session and report whether a live endpoint, stale endpoint, or snapshot existed.
+///
+/// The CLI uses the result to distinguish a successful cleanup from a missing name. Other callers
+/// retain idempotent shutdown through [`shutdown_named_session`].
+pub(crate) fn shutdown_named_session_if_present(name: &str) -> io::Result<bool> {
     let endpoint = super::session_endpoint(name)?;
+    let endpoint_exists = path_entry_exists(endpoint.path())?;
+    let snapshot_exists = super::list_snapshot_names_by_recency()
+        .iter()
+        .any(|snapshot| snapshot == name);
+    if !endpoint_exists && !snapshot_exists {
+        return Ok(false);
+    }
+
+    shutdown_existing_named_session(&endpoint, name)?;
+    Ok(true)
+}
+
+fn shutdown_existing_named_session(endpoint: &IpcEndpoint, name: &str) -> io::Result<()> {
     let mut stream = match endpoint.connect() {
         Ok(stream) => stream,
         Err(connect_error) => {
-            return handle_connect_failure(&endpoint, name, connect_error);
+            return handle_connect_failure(endpoint, name, connect_error);
         }
     };
 
@@ -55,7 +77,7 @@ pub(crate) fn shutdown_named_session(name: &str) -> io::Result<()> {
             // Keep the authenticated connection open until the server retires so Shutdown remains
             // associated with a live attached client throughout delivery. Dropping immediately
             // makes the final control frame race the peer-EOF teardown under load.
-            let retirement = wait_for_retirement(&endpoint, server_pid)?;
+            let retirement = wait_for_retirement(endpoint, server_pid)?;
             drop(stream);
             return match retirement {
                 Retirement::Retired => snapshot_error.map_or(Ok(()), Err),
@@ -70,8 +92,8 @@ pub(crate) fn shutdown_named_session(name: &str) -> io::Result<()> {
     let Some(server_pid) = server_pid else {
         // Without a local peer pid there is no safe forced-termination path. Do not unlink a live
         // endpoint or pretend an incompatible live server was stopped.
-        return match probe_endpoint(&endpoint, None)? {
-            EndpointProbe::Retired => cleanup_stale_session(&endpoint, name),
+        return match probe_endpoint(endpoint, None)? {
+            EndpointProbe::Retired => cleanup_stale_session(endpoint, name),
             EndpointProbe::Live | EndpointProbe::LivePeerUnknown | EndpointProbe::Busy => {
                 Err(io::Error::other(format!(
                     "could not shut down session {name:?}: {graceful_error}; peer pid unavailable"
@@ -84,9 +106,9 @@ pub(crate) fn shutdown_named_session(name: &str) -> io::Result<()> {
     // The protocol failed, so the captured local pid is the only permitted fallback. Re-probe the
     // endpoint immediately before termination and require the same peer pid; a different peer (or
     // an endpoint that cannot report its peer) must be left completely alone.
-    match probe_endpoint(&endpoint, Some(server_pid))? {
+    match probe_endpoint(endpoint, Some(server_pid))? {
         EndpointProbe::Live => crate::platform::server_lifecycle::terminate_server(server_pid),
-        EndpointProbe::Retired => return cleanup_stale_session(&endpoint, name),
+        EndpointProbe::Retired => return cleanup_stale_session(endpoint, name),
         EndpointProbe::Recreated => return Err(recreated_server_error(name)),
         EndpointProbe::LivePeerUnknown | EndpointProbe::Busy => {
             return Err(io::Error::other(format!(
@@ -94,8 +116,8 @@ pub(crate) fn shutdown_named_session(name: &str) -> io::Result<()> {
             )));
         }
     }
-    match wait_for_retirement(&endpoint, Some(server_pid))? {
-        Retirement::Retired => cleanup_stale_session(&endpoint, name),
+    match wait_for_retirement(endpoint, Some(server_pid))? {
+        Retirement::Retired => cleanup_stale_session(endpoint, name),
         Retirement::Recreated => Err(recreated_server_error(name)),
         Retirement::TimedOut => Err(io::Error::new(
             io::ErrorKind::TimedOut,
@@ -103,6 +125,14 @@ pub(crate) fn shutdown_named_session(name: &str) -> io::Result<()> {
                 "could not shut down session {name:?}: forced termination did not retire the old endpoint"
             ),
         )),
+    }
+}
+
+fn path_entry_exists(path: &std::path::Path) -> io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
     }
 }
 

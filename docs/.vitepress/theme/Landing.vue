@@ -50,7 +50,7 @@ const features = [
   },
   {
     title: "Named sessions keep running",
-    body: "A background server owns every PTY in a named session. Detach, then use rozi attach dev to return to its layout, running programs, and scrollback from another window or over SSH.",
+    body: "A background server owns every PTY in a named session. Detach, then use rozi sessions attach dev to return to its layout, running programs, and scrollback from another window or over SSH.",
     link: "/sessions",
     linkText: "Sessions",
   },
@@ -230,10 +230,10 @@ const extensionSurfaces = [
 ];
 
 const authorLoop = [
-  ["rozi new-extension", "scaffold"],
-  ["rozi check-extension", "validate"],
-  ["rozi reload-extensions", "install"],
-  ["rozi list-extensions", "confirm"],
+  ["rozi extensions new", "scaffold"],
+  ["rozi extensions check", "validate"],
+  ["rozi run-action reload-extensions", "install"],
+  ["rozi extensions list", "confirm"],
 ];
 
 const exampleExtensions = [

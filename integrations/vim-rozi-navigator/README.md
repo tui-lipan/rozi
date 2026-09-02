@@ -23,7 +23,7 @@ data_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
 install -d -m 700 "$data_root" "$data_root/extensions"
 ln -s "/absolute/path/to/rozi/integrations/vim-rozi-navigator" \
   "$data_root/extensions/vim-rozi-navigator"
-rozi check-extension "$data_root/extensions/vim-rozi-navigator"
+rozi extensions check "$data_root/extensions/vim-rozi-navigator"
 rozi run-action reload-extensions
 ```
 

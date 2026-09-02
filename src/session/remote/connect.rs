@@ -155,7 +155,7 @@ fn preamble_timeout(config: &RemoteConfig) -> Duration {
     }
 }
 
-/// Kill a named session on the remote host via `rozi kill-session` over ssh.
+/// Kill a named session on the remote host via `rozi sessions kill` over ssh.
 pub fn kill_remote_session(
     target: &RemoteTarget,
     session: &str,
@@ -178,16 +178,17 @@ pub fn kill_remote_session(
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
     command.arg(&remote_bin);
-    command.arg("kill-session");
+    command.arg("sessions");
+    command.arg("kill");
     command.arg(session);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = command
         .output()
-        .map_err(|err| format!("remote kill-session ssh failed: {err}"))?;
+        .map_err(|err| format!("remote sessions kill ssh failed: {err}"))?;
     if !output.status.success() {
-        return Err(format!(
-            "remote kill-session failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+        return Err(super::sessions_command_failure(
+            "kill",
+            &String::from_utf8_lossy(&output.stderr),
         ));
     }
     Ok(())

@@ -76,7 +76,7 @@ class SshConfigTests(unittest.TestCase):
 
         self.assertEqual(
             run.call_args.args[0],
-            [ssh_tools.ROZI, "new-pane", "--focus", "--argv", ssh, "--", alias],
+            [ssh_tools.ROZI, "split", "--focus", "--argv", ssh, "--", alias],
         )
 
 

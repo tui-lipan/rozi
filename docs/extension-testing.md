@@ -21,7 +21,7 @@ export LAB ROZI_BIN
 
 cleanup() {
     trap - EXIT HUP INT TERM
-    "$ROZI_BIN" kill-session "$ROZI_LAB_SESSION" >/dev/null 2>&1 || true
+    "$ROZI_BIN" sessions kill "$ROZI_LAB_SESSION" >/dev/null 2>&1 || true
     rm -rf "$LAB"
 }
 trap cleanup EXIT
@@ -56,14 +56,14 @@ for extension in \
     agent-activity \
     activity-dashboard
 do
-    "$ROZI_BIN" check-extension "examples/extensions/$extension"
+    "$ROZI_BIN" extensions check "examples/extensions/$extension"
     cp -R \
         "examples/extensions/$extension" \
         "$XDG_DATA_HOME/rozi/extensions/$extension"
 done
 
-"$ROZI_BIN" list-extensions --verbose
-"$ROZI_BIN" new "$ROZI_LAB_SESSION"
+"$ROZI_BIN" extensions list --verbose
+"$ROZI_BIN" sessions new "$ROZI_LAB_SESSION"
 ```
 
 Run the manual checks from panes in that UI. Detach when finished. The setup shell then kills the
@@ -84,7 +84,7 @@ Validate every installed copy:
 ```sh
 for extension in "$XDG_DATA_HOME/rozi/extensions"/*
 do
-    "$ROZI_BIN" check-extension "$extension"
+    "$ROZI_BIN" extensions check "$extension"
 done
 ```
 
@@ -208,7 +208,7 @@ Check these cases:
 2. Change only title, description, or version, reload, and confirm the service remains running.
 3. Add the extension ID to the isolated config's `[extensions].disabled`, reload, and confirm its
    commands, service, picker, rows, and subscriptions disappear.
-4. Make the manifest invalid, reload, and confirm `list-extensions --verbose` reports the error
+4. Make the manifest invalid, reload, and confirm `extensions list --verbose` reports the error
    without keeping the old generation active.
 5. Repair the manifest, validate it, reload, and confirm one service starts.
 6. Detach the only client and confirm client-side services stop.

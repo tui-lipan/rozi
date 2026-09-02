@@ -24,11 +24,11 @@ Python 3 available as `python` is the only runtime dependency. Validate and copy
 directory, then reload Rozi explicitly:
 
 ```bash
-rozi check-extension ./agent-activity
+rozi extensions check ./agent-activity
 cp -R ./agent-activity \
   "${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/agent-activity"
 rozi run-action reload-extensions
-rozi list-extensions --verbose
+rozi extensions list --verbose
 ```
 
 Rozi does not watch extension source trees. After editing the installed copy, run

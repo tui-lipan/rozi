@@ -15,11 +15,11 @@ config reload retains the dashboard history. Rozi intentionally does not watch e
 It requires Python 3 available as `python`. Install the directory manually, validate it, and reload:
 
 ```bash
-rozi check-extension ./activity-dashboard
+rozi extensions check ./activity-dashboard
 cp -R ./activity-dashboard \
   "${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/activity-dashboard"
 rozi run-action reload-extensions
-rozi list-extensions --verbose
+rozi extensions list --verbose
 ```
 
 Disabling or invalidating the extension terminates its service and withdraws its published rows.

@@ -1,7 +1,7 @@
 # SSH tools extension
 
 This independent example uses only the public extension manifest/environment and the
-`rozi pick --json`, `rozi notify`, and `rozi new-pane` commands. `ssh-tools.hosts` lists concrete
+`rozi pick --json`, `rozi notify`, and `rozi split` commands. `ssh-tools.hosts` lists concrete
 aliases from the standard user SSH config and opens the selected host in a focused pane.
 
 ## Prerequisites
@@ -28,7 +28,7 @@ the config; each description probe is bounded to two seconds.
 Copy or clone this directory anywhere below Rozi's user extension directory, then run:
 
 ```bash
-rozi check-extension ./ssh-tools
+rozi extensions check ./ssh-tools
 rozi run-action reload-extensions
 rozi run-action ssh-tools.hosts
 ```
@@ -40,13 +40,13 @@ structured rows. A missing `ssh` executable or pane-launch failure produces an e
 
 ## Pane launch boundary
 
-The selected host opens with `rozi new-pane --argv <ssh> -- <alias>`. Rozi passes the discovered
+The selected host opens with `rozi split --argv <ssh> -- <alias>`. Rozi passes the discovered
 SSH executable and alias directly to the child process without shell parsing, preserving spaces,
 Unicode, quotes, and shell metacharacters on every supported platform.
 
 ## Manual checks
 
-1. Run `rozi check-extension ./ssh-tools` and confirm `ssh-tools.hosts` uses a direct argv manifest.
+1. Run `rozi extensions check ./ssh-tools` and confirm `ssh-tools.hosts` uses a direct argv manifest.
 2. Add concrete aliases, a wildcard-only pattern, and an included file to the user config. Include
    at least one quoted path or alias containing spaces/Unicode if supported by the installed
    OpenSSH build.

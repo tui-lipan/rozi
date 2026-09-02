@@ -169,7 +169,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
             continue
         control(
             args.socket,
-            "new-pane",
+            "split",
             "--workspace",
             str(workspace),
             "--cwd",

@@ -30,13 +30,13 @@ available until you kill it. Create one from the picker by typing a name and pre
 from a shell with:
 
 ```bash
-rozi new dev
+rozi sessions new dev
 ```
 
 Attach to an existing named session with:
 
 ```bash
-rozi attach dev
+rozi sessions attach dev
 ```
 
 A temporary session has no durable user name. `Enter` or `Ctrl+T` in the startup picker creates

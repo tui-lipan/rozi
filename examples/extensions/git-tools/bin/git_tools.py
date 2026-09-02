@@ -465,7 +465,7 @@ def run_picker(mode: str) -> int:
                         if not isinstance(item, Worktree):
                             raise ToolError("Worktree changed; refresh")
                         subprocess.run(
-                            [ROZI, "new-pane", "--cwd", item.path, "--focus"],
+                            [ROZI, "split", "--cwd", item.path, "--focus"],
                             check=True,
                         )
                     break

@@ -209,7 +209,7 @@ def notify(message: str, level: str = "error") -> None:
 
 
 def run_task(task: Task, root: Path, config: dict) -> int:
-    args = ["new-pane", "--cwd", str(root), "--title", task.name]
+    args = ["split", "--cwd", str(root), "--title", task.name]
     if config["pane"] == "focus":
         args.append("--focus")
     if config["keep_open"]:

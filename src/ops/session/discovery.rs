@@ -159,7 +159,7 @@ pub(crate) type HostProbeStatus = Vec<(crate::session::remote::RemoteTarget, Opt
 /// per-host probe outcomes.
 pub(crate) type SidebarDiscovery = (std::io::Result<Vec<DiscoveredSession>>, HostProbeStatus);
 
-/// Probe exactly one remote host using the shared SSH/list-sessions protocol path.
+/// Probe exactly one remote host using the shared SSH/`sessions list` protocol path.
 pub(crate) fn discover_remote_host_sessions(
     target: &crate::session::remote::RemoteTarget,
     remote_config: &crate::config::RemoteConfig,

@@ -249,7 +249,7 @@ def open_pane(mode: str, container: Container) -> None:
         process = subprocess.run(
             [
                 ROZI,
-                "new-pane",
+                "split",
                 "--focus",
                 "--argv",
                 sys.executable,

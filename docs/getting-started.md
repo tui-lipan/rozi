@@ -71,7 +71,7 @@ The client exits. The shells in `dev` continue running.
 ## 6. Attach again
 
 ```bash
-rozi attach dev
+rozi sessions attach dev
 ```
 
 You return to the same live panes and scrollback.

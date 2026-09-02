@@ -65,7 +65,8 @@ fn scaffold_python() -> Result<PythonLaunch, String> {
             prefix_arg: candidate.prefix_arg,
         })
         .ok_or_else(|| {
-            "new-extension requires Python 3 (`python3`, `python`, or Windows `py`)".to_string()
+            "`rozi extensions new` requires Python 3 (`python3`, `python`, or Windows `py`)"
+                .to_string()
         })
 }
 
@@ -114,10 +115,10 @@ fn write_scaffold(id: &str, destination: &Path, python: &PythonLaunch) -> Result
          Generated Rozi extension scaffold.\n\n\
          ## Develop\n\n\
          ```bash\n\
-         rozi check-extension .\n\
+         rozi extensions check .\n\
          # Copy this directory below Rozi's user extension directory, then:\n\
          rozi run-action reload-extensions\n\
-         rozi list-extensions --verbose\n\
+         rozi extensions list --verbose\n\
          rozi run-action {id}.hello\n\
          ```\n\n\
          The example uses structured `exec` and calls the running Rozi binary through\n\

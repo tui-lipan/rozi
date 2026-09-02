@@ -27,7 +27,7 @@ fn repository_root() -> PathBuf {
 
 fn check_extension(path: &Path) -> serde_json::Value {
     let output = Command::new(env!("CARGO_BIN_EXE_rozi"))
-        .args(["check-extension", path.to_str().unwrap(), "--json"])
+        .args(["extensions", "check", path.to_str().unwrap(), "--json"])
         .output()
         .unwrap();
     assert!(
@@ -155,8 +155,8 @@ fn extension_author_skill_tracks_the_current_public_contract() {
     assert!(skill.lines().count() < 500);
     for required in [
         "api = 1",
-        "rozi new-extension",
-        "rozi check-extension",
+        "rozi extensions new",
+        "rozi extensions check",
         "ROZI_EXTENSION",
         "ROZI_EXTENSION_DIR",
         "ROZI_EXTENSION_GENERATION",

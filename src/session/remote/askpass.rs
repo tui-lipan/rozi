@@ -10,7 +10,7 @@
 //! the running UI and prints back whatever the user typed. Nothing touches the terminal.
 //!
 //! The broker exists only while the TUI is up, and [`configure`] is a no-op without it. Every
-//! pre-TUI path — the `--remote` startup install prompt, `rozi list-sessions --remote` — therefore
+//! pre-TUI path — the `--remote` startup install prompt, `rozi sessions list --remote` — therefore
 //! keeps ssh's ordinary terminal prompt, which is the right answer when there is no UI to cover.
 //!
 //! A bind failure is not fatal and is not reported: it leaves prompts on the terminal exactly as

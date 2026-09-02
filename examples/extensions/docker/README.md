@@ -33,13 +33,13 @@ Copy this directory below Rozi's user extension directory, validate it, and relo
 destination="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/docker"
 mkdir -p "$(dirname "$destination")"
 cp -R ./docker "$destination"
-rozi check-extension "$destination"
+rozi extensions check "$destination"
 rozi run-action reload-extensions
-rozi list-extensions --verbose
+rozi extensions list --verbose
 ```
 
 On Windows, copy the directory to `%LOCALAPPDATA%\rozi\extensions\docker` and pass that path to
-`rozi check-extension`.
+`rozi extensions check`.
 
 ## Manual flow
 
@@ -57,5 +57,5 @@ picker reopening. Use `i`, `l`, or `e` to open a pane. To remove a stopped conta
 
 Docker discovery and every management mutation use structured subprocess argv; container names are
 display-only and are never inserted into commands. Inspect, logs, and shell use
-`rozi new-pane --argv` so the Python executable, helper path, mode, and validated full hexadecimal
+`rozi split --argv` so the Python executable, helper path, mode, and validated full hexadecimal
 container ID cross into the pane as literal process arguments without shell parsing.

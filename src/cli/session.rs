@@ -124,8 +124,15 @@ pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<(
     if let Some(remote) = remote {
         return run_kill_session_remote(name, remote);
     }
-    session::server::shutdown_named_session(name)
+    let found = session::server::shutdown_named_session_if_present(name)
         .map_err(|err| std::io::Error::other(format!("could not kill session {name:?}: {err}")))?;
+    if !found {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Session `{name}` was not found."),
+        )
+        .into());
+    }
     Ok(())
 }
 

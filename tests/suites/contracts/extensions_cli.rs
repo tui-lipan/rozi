@@ -57,7 +57,7 @@ fn list_extensions_reports_loaded_disabled_and_incompatible_in_all_formats() {
     write_extension(&root, "disabled-checkout", "disabled", 1);
     write_extension(&root, "future-checkout", "future", 2);
 
-    let text = rozi(&temp, &["list-extensions"]);
+    let text = rozi(&temp, &["extensions", "list"]);
     assert!(
         text.status.success(),
         "stdout: {}\nstderr: {}",
@@ -70,7 +70,7 @@ fn list_extensions_reports_loaded_disabled_and_incompatible_in_all_formats() {
     assert!(stdout.contains("disabled  disabled title  1.0.0    1         0         disabled"));
     assert!(stdout.contains("requires extension API 2"));
 
-    let verbose = rozi(&temp, &["list-extensions", "--verbose"]);
+    let verbose = rozi(&temp, &["extensions", "list", "--verbose"]);
     assert!(verbose.status.success());
     let stdout = String::from_utf8(verbose.stdout).unwrap();
     let loaded = std::fs::canonicalize(loaded).unwrap();
@@ -82,7 +82,7 @@ fn list_extensions_reports_loaded_disabled_and_incompatible_in_all_formats() {
     assert!(stdout.contains("loaded.open"));
     assert!(!stdout.contains("command.loaded.open"));
 
-    let json = rozi(&temp, &["list-extensions", "--json"]);
+    let json = rozi(&temp, &["extensions", "list", "--json"]);
     assert!(json.status.success());
     let document: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(document["schema_version"], 1);
@@ -104,7 +104,7 @@ fn check_extension_has_deterministic_success_and_failure_exit_codes() {
     let good = write_extension(&root, "good-checkout", "good", 1);
     let future = write_extension(&root, "future-checkout", "future", 2);
 
-    let success = rozi(&temp, &["check-extension", good.to_str().unwrap()]);
+    let success = rozi(&temp, &["extensions", "check", good.to_str().unwrap()]);
     assert!(
         success.status.success(),
         "stdout: {}\nstderr: {}",
@@ -119,7 +119,7 @@ fn check_extension_has_deterministic_success_and_failure_exit_codes() {
 
     let failure = rozi(
         &temp,
-        &["check-extension", future.to_str().unwrap(), "--json"],
+        &["extensions", "check", future.to_str().unwrap(), "--json"],
     );
     assert!(!failure.status.success());
     let value: serde_json::Value = serde_json::from_slice(&failure.stdout).unwrap();
@@ -135,7 +135,7 @@ fn new_extension_creates_a_valid_non_destructive_scaffold_in_unicode_paths() {
     let parent = temp.path().join("author space 東京");
     std::fs::create_dir(&parent).unwrap();
 
-    let created = rozi_in(&temp, &["new-extension", "sample-tools"], Some(&parent));
+    let created = rozi_in(&temp, &["extensions", "new", "sample-tools"], Some(&parent));
     assert!(
         created.status.success(),
         "stdout: {}\nstderr: {}",
@@ -154,7 +154,7 @@ fn new_extension_creates_a_valid_non_destructive_scaffold_in_unicode_paths() {
 
     let checked = rozi(
         &temp,
-        &["check-extension", extension.to_str().unwrap(), "--json"],
+        &["extensions", "check", extension.to_str().unwrap(), "--json"],
     );
     assert!(
         checked.status.success(),
@@ -165,7 +165,7 @@ fn new_extension_creates_a_valid_non_destructive_scaffold_in_unicode_paths() {
     let diagnostic: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
     assert_eq!(diagnostic["extension"]["commands"][0], "sample-tools.hello");
 
-    let repeated = rozi_in(&temp, &["new-extension", "sample-tools"], Some(&parent));
+    let repeated = rozi_in(&temp, &["extensions", "new", "sample-tools"], Some(&parent));
     assert!(!repeated.status.success());
     assert!(String::from_utf8_lossy(&repeated.stderr).contains("destination already exists"));
     assert_eq!(
@@ -174,7 +174,7 @@ fn new_extension_creates_a_valid_non_destructive_scaffold_in_unicode_paths() {
     );
 
     for id in ["Uppercase", "two.words", "../escape", "rozi"] {
-        let rejected = rozi_in(&temp, &["new-extension", id], Some(&parent));
+        let rejected = rozi_in(&temp, &["extensions", "new", id], Some(&parent));
         assert!(!rejected.status.success(), "accepted invalid id {id:?}");
         assert!(!parent.join(id).exists());
     }
@@ -196,7 +196,7 @@ fn check_extension_explains_launch_cwd_and_safe_environment_details() {
     )
     .unwrap();
 
-    let output = rozi(&temp, &["check-extension", extension.to_str().unwrap()]);
+    let output = rozi(&temp, &["extensions", "check", extension.to_str().unwrap()]);
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains(r#"launch: ["python","#));
@@ -211,7 +211,7 @@ fn check_extension_explains_launch_cwd_and_safe_environment_details() {
 
     let json = rozi(
         &temp,
-        &["check-extension", extension.to_str().unwrap(), "--json"],
+        &["extensions", "check", extension.to_str().unwrap(), "--json"],
     );
     assert!(json.status.success());
     let document: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();

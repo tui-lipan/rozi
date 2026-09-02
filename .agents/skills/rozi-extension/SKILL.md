@@ -15,9 +15,9 @@ reach into its state files.
 ## Start here
 
 ```bash
-rozi new-extension my-extension
+rozi extensions new my-extension
 cd my-extension
-rozi check-extension .
+rozi extensions check .
 ```
 
 A normal extension is an independent directory:
@@ -146,7 +146,7 @@ entries = [
   `rozi notify`, exit 0 — otherwise the user gets the specific message and a vaguer duplicate.
 - Extensions install under the data directory (`${XDG_DATA_HOME:-~/.local/share}/rozi/extensions`),
   not beside `config.toml`, and that data directory must stay owner-only or Rozi refuses to start.
-  `rozi list-extensions` names the directory it scanned when it finds nothing.
+  `rozi extensions list` names the directory it scanned when it finds nothing.
 - Disable an installed extension with `[extensions] disabled = ["git-tools"]` in `config.toml`.
 - Extension API 1 is frozen: manifest keys, id namespacing, the `ROZI_EXTENSION*` variables, the
   control commands, atomic validity, the `<prefix> x` chord space, and `schema_version: 1`
@@ -255,23 +255,23 @@ events.
 ```bash
 rozi run-action reload-extensions
 rozi run-action git-tools.branches
-rozi new-pane --cwd /project --focus --argv ssh -- devbox
+rozi split --cwd /project --focus --argv ssh -- devbox
 ```
 
 `run-action` uses stable built-in, config-command, or extension IDs. Prefer
-`new-pane --argv PROGRAM [ARG...]` for pane processes; place pane options before `--argv` because it
+`split --argv PROGRAM [ARG...]` for pane processes; place pane options before `--argv` because it
 consumes the rest. Use a positional command line only when shell syntax is intentional. Popup
 commands remain command lines.
 
 ## Development loop
 
 ```bash
-rozi new-extension my-extension
+rozi extensions new my-extension
 cd my-extension
-rozi check-extension .
+rozi extensions check .
 # copy or clone below the user extension directory
 rozi run-action reload-extensions
-rozi list-extensions --verbose
+rozi extensions list --verbose
 rozi run-action my-extension.hello
 ```
 
@@ -284,12 +284,12 @@ and explicit development symlinks remain the installation model.
 - Unsupported API: use the generation documented by the running Rozi; do not guess compatibility.
 - Invalid or duplicate ID: fix the manifest; IDs are stable namespaces and duplicates are atomic
   failures.
-- Executable/path missing: inspect resolved argv and cwd in `rozi check-extension PATH`.
+- Executable/path missing: inspect resolved argv and cwd in `rozi extensions check PATH`.
 - Service restart loop: run its resolved argv manually with the documented cwd/env keys, then use
   `restart = "never"` while diagnosing if repeated runs are harmful.
 - Generation rejected or stream closed after reload: exit; the process belongs to a retired
   generation.
-- Command absent: check validation, `rozi list-extensions --verbose`, disabled configuration, and
+- Command absent: check validation, `rozi extensions list --verbose`, disabled configuration, and
   then reload.
 - No shortcut: commands are keyless by default; invoke the public ID or add `[keys]`.
 - Manifest became invalid: the old valid generation is retired on reload; repair and reload again.
@@ -309,7 +309,7 @@ ownership; it does not sandbox code or enforce capability permissions.
 
 ## Completion checklist
 
-- [ ] `rozi check-extension .` succeeds and shows intended IDs, argv, cwd, and injected environment.
+- [ ] `rozi extensions check .` succeeds and shows intended IDs, argv, cwd, and injected environment.
 - [ ] Commands work from a path containing spaces and Unicode.
 - [ ] Missing optional executables produce a concise notification/error.
 - [ ] Picker cancellation, input actions, disabled rows, and refresh behave correctly.

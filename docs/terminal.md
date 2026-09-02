@@ -14,7 +14,7 @@ Remote panes use the remote server's shell and filesystem, not the client's `[sh
 
 ## Working directories and shell metadata
 
-Rozi uses shell metadata for pane titles, new-pane directory inheritance, prompt navigation, last
+Rozi uses shell metadata for pane titles, new pane directory inheritance, prompt navigation, last
 command output, and foreground-program detection.
 
 With `[shell_integration] mode = "auto"`, Rozi configures bash, zsh, fish, and PowerShell for the

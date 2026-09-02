@@ -28,7 +28,7 @@ stream exits the service so Rozi can retire it cleanly.
 The extension itself has no Python packages to install. Missing `gh`, missing authentication,
 non-repository directories, API failures, timeouts, and malformed JSON become inert Activity/picker
 diagnostic rows instead of crashing the service. The supervised Python process cannot run when
-`python` itself is absent; `rozi check-extension` and `list-extensions --verbose` report that
+`python` itself is absent; `rozi extensions check` and `extensions list --verbose` report that
 missing executable before launch.
 
 Check the prerequisites manually:
@@ -52,14 +52,14 @@ From this repository checkout:
 src="$PWD/examples/extensions/pr-dashboard"
 dst="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/pr-dashboard"
 
-rozi check-extension "$src"
+rozi extensions check "$src"
 python -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
   "$src/bin/pr_dashboard.py"
 mkdir -p "$dst"
 cp -R "$src/." "$dst/"
-rozi check-extension "$dst"
+rozi extensions check "$dst"
 rozi run-action reload-extensions
-rozi list-extensions --verbose
+rozi extensions list --verbose
 ```
 
 The PowerShell equivalent on Windows is:
@@ -69,9 +69,9 @@ $src = Resolve-Path ".\examples\extensions\pr-dashboard"
 $dst = Join-Path $env:LOCALAPPDATA "rozi\extensions\pr-dashboard"
 New-Item -ItemType Directory -Force $dst | Out-Null
 Copy-Item -Recurse -Force (Join-Path $src "*") $dst
-rozi check-extension $dst
+rozi extensions check $dst
 rozi run-action reload-extensions
-rozi list-extensions --verbose
+rozi extensions list --verbose
 ```
 
 ## Invoke and use

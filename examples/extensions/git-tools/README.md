@@ -23,7 +23,7 @@ Copy or clone this directory anywhere below Rozi's user extension directory. The
 directory may be renamed; `id = "git-tools"` remains its public identity.
 
 ```bash
-rozi check-extension ./git-tools
+rozi extensions check ./git-tools
 rozi run-action reload-extensions
 ```
 

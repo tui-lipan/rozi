@@ -25,6 +25,27 @@ pub(crate) use target::{validate_remote_executable_token, validate_remote_target
 
 use crate::config::{RemoteConfig, RemoteHostConfig};
 
+/// Format a failed namespaced session command, translating an old remote parser's diagnostics into
+/// a version-skew message while preserving stderr for unrelated failures.
+pub(crate) fn sessions_command_failure(verb: &str, stderr: &str) -> String {
+    let stderr = stderr.trim();
+    let parser_rejected_namespace = [
+        "unknown flag",
+        "unexpected argument",
+        "No session or profile named",
+    ]
+    .iter()
+    .any(|marker| stderr.contains(marker));
+
+    if parser_rejected_namespace {
+        format!(
+            "remote sessions {verb} failed: the remote rozi is older than 0.0.16 and does not understand `rozi sessions {verb}`"
+        )
+    } else {
+        format!("remote sessions {verb} failed: {stderr}")
+    }
+}
+
 /// Resolved SSH destination after merging CLI target with `[remote]` / `[remote.hosts.*]` config.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedRemote {
@@ -101,5 +122,32 @@ impl ResolvedRemote {
             Some(user) => format!("{user}@{}", self.host),
             None => self.host.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sessions_command_failure;
+
+    #[test]
+    fn old_remote_parser_errors_become_version_skew_errors() {
+        for stderr in [
+            "unknown flag `--format`",
+            "unexpected argument `list`",
+            "No session or profile named `sessions`.",
+        ] {
+            assert_eq!(
+                sessions_command_failure("list", stderr),
+                "remote sessions list failed: the remote rozi is older than 0.0.16 and does not understand `rozi sessions list`"
+            );
+        }
+    }
+
+    #[test]
+    fn unrelated_remote_failures_keep_raw_stderr() {
+        assert_eq!(
+            sessions_command_failure("kill", " ssh: Connection refused\n"),
+            "remote sessions kill failed: ssh: Connection refused"
+        );
     }
 }

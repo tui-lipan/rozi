@@ -166,7 +166,7 @@ fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
                 .contains(EXTENSION_ID)
             {
                 let diagnostic = Command::new(env!("CARGO_BIN_EXE_rozi"))
-                    .args(["check-extension", root.to_str().unwrap(), "--json"])
+                    .args(["extensions", "check", root.to_str().unwrap(), "--json"])
                     .output()
                     .unwrap();
                 panic!(

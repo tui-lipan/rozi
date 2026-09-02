@@ -70,7 +70,7 @@ fn pinned_config() -> RemoteConfig {
 /// Best-effort teardown so a real session server is not left running on the developer's machine.
 fn kill_session(name: &str) {
     let _ = std::process::Command::new(env!("CARGO_BIN_EXE_rozi"))
-        .args(["kill-session", name])
+        .args(["sessions", "kill", name])
         .output();
 }
 
@@ -243,7 +243,7 @@ fn remote_serve_proxies_a_session_over_pipes() {
 
     // Tear the server down inside the private runtime dir rather than the user's real one.
     let _ = Command::new(env!("CARGO_BIN_EXE_rozi"))
-        .args(["kill-session", &session])
+        .args(["sessions", "kill", &session])
         .env("XDG_RUNTIME_DIR", &runtime_base)
         .output();
     let _ = std::fs::remove_dir_all(&runtime_base);

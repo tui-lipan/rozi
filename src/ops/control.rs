@@ -468,7 +468,7 @@ fn run_action(
                 format!("extension `{extension}` does not define command `{action_id}`")
             } else {
                 format!(
-                    "extension command `{action_id}` is unavailable; run `rozi list-extensions --verbose`"
+                    "extension command `{action_id}` is unavailable; run `rozi extensions list --verbose`"
                 )
             }
         } else {
@@ -978,7 +978,7 @@ mod tests {
                 assert_eq!(
                     response.error.as_deref(),
                     Some(
-                        "extension command `git-tools.branches` is unavailable; run `rozi list-extensions --verbose`"
+                        "extension command `git-tools.branches` is unavailable; run `rozi extensions list --verbose`"
                     )
                 );
             })

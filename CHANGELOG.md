@@ -4,12 +4,20 @@
 
 ### Changed
 
+- Session and extension CLI commands now use namespaces. `list-sessions`, `kill-session`, `attach`,
+  and `new` are replaced by `sessions list`, `sessions kill`, `sessions attach`, and `sessions new`.
+  `list-extensions`, `new-extension`, and `check-extension` are replaced by `extensions list`,
+  `extensions new`, and `extensions check`. The `new-pane` CLI alias is removed; use `split`.
+  Remote hosts must run this same release for `sessions list --remote` and
+  `sessions kill --remote`.
 - Takes tui-lipan 0.4.1, which requires a `termina` that no longer panics the input worker on a
   mouse report at column or row 0. Rozi's `[patch.crates-io]` for that fix is gone, so builds from
   the published crate - `cargo install rozi` included - carry it like every other build.
 
 ### Fixed
 
+- `rozi sessions kill <NAME>` exits with an error when no live or restorable session has that name
+  instead of succeeding silently.
 - The extension detail overlay scrolls its own document with an integrated scrollbar and even side
   padding. It had been wrapped in an outer `ScrollView` with a one-column left inset to work around
   a tui-lipan scrollbar reservation the 0.4.1 renderer no longer needs.

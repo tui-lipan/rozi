@@ -38,7 +38,7 @@ mod unix {
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("No session or profile named `wok`."));
-        assert!(stderr.contains("Create it with: rozi new wok"));
+        assert!(stderr.contains("Create it with: rozi sessions new wok"));
         let runtime_path = root.join("runtime/rozi");
         let runtime_entries = fs::read_dir(&runtime_path)
             .map(|entries| entries.count())
@@ -54,11 +54,30 @@ mod unix {
         fs::create_dir_all(&profiles).unwrap();
         fs::write(profiles.join("work.toml"), "version = 1\n").unwrap();
 
-        let output = command(&root).args(["attach", "work"]).output().unwrap();
+        let output = command(&root)
+            .args(["sessions", "attach", "work"])
+            .output()
+            .unwrap();
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("Session `work` is not running."));
         assert!(stderr.contains("Start it with: rozi work"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn killing_a_missing_session_fails_with_a_diagnostic() {
+        let root = isolated_home("kill-missing");
+        let output = command(&root)
+            .args(["sessions", "kill", "missing"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("Session `missing` was not found."),
+            "missing session diagnostic: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

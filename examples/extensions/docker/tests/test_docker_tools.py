@@ -139,7 +139,7 @@ class DockerDiscoveryTests(unittest.TestCase):
             docker_tools.open_pane("logs", container)
 
         argv = run.call_args.args[0]
-        self.assertEqual(argv[:4], [docker_tools.ROZI, "new-pane", "--focus", "--argv"])
+        self.assertEqual(argv[:4], [docker_tools.ROZI, "split", "--focus", "--argv"])
         self.assertEqual(argv[-3:], ["--pane", "logs", container.id])
         self.assertNotIn(container.name, argv)
 

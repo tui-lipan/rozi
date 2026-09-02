@@ -140,7 +140,7 @@ cleanup_scenario() {
     [[ -S $socket ]] && "$BIN" --socket "$socket" run-action detach >/dev/null 2>&1
   done
   if [[ -n ${SESSION:-} ]]; then
-    "$BIN" kill-session "$SESSION" >/dev/null 2>&1
+    "$BIN" sessions kill "$SESSION" >/dev/null 2>&1
   fi
   local attempt pid
   for attempt in {1..40}; do
@@ -487,7 +487,7 @@ EOF
   for ((pane=2; pane<=panes; pane++)); do
     printf -v marker 'M%02d' "$pane"
     command=$(pane_command "$history" "$content" "$marker")
-    response=$("$BIN" --socket "$control" new-pane "$command")
+    response=$("$BIN" --socket "$control" split "$command")
     id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<<"$response")
     PANE_IDS+=("$id")
     PANE_MARKERS+=("$marker")

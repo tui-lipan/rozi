@@ -9,10 +9,10 @@ on another host over SSH.
 rozi --remote workbox
 rozi --remote workbox dev
 rozi --remote ssh://user@host:2222
-rozi --remote workbox attach dev
-rozi --remote workbox new review
-rozi list-sessions --remote workbox
-rozi kill-session dev --remote workbox
+rozi --remote workbox sessions attach dev
+rozi --remote workbox sessions new review
+rozi sessions list --remote workbox
+rozi sessions kill dev --remote workbox
 ```
 
 The session commands behave like local commands. A named target attaches to its running session or
@@ -66,7 +66,7 @@ and `scp` it runs, overriding a desktop `SSH_ASKPASS` for those commands only. T
 8.4 or newer on the client; older clients prompt on the terminal, where the prompt will overwrite
 the UI.
 
-Command-line runs have no UI to cover, so `rozi list-sessions --remote`, `rozi kill-session
+Command-line runs have no UI to cover, so `rozi sessions list --remote`, `rozi sessions kill
 --remote`, and the pre-launch install prompt keep SSH's ordinary terminal prompt.
 
 ## Shared connections
@@ -175,7 +175,7 @@ the remote server's `PATH` for change markers. File search only includes directo
 already expanded.
 
 Hooks run locally and receive `ROZI_REMOTE_HOST`. The UI control socket also remains local.
-`list-sessions --remote` and `kill-session --remote` are separate SSH commands.
+`sessions list --remote` and `sessions kill --remote` are separate SSH commands.
 
 Clipboard reads and writes happen on the client where the UI runs. OSC52 from a remote pane can
 therefore update the local clipboard when enabled. Direct rich-clipboard access by the pane still

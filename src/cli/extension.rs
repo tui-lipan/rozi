@@ -19,7 +19,7 @@ pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {
         "{}  {}",
         styles.paint("Validate", OutputTone::Muted),
         styles.paint(
-            &format!("rozi check-extension {}", destination.display()),
+            &format!("rozi extensions check {}", destination.display()),
             OutputTone::Accent
         )
     );
@@ -215,10 +215,10 @@ pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Res
     Ok(info.status == crate::config::ExtensionStatus::Loaded)
 }
 
-/// The whole `check-extension` report as one string.
+/// The whole `extensions check` report as one string.
 ///
 /// Built rather than printed line by line so it reaches stdout in a single write: `println!` panics
-/// when the reader has gone, and `rozi check-extension … | head` is an ordinary thing to type.
+/// when the reader has gone, and `rozi extensions check … | head` is an ordinary thing to type.
 fn format_check_text(sections: &[crate::config::ReportSection], styles: OutputStyles) -> String {
     use std::fmt::Write as _;
 

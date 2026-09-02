@@ -19,7 +19,7 @@ Before installation:
 4. Validate the unpacked directory.
 
 ```sh
-rozi check-extension ./rozi-git-tools
+rozi extensions check ./rozi-git-tools
 ```
 
 Validation checks the manifest, API, IDs, launch declarations, environment, and executable paths.
@@ -48,13 +48,13 @@ install_root="$data_root/extensions"
 # umask, which is usually 0755.
 install -d -m 700 "$data_root" "$install_root"
 cp -R ./rozi-git-tools "$install_root/git-tools"
-rozi check-extension "$install_root/git-tools"
+rozi extensions check "$install_root/git-tools"
 rozi run-action reload-extensions
 ```
 
 Extensions live under the **data** directory, not next to `config.toml`. Only the `[extensions]`
 settings go in the config file. If a freshly copied extension does not appear, open
-**Extensions…** to see its status and validation error. `rozi list-extensions` is the scripting
+**Extensions…** to see its status and validation error. `rozi extensions list` is the scripting
 equivalent and names the directory it scanned.
 
 If Rozi refuses to start with `managed installation ... permissions must not allow group/other
@@ -77,20 +77,20 @@ report. The detail view is read-only and wraps long command, path, and diagnosti
 Use the CLI when a script or external tool needs the same information:
 
 ```sh
-rozi list-extensions
-rozi list-extensions --verbose
-rozi list-extensions --json
+rozi extensions list
+rozi extensions list --verbose
+rozi extensions list --json
 ```
 
 The report includes loaded, disabled, invalid, incompatible, and duplicate candidates. Verbose
 output adds paths, public command, service, agent, and sidebar tab IDs, navigation targets,
 resolved executables, and validation errors.
 
-`check-extension --json` and `list-extensions --json` are available for tooling:
+`extensions check --json` and `extensions list --json` are available for tooling:
 
 ```sh
-rozi check-extension ./git-tools --json
-rozi list-extensions --json
+rozi extensions check ./git-tools --json
+rozi extensions list --json
 ```
 
 ## Disable or remove
@@ -136,9 +136,9 @@ install_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions"
 git -C "$install_root/git-tools" fetch --all
 git -C "$install_root/git-tools" diff HEAD..origin/main
 git -C "$install_root/git-tools" pull --ff-only
-rozi check-extension "$install_root/git-tools"
+rozi extensions check "$install_root/git-tools"
 rozi run-action reload-extensions
-rozi list-extensions --verbose
+rozi extensions list --verbose
 ```
 
 An explicit reload is required because Rozi does not watch extension directories. Process-facing
@@ -150,9 +150,9 @@ changes such as title, description, and package version keep the generation.
 Create and validate a scaffold:
 
 ```sh
-rozi new-extension my-extension
+rozi extensions new my-extension
 cd my-extension
-rozi check-extension .
+rozi extensions check .
 ```
 
 An extension normally has this structure:
@@ -322,7 +322,7 @@ Every command and service receives the merged result as compact JSON in `ROZI_EX
 ```
 
 Changing a setting is a process-facing change: the generation rotates and services restart with the
-new value. `rozi check-extension` lists the declared settings and their defaults.
+new value. `rozi extensions check` lists the declared settings and their defaults.
 
 ### Default keybindings
 
@@ -464,7 +464,7 @@ See [Scripting](scripting.md) for portable command examples and
 Validate after each manifest edit:
 
 ```sh
-rozi check-extension .
+rozi extensions check .
 ```
 
 Then use the isolated procedure in [Extension testing](extension-testing.md). Do not test by first
@@ -474,7 +474,7 @@ For an installed extension:
 
 ```sh
 rozi run-action reload-extensions
-rozi list-extensions --verbose
+rozi extensions list --verbose
 ```
 
 If a command fails, run its resolved argv from the verbose validation output with an isolated test

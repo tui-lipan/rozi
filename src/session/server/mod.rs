@@ -31,7 +31,7 @@ pub use pane_log::PaneLog;
 pub(crate) use resurrect::list_snapshot_names_by_recency;
 mod runtime;
 mod shutdown;
-pub(crate) use shutdown::shutdown_named_session;
+pub(crate) use shutdown::{shutdown_named_session, shutdown_named_session_if_present};
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;

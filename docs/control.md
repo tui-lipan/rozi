@@ -38,8 +38,7 @@ Put `--socket PATH` before the command when selecting an endpoint explicitly.
 | `focus <PANE_ID>` | Focus a pane. |
 | `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. |
 | `send-keys [--target <PANE_ID>] [-l\|--literal] [--] <KEY\|TEXT>...` | Send named keys and text. |
-| `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Spawn a pane. `new-pane` is an alias. |
-| `new-pane [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Spawn a pane. |
+| `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Spawn a pane. |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. |
 | `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--format text\|json]` | Print pane text. |
 | `switch-workspace <1-9>` | Switch the active workspace. |
@@ -63,7 +62,7 @@ Other successful one-shot commands print a short acknowledgement on a terminal. 
 keeps the JSON response. Errors go to stderr in human mode.
 
 `list-panes` describes only the UI endpoint that answered. It includes the current attachment and
-client-local scratch panes, not every named session. Use `rozi list-sessions` to discover session
+client-local scratch panes, not every named session. Use `rozi sessions list` to discover session
 servers.
 
 ## Target selection
@@ -75,7 +74,7 @@ Target a pane explicitly when a script drives a pane it created:
 
 ```sh
 ROZI_CMD=${ROZI_BIN:-rozi}
-pane=$("$ROZI_CMD" new-pane --workspace 9 --argv bash | jq -r '.data.id')
+pane=$("$ROZI_CMD" split --workspace 9 --argv bash | jq -r '.data.id')
 "$ROZI_CMD" send-text --target "$pane" 'printf "ready\n"'
 "$ROZI_CMD" send-keys --target "$pane" Enter
 ```
@@ -84,7 +83,7 @@ Input sent while a PTY starts is queued. Input to an exited or failed PTY is rej
 
 ## Spawning panes
 
-`split` and `new-pane` leave focus unchanged unless `--focus` is present.
+`split` leaves focus unchanged unless `--focus` is present.
 
 Options:
 
@@ -99,8 +98,8 @@ A positional `COMMAND` is interpreted by the configured `command_shell`. `--argv
 program directly and consumes the remaining arguments, so all pane options must come first.
 
 ```sh
-rozi new-pane --cwd "/repo with spaces" --title Tests --keep-open 'cargo test'
-rozi new-pane --workspace 9 --focus --argv cargo test -- --nocapture
+rozi split --cwd "/repo with spaces" --title Tests --keep-open 'cargo test'
+rozi split --workspace 9 --focus --argv cargo test -- --nocapture
 ```
 
 The response waits up to five seconds for PTY readiness. `pty_ready: false` means the pane still
@@ -211,19 +210,19 @@ These commands use session endpoints rather than a UI control endpoint:
 
 ```sh
 rozi dev
-rozi attach dev
-rozi attach dev --read-only
-rozi new dev
-rozi new review --profile dev
-rozi list-sessions
-rozi kill-session dev
+rozi sessions attach dev
+rozi sessions attach dev --read-only
+rozi sessions new dev
+rozi sessions new review --profile dev
+rozi sessions list
+rozi sessions kill dev
 ```
 
 Remote forms are limited to session lifecycle:
 
 ```sh
-rozi list-sessions --remote workbox
-rozi kill-session dev --remote workbox
+rozi sessions list --remote workbox
+rozi sessions kill dev --remote workbox
 ```
 
 See [Sessions](sessions.md) and [Remote sessions](remote.md).

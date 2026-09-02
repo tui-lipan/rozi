@@ -20,7 +20,7 @@ pub(super) struct ExtensionManifestFile {
     pub(super) sidebar_tabs: Vec<ExtensionSidebarTabFile>,
     /// Settings this extension understands, with the value each one takes when the user says
     /// nothing. Declaring them is what makes a user override checkable and what gives
-    /// `check-extension` something to show; an undeclared key is not a setting.
+    /// `extensions check` something to show; an undeclared key is not a setting.
     #[serde(default)]
     pub(super) settings: BTreeMap<String, toml::Value>,
     /// Static split-aware foreground-program declarations. Rozi compiles these into core

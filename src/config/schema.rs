@@ -434,7 +434,7 @@ pub struct RemoteConfig {
     /// On by default: the attach transport hands ssh's stdin to the session protocol, so a
     /// password prompt there cannot be answered and would hang instead. Turning it off lets ssh
     /// prompt on the controlling terminal, which is useful for the CLI helpers
-    /// (`list-sessions --remote`, `kill-session --remote`) and for passphrase-protected keys with
+    /// (`sessions list --remote`, `sessions kill --remote`) and for passphrase-protected keys with
     /// no agent — at the cost of a prompt that can land on top of a running TUI.
     pub batch_mode: bool,
 }

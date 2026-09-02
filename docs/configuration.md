@@ -481,7 +481,7 @@ wins.
 | `focus` | bool | `true` | Focuses the pane and its workspace. |
 | `fullscreen` | bool | `false` | Starts fullscreen. |
 
-Control `new-pane --workspace` and `--focus` override those two rule fields. See
+Control `split --workspace` and `--focus` override those two rule fields. See
 [Layouts and panes](layouts-and-panes.md).
 
 ## `[[agents]]`
@@ -574,7 +574,7 @@ runner = "just"
 rows = 20
 ```
 
-Run `rozi check-extension <path>` to see the settings an extension declares and their defaults.
+Run `rozi extensions check <path>` to see the settings an extension declares and their defaults.
 
 Extension commands may also suggest a default chord inside the reserved `<prefix> x` space. A
 `[keys]` entry for the command overrides it.

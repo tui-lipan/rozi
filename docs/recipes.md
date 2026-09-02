@@ -56,7 +56,7 @@ worktree=$(
         "$@" pick --title "Git worktrees"
 ) || exit 0
 [ -n "$worktree" ] || exit 0
-"$@" new-pane --cwd "$worktree" --focus
+"$@" split --cwd "$worktree" --focus
 ```
 
 Quoting `"$worktree"` is required because picker output is untrusted text and paths may contain
@@ -79,9 +79,9 @@ IFS= read -r selected < "$choice" || exit 0
 [ -n "$selected" ] || exit 0
 
 if [ -n "${ROZI_SOCKET:-}" ]; then
-    "$ROZI" --socket "$ROZI_SOCKET" new-pane --focus --argv "${EDITOR:-vi}" "$selected"
+    "$ROZI" --socket "$ROZI_SOCKET" split --focus --argv "${EDITOR:-vi}" "$selected"
 else
-    "$ROZI" new-pane --focus --argv "${EDITOR:-vi}" "$selected"
+    "$ROZI" split --focus --argv "${EDITOR:-vi}" "$selected"
 fi
 ```
 
@@ -237,7 +237,7 @@ produce_rows |
     while IFS= read -r message; do
         number=$(printf '%s\n' "$message" | jq -r '.activate // empty' | awk -F- '{print $2}')
         [ -n "$number" ] || continue
-        "$@" new-pane --focus --argv gh pr checkout "$number"
+        "$@" split --focus --argv gh pr checkout "$number"
     done
 ```
 

@@ -35,7 +35,7 @@ These commands attach to session `dev` when it is running. Otherwise they start 
 Launch the same recipe under another session name:
 
 ```bash
-rozi new review --profile dev
+rozi sessions new review --profile dev
 ```
 
 A profile and a session remain independent. Editing the profile does not change a running session.

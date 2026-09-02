@@ -304,7 +304,7 @@ impl StartupPlan {
             cli::SessionCommand::New => {
                 if running {
                     startup_fatal(format!(
-                        "Session `{name}` is already running.\nAttach with: rozi attach {name}"
+                        "Session `{name}` is already running.\nAttach with: rozi sessions attach {name}"
                     ));
                 }
                 self.autostart = true;
@@ -321,7 +321,7 @@ impl StartupPlan {
                     self.autostart = true;
                 } else {
                     startup_fatal(format!(
-                        "No session or profile named `{name}`.\nCreate it with: rozi new {name}"
+                        "No session or profile named `{name}`.\nCreate it with: rozi sessions new {name}"
                     ));
                 }
             }
@@ -1042,7 +1042,7 @@ pub(crate) fn clipboard_copy_feedback_duration(config: &Config) -> Duration {
 
 /// Point config loading at `--config <PATH>` before any command reads it.
 ///
-/// Every entry point that loads config goes through here, so a server, a remote `list-sessions`,
+/// Every entry point that loads config goes through here, so a server, a remote `sessions list`,
 /// and the UI all honour the same flag rather than the UI alone.
 fn apply_config_path(path: Option<String>) {
     if let Some(path) = path {
@@ -1069,24 +1069,39 @@ pub fn run() -> Result<()> {
         }
     };
 
-    // Pure extension diagnostics and the built-in skill do not need a runnable terminal host or a
-    // healthy managed binary. Keeping them first makes them useful while repairing either.
+    // Pure extension diagnostics, namespace help, and the built-in skill do not need a runnable
+    // terminal host or a healthy managed binary. Keeping them first makes them useful while
+    // repairing either.
     let parsed = match parsed {
-        cli::ParsedCli::ListExtensions {
-            json,
-            verbose,
-            config_path,
-        } => {
-            apply_config_path(config_path);
-            return cli::run_list_extensions_cli(json, verbose);
-        }
-        cli::ParsedCli::NewExtension { id } => {
-            return cli::run_new_extension_cli(&id);
-        }
-        cli::ParsedCli::CheckExtension { path, json } => {
-            if !cli::run_check_extension_cli(&path, json)? {
-                std::process::exit(1);
+        cli::ParsedCli::Extensions(command) => match command {
+            cli::ExtensionsCommand::List {
+                json,
+                verbose,
+                config_path,
+            } => {
+                apply_config_path(config_path);
+                return cli::run_list_extensions_cli(json, verbose);
             }
+            cli::ExtensionsCommand::New { id } => {
+                return cli::run_new_extension_cli(&id);
+            }
+            cli::ExtensionsCommand::Check { path, json } => {
+                if !cli::run_check_extension_cli(&path, json)? {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+        },
+        cli::ParsedCli::ExtensionsHelp => {
+            cli::print_extensions_help();
+            return Ok(());
+        }
+        cli::ParsedCli::ExtensionsCheckHelp => {
+            cli::print_extensions_check_help();
+            return Ok(());
+        }
+        cli::ParsedCli::SessionsHelp => {
+            cli::print_sessions_help();
             return Ok(());
         }
         cli::ParsedCli::SkillHelp => {
@@ -1160,32 +1175,35 @@ pub fn run() -> Result<()> {
             return cli::run_server_cli(&name, fresh);
         }
         cli::ParsedCli::RemoteServe { name } => return cli::run_remote_serve_cli(&name),
-        cli::ParsedCli::ListSessions {
-            format,
-            remote,
-            config_path,
-        } => {
-            apply_config_path(config_path);
-            return cli::run_list_sessions_cli(format, remote.as_deref());
-        }
-        cli::ParsedCli::KillSession {
-            name,
-            remote,
-            config_path,
-        } => {
-            apply_config_path(config_path);
-            return cli::run_kill_session_cli(&name, remote.as_deref());
-        }
+        cli::ParsedCli::Sessions(command) => match command {
+            cli::SessionsCommand::List {
+                format,
+                remote,
+                config_path,
+            } => {
+                apply_config_path(config_path);
+                return cli::run_list_sessions_cli(format, remote.as_deref());
+            }
+            cli::SessionsCommand::Kill {
+                name,
+                remote,
+                config_path,
+            } => {
+                apply_config_path(config_path);
+                return cli::run_kill_session_cli(&name, remote.as_deref());
+            }
+        },
         cli::ParsedCli::Run(args) => args,
         cli::ParsedCli::Help { .. }
         | cli::ParsedCli::Version
         | cli::ParsedCli::Skill(_)
         | cli::ParsedCli::SkillHelp
+        | cli::ParsedCli::SessionsHelp
+        | cli::ParsedCli::Extensions(_)
+        | cli::ParsedCli::ExtensionsHelp
+        | cli::ParsedCli::ExtensionsCheckHelp
         | cli::ParsedCli::Install
-        | cli::ParsedCli::Update(_)
-        | cli::ParsedCli::ListExtensions { .. }
-        | cli::ParsedCli::NewExtension { .. }
-        | cli::ParsedCli::CheckExtension { .. } => unreachable!("early CLI command returned above"),
+        | cli::ParsedCli::Update(_) => unreachable!("early CLI command returned above"),
     };
 
     apply_config_path(cli.config_path.clone());

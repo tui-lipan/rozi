@@ -338,7 +338,7 @@
 # Absolute path to rozi on the remote; set it to skip the probe and install steps.
 #binary_path = "/usr/local/bin/rozi"
 
-# Placement rules for command-carrying pane spawns, including control new-pane and
+# Placement rules for command-carrying pane spawns, including control split and
 # [keys] run. First match wins. Plain shell panes, profile restore, scratchpads, and
 # popups do not use rules. Matching is command-based only - OSC titles arrive too late.
 [[rules]]
@@ -439,7 +439,7 @@
 [extensions]
 #disabled = ["docker"]
 # Per-extension settings live in a subtable named after the extension's stable id. The keys
-# are whatever that extension declares; `rozi check-extension <path>` lists them with their
+# are whatever that extension declares; `rozi extensions check <path>` lists them with their
 # defaults. An unknown key, a wrong type, or a table naming nothing installed is reported and
 # ignored. Not shown as a setting here because it only validates against an installed
 # extension:

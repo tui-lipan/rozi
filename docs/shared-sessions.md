@@ -7,9 +7,9 @@ overlays, theme, and sidebar.
 Start another client with the same target:
 
 ```bash
-rozi attach dev
-rozi --remote workbox attach dev
-rozi attach dev --read-only
+rozi sessions attach dev
+rozi --remote workbox sessions attach dev
+rozi sessions attach dev --read-only
 ```
 
 ## Join a session
@@ -64,7 +64,7 @@ control role when control transfers.
 For a viewer who should never type or control layout, attach with:
 
 ```bash
-rozi attach dev --read-only
+rozi sessions attach dev --read-only
 ```
 
 A read-only client cannot send terminal input, request or receive layout control, commit layouts, or

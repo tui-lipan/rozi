@@ -110,6 +110,10 @@ The tree follows focus and current-directory reports. Expansion state is remembe
 the client. While attached remotely, directory data comes from the remote session server and search
 only covers directories already fetched by expansion.
 
+A symlink shows where it points, as `CLAUDE.md → AGENTS.md`, and the target is the link's own text
+rather than a resolved path. Remote listings carry the target with the entry, so a link on the
+server's host reads the same way. Clicking a link acts on the link, not on the file behind it.
+
 ## Git
 
 Git shows changed files for the repository containing the focused pane's working directory. It

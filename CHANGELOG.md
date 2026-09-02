@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- The Files and Git tabs show where a symlink points, as `CLAUDE.md → AGENTS.md`. The target is the
+  link's own text rather than a resolved path, the way `ls -l` reports it. Remote listings carry
+  the target with the entry, so a link on the server's host reads the same as a local one.
+
 ### Changed
 
 - Session and extension CLI commands now use namespaces. `list-sessions`, `kill-session`, `attach`,
@@ -32,6 +38,13 @@
 
 ### Fixed
 
+- Collapsing the root row in the Git tab no longer replaces the whole tab with "No changes". The
+  tree decided it was empty from the rows it had drawn, and a collapsed root draws none, so folding
+  the heading shut looked exactly like a clean repository - with no heading left to open again.
+- Moving the cursor onto a file no longer jumps to a symlink that points at it. Every link was
+  stored under its target's path, so two rows shared one identity: in this repository `CLAUDE.md`
+  links to `AGENTS.md`, and selecting either landed on the other. Git markers were mixed up the
+  same way, and clicking a link acted on its target; both now follow the row the user is on.
 - Dragging the sidebar splitter stops at the width the sidebar is allowed to take, at both ends,
   instead of following the pointer past it. The handle used to keep travelling while the panel
   stayed at its clamped width: an empty strip opened between the sidebar and the pane column, and

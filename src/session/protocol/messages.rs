@@ -240,6 +240,11 @@ pub struct WireDirEntry {
     pub is_dir: bool,
     #[serde(default)]
     pub is_symlink: bool,
+    /// Where a symlink points, spelled the way the link itself spells it, so the tree can show
+    /// `link → target` for a file it cannot read from this side of the connection. `None` for
+    /// everything that is not a link, and for a link the server could not read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symlink_target: Option<String>,
     /// Whether the server's ignore rules exclude this entry.
     #[serde(default)]
     pub ignored: bool,

@@ -199,6 +199,10 @@ fn wire_entry_to_widget(entry: crate::session::protocol::WireDirEntry) -> FileTr
     let mut out = FileTreeEntry::new(entry.name, entry.is_dir)
         .symlink(entry.is_symlink)
         .ignored(entry.ignored);
+    // Local trees read a link's target themselves; a served one only knows what the server sent.
+    if let Some(target) = entry.symlink_target {
+        out = out.symlink_target(target);
+    }
     if entry.git_staged.is_some() || entry.git_unstaged.is_some() {
         out = out.git_status(GitFileStatus::new(
             entry.git_staged.map(wire_state_to_change),

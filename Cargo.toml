@@ -32,7 +32,8 @@ exclude = [
 # own width bounds do instead of dragging past them. It also carries the file-tree fixes the Git
 # tab needs - a collapsed root no longer reads as a clean repository, and a symlink is its own row
 # rather than a second name for its target - plus `FileTreeEntry::symlink_target` for remote trees.
-tui-lipan = { version = "0.6.0", features = [
+# 0.6.1 puts a link's target beside its name instead of right-aligning it away from the row.
+tui-lipan = { version = "0.6.1", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

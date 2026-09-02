@@ -701,7 +701,12 @@ fn retained_directory_bytes(
         .saturating_add(
             entries
                 .iter()
-                .map(|entry| entry.name.capacity())
+                .map(|entry| {
+                    entry
+                        .name
+                        .capacity()
+                        .saturating_add(entry.symlink_target.as_ref().map_or(0, String::capacity))
+                })
                 .sum::<usize>(),
         )
 }

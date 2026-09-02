@@ -186,14 +186,27 @@ fn file_tree_messages_round_trip() {
 
     let listing = ServerMessage::DirectoryListing {
         path: "/srv/project".into(),
-        entries: vec![WireDirEntry {
-            name: "src".into(),
-            is_dir: true,
-            is_symlink: false,
-            ignored: false,
-            git_staged: None,
-            git_unstaged: Some(WireChangeState::Modified),
-        }],
+        entries: vec![
+            WireDirEntry {
+                name: "src".into(),
+                is_dir: true,
+                is_symlink: false,
+                symlink_target: None,
+                ignored: false,
+                git_staged: None,
+                git_unstaged: Some(WireChangeState::Modified),
+            },
+            // A link rides its target along: the client cannot read it from the other host.
+            WireDirEntry {
+                name: "CLAUDE.md".into(),
+                is_dir: false,
+                is_symlink: true,
+                symlink_target: Some("AGENTS.md".into()),
+                ignored: false,
+                git_staged: None,
+                git_unstaged: None,
+            },
+        ],
         error: None,
     };
     let mut buf = Vec::new();

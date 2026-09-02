@@ -54,11 +54,18 @@ pub(crate) fn list_directory(path: &str, show_hidden: bool) -> (Vec<WireDirEntry
             Some(_) => false,
             None => false,
         };
+        // The link's own text, not a resolved path: it is what the tree shows after the name, and
+        // resolving it here would spell a target that means nothing on the client's host.
+        let symlink_target = is_symlink
+            .then(|| std::fs::read_link(item.path()).ok())
+            .flatten()
+            .map(|target| target.to_string_lossy().into_owned());
         let entry_status = status.get(name.as_str()).copied();
         entries.push(WireDirEntry {
             name,
             is_dir,
             is_symlink,
+            symlink_target,
             ignored: entry_status.is_some_and(|(_, _, ignored)| ignored),
             git_staged: entry_status.and_then(|(staged, _, _)| staged),
             git_unstaged: entry_status.and_then(|(_, unstaged, _)| unstaged),
@@ -347,6 +354,38 @@ mod tests {
 
         let (all, _) = list_directory(&path, true);
         assert!(all.iter().any(|e| e.name == ".hidden"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The client cannot read a link that lives on this host, so the listing carries the link's own
+    /// text for the tree to show after the name.
+    #[cfg(unix)]
+    #[test]
+    fn listing_carries_a_symlinks_target() {
+        let dir = std::env::temp_dir().join(format!("rozi-browse-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("AGENTS.md"), b"guide").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", dir.join("CLAUDE.md")).unwrap();
+
+        let (entries, error) = list_directory(&dir.to_string_lossy(), false);
+        assert!(error.is_none());
+        let entry_named = |name: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap_or_else(|| panic!("{name} listed"))
+        };
+
+        let link = entry_named("CLAUDE.md");
+        assert!(link.is_symlink);
+        assert_eq!(link.symlink_target.as_deref(), Some("AGENTS.md"));
+        assert_eq!(
+            entry_named("AGENTS.md").symlink_target,
+            None,
+            "an ordinary file carries no target"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

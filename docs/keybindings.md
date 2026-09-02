@@ -128,7 +128,9 @@ not have stable ids. Named `[[commands]]` entries do.
 ## Split-aware navigation
 
 The `smart-focus-left`, `smart-focus-down`, `smart-focus-up`, and `smart-focus-right` actions let
-one key set cross both editor splits and rozi panes. Bind them explicitly:
+one key set cross both editor splits and rozi panes. The
+[vim-rozi-navigator](https://github.com/tui-lipan/vim-rozi-navigator) extension suggests these
+bindings when they are free:
 
 ```toml
 [keys]
@@ -137,6 +139,10 @@ smart-focus-down = "ctrl-j"
 smart-focus-up = "ctrl-k"
 smart-focus-right = "ctrl-l"
 ```
+
+The explicit block above is optional after installing that extension. Keep it when you want those
+keys regardless of extension state, or to override a conflicting binding. An explicit entry for an
+action, including `[]` to leave it unbound, suppresses the extension suggestion.
 
 Rozi keeps the synchronous routing mechanism in core. When the focused pane's foreground process
 appears in `[navigation] editors`, Rozi forwards `Ctrl-h/j/k/l` to that process; otherwise it moves

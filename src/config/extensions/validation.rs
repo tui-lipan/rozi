@@ -10,12 +10,13 @@ use crate::config::{
 use super::super::commands::valid_command_segment;
 use super::manifest::{
     ExtensionCommandFile, ExtensionNavigationTargetFile, ExtensionServiceFile,
-    ExtensionSidebarTabFile,
+    ExtensionSidebarTabFile, ExtensionSuggestedKeybindingFile,
 };
 use super::paths::{normalize_direct_argv, resolve_declared_path};
 use super::{
-    ExtensionInfo, ExtensionNavigationTargetDiagnostic, RESERVED_EXTENSION_ENV,
-    RESERVED_EXTENSION_IDS, clean_optional,
+    ExtensionInfo, ExtensionNavigationTargetDiagnostic, ExtensionSuggestedKeybindingDiagnostic,
+    ExtensionSuggestedKeybindingStatus, RESERVED_EXTENSION_ENV, RESERVED_EXTENSION_IDS,
+    SuggestedKeybindingContribution, clean_optional,
 };
 
 pub(super) fn validate_requested_extension_id(id: &str) -> Result<(), String> {
@@ -157,6 +158,60 @@ fn is_executable_basename(program: &str) -> bool {
         .all(|character| !character.is_control() && !matches!(character, '/' | '\\'))
 }
 
+pub(super) fn validate_suggested_keybinding(
+    raw: ExtensionSuggestedKeybindingFile,
+    extension_id: &str,
+    seen: &mut HashSet<(String, String)>,
+    info: &mut ExtensionInfo,
+    bindings: &mut Vec<SuggestedKeybindingContribution>,
+) {
+    let Some(action) = clean_optional(raw.action) else {
+        info.errors
+            .push("suggested keybinding missing required field `action`".to_string());
+        return;
+    };
+    if !crate::commands::is_extension_bindable_action(&action) {
+        info.errors.push(format!(
+            "suggested keybinding action `{action}` is not extension-bindable (allowed: {})",
+            crate::commands::extension_bindable_action_ids().join(", ")
+        ));
+        return;
+    }
+    let Some(key) = clean_optional(raw.key) else {
+        info.errors
+            .push("suggested keybinding missing required field `key`".to_string());
+        return;
+    };
+    let binding = match tui_lipan::input::KeyBinding::from_str(&key) {
+        Ok(binding) => binding,
+        Err(_) => {
+            info.errors.push(format!(
+                "suggested keybinding `{action}` has an unparsable key `{key}`"
+            ));
+            return;
+        }
+    };
+    let canonical = binding.canonical_lowercase();
+    if !seen.insert((action.clone(), canonical)) {
+        return;
+    }
+    let display_key = crate::view::keys_display::format_binding(&binding);
+    info.suggested_keybindings
+        .push(ExtensionSuggestedKeybindingDiagnostic {
+            extension_id: extension_id.to_string(),
+            action: action.clone(),
+            key: display_key.clone(),
+            status: ExtensionSuggestedKeybindingStatus::Declared,
+            detail: None,
+        });
+    bindings.push(SuggestedKeybindingContribution {
+        extension_id: extension_id.to_string(),
+        action,
+        key: display_key,
+        binding,
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn validate_command(
     raw: ExtensionCommandFile,
@@ -238,9 +293,8 @@ pub(super) fn validate_command(
             None
         }
     };
-    // A chord that cannot be parsed is the extension's mistake and is reported, but it does not
-    // invalidate the extension: the command still works from the palette, which is where most
-    // people reach it anyway.
+    // A chord that cannot be parsed is a manifest error and participates in the extension's
+    // atomic validity check below, like a malformed command action or navigation target.
     let default_key = clean_optional(raw.key).and_then(|key| {
         if key.split_whitespace().all(|step| {
             tui_lipan::input::KeyBinding::from_str(step).is_ok_and(|step| step.step_count() == 1)

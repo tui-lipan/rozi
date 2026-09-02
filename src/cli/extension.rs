@@ -30,12 +30,96 @@ pub(crate) fn run_install_extension_cli(source: &str, link: bool) -> Result<()> 
         action,
         installed.destination.display()
     );
+    if let Some(summary) = installed_extension_summary(&installed.id) {
+        if summary.navigation_programs > 0 {
+            println!(
+                "{}  {} program{}",
+                styles.paint("Navigation targets", OutputTone::Muted),
+                summary.navigation_programs,
+                if summary.navigation_programs == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            );
+        }
+        if summary.keybindings > 0 {
+            let mut counts = Vec::new();
+            if summary.active > 0 {
+                counts.push(format!("{} active", summary.active));
+            }
+            if summary.conflicts > 0 {
+                counts.push(format!(
+                    "{} conflict{}",
+                    summary.conflicts,
+                    if summary.conflicts == 1 { "" } else { "s" }
+                ));
+            }
+            if summary.suppressed > 0 {
+                counts.push(format!("{} suppressed", summary.suppressed));
+            }
+            println!(
+                "{}  {}",
+                styles.paint("Keybindings", OutputTone::Muted),
+                counts.join(", ")
+            );
+        }
+    }
     println!(
         "{}  {}",
         styles.paint("Reload", OutputTone::Muted),
         styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
     );
     Ok(())
+}
+
+struct InstalledExtensionSummary {
+    navigation_programs: usize,
+    keybindings: usize,
+    active: usize,
+    conflicts: usize,
+    suppressed: usize,
+}
+
+fn installed_extension_summary(id: &str) -> Option<InstalledExtensionSummary> {
+    let loaded = crate::config::load_config();
+    let mut entries = crate::config::scan_extensions_for_cli().entries();
+    crate::config::apply_suggested_keybinding_resolutions(
+        &mut entries,
+        &loaded.config.suggested_keybinding_resolutions,
+    );
+    let extension = entries
+        .iter()
+        .find(|extension| extension.id.as_deref() == Some(id))?;
+    Some(InstalledExtensionSummary {
+        navigation_programs: extension
+            .navigation_targets
+            .iter()
+            .map(|target| target.programs.len())
+            .sum(),
+        keybindings: extension.suggested_keybindings.len(),
+        active: extension
+            .suggested_keybindings
+            .iter()
+            .filter(|binding| {
+                binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Active
+            })
+            .count(),
+        conflicts: extension
+            .suggested_keybindings
+            .iter()
+            .filter(|binding| {
+                binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Conflict
+            })
+            .count(),
+        suppressed: extension
+            .suggested_keybindings
+            .iter()
+            .filter(|binding| {
+                binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Suppressed
+            })
+            .count(),
+    })
 }
 
 pub(crate) fn run_remove_extension_cli(id: &str) -> Result<()> {
@@ -256,6 +340,19 @@ pub(super) fn format_extensions_text(
                 out.push('\n');
             }
         }
+        if !extension.suggested_keybindings.is_empty() {
+            out.push_str("  suggested keybindings\n");
+            for binding in &extension.suggested_keybindings {
+                out.push_str("    ");
+                out.push_str(&format!("{:<10}  {:<24}  ", binding.key, binding.action));
+                out.push_str(binding.status.as_str());
+                if let Some(detail) = binding.detail.as_deref() {
+                    out.push_str(": ");
+                    out.push_str(detail);
+                }
+                out.push('\n');
+            }
+        }
         for error in &extension.errors {
             out.push_str("  error     ");
             out.push_str(error);
@@ -271,7 +368,12 @@ pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
     for error in &scan.root_errors {
         eprintln!("rozi: {error}");
     }
-    let entries = scan.entries();
+    let mut entries = scan.entries();
+    let loaded = crate::config::load_config();
+    crate::config::apply_suggested_keybinding_resolutions(
+        &mut entries,
+        &loaded.config.suggested_keybinding_resolutions,
+    );
     if json {
         let document = crate::config::ExtensionListDocument::new(entries);
         super::output::print_or_stop(&format!(

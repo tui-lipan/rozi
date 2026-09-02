@@ -45,6 +45,23 @@ pub(crate) struct BuiltinCommand {
 pub(crate) const FORWARD_PREFIX_COMMAND_ID: &str = "rozi.forward-prefix";
 const PASTE_DIRECT_SHORTCUT: &str = "ctrl-v";
 
+/// Core actions an extension may target with `[[suggested_keybindings]]`. Keeping this as a small,
+/// explicit allowlist prevents the action registry from becoming an accidental extension API.
+const EXTENSION_BINDABLE_ACTION_IDS: &[&str] = &[
+    "smart-focus-left",
+    "smart-focus-down",
+    "smart-focus-up",
+    "smart-focus-right",
+];
+
+pub(crate) fn extension_bindable_action_ids() -> &'static [&'static str] {
+    EXTENSION_BINDABLE_ACTION_IDS
+}
+
+pub(crate) fn is_extension_bindable_action(id: &str) -> bool {
+    EXTENSION_BINDABLE_ACTION_IDS.contains(&id)
+}
+
 pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::Spawn,
@@ -1123,6 +1140,13 @@ fn resolve_shortcuts(config: &Config, id: &str, defaults: &[&str]) -> KeyBinding
             bindings
                 .push(KeyBinding::from_str(PASTE_DIRECT_SHORTCUT).expect("paste shortcut parses"));
         }
+        if let Some(suggested) = config.extension_action_key_defaults.get(id) {
+            for binding in suggested {
+                if !bindings.contains(binding) {
+                    bindings.push(binding.clone());
+                }
+            }
+        }
         KeyBindings::from_bindings(bindings)
     }
 }
@@ -1151,7 +1175,8 @@ fn builtin_keybinding_hint(config: &Config, id: &str, defaults: &[&str]) -> Opti
 }
 
 /// Return the live display alternatives for one built-in action. Defaults intentionally stay as
-/// command key steps (`w`, `x`, …), while explicit overrides retain their exact bindings.
+/// command key steps (`w`, `x`, …), granted extension suggestions use their literal binding, and
+/// explicit overrides retain their exact bindings.
 fn builtin_keybinding_hint_parts(config: &Config, id: &str, defaults: &[&str]) -> Vec<String> {
     if config.key_overrides.contains_key(id) {
         resolve_shortcuts(config, id, defaults)
@@ -1159,11 +1184,14 @@ fn builtin_keybinding_hint_parts(config: &Config, id: &str, defaults: &[&str]) -
             .map(format_binding)
             .collect()
     } else {
-        let hints: Vec<_> = defaults
+        let mut hints: Vec<_> = defaults
             .iter()
             .filter_map(|key| KeyBinding::from_str(key).ok())
             .map(|binding| format_binding(&binding))
             .collect();
+        if let Some(suggested) = config.extension_action_key_defaults.get(id) {
+            hints.extend(suggested.iter().map(format_binding));
+        }
         hints
     }
 }
@@ -1195,7 +1223,7 @@ pub(crate) const EXTENSION_KEY_LEADER: &str = "x";
 pub(crate) fn builtin_default_shortcuts(
     input: &crate::config::InputConfig,
 ) -> Vec<(&'static str, KeyBinding)> {
-    BUILTIN_COMMANDS
+    let mut shortcuts = BUILTIN_COMMANDS
         .iter()
         .filter_map(|command| Some((command.action.id()?, command.default_keys)))
         .flat_map(|(id, keys)| {
@@ -1203,7 +1231,48 @@ pub(crate) fn builtin_default_shortcuts(
                 .flat_map(move |key| crate::config::scheme_shortcuts(input, key))
                 .map(move |binding| (id, binding))
         })
-        .collect()
+        .collect::<Vec<_>>();
+    shortcuts.push((
+        "paste",
+        KeyBinding::from_str(PASTE_DIRECT_SHORTCUT).expect("paste shortcut parses"),
+    ));
+    shortcuts
+}
+
+/// Every core-owned default shortcut, including generated workspace and prefix-forward commands.
+/// Extension suggestions use this complete set so a generated command cannot be shadowed merely
+/// because it is not represented by one static [`BuiltinCommand`].
+pub(crate) fn core_default_shortcuts(
+    input: &crate::config::InputConfig,
+) -> Vec<(String, KeyBinding)> {
+    let mut shortcuts = builtin_default_shortcuts(input)
+        .into_iter()
+        .map(|(id, binding)| (id.to_string(), binding))
+        .collect::<Vec<_>>();
+    for index in 0..9 {
+        let digit = WORKSPACE_DIGITS[index];
+        let symbol = WORKSPACE_SHIFT_SYMBOLS[index];
+        for (kind, keys) in [
+            ("switch", vec![digit.to_string()]),
+            ("move", vec![symbol.to_string(), format!("shift-{digit}")]),
+            (
+                "relocate",
+                vec![format!("ctrl-{symbol}"), format!("ctrl-shift-{digit}")],
+            ),
+        ] {
+            let id = format!("workspace.{kind}.{}", index + 1);
+            shortcuts.extend(
+                keys.iter()
+                    .flat_map(|key| crate::config::scheme_shortcuts(input, key))
+                    .map(|binding| (id.clone(), binding)),
+            );
+        }
+    }
+    let prefix = input.prefix.canonical_lowercase();
+    if let Ok(binding) = KeyBinding::from_str(&format!("{prefix} {prefix}")) {
+        shortcuts.push((FORWARD_PREFIX_COMMAND_ID.to_string(), binding));
+    }
+    shortcuts
 }
 
 pub(crate) fn default_shortcuts_for_action(
@@ -1743,6 +1812,33 @@ mod tests {
 
         let shortcuts = resolve_shortcuts(&config, "scratchpad", &["`"]);
         assert!(shortcuts.is_empty());
+    }
+
+    #[test]
+    fn granted_extension_binding_uses_normal_builtin_dispatch() {
+        let mut config = Config::default();
+        config.extension_action_key_defaults.insert(
+            "smart-focus-left".to_string(),
+            vec![KeyBinding::from_str("ctrl-h").unwrap()],
+        );
+        let shortcuts = resolve_shortcuts(&config, "smart-focus-left", &[]);
+        assert!(
+            shortcuts
+                .iter()
+                .any(|binding| binding.matches_sequence(&[ctrl('h')]))
+        );
+
+        config.key_overrides.insert(
+            "smart-focus-left".to_string(),
+            vec![KeyBinding::from_str("ctrl-b h").unwrap()],
+        );
+        let overridden = resolve_shortcuts(&config, "smart-focus-left", &[]);
+        assert_eq!(overridden.len(), 1);
+        assert!(
+            !overridden
+                .iter()
+                .any(|binding| binding.matches_sequence(&[ctrl('h')]))
+        );
     }
 
     #[test]

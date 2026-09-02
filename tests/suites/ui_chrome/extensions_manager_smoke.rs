@@ -61,7 +61,12 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             copy_fixture("valid/direct-command", &extensions.join("z-direct"));
             let manifest = extensions.join("z-direct/extension.toml");
             let mut text = std::fs::read_to_string(&manifest).expect("read copied manifest");
-            text.push_str("\n[settings]\nrunner = \"auto\"\n");
+            text.push_str(
+                "\n[settings]\nrunner = \"auto\"\n\
+                 [[suggested_keybindings]]\n\
+                 action = \"smart-focus-left\"\n\
+                 key = \"ctrl-h\"\n",
+            );
             std::fs::write(&manifest, text).expect("add fixture setting");
             mark_git_managed(&extensions, "fixture-direct");
 
@@ -72,6 +77,9 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 w: 110,
                 h: 52,
             });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::ReloadExtensions))
+                .expect("load extension contributions");
             backend
                 .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
                 .expect("open extensions");
@@ -92,10 +100,26 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             assert!(list.contains("Active"), "{list}");
             assert!(list.contains("fixture-direct"), "{list}");
             assert!(list.contains("update available"), "{list}");
+            assert!(list.contains("1 key active"), "{list}");
             assert!(list.contains("install"), "{list}");
             assert!(list.contains("Problems"), "{list}");
             assert!(list.contains("future-a"), "{list}");
             assert!(list.contains("requires extension API 2"), "{list}");
+            assert!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .unwrap()
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id.as_deref() == Some("fixture-direct"))
+                    .unwrap()
+                    .suggested_keybindings
+                    .iter()
+                    .any(|binding| binding.status
+                        == rozi::config::ExtensionSuggestedKeybindingStatus::Active)
+            );
 
             backend
                 .send_key(KeyEvent {
@@ -202,6 +226,10 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 state.entries[state.selected].status,
                 rozi::config::ExtensionStatus::Disabled
             );
+            assert_eq!(
+                state.entries[state.selected].suggested_keybindings[0].status,
+                rozi::config::ExtensionSuggestedKeybindingStatus::Suppressed
+            );
             let config = std::fs::read_to_string(rozi::config::config_path())
                 .expect("disabled list persisted");
             assert!(
@@ -249,9 +277,10 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .dispatch(rozi::Msg::ExtensionsOpenDetail)
                 .expect("open extension detail");
             let detail = frame(&mut backend);
-            for group in ["Overview", "Commands", "Settings"] {
+            for group in ["Overview", "Commands", "Suggested keybindings", "Settings"] {
                 assert!(detail.contains(group), "missing {group}:\n{detail}");
             }
+            assert!(detail.contains("suppressed"), "{detail}");
             assert!(detail.contains("update"), "{detail}");
             assert!(!detail.contains("Search report"), "{detail}");
             assert!(detail.contains("command.py"), "{detail}");

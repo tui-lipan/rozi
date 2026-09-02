@@ -27,6 +27,10 @@ pub(super) struct ExtensionManifestFile {
     /// navigation policy when no explicit `[navigation] editors` list replaces the defaults.
     #[serde(default)]
     pub(super) navigation_targets: Vec<ExtensionNavigationTargetFile>,
+    /// Best-effort bindings for explicitly extension-bindable core actions. These are resolved
+    /// after user configuration and built-in defaults; they never intercept input at runtime.
+    #[serde(default)]
+    pub(super) suggested_keybindings: Vec<ExtensionSuggestedKeybindingFile>,
 }
 
 /// One `[[sidebar_tabs]]` entry. The tree-only options `config.toml` tab tables accept are absent:
@@ -84,6 +88,13 @@ pub(super) struct ExtensionMetadataFile {
 pub(super) struct ExtensionNavigationTargetFile {
     pub(super) name: Option<String>,
     pub(super) programs: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExtensionSuggestedKeybindingFile {
+    pub(super) action: Option<String>,
+    pub(super) key: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

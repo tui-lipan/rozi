@@ -44,8 +44,9 @@ name, rejects an existing destination or conflicting ID, and removes the ID from
 Run `rozi run-action reload-extensions` in each running client that should load the new extension.
 
 Git installations keep their original remote and installed commit in private installation
-metadata. This information is reserved for explicit lifecycle commands such as a future
-`rozi extensions update <ID>`. Installation does not enable background updates.
+metadata for explicit lifecycle commands such as `rozi extensions update <ID>`. Installation does
+not enable background updates. The completion report summarizes contributed navigation programs
+and the active, conflicting, or suppressed suggested keybindings.
 
 For extension development, link a checkout instead:
 
@@ -335,10 +336,39 @@ Every command and service receives the merged result as compact JSON in `ROZI_EX
 Changing a setting is a process-facing change: the generation rotates and services restart with the
 new value. `rozi extensions check` lists the declared settings and their defaults.
 
-### Default keybindings
+### Suggested keybindings
 
-A command may suggest a chord. It is written as the key steps *inside* the reserved extension space,
-which is the leader prefix followed by `x`:
+An extension can suggest a key for one of the core actions Rozi explicitly exposes to extensions:
+
+```toml
+[[suggested_keybindings]]
+action = "smart-focus-left"
+key = "ctrl-h"
+```
+
+These suggestions are resolved once when extensions load. Input still goes through Rozi's normal
+synchronous command registry; the extension does not receive keys or run a callback.
+
+Resolution order is:
+
+1. explicit `[keys]` configuration, including an empty list that unbinds the action;
+2. built-in defaults;
+3. extension suggestions.
+
+Configuring the target action suppresses its suggestion even when the proposed key is otherwise
+free. A key already used by the user or core produces an inactive conflict. Identical suggestions
+for the same action and key deduplicate. If extensions suggest different actions on the same free
+key, neither wins; every competing suggestion is reported as a conflict. Different free keys for
+the same unbound action may coexist. Disabling, removing, or reloading an extension rebuilds this
+keymap and removes its contribution.
+
+Extension API 1 currently exposes only `smart-focus-left`, `smart-focus-down`, `smart-focus-up`, and
+`smart-focus-right`. Any other action makes the manifest invalid. `rozi extensions list --verbose`
+and the Extensions picker retain the source extension and show each suggestion as active,
+suppressed, or conflicting.
+
+A contributed command has a separate shorthand for suggesting a chord. It is written as the key
+steps *inside* the reserved extension command space, which is the leader prefix followed by `x`:
 
 ```toml
 [[commands]]
@@ -352,10 +382,10 @@ That command answers to `<prefix> x r` — `Ctrl+A x r` with the default prefix.
 to `x` itself, so a suggestion can never collide with a built-in and a later Rozi release can never
 take one away.
 
-A suggestion is the weakest claim in the system. It loses to anything already bound: a `[keys]`
-entry, another extension that asked first, and any chord that merely starts with it, since typing
-those steps would fire the other command first. Losing is reported as a warning and costs nothing
-else — the command stays in the palette, and the user can bind it by hand:
+A command chord is also a weak claim. It loses to anything already bound, including any chord that
+merely starts with it, since typing those steps would fire the other command first. Losing is
+reported as a warning and costs nothing else — the command stays in the palette, and the user can
+bind it by hand:
 
 ```toml
 [keys]
@@ -426,6 +456,8 @@ Extension API 1 is frozen. Everything below is a contract Rozi will not break in
   never replace a built-in;
 - navigation targets are static load-time declarations; core owns foreground-process matching and
   key forwarding, and an explicit `[navigation] editors` list replaces all declarations;
+- suggested keybindings target only the documented extension-bindable action allowlist, resolve
+  below user and core bindings, and never put extension code on the input path;
 - the `ROZI_EXTENSION*` environment variables and their meanings;
 - the `rozi` control commands documented in [Control](control.md), and their exit codes;
 - atomic validity: an extension is loaded whole or not at all;

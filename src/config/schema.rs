@@ -915,6 +915,12 @@ pub struct Config {
     /// Chords extensions asked for and got: command id -> bindings. Separate from
     /// [`Self::key_overrides`], which means "the user bound this by hand" and outranks these.
     pub extension_key_defaults: HashMap<String, Vec<KeyBinding>>,
+    /// Granted `[[suggested_keybindings]]`, keyed by extension-bindable core action id.
+    pub extension_action_key_defaults: HashMap<String, Vec<KeyBinding>>,
+    /// Every enabled extension suggestion and its deterministic resolution, including provenance
+    /// for reports and picker details.
+    pub suggested_keybinding_resolutions:
+        Vec<super::extensions::ExtensionSuggestedKeybindingDiagnostic>,
     /// Stable IDs of every extension present on disk, whatever its status. Wider than
     /// [`Self::active_extensions`] on purpose: a durable sidebar placement naming a tab from a
     /// disabled or currently broken extension is kept, and only one that is gone gets pruned.
@@ -1542,6 +1548,8 @@ impl Default for Config {
             installed_extensions: HashSet::new(),
             extension_problems: 0,
             extension_key_defaults: HashMap::new(),
+            extension_action_key_defaults: HashMap::new(),
+            suggested_keybinding_resolutions: Vec::new(),
             extension_runtime: std::collections::BTreeMap::new(),
             logging: LoggingConfig::default(),
             workbar: WorkbarConfig::default(),

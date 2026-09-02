@@ -6,11 +6,13 @@ use serde::Serialize;
 use super::schema::{
     NamedCommand, ServiceConfig, ServiceLaunch, ServiceRestart, UserCommandAction,
 };
+use tui_lipan::prelude::KeyBinding;
 
 mod authoring;
 mod contributions;
 mod diagnostics;
 mod discovery;
+mod keybindings;
 mod manifest;
 mod paths;
 mod runtime;
@@ -24,6 +26,7 @@ pub use diagnostics::{
 pub(crate) use diagnostics::{
     ReportKind, ReportRow, ReportSection, ReportTone, report_sections, report_text,
 };
+pub(crate) use keybindings::resolve as resolve_suggested_keybindings;
 use manifest::ExtensionManifestFile;
 pub(crate) use manifest::UserExtensionConfig;
 use paths::{absolute_path, normalize_path};
@@ -37,7 +40,7 @@ pub use settings::{ExtensionSettingValue, ExtensionSettings};
 pub(crate) use validation::is_extension_scoped_id;
 use validation::{
     validate_command, validate_extension_id, validate_navigation_target, validate_service,
-    validate_sidebar_tab,
+    validate_sidebar_tab, validate_suggested_keybinding,
 };
 
 /// The generation of Rozi's complete public extension contract.
@@ -99,6 +102,10 @@ pub struct ExtensionInfo {
     pub sidebar_tabs: Vec<String>,
     /// Static split-aware foreground-program declarations from the manifest.
     pub navigation_targets: Vec<ExtensionNavigationTargetDiagnostic>,
+    /// Suggested core-action bindings and their result in the current keymap. A standalone
+    /// `extensions check` report uses `declared`; the loaded config replaces it with the effective
+    /// status while preserving extension provenance.
+    pub suggested_keybindings: Vec<ExtensionSuggestedKeybindingDiagnostic>,
     /// Settings the manifest declares, at their default values. What the user's `config.toml`
     /// overrides them to is not known here: a scan reads the extension, not the user.
     pub settings: ExtensionSettings,
@@ -113,6 +120,44 @@ pub struct ExtensionInfo {
 pub struct ExtensionNavigationTargetDiagnostic {
     pub name: String,
     pub programs: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExtensionSuggestedKeybindingStatus {
+    Declared,
+    Active,
+    Suppressed,
+    Conflict,
+}
+
+impl ExtensionSuggestedKeybindingStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Declared => "declared",
+            Self::Active => "active",
+            Self::Suppressed => "suppressed",
+            Self::Conflict => "conflict",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ExtensionSuggestedKeybindingDiagnostic {
+    pub extension_id: String,
+    pub action: String,
+    pub key: String,
+    pub status: ExtensionSuggestedKeybindingStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SuggestedKeybindingContribution {
+    pub(crate) extension_id: String,
+    pub(crate) action: String,
+    pub(crate) key: String,
+    pub(crate) binding: KeyBinding,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -174,6 +219,7 @@ pub(crate) struct DiscoveredExtension {
     agents: Vec<crate::agent_detection::AgentDefinition>,
     sidebar_tabs: Vec<super::schema::SidebarTab>,
     navigation_targets: Vec<super::schema::NavigationTargetContribution>,
+    suggested_keybindings: Vec<SuggestedKeybindingContribution>,
     settings: ExtensionSettings,
 }
 
@@ -249,6 +295,26 @@ pub(crate) fn scan_extensions_with_user_config(user: &UserExtensionConfig) -> Ex
     scan
 }
 
+pub(crate) fn apply_suggested_keybinding_resolutions(
+    entries: &mut [ExtensionInfo],
+    resolutions: &[ExtensionSuggestedKeybindingDiagnostic],
+) {
+    for entry in entries {
+        for binding in &mut entry.suggested_keybindings {
+            if let Some(resolved) = resolutions.iter().find(|resolved| {
+                resolved.extension_id == binding.extension_id
+                    && resolved.action == binding.action
+                    && resolved.key == binding.key
+            }) {
+                *binding = resolved.clone();
+            } else if entry.status == ExtensionStatus::Disabled {
+                binding.status = ExtensionSuggestedKeybindingStatus::Suppressed;
+                binding.detail = Some("extension is disabled".to_string());
+            }
+        }
+    }
+}
+
 pub(crate) fn parse_user_extension_config(
     text: &str,
 ) -> Result<UserExtensionConfig, toml::de::Error> {
@@ -318,6 +384,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         agents: Vec::new(),
         sidebar_tabs: Vec::new(),
         navigation_targets: Vec::new(),
+        suggested_keybindings: Vec::new(),
         settings: ExtensionSettings::new(),
         command_details: Vec::new(),
         service_details: Vec::new(),
@@ -344,6 +411,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
                 navigation_targets: Vec::new(),
+                suggested_keybindings: Vec::new(),
                 settings: ExtensionSettings::new(),
             };
         }
@@ -359,6 +427,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
                 navigation_targets: Vec::new(),
+                suggested_keybindings: Vec::new(),
                 settings: ExtensionSettings::new(),
             };
         }
@@ -375,6 +444,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
                 navigation_targets: Vec::new(),
+                suggested_keybindings: Vec::new(),
                 settings: ExtensionSettings::new(),
             };
         }
@@ -463,6 +533,17 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut navigation_targets,
         );
     }
+    let mut suggested_keybindings = Vec::new();
+    let mut seen_suggested_keybindings = HashSet::new();
+    for raw in manifest.suggested_keybindings {
+        validate_suggested_keybinding(
+            raw,
+            &validation_id,
+            &mut seen_suggested_keybindings,
+            &mut info,
+            &mut suggested_keybindings,
+        );
+    }
     // Agent definitions are declarative data rather than a launchable process, so they need no
     // path resolution or environment - only the same validation `config.toml` entries get. An
     // invalid one invalidates the extension, matching how a bad command or service is treated.
@@ -484,6 +565,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         info.agents.clear();
         info.sidebar_tabs.clear();
         info.navigation_targets.clear();
+        info.suggested_keybindings.clear();
         info.settings.clear();
         info.command_details.clear();
         info.service_details.clear();
@@ -500,6 +582,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         agents.clear();
         sidebar_tabs.clear();
         navigation_targets.clear();
+        suggested_keybindings.clear();
     } else if !info.errors.is_empty() {
         info.status = ExtensionStatus::Invalid;
         commands.clear();
@@ -507,6 +590,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         agents.clear();
         sidebar_tabs.clear();
         navigation_targets.clear();
+        suggested_keybindings.clear();
     } else {
         info.status = ExtensionStatus::Loaded;
         info.enabled = true;
@@ -518,6 +602,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         agents,
         sidebar_tabs,
         navigation_targets,
+        suggested_keybindings,
         settings: declared_settings,
     }
 }
@@ -688,6 +773,89 @@ mod tests {
         assert_eq!(contributions.navigation_targets.len(), 1);
         assert_eq!(contributions.navigation_targets[0].extension_id, "vim-rozi");
         assert_eq!(contributions.navigation_targets[0].name, "vim");
+    }
+
+    #[test]
+    fn suggested_keybindings_are_validated_deduplicated_and_contributed() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "vim-rozi",
+            &format!(
+                "{}[[suggested_keybindings]]\naction = \"smart-focus-left\"\nkey = \"ctrl-h\"\n\
+                 [[suggested_keybindings]]\naction = \"smart-focus-left\"\nkey = \"CTRL-H\"\n\
+                 [[suggested_keybindings]]\naction = \"smart-focus-down\"\nkey = \"ctrl-j\"\n",
+                manifest("vim-rozi", "1")
+            ),
+        );
+
+        let scan = scan_extensions_in(temp.path());
+        let entries = scan.entries();
+        let entry = &entries[0];
+        assert_eq!(entry.status, ExtensionStatus::Loaded);
+        assert_eq!(entry.suggested_keybindings.len(), 2);
+        assert_eq!(entry.suggested_keybindings[0].key, "Ctrl+h");
+        assert!(
+            entry
+                .suggested_keybindings
+                .iter()
+                .all(|binding| binding.status == ExtensionSuggestedKeybindingStatus::Declared)
+        );
+
+        let contributions = scan.into_contributions(&[], &Default::default());
+        assert_eq!(contributions.suggested_keybindings.len(), 2);
+        assert_eq!(
+            contributions.suggested_keybindings[0].extension_id,
+            "vim-rozi"
+        );
+    }
+
+    #[test]
+    fn unknown_or_non_bindable_suggested_actions_invalidate_the_manifest() {
+        for action in ["spawn", "not-an-action"] {
+            let temp = tempfile::tempdir().unwrap();
+            write_manifest(
+                temp.path(),
+                "unsafe-keys",
+                &format!(
+                    "{}[[suggested_keybindings]]\naction = \"{action}\"\nkey = \"ctrl-h\"\n",
+                    manifest("unsafe-keys", "1")
+                ),
+            );
+            let entry = scan_extensions_in(temp.path()).entries().remove(0);
+            assert_eq!(entry.status, ExtensionStatus::Invalid);
+            assert!(
+                entry
+                    .errors
+                    .iter()
+                    .any(|error| error.contains("not extension-bindable")),
+                "{:?}",
+                entry.errors
+            );
+        }
+    }
+
+    #[test]
+    fn unparsable_suggested_keys_invalidate_the_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "bad-key",
+            &format!(
+                "{}[[suggested_keybindings]]\naction = \"smart-focus-left\"\nkey = \"not a key chord ???\"\n",
+                manifest("bad-key", "1")
+            ),
+        );
+        let entry = scan_extensions_in(temp.path()).entries().remove(0);
+        assert_eq!(entry.status, ExtensionStatus::Invalid);
+        assert!(
+            entry
+                .errors
+                .iter()
+                .any(|error| error.contains("unparsable key")),
+            "{:?}",
+            entry.errors
+        );
     }
 
     #[test]
@@ -1516,7 +1684,8 @@ mod tests {
                 "navigation_targets",
                 "services",
                 "settings",
-                "sidebar_tabs"
+                "sidebar_tabs",
+                "suggested_keybindings"
             ]
         );
         assert_eq!(
@@ -1534,6 +1703,18 @@ mod tests {
         assert_eq!(
             keys(&properties["navigation_targets"]["items"]["properties"]),
             ["name", "programs"]
+        );
+        assert_eq!(
+            keys(&properties["suggested_keybindings"]["items"]["properties"]),
+            ["action", "key"]
+        );
+        assert_eq!(
+            properties["suggested_keybindings"]["items"]["required"],
+            serde_json::json!(["action", "key"])
+        );
+        assert_eq!(
+            properties["suggested_keybindings"]["items"]["properties"]["action"]["enum"],
+            serde_json::json!(crate::commands::extension_bindable_action_ids())
         );
         assert_eq!(
             keys(&properties["sidebar_tabs"]["items"]["properties"]),

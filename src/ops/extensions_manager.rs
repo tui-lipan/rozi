@@ -223,6 +223,7 @@ pub(crate) fn install_finished(
             state.install_prompt = None;
             let update = crate::ops::config::reload_extensions_quiet(ctx);
             select_by_id(ctx, &id);
+            notify_info(ctx, &installed_summary(&ctx.state, &id));
             update
         }
         Err(error) => {
@@ -532,6 +533,10 @@ fn scan(ctx: &mut Context<AppRoot>) -> ManagerScan {
         notify_error(ctx, "Extension scan failed", error.clone());
     }
     let mut entries = scan.entries();
+    crate::config::apply_suggested_keybinding_resolutions(
+        &mut entries,
+        &ctx.state.config.suggested_keybinding_resolutions,
+    );
     let mut merged = BTreeMap::new();
     let manifest_entries = entries
         .iter()
@@ -751,6 +756,53 @@ fn prompt_error(error: &str) -> String {
 
 fn notify_info(ctx: &mut Context<AppRoot>, message: &str) {
     crate::pane::pty_events::notify_info(ctx, message);
+}
+
+fn installed_summary(state: &crate::state::State, id: &str) -> String {
+    let Some(entry) = state.extensions.as_ref().and_then(|extensions| {
+        extensions
+            .entries
+            .iter()
+            .find(|entry| entry.id.as_deref() == Some(id))
+    }) else {
+        return format!("Installed {id}");
+    };
+    let navigation_programs = entry
+        .navigation_targets
+        .iter()
+        .map(|target| target.programs.len())
+        .sum::<usize>();
+    let active = entry
+        .suggested_keybindings
+        .iter()
+        .filter(|binding| {
+            binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Active
+        })
+        .count();
+    let conflicts = entry
+        .suggested_keybindings
+        .iter()
+        .filter(|binding| {
+            binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Conflict
+        })
+        .count();
+    let mut parts = vec![format!("Installed {id}")];
+    if navigation_programs > 0 {
+        parts.push(format!("{navigation_programs} navigation programs"));
+    }
+    if active > 0 {
+        parts.push(format!(
+            "{active} keybinding{} active",
+            if active == 1 { "" } else { "s" }
+        ));
+    }
+    if conflicts > 0 {
+        parts.push(format!(
+            "{conflicts} key conflict{}",
+            if conflicts == 1 { "" } else { "s" }
+        ));
+    }
+    parts.join(" · ")
 }
 
 fn notify_error(ctx: &mut Context<AppRoot>, title: &str, detail: impl Into<String>) {

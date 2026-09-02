@@ -590,6 +590,7 @@ fn load_config_from_text_with_extensions(
 
     let Some(parsed) = parse_file_config(text, path, &mut warnings) else {
         let contributions = extensions.into_contributions(&[], &Default::default());
+        let suggested_keybindings = contributions.suggested_keybindings;
         warnings.extend(contributions.warnings);
         config.commands = contributions.commands;
         config.active_extensions = contributions.active_ids;
@@ -609,6 +610,14 @@ fn load_config_from_text_with_extensions(
             contributions.sidebar_tabs,
             &mut warnings,
         );
+        let resolved = super::extensions::resolve_suggested_keybindings(
+            &config,
+            suggested_keybindings,
+            &HashSet::new(),
+            &mut warnings,
+        );
+        config.extension_action_key_defaults = resolved.active;
+        config.suggested_keybinding_resolutions = resolved.diagnostics;
         return LoadedConfig { config, warnings };
     };
 
@@ -933,6 +942,7 @@ fn load_config_from_text_with_extensions(
     apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
     let contributions =
         extensions.into_contributions(&parsed.extensions.disabled, &parsed.extensions.settings);
+    let suggested_keybindings = contributions.suggested_keybindings;
     if !has_explicit_navigation_editors {
         config
             .navigation
@@ -972,6 +982,15 @@ fn load_config_from_text_with_extensions(
         .collect();
     config.services = crate::config::services::build_services(parsed.services, &mut warnings);
     config.services.extend(contributions.services);
+    let explicitly_configured_actions = parsed
+        .keys
+        .iter()
+        .filter(|(id, spec)| {
+            crate::commands::is_extension_bindable_action(id)
+                && !matches!(spec, KeyBindingSpec::UserCommand(_))
+        })
+        .map(|(id, _)| id.clone())
+        .collect::<HashSet<_>>();
     let mut user_commands = Vec::new();
     config.key_overrides = build_key_overrides(
         parsed.keys,
@@ -982,6 +1001,14 @@ fn load_config_from_text_with_extensions(
     );
     config.user_commands = user_commands;
     config.extension_key_defaults = resolve_extension_key_defaults(&config, &mut warnings);
+    let resolved = super::extensions::resolve_suggested_keybindings(
+        &config,
+        suggested_keybindings,
+        &explicitly_configured_actions,
+        &mut warnings,
+    );
+    config.extension_action_key_defaults = resolved.active;
+    config.suggested_keybinding_resolutions = resolved.diagnostics;
 
     LoadedConfig { config, warnings }
 }
@@ -998,11 +1025,11 @@ fn resolve_extension_key_defaults(
     config: &Config,
     warnings: &mut Vec<String>,
 ) -> HashMap<String, Vec<KeyBinding>> {
-    let mut claimed: Vec<(String, String)> =
-        crate::commands::builtin_default_shortcuts(&config.input)
-            .into_iter()
-            .map(|(id, binding)| (binding.canonical_lowercase(), format!("`{id}`")))
-            .collect();
+    let mut claimed: Vec<(String, String)> = crate::commands::core_default_shortcuts(&config.input)
+        .into_iter()
+        .filter(|(id, _)| !config.key_overrides.contains_key(id))
+        .map(|(id, binding)| (binding.canonical_lowercase(), format!("`{id}`")))
+        .collect();
     for (id, bindings) in &config.key_overrides {
         for binding in bindings {
             claimed.push((binding.canonical_lowercase(), format!("`{id}`")));
@@ -1693,6 +1720,9 @@ mod file_tests {
 
     const KEY_MANIFEST: &str = "[extension]\nid = \"tasks\"\napi = 1\n\
          [[commands]]\nid = \"run\"\nsend = \"run\"\nkey = \"g r\"\n";
+    const SUGGESTED_BINDING_MANIFEST: &str = "[extension]\nid = \"vim-rozi\"\napi = 1\n\
+         [[suggested_keybindings]]\naction = \"smart-focus-left\"\nkey = \"ctrl-h\"\n\
+         [[suggested_keybindings]]\naction = \"smart-focus-down\"\nkey = \"ctrl-j\"\n";
 
     #[test]
     fn extension_problem_count_survives_a_config_parse_failure() {
@@ -1779,6 +1809,60 @@ mod file_tests {
                 .any(|warning| warning.contains("already uses")),
             "{:?}",
             loaded.warnings
+        );
+    }
+
+    #[test]
+    fn suggested_action_bindings_apply_and_explicit_action_config_suppresses_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let loaded = load_config_from_text_with_extensions(
+            "",
+            Path::new("config.toml"),
+            scan_with(temp.path(), SUGGESTED_BINDING_MANIFEST),
+            Vec::new(),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(
+            loaded.config.extension_action_key_defaults["smart-focus-left"][0]
+                .canonical_lowercase(),
+            "ctrl+h"
+        );
+        assert!(
+            loaded
+                .config
+                .suggested_keybinding_resolutions
+                .iter()
+                .all(|binding| binding.status
+                    == crate::config::ExtensionSuggestedKeybindingStatus::Active)
+        );
+
+        let loaded = load_config_from_text_with_extensions(
+            "[keys]\nsmart-focus-left = []\n",
+            Path::new("config.toml"),
+            scan_with(temp.path(), SUGGESTED_BINDING_MANIFEST),
+            Vec::new(),
+        );
+        assert!(
+            !loaded
+                .config
+                .extension_action_key_defaults
+                .contains_key("smart-focus-left")
+        );
+        assert_eq!(
+            loaded
+                .config
+                .suggested_keybinding_resolutions
+                .iter()
+                .find(|binding| binding.action == "smart-focus-left")
+                .unwrap()
+                .status,
+            crate::config::ExtensionSuggestedKeybindingStatus::Suppressed
+        );
+        assert!(
+            loaded
+                .config
+                .extension_action_key_defaults
+                .contains_key("smart-focus-down")
         );
     }
 

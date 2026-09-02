@@ -76,6 +76,12 @@ fn local_install_copies_enables_and_removes_without_touching_the_source() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("source extension");
     write_source_extension(&source, "disabled");
+    let mut manifest = std::fs::read_to_string(source.join("extension.toml")).unwrap();
+    manifest.push_str(
+        "[[navigation_targets]]\nname = \"vim\"\nprograms = [\"vim\", \"nvim\"]\n\
+         [[suggested_keybindings]]\naction = \"smart-focus-left\"\nkey = \"ctrl-h\"\n",
+    );
+    std::fs::write(source.join("extension.toml"), manifest).unwrap();
 
     let installed = rozi(&temp, &["extensions", "install", source.to_str().unwrap()]);
     assert!(
@@ -84,6 +90,15 @@ fn local_install_copies_enables_and_removes_without_touching_the_source() {
         String::from_utf8_lossy(&installed.stdout),
         String::from_utf8_lossy(&installed.stderr)
     );
+    let install_output = String::from_utf8_lossy(&installed.stdout);
+    assert!(install_output.contains("Navigation targets  2 programs"));
+    assert!(install_output.contains("Keybindings  1 active"));
+    let listed = rozi(&temp, &["extensions", "list", "--verbose"]);
+    let listed = String::from_utf8_lossy(&listed.stdout);
+    assert!(listed.contains("suggested keybindings"));
+    assert!(listed.contains("Ctrl+h"));
+    assert!(listed.contains("smart-focus-left"));
+    assert!(listed.contains("active"));
     let destination = temp.path().join("data/rozi/extensions/disabled");
     assert!(destination.join("extension.toml").is_file());
     assert!(

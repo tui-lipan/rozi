@@ -50,6 +50,12 @@ api = 1
 name = "vim"
 programs = ["vim", "nvim", "view", "vimdiff"]
 
+# Optional: propose a key for an explicitly extension-bindable core action. User bindings and core
+# defaults win; conflicts remain visible but do not invalidate the extension.
+[[suggested_keybindings]]
+action = "smart-focus-left"
+key = "ctrl-h"
+
 [[commands]]
 id = "branches"
 label = "Branches…"
@@ -97,6 +103,10 @@ entries = [
   paths. Enabled targets augment built-ins only when the user omitted `[navigation] editors`; an
   explicit list, including `[]`, replaces every built-in and extension target. Declarations are
   data only and never put an extension process on the input path.
+- `[[suggested_keybindings]]` may target only the documented extension-bindable actions. User
+  configuration (including an explicit unbind) and core defaults win. Identical suggestions
+  deduplicate; different actions proposed for the same free key both become visible conflicts.
+  Suggestions are resolved at load time and never put extension code on the input path.
 - Use `exec = ["program", "arg"]` for direct, argument-preserving execution.
 - Use `shell = "..."` only when shell syntax is intentional. Never put a shell command string in
   `exec`.
@@ -140,8 +150,9 @@ entries = [
 - A command's `key` is a suggestion inside `<prefix> x`, never a bare key and never the held
   modifier. It loses to any existing binding, including a chord it merely extends, and losing is
   a warning rather than a failure. Do not assume it was granted.
-- Any invalid command, service, agent, sidebar tab, navigation target, or setting invalidates the
-  whole extension atomically.
+- Any invalid command, service, agent, sidebar tab, navigation target, suggested keybinding, or
+  setting invalidates the whole extension atomically. A valid suggestion that merely conflicts
+  remains inactive without invalidating the extension.
 - A non-zero exit from a command raises Rozi's own error toast. If the program already called
   `rozi notify`, exit 0 — otherwise the user gets the specific message and a vaguer duplicate.
 - Extensions install under the data directory (`${XDG_DATA_HOME:-~/.local/share}/rozi/extensions`),

@@ -4,7 +4,7 @@ use crate::config::{NamedCommand, NavigationTargetContribution, ServiceConfig, S
 
 use super::{
     EXTENSION_API_VERSION, ExtensionRuntimeFingerprint, ExtensionScan, ExtensionStatus,
-    SETTINGS_ENV, fingerprint, fingerprints_by_id, settings,
+    SETTINGS_ENV, SuggestedKeybindingContribution, fingerprint, fingerprints_by_id, settings,
 };
 
 /// Everything a scan of the extension directory contributes to a loaded [`crate::config::Config`].
@@ -15,6 +15,7 @@ pub(crate) struct ExtensionContributions {
     pub(crate) agents: Vec<crate::agent_detection::AgentDefinition>,
     pub(crate) sidebar_tabs: Vec<SidebarTab>,
     pub(crate) navigation_targets: Vec<NavigationTargetContribution>,
+    pub(crate) suggested_keybindings: Vec<SuggestedKeybindingContribution>,
     pub(crate) active_ids: HashSet<String>,
     /// Every extension present on disk, whatever its status. A sidebar placement naming a tab from
     /// one of these is kept rather than pruned: the extension is here, it just is not contributing
@@ -36,6 +37,7 @@ pub(super) fn build(
     let mut agents = Vec::new();
     let mut sidebar_tabs = Vec::new();
     let mut navigation_targets = Vec::new();
+    let mut suggested_keybindings = Vec::new();
     let mut active_ids = HashSet::new();
     let mut installed_ids = HashSet::new();
     let mut runtime = Vec::new();
@@ -89,6 +91,7 @@ pub(super) fn build(
             agents.extend(extension.agents);
             sidebar_tabs.extend(extension_tabs);
             navigation_targets.extend(extension.navigation_targets);
+            suggested_keybindings.extend(extension.suggested_keybindings);
         } else if extension.info.status != ExtensionStatus::Disabled {
             problem_count += 1;
             warnings.extend(
@@ -116,6 +119,7 @@ pub(super) fn build(
         agents,
         sidebar_tabs,
         navigation_targets,
+        suggested_keybindings,
         active_ids,
         installed_ids,
         runtime: fingerprints_by_id(runtime),

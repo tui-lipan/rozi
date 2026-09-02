@@ -158,6 +158,28 @@ pub(crate) fn report_sections(
     );
     push_section(
         &mut sections,
+        "Suggested keybindings",
+        info.suggested_keybindings
+            .iter()
+            .map(|binding| {
+                let status = match binding.detail.as_deref() {
+                    Some(detail) => format!("{}: {detail}", binding.status.as_str()),
+                    None => binding.status.as_str().to_string(),
+                };
+                ReportRow {
+                    label: binding.key.clone(),
+                    value: format!(
+                        "action: {}\nsource: {}\nstatus: {status}",
+                        binding.action, binding.extension_id
+                    ),
+                    tone: suggested_keybinding_tone(binding.status),
+                    kind: ReportKind::Info,
+                }
+            })
+            .collect(),
+    );
+    push_section(
+        &mut sections,
         "Settings",
         merged
             .iter()
@@ -255,6 +277,15 @@ fn status_tone(status: ExtensionStatus) -> ReportTone {
     }
 }
 
+fn suggested_keybinding_tone(status: super::ExtensionSuggestedKeybindingStatus) -> ReportTone {
+    match status {
+        super::ExtensionSuggestedKeybindingStatus::Active => ReportTone::Success,
+        super::ExtensionSuggestedKeybindingStatus::Conflict => ReportTone::Warning,
+        super::ExtensionSuggestedKeybindingStatus::Declared
+        | super::ExtensionSuggestedKeybindingStatus::Suppressed => ReportTone::Muted,
+    }
+}
+
 fn format_launch(launch: &ExtensionLaunchDiagnostic) -> String {
     match launch {
         ExtensionLaunchDiagnostic::Direct { argv } => {
@@ -302,6 +333,13 @@ mod tests {
             navigation_targets: vec![crate::config::ExtensionNavigationTargetDiagnostic {
                 name: "editor".to_string(),
                 programs: vec!["example-editor".to_string()],
+            }],
+            suggested_keybindings: vec![crate::config::ExtensionSuggestedKeybindingDiagnostic {
+                extension_id: "tasks".to_string(),
+                action: "smart-focus-left".to_string(),
+                key: "Ctrl+h".to_string(),
+                status: crate::config::ExtensionSuggestedKeybindingStatus::Active,
+                detail: None,
             }],
             settings: [(
                 "runner".to_string(),
@@ -354,6 +392,7 @@ mod tests {
                 "Agents",
                 "Sidebar tabs",
                 "Navigation targets",
+                "Suggested keybindings",
                 "Settings",
                 "Errors"
             ]
@@ -363,11 +402,11 @@ mod tests {
             ReportKind::Command("tasks.run".to_string())
         );
         assert_eq!(
-            sections[6].rows[0].kind,
+            sections[7].rows[0].kind,
             ReportKind::Setting("runner".to_string())
         );
-        assert_eq!(sections[7].rows[0].kind, ReportKind::Error);
-        assert_eq!(sections[6].rows[0].value, "\"just\"");
+        assert_eq!(sections[8].rows[0].kind, ReportKind::Error);
+        assert_eq!(sections[7].rows[0].value, "\"just\"");
     }
 
     #[test]
@@ -378,6 +417,7 @@ mod tests {
         empty.agents.clear();
         empty.sidebar_tabs.clear();
         empty.navigation_targets.clear();
+        empty.suggested_keybindings.clear();
         empty.errors.clear();
         let sections = report_sections(&empty, &ExtensionSettings::new());
         assert_eq!(

@@ -1,4 +1,4 @@
-const EXTENSIONS_WIDTH: u16 = 72;
+const EXTENSIONS_WIDTH: u16 = 84;
 const EXTENSION_DETAIL_WIDTH: u16 = 76;
 
 pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
@@ -220,6 +220,32 @@ fn extension_description(
         parts.push("updating…".to_string());
     } else if id.is_some_and(|id| available_updates.contains(id)) {
         parts.push("update available".to_string());
+    }
+    let active = entry
+        .suggested_keybindings
+        .iter()
+        .filter(|binding| {
+            binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Active
+        })
+        .count();
+    let conflicts = entry
+        .suggested_keybindings
+        .iter()
+        .filter(|binding| {
+            binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Conflict
+        })
+        .count();
+    if active > 0 {
+        parts.push(format!(
+            "{active} key{} active",
+            if active == 1 { "" } else { "s" }
+        ));
+    }
+    if conflicts > 0 {
+        parts.push(format!(
+            "{conflicts} key conflict{}",
+            if conflicts == 1 { "" } else { "s" }
+        ));
     }
     parts.join(" · ")
 }

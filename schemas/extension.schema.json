@@ -171,6 +171,32 @@
         }
       }
     },
+    "suggested_keybindings": {
+      "type": "array",
+      "description": "Best-effort bindings for explicitly extension-bindable core actions.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "key"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "smart-focus-left",
+              "smart-focus-down",
+              "smart-focus-up",
+              "smart-focus-right"
+            ]
+          },
+          "key": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "agents": {
       "type": "array",
       "description": "Agent definitions. Ids are namespaced <extension>.<id> once loaded.",

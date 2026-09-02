@@ -3,6 +3,131 @@
 use std::fs;
 use std::path::Path;
 
+/// Copy an extension tree without following symbolic links found inside it.
+pub(crate) fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
+    let metadata = fs::metadata(source)
+        .map_err(|error| format!("Could not inspect source {}: {error}", source.display()))?;
+    if !metadata.is_dir() {
+        return Err(format!(
+            "Extension source is not a directory: {}",
+            source.display()
+        ));
+    }
+    fs::create_dir(destination).map_err(|error| {
+        format!(
+            "Could not create installation staging directory {}: {error}",
+            destination.display()
+        )
+    })?;
+    copy_directory_contents(source, destination)?;
+    fs::set_permissions(destination, metadata.permissions()).map_err(|error| {
+        format!(
+            "Could not preserve permissions on {}: {error}",
+            destination.display()
+        )
+    })
+}
+
+fn copy_directory_contents(source: &Path, destination: &Path) -> Result<(), String> {
+    let entries = fs::read_dir(source)
+        .map_err(|error| format!("Could not read source {}: {error}", source.display()))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| format!("Could not read an entry in {}: {error}", source.display()))?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "Could not inspect source {}: {error}",
+                source_path.display()
+            )
+        })?;
+        if file_type.is_symlink() {
+            copy_symlink(&source_path, &destination_path)?;
+        } else if file_type.is_dir() {
+            copy_directory(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &destination_path).map_err(|error| {
+                format!(
+                    "Could not copy {} to {}: {error}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        } else {
+            return Err(format!(
+                "Unsupported filesystem entry in extension source: {}",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn copy_symlink(source: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+
+    let target = fs::read_link(source)
+        .map_err(|error| format!("Could not read link {}: {error}", source.display()))?;
+    symlink(&target, destination).map_err(|error| {
+        format!(
+            "Could not copy link {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })
+}
+
+#[cfg(windows)]
+fn copy_symlink(source: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+
+    let target = fs::read_link(source)
+        .map_err(|error| format!("Could not read link {}: {error}", source.display()))?;
+    let resolved = if target.is_absolute() {
+        target.clone()
+    } else {
+        source
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(&target)
+    };
+    let target_metadata = fs::metadata(&resolved).map_err(|error| {
+        format!(
+            "Could not inspect link target for {}: {error}",
+            source.display()
+        )
+    })?;
+    let result = if target_metadata.is_dir() {
+        symlink_dir(&target, destination)
+    } else {
+        symlink_file(&target, destination)
+    };
+    result.map_err(|error| {
+        format!(
+            "Could not copy link {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })
+}
+
+/// Create the direct installation link used by `extensions install --link`.
+pub(crate) fn create_directory_link(target: &Path, link: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    let result = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let result = std::os::windows::fs::symlink_dir(target, link);
+    result.map_err(|error| {
+        format!(
+            "Could not link extension {} to {}: {error}",
+            target.display(),
+            link.display()
+        )
+    })
+}
+
 /// Resolve a diagnostic path back to the direct filesystem entry that produced it.
 ///
 /// Extension diagnostics are a public UTF-8 contract and therefore store paths lossily. Re-read

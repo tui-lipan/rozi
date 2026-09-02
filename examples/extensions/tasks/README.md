@@ -29,15 +29,10 @@ Both chords are suggestions. Rozi drops one silently if you have already bound i
 ## Install
 
 ```sh
-data_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
-install -d -m 700 "$data_root" "$data_root/extensions"
-cp -R ./tasks "$data_root/extensions/tasks"
-rozi extensions check "$data_root/extensions/tasks"
+rozi extensions check ./tasks
+rozi extensions install --link ./tasks
 rozi run-action reload-extensions
 ```
-
-Extensions go under the data directory, not beside `config.toml`. The `install -d -m 700` matters:
-Rozi's data directory is also its managed-installation root and must stay owner-only.
 
 ## Settings
 

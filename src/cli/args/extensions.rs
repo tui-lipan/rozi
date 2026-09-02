@@ -21,9 +21,51 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "list [--verbose] [--json]",
                 "Show extension discovery status",
             ),
+            row("install <SOURCE>", "Install and enable an extension"),
+            row(
+                "install --link <PATH>",
+                "Link and enable a development checkout",
+            ),
+            row("remove <ID>", "Remove an installed extension"),
             row("new <ID>", "Create a valid extension scaffold"),
             row("check <PATH> [--json]", "Validate an unpacked extension"),
         ],
+    },
+    HelpSection {
+        heading: "OPTIONS",
+        advanced_only: false,
+        note: "",
+        rows: &[row("-h, --help", "Print help")],
+    },
+];
+
+const INSTALL_HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        heading: "USAGE",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row("rozi extensions install <SOURCE>", ""),
+            row("rozi extensions install --link <PATH>", ""),
+        ],
+    },
+    HelpSection {
+        heading: "OPTIONS",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row("--link <PATH>", "Link a local checkout without copying it"),
+            row("-h, --help", "Print help"),
+        ],
+    },
+];
+
+const REMOVE_HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        heading: "USAGE",
+        advanced_only: false,
+        note: "",
+        rows: &[row("rozi extensions remove <ID>", "")],
     },
     HelpSection {
         heading: "OPTIONS",
@@ -65,6 +107,20 @@ pub(crate) fn print_check_help() {
     println!("{out}");
 }
 
+pub(crate) fn print_install_help() {
+    let styles = HelpStyles::detect();
+    let mut out = styles.title_line("rozi extensions install", "install and enable an extension");
+    append_help_sections(&mut out, INSTALL_HELP_SECTIONS, &styles, true);
+    println!("{out}");
+}
+
+pub(crate) fn print_remove_help() {
+    let styles = HelpStyles::detect();
+    let mut out = styles.title_line("rozi extensions remove", "remove an installed extension");
+    append_help_sections(&mut out, REMOVE_HELP_SECTIONS, &styles, true);
+    println!("{out}");
+}
+
 pub(super) fn parse(
     iter: &mut Peekable<IntoIter<String>>,
     config_path: Option<String>,
@@ -73,20 +129,23 @@ pub(super) fn parse(
         .clone()
         .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        return if iter.peek().is_some_and(|arg| arg == "check") {
-            Ok(ParsedCli::ExtensionsCheckHelp)
-        } else {
-            Ok(ParsedCli::ExtensionsHelp)
+        return match iter.peek().map(String::as_str) {
+            Some("check") => Ok(ParsedCli::ExtensionsCheckHelp),
+            Some("install") => Ok(ParsedCli::ExtensionsInstallHelp),
+            Some("remove") => Ok(ParsedCli::ExtensionsRemoveHelp),
+            _ => Ok(ParsedCli::ExtensionsHelp),
         };
     }
 
     match iter.next().as_deref() {
         None => Ok(ParsedCli::ExtensionsHelp),
         Some("list") => parse_list(iter, config_path),
+        Some("install") => parse_install(iter, config_path),
+        Some("remove") => parse_remove(iter, config_path),
         Some("new") => parse_new(iter),
         Some("check") => parse_check(iter),
         Some(other) => Err(format!(
-            "unknown extensions command `{other}` (expected list, new, or check)"
+            "unknown extensions command `{other}` (expected list, install, remove, new, or check)"
         )),
     }
 }
@@ -117,6 +176,43 @@ fn parse_list(
     Ok(ParsedCli::Extensions(ExtensionsCommand::List {
         json,
         verbose,
+        config_path,
+    }))
+}
+
+fn parse_install(
+    iter: &mut impl Iterator<Item = String>,
+    config_path: Option<String>,
+) -> std::result::Result<ParsedCli, String> {
+    let first = iter
+        .next()
+        .ok_or_else(|| "extensions install requires a source".to_string())?;
+    let (source, link) = if first == "--link" {
+        (
+            require_value(iter, "extensions install --link requires a local path")?,
+            true,
+        )
+    } else if first.starts_with('-') {
+        return Err(format!("unknown extensions install option `{first}`"));
+    } else {
+        (first, false)
+    };
+    reject_trailing_control_args(iter, "extensions install")?;
+    Ok(ParsedCli::Extensions(ExtensionsCommand::Install {
+        source,
+        link,
+        config_path,
+    }))
+}
+
+fn parse_remove(
+    iter: &mut impl Iterator<Item = String>,
+    config_path: Option<String>,
+) -> std::result::Result<ParsedCli, String> {
+    let id = require_value(iter, "extensions remove requires an extension id")?;
+    reject_trailing_control_args(iter, "extensions remove")?;
+    Ok(ParsedCli::Extensions(ExtensionsCommand::Remove {
+        id,
         config_path,
     }))
 }
@@ -170,6 +266,16 @@ mod tests {
                 .expect("parses"),
             ParsedCli::ExtensionsCheckHelp
         ));
+        assert!(matches!(
+            parse_cli_args(vec!["extensions".into(), "install".into(), "--help".into(),])
+                .expect("parses"),
+            ParsedCli::ExtensionsInstallHelp
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["extensions".into(), "remove".into(), "--help".into(),])
+                .expect("parses"),
+            ParsedCli::ExtensionsRemoveHelp
+        ));
 
         assert!(matches!(
             parse_cli_args(vec![
@@ -201,7 +307,41 @@ mod tests {
                 .expect("parses"),
             ParsedCli::Extensions(ExtensionsCommand::New { id }) if id == "git-tools"
         ));
+        assert!(matches!(
+            parse_cli_args(vec![
+                "extensions".into(),
+                "install".into(),
+                "https://github.com/user/git-tools.git".into(),
+            ])
+            .expect("parses"),
+            ParsedCli::Extensions(ExtensionsCommand::Install { source, link: false, .. })
+                if source == "https://github.com/user/git-tools.git"
+        ));
+        assert!(matches!(
+            parse_cli_args(vec![
+                "extensions".into(),
+                "install".into(),
+                "--link".into(),
+                "./git-tools".into(),
+            ])
+            .expect("parses"),
+            ParsedCli::Extensions(ExtensionsCommand::Install { source, link: true, .. })
+                if source == "./git-tools"
+        ));
+        assert!(matches!(
+            parse_cli_args(vec![
+                "extensions".into(),
+                "remove".into(),
+                "git-tools".into(),
+            ])
+            .expect("parses"),
+            ParsedCli::Extensions(ExtensionsCommand::Remove { id, .. }) if id == "git-tools"
+        ));
         assert!(parse_cli_args(vec!["extensions".into(), "new".into()]).is_err());
+        assert!(
+            parse_cli_args(vec!["extensions".into(), "install".into(), "--link".into()]).is_err()
+        );
+        assert!(parse_cli_args(vec!["extensions".into(), "remove".into()]).is_err());
         assert!(
             parse_cli_args(vec![
                 "extensions".into(),
@@ -213,7 +353,7 @@ mod tests {
         );
         assert_eq!(
             parse_cli_args(vec!["extensions".into(), "lst".into()]).expect_err("must reject"),
-            "unknown extensions command `lst` (expected list, new, or check)"
+            "unknown extensions command `lst` (expected list, install, remove, new, or check)"
         );
     }
 

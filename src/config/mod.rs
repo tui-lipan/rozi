@@ -23,7 +23,8 @@ pub(crate) use extensions::{
     create_extension_scaffold, extensions_dir_path, is_extension_scoped_id,
     merge_extension_settings, provenance_from_process, provenance_is_active,
     read_user_extension_config, reconcile_generations, report_sections, report_text,
-    scan_extensions_for_cli, scan_extensions_with_user_config,
+    scan_extensions, scan_extensions_for_cli, scan_extensions_with_user_config,
+    validate_extension_installation_id,
 };
 pub use file::*;
 pub use persist::*;

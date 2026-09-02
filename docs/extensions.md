@@ -30,42 +30,34 @@ not authorize its code.
 
 ## Install
 
-There is no extension registry or automatic installer. Copy or clone the reviewed directory into
-the user data directory:
-
-| Platform | Extension directory |
-| --- | --- |
-| Linux and macOS | `${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/` |
-| Windows | `%LOCALAPPDATA%\rozi\extensions\` |
-
-Linux example:
+Install a reviewed local directory, HTTPS Git remote, or SSH Git remote:
 
 ```sh
-data_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
-install_root="$data_root/extensions"
-# Owner-only, because Rozi's data directory is also its managed-installation root and a
-# group- or world-readable one makes Rozi refuse to start. A plain `mkdir -p` uses your
-# umask, which is usually 0755.
-install -d -m 700 "$data_root" "$install_root"
-cp -R ./rozi-git-tools "$install_root/git-tools"
-rozi extensions check "$install_root/git-tools"
-rozi run-action reload-extensions
+rozi extensions install ./rozi-git-tools
+rozi extensions install https://github.com/user/rozi-git-tools.git
+rozi extensions install git@github.com:user/rozi-git-tools.git
 ```
 
-Extensions live under the **data** directory, not next to `config.toml`. Only the `[extensions]`
-settings go in the config file. If a freshly copied extension does not appear, open
-**Extensions…** to see its status and validation error. `rozi extensions list` is the scripting
-equivalent and names the directory it scanned.
+Rozi validates the extension before installing it. Local directories are copied. Git repositories
+are cloned into Rozi-owned storage. In both cases, Rozi uses the manifest ID as the installation
+name, rejects an existing destination or conflicting ID, and removes the ID from the disabled list.
+Run `rozi run-action reload-extensions` in each running client that should load the new extension.
 
-If Rozi refuses to start with `managed installation ... permissions must not allow group/other
-access`, the data directory was created with default permissions. Fix it with:
+Git installations keep their original remote and installed commit in private installation
+metadata. This information is reserved for explicit lifecycle commands such as a future
+`rozi extensions update <ID>`. Installation does not enable background updates.
+
+For extension development, link a checkout instead:
 
 ```sh
-chmod 700 "${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
+rozi extensions install --link ./rozi-git-tools
 ```
 
-The installation directory name is not the extension identity. Identity comes from
-`extension.id`. Two installed directories declaring the same ID are both rejected.
+Rozi stores only a symlink for a linked extension. Changes in the checkout are visible after an
+extension reload. The checkout remains user-owned.
+
+There is no extension registry, dependency resolver, or automatic installer for editor plugins.
+The installation directory is private Rozi data. Users do not need to create or edit it.
 
 ## List and inspect installed extensions
 
@@ -100,8 +92,17 @@ enable it. Rozi writes the stable ID to `config.toml`, reloads extension contrib
 the overlay open.
 
 `Ctrl+K` removes the selected installation after a second press. A linked development checkout is
-unlinked; Rozi does not delete the checkout the link points to. You can also disable an extension
-by editing the stable ID list:
+unlinked; Rozi does not delete the checkout the link points to. The CLI accepts the stable
+manifest ID:
+
+```sh
+rozi extensions remove git-tools
+```
+
+Removal deletes local copies and Rozi-owned Git clones. For a linked extension, it deletes only the
+symlink. Run `rozi run-action reload-extensions` in running clients after removal.
+
+You can also disable an extension without removing it by editing the stable ID list:
 
 ```toml
 [extensions]
@@ -112,9 +113,6 @@ When the config file is saved, Rozi removes the extension's commands, agents, si
 navigation targets, stops its services, and closes its owned picker, publisher, and subscription
 streams. A disabled extension's sidebar placement is remembered, so re-enabling it puts its tab
 back where you had it.
-
-For scripted removal, disable the extension first, delete its installed directory, then run
-`rozi run-action reload-extensions`.
 
 Bindings may refer to an unavailable extension:
 
@@ -128,22 +126,20 @@ disabled or absent.
 
 ## Update
 
-Rozi does not update extensions automatically. Review incoming changes before replacing installed
-files. For a Git checkout:
+Rozi does not update extensions automatically, and this release does not provide
+`rozi extensions update` yet. Review upstream changes, then remove and reinstall the extension
+explicitly:
 
 ```sh
-install_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions"
-git -C "$install_root/git-tools" fetch --all
-git -C "$install_root/git-tools" diff HEAD..origin/main
-git -C "$install_root/git-tools" pull --ff-only
-rozi extensions check "$install_root/git-tools"
+rozi extensions remove git-tools
+rozi extensions install https://github.com/user/rozi-git-tools.git
 rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
 
-An explicit reload is required because Rozi does not watch extension directories. Process-facing
-changes rotate the extension's opaque generation and retire old control streams. Metadata-only
-changes such as title, description, and package version keep the generation.
+Git installs retain their original remote and installed revision so a later update command can
+fetch and report changes without changing the installation model. An explicit reload is required
+because Rozi does not watch extension directories.
 
 ## Create an extension
 

@@ -50,14 +50,11 @@ From this repository checkout:
 
 ```bash
 src="$PWD/examples/extensions/pr-dashboard"
-dst="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/pr-dashboard"
 
 rozi extensions check "$src"
 python -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
   "$src/bin/pr_dashboard.py"
-mkdir -p "$dst"
-cp -R "$src/." "$dst/"
-rozi extensions check "$dst"
+rozi extensions install --link "$src"
 rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
@@ -66,10 +63,8 @@ The PowerShell equivalent on Windows is:
 
 ```powershell
 $src = Resolve-Path ".\examples\extensions\pr-dashboard"
-$dst = Join-Path $env:LOCALAPPDATA "rozi\extensions\pr-dashboard"
-New-Item -ItemType Directory -Force $dst | Out-Null
-Copy-Item -Recurse -Force (Join-Path $src "*") $dst
-rozi extensions check $dst
+rozi extensions check $src
+rozi extensions install --link $src
 rozi run-action reload-extensions
 rozi extensions list --verbose
 ```

@@ -1113,6 +1113,18 @@ pub fn run() -> Result<()> {
                 }
                 return Ok(());
             }
+            cli::ExtensionsCommand::Install {
+                source,
+                link,
+                config_path,
+            } => {
+                apply_config_path(config_path);
+                return cli::run_install_extension_cli(&source, link);
+            }
+            cli::ExtensionsCommand::Remove { id, config_path } => {
+                apply_config_path(config_path);
+                return cli::run_remove_extension_cli(&id);
+            }
         },
         cli::ParsedCli::ExtensionsHelp => {
             cli::print_extensions_help();
@@ -1120,6 +1132,14 @@ pub fn run() -> Result<()> {
         }
         cli::ParsedCli::ExtensionsCheckHelp => {
             cli::print_extensions_check_help();
+            return Ok(());
+        }
+        cli::ParsedCli::ExtensionsInstallHelp => {
+            cli::print_extensions_install_help();
+            return Ok(());
+        }
+        cli::ParsedCli::ExtensionsRemoveHelp => {
+            cli::print_extensions_remove_help();
             return Ok(());
         }
         cli::ParsedCli::SessionsHelp => {
@@ -1224,6 +1244,8 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::Extensions(_)
         | cli::ParsedCli::ExtensionsHelp
         | cli::ParsedCli::ExtensionsCheckHelp
+        | cli::ParsedCli::ExtensionsInstallHelp
+        | cli::ParsedCli::ExtensionsRemoveHelp
         | cli::ParsedCli::Install
         | cli::ParsedCli::Update(_) => unreachable!("early CLI command returned above"),
     };

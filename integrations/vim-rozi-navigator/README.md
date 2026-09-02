@@ -16,14 +16,11 @@ smart-focus-right = "ctrl-l"
 
 ### Register the Rozi extension
 
-Link or copy this repository into Rozi's extension directory:
+Register this checkout as a linked development extension:
 
 ```bash
-data_root="${XDG_DATA_HOME:-$HOME/.local/share}/rozi"
-install -d -m 700 "$data_root" "$data_root/extensions"
-ln -s "/absolute/path/to/rozi/integrations/vim-rozi-navigator" \
-  "$data_root/extensions/vim-rozi-navigator"
-rozi extensions check "$data_root/extensions/vim-rozi-navigator"
+rozi extensions check "/absolute/path/to/rozi/integrations/vim-rozi-navigator"
+rozi extensions install --link "/absolute/path/to/rozi/integrations/vim-rozi-navigator"
 rozi run-action reload-extensions
 ```
 

@@ -40,7 +40,6 @@ export TMPDIR="$LAB/tmp"
 mkdir -p \
     "$HOME" \
     "$XDG_CONFIG_HOME/rozi" \
-    "$XDG_DATA_HOME/rozi/extensions" \
     "$XDG_STATE_HOME" \
     "$XDG_CACHE_HOME" \
     "$XDG_RUNTIME_DIR" \
@@ -57,9 +56,7 @@ for extension in \
     activity-dashboard
 do
     "$ROZI_BIN" extensions check "examples/extensions/$extension"
-    cp -R \
-        "examples/extensions/$extension" \
-        "$XDG_DATA_HOME/rozi/extensions/$extension"
+    "$ROZI_BIN" extensions install --link "examples/extensions/$extension"
 done
 
 "$ROZI_BIN" extensions list --verbose

@@ -27,19 +27,14 @@ row. Command failures use a concise error notification and keep mutation workflo
 
 ## Install
 
-Copy this directory below Rozi's user extension directory, validate it, and reload:
+Validate and link the example checkout, then reload:
 
 ```bash
-destination="${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/docker"
-mkdir -p "$(dirname "$destination")"
-cp -R ./docker "$destination"
-rozi extensions check "$destination"
+rozi extensions check ./docker
+rozi extensions install --link ./docker
 rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
-
-On Windows, copy the directory to `%LOCALAPPDATA%\rozi\extensions\docker` and pass that path to
-`rozi extensions check`.
 
 ## Manual flow
 

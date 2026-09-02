@@ -19,11 +19,12 @@ individual process arguments; NUL-delimited Git output preserves spaces and Unic
 
 ## Install
 
-Copy or clone this directory anywhere below Rozi's user extension directory. The installation
-directory may be renamed; `id = "git-tools"` remains its public identity.
+Validate and link the example checkout. Rozi registers it by its manifest identity,
+`id = "git-tools"`.
 
 ```bash
 rozi extensions check ./git-tools
+rozi extensions install --link ./git-tools
 rozi run-action reload-extensions
 ```
 

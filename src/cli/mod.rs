@@ -17,11 +17,13 @@ pub(crate) mod update;
 
 pub(crate) use args::{
     CliArgs, ExtensionsCommand, ParsedCli, SessionCommand, SessionsCommand, parse_cli_args,
-    print_extensions_check_help, print_extensions_help, print_sessions_help,
+    print_extensions_check_help, print_extensions_help, print_extensions_install_help,
+    print_extensions_remove_help, print_sessions_help,
 };
 pub(crate) use control::{run_control_cli, run_pick_cli, run_publish_cli, run_subscribe_cli};
 pub(crate) use extension::{
-    run_check_extension_cli, run_list_extensions_cli, run_new_extension_cli,
+    run_check_extension_cli, run_install_extension_cli, run_list_extensions_cli,
+    run_new_extension_cli, run_remove_extension_cli,
 };
 pub(crate) use help::{print_help, print_version};
 pub(crate) use session::{

@@ -24,14 +24,21 @@ pub(super) fn directories(root: &Path) -> (Vec<PathBuf>, Vec<String>) {
     let mut errors = Vec::new();
     for entry in entries {
         match entry {
-            Ok(entry) => match entry.file_type() {
-                Ok(kind) if kind.is_dir() || kind.is_symlink() => directories.push(entry.path()),
-                Ok(_) => {}
-                Err(error) => errors.push(format!(
-                    "extension entry {} could not be inspected: {error}",
-                    entry.path().display()
-                )),
-            },
+            Ok(entry) => {
+                if entry.file_name() == ".rozi" {
+                    continue;
+                }
+                match entry.file_type() {
+                    Ok(kind) if kind.is_dir() || kind.is_symlink() => {
+                        directories.push(entry.path());
+                    }
+                    Ok(_) => {}
+                    Err(error) => errors.push(format!(
+                        "extension entry {} could not be inspected: {error}",
+                        entry.path().display()
+                    )),
+                }
+            }
             Err(error) => errors.push(format!(
                 "extension directory entry could not be read: {error}"
             )),

@@ -25,16 +25,17 @@ the config; each description probe is bounded to two seconds.
 
 ## Install and run
 
-Copy or clone this directory anywhere below Rozi's user extension directory, then run:
+Validate and link the example checkout, then run:
 
 ```bash
 rozi extensions check ./ssh-tools
+rozi extensions install --link ./ssh-tools
 rozi run-action reload-extensions
 rozi run-action ssh-tools.hosts
 ```
 
-The installation directory may be renamed; `id = "ssh-tools"` remains the public identity. Press
-`r` in the picker to reread the root config, traversed includes, and effective descriptions. A
+The manifest ID `ssh-tools` remains the public identity. Press `r` in the picker to reread the root
+config, traversed includes, and effective descriptions. A
 missing config, an empty concrete alias set, and unreadable included files appear as disabled
 structured rows. A missing `ssh` executable or pane-launch failure produces an error notification.
 

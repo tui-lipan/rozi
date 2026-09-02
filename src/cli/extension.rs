@@ -5,6 +5,68 @@ use tui_lipan::Result;
 
 use super::output::{OutputStyles, OutputTone, TableCell, format_table};
 
+pub(crate) fn run_install_extension_cli(source: &str, link: bool) -> Result<()> {
+    let request = if link {
+        crate::extension_installation::InstallRequest::Link(std::path::PathBuf::from(source))
+    } else {
+        crate::extension_installation::InstallRequest::Source(source.to_string())
+    };
+    let installed =
+        crate::extension_installation::install(request).map_err(std::io::Error::other)?;
+    let styles = OutputStyles::detect();
+    let action = match installed.kind {
+        crate::extension_installation::InstallKind::Local => "Copied",
+        crate::extension_installation::InstallKind::Git => "Cloned",
+        crate::extension_installation::InstallKind::Link => "Linked",
+    };
+    println!(
+        "{} {}",
+        styles.paint("Installed", OutputTone::Success),
+        styles.paint(&installed.id, OutputTone::Accent)
+    );
+    println!(
+        "{}  {} to {}",
+        styles.paint("Source", OutputTone::Muted),
+        action,
+        installed.destination.display()
+    );
+    println!(
+        "{}  {}",
+        styles.paint("Reload", OutputTone::Muted),
+        styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
+    );
+    Ok(())
+}
+
+pub(crate) fn run_remove_extension_cli(id: &str) -> Result<()> {
+    let removed = crate::extension_installation::remove(id).map_err(std::io::Error::other)?;
+    let styles = OutputStyles::detect();
+    println!(
+        "{} {}",
+        styles.paint(
+            if removed.linked {
+                "Unlinked"
+            } else {
+                "Removed"
+            },
+            OutputTone::Success
+        ),
+        styles.paint(&removed.id, OutputTone::Accent)
+    );
+    if removed.linked {
+        println!(
+            "{}  The source checkout was not changed.",
+            styles.paint("Source", OutputTone::Muted)
+        );
+    }
+    println!(
+        "{}  {}",
+        styles.paint("Reload", OutputTone::Muted),
+        styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
+    );
+    Ok(())
+}
+
 pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {
     let styles = OutputStyles::detect();
     let parent = std::env::current_dir()?;

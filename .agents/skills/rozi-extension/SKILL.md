@@ -269,15 +269,15 @@ commands remain command lines.
 rozi extensions new my-extension
 cd my-extension
 rozi extensions check .
-# copy or clone below the user extension directory
+rozi extensions install --link .
 rozi run-action reload-extensions
 rozi extensions list --verbose
 rozi run-action my-extension.hello
 ```
 
-Linux/macOS installs live under `$XDG_DATA_HOME/rozi/extensions` or
-`~/.local/share/rozi/extensions`; Windows uses `%LOCALAPPDATA%\rozi\extensions`. Manual clone/copy
-and explicit development symlinks remain the installation model.
+Use `rozi extensions install <SOURCE>` for a local directory or Git HTTPS/SSH URL. Rozi owns the
+installed copy or clone. Use `--link <PATH>` only for a development checkout that should remain
+user-owned, and remove either form with `rozi extensions remove <ID>`.
 
 ## Debug failures
 

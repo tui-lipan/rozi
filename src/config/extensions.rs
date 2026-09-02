@@ -226,6 +226,18 @@ pub(crate) fn scan_extensions() -> ExtensionScan {
     scan_extensions_in(&crate::platform::paths::extensions_dir(&env))
 }
 
+pub(crate) fn validate_extension_installation_id(id: &str) -> Result<(), String> {
+    let mut errors = Vec::new();
+    if validate_extension_id(Some(id), &mut errors) && errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| format!("invalid extension id `{id}`")))
+    }
+}
+
 pub(crate) fn scan_extensions_for_cli() -> ExtensionScan {
     let user = read_user_extension_config().unwrap_or_default();
     scan_extensions_with_user_config(&user)

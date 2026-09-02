@@ -10,6 +10,7 @@ mod commands;
 pub mod config;
 mod control;
 pub mod events;
+mod extension_installation;
 pub mod input;
 pub mod layout;
 pub mod msg;

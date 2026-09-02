@@ -20,18 +20,17 @@ The supervised `agent-activity.watch` service:
 
 ## Install
 
-Python 3 available as `python` is the only runtime dependency. Validate and copy the directory into the user extension
-directory, then reload Rozi explicitly:
+Python 3 available as `python` is the only runtime dependency. Validate and link the example
+checkout, then reload Rozi explicitly:
 
 ```bash
 rozi extensions check ./agent-activity
-cp -R ./agent-activity \
-  "${XDG_DATA_HOME:-$HOME/.local/share}/rozi/extensions/agent-activity"
+rozi extensions install --link ./agent-activity
 rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
 
-Rozi does not watch extension source trees. After editing the installed copy, run
+Rozi does not watch extension source trees. After editing the linked checkout, run
 `rozi run-action reload-extensions` again.
 
 ## Manual simulation

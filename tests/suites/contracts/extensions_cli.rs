@@ -27,6 +27,15 @@ fn rozi(temp: &tempfile::TempDir, args: &[&str]) -> Output {
 }
 
 fn rozi_in(temp: &tempfile::TempDir, args: &[&str], cwd: Option<&Path>) -> Output {
+    rozi_in_with_env(temp, args, cwd, &[])
+}
+
+fn rozi_in_with_env(
+    temp: &tempfile::TempDir,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(&str, &str)],
+) -> Output {
     let config = temp.path().join("config/rozi/config.toml");
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     if !config.exists() {
@@ -46,7 +55,210 @@ fn rozi_in(temp: &tempfile::TempDir, args: &[&str], cwd: Option<&Path>) -> Outpu
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
+    command.envs(env.iter().copied());
     command.output().unwrap()
+}
+
+fn write_source_extension(path: &Path, id: &str) {
+    std::fs::create_dir_all(path).unwrap();
+    std::fs::write(
+        path.join("extension.toml"),
+        format!(
+            "[extension]\nid = \"{id}\"\ntitle = \"{id} title\"\nversion = \"1.0.0\"\napi = 1\n\
+             [[commands]]\nid = \"open\"\nsend = \"echo {id}\\n\"\n"
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn local_install_copies_enables_and_removes_without_touching_the_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source extension");
+    write_source_extension(&source, "disabled");
+
+    let installed = rozi(&temp, &["extensions", "install", source.to_str().unwrap()]);
+    assert!(
+        installed.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&installed.stdout),
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let destination = temp.path().join("data/rozi/extensions/disabled");
+    assert!(destination.join("extension.toml").is_file());
+    assert!(
+        !std::fs::read_to_string(temp.path().join("config/rozi/config.toml"))
+            .unwrap()
+            .contains("disabled =")
+    );
+
+    std::fs::write(source.join("source-only"), "source").unwrap();
+    assert!(!destination.join("source-only").exists());
+    let conflict = rozi(&temp, &["extensions", "install", source.to_str().unwrap()]);
+    assert!(!conflict.status.success());
+    assert!(String::from_utf8_lossy(&conflict.stderr).contains("already installed"));
+
+    let removed = rozi(&temp, &["extensions", "remove", "disabled"]);
+    assert!(
+        removed.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&removed.stdout),
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(!destination.exists());
+    assert!(source.join("source-only").is_file());
+    assert!(
+        !temp
+            .path()
+            .join("data/rozi/extensions/.rozi/installations/disabled.toml")
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_install_reflects_edits_and_remove_only_unlinks_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("linked source");
+    write_source_extension(&source, "linked");
+
+    let installed = rozi(
+        &temp,
+        &["extensions", "install", "--link", source.to_str().unwrap()],
+    );
+    assert!(
+        installed.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&installed.stdout),
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let destination = temp.path().join("data/rozi/extensions/linked");
+    assert!(
+        std::fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    std::fs::write(source.join("live-edit"), "changed").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(destination.join("live-edit")).unwrap(),
+        "changed"
+    );
+    let removed = rozi(&temp, &["extensions", "remove", "linked"]);
+    assert!(removed.status.success());
+    assert!(!destination.exists());
+    assert_eq!(
+        std::fs::read_to_string(source.join("live-edit")).unwrap(),
+        "changed"
+    );
+}
+
+#[test]
+fn invalid_sources_and_manifests_are_rejected_before_installation() {
+    let temp = tempfile::tempdir().unwrap();
+    let missing = rozi(
+        &temp,
+        &["extensions", "install", "./does-not-exist-or-look-like-git"],
+    );
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("Invalid extension source"));
+
+    let invalid = temp.path().join("invalid");
+    std::fs::create_dir(&invalid).unwrap();
+    std::fs::write(
+        invalid.join("extension.toml"),
+        "[extension]\nid = \"Uppercase\"\napi = 1\n",
+    )
+    .unwrap();
+    let rejected = rozi(&temp, &["extensions", "install", invalid.to_str().unwrap()]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("not installable"));
+    assert!(!temp.path().join("data/rozi/extensions/Uppercase").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn install_rejects_a_symlinked_rozi_data_destination() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("safe source");
+    write_source_extension(&source, "safe-source");
+    let redirected = temp.path().join("redirected");
+    std::fs::create_dir_all(temp.path().join("data")).unwrap();
+    std::fs::create_dir(&redirected).unwrap();
+    symlink(&redirected, temp.path().join("data/rozi")).unwrap();
+
+    let rejected = rozi(&temp, &["extensions", "install", source.to_str().unwrap()]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("not a directory"));
+    assert!(!redirected.join("extensions").exists());
+}
+
+#[test]
+fn git_install_records_the_original_remote_and_exact_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("git source");
+    write_source_extension(&source, "git-source");
+    let run_git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&source)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
+    run_git(&["init"]);
+    run_git(&["add", "."]);
+    run_git(&[
+        "-c",
+        "user.name=Rozi Test",
+        "-c",
+        "user.email=rozi@example.invalid",
+        "commit",
+        "-m",
+        "fixture",
+    ]);
+    let revision = String::from_utf8(run_git(&["rev-parse", "HEAD"]).stdout).unwrap();
+    let revision = revision.trim();
+
+    let remote = "https://example.invalid/git-source.git";
+    let local_url = url::Url::from_directory_path(&source).unwrap().to_string();
+    let rewrite_key = format!("url.{local_url}.insteadOf");
+    let installed = rozi_in_with_env(
+        &temp,
+        &["extensions", "install", remote],
+        None,
+        &[
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", &rewrite_key),
+            ("GIT_CONFIG_VALUE_0", remote),
+        ],
+    );
+    assert!(
+        installed.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&installed.stdout),
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let destination = temp.path().join("data/rozi/extensions/git-source");
+    assert!(destination.join(".git").is_dir());
+    let metadata = std::fs::read_to_string(
+        temp.path()
+            .join("data/rozi/extensions/.rozi/installations/git-source.toml"),
+    )
+    .unwrap();
+    let metadata: toml::Value = toml::from_str(&metadata).unwrap();
+    assert_eq!(metadata["source"]["kind"].as_str(), Some("git"));
+    assert_eq!(metadata["source"]["remote"].as_str(), Some(remote));
+    assert_eq!(metadata["source"]["revision"].as_str(), Some(revision));
 }
 
 #[test]

@@ -474,6 +474,13 @@ mod tests {
     }
 
     #[test]
+    fn zsh_precmd_does_not_assign_its_read_only_status_parameter() {
+        assert!(!ZSH_SCRIPT.contains("local status"));
+        assert!(ZSH_SCRIPT.contains("local command_status=$?"));
+        assert!(ZSH_SCRIPT.contains("\"$command_status\""));
+    }
+
+    #[test]
     fn powershell_does_not_restore_conptys_startup_cursor_after_each_command() {
         let windows_guard = "if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {";
         let guard_start = POWERSHELL_SCRIPT

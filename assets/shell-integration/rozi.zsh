@@ -55,11 +55,11 @@ __rozi_osc7() {
 }
 
 __rozi_precmd() {
-    local status=$?
+    local command_status=$?
     if [[ -n "$__rozi_have_last_command" ]]; then
         # Recover from a foreground TUI that exited without restoring the terminal before drawing
         # the prompt. The shell's line editor can re-enable any modes it needs afterwards.
-        printf '\e]133;D;%d\e\\\e[?1049l\e[?1000l\e[?1002l\e[?1003l\e[?1004l\e[?1005l\e[?1006l\e[?2004l\e[?1l\e>' "$status"
+        printf '\e]133;D;%d\e\\\e[?1049l\e[?1000l\e[?1002l\e[?1003l\e[?1004l\e[?1005l\e[?1006l\e[?2004l\e[?1l\e>' "$command_status"
         unset __rozi_have_last_command
     fi
     __rozi_osc7

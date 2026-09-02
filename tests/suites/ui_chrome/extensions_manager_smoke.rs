@@ -293,7 +293,12 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .dispatch(rozi::Msg::ExtensionsToggleSelected)
                 .expect("disable selected fixture");
             let toggled = frame(&mut backend);
+            // The group header, the `enable` hint, and the row's own description carry the new
+            // state, so the toggle stays silent and the description does not repeat the group.
             assert!(toggled.contains("Disabled"), "{toggled}");
+            assert!(toggled.contains("enable"), "{toggled}");
+            assert!(!toggled.contains("Disabled fixture-direct"), "{toggled}");
+            assert!(!toggled.contains("· disabled"), "{toggled}");
             let state = backend
                 .state()
                 .extensions
@@ -366,11 +371,50 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             assert!(!detail.contains("Ctrl+u"), "{detail}");
             assert!(!detail.contains("Search report"), "{detail}");
             assert!(detail.contains("command.py"), "{detail}");
+            // The report replaces the picker rather than stacking on it.
+            assert!(!detail.contains("Search extensions…"), "{detail}");
             assert!(
                 backend
                     .focused_key()
                     .is_some_and(|key| key.as_ref() == "rozi-extension-detail")
             );
+            // A viewport too short for the report puts it on the capped branch, where the arrows
+            // and Page keys have somewhere to scroll to.
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 24,
+            });
+            let capped = frame(&mut backend);
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Down,
+                    mods: KeyMods::NONE,
+                })
+                .expect("scroll the extension report down a row");
+            let stepped = frame(&mut backend);
+            assert_ne!(
+                capped, stepped,
+                "Down does not scroll the report:\n{capped}"
+            );
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Up,
+                    mods: KeyMods::NONE,
+                })
+                .expect("scroll the extension report back up");
+            assert_eq!(
+                capped,
+                frame(&mut backend),
+                "Up does not scroll the report back"
+            );
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 52,
+            });
             backend
                 .send_key(KeyEvent {
                     code: KeyCode::PageDown,

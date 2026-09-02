@@ -1,21 +1,25 @@
 const EXTENSIONS_WIDTH: u16 = 84;
 const EXTENSION_DETAIL_WIDTH: u16 = 76;
-const EXTENSION_UPDATING_LABEL: &str = "updating…";
 
 pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(state) = ctx.state.extensions.as_ref() else {
         return Text::new("").into();
     };
+    // One description per row, shared by the group entries and the row renderer so the text a
+    // query matches is the text the row shows.
+    let descriptions: Vec<String> = state
+        .entries
+        .iter()
+        .map(|entry| crate::ops::extensions_manager::extension_description(entry, state))
+        .collect();
     let entries = search_entries_with_groups([
-        extension_group(
-            "Active",
-            state,
-            |status| status == crate::config::ExtensionStatus::Loaded,
-        ),
-        extension_group("Disabled", state, |status| {
+        extension_group("Active", state, &descriptions, |status| {
+            status == crate::config::ExtensionStatus::Loaded
+        }),
+        extension_group("Disabled", state, &descriptions, |status| {
             status == crate::config::ExtensionStatus::Disabled
         }),
-        extension_group("Problems", state, |status| {
+        extension_group("Problems", state, &descriptions, |status| {
             !matches!(
                 status,
                 crate::config::ExtensionStatus::Loaded
@@ -93,8 +97,6 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     let item_style = fg_only(&ctx.state.theme.primary);
     let muted_style = fg_only(&ctx.state.theme.muted);
     let rows = state.entries.clone();
-    let installation_kinds = state.installation_kinds.clone();
-    let available_updates = state.available_updates.clone();
     let updating_id = state.updating_id.clone();
     let updating_style = Style::new().fg(ctx.state.theme.status.info);
     let selected_index = entries
@@ -144,18 +146,13 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
                 [Span::new(item.label.as_ref()).style(label_style)],
                 fit_description(
                     item.label.as_ref(),
-                    &extension_description(
-                        entry,
-                        &installation_kinds,
-                        &available_updates,
-                        updating_id.as_deref(),
-                    ),
+                    &descriptions[item.value],
                     EXTENSIONS_WIDTH,
                 ),
                 description_style,
             );
             Some(if updating {
-                row.description(EXTENSION_UPDATING_LABEL)
+                row.description(crate::ops::extensions_manager::EXTENSION_UPDATING_LABEL)
                     .description_style(description_style)
                     .description_spinner(crate::view::session_status::picker_circle_spinner(
                         updating_style,
@@ -182,6 +179,7 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
 fn extension_group(
     title: &'static str,
     state: &crate::state::ExtensionsState,
+    descriptions: &[String],
     include: impl Fn(crate::config::ExtensionStatus) -> bool,
 ) -> (&'static str, Vec<SearchEntry<usize>>) {
     let rows = state
@@ -193,83 +191,13 @@ fn extension_group(
             SearchEntry::item(entry.display_name().to_string(), index).description(
                 picker_description(fit_description(
                     entry.display_name(),
-                    &extension_description(
-                        entry,
-                        &state.installation_kinds,
-                        &state.available_updates,
-                        state.updating_id.as_deref(),
-                    ),
+                    &descriptions[index],
                     EXTENSIONS_WIDTH,
                 )),
             )
         })
         .collect();
     (title, rows)
-}
-
-fn extension_description(
-    entry: &crate::config::ExtensionInfo,
-    installation_kinds: &std::collections::BTreeMap<
-        String,
-        crate::extension_installation::InstallKind,
-    >,
-    available_updates: &std::collections::BTreeSet<String>,
-    updating_id: Option<&str>,
-) -> String {
-    let id = entry.id.as_deref();
-    if id.is_some_and(|id| updating_id == Some(id)) {
-        return EXTENSION_UPDATING_LABEL.to_string();
-    }
-    let mut parts = Vec::new();
-    if let Some(version) = entry.version.as_deref() {
-        parts.push(version.to_string());
-    }
-    let source = installation_kind_label(id.and_then(|id| installation_kinds.get(id)));
-    parts.push(source.to_string());
-    if entry.status != crate::config::ExtensionStatus::Loaded {
-        parts.push(entry.status_detail());
-    }
-    if id.is_some_and(|id| available_updates.contains(id)) {
-        parts.push("update available".to_string());
-    }
-    let active = entry
-        .suggested_keybindings
-        .iter()
-        .filter(|binding| {
-            binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Active
-        })
-        .count();
-    let conflicts = entry
-        .suggested_keybindings
-        .iter()
-        .filter(|binding| {
-            binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Conflict
-        })
-        .count();
-    if active > 0 {
-        parts.push(format!(
-            "{active} key{} active",
-            if active == 1 { "" } else { "s" }
-        ));
-    }
-    if conflicts > 0 {
-        parts.push(format!(
-            "{conflicts} key conflict{}",
-            if conflicts == 1 { "" } else { "s" }
-        ));
-    }
-    parts.join(" · ")
-}
-
-fn installation_kind_label(
-    kind: Option<&crate::extension_installation::InstallKind>,
-) -> &'static str {
-    match kind {
-        Some(crate::extension_installation::InstallKind::Git) => "git",
-        Some(crate::extension_installation::InstallKind::Local) => "copied",
-        Some(crate::extension_installation::InstallKind::Link) => "linked",
-        None => "manual",
-    }
 }
 
 pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
@@ -297,20 +225,20 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
             state.manifest_entries.contains(entry.path.as_str()),
         ),
     ];
+    let formatter = ExtensionReportFormatter::new(detail.sections.clone(), &ctx.state.theme);
     let document = DocumentView::new(crate::config::report_text(&detail.sections))
-        .formatter(ExtensionReportFormatter::new(
-            detail.sections.clone(),
-            &ctx.state.theme,
-        ))
+        .height(report_height(ctx, &formatter))
+        .formatter(formatter)
         .wrap(true)
         .line_numbers(false)
         .border(false)
-        .height(Length::Flex(1))
         .padding((0, 1, 0, 1))
         .scrollbar(true)
         .scrollbar_config(modal_scrollbar_config(&ctx.state.theme))
+        // The report is the modal's only focusable widget, so it has to be its tab stop: an
+        // overlay whose focus ring is empty swallows every key before dispatch, which is what
+        // used to leave the arrows and Page keys inert over a report too long to fit.
         .focusable(true)
-        .tab_stop(false)
         .style(fg_only(&ctx.state.theme.primary))
         .focus_content_style(fg_only(&ctx.state.theme.primary))
         .on_key(overlay_interceptor(ctx, &actions))
@@ -324,6 +252,45 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
         .on_close(ctx.link().callback(|_| Msg::CloseExtensionDetail))
         .child(action_palette_frame(content))
         .into()
+}
+
+/// Height for the report body: content-sized while the report fits, capped once it does not.
+///
+/// `action_palette_modal_with_width` caps the modal at 65% of the viewport, and a `Length::Auto`
+/// document squeezed by that cap clips its tail rather than scrolling - the hint row then
+/// overdraws the last visible line. So the cap is applied here instead, from an estimate that
+/// leans the safe way: the row count rounds up (word wrapping breaks earlier than this counts,
+/// never later) and the budget rounds down, so a report near the boundary takes the capped branch,
+/// where the document scrolls. Over-capping costs a few unused rows; under-capping costs the hints.
+fn report_height(ctx: &Context<AppRoot>, formatter: &ExtensionReportFormatter) -> Length {
+    // Modal border, hint row, and one row of slack.
+    const CHROME_ROWS: u16 = 4;
+    // Modal border, the document's own horizontal padding, and its scrollbar column.
+    const TEXT_WIDTH: u16 = EXTENSION_DETAIL_WIDTH - 5;
+
+    let cap = (ctx.viewport().h * 65 / 100)
+        .saturating_sub(CHROME_ROWS)
+        .max(3);
+    let rows: u32 = formatter
+        .document()
+        .blocks
+        .iter()
+        .map(|block| match block {
+            FormattedBlock::Lines(lines) => lines
+                .iter()
+                .map(|line| {
+                    let budget = usize::from(TEXT_WIDTH.saturating_sub(line.indent)).max(1);
+                    tui_lipan::utils::spans::line_width(&line.spans).div_ceil(budget).max(1) as u32
+                })
+                .sum(),
+            _ => 0,
+        })
+        .sum();
+    if rows > u32::from(cap) {
+        Length::Px(cap)
+    } else {
+        Length::Auto
+    }
 }
 
 #[derive(Clone)]
@@ -523,7 +490,7 @@ fn push_report_line(
 
 #[cfg(test)]
 mod extension_report_tests {
-    use super::{compact_home_paths, installation_kind_label};
+    use super::compact_home_paths;
 
     #[test]
     fn report_paths_collapse_home_prefixes_without_touching_sibling_names() {
@@ -542,21 +509,5 @@ mod extension_report_tests {
             compact_home_paths("/prefix/home/you/project", Some("/home/you")),
             "/prefix/home/you/project"
         );
-    }
-
-    #[test]
-    fn installation_kinds_have_compact_distinct_picker_labels() {
-        use crate::extension_installation::InstallKind;
-
-        assert_eq!(installation_kind_label(Some(&InstallKind::Git)), "git");
-        assert_eq!(
-            installation_kind_label(Some(&InstallKind::Local)),
-            "copied"
-        );
-        assert_eq!(
-            installation_kind_label(Some(&InstallKind::Link)),
-            "linked"
-        );
-        assert_eq!(installation_kind_label(None), "manual");
     }
 }

@@ -80,6 +80,29 @@ pub enum HelpTab {
     All,
 }
 
+impl HelpTab {
+    /// The tab strip's order, shared by the strip, the keyboard cycle, and `HelpTabSelected`, so
+    /// the three cannot disagree about which index is which tab.
+    pub const ORDER: [Self; 4] = [Self::Global, Self::Modes, Self::Unbound, Self::All];
+
+    pub fn index(self) -> usize {
+        Self::ORDER
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or_default()
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        Self::ORDER.get(index).copied().unwrap_or_default()
+    }
+
+    /// The tab `steps` places along the strip, wrapping at both ends.
+    pub fn stepped(self, steps: isize) -> Self {
+        let count = Self::ORDER.len();
+        Self::from_index((self.index() + count.wrapping_add_signed(steps)) % count)
+    }
+}
+
 pub struct PublishStreamState {
     pub id: u64,
     pub sender: std::sync::mpsc::SyncSender<String>,

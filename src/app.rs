@@ -752,7 +752,32 @@ impl AppRoot {
             ctx.request_focus(crate::view::help_filter_key());
             return Some(KeyUpdate::handled(Update::full()));
         }
+        if let Some(steps) = Self::help_tab_step(ctx, key) {
+            let index = ctx.state.help_tab.stepped(steps).index();
+            ctx.link().send(Msg::HelpTabSelected(index));
+            return Some(KeyUpdate::handled(Update::full()));
+        }
         None
+    }
+
+    /// How far a key moves the help tab strip, if it moves it at all.
+    ///
+    /// `Tab`/`Shift+Tab` cycle from anywhere in the overlay; the arrows only do while the filter
+    /// is unfocused, where they would otherwise be the caret's.
+    fn help_tab_step(ctx: &Context<Self>, key: KeyEvent) -> Option<isize> {
+        if key.mods.ctrl || key.mods.alt || key.mods.super_key {
+            return None;
+        }
+        match key.code {
+            KeyCode::Tab if !key.mods.shift => Some(1),
+            KeyCode::BackTab | KeyCode::Tab => Some(-1),
+            KeyCode::Left | KeyCode::Right
+                if !ctx.has_focus_within_key(crate::view::help_filter_key()) =>
+            {
+                Some(if key.code == KeyCode::Left { -1 } else { 1 })
+            }
+            _ => None,
+        }
     }
 
     fn geometry_animation_enabled(state: &State, pane: &Pane, viewport_changed: bool) -> bool {

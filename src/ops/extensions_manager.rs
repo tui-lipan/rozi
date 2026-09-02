@@ -8,6 +8,8 @@ use crate::AppRoot;
 use crate::config::{ExtensionInfo, ExtensionSettings, ExtensionStatus};
 use crate::state::{ExtensionDetailState, ExtensionsState};
 
+pub(crate) const EXTENSION_UPDATING_LABEL: &str = "updating…";
+
 static NEXT_UPDATE_CHECK_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 struct ManagerScan {
@@ -115,15 +117,12 @@ pub(crate) fn toggle_selected(ctx: &mut Context<AppRoot>) -> Update {
         return Update::full();
     }
 
+    // The row moves between the Active and Disabled groups and the enter hint flips, so the
+    // toggle needs no toast. Only newly suppressed suggestions are worth interrupting for.
     let update = crate::ops::config::reload_extensions_quiet(ctx);
-    notify_info(
-        ctx,
-        &format!(
-            "{} {}",
-            if disabled { "Disabled" } else { "Enabled" },
-            entry.display_name()
-        ),
-    );
+    if !disabled {
+        warn_about_key_conflicts(ctx, &id);
+    }
     update
 }
 
@@ -279,9 +278,11 @@ pub(crate) fn install_finished(
     match result {
         Ok(id) => {
             state.install_prompt = None;
+            // The prompt closes onto the new row, selected, with its version, source, and
+            // keybinding counts in the description. Only the conflicts need a toast.
             let update = crate::ops::config::reload_extensions_quiet(ctx);
             select_by_id(ctx, &id);
-            notify_info(ctx, &installed_summary(&ctx.state, &id));
+            warn_about_key_conflicts(ctx, &id);
             update
         }
         Err(error) => {
@@ -493,9 +494,8 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     }
     cleanup_disabled_after_removal(ctx, &entry);
 
-    let update = crate::ops::config::reload_extensions_quiet(ctx);
-    notify_info(ctx, &format!("Removed {}", entry.display_name()));
-    update
+    // The row leaves the list under the armed confirmation the user just pressed twice.
+    crate::ops::config::reload_extensions_quiet(ctx)
 }
 
 pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
@@ -694,25 +694,93 @@ fn select_by_id(ctx: &mut Context<AppRoot>, id: &str) {
     }
 }
 
+/// The right-aligned picker description for one row.
+///
+/// The manager renders this and matches queries against it, so a row the palette surfaced on a
+/// description word stays actionable. The `Disabled` and `Problems` groups already name a status,
+/// but a problem row's detail also carries its first error, so only the bare `disabled` label is
+/// left out.
+pub(crate) fn extension_description(entry: &ExtensionInfo, state: &ExtensionsState) -> String {
+    let id = entry.id.as_deref();
+    if id.is_some_and(|id| state.updating_id.as_deref() == Some(id)) {
+        return EXTENSION_UPDATING_LABEL.to_string();
+    }
+    let mut parts = Vec::new();
+    if let Some(version) = entry.version.as_deref() {
+        parts.push(version.to_string());
+    }
+    parts.push(
+        installation_kind_label(id.and_then(|id| state.installation_kinds.get(id))).to_string(),
+    );
+    if !matches!(
+        entry.status,
+        ExtensionStatus::Loaded | ExtensionStatus::Disabled
+    ) {
+        parts.push(entry.status_detail());
+    }
+    if id.is_some_and(|id| state.available_updates.contains(id)) {
+        parts.push("update available".to_string());
+    }
+    let active = suggested_keybindings(
+        entry,
+        crate::config::ExtensionSuggestedKeybindingStatus::Active,
+    );
+    let conflicts = suggested_keybindings(
+        entry,
+        crate::config::ExtensionSuggestedKeybindingStatus::Conflict,
+    );
+    if active > 0 {
+        parts.push(format!(
+            "{active} key{} active",
+            if active == 1 { "" } else { "s" }
+        ));
+    }
+    if conflicts > 0 {
+        parts.push(format!(
+            "{conflicts} key conflict{}",
+            if conflicts == 1 { "" } else { "s" }
+        ));
+    }
+    parts.join(" · ")
+}
+
+fn installation_kind_label(
+    kind: Option<&crate::extension_installation::InstallKind>,
+) -> &'static str {
+    match kind {
+        Some(crate::extension_installation::InstallKind::Git) => "git",
+        Some(crate::extension_installation::InstallKind::Local) => "copied",
+        Some(crate::extension_installation::InstallKind::Link) => "linked",
+        None => "manual",
+    }
+}
+
+fn suggested_keybindings(
+    entry: &ExtensionInfo,
+    status: crate::config::ExtensionSuggestedKeybindingStatus,
+) -> usize {
+    entry
+        .suggested_keybindings
+        .iter()
+        .filter(|binding| binding.status == status)
+        .count()
+}
+
 fn selected_entry(state: &crate::state::State) -> Option<&ExtensionInfo> {
     let extensions = state.extensions.as_ref()?;
     let entry = extensions.entries.get(extensions.selected)?;
-    extension_matches_query(entry, &extensions.query).then_some(entry)
+    extension_matches_query(entry, extensions).then_some(entry)
 }
 
-fn extension_matches_query(entry: &ExtensionInfo, query: &str) -> bool {
-    if query.trim().is_empty() {
+fn extension_matches_query(entry: &ExtensionInfo, extensions: &ExtensionsState) -> bool {
+    if extensions.query.trim().is_empty() {
         return true;
     }
-    let description = match entry.version.as_deref() {
-        Some(version) => format!("{version} · {}", entry.status_detail()),
-        None => entry.status_detail(),
-    };
     let items = [SearchItem::new(entry.display_name(), ())
-        .description(ItemDescription::new().right(description))];
+        .description(ItemDescription::new().right(extension_description(entry, extensions)))];
     !tui_lipan::rank_search_palette_indices_with_mode(
         &items,
-        query,
+        &extensions.query,
         SearchMatchMode::Hybrid,
         |_, _, score| score as f64,
     )
@@ -807,53 +875,53 @@ fn notify_info(ctx: &mut Context<AppRoot>, message: &str) {
     crate::pane::pty_events::notify_info(ctx, message);
 }
 
-fn installed_summary(state: &crate::state::State, id: &str) -> String {
-    let Some(entry) = state.extensions.as_ref().and_then(|extensions| {
-        extensions
-            .entries
-            .iter()
-            .find(|entry| entry.id.as_deref() == Some(id))
-    }) else {
-        return format!("Installed {id}");
-    };
-    let navigation_programs = entry
-        .navigation_targets
-        .iter()
-        .map(|target| target.programs.len())
-        .sum::<usize>();
-    let active = entry
-        .suggested_keybindings
-        .iter()
-        .filter(|binding| {
-            binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Active
+/// A suggested keybinding an existing binding already owns is silently dropped, so installing or
+/// enabling an extension that carries one warns rather than leaving the row description to say it.
+fn warn_about_key_conflicts(ctx: &mut Context<AppRoot>, id: &str) {
+    let conflicts = ctx
+        .state
+        .extensions
+        .as_ref()
+        .and_then(|extensions| {
+            extensions
+                .entries
+                .iter()
+                .find(|entry| entry.id.as_deref() == Some(id))
         })
-        .count();
-    let conflicts = entry
-        .suggested_keybindings
-        .iter()
-        .filter(|binding| {
-            binding.status == crate::config::ExtensionSuggestedKeybindingStatus::Conflict
+        .map(|entry| {
+            suggested_keybindings(
+                entry,
+                crate::config::ExtensionSuggestedKeybindingStatus::Conflict,
+            )
         })
-        .count();
-    let mut parts = vec![format!("Installed {id}")];
-    if navigation_programs > 0 {
-        parts.push(format!("{navigation_programs} navigation programs"));
+        .unwrap_or_default();
+    if conflicts == 0 {
+        return;
     }
-    if active > 0 {
-        parts.push(format!(
-            "{active} keybinding{} active",
-            if active == 1 { "" } else { "s" }
-        ));
-    }
-    if conflicts > 0 {
-        parts.push(format!(
-            "{conflicts} key conflict{}",
+    crate::pane::pty_events::notify_warning(
+        ctx,
+        format!("{id} keybindings not bound"),
+        format!(
+            "{conflicts} suggested key{} already bound",
             if conflicts == 1 { "" } else { "s" }
-        ));
-    }
-    parts.join(" · ")
+        ),
+    );
 }
 
 fn notify_error(ctx: &mut Context<AppRoot>, title: &str, detail: impl Into<String>) {
     crate::pane::pty_events::notify_error(ctx, title, detail.into());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::installation_kind_label;
+    use crate::extension_installation::InstallKind;
+
+    #[test]
+    fn installation_kinds_have_compact_distinct_picker_labels() {
+        assert_eq!(installation_kind_label(Some(&InstallKind::Git)), "git");
+        assert_eq!(installation_kind_label(Some(&InstallKind::Local)), "copied");
+        assert_eq!(installation_kind_label(Some(&InstallKind::Link)), "linked");
+        assert_eq!(installation_kind_label(None), "manual");
+    }
 }

@@ -84,8 +84,10 @@ fn help_rows(ctx: &Context<AppRoot>) -> Vec<HelpRow> {
 fn direct_mode_rows() -> Vec<HelpRow> {
     const COPY: &str = "Copy mode · DIRECT";
     const SIDEBAR: &str = "Sidebar focused · DIRECT";
+    const HELP: &str = "Keybindings open · DIRECT";
     const COPY_EXTRA: &str = "direct copy mode context selection";
     const SIDEBAR_EXTRA: &str = "direct sidebar focused context tree files git panel";
+    const HELP_EXTRA: &str = "direct keybindings help overlay context tabs";
     let mut rows = vec![
         HelpRow::direct(COPY, "hjkl / arrows", "Move cursor", COPY_EXTRA),
         HelpRow::direct(COPY, "w / b / e", "Word forward / back / end", COPY_EXTRA),
@@ -149,6 +151,10 @@ fn direct_mode_rows() -> Vec<HelpRow> {
         ),
         HelpRow::direct(SIDEBAR, "s", "Toggle panels", SIDEBAR_EXTRA),
         HelpRow::direct(SIDEBAR, "Esc", "Return to pane", SIDEBAR_EXTRA),
+        HelpRow::direct(HELP, "Tab / Shift+Tab, ← / →", "Cycle tabs", HELP_EXTRA),
+        HelpRow::direct(HELP, "↑ / ↓, PageUp / PageDown", "Scroll", HELP_EXTRA),
+        HelpRow::direct(HELP, "/", "Filter", HELP_EXTRA),
+        HelpRow::direct(HELP, "Esc", "Close", HELP_EXTRA),
     ];
     for row in &mut rows {
         row.extra.push_str(" modes");
@@ -280,12 +286,7 @@ pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
             Tab::new("Unbound"),
             Tab::new("All"),
         ])
-        .active(match ctx.state.help_tab {
-            crate::state::HelpTab::Global => 0,
-            crate::state::HelpTab::Modes => 1,
-            crate::state::HelpTab::Unbound => 2,
-            crate::state::HelpTab::All => 3,
-        })
+        .active(ctx.state.help_tab.index())
         .focusable(false)
         .width(Length::Flex(1))
         .height(Length::Px(1))
@@ -309,23 +310,29 @@ pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
         ctx.state.help_query.text(),
     );
     let mut list = VStack::new();
+    let mut list_rows = 0usize;
     if groups.is_empty() {
         list = list.child(
             Text::new("No matches")
                 .style(fg_only(&theme.muted))
                 .height(Length::Px(1)),
         );
+        list_rows += 1;
     } else {
         for (index, (category, rows)) in groups.iter().enumerate() {
             if !category.is_empty() {
                 list = list.child(help_section(category, theme, index > 0));
+                // The divider, plus the blank row a spaced section carries above it.
+                list_rows += if index > 0 { 2 } else { 1 };
             }
             for row in rows {
                 list = list.child(help_row(&row.keys, &row.label, theme));
             }
+            list_rows += rows.len();
         }
     }
     let body = VStack::new()
+        .height(Length::Auto)
         .child(tabs)
         .child(Text::new("").height(Length::Px(1)))
         .child(
@@ -335,12 +342,17 @@ pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
                 .scroll_wheel(true)
                 .scrollbar(true)
                 .scrollbar_config(modal_scrollbar_config(theme))
-                .height(Length::Flex(1))
+                .height(help_list_height(ctx, list_rows))
                 .key(help_scroll_key()),
         );
     Modal::new()
         .width(Length::Px(64))
-        .height(Length::Percent(70))
+        // Content-sized so filtering down to a handful of rows shrinks the modal, capped at the
+        // 70% the full list used to claim unconditionally. `reserve_height` pins the top edge, so
+        // the modal shrinks downward while you type rather than re-centering under the cursor.
+        .height(Length::Auto)
+        .max_height(Length::Percent(HELP_MAX_HEIGHT_PERCENT))
+        .reserve_height(Length::Percent(HELP_MAX_HEIGHT_PERCENT))
         .padding(0)
         .border(false)
         .frame_style(Style::new().bg(theme.surface.element))
@@ -355,10 +367,26 @@ pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
                 .border_style(BorderStyle::Rounded)
                 .style(Style::new().bg(theme.surface.element))
                 .padding((0, 1, 1, 1))
-                .height(Length::Flex(1))
+                .height(Length::Auto)
                 .child(body),
         )
         .into()
+}
+
+const HELP_MAX_HEIGHT_PERCENT: u16 = 70;
+
+/// Height for the keybinding list: every row is one line, so the count is exact, and the list is
+/// only capped where the modal would otherwise outgrow the viewport. A `Length::Flex(1)` list
+/// resolves to whatever the modal offers, which is what pinned the modal open at its full height
+/// no matter how few rows the filter left.
+fn help_list_height(ctx: &Context<AppRoot>, rows: usize) -> Length {
+    // The frame's border and bottom padding, the tab strip, and the blank row under it.
+    const CHROME_ROWS: u16 = 5;
+
+    let cap = (ctx.viewport().h * HELP_MAX_HEIGHT_PERCENT / 100)
+        .saturating_sub(CHROME_ROWS)
+        .max(3);
+    Length::Px(u16::try_from(rows).unwrap_or(u16::MAX).clamp(1, cap))
 }
 
 fn help_category_priority(category: &str) -> usize {
@@ -377,8 +405,9 @@ fn help_category_priority(category: &str) -> usize {
         "Mouse" => 11,
         "Sidebar" => 12,
         "Sidebar focused · DIRECT" => 13,
+        "Keybindings open · DIRECT" => 14,
         "Custom" => usize::MAX,
-        _ => 14,
+        _ => 15,
     }
 }
 

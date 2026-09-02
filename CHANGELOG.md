@@ -20,6 +20,15 @@
 - Takes tui-lipan 0.4.1, which requires a `termina` that no longer panics the input worker on a
   mouse report at column or row 0. Rozi's `[patch.crates-io]` for that fix is gone, so builds from
   the published crate - `cargo install rozi` included - carry it like every other build.
+- Enabling, disabling, installing, and removing an extension no longer toast. The Extensions picker
+  already shows each of those: the row moves between the `Active` and `Disabled` groups, the
+  `Enter` hint flips, a new row arrives selected, a removed one leaves. What does toast is a
+  suggested keybinding an existing binding already owns, which is dropped silently otherwise.
+- The Extensions picker drops `disabled` from a row's description. The `Disabled` group heading
+  above it already says so; a problem row still carries its status and first error.
+- The extension report opens in place of the Extensions picker instead of stacking on top of it,
+  the way every other nested dialog behaves. `Esc` returns to the picker with its query and
+  selection intact.
 
 ### Fixed
 
@@ -33,6 +42,17 @@
 - The extension detail overlay scrolls its own document with an integrated scrollbar and even side
   padding. It had been wrapped in an outer `ScrollView` with a one-column left inset to work around
   a tui-lipan scrollbar reservation the 0.4.1 renderer no longer needs.
+- The extension report's modal hugs the report instead of always claiming 65% of the viewport. A
+  report that does not fit still stops at that cap and scrolls.
+- The arrows, `PageUp`/`PageDown`, and `Home`/`End` scroll the extension report. The report was the
+  modal's only focusable widget and was not its tab stop, which left the overlay's focus ring empty
+  - and an overlay with an empty ring swallows every key before it reaches anything.
+- The Keybindings modal hugs its list instead of always claiming 70% of the viewport, so filtering
+  down to a handful of shortcuts no longer leaves most of the panel empty. A list too long for the
+  viewport still stops at that cap and scrolls, and the modal's top edge stays put while you type.
+- `Tab` and `Shift+Tab` cycle the Keybindings tabs, and `Left` and `Right` do the same while the
+  search field is not focused. The strip was mouse-only. The overlay's own keys are now listed
+  under `Modes`, beside the other direct-mode contexts.
 
 ## 0.0.15 - 2026-09-01
 

@@ -730,7 +730,14 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_settings && ctx.state.pane_padding_editor.is_some() {
         root = root.child(pane_padding_overlay(ctx));
     }
-    if ctx.state.extensions.is_some() {
+    // The report replaces the picker rather than stacking on it, like every other nested dialog
+    // (see `ops::overlay_return`). The picker is rebuilt from `restore_query` on the way back.
+    if ctx
+        .state
+        .extensions
+        .as_ref()
+        .is_some_and(|state| state.detail.is_none())
+    {
         root = root.child(extensions_overlay(ctx));
     }
     if ctx

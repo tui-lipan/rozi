@@ -278,8 +278,9 @@ the selected row or submits a prompt.
 - Layout picker: `Ctrl+F` saves the highlighted layout as the default.
 - Scrollback search: `Enter` selects a result, `Ctrl+N` and `Ctrl+P` move among results, `Tab`
   changes scope, and `Esc` closes.
-- Help: `/` searches the current help tab. `Enter` or `Esc` leaves the search field, and a second
-  `Esc` closes help.
+- Help: `Tab` and `Shift+Tab` cycle the tabs, and `Left` and `Right` do the same while the search
+  field is not focused. The arrow and paging keys scroll the list. `/` searches the current help
+  tab. `Enter` or `Esc` leaves the search field, and a second `Esc` closes help.
 - Settings: arrows move through rows. `Left` and `Right` change a setting where the row supports
   stepping.
 - Extensions: `Enter` enables or disables the selected extension, `Ctrl+D` opens details,

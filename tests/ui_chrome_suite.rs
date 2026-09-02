@@ -2,6 +2,8 @@
 mod askpass_smoke;
 #[path = "suites/ui_chrome/extensions_manager_smoke.rs"]
 mod extensions_manager_smoke;
+#[path = "suites/ui_chrome/help_smoke.rs"]
+mod help_smoke;
 #[path = "suites/ui_chrome/pick_smoke.rs"]
 mod pick_smoke;
 #[path = "suites/ui_chrome/prefix_mouse_gestures.rs"]

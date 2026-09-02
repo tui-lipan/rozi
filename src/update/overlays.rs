@@ -132,12 +132,7 @@ pub(super) fn help_query_changed(ctx: &mut Context<AppRoot>, event: InputEvent) 
 }
 
 pub(super) fn help_tab_selected(ctx: &mut Context<AppRoot>, index: usize) -> Update {
-    ctx.state.help_tab = match index {
-        1 => crate::state::HelpTab::Modes,
-        2 => crate::state::HelpTab::Unbound,
-        3 => crate::state::HelpTab::All,
-        _ => crate::state::HelpTab::Global,
-    };
+    ctx.state.help_tab = crate::state::HelpTab::from_index(index);
     ctx.request_focus(crate::view::help_scroll_key());
     Update::full()
 }

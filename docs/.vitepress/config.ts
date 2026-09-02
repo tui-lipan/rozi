@@ -233,7 +233,7 @@ export default defineConfig({
           { text: "Themes", link: "/themes" },
           {
             text: "Vim and Neovim integration",
-            link: "https://github.com/tui-lipan/rozi/tree/master/integrations/vim-rozi-navigator",
+            link: "https://github.com/tui-lipan/vim-rozi-navigator",
           },
         ],
       },

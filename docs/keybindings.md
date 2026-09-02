@@ -152,8 +152,8 @@ including an empty list, replaces both built-in and extension-provided names com
 Editor-specific behavior remains in normal editor packages. The package owns its split layout and
 uses the same CLI action boundary for local and attached sessions, while the Rozi extension
 manifest only describes routing policy. See the
-[Vim and Neovim navigator](../integrations/vim-rozi-navigator/) for an integration whose repository
-contains both sides without making either installation own the other.
+[Vim and Neovim navigator](https://github.com/tui-lipan/vim-rozi-navigator) for an integration whose
+repository contains both sides without making either installation own the other.
 
 ## Rebind a command
 

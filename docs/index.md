@@ -20,7 +20,7 @@ Start with [Getting started](getting-started.md) for a guided first session. The
 - [Terminal features](terminal.md)
 - [Sidebar](sidebar.md)
 - [Themes](themes.md)
-- [Vim and Neovim integration](../integrations/vim-rozi-navigator/)
+- [Vim and Neovim integration](https://github.com/tui-lipan/vim-rozi-navigator)
 
 ## Customize
 

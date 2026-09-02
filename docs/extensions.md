@@ -209,6 +209,13 @@ in-memory split-aware program set. The extension does not run code, receive key 
 participate in foreground-process lookup. Disabling or removing it drops its target declarations
 on the next extension reload.
 
+The standalone [vim-rozi-navigator](https://github.com/tui-lipan/vim-rozi-navigator) repository
+combines this declaration with its Vim and Neovim plugin. Register the Rozi side directly:
+
+```sh
+rozi extensions install https://github.com/tui-lipan/vim-rozi-navigator.git
+```
+
 An explicit user list wins completely:
 
 ```toml

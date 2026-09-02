@@ -36,7 +36,7 @@ The [Feature map](features.md) groups capabilities by what you may want to do. R
 | [Configuration](configuration.md) | The `config.toml` reference and live reload |
 | [Themes](themes.md) | Built-in, system, and custom themes |
 | [Profiles](profiles.md) | Reusable launch recipes, captured layouts, and profile files |
-| [Vim and Neovim navigator](../integrations/vim-rozi-navigator/) | One set of navigation keys for editor splits and rozi panes |
+| [Vim and Neovim navigator](https://github.com/tui-lipan/vim-rozi-navigator) | One set of navigation keys for editor splits and rozi panes |
 
 ## Coding agents
 

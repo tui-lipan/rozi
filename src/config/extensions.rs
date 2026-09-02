@@ -1170,16 +1170,6 @@ mod tests {
                 extension.info.errors
             );
         }
-        let navigator = check_extension(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("integrations/vim-rozi-navigator"),
-        );
-        assert_eq!(
-            navigator.info.status,
-            ExtensionStatus::Loaded,
-            "{:?}",
-            navigator.info.errors
-        );
-        assert_eq!(navigator.info.navigation_targets[0].name, "vim");
     }
 
     #[test]

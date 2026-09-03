@@ -19,7 +19,7 @@
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use super::fs_security;
@@ -233,10 +233,61 @@ pub fn runtime_dir_path(env: &PlatformEnv) -> PathBuf {
     }
 }
 
+/// How much room an endpoint needs after the runtime directory's own path.
+///
+/// The longest thing rozi puts in there is not a session endpoint but ssh's multiplexing socket:
+/// `/ssh-` plus the 40-hex `%C` destination hash is 45 bytes, and OpenSSH binds it under a
+/// temporary `.<16 random>` suffix first, for 62. A session endpoint is `/session-<name>.sock`,
+/// which with [`crate::session::discovery::MAX_SESSION_NAME_LEN`] comes to 78. The larger wins, and
+/// `runtime_dir_leaves_room_for_every_endpoint` holds this number to those two.
+#[cfg(unix)]
+const RUNTIME_DIR_HEADROOM: usize = 78;
+
 /// Per-user private fallback runtime directory when `$XDG_RUNTIME_DIR` is unavailable.
+///
+/// Normally the temp directory. macOS is the exception that forced this to be a decision: it sets
+/// no `XDG_RUNTIME_DIR` and its per-user `TMPDIR` is a 48-byte `/var/folders/<two>/<hash>/T`, so
+/// the endpoints underneath ran past what a Unix socket may be bound at. Nothing said so - ssh
+/// multiplexing died with the socket path in a message no user would connect to their temp
+/// directory, and a session with a long name simply failed to start. So the temp directory is used
+/// only while it leaves an endpoint room, and `/private/tmp` (`/tmp` elsewhere) takes over when it
+/// does not - the same place tmux keeps its sockets, and for the same reason.
+///
+/// `/private/tmp` rather than `/tmp` on macOS: the latter is a symlink to it, and
+/// [`fs_security::ensure_private_dir`] rejects symlinked components by design.
+///
+/// An explicitly set `XDG_RUNTIME_DIR` is never second-guessed, even if it is too long: it is a
+/// deliberate choice about where this user's sockets live - the test harness makes exactly that
+/// choice to keep a test's endpoints away from the developer's own - and silently relocating out of
+/// one would be worse than the bind error that follows.
 pub fn fallback_runtime_dir_path() -> PathBuf {
-    let owner = super::user::current_user_tag();
-    std::env::temp_dir().join(format!("{APP_DIR}-{owner}"))
+    fallback_runtime_dir_in(std::env::temp_dir(), &super::user::current_user_tag())
+}
+
+/// [`fallback_runtime_dir_path`] against an explicit temp directory, so the length rule can be
+/// exercised without a machine whose `TMPDIR` is long enough to trip it.
+fn fallback_runtime_dir_in(temp_dir: PathBuf, owner: &str) -> PathBuf {
+    let name = format!("{APP_DIR}-{owner}");
+    #[cfg(unix)]
+    {
+        let fits = |base: &Path| {
+            base.join(&name).as_os_str().len() + RUNTIME_DIR_HEADROOM
+                <= super::ipc::MAX_ENDPOINT_PATH_LEN
+        };
+        if !fits(&temp_dir) {
+            let short = Path::new(if cfg!(target_vendor = "apple") {
+                "/private/tmp"
+            } else {
+                "/tmp"
+            });
+            // Only when it is a real improvement: a system without it, or one where even this is
+            // too long, is better served by the temp directory it actually has.
+            if short.is_dir() && fits(short) {
+                return short.join(name);
+            }
+        }
+    }
+    temp_dir.join(name)
 }
 
 /// This binary's own path, injected into spawned processes as `ROZI_BIN`.
@@ -793,13 +844,65 @@ mod tests {
         let first = fallback_runtime_dir_path();
         let second = fallback_runtime_dir_path();
         assert_eq!(first, second);
-        assert!(first.starts_with(std::env::temp_dir()));
         assert!(
             first
                 .file_name()
                 .unwrap()
                 .to_string_lossy()
                 .starts_with("rozi-")
+        );
+    }
+
+    /// The temp directory is where this belongs, and it stays there whenever an endpoint fits.
+    #[cfg(unix)]
+    #[test]
+    fn fallback_runtime_dir_stays_in_a_temp_dir_that_fits() {
+        assert_eq!(
+            fallback_runtime_dir_in(PathBuf::from("/tmp"), "501"),
+            PathBuf::from("/tmp/rozi-501")
+        );
+    }
+
+    /// macOS's per-user `TMPDIR`, which is the case this rule exists for: 48 bytes before rozi has
+    /// written anything, and an ssh control socket or a long session name then has nowhere to land.
+    #[cfg(unix)]
+    #[test]
+    fn fallback_runtime_dir_leaves_a_temp_dir_too_small_for_an_endpoint() {
+        let cramped = PathBuf::from("/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T");
+        let resolved = fallback_runtime_dir_in(cramped.clone(), "501");
+        assert!(
+            !resolved.starts_with(&cramped),
+            "a temp directory with no room for an endpoint was kept: {}",
+            resolved.display()
+        );
+        assert!(
+            resolved.as_os_str().len() + RUNTIME_DIR_HEADROOM
+                <= super::super::ipc::MAX_ENDPOINT_PATH_LEN,
+            "the replacement has no room either: {}",
+            resolved.display()
+        );
+    }
+
+    /// [`RUNTIME_DIR_HEADROOM`] is a number, and a number drifts away from what it was measured
+    /// from. These are the two longest things that land in the runtime directory; if either grows
+    /// past the reservation, a socket stops binding somewhere far from here.
+    #[cfg(unix)]
+    #[test]
+    fn runtime_dir_headroom_covers_every_endpoint_that_lands_in_it() {
+        let longest_session = format!(
+            "/session-{}.sock",
+            "a".repeat(crate::session::discovery::MAX_SESSION_NAME_LEN)
+        );
+        assert!(
+            longest_session.len() <= RUNTIME_DIR_HEADROOM,
+            "a session endpoint no longer fits the reservation: {} > {RUNTIME_DIR_HEADROOM}",
+            longest_session.len()
+        );
+        // `/ssh-` + the 40-hex `%C` expansion + OpenSSH's `.<16 random>` temporary suffix.
+        let ssh_control = "/ssh-".len() + 40 + 17;
+        assert!(
+            ssh_control <= RUNTIME_DIR_HEADROOM,
+            "an ssh control socket no longer fits the reservation: {ssh_control} > {RUNTIME_DIR_HEADROOM}"
         );
     }
 

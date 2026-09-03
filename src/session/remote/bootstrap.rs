@@ -994,18 +994,17 @@ const CONTROL_PERSIST_SECS: u32 = 60;
 ///
 /// Unix only: OpenSSH for Windows has no connection multiplexing, so a Windows client authenticates
 /// per invocation exactly as before. The socket lives in the runtime directory, which is already
-/// private to this user; without one, multiplexing is simply skipped.
+/// private to this user; without one - or without room in it for the socket - multiplexing is
+/// simply skipped.
+#[cfg(not(unix))]
+fn apply_multiplexing(_command: &mut Command) {}
+
+#[cfg(unix)]
 fn apply_multiplexing(command: &mut Command) {
-    if !cfg!(unix) {
-        return;
-    }
     let Ok(dir) = crate::control::runtime_dir() else {
         return;
     };
-    // `%C` is a hash of user/host/port/proxy, so one master per distinct destination, and a path
-    // short enough for the socket-name limit however long the destination is.
-    let control_path = dir.join("ssh-%C");
-    let Some(control_path) = control_path.to_str() else {
+    let Some(control_path) = multiplexing_control_path(&dir) else {
         return;
     };
     command
@@ -1015,6 +1014,29 @@ fn apply_multiplexing(command: &mut Command) {
         .arg(format!("ControlPath={control_path}"))
         .arg("-o")
         .arg(format!("ControlPersist={CONTROL_PERSIST_SECS}"));
+}
+
+/// The `ControlPath` to multiplex through in `dir`, or `None` when `dir` cannot hold the socket.
+///
+/// `%C` is a hash of user/host/port/proxy, so one master per distinct destination, and a path short
+/// enough for the socket-name limit however long the destination is. What ssh binds is still longer
+/// than what it is handed: `%C` expands to 40 hex characters, and the socket is created under a
+/// temporary `.<16 random>` suffix first.
+///
+/// A path that does not fit is not a multiplexing problem. ssh exits, and it is the *attach* that
+/// fails - a convenience feature taking the whole connection down with it, which is what a 48-byte
+/// macOS `TMPDIR` used to do. Returning `None` degrades to one authentication per invocation, the
+/// same as a Windows client and the same as having no runtime directory at all.
+#[cfg(unix)]
+fn multiplexing_control_path(dir: &Path) -> Option<String> {
+    /// `%C`, as OpenSSH expands it: SHA-1 of the destination tuple, in hex.
+    const EXPANDED_HASH_LEN: usize = 40;
+    /// The `.XXXXXXXXXXXXXXXX` OpenSSH binds under before renaming the socket into place.
+    const TEMPORARY_SUFFIX_LEN: usize = 17;
+
+    let control_path = dir.join("ssh-%C").to_str()?.to_string();
+    let bound_len = control_path.len() - "%C".len() + EXPANDED_HASH_LEN + TEMPORARY_SUFFIX_LEN;
+    (bound_len <= crate::platform::ipc::MAX_ENDPOINT_PATH_LEN).then_some(control_path)
 }
 
 /// Append the OpenSSH end-of-options marker and destination. OpenSSH expects the destination before
@@ -1467,6 +1489,24 @@ protocol_max={beyond}
     /// shared connection that is four authentications, which on a password host means typing the
     /// password four times. The options that collapse them have to be on *every* invocation: the
     /// one that arrives first becomes the master, and it is not always the same one.
+    /// Multiplexing is a convenience. Handing ssh a `ControlPath` it cannot bind is not a lost
+    /// convenience but a failed *attach*, so a runtime directory with no room for the socket drops
+    /// the option instead - which is what a 48-byte macOS `TMPDIR` used to turn into a dead remote.
+    #[cfg(unix)]
+    #[test]
+    fn a_runtime_directory_too_small_for_the_socket_drops_multiplexing() {
+        assert_eq!(
+            multiplexing_control_path(Path::new("/run/user/1000/rozi")),
+            Some("/run/user/1000/rozi/ssh-%C".to_string())
+        );
+        assert_eq!(
+            multiplexing_control_path(Path::new(
+                "/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/rozi-501"
+            )),
+            None
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn every_invocation_offers_to_share_one_authenticated_connection() {

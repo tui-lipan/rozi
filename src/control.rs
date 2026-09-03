@@ -679,17 +679,35 @@ mod tests {
         std::env::temp_dir().join(format!("rozi-test-{name}-{}", std::process::id()))
     }
 
+    /// Per-uid, in the temp directory - unless the temp directory has no room for an endpoint, the
+    /// macOS case `paths::fallback_runtime_dir_leaves_a_temp_dir_too_small_for_an_endpoint` covers.
+    /// Whichever it picks, the point of the directory is that a session can be served from it.
     #[test]
     #[cfg(unix)]
     fn runtime_dir_uses_per_user_temp_fallback_without_xdg() {
-        let expected = std::env::temp_dir().join(format!(
-            "rozi-{}",
-            crate::platform::fs_security::current_uid()
+        let dir = crate::platform::paths::fallback_runtime_dir_path();
+        let name = format!("rozi-{}", crate::platform::fs_security::current_uid());
+        assert_eq!(dir.file_name().unwrap().to_string_lossy(), name);
+
+        let longest_endpoint = dir.join(format!(
+            "session-{}.sock",
+            "a".repeat(crate::session::discovery::MAX_SESSION_NAME_LEN)
         ));
-        assert_eq!(
-            crate::platform::paths::fallback_runtime_dir_path(),
-            expected
+        assert!(
+            longest_endpoint.as_os_str().len() <= crate::platform::ipc::MAX_ENDPOINT_PATH_LEN,
+            "the fallback runtime directory cannot hold a session endpoint: {}",
+            longest_endpoint.display()
         );
+
+        // Where the temp directory has the room - every ordinary Linux and Windows machine - that
+        // is still where it goes, rather than a short path nobody asked for.
+        let in_temp_dir = std::env::temp_dir().join(&name);
+        let temp_dir_has_room = in_temp_dir.as_os_str().len() + longest_endpoint.as_os_str().len()
+            - dir.as_os_str().len()
+            <= crate::platform::ipc::MAX_ENDPOINT_PATH_LEN;
+        if temp_dir_has_room {
+            assert_eq!(dir, in_temp_dir);
+        }
     }
 
     #[test]

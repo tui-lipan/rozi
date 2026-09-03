@@ -54,7 +54,7 @@ impl IpcConnection {
 mod unix;
 #[cfg(unix)]
 #[allow(unused_imports)]
-pub use unix::{BoundEndpoint, IpcConnection, IpcEndpoint, IpcListener};
+pub use unix::{BoundEndpoint, IpcConnection, IpcEndpoint, IpcListener, MAX_ENDPOINT_PATH_LEN};
 
 #[cfg(windows)]
 mod windows;

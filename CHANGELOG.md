@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Changed
+
+- On macOS the runtime directory moves out of the per-user `TMPDIR` when there is no room in it for
+  a socket, to `/private/tmp/rozi-<uid>` - where tmux keeps its own, for the same reason. macOS
+  spends 48 bytes on `/var/folders/<two>/<hash>/T` before rozi writes anything, and a Unix socket
+  path may be 104. A session running across the upgrade is not found by the new location; start it
+  again.
+- A session name is capped at 64 characters. The name is spelled into the session's socket path, so
+  a long enough one produced a session that could not be served at all - reported as whatever the
+  bind happened to fail with, nowhere near the name that caused it.
+
+### Fixed
+
+- Connecting to a remote host works on macOS. ssh's connection multiplexing puts its control socket
+  in the runtime directory, and under macOS's `TMPDIR` that path was past the length a socket may be
+  bound at, so ssh exited and took the attach down with it - the whole remote feature, unusable on
+  that platform, for a path nobody could see. The directory now leaves room, and a control path that
+  still would not fit drops multiplexing rather than the connection: a shared connection is a
+  convenience, and losing it costs an authentication per invocation, not the host.
+- `rozi extensions install <git-url>` works on Windows. The source was inspected as a filesystem
+  path before it was recognised as a URL, and Windows answers `ERROR_INVALID_NAME` for a path
+  containing `://` rather than "no such file" - which read as an unreadable source and refused every
+  Git install on that platform.
+
 ## 0.0.16 - 2026-09-03
 
 A restored session comes back running what its panes were running, not only the shells they were

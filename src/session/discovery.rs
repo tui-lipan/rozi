@@ -41,11 +41,22 @@ pub enum SessionSource {
     Remote(crate::session::remote::RemoteTarget),
 }
 
+/// The longest session name that can be bound as an endpoint.
+///
+/// A session's name is not just a label: it is spelled into its endpoint's file name, and on Unix
+/// that path has a hard limit (see [`crate::platform::ipc::MAX_ENDPOINT_PATH_LEN`]). Unbounded, a
+/// long enough name produced a session that could not be served at all, reported as whatever the
+/// bind failed with - so the bound is stated here, where a name is admitted, rather than discovered
+/// at the socket. 64 is far past any name a person types and still leaves the runtime directory
+/// room to move (see [`crate::platform::paths::fallback_runtime_dir_path`]).
+pub const MAX_SESSION_NAME_LEN: usize = 64;
+
 /// Whether `name` is a well-formed *attach target*. Like [`valid_session_name`] but permits the
 /// reserved `eph-` prefix: attaching to an already-running ephemeral session (our own, shown as the
 /// current row) is legitimate even though users may not *create* ephemeral names.
 pub fn valid_attach_target(name: &str) -> bool {
     !name.is_empty()
+        && name.len() <= MAX_SESSION_NAME_LEN
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
@@ -652,5 +663,14 @@ mod tests {
             DiscoveredSessionStatus::Running { panes: 2, .. }
         ));
         assert_eq!(parsed[1].status, DiscoveredSessionStatus::Restorable);
+    }
+
+    /// A name is spelled into a socket path, so an unbounded one is a session that cannot be
+    /// served. Rejecting it where names are admitted turns a bind failure into a refused name.
+    #[test]
+    fn a_name_too_long_to_bind_is_not_a_valid_target() {
+        assert!(valid_attach_target(&"a".repeat(MAX_SESSION_NAME_LEN)));
+        assert!(!valid_attach_target(&"a".repeat(MAX_SESSION_NAME_LEN + 1)));
+        assert!(!valid_session_name(&"a".repeat(MAX_SESSION_NAME_LEN + 1)));
     }
 }

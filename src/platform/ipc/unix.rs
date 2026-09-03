@@ -14,6 +14,19 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// The longest path a Unix-domain socket can be bound at, terminator excluded.
+///
+/// `sockaddr_un.sun_path` is a fixed array the kernel copies the path into, NUL included: 104 bytes
+/// on the Apple platforms and 108 on Linux. Nothing reports this as a limit until a bind fails, and
+/// a bind that fails on a path length reads like a permissions or a "server did not start" problem.
+/// So it is stated once, here, and everything that has to leave room for an endpoint measures
+/// against it - see [`crate::platform::paths::fallback_runtime_dir_path`].
+pub const MAX_ENDPOINT_PATH_LEN: usize = if cfg!(target_vendor = "apple") {
+    103
+} else {
+    107
+};
+
 /// A Unix-domain-socket endpoint: a path in the filesystem namespace. Naming conventions for
 /// control and session endpoints live in [`super::EndpointRegistry`]; this type only knows how to
 /// bind/connect once a path has been decided.

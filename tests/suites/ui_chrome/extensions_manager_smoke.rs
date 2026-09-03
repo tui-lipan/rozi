@@ -370,7 +370,15 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             assert!(detail.contains("copy report"), "{detail}");
             assert!(!detail.contains("Ctrl+u"), "{detail}");
             assert!(!detail.contains("Search report"), "{detail}");
-            assert!(detail.contains("command.py"), "{detail}");
+            // The launch line carries the extension's absolute directory, and a deep enough one
+            // wraps inside the file name itself - on Windows the fold lands between `command.` and
+            // `py`. What this asserts is that the command is shown, not where the panel folded it,
+            // so match with the wrapping and the panel's chrome taken back out.
+            let unfolded: String = detail
+                .chars()
+                .filter(|c| !c.is_whitespace() && !"│─╭╮╰╯".contains(*c))
+                .collect();
+            assert!(unfolded.contains("command.py"), "{detail}");
             // The report replaces the picker rather than stacking on it.
             assert!(!detail.contains("Search extensions…"), "{detail}");
             assert!(

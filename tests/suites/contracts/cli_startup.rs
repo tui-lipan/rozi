@@ -186,6 +186,12 @@ mod unix {
             }
         };
 
+        // The listener polls, but this read should block until the client's line arrives. Linux
+        // hands `accept` a blocking socket regardless of the listener; the BSDs, macOS included,
+        // let it inherit `O_NONBLOCK`, so the read returned `EAGAIN` for whatever had not arrived
+        // in the same instant - a failure that depended on scheduling, not on the behaviour here.
+        stream.set_nonblocking(false).unwrap();
+
         let mut request = String::new();
         BufReader::new(stream.try_clone().unwrap())
             .read_line(&mut request)

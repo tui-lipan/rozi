@@ -244,7 +244,7 @@ wait_for_pane() {
 start_client() {
   local rows=$1 cols=$2 after socket wrapper state status client_pid
   local deadline=$((SECONDS + 15)) log="$ROOT/client-${#WRAPPER_PIDS[@]}.log"
-  script -qefc "stty rows $rows cols $cols; exec '$BIN' attach '$SESSION'" /dev/null </dev/null >"$log" 2>&1 &
+  script -qefc "stty rows $rows cols $cols; exec '$BIN' sessions attach '$SESSION'" /dev/null </dev/null >"$log" 2>&1 &
   wrapper=$!
   WRAPPER_PIDS+=("$wrapper")
   while ((SECONDS < deadline)); do

@@ -900,11 +900,13 @@ mod tests {
                 .expect("command link settled above"),
         );
         for index in 0..count {
+            // Distinct generations keep these as separate queue entries. These tests exercise the
+            // drain budget and command yielding, not mailbox coalescing.
             mailbox
                 .push(Frame::PaneBytes {
                     pane_id: (index % 2) as crate::state::PaneId + 1,
                     local: false,
-                    generation: 1,
+                    generation: index as u64 + 1,
                     bytes: vec![index as u8],
                 })
                 .expect("test frame must fit in the inbound mailbox");

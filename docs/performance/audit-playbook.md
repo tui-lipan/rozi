@@ -238,11 +238,12 @@ samply record --save-only --output target/perf-audit/profile.json.gz \
 Generate one controlled workload and stop the recording cleanly. Report the sampled thread and
 process. Keep client, server, and child-shell CPU separate.
 
-Do not attach a sampler to a running client with `samply record -p <client-pid>`. On Linux the
-attach stalls the client: it stops serving control requests and stops rendering, reports 0.00% of
-one core, and does not recover. A client CPU figure recorded that way measures a stalled process.
-Attaching to the session server is unaffected. For client-side questions, launch a benchmark
-binary under the sampler instead:
+Do not attach samply to a client hosted by util-linux `script` with
+`samply record -p <client-pid>`. On Linux, samply stops and resumes the target while attaching.
+`script` propagates the child stop by stopping itself, but samply resumes only the target. The
+stopped wrapper no longer drains the PTY, so the resumed client eventually blocks while rendering
+and reports 0.00% of one core. Launch the client under samply, or launch a benchmark binary under
+the sampler instead. Attaching to the session server is unaffected:
 
 ```bash
 CARGO_PROFILE_BENCH_DEBUG=true CARGO_PROFILE_BENCH_STRIP=false \

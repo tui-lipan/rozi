@@ -978,6 +978,9 @@ pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig)
 /// How long a shared connection outlives the command that opened it. Long enough to carry a probe
 /// straight into the attach that follows it, short enough that quitting rozi leaves nothing behind
 /// worth noticing.
+///
+/// Unix only, like the multiplexing it configures: OpenSSH for Windows has none.
+#[cfg(unix)]
 const CONTROL_PERSIST_SECS: u32 = 60;
 
 /// Share one authenticated connection across every ssh a single remote operation runs.

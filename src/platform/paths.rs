@@ -19,7 +19,7 @@
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use super::fs_security;
@@ -270,6 +270,8 @@ fn fallback_runtime_dir_in(temp_dir: PathBuf, owner: &str) -> PathBuf {
     let name = format!("{APP_DIR}-{owner}");
     #[cfg(unix)]
     {
+        use std::path::Path;
+
         let fits = |base: &Path| {
             base.join(&name).as_os_str().len() + RUNTIME_DIR_HEADROOM
                 <= super::ipc::MAX_ENDPOINT_PATH_LEN

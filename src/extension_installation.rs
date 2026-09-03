@@ -437,7 +437,17 @@ fn resolve_source(request: InstallRequest) -> Result<ResolvedSource, String> {
                 Ok(_) => {
                     canonical_directory(path, "Local extension source").map(ResolvedSource::Local)
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // `InvalidFilename` alongside `NotFound` because a remote URL is not merely a path
+                // that does not exist: on Windows `https://host/repo.git` is invalid path *syntax*,
+                // and the OS answers `ERROR_INVALID_NAME` rather than "no such file". Read as a
+                // failure to inspect the source, that refused every Git install on that platform
+                // while the same command worked on Linux and macOS.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidFilename
+                    ) =>
+                {
                     if is_git_url(&source) {
                         Ok(ResolvedSource::Git(source))
                     } else {

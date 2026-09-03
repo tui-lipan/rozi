@@ -243,7 +243,10 @@ mod tests {
         assert!(checkout.path().join("keep").exists());
     }
 
-    #[cfg(unix)]
+    // Not macOS: APFS enforces UTF-8 in file names and rejects the byte this test needs with
+    // `EILSEQ`, so the path it is about cannot be created there. Same gate as the sibling case in
+    // `config::extensions`.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn lossy_diagnostic_path_resolves_to_the_native_installation_path() {
         use std::ffi::OsString;

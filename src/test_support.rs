@@ -98,9 +98,7 @@ fn scratch_root() -> &'static Path {
 fn runtime_scratch_root() -> &'static Path {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     ROOT.get_or_init(|| {
-        let base = PlatformEnv::snapshot()
-            .xdg_runtime_dir
-            .unwrap_or_else(std::env::temp_dir);
+        let base = runtime_scratch_base();
         sweep_stale_runtime_roots(&base);
         let root = base.join(format!("rozi-test-run-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -112,6 +110,34 @@ fn runtime_scratch_root() -> &'static Path {
         }
         root
     })
+}
+
+/// Where [`runtime_scratch_root`] is carved out: a directory short enough that a session endpoint
+/// inside it still fits `sockaddr_un.sun_path`.
+///
+/// `XDG_RUNTIME_DIR` is the right home for an endpoint, and where it exists it is already short
+/// (`/run/user/1000`). macOS has none, and the fallback - its per-user temp directory - is a
+/// 48-byte `/var/folders/<two>/<hash>/T`. A session endpoint under that runs past the 104 bytes
+/// macOS allows, so the socket cannot be bound at all: a test that renames a session reads the
+/// bind failure as the rename being *refused*, which is a plausible enough result to look like a
+/// product bug. `/tmp` is where a Linux runner without `XDG_RUNTIME_DIR` already lands, so falling
+/// back to it keeps one arrangement across platforms rather than inventing a macOS-only one.
+fn runtime_scratch_base() -> PathBuf {
+    /// What follows the base is `/rozi-test-run-<pid>/rozi/session-<name>.sock`: 73 bytes for a
+    /// seven-digit pid and the longest session name the tests bind, which leaves 31 of macOS's
+    /// 104. Rounded down to leave the next long name some room.
+    const LONGEST_USABLE_BASE: usize = 30;
+
+    let base = PlatformEnv::snapshot()
+        .xdg_runtime_dir
+        .unwrap_or_else(std::env::temp_dir);
+    // Windows endpoints are named pipes, which have no such limit - and its runtime directory is
+    // derived from `%LOCALAPPDATA%` anyway, so this root is inert there (see `isolated_env`).
+    if !cfg!(unix) || base.as_os_str().len() <= LONGEST_USABLE_BASE {
+        return base;
+    }
+    let short = PathBuf::from("/tmp");
+    if short.is_dir() { short } else { base }
 }
 
 /// Remove runtime roots left behind by test processes that are long gone.
@@ -240,18 +266,28 @@ mod tests {
     #[test]
     fn endpoints_resolve_inside_this_process_runtime_root() {
         let runtime = crate::platform::paths::runtime_dir_path(&PlatformEnv::from_process());
+        // Windows derives its runtime directory from `%LOCALAPPDATA%`, so there endpoints move
+        // with the rest of the scratch root rather than with the carved-out runtime one.
+        let expected: &Path = if cfg!(windows) {
+            scratch_root()
+        } else {
+            runtime_scratch_root()
+        };
         assert!(
-            runtime.starts_with(runtime_scratch_root()),
+            runtime.starts_with(expected),
             "endpoints escaped this process's runtime root: {}",
             runtime.display()
         );
-        // The reason it is not simply under the scratch root: `sockaddr_un.sun_path` is ~108 bytes,
-        // and a session endpoint has to fit with room for its name.
-        let endpoint = runtime.join(format!("session-{}.sock", "a".repeat(32)));
-        assert!(
-            endpoint.as_os_str().len() < 100,
-            "a test session endpoint is too long for a Unix socket: {}",
-            endpoint.display()
-        );
+        // The reason it is not simply under the scratch root: `sockaddr_un.sun_path` is ~108 bytes
+        // - 104 on macOS - and a session endpoint has to fit with room for its name. A named pipe
+        // carries no such limit, so this is the Unix half of the guarantee only.
+        if cfg!(unix) {
+            let endpoint = runtime.join(format!("session-{}.sock", "a".repeat(32)));
+            assert!(
+                endpoint.as_os_str().len() < 100,
+                "a test session endpoint is too long for a Unix socket: {}",
+                endpoint.display()
+            );
+        }
     }
 }

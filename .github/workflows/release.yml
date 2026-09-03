@@ -13,9 +13,23 @@ permissions:
   contents: read
 
 jobs:
+  # Every platform this release ships a binary for, not just the one that is cheapest to run.
+  #
+  # This gate used to be Ubuntu alone, while `package` below built and signed archives for five
+  # targets. `ci.yml` does run on the tag push - it has a bare `on: push` - but the two workflows
+  # decide independently, so a red matrix on the exact commit being released did not stop
+  # publication: 0.0.16 shipped with `extensions install <git-url>` broken on Windows, and the
+  # Windows CI job for that tag had failed while this workflow published to crates.io. A release is
+  # the one moment worth paying the whole matrix for.
   test:
-    name: test
-    runs-on: ubuntu-latest
+    name: test ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform's failure must not cancel the others: a release that is going to be fixed and
+      # re-tagged should say everything that is wrong with it the first time.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.90
@@ -23,12 +37,18 @@ jobs:
       # gated on timing-sensitive benchmarks racing a shared runner - server_fairness synchronises
       # with a helper thread on a deadline and lost that race here. Benchmarks measure, they do not
       # decide whether a build ships.
+      #
+      # `--no-fail-fast` for the reason the matrix exists: cargo otherwise stops at the first test
+      # binary that fails, and re-tagging once per hidden failure is a worse loop than re-pushing.
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked --no-fail-fast
       # Keep the compile coverage `--all-targets` was there for, without executing anything.
       - name: Check every target compiles
+        if: ${{ !cancelled() }}
         run: cargo check --locked --all-targets
+      # The script is the same on every runner, so checking it once is enough.
       - name: Check Unix installer syntax
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         run: bash -n install.sh
 
   package:

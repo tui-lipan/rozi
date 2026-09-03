@@ -34,8 +34,20 @@ jobs:
         run: cargo clippy --locked --all-targets --features windows-launcher -- -D warnings
       # This includes extension argv/path probes and service child/grandchild termination tests;
       # keep it native rather than replacing the matrix with cross-compilation.
+      #
+      # `--no-fail-fast` because cargo otherwise stops at the first test *binary* that fails, and
+      # this matrix exists to find what only breaks on one platform. A queue of macOS and Windows
+      # failures once sat behind a single failing target, revealed one per push as each fix exposed
+      # the next: five rounds of CI to learn what one run could have said. Individual tests inside a
+      # binary are already all reported; this extends that to the targets.
+      #
+      # It runs even when an earlier step failed, for the same reason. Clippy findings and a
+      # platform's test results are independent facts, and a lint error on Windows once meant that
+      # platform reported no test results at all - the step never started, so the run said nothing
+      # about the thing the matrix is for.
       - name: Test (including native process integration)
-        run: cargo test --locked
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --no-fail-fast
       - name: Release build
         run: cargo build --locked --release
 

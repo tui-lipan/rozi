@@ -5,6 +5,35 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
 
+/// How long a tree may take to show what it was asked for before the test calls it a failure.
+///
+/// These trees are filled asynchronously - a directory listing, and for the Changes view a whole
+/// `git status` process - so every assertion here is really "eventually". A fixed number of short
+/// sleeps encodes the *runner* instead: on Windows, where spawning git costs an order of magnitude
+/// more than it does here, 600ms of pumping ended with the tree still holding nothing but its root
+/// row, and the tests read that as markers gone missing and a refresh chain never armed. A deadline
+/// costs nothing on a fast machine, because it stops as soon as the condition holds.
+const TREE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Pump the app until `ready` holds, or [`TREE_DEADLINE`] passes. Returns whether it held.
+fn pump_until(
+    backend: &mut TestBackend<AppRoot>,
+    mut ready: impl FnMut(&mut TestBackend<AppRoot>) -> bool,
+) -> bool {
+    let deadline = std::time::Instant::now() + TREE_DEADLINE;
+    loop {
+        backend.render();
+        let _ = backend.pump();
+        if ready(backend) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 /// A scratch git repository with one committed file, one modified, and one untracked, so the
 /// changes view has something of each kind to project.
 struct Repo(std::path::PathBuf);
@@ -202,11 +231,16 @@ fn files_tab_refresh_tick_reloads_directory_without_remounting() {
                 state.current_mut().workspaces[0].focused_pane = Some(pane);
                 state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
             }
-            for _ in 0..20 {
-                backend.render();
-                let _ = backend.pump();
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
+            // A visible tree arms its refresh chain as it mounts, so this is also the signal that
+            // the first listing has been taken - which is what the negative assertion below needs.
+            assert!(
+                pump_until(&mut backend, |backend| backend
+                    .state()
+                    .sidebar
+                    .tree_refresh_armed_epoch
+                    .is_some()),
+                "visible tree has a refresh chain"
+            );
             assert!(
                 !backend
                     .capture_frame()
@@ -224,17 +258,12 @@ fn files_tab_refresh_tick_reloads_directory_without_remounting() {
             backend
                 .dispatch(Msg::SidebarTreeRefresh { epoch })
                 .expect("dispatch refresh tick");
-            for _ in 0..40 {
-                backend.render();
-                let _ = backend.pump();
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
 
             assert!(
-                backend
+                pump_until(&mut backend, |backend| backend
                     .capture_frame()
                     .plain_text()
-                    .contains("appeared-later.rs"),
+                    .contains("appeared-later.rs")),
                 "the refresh updates local entries without a remount"
             );
         })
@@ -310,27 +339,33 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                 state.current_mut().workspaces[0].focused_pane = Some(pane);
                 state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
             }
-            for _ in 0..40 {
-                backend.render();
-                let _ = backend.pump();
-                std::thread::sleep(std::time::Duration::from_millis(15));
-            }
-            backend.render();
-
             let git = backend.state().theme.git_status;
-            let frame = backend.capture_frame();
             // Collect the color of each marker/stat glyph in the right-hand suffix region, so the
             // left-hand labels (accent-colored, and the theme's accent happens to equal the
             // untracked purple) cannot be mistaken for a status color.
-            let mut seen: Vec<(String, tui_lipan::prelude::Color)> = Vec::new();
-            for y in 0..24u16 {
-                for x in 12..34u16 {
-                    let cell = frame.cell(x, y);
-                    if !cell.symbol.trim().is_empty() {
-                        seen.push((cell.symbol.clone(), cell.fg));
+            let markers = |backend: &mut TestBackend<AppRoot>| {
+                let frame = backend.capture_frame();
+                let mut seen: Vec<(String, tui_lipan::prelude::Color)> = Vec::new();
+                for y in 0..24u16 {
+                    for x in 12..34u16 {
+                        let cell = frame.cell(x, y);
+                        if !cell.symbol.trim().is_empty() {
+                            seen.push((cell.symbol.clone(), cell.fg));
+                        }
                     }
                 }
-            }
+                seen
+            };
+            // `git status` has to run and come back before any marker exists; until then the panel
+            // holds its root row and nothing else, which is indistinguishable from a repository
+            // whose markers lost their color.
+            pump_until(&mut backend, |backend| {
+                markers(backend)
+                    .iter()
+                    .any(|(symbol, color)| symbol == "M" && *color == git.modified)
+            });
+
+            let seen = markers(&mut backend);
             let colored = |sym: &str, color| seen.iter().any(|(s, c)| s == sym && *c == color);
 
             assert!(

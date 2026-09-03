@@ -227,12 +227,41 @@ recreates:
 
 - workspace layouts, names, and pane placement
 - pane commands and working directories
+- commands running inside a shell pane, including their arguments
 - pane titles and terminal palette
 - saved terminal history
 
 Processes are not checkpointed. Each command starts again in a fresh PTY, and saved history is
 replayed above the new output. Missing directories, missing replay files, and individual spawn
 failures do not prevent the rest of the snapshot from loading.
+
+### Commands a pane was running
+
+A pane created with a command, such as `rozi new-pane -- btop` or a pane from a profile, comes back
+running it. That command is what the pane is for.
+
+A pane that is a plain shell comes back as a plain shell, but a snapshot also records whatever was
+running *in* it. An agent, an editor, a log tail, or a build started by typing at the prompt is
+captured with its arguments, and restoring types it back into the new shell. When it exits you are
+left at that shell, exactly as you would be had you typed the command yourself.
+
+Only a command genuinely mid-flight is recorded. A pane sitting at a prompt has nothing running,
+so nothing is captured, and prompt machinery like directory-jump hooks is never mistaken for work.
+
+Rozi cannot tell `btop` from `terraform apply` by looking at the command, so
+`[session] resurrect_foreground` decides how much benefit of the doubt an observed command gets:
+
+| Value | Restoring a shell that was running something |
+| --- | --- |
+| `auto` (default) | Types the command back and runs it. |
+| `hold` | Types the command back and leaves it at the prompt. `Enter` runs it. |
+| `never` | Restores the shell and its scrollback. No command is written to the snapshot. |
+
+Set `hold` for a workspace where re-running a command unasked would be worse than typing it again.
+The session server loads this setting when it starts. During restore it applies the current value,
+so starting the server with `never` also stops an existing snapshot from replaying anything.
+`never` omits commands from later snapshots as well. Changing the setting for a running server
+takes effect after that server restarts.
 
 Use `Ctrl+K` twice on a restorable row to forget the snapshot. Explicit
 `rozi sessions new <name>` also starts fresh rather than restoring an old snapshot with that name.

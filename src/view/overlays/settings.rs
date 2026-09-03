@@ -275,6 +275,16 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                     enabled_status(ctx.state.config.session.resurrect),
                     ToggleSessionResurrect,
                 ),
+                (
+                    "Restored running commands",
+                    ctx.state
+                        .config
+                        .session
+                        .resurrect_foreground
+                        .label()
+                        .to_string(),
+                    CycleResurrectForeground,
+                ),
             ],
         ),
     ]);

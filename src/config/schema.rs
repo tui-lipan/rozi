@@ -353,6 +353,69 @@ impl SessionStartup {
     }
 }
 
+/// What resurrection does with the command a pane was observed running, as opposed to the command
+/// the pane was explicitly launched with.
+///
+/// An explicit launch intent (`rozi new-pane -- btop`, a profile command) is replayable by
+/// construction: the user told Rozi to run it. A command typed at a prompt is only *observed*, and
+/// Rozi cannot tell `btop` from `terraform apply` by looking at argv. This is the knob that decides
+/// how much benefit of the doubt an observation gets, since no heuristic can earn it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ForegroundRestore {
+    /// Type the captured command at the restored pane's prompt and run it.
+    #[default]
+    Auto,
+    /// Type the captured command at the restored pane's prompt and leave it there unsubmitted.
+    /// `Enter` runs it, anything else edits or discards it.
+    Hold,
+    /// Restore the shell and its scrollback; forget what was running in it. Under this setting the
+    /// command is never written to the snapshot in the first place.
+    Never,
+}
+
+impl ForegroundRestore {
+    /// Cycle order for the Settings row, ascending in how much it does without being asked.
+    pub fn all() -> &'static [Self] {
+        &[Self::Never, Self::Hold, Self::Auto]
+    }
+
+    /// One spelling per mode: an unrecognized value warns and leaves the default in place rather
+    /// than resolving through aliases that describe a different mode than they name.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "hold" => Some(Self::Hold),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Hold => "hold",
+            Self::Never => "never",
+        }
+    }
+
+    /// Named for what the restored pane does, not for the policy: the Settings row is read by
+    /// someone deciding whether they want a command to come back running.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Run again",
+            Self::Hold => "Wait at prompt",
+            Self::Never => "Forget",
+        }
+    }
+
+    pub fn step_in(self, reverse: bool) -> Self {
+        let choices = Self::all();
+        let index = choices.iter().position(|mode| *mode == self).unwrap_or(0);
+        let offset = if reverse { choices.len() - 1 } else { 1 };
+        choices[(index + offset) % choices.len()]
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SessionConfig {
     /// Persist the live layout on quit and restore it on next launch.
@@ -364,6 +427,9 @@ pub struct SessionConfig {
     pub startup: SessionStartup,
     /// Persist and restart named sessions after their server disappears.
     pub resurrect: bool,
+    /// What resurrection does with a command a pane was observed running at its prompt, rather
+    /// than launched with. See [`ForegroundRestore`].
+    pub resurrect_foreground: ForegroundRestore,
     /// Let a writable follower take layout control immediately instead of waiting for the current
     /// controller to grant its request.
     ///
@@ -383,6 +449,7 @@ impl Default for SessionConfig {
             path: None,
             startup: SessionStartup::default(),
             resurrect: true,
+            resurrect_foreground: ForegroundRestore::default(),
             allow_takeover: true,
         }
     }
@@ -1851,6 +1918,31 @@ mod tests {
             SessionStartup::Profile,
             "prev() must wrap the other way"
         );
+    }
+
+    #[test]
+    fn foreground_restore_cycles_both_ways_and_round_trips_its_id() {
+        let mut mode = ForegroundRestore::Never;
+        for _ in 0..ForegroundRestore::all().len() {
+            assert_eq!(ForegroundRestore::parse(mode.as_str()), Some(mode));
+            assert_eq!(mode.step_in(false).step_in(true), mode);
+            mode = mode.step_in(false);
+        }
+        assert_eq!(
+            mode,
+            ForegroundRestore::Never,
+            "forward stepping must close the ring"
+        );
+        assert_eq!(
+            ForegroundRestore::Never.step_in(true),
+            ForegroundRestore::Auto,
+            "reverse stepping must wrap"
+        );
+        assert_eq!(
+            ForegroundRestore::parse("AUTO"),
+            Some(ForegroundRestore::Auto)
+        );
+        assert_eq!(ForegroundRestore::parse(" rerun "), None);
     }
 
     /// Without a default profile there is nothing for `profile` mode to open, so the Settings row

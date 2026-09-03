@@ -487,6 +487,20 @@ fn settings_activate_dir(
             ctx.state.config.session.resurrect = !ctx.state.config.session.resurrect;
             persisted = Some(("session", "resurrect", ctx.state.config.session.resurrect));
         }
+        CycleResurrectForeground => {
+            let value = ctx
+                .state
+                .config
+                .session
+                .resurrect_foreground
+                .step_in(reverse);
+            ctx.state.config.session.resurrect_foreground = value;
+            if let Err(err) =
+                crate::config::persist_session_string("resurrect_foreground", value.as_str())
+            {
+                preference_error(ctx, err);
+            }
+        }
     }
     if let Some((section, key, value)) = persisted {
         let result = match section {
@@ -1028,6 +1042,41 @@ mod tests {
             assert_eq!(
                 backend.state().config.session.startup,
                 crate::config::SessionStartup::Picker
+            );
+        });
+    }
+
+    #[test]
+    fn settings_steps_foreground_restore_in_both_directions() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            backend.state_mut().settings_selected =
+                Some(crate::state::SettingsAction::CycleResurrectForeground);
+            assert_eq!(
+                backend.state().config.session.resurrect_foreground,
+                crate::config::ForegroundRestore::Auto
+            );
+
+            backend
+                .dispatch(Msg::SettingsStep { reverse: false })
+                .unwrap();
+            assert_eq!(
+                backend.state().config.session.resurrect_foreground,
+                crate::config::ForegroundRestore::Never
+            );
+            assert_eq!(
+                backend.state().settings_selected,
+                Some(crate::state::SettingsAction::CycleResurrectForeground)
+            );
+            assert!(backend.state().show_settings, "the dialog stays open");
+
+            backend
+                .dispatch(Msg::SettingsStep { reverse: true })
+                .unwrap();
+            assert_eq!(
+                backend.state().config.session.resurrect_foreground,
+                crate::config::ForegroundRestore::Auto
             );
         });
     }

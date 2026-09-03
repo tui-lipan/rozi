@@ -52,7 +52,7 @@ Most settings apply immediately. These settings have narrower behavior:
 | `clipboard.enable_osc52` | Next client launch. |
 | `sidebar.visible` | Client startup only. Reload never opens or closes the sidebar. |
 | `session.startup` | Next bare launch. |
-| `session.resurrect`, `session.allow_takeover` | Session servers started after the change. |
+| `session.resurrect`, `session.resurrect_foreground`, `session.allow_takeover` | Session servers started after the change. |
 | `logging.*` | Session servers started after the change. |
 | `remote.*` | New SSH connections. |
 | `rules` | New command-carrying pane spawns. |
@@ -305,6 +305,7 @@ their own deliberate selection path.
 | --- | --- | --- | --- |
 | `autosave` | bool | `false` | Saves and restores local layout intent, not live PTYs. |
 | `resurrect` | bool | `true` | Saves named-session layout, command, scrollback, and restart intent. |
+| `resurrect_foreground` | string | `"auto"` | What a restore does with a command a pane was observed running: `"auto"` runs it again, `"hold"` leaves it at the prompt unsubmitted, `"never"` restores the shell alone and records no command. |
 | `startup` | string | `"picker"` | `"picker"`, `"ephemeral"`, `"last"`, or `"profile"`. |
 | `path` | path string | State directory `session.toml` | Autosave file. `~` expands. |
 | `allow_takeover` | bool | `true` | Lets a writable follower take layout control immediately. |

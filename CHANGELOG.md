@@ -4,12 +4,24 @@
 
 ### Added
 
+- Restoring a session brings back what its panes were *running*, not only what they were launched
+  with. A shell pane that was running an agent, an editor, or a log tail is captured with that
+  command and its arguments. The restored shell types it back, so a workspace of agents comes back
+  working rather than as three transcripts and a prompt. Only a command genuinely mid-flight is
+  recorded; a pane at a prompt still restores as a plain shell.
+- `[session] resurrect_foreground` decides what a restore does with such a command: `auto` (the
+  default) runs it again, `hold` leaves it typed at the prompt for `Enter`, and `never` restores
+  the shell alone and writes no command to the snapshot. Set `hold` where re-running a command
+  unasked would be worse than typing it again. Settings has a matching **Restored running
+  commands** row.
 - The Files and Git tabs show where a symlink points, as `CLAUDE.md → AGENTS.md`. The target is the
   link's own text rather than a resolved path, the way `ls -l` reports it. Remote listings carry
   the target with the entry, so a link on the server's host reads the same as a local one.
 
 ### Changed
 
+- The session snapshot format is version 3. A version 2 snapshot is not read; the session it
+  describes starts fresh instead of restoring, and the next snapshot replaces it.
 - Session and extension CLI commands now use namespaces. `list-sessions`, `kill-session`, `attach`,
   and `new` are replaced by `sessions list`, `sessions kill`, `sessions attach`, and `sessions new`.
   `list-extensions`, `new-extension`, and `check-extension` are replaced by `extensions list`,

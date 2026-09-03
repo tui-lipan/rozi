@@ -337,6 +337,7 @@ struct SessionFileConfig {
     path: Option<String>,
     startup: Option<String>,
     resurrect: Option<bool>,
+    resurrect_foreground: Option<String>,
     allow_takeover: Option<bool>,
 }
 
@@ -688,6 +689,14 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(allow_takeover) = parsed.session.allow_takeover {
         config.session.allow_takeover = allow_takeover;
+    }
+    if let Some(value) = non_empty(parsed.session.resurrect_foreground) {
+        match crate::config::ForegroundRestore::parse(&value) {
+            Some(mode) => config.session.resurrect_foreground = mode,
+            None => warnings.push(format!(
+                "Ignored unknown session.resurrect_foreground \"{value}\" (expected `auto`, `hold`, or `never`)"
+            )),
+        }
     }
     if let Some(path) = non_empty(parsed.session.path) {
         config.session.path = Some(expand_path(path));
@@ -1347,6 +1356,57 @@ mod file_tests {
                 .expect("config parses");
         assert_eq!(parsed.session.startup.as_deref(), Some("picker"));
         assert_eq!(parsed.session.allow_takeover, Some(false));
+    }
+
+    /// An unreadable value must leave the default standing rather than resolve to something that
+    /// re-runs commands the user did not ask for, so it warns and changes nothing.
+    #[test]
+    fn an_unknown_resurrect_foreground_warns_and_keeps_the_default() {
+        let loaded = load_config_from_text(
+            "[session]\nresurrect_foreground = \"maybe\"",
+            Path::new("config.toml"),
+        );
+
+        assert_eq!(
+            loaded.config.session.resurrect_foreground,
+            crate::config::ForegroundRestore::Auto
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("resurrect_foreground")),
+            "{:?}",
+            loaded.warnings
+        );
+    }
+
+    #[test]
+    fn session_section_parses_every_resurrect_foreground_mode() {
+        for (text, expected) in [
+            ("auto", crate::config::ForegroundRestore::Auto),
+            ("hold", crate::config::ForegroundRestore::Hold),
+            ("never", crate::config::ForegroundRestore::Never),
+        ] {
+            let loaded = load_config_from_text(
+                &format!("[session]\nresurrect_foreground = \"{text}\""),
+                Path::new("config.toml"),
+            );
+            assert_eq!(loaded.config.session.resurrect_foreground, expected);
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        }
+    }
+
+    /// The server reads this at both ends of a resurrection, so its own default must agree with
+    /// the config's. A server started without a config must not restore differently.
+    #[test]
+    fn resurrect_foreground_defaults_agree_on_both_sides() {
+        assert_eq!(
+            crate::config::Config::default()
+                .session
+                .resurrect_foreground,
+            crate::session::server::ServerSettings::default().resurrect_foreground
+        );
     }
 
     /// Takeover is on unless a config turns it off, and the server's own settings default agrees —

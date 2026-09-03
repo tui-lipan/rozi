@@ -16,6 +16,8 @@
 mod common;
 
 use std::fs;
+#[cfg(target_os = "linux")]
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -293,4 +295,167 @@ fn pane_layout() -> SharedLayout {
             }],
         }],
     }
+}
+
+/// A shell pane restored as a shell must come back running whatever was in it. This is the whole
+/// difference between restoring a session and restoring a transcript of one.
+///
+/// Linux-only, unlike the rest of this file. Replaying a command means replaying its arguments,
+/// and reading another process's `argv` is what macOS does not permit; `tail` without the file it
+/// was following is a pane waiting on stdin, so a macOS run would assert on output that could
+/// never arrive. The capture rules themselves are covered by unit tests on every platform.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_restored_shell_reruns_the_command_it_was_holding() {
+    const PROBE_PANE: u32 = 82;
+    const MARKER: &str = "rozi-foreground-rerun-marker";
+    const RESTORED_MARKER: &str = "rozi-foreground-live-after-restore";
+
+    let session = unique_session_name();
+    let test_root = private_temp_dir();
+    let runtime_base = test_root.join("runtime");
+    let state_base = test_root.join("state");
+    let config_base = test_root.join("config");
+    for base in [&runtime_base, &state_base, &config_base] {
+        fs::create_dir_all(base).expect("create test base");
+    }
+    let config_path = config_base.join("config.toml");
+    fs::write(
+        &config_path,
+        "scrollback = 100\n\n[session]\nresurrect = true\nresurrect_foreground = \"auto\"\n",
+    )
+    .expect("write test config");
+    // The marker lives in the file `tail` follows, never in the command line. A restored shell
+    // echoes what is typed into it, and a marker inside that echo would let this test pass
+    // without the command ever having run again.
+    let probe = test_root.join("probe.txt");
+    fs::write(&probe, format!("{MARKER}\n")).expect("write probe file");
+    let command = format!("tail -f {}", probe.display());
+
+    let endpoint = subprocess_endpoint(&runtime_base, &session);
+    let child = spawn_server(
+        &session,
+        &runtime_base,
+        &state_base,
+        &config_base,
+        &config_path,
+    );
+    let mut server = ServerGuard::new(child, test_root.clone());
+    let mut client = connect_when_ready(&endpoint, server.child_mut());
+    client.write_control(&attach_message(&session, "foreground-writer"));
+    read_until(&mut client, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
+    });
+
+    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    client.write_control(&ClientMessage::SpawnPane {
+        local: false,
+        pane_id: PROBE_PANE,
+        generation: PANE_GENERATION,
+        // No launch intent at all: this is the pane the old snapshot format had nothing to say
+        // about beyond "it was a shell".
+        launch: None,
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        keep_open: false,
+        env: Vec::new(),
+        title: None,
+        palette: WirePalette::from(TerminalColorPalette::default()),
+        shell,
+        command_shell,
+        cell_width: 0,
+        cell_height: 0,
+    });
+    read_until(&mut client, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::SpawnResult {
+                pane_id: PROBE_PANE,
+                ok: true,
+                ..
+            })
+        )
+    });
+
+    client.write_pane_input(
+        PROBE_PANE,
+        PANE_GENERATION,
+        format!("{command}\r").as_bytes(),
+    );
+    // A snapshot records what the last runtime poll saw, so detaching before the server has
+    // noticed `tail` holding the terminal would capture a bare shell and prove nothing.
+    read_until(&mut client, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::PaneRuntimeChanged { pane_id: PROBE_PANE, state, .. })
+                if state.foreground_program.as_deref() == Some("tail")
+        )
+    });
+
+    client.write_control(&ClientMessage::Detach);
+    drop(client);
+
+    let snapshot = state_base.join("rozi").join("sessions").join(&session);
+    wait_for_meta(&snapshot, &command);
+
+    server.kill_for_restart();
+    let restarted = spawn_server(
+        &session,
+        &runtime_base,
+        &state_base,
+        &config_base,
+        &config_path,
+    );
+    server.replace_child(restarted);
+
+    let mut restored = connect_when_ready(&endpoint, server.child_mut());
+    restored.write_control(&attach_message(&session, "foreground-reader"));
+    read_until(&mut restored, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
+    });
+
+    // This marker did not exist when the replay was captured. Seeing it proves the restored
+    // `tail -f` is live, rather than merely seeing the old marker in restored scrollback.
+    writeln!(
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&probe)
+            .expect("open probe for append"),
+        "{RESTORED_MARKER}"
+    )
+    .expect("append restored marker");
+    let mut output = Vec::new();
+    read_until(&mut restored, |frame| {
+        if let Frame::PaneBytes {
+            pane_id: PROBE_PANE,
+            bytes,
+            ..
+        } = frame
+        {
+            output.extend_from_slice(bytes);
+        }
+        contains(&output, RESTORED_MARKER.as_bytes())
+    });
+
+    restored.write_control(&ClientMessage::Shutdown);
+    drop(restored);
+    server.wait_for_exit();
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_meta(snapshot: &std::path::Path, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Ok(meta) = fs::read_to_string(snapshot.join("meta.json"))
+            && meta.contains(expected)
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "session snapshot at {} did not record {expected:?}",
+        snapshot.display()
+    );
 }

@@ -292,6 +292,9 @@ impl SessionServer {
         // Cloned before the pane borrow: detection reads the session's whole agent catalog, which
         // lives on the server rather than the pane.
         let agents = self.settings.agents.clone();
+        let tracks_snapshot_foreground = owner.is_none()
+            && self.settings.resurrect
+            && self.settings.resurrect_foreground != crate::config::ForegroundRestore::Never;
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return;
         };
@@ -308,6 +311,9 @@ impl SessionServer {
         if next == pane.runtime {
             return;
         }
+        let snapshot_foreground_changed = tracks_snapshot_foreground
+            && pane.launch.is_none()
+            && resurrection_foreground_changed(&pane.runtime, &next);
         pane.runtime = next.clone();
         let message = ServerMessage::PaneRuntimeChanged {
             pane_id,
@@ -319,6 +325,13 @@ impl SessionServer {
             self.enqueue(owner, Target::Client(owner), message);
         } else {
             self.broadcast_control(&message);
+        }
+        if snapshot_foreground_changed {
+            // PTY output normally dirties a snapshot first, but the process inspector can learn
+            // the command or its argv after that output has already been persisted. Keep the
+            // metadata change dirty so a later detach or shutdown cannot retain the earlier,
+            // command-less snapshot.
+            self.mark_dirty();
         }
     }
 }
@@ -438,6 +451,21 @@ fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeStat
         || candidate.status != current.status
         || candidate.detected_agent != current.detected_agent
         || candidate.work_started_at != current.work_started_at
+}
+
+/// Whether runtime metadata used to reconstruct an observed foreground command changed.
+///
+/// This is intentionally narrower than [`runtime_state_changed`]. Agent status, Git state, and
+/// display paths are useful to clients but do not change resurrection metadata.
+fn resurrection_foreground_changed(
+    current: &PaneRuntimeState,
+    candidate: &PaneRuntimeState,
+) -> bool {
+    current.cwd_host != candidate.cwd_host
+        || current.command_phase != candidate.command_phase
+        || current.foreground_program != candidate.foreground_program
+        || current.foreground_executable != candidate.foreground_executable
+        || current.foreground_arguments != candidate.foreground_arguments
 }
 
 /// Build the candidate [`PaneRuntimeState`] for `pane`, bumping `sequence` past its previous value
@@ -1273,6 +1301,19 @@ mod tests {
             replayable_arguments(&argv(&["sh", "-c", "one\ntwo"])).is_empty(),
             "a newline would end the replayed command line early"
         );
+    }
+
+    #[test]
+    fn resurrection_tracks_only_runtime_fields_written_to_its_snapshot() {
+        let current = PaneRuntimeState::default();
+        let mut candidate = current.clone();
+        candidate.foreground_program = Some("nvim".to_string());
+        assert!(resurrection_foreground_changed(&current, &candidate));
+
+        let mut client_only = current.clone();
+        client_only.git_branch = Some("feature".to_string());
+        client_only.work_started_at = Some(42);
+        assert!(!resurrection_foreground_changed(&current, &client_only));
     }
 
     /// An interpreted program is not the process holding the terminal: `python3 /bin/agent --go`

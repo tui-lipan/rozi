@@ -320,6 +320,12 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
         ToggleSessionResurrect => {
             alias_list(&["session resurrect", "restore sessions", "server restart"])
         }
+        CycleResurrectForeground => alias_list(&[
+            "restore running commands",
+            "resurrect foreground",
+            "restart agents",
+            "rerun command on restore",
+        ]),
         ToggleMarkBell => alias_list(&["bell mark", "bell marker", "bell tab marker"]),
         ToggleMarkBlocked => alias_list(&["blocked mark", "blocked marker", "waiting marker"]),
         ToggleMarkFinished => alias_list(&["finished mark", "done marker", "completed marker"]),

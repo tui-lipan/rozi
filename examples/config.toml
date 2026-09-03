@@ -227,6 +227,11 @@
 #autosave = false
 # Snapshot named sessions so layout, commands, and scrollback survive a server restart.
 #resurrect = true
+# What a restore does with a command running inside a shell pane, as opposed to one the pane was
+# launched with. "auto" types it back and runs it, so an agent or an editor comes back working.
+# "hold" types it back and waits, so running it again is a keystroke you chose. "never" restores
+# the shell and its scrollback alone, and writes no command to the snapshot at all.
+#resurrect_foreground = "auto"
 # "picker" always opens the session picker, "ephemeral" starts a
 # scratch session immediately, "last" reopens the last named session, "profile" opens the
 # session named after the [profile] default.

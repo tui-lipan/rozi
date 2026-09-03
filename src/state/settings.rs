@@ -52,6 +52,7 @@ pub enum SettingsAction {
     CycleStartupMode,
     ToggleSessionAutosave,
     ToggleSessionResurrect,
+    CycleResurrectForeground,
 }
 
 impl SettingsAction {
@@ -114,6 +115,7 @@ impl SettingsAction {
             Self::CycleStartupMode,
             Self::ToggleSessionAutosave,
             Self::ToggleSessionResurrect,
+            Self::CycleResurrectForeground,
         ]
     }
 

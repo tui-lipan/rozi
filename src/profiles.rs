@@ -400,89 +400,23 @@ fn workspace_profile_from_state(
     }
 }
 
-/// The command a pane is running *right now*, if it is worth replaying on restore.
-///
-/// `foreground_program` keeps reporting the last executed command's executable while the shell
-/// sits idle at a prompt (OSC 133 `rozi_exe=` is only replaced by the next command), so a pane
-/// where the user merely changed directories would otherwise capture stale prompt machinery like
-/// `__zoxide_hook` and replay it as a pane command. Only trust it while shell integration reports
-/// a command mid-flight (`Executing`), or when there is no integration at all (`Unknown`) and the
-/// value comes from the process inspector, which reads the live foreground process group.
-///
-/// What is captured is the whole invocation, not just the program: an agent started with
-/// `--dangerously-skip-permissions` is a different pane from the same agent without it. The
-/// program is named where a name is enough to find it again and given as a path where it is not -
-/// one started through an alias, or straight out of a build tree, restores as `command not found`
-/// if only its name is written down.
-///
-/// Neither the path nor the arguments belong to a pane attached over `--remote`: both describe a
-/// process on the far host, which the machine doing the restoring is not. Those panes keep the
-/// bare program name, as they did before either was captured.
+/// The command a pane is running *right now*, if it is worth replaying on restore. See
+/// [`crate::pane::launch::replayable_foreground_command`], which resurrection snapshots share.
 fn live_running_command(pane: &Pane, shells: &HashSet<String>) -> Option<String> {
-    use crate::session::protocol::PaneCommandPhase;
-
-    match pane.terminal.command_phase {
-        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => {}
-        PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. } => {
-            return None;
-        }
-    }
-    let program = pane
-        .terminal
-        .foreground_program
-        .as_deref()
-        .filter(|program| {
-            !shells.contains(&crate::platform::command::normalized_program_name(program))
-        })?;
-    if pane.terminal.cwd_host.is_some() {
-        return Some(program.to_string());
-    }
-    let program = match pane.terminal.foreground_executable.as_deref() {
-        Some(path) => shell_quote(path),
-        None => program.to_string(),
-    };
-    Some(
-        std::iter::once(program)
-            .chain(
-                pane.terminal
-                    .foreground_arguments
-                    .iter()
-                    .map(|argument| shell_quote(argument)),
-            )
-            .collect::<Vec<_>>()
-            .join(" "),
+    crate::pane::launch::replayable_foreground_command(
+        crate::pane::launch::ForegroundSnapshot {
+            command_phase: pane.terminal.command_phase,
+            program: pane.terminal.foreground_program.as_deref(),
+            executable: pane.terminal.foreground_executable.as_deref(),
+            arguments: &pane.terminal.foreground_arguments,
+            remote: pane.terminal.cwd_host.is_some(),
+        },
+        shells,
     )
 }
 
-/// Quote `word` so an interactive shell reads it as one literal argument, since the captured
-/// command is replayed by typing it at a prompt. Only reached for inspector-reported paths and
-/// arguments, which exist on Unix alone - a Windows pane has neither.
-fn shell_quote(word: &str) -> String {
-    let plain = |ch: char| ch.is_ascii_alphanumeric() || "_-./:@%+=".contains(ch);
-    if !word.is_empty() && word.chars().all(plain) {
-        return word.to_string();
-    }
-    format!("'{}'", word.replace('\'', r"'\''"))
-}
-
 fn shell_basenames(config: &crate::config::Config) -> HashSet<String> {
-    let mut shells: HashSet<String> = [
-        "bash",
-        "zsh",
-        "fish",
-        "sh",
-        "dash",
-        "ksh",
-        "tcsh",
-        "csh",
-        "nu",
-        "pwsh",
-        "powershell",
-        "cmd",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect();
+    let mut shells = crate::pane::launch::common_shell_basenames();
     let resolved = crate::platform::command::resolve_interactive_shell(
         config.shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),

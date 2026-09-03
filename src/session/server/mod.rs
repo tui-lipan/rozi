@@ -141,6 +141,10 @@ pub struct SessionServer {
     /// generation whose replay file the live snapshot directory currently holds. Cleared whenever
     /// a snapshot fails, so a broken or externally removed directory self-heals into a full export.
     persisted_replays: HashMap<PaneId, u64>,
+    /// Commands restored panes were observed running, waiting for their new shell to reach a
+    /// prompt before being typed into it. See
+    /// [`SessionServer::flush_pending_foreground`](resurrect).
+    pending_foreground: Vec<resurrect::PendingForeground>,
     /// Filesystem listings currently being computed off the session pump. Each entry owns at most
     /// one latest rerun, so repeated polling cannot queue unbounded duplicate work.
     browse_in_flight: HashMap<BrowseRequestKey, BrowseState>,
@@ -167,6 +171,12 @@ pub struct ServerSettings {
     /// [`crate::config::LoggingConfig::max_bytes`] including its `0` (unlimited) escape.
     pub log_max_bytes: u64,
     pub resurrect: bool,
+    /// What a snapshot does with a command a pane was observed running at its prompt. Mirrors
+    /// [`crate::config::SessionConfig::resurrect_foreground`], and is read at both ends: capture
+    /// declines to write the command down under
+    /// [`Never`](crate::config::ForegroundRestore::Never), and restore decides between running the
+    /// captured command and leaving it pending at the prompt.
+    pub resurrect_foreground: crate::config::ForegroundRestore,
     pub snapshot_dir: Option<PathBuf>,
     pub snapshot_interval: Duration,
     /// Maximum time an attached client may go without a heartbeat pong.
@@ -205,6 +215,7 @@ impl Default for ServerSettings {
             log_dir: None,
             log_max_bytes: crate::config::DEFAULT_LOG_MAX_BYTES,
             resurrect: false,
+            resurrect_foreground: crate::config::ForegroundRestore::default(),
             snapshot_dir: None,
             snapshot_interval: Duration::from_secs(30),
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT,
@@ -796,6 +807,7 @@ impl SessionServer {
             snapshot_generation: 0,
             snapshot_worker: None,
             persisted_replays: HashMap::new(),
+            pending_foreground: Vec::new(),
             browse_in_flight: HashMap::new(),
             browse_worker: None,
             last_snapshot: Instant::now(),
@@ -883,6 +895,7 @@ impl SessionServer {
         activity |= self.pump_clients();
         self.retry_browse_requests();
         self.poll_pane_runtime();
+        self.flush_pending_foreground();
         self.adopt_pending_listener(listener);
         if let Err(err) = self.drain_snapshot_results() {
             eprintln!("rozi: session snapshot failed: {err}");
@@ -1201,6 +1214,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
             log_dir: loaded.config.logging.dir,
             log_max_bytes: loaded.config.logging.max_bytes,
             resurrect: !client_scratch && loaded.config.session.resurrect,
+            resurrect_foreground: loaded.config.session.resurrect_foreground,
             allow_takeover: !client_scratch && loaded.config.session.allow_takeover,
             scrollback: loaded.config.scrollback,
             shell,

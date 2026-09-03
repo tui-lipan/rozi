@@ -9,11 +9,30 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Version 2 stores pane launch intent as shell-or-direct rather than a shell-only command string.
-const SNAPSHOT_VERSION: u32 = 2;
+/// Version 3 stores the command a pane was observed running alongside the command it was launched
+/// with. Version 2 stored pane launch intent as shell-or-direct rather than a shell-only command
+/// string.
+const SNAPSHOT_VERSION: u32 = 3;
 
 /// How long shutdown waits for an in-flight durable write before abandoning it.
 const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+/// How long a restored pane's captured command waits for that pane's shell to report a prompt
+/// before being typed anyway. Only reached by a pane with no shell integration to report one, so
+/// the value is a bound on the wait rather than the wait itself: long enough that a slow `rc` file
+/// has finished, short enough that a restored session is not visibly inert.
+const FOREGROUND_PROMPT_WAIT: Duration = Duration::from_secs(3);
+
+/// A command a restored pane was observed running, waiting for that pane's new shell to be ready
+/// to receive it. See [`SessionServer::flush_pending_foreground`].
+pub(super) struct PendingForeground {
+    pane_id: PaneId,
+    /// The generation the pane was restored at. A pane that has since been respawned is a
+    /// different pane, and typing a command from the old one into it would be a surprise.
+    generation: u64,
+    command: String,
+    waiting_since: Instant,
+}
 
 /// Where a pane's replay bytes for this snapshot come from.
 enum ReplaySource {
@@ -240,7 +259,20 @@ struct SnapshotMeta {
 struct SnapshotPane {
     pane_id: PaneId,
     generation: u64,
+    /// How the pane was *created*: the launch intent a client asked for, or `None` for a plain
+    /// interactive shell.
     launch: Option<crate::pane::launch::PaneLaunch>,
+    /// What was *running* in the pane when the snapshot was taken, as a line an interactive shell
+    /// would accept.
+    ///
+    /// Deliberately not folded into `launch`. The two answer different questions, and the
+    /// difference outlives the restore: when a replayed foreground command exits, a pane whose
+    /// `launch` is `None` must fall back to its shell rather than behave like a pane that was
+    /// created to run one command. Absent when the pane sat at a prompt, when it was already
+    /// running its own launch command, or when
+    /// [`ForegroundRestore::Never`](crate::config::ForegroundRestore::Never) declined to record it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    foreground: Option<String>,
     cwd: Option<String>,
     keep_open: bool,
     title: Option<String>,
@@ -453,6 +485,23 @@ impl SessionServer {
         metrics.successes + metrics.failures == metrics.attempts
     }
 
+    /// Program names that mean "this pane is sitting at a prompt" rather than "this pane is
+    /// running something": the common set, plus every interactive shell this server actually
+    /// launches panes with. A pane whose foreground program is its own shell has nothing to replay.
+    fn shell_basenames(&self) -> std::collections::HashSet<String> {
+        let mut shells = crate::pane::launch::common_shell_basenames();
+        for program in self
+            .settings
+            .shell
+            .first()
+            .into_iter()
+            .chain(self.panes.values().filter_map(|pane| pane.shell.first()))
+        {
+            shells.insert(crate::platform::command::normalized_program_name(program));
+        }
+        shells
+    }
+
     /// Capture everything the durable write needs, so the write itself needs no access back to
     /// live server state. This is the only part the server loop is blocked for.
     fn capture_snapshot(&mut self, started: Instant) -> io::Result<SnapshotJob> {
@@ -461,16 +510,26 @@ impl SessionServer {
         let mut replays = Vec::new();
         let mut captured = Vec::new();
         let (mut exported, mut reused, mut exported_bytes) = (0_u32, 0_u32, 0_u64);
+        let record_foreground =
+            self.settings.resurrect_foreground != crate::config::ForegroundRestore::Never;
+        let shells = self.shell_basenames();
         for (&pane_id, pane) in &mut self.panes {
             // The popup slot is a transient client-local overlay; resurrecting it would
             // revive an invisible orphan pane no client adopts.
             if pane.exited.is_some() || pane_id == crate::state::POPUP_PANE_ID {
                 continue;
             }
+            // A pane running its own launch command has nothing to add: restoring `launch` already
+            // starts it. Only a shell that someone typed into is telling the snapshot something it
+            // does not otherwise know.
+            let foreground = (record_foreground && pane.launch.is_none())
+                .then(|| observed_foreground_command(pane, &shells))
+                .flatten();
             panes.push(SnapshotPane {
                 pane_id,
                 generation: pane.generation,
                 launch: pane.launch.clone(),
+                foreground,
                 cwd: pane.spawnable_cwd(),
                 keep_open: pane.keep_open,
                 title: pane.effective_title(),
@@ -582,6 +641,9 @@ impl SessionServer {
             );
             if matches!(result, ServerMessage::SpawnResult { ok: true, .. }) {
                 restored += 1;
+                if let Some(command) = saved.foreground.as_deref() {
+                    self.replay_foreground_command(saved.pane_id, generation, command);
+                }
             }
             if let Some(layout) = &mut layout {
                 for workspace in &mut layout.workspaces {
@@ -606,6 +668,80 @@ impl SessionServer {
         self.forget_persisted_replays();
         self.last_snapshot = Instant::now();
         Ok(restored)
+    }
+
+    /// Queue a captured foreground command to be typed into a freshly restored pane.
+    ///
+    /// Typing is the whole mechanism, and it is the reason the pane's `launch` stays `None`: this
+    /// is a shell that has a command in it, not a pane created to run one. When the command exits,
+    /// the shell is still there, exactly as it would be had the user typed it.
+    ///
+    /// Nothing is written yet. A shell that has not finished starting has not necessarily taken
+    /// the terminal's input queue over from its own startup scripts, and a command line half
+    /// eaten by an `rc` file that reads stdin would submit *something other than what was
+    /// captured* - which is the one failure mode `auto` cannot be allowed to have. See
+    /// [`SessionServer::flush_pending_foreground`] for what it waits for.
+    fn replay_foreground_command(&mut self, pane_id: PaneId, generation: u64, command: &str) {
+        if self.settings.resurrect_foreground == crate::config::ForegroundRestore::Never {
+            // Capture already declined to record anything under `Never`, but a snapshot taken
+            // under a different setting must still be honored as the setting reads *now*.
+            return;
+        }
+        self.pending_foreground.push(PendingForeground {
+            pane_id,
+            generation,
+            command: command.to_string(),
+            waiting_since: Instant::now(),
+        });
+    }
+
+    /// Type each queued command into its pane once that pane's shell is ready for it.
+    ///
+    /// "Ready" is the shell's own prompt report (`OSC 133 A`, surfaced as
+    /// [`PaneCommandPhase::Prompt`]): past that point the shell is reading the terminal and
+    /// nothing else is. Shell integration is not universal - `cmd.exe` has no `133;B`, and a user
+    /// may have turned injection off - so a pane that never reports one falls back to writing
+    /// after [`FOREGROUND_PROMPT_WAIT`], by which point any ordinary shell is long up. The bytes
+    /// then take the same path a client's keystrokes do; to the shell this is indistinguishable
+    /// from someone typing fast.
+    ///
+    /// Under [`Auto`](crate::config::ForegroundRestore::Auto) the line is submitted. Under
+    /// [`Hold`](crate::config::ForegroundRestore::Hold) it is left at the prompt unsubmitted, so
+    /// running it is a keystroke the user chose - and so is deleting it.
+    pub(super) fn flush_pending_foreground(&mut self) {
+        if self.pending_foreground.is_empty() {
+            return;
+        }
+        let submit = self.settings.resurrect_foreground == crate::config::ForegroundRestore::Auto;
+        let mut ready = Vec::new();
+        let mut waiting = Vec::new();
+        for pending in std::mem::take(&mut self.pending_foreground) {
+            // A pane that went away, or was respawned under a new generation, before its shell was
+            // ever ready has nothing left to type into.
+            let Some(pane) = self.panes.get(&pending.pane_id) else {
+                continue;
+            };
+            if pane.generation != pending.generation {
+                continue;
+            }
+            let prompted = matches!(
+                pane.runtime.command_phase,
+                protocol::PaneCommandPhase::Prompt | protocol::PaneCommandPhase::Input
+            );
+            if prompted || pending.waiting_since.elapsed() >= FOREGROUND_PROMPT_WAIT {
+                ready.push(pending);
+            } else {
+                waiting.push(pending);
+            }
+        }
+        self.pending_foreground = waiting;
+        for pending in ready {
+            let mut bytes = pending.command.into_bytes();
+            if submit {
+                bytes.push(b'\r');
+            }
+            self.handle_pane_input(None, pending.pane_id, pending.generation, &bytes);
+        }
     }
 
     /// Remove the published snapshot and any staging or backup directory left over for this
@@ -681,6 +817,26 @@ fn write_secure(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     file.write_all(bytes)?;
     file.sync_all()
+}
+
+/// The command this pane's shell is running right now, if it is worth writing down. Shares its
+/// judgment with profile capture - see
+/// [`replayable_foreground_command`](crate::pane::launch::replayable_foreground_command), which
+/// explains why a pane at a prompt reports nothing here even though it still names a program.
+fn observed_foreground_command(
+    pane: &ServerPane,
+    shells: &std::collections::HashSet<String>,
+) -> Option<String> {
+    crate::pane::launch::replayable_foreground_command(
+        crate::pane::launch::ForegroundSnapshot {
+            command_phase: pane.runtime.command_phase,
+            program: pane.runtime.foreground_program.as_deref(),
+            executable: pane.runtime.foreground_executable.as_deref(),
+            arguments: &pane.runtime.foreground_arguments,
+            remote: pane.runtime.cwd_host.is_some(),
+        },
+        shells,
+    )
 }
 
 fn default_snapshot_dir() -> Option<PathBuf> {
@@ -1119,6 +1275,223 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// A pane whose runtime state says it is running `program args` right now.
+    fn running(program: &str, arguments: &[&str], phase: protocol::PaneCommandPhase) -> ServerPane {
+        let mut pane = test_pane();
+        pane.runtime.command_phase = phase;
+        pane.runtime.foreground_program = Some(program.to_string());
+        pane.runtime.foreground_arguments = arguments
+            .iter()
+            .map(|argument| argument.to_string())
+            .collect();
+        pane
+    }
+
+    fn shells() -> std::collections::HashSet<String> {
+        crate::pane::launch::common_shell_basenames()
+    }
+
+    /// The whole point of capturing a foreground command: a shell someone typed an agent into is
+    /// not a shell, and restoring it as one loses the session's actual contents.
+    #[test]
+    fn a_shell_running_a_command_captures_the_whole_invocation() {
+        let pane = running(
+            "cursor-agent",
+            &["--force", "keep going"],
+            protocol::PaneCommandPhase::Executing,
+        );
+
+        assert_eq!(
+            observed_foreground_command(&pane, &shells()).as_deref(),
+            Some("cursor-agent --force 'keep going'"),
+            "arguments distinguish one run of an agent from another, and must survive being \
+             typed back at a prompt"
+        );
+    }
+
+    /// `foreground_program` keeps naming the last command run while the shell idles at its prompt,
+    /// so an unfiltered capture would resurrect whatever hook last ran - `cd` machinery included.
+    #[test]
+    fn a_pane_at_its_prompt_captures_nothing() {
+        for phase in [
+            protocol::PaneCommandPhase::Prompt,
+            protocol::PaneCommandPhase::Input,
+            protocol::PaneCommandPhase::Completed { exit_status: None },
+        ] {
+            let pane = running("__zoxide_hook", &[], phase);
+            assert_eq!(
+                observed_foreground_command(&pane, &shells()),
+                None,
+                "{phase:?} means nothing is running, whatever the pane last named"
+            );
+        }
+    }
+
+    /// A pane sitting in its own shell is a pane sitting in its own shell. There is nothing to
+    /// replay, and typing the shell's name back would nest a second one inside the first.
+    #[test]
+    fn a_pane_running_only_its_shell_captures_nothing() {
+        let pane = running("zsh", &[], protocol::PaneCommandPhase::Executing);
+
+        assert_eq!(observed_foreground_command(&pane, &shells()), None);
+    }
+
+    /// `launch` and `foreground` answer different questions, and only the second is new
+    /// information: a pane created to run a command already restores it by respawning that command.
+    #[test]
+    fn only_shell_panes_record_what_they_are_running() {
+        let root = std::env::temp_dir().join(format!(
+            "rozi-snapshot-foreground-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "foreground",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::ZERO,
+                ..ServerSettings::default()
+            },
+        );
+        server.panes.insert(
+            1,
+            running(
+                "nvim",
+                &["src/main.rs"],
+                protocol::PaneCommandPhase::Executing,
+            ),
+        );
+        let mut launched = running("btop", &[], protocol::PaneCommandPhase::Executing);
+        launched.launch = Some(crate::pane::launch::PaneLaunch::shell("btop"));
+        server.panes.insert(2, launched);
+
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        let captured = |pane_id: PaneId| {
+            job.meta
+                .panes
+                .iter()
+                .find(|pane| pane.pane_id == pane_id)
+                .expect("pane in snapshot")
+                .foreground
+                .clone()
+        };
+
+        assert_eq!(captured(1).as_deref(), Some("nvim src/main.rs"));
+        assert_eq!(
+            captured(2),
+            None,
+            "a pane launched with a command restores it through `launch`; recording it twice \
+             would run it twice"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// `never` is an instruction not to keep the command, not merely not to run it. A user who set
+    /// it should not find their command lines sitting in the state directory.
+    #[test]
+    fn never_writes_no_command_to_the_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "rozi-snapshot-never-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "never",
+            ServerSettings {
+                resurrect: true,
+                resurrect_foreground: crate::config::ForegroundRestore::Never,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::ZERO,
+                ..ServerSettings::default()
+            },
+        );
+        server.panes.insert(
+            1,
+            running("cursor-agent", &[], protocol::PaneCommandPhase::Executing),
+        );
+
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+
+        assert_eq!(job.meta.panes[0].foreground, None);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A command is typed only once the restored shell says it is reading the terminal. Writing it
+    /// at spawn races the shell's own startup, and under `auto` a half-consumed line would submit
+    /// something other than what was captured.
+    #[test]
+    fn a_queued_command_waits_for_the_restored_shell_to_reach_its_prompt() {
+        let mut server = SessionServer::new_named_with_settings(
+            "pending",
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = test_pane();
+        pane.generation = 7;
+        server.panes.insert(1, pane);
+        server.replay_foreground_command(1, 7, "cursor-agent");
+
+        server.flush_pending_foreground();
+        assert_eq!(
+            server.pending_foreground.len(),
+            1,
+            "a shell that has not reported a prompt is not ready to be typed into"
+        );
+
+        server.panes.get_mut(&1).unwrap().runtime.command_phase =
+            protocol::PaneCommandPhase::Prompt;
+        server.flush_pending_foreground();
+        assert!(server.pending_foreground.is_empty());
+    }
+
+    /// The pane the command belonged to is gone the moment its generation moves; typing an old
+    /// pane's command into its replacement would be someone else's command appearing from nowhere.
+    #[test]
+    fn a_queued_command_is_dropped_when_its_pane_is_replaced() {
+        let mut server = SessionServer::new_named_with_settings(
+            "respawned",
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = test_pane();
+        pane.generation = 7;
+        pane.runtime.command_phase = protocol::PaneCommandPhase::Prompt;
+        server.panes.insert(1, pane);
+        server.replay_foreground_command(1, 7, "cursor-agent");
+
+        server.panes.get_mut(&1).unwrap().generation = 8;
+        server.flush_pending_foreground();
+
+        assert!(server.pending_foreground.is_empty());
+    }
+
+    /// `never` is read when the session is restored, not when it was snapshotted, so turning it on
+    /// also defuses a snapshot taken while it was off.
+    #[test]
+    fn never_replays_nothing_from_an_existing_snapshot() {
+        let mut server = SessionServer::new_named_with_settings(
+            "defused",
+            ServerSettings {
+                resurrect: true,
+                resurrect_foreground: crate::config::ForegroundRestore::Never,
+                ..ServerSettings::default()
+            },
+        );
+        server.panes.insert(1, test_pane());
+        server.replay_foreground_command(1, 1, "terraform apply");
+
+        assert!(server.pending_foreground.is_empty());
     }
 
     fn test_pane() -> ServerPane {

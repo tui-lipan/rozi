@@ -4,7 +4,7 @@ This directory records performance audits for specific revisions and machines. D
 historical evidence. They are not current benchmark guidance and their source, dependency, or
 architecture descriptions may no longer match the repository.
 
-The latest report is [Idle server wakeup evidence, 2026-08-29](audits/2026-08-29.md).
+The latest report is [Render and ingest CPU attribution, 2026-09-03](audits/2026-09-03.md).
 
 Use the [benchmark guide](../benchmarks.md) for permanent harness commands and definitions. Use the
 [audit playbook](audit-playbook.md) to run and record a new audit.
@@ -13,6 +13,7 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
+| 2026-09-03 | `c9e9881`, clean worktree | ready with minor improvements | [Render and ingest CPU attribution](audits/2026-09-03.md) |
 | 2026-08-29 | `4dedfc8` before and `0638f41` after, plus recorded benchmark and wait tuning | ready | [Idle server wakeup evidence](audits/2026-08-29.md) |
 | 2026-08-04 | `2b85924` plus recorded audit worktree changes, with follow-ups at `9f66a6a` and `4d45cf4` | ready with minor improvements | [Performance follow-up evidence](audits/2026-08-04.md) |
 | 2026-08-03 | `c07b6be` plus recorded worktree changes | ready with minor improvements | [Performance and resource-efficiency audit](audits/2026-08-03.md) |

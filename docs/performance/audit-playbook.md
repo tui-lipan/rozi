@@ -238,6 +238,23 @@ samply record --save-only --output target/perf-audit/profile.json.gz \
 Generate one controlled workload and stop the recording cleanly. Report the sampled thread and
 process. Keep client, server, and child-shell CPU separate.
 
+Do not attach a sampler to a running client with `samply record -p <client-pid>`. On Linux the
+attach stalls the client: it stops serving control requests and stops rendering, reports 0.00% of
+one core, and does not recover. A client CPU figure recorded that way measures a stalled process.
+Attaching to the session server is unaffected. For client-side questions, launch a benchmark
+binary under the sampler instead:
+
+```bash
+CARGO_PROFILE_BENCH_DEBUG=true CARGO_PROFILE_BENCH_STRIP=false \
+  cargo bench --locked --bench app_render --no-run
+samply record --save-only -o target/perf-audit/view_layout.json.gz -- \
+  target/release/deps/app_render-<hash> --bench 'view_layout/16' --profile-time 12
+```
+
+`--save-only` defers symbolication, so the saved profile carries raw addresses. Resolve them per
+library with `addr2line -e <library> -f -C -s`, and read the `libs` table in the profile to learn
+which library an address belongs to.
+
 Use profiles to answer a stated question, such as which function dominates a measured workload or
 whether cost grows with pane or client count. If host policy blocks sampling, report that and rely
 on deterministic benchmarks and direct process measurements.

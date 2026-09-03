@@ -7,13 +7,18 @@ mod unix {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+    /// A throwaway `$HOME` for one CLI invocation.
+    ///
+    /// Rooted through [`rozi::test_support::socket_safe_temp_dir`] because
+    /// `control_clients_skip_managed_installation_recovery` binds a socket inside what this
+    /// returns: under macOS's per-user `TMPDIR` the path is past `sun_path` before the test starts.
     fn isolated_home(label: &str) -> std::path::PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("rozi-cli-{label}-{}-{nonce}", std::process::id()));
+        let root = rozi::test_support::socket_safe_temp_dir()
+            .join(format!("rozi-cli-{label}-{}-{nonce}", std::process::id()));
         for dir in ["config", "state", "data", "runtime"] {
             let path = root.join(dir);
             fs::create_dir_all(&path).unwrap();

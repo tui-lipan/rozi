@@ -112,31 +112,53 @@ fn runtime_scratch_root() -> &'static Path {
     })
 }
 
+/// The most a base directory may spend before a test's own layout stops fitting a Unix socket.
+///
+/// `sockaddr_un.sun_path` is 104 bytes on macOS, the smallest of the platforms rozi builds for.
+/// What a test appends to a base is `/<test root>/rozi/session-<name>.sock`: 73 bytes for a
+/// seven-digit pid in the root and the longest session name the tests bind, which leaves 31.
+/// Rounded down to leave the next long name some room.
+const LONGEST_USABLE_BASE: usize = 30;
+
 /// Where [`runtime_scratch_root`] is carved out: a directory short enough that a session endpoint
 /// inside it still fits `sockaddr_un.sun_path`.
 ///
 /// `XDG_RUNTIME_DIR` is the right home for an endpoint, and where it exists it is already short
-/// (`/run/user/1000`). macOS has none, and the fallback - its per-user temp directory - is a
-/// 48-byte `/var/folders/<two>/<hash>/T`. A session endpoint under that runs past the 104 bytes
-/// macOS allows, so the socket cannot be bound at all: a test that renames a session reads the
-/// bind failure as the rename being *refused*, which is a plausible enough result to look like a
-/// product bug. `/tmp` is where a Linux runner without `XDG_RUNTIME_DIR` already lands, so falling
-/// back to it keeps one arrangement across platforms rather than inventing a macOS-only one.
+/// (`/run/user/1000`), so it is preferred whenever it fits.
 fn runtime_scratch_base() -> PathBuf {
-    /// What follows the base is `/rozi-test-run-<pid>/rozi/session-<name>.sock`: 73 bytes for a
-    /// seven-digit pid and the longest session name the tests bind, which leaves 31 of macOS's
-    /// 104. Rounded down to leave the next long name some room.
-    const LONGEST_USABLE_BASE: usize = 30;
-
-    let base = PlatformEnv::snapshot()
-        .xdg_runtime_dir
-        .unwrap_or_else(std::env::temp_dir);
+    let Some(runtime) = PlatformEnv::snapshot().xdg_runtime_dir else {
+        return socket_safe_temp_dir();
+    };
     // Windows endpoints are named pipes, which have no such limit - and its runtime directory is
     // derived from `%LOCALAPPDATA%` anyway, so this root is inert there (see `isolated_env`).
-    if !cfg!(unix) || base.as_os_str().len() <= LONGEST_USABLE_BASE {
+    if !cfg!(unix) || runtime.as_os_str().len() <= LONGEST_USABLE_BASE {
+        return runtime;
+    }
+    socket_safe_temp_dir()
+}
+
+/// A temp directory short enough to hold a whole test layout with a Unix socket at the end.
+///
+/// The temp directory itself wherever it fits, which is every ordinary Linux and Windows machine.
+/// macOS's per-user `TMPDIR` is a 48-byte `/var/folders/<two>/<hash>/T` that spends half the budget
+/// before a test has written anything, and an endpoint under it cannot be bound at all - so there
+/// the base falls back to the system temp directory, which every platform keeps short.
+///
+/// `/private/tmp` rather than `/tmp` on macOS: the latter is a symlink to it, and the private-
+/// directory check an endpoint's parent goes through rejects symlinked components by design.
+///
+/// Public because the integration suites build their own roots and need the same rule. Three
+/// copies of it is how one socket-length bug reached three test binaries at once.
+pub fn socket_safe_temp_dir() -> PathBuf {
+    let base = std::env::temp_dir();
+    if base.as_os_str().len() <= LONGEST_USABLE_BASE {
         return base;
     }
-    let short = PathBuf::from("/tmp");
+    let short = if cfg!(target_os = "macos") {
+        PathBuf::from("/private/tmp")
+    } else {
+        PathBuf::from("/tmp")
+    };
     if short.is_dir() { short } else { base }
 }
 

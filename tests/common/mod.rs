@@ -362,17 +362,11 @@ pub(crate) fn connect_when_ready(endpoint: &IpcEndpoint, child: &mut Child) -> T
 
 /// Base directory for a test's runtime state, kept short enough to hold a Unix socket.
 ///
-/// `sockaddr_un.sun_path` is 104 bytes on macOS (108 on Linux), and this base has a whole runtime
-/// layout appended to it before a socket name lands at the end: `<base>/rozi/<session>.sock`.
-/// macOS's per-user `TMPDIR` is `/var/folders/<2>/<30ish>/T/` on its own, which leaves too little
-/// room, so prefer the short system temp directory there. `/private/tmp` rather than `/tmp`
-/// because the latter is a symlink and [`ensure_private_dir`] rejects those by design.
+/// The length rule and the reason for `/private/tmp` live in
+/// [`rozi::test_support::socket_safe_temp_dir`], which the unit tests and the other suites resolve
+/// their roots through too.
 pub(crate) fn private_temp_dir() -> PathBuf {
-    let base = if cfg!(target_os = "macos") {
-        PathBuf::from("/private/tmp")
-    } else {
-        std::env::temp_dir()
-    };
+    let base = rozi::test_support::socket_safe_temp_dir();
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock after epoch")

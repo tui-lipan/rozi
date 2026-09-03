@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.0.16 - 2026-09-03
+
+A restored session comes back running what its panes were running, not only the shells they were
+launched with. Session and extension CLI commands move under `sessions` and `extensions`
+namespaces, and the extension surfaces stop announcing what their own picker already shows.
+
 ### Added
 
 - Restoring a session brings back what its panes were *running*, not only what they were launched

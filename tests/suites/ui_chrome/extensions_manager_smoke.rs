@@ -469,15 +469,31 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             backend
                 .dispatch(rozi::Msg::ExtensionsReload)
                 .expect("rescan duplicate fixture");
-            let duplicate_row = backend
+            // By directory name rather than by whole-path string equality. Two spellings of one
+            // directory compare unequal - Windows hands `std::env::temp_dir` the 8.3 form
+            // (`RUNNER~1`), and a path that has been through the filesystem may come back in the
+            // long one - and the row this wants is "the duplicate fixture", which its own directory
+            // name says exactly. The paths are printed when it misses so the next failure names the
+            // mismatch instead of restating the question.
+            let entries = &backend
                 .state()
                 .extensions
                 .as_ref()
                 .expect("extensions state")
-                .entries
+                .entries;
+            let duplicate_name = duplicate.file_name().expect("duplicate fixture is named");
+            let duplicate_row = entries
                 .iter()
-                .position(|entry| entry.path == duplicate.to_string_lossy())
-                .expect("duplicate fixture");
+                .position(|entry| {
+                    std::path::Path::new(&entry.path).file_name() == Some(duplicate_name)
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "no row for the duplicate fixture at {}\nrows: {:?}",
+                        duplicate.display(),
+                        entries.iter().map(|entry| &entry.path).collect::<Vec<_>>()
+                    )
+                });
             backend
                 .dispatch(rozi::Msg::ExtensionsSelect(duplicate_row))
                 .expect("select duplicate fixture");

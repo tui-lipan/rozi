@@ -100,7 +100,7 @@ name = "lipan"
 | `cwd` | path string | Launch directory | `~` expands. Used by new panes. |
 | `scrollback` | integer | `5000` | Minimum `1`. |
 | `frame_rate` | integer | `120` | Clamped to `15..=480` with a warning. |
-| `nerd_icons` | bool | `true` | Enables private-use glyphs in chrome. File icons also require a sidebar tree tab with `icons = true`. |
+| `nerd_icons` | bool | `true` | Enables private-use glyphs in chrome: pane title icons, workbar location and named-session badges, the Sessions sidebar client-count badge, directory chevrons, and `round`/`arrow` caps. Off, those badges use `⌁` / `∞` / `⋈`, directory chevrons use `▶` / `▼`, and pane titles drop the icon. File icons also require a sidebar tree tab with `icons = true`. |
 
 New local panes receive `ROZI=1`, `ROZI_PANE`, and, when available, `ROZI_SOCKET` and `ROZI_BIN`.
 See [Scripting](scripting.md) and [Control CLI](control.md).

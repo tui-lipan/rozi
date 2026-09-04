@@ -950,7 +950,8 @@ pub struct Config {
     /// client CPU, which is the trade worth making over a slow link or on battery. The server's PTY
     /// reads are unaffected - output is coalesced into fewer repaints, never dropped.
     pub frame_rate: u16,
-    /// Use Nerd Font private-use glyphs for decorative UI chrome: pane title icons, sidebar
+    /// Use Nerd Font private-use glyphs for decorative UI chrome: pane title icons, workbar
+    /// location and named-session badges, the Sessions sidebar client-count badge, sidebar
     /// directory chevrons, and `round`/`arrow` end caps. File-kind icons in the sidebar still need
     /// the per-tab `icons` flag as well. On by default so existing installs keep their current look.
     pub nerd_icons: bool,
@@ -1638,7 +1639,8 @@ impl Config {
     }
 
     /// Pane title icon for tiled / floating / fullscreen chrome. Empty when nerd icons are off so
-    /// the title does not spend columns on a missing glyph or a substitute badge.
+    /// the title does not spend columns on a missing glyph or a substitute badge: floating and
+    /// fullscreen already change the frame, and a tiled pane is the default.
     pub fn pane_title_icon(&self, fullscreen: bool, floating: bool) -> &'static str {
         if !self.nerd_icons {
             return "";
@@ -1650,6 +1652,25 @@ impl Config {
         } else {
             "󰖲"
         }
+    }
+
+    fn chrome_icon(&self, nerd: &'static str, fallback: &'static str) -> &'static str {
+        if self.nerd_icons { nerd } else { fallback }
+    }
+
+    /// Workbar location / SSH host prefix, including the trailing space.
+    pub fn remote_host_icon(&self) -> &'static str {
+        self.chrome_icon("󰒍 ", "⌁ ")
+    }
+
+    /// Workbar named-session prefix, including the trailing space.
+    pub fn named_session_icon(&self) -> &'static str {
+        self.chrome_icon("󰛤 ", "∞ ")
+    }
+
+    /// Sessions-tab shared-client count prefix, including the trailing space.
+    pub fn shared_clients_icon(&self) -> &'static str {
+        self.chrome_icon("󰍺 ", "⋈ ")
     }
 }
 
@@ -2072,6 +2093,13 @@ mod tests {
         );
         assert_eq!(config.pane_title_icon(false, false), "");
         assert_eq!(config.pane_title_icon(true, true), "");
+        assert_eq!(config.remote_host_icon(), "⌁ ");
+        assert_eq!(config.named_session_icon(), "∞ ");
+        assert_eq!(config.shared_clients_icon(), "⋈ ");
+        config.nerd_icons = true;
+        assert_eq!(config.remote_host_icon(), "󰒍 ");
+        assert_eq!(config.named_session_icon(), "󰛤 ");
+        assert_eq!(config.shared_clients_icon(), "󰍺 ");
     }
 
     #[test]

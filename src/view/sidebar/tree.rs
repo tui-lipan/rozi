@@ -38,12 +38,12 @@ pub(super) fn tree_tab(
         .directory_icon(if ctx.state.config.nerd_icons {
             ""
         } else {
-            ">"
+            "▶"
         })
         .opened_directory_icon(if ctx.state.config.nerd_icons {
             ""
         } else {
-            "v"
+            "▼"
         })
         .file_icon("")
         .symlink_icon("")

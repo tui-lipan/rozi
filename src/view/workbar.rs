@@ -468,11 +468,11 @@ fn segment_label(ctx: &Context<AppRoot>, segment: &WorkbarSegment) -> Option<Str
         WorkbarSegment::Session => {
             let name = attached_session_name(ctx)?;
             let clients = ctx.state.attached_client_count();
-            Some(if clients > 1 {
-                format!(" 󰛤 {name} ·{clients} ")
-            } else {
-                format!(" 󰛤 {name} ")
-            })
+            Some(session_badge_label(
+                &name,
+                clients,
+                ctx.state.config.named_session_icon(),
+            ))
         }
         WorkbarSegment::Clock => {
             let text = format!(
@@ -546,6 +546,7 @@ fn segment_label(ctx: &Context<AppRoot>, segment: &WorkbarSegment) -> Option<Str
 
 fn location_label(state: &crate::state::State) -> Option<String> {
     use crate::state::ConnectionState;
+    let icon = state.config.remote_host_icon();
     if let Some(host) = state.current().remote_host.as_deref() {
         let suffix = match state.current().connection {
             ConnectionState::Connecting => " · connecting",
@@ -556,12 +557,12 @@ fn location_label(state: &crate::state::State) -> Option<String> {
             | ConnectionState::Incompatible => " · offline",
             ConnectionState::Connected => "",
         };
-        return Some(format!(" 󰒍 {host}{suffix} "));
+        return Some(format!(" {icon}{host}{suffix} "));
     }
     // Sessionless but scoped: the badge names where the next shell would start. No connection
     // suffix, because there is no connection to describe.
     if let Some(target) = state.active_launcher_scope() {
-        return Some(format!(" 󰒍 {} ", target.display_label()));
+        return Some(format!(" {icon}{} ", target.display_label()));
     }
     let retained = state
         .background
@@ -577,7 +578,15 @@ fn location_label(state: &crate::state::State) -> Option<String> {
                 )
         })
         .count();
-    (retained > 0).then(|| format!(" 󰒍 {retained} "))
+    (retained > 0).then(|| format!(" {icon}{retained} "))
+}
+
+fn session_badge_label(name: &str, clients: u32, icon: &str) -> String {
+    if clients > 1 {
+        format!(" {icon}{name} ·{clients} ")
+    } else {
+        format!(" {icon}{name} ")
+    }
 }
 
 /// The element for a left-region workbar item: the workspace tab strip, or a colored badge. Left
@@ -1068,8 +1077,8 @@ pub(crate) fn connecting_workspace_panel(
 mod tests {
     use super::{
         WorkspaceMarker, collaboration_status, curated_color, has_inactive_marked_workspace,
-        location_label, resolve_badge_color, workspace_marker, workspace_marker_color,
-        workspace_placeholder_label, workspace_tab_label,
+        location_label, resolve_badge_color, session_badge_label, workspace_marker,
+        workspace_marker_color, workspace_placeholder_label, workspace_tab_label,
     };
     use crate::config::{BadgeColor, WorkbarAlertConfig, WorkbarSegment};
     use crate::state::{AlertMode, Pane, Workspace};
@@ -1102,11 +1111,24 @@ mod tests {
         ));
         state.current_mut().connection = crate::state::ConnectionState::Connected;
         assert_eq!(location_label(&state).as_deref(), Some(" 󰒍 workbox "));
+        state.config.nerd_icons = false;
+        assert_eq!(location_label(&state).as_deref(), Some(" ⌁ workbox "));
+        state.config.nerd_icons = true;
 
         state.runtime_epoch = 1;
         state.park_current(1, crate::state::Attachment::new());
         state.current_mut().connection = crate::state::ConnectionState::Connected;
         assert_eq!(location_label(&state).as_deref(), Some(" 󰒍 1 "));
+        state.config.nerd_icons = false;
+        assert_eq!(location_label(&state).as_deref(), Some(" ⌁ 1 "));
+    }
+
+    #[test]
+    fn session_badge_label_keeps_a_standard_unicode_prefix_without_nerd_icons() {
+        assert_eq!(session_badge_label("dev", 1, "󰛤 "), " 󰛤 dev ");
+        assert_eq!(session_badge_label("dev", 3, "󰛤 "), " 󰛤 dev ·3 ");
+        assert_eq!(session_badge_label("dev", 1, "∞ "), " ∞ dev ");
+        assert_eq!(session_badge_label("dev", 3, "∞ "), " ∞ dev ·3 ");
     }
 
     #[test]

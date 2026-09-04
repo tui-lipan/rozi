@@ -209,6 +209,61 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
         .expect("Sessions sidebar smoke completes");
 }
 
+#[test]
+fn sessions_sidebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
+                state.config.nerd_icons = false;
+                state.config.sidebar.tabs = vec![SidebarTab::Sessions];
+                state.config.sidebar.split = false;
+                state.sidebar.apply_configured_panels(&state.config.sidebar);
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+                state.current_mut().session_name = Some("dev".into());
+                state.sidebar.sessions = vec![session("dev", 2, 2, None)];
+            }
+
+            backend.render();
+            let lines: Vec<String> = backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .into_iter()
+                .map(|line| line.chars().take(32).collect())
+                .collect();
+            let row = lines
+                .iter()
+                .position(|line| line.contains("▍ dev"))
+                .unwrap_or_else(|| panic!("current session should be visible: {lines:#?}"));
+            assert!(
+                lines[row].contains("⋈ 2"),
+                "shared-client count uses the standard-unicode stand-in: {}",
+                lines[row]
+            );
+            assert!(
+                !lines[row].contains('󰍺')
+                    && !lines
+                        .iter()
+                        .any(|line| line.contains('󰒍') || line.contains('󰛤')),
+                "nerd glyphs stay off when nerd_icons is false: {lines:#?}"
+            );
+        })
+        .expect("spawn nerd-icons Sessions smoke thread")
+        .join()
+        .expect("nerd-icons Sessions smoke completes");
+}
+
 /// The Sessions tab with one configured host in `probe` state and nothing else, so the host row
 /// and whatever rides under it are the only things on screen.
 fn host_backend(probe: HostProbe) -> TestBackend<AppRoot> {

@@ -37,9 +37,10 @@ exclude = [
 # the emulator says changed rather than the whole window - see
 # docs/performance/audits/2026-09-04-idle-repaint.md. It is a minor bump because `UpdateLevel`
 # gained a variant below `Paint`, so the matches in `src/update/mod.rs` had to grow an arm.
-# 0.7.1 is required, not merely preferred: 0.7.0's row repaint never placed the hardware caret, so
-# the caret trailed the last patched cell instead of following the shell.
-tui-lipan = { version = "0.7.1", features = [
+# 0.7.2 is required, not merely preferred. Both of its predecessors left the caret behind: 0.7.0's
+# row repaint never placed it at all, and 0.7.1 still let the resync that follows a repaint walk off
+# with it, which is what put the caret at the end of its row for the length of a focus transition.
+tui-lipan = { version = "0.7.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

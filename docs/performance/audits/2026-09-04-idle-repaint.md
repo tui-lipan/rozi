@@ -195,7 +195,21 @@ time, and a block caret parked on a prompt glyph read as if the glyph had been d
 The cells were never wrong, which is exactly why it survived: the correctness matrix compared a
 patched frame against a full paint cell by cell, and a caret is not a cell. A partial repaint owes
 the host two things and only one of them was being checked. tui-lipan 0.7.1 places the caret and
-holds it to the same oracle, and Rozi requires that version.
+holds it to the same oracle.
+
+0.7.1 was not enough either. A repaint writes rows straight to the host, so the next ordinary draw
+re-sends them to bring Ratatui's own previous buffer back into agreement - and it does that after
+the draw has placed the caret. Sending cells moves the caret, so the resync left it one column past
+the last cell it re-sent. That needed an animation to see, because the resync only sends cells that
+differ from what the host holds: a style transition over a pane whose terminal is also producing
+output makes every cell on a patched row differ. On a focus change the border transition did
+exactly that, and the caret sat at the end of its row until the animation stopped. tui-lipan 0.7.2
+has the resync restore the caret it disturbs, and Rozi requires that version.
+
+The lesson is the same both times, and worth more than either fix. The framework's test backend
+wrote cells without moving its cursor, which no terminal does, so an assertion about the caret
+could not fail for the one reason a caret ever goes wrong - some draw walked off with it. 0.7.2
+also replaces that backend with one that advances the cursor the way crossterm does.
 
 The measurements above are unaffected - placing a caret is one escape sequence, and the extra row
 the fix paints is a row that was usually already damaged.

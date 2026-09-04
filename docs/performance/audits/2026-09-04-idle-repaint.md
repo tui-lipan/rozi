@@ -185,6 +185,21 @@ already turns 12,000 cells into 200 at 200x60, and the numbers above say the rem
 And the snapshot rebuild is now the largest per-cell term, but it is a different subsystem and a
 separate decision.
 
+## What the first cut got wrong
+
+tui-lipan 0.7.0 shipped this with the caret unplaced. A full draw ends by telling the host where the
+caret goes; the row repaint never called that, so the caret stayed where crossterm's last cell write
+left it - one column past the run it had just sent. Typing at a prompt made it wander a cell at a
+time, and a block caret parked on a prompt glyph read as if the glyph had been deleted.
+
+The cells were never wrong, which is exactly why it survived: the correctness matrix compared a
+patched frame against a full paint cell by cell, and a caret is not a cell. A partial repaint owes
+the host two things and only one of them was being checked. tui-lipan 0.7.1 places the caret and
+holds it to the same oracle, and Rozi requires that version.
+
+The measurements above are unaffected - placing a caret is one escape sequence, and the extra row
+the fix paints is a row that was usually already damaged.
+
 ## Reproducing
 
 The harness is not committed; it is a variant of `tools/memory-matrix.sh` that replaces the pane

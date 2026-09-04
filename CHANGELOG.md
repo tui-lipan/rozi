@@ -4,6 +4,10 @@
 
 ### Changed
 
+- The bootstrap installers drop the extra indent and finish in two short forms: `Run rozi` when
+  the command is already on PATH, or `Not on PATH` with `Run` and `Add` lines when it is not.
+  Windows still names the third case, a session that has not picked up a persisted PATH entry, as
+  `Not this terminal`.
 - A pane streaming output no longer costs a full-window frame per changed character. A client
   watching an agent CLI animate a spinner sat at about 8% of a core because every tiny update
   repainted every cell on screen; it now repaints only the rows the terminal emulator reports as

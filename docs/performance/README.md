@@ -13,7 +13,7 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
-| 2026-09-04 | `4b8f076` plus recorded framework changes | three framework fixes land a 31% cut | [Element-tree allocation in view and layout](audits/2026-09-04.md) |
+| 2026-09-04 | `4b8f076` plus recorded framework changes | five changes land a 32% cut | [Element-tree allocation in view and layout](audits/2026-09-04.md) |
 | 2026-09-03 | `c9e9881`, clean worktree | ready with minor improvements | [Render and ingest CPU attribution](audits/2026-09-03.md) |
 | 2026-08-29 | `4dedfc8` before and `0638f41` after, plus recorded benchmark and wait tuning | ready | [Idle server wakeup evidence](audits/2026-08-29.md) |
 | 2026-08-04 | `2b85924` plus recorded audit worktree changes, with follow-ups at `9f66a6a` and `4d45cf4` | ready with minor improvements | [Performance follow-up evidence](audits/2026-08-04.md) |

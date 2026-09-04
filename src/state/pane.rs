@@ -37,7 +37,50 @@ pub struct Pane {
     pub keys: PaneKeys,
 }
 
-/// Per-pane element keys, cached for the lifetime of the pane.
+/// A chrome colour a pane animates independently.
+///
+/// Each slot is one animation identity, so the set is closed and its names are part of the key
+/// format rather than free text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChromeSlot {
+    /// Titlebar background.
+    TitleBg,
+    /// Titlebar text.
+    TitleFg,
+    /// Pane frame background.
+    FrameBg,
+    /// Pane frame border.
+    FrameFg,
+    /// The divider drawn between this pane and its neighbour.
+    DividerFg,
+}
+
+impl ChromeSlot {
+    const ALL: [Self; 5] = [
+        Self::TitleBg,
+        Self::TitleFg,
+        Self::FrameBg,
+        Self::FrameFg,
+        Self::DividerFg,
+    ];
+
+    /// The slot's name as it appears in the animation key. Changing one restarts that fade.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::TitleBg => "title-bg",
+            Self::TitleFg => "title-fg",
+            Self::FrameBg => "frame-bg",
+            Self::FrameFg => "frame-fg",
+            Self::DividerFg => "divider-fg",
+        }
+    }
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Per-pane element and animation keys, cached for the lifetime of the pane.
 ///
 /// Rebuilding these in `view()` cost a `String` from `format!` plus the `Arc<str>` that `Key`
 /// copies it into, for every pane on every frame.
@@ -46,6 +89,8 @@ pub struct PaneKeys {
     pub body: Key,
     /// Keys the terminal widget itself; focus routing looks the pane up by this.
     pub terminal: Key,
+    /// One animation key per [`ChromeSlot`], indexed by the slot.
+    chrome: [Key; ChromeSlot::ALL.len()],
 }
 
 impl PaneKeys {
@@ -53,7 +98,14 @@ impl PaneKeys {
         Self {
             body: crate::view::pane_body_key(id).into(),
             terminal: crate::view::pane_terminal_key(id).into(),
+            chrome: ChromeSlot::ALL
+                .map(|slot| Key::from(format!("rozi-pane-chrome-{id}-{}", slot.name()))),
         }
+    }
+
+    /// The animation key for one chrome slot.
+    pub fn chrome(&self, slot: ChromeSlot) -> &Key {
+        &self.chrome[slot.index()]
     }
 }
 

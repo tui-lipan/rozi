@@ -33,7 +33,7 @@ use crate::layout::geometry::{
 };
 use crate::layout::tiling::PanePlacement;
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding_with_visible};
-use crate::state::{PaneId, WORKBAR_HEIGHT};
+use crate::state::{ChromeSlot, PaneId, WORKBAR_HEIGHT};
 use crate::{AppRoot, Msg};
 
 use pane::pane_title_bg;
@@ -383,9 +383,11 @@ pub(crate) fn render_workspace_panes(
         ));
         let focused_style = if highlight_focused {
             let target = crate::ops::theme::pane_frame_foreground(theme, true, true);
-            let fg = focused_pane.map_or(Paint::Solid(target), |id| {
-                app.chrome_color(ctx, id, "divider-fg", target)
-            });
+            let fg = focused_pane
+                .and_then(|id| crate::pane::lifecycle::find_pane(&ctx.state, id))
+                .map_or(Paint::Solid(target), |pane| {
+                    app.chrome_color(ctx, pane, ChromeSlot::DividerFg, target)
+                });
             Style::new().fg(fg)
         } else {
             normal_style
@@ -1346,7 +1348,11 @@ fn seam_neighbor_title_bgs(
     focused_pane: Option<PaneId>,
 ) -> (Option<Paint>, Option<Paint>) {
     let same_top_row = |other: &PanePlacement| (other.rect.y - base_rect.y).abs() < 0.5;
-    let color_of = |id: PaneId| pane_title_bg(app, ctx, id, focused_pane == Some(id));
+    let color_of = |id: PaneId| {
+        crate::pane::lifecycle::find_pane(&ctx.state, id)
+            .map(|pane| pane_title_bg(app, ctx, pane, focused_pane == Some(id)))
+    };
+
     // A neighbor across the left seam has its right border column on our left column; across the
     // right seam, its left column is on our right border column.
     let left = placements
@@ -1356,7 +1362,7 @@ fn seam_neighbor_title_bgs(
                 && same_top_row(other)
                 && (other.rect.x + other.rect.w - 1.0 - base_rect.x).abs() < 0.5
         })
-        .map(|other| color_of(other.id));
+        .and_then(|other| color_of(other.id));
     let right = placements
         .iter()
         .find(|other| {
@@ -1364,7 +1370,7 @@ fn seam_neighbor_title_bgs(
                 && same_top_row(other)
                 && (other.rect.x - (base_rect.x + base_rect.w - 1.0)).abs() < 0.5
         })
-        .map(|other| color_of(other.id));
+        .and_then(|other| color_of(other.id));
     (left, right)
 }
 

@@ -109,6 +109,10 @@ harness = false
 name = "server_fairness"
 harness = false
 
+[[bench]]
+name = "alloc_probe"
+harness = false
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

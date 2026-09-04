@@ -40,7 +40,9 @@ exclude = [
 # 0.7.2 is required, not merely preferred. Both of its predecessors left the caret behind: 0.7.0's
 # row repaint never placed it at all, and 0.7.1 still let the resync that follows a repaint walk off
 # with it, which is what put the caret at the end of its row for the length of a focus transition.
-tui-lipan = { version = "0.7.2", features = [
+# 0.7.3 keeps provided file-tree paths in the remote host's path flavor, so a Windows client does
+# not rewrite a Linux session's `/home/...` root into `C:\home\...` and break Files and Git.
+tui-lipan = { version = "0.7.3", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

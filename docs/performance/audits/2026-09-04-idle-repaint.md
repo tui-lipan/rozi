@@ -18,9 +18,9 @@ often the guest writes and linear in the *total* cells of the window, and does n
 the writing pane is shrunk to a quarter of that window. Every tiny update rebuilds the entire
 window's frame.
 
-This audit measures one client, one writing pane, and CPU from `/proc`. It does not split the
-per-update cost between building the frame and diffing it; that needs a profiler this host is not
-currently configured for.
+This audit measures one client, one writing pane, CPU from `/proc`, and a temporary timer splitting
+the paint from the diff. It does not attribute cost *within* painting, which would need a sampled
+profile this host is not currently configured for.
 
 ## Measurement context
 
@@ -103,6 +103,29 @@ Flat. Shrinking the changing pane to a quarter of the window changes nothing, so
 scoped to the pane that changed, let alone to the cells that changed. **One character moving in one
 pane costs a full-window frame.**
 
+## Where an update's 1.7 ms goes
+
+`draw_current_tree` funnels every render path, and its one `terminal.draw(...)` call does two
+separable things: `render(f, &ctx)` paints the widget tree into ratatui's next `Buffer`, and the
+rest of the call diffs that against the previous buffer and writes the result. Timing them
+separately, at 30 updates/s:
+
+| Viewport | Cells | `render(f, &ctx)` | diff + flush | Whole draw | Paint share |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 80x24 | 1,920 | 186 µs | 38 µs | 224 µs | 83% |
+| 200x60 | 12,000 | 949 µs | 140 µs | 1,089 µs | 87% |
+| 320x90 | 28,800 | 2,077 µs | 311 µs | 2,388 µs | 87% |
+
+Both halves are proportional to window cells - painting at roughly 72 to 97 ns per cell, diffing at
+11 to 20 - and painting is about 6.7 times the diff. The probe also counted 31.4 frames a second
+against a 30 Hz guest, which is the third independent confirmation that paints track updates one to
+one.
+
+At 200x60 that accounts for 1,089 µs of the 1,723 µs an update costs. Of the remainder, about
+235 µs is the visible-grid snapshot that `refresh_live_terminals` rebuilds at the top of the same
+function - the figure measured independently above - leaving roughly 400 µs in the mailbox, the
+event loop, and cursor handling.
+
 ## Interpretation
 
 - Confirmed defect: per-update client cost is proportional to total window cells and independent of
@@ -111,9 +134,13 @@ pane costs a full-window frame.**
 - Confirmed not the cause: the session server, flat near 1% across every rate measured.
 - Confirmed working: output coalescing and the frame diff. Updates map one to one onto paints, and
   about 100 bytes reach the terminal per update at every rate and viewport.
-- Not yet split: how much of the per-update cost is building the frame against diffing it. The
-  visible-grid snapshot rebuild is 235 µs at 200x60, about 14% of the 1.7 ms an update costs there,
-  so it is a contributor and not the story. Do not optimize it on this evidence alone.
+- Confirmed target: painting the tree into the next buffer, at 87% of the draw and about 56% of
+  everything an update costs. The diff is real but secondary at 8%, and the snapshot rebuild is
+  14%. Optimizing either of those first would be optimizing the small half.
+- Not a fix on its own: scoping the repaint to the dirty *pane*. It would explain the split-window
+  result, but the reported case is a single full-window pane, where the pane rect is still every
+  cell. The granularity that matters is the terminal cells that changed, which is information the
+  emulator already has and the render path currently discards.
 
 ## Reproducing
 
@@ -122,7 +149,11 @@ workload with a rate-controlled spinner and samples `utime + stime` rather than 
 worth keeping are the isolated root, the `script`-hosted client, and reading the wrapper's log size
 for host bytes.
 
-Splitting build against diff needs a sampled profile of the client. That is blocked here:
+The paint-versus-diff split needed no profiler: a temporary timer inside `draw_current_tree`
+around `render(f, &ctx)`, against one around the whole `terminal.draw(...)`, reported to a file
+named by an environment variable. That instrumentation was not kept.
+
+A finer attribution *within* painting would need a sampled profile, and that is blocked here:
 `kernel.perf_event_paranoid` is 2, `perf` is not installed, and the
 [2026-09-03 audit](2026-09-03.md) recorded that attaching samply to a `script`-hosted client
 strands the PTY wrapper. Lowering the sysctl is an owner action.

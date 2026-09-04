@@ -9,7 +9,7 @@ use crate::state::{
 use crate::{AppRoot, Msg};
 
 use super::integrated_scrollbar_config;
-use super::widget_keys::{pane_body_key, pane_terminal_key, pane_window_key};
+use super::widget_keys::pane_window_key;
 
 /// Caller-decided border-merge posture for one pane (see `view::render`).
 #[derive(Clone, Copy, Default)]
@@ -949,7 +949,7 @@ pub(crate) fn pane_element(
         terminal_widget = terminal_widget.selection(Some(selection));
     }
     let terminal: Element = terminal_widget.into();
-    let terminal = terminal.key(pane_terminal_key(id));
+    let terminal = terminal.key(pane.keys.terminal.clone());
 
     // Border fusing is buffer-level: any two box-drawing glyphs sharing a cell merge unless the
     // later frame draws in Replace mode, so only panes in the settled merged layer may merge
@@ -1106,7 +1106,7 @@ pub(crate) fn pane_element(
         None => terminal,
     };
     let body: Element = body.child(content).into();
-    let body = body.key(pane_body_key(id));
+    let body = body.key(pane.keys.body.clone());
     window_stack = window_stack.child(body);
 
     // A pending prefix chord temporarily takes the same ownership of mouse gestures as the held

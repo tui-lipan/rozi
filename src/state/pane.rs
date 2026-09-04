@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use tui_lipan::prelude::{FloatRect, ManagedTerminalStatus};
+use tui_lipan::prelude::{FloatRect, Key, ManagedTerminalStatus};
 
 use crate::pane::{TerminalPane, shell_title_parts};
 
@@ -28,6 +28,33 @@ pub struct Pane {
     pub logging: bool,
     pub activity: PaneActivity,
     pub terminal: TerminalPane,
+    /// This pane's element keys, built once here rather than formatted in every `view()`.
+    ///
+    /// Both are functions of [`id`](Self::id) alone, which never changes for a live pane, so a
+    /// cached key cannot go stale. The window key is deliberately absent: it also depends on
+    /// `pty_generation`, which is a public field written from many places, and a cache behind a
+    /// field that anything may assign is a correctness trap rather than a saving.
+    pub keys: PaneKeys,
+}
+
+/// Per-pane element keys, cached for the lifetime of the pane.
+///
+/// Rebuilding these in `view()` cost a `String` from `format!` plus the `Arc<str>` that `Key`
+/// copies it into, for every pane on every frame.
+pub struct PaneKeys {
+    /// Keys the pane body element, the container holding the terminal and its chrome.
+    pub body: Key,
+    /// Keys the terminal widget itself; focus routing looks the pane up by this.
+    pub terminal: Key,
+}
+
+impl PaneKeys {
+    fn new(id: PaneId) -> Self {
+        Self {
+            body: crate::view::pane_body_key(id).into(),
+            terminal: crate::view::pane_terminal_key(id).into(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,6 +81,7 @@ impl Pane {
             closing: false,
             logging: false,
             activity: PaneActivity::default(),
+            keys: PaneKeys::new(id),
             terminal: {
                 let mut terminal = TerminalPane::new(scrollback);
                 terminal.bind_session(id, 0);

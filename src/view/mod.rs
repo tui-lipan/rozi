@@ -18,11 +18,11 @@ pub use widget_keys::pane_window_key;
 pub use widget_keys::{
     askpass_input_key, collaboration_key, extension_detail_key, extension_install_input_key,
     extensions_key, follow_prompt_key, help_filter_key, help_scroll_key, layout_picker_key,
-    palette_key, pane_id_from_window_key, pane_padding_horizontal_key, pane_padding_vertical_key,
-    pane_terminal_key, pick_key, pick_prompt_input_key, profile_picker_key, remote_picker_key,
-    remote_target_input_key, rename_input_key, rename_session_input_key, save_profile_key,
-    search_input_key, session_picker_key, settings_palette_key, sidebar_body_key,
-    sidebar_region_key, theme_picker_key,
+    palette_key, pane_body_key, pane_id_from_window_key, pane_padding_horizontal_key,
+    pane_padding_vertical_key, pane_terminal_key, pick_key, pick_prompt_input_key,
+    profile_picker_key, remote_picker_key, remote_target_input_key, rename_input_key,
+    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
+    settings_palette_key, sidebar_body_key, sidebar_region_key, theme_picker_key,
 };
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
 

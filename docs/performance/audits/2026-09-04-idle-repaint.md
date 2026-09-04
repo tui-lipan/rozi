@@ -6,7 +6,8 @@
 
 ## Verdict and scope
 
-**Verdict: confirmed defect. One changed character repaints the whole window.**
+**Verdict: confirmed defect, since fixed. One changed character repainted the whole window.**
+See [Fixed, and by how much](#fixed-and-by-how-much) for the result.
 
 A TUI that does not take the alternate screen - a coding-agent CLI, typically - leaves its output
 in the primary buffer and animates a spinner in a couple of cells. The reported symptom is a client
@@ -141,6 +142,48 @@ event loop, and cursor handling.
   result, but the reported case is a single full-window pane, where the pane rect is still every
   cell. The granularity that matters is the terminal cells that changed, which is information the
   emulator already has and the render path currently discards.
+
+## Fixed, and by how much
+
+The framework now carries the emulator's damage through to the draw. `alacritty_terminal` already
+reports which lines changed; the render path discarded it. tui-lipan gained `Update::terminal_paint()`,
+which asserts that live terminal content is the only thing that looks different this frame, and a
+frame that keeps that claim repaints only the damaged viewport rows - through the ordinary tree walk
+in the real render context, clipped to one row, so a patched row is by construction the cells a full
+paint would have produced there. `output_frame_update` returns it where it returned `Update::paint()`;
+the indicator and chrome checks beside it are exactly what would make the claim untrue.
+
+Same harness, same host, one changed character at 30 updates a second, animations off. The
+sampling window is 30 s rather than the 6 s used above: at 0.6% of a core, 6 s of `utime + stime`
+is three or four clock ticks, and a one-tick quantum is a third of the reading.
+
+| Viewport | Cells | Before | After | Change |
+| --- | ---: | ---: | ---: | ---: |
+| 80x24 | 1,920 | 410 µs | 205 µs | −50% |
+| 200x60 | 12,000 | 1,672 µs | 580 µs | −65% |
+| 320x90 | 28,800 | 3,652 µs | 1,148 µs | −69% |
+
+And the reported case itself, 200x60 at 50 updates a second - the rate the 8% figure corresponds to:
+
+| | Client % | Server % | CPU per update |
+| --- | ---: | ---: | ---: |
+| Before | 8.20 | 0.87 | 1,624 µs |
+| After | 2.60 | 0.83 | 515 µs |
+
+The shape matters more than the number. 320x90 cost 8.9 times 80x24 for the same one-row change;
+it now costs 5.6, against 4.0 for the row width alone. Fitting the three points to
+`a·width + b·cells + c` gives about 0.7 µs per column, 29 ns per cell, and 93 µs fixed. That
+per-cell term is the visible-grid snapshot `refresh_live_terminals` rebuilds every frame - measured
+independently above at about 20 ns per cell - and no longer painting. Painting has left the profile.
+
+Host output fell slightly too, from about 104 to 89 bytes per update. It was never the problem -
+the diff was already emitting one changed cell for one changed cell - so this is a side effect
+worth recording rather than a result.
+
+Two things this deliberately did not do. Column-level damage is tracked and unused: row granularity
+already turns 12,000 cells into 200 at 200x60, and the numbers above say the remainder is elsewhere.
+And the snapshot rebuild is now the largest per-cell term, but it is a different subsystem and a
+separate decision.
 
 ## Reproducing
 

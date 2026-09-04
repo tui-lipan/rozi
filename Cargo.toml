@@ -33,7 +33,11 @@ exclude = [
 # tab needs - a collapsed root no longer reads as a clean repository, and a symlink is its own row
 # rather than a second name for its target - plus `FileTreeEntry::symlink_target` for remote trees.
 # 0.6.1 puts a link's target beside its name instead of right-aligning it away from the row.
-tui-lipan = { version = "0.6.1", features = [
+# 0.7.0 adds `Update::terminal_paint()`, which is what lets a pane's own output repaint the rows
+# the emulator says changed rather than the whole window - see
+# docs/performance/audits/2026-09-04-idle-repaint.md. It is a minor bump because `UpdateLevel`
+# gained a variant below `Paint`, so the matches in `src/update/mod.rs` had to grow an arm.
+tui-lipan = { version = "0.7.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

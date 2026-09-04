@@ -13,7 +13,7 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
-| 2026-09-04 | `ca5f34b` | confirmed defect: one changed character repaints the whole window | [Idle CPU under a non-fullscreen agent spinner](audits/2026-09-04-idle-repaint.md) |
+| 2026-09-04 | `ca5f34b`, fix measured at `151f175` plus the framework change | confirmed defect, fixed: one changed character repainted the whole window; damaged-row repaint cuts the reported case from 8.3% to 2.7% of a core | [Idle CPU under a non-fullscreen agent spinner](audits/2026-09-04-idle-repaint.md) |
 | 2026-09-04 | `4b8f076` plus recorded framework changes | five changes land a 32% cut | [Element-tree allocation in view and layout](audits/2026-09-04.md) |
 | 2026-09-03 | `c9e9881`, clean worktree | ready with minor improvements | [Render and ingest CPU attribution](audits/2026-09-03.md) |
 | 2026-08-29 | `4dedfc8` before and `0638f41` after, plus recorded benchmark and wait tuning | ready | [Idle server wakeup evidence](audits/2026-08-29.md) |

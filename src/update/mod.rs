@@ -767,6 +767,11 @@ fn merge_updates(mut aggregate: Update, mut next: Update) -> Update {
     match (level, command) {
         (UpdateLevel::None, None) => Update::none(),
         (UpdateLevel::None, Some(command)) => Update::command_only(command),
+        (UpdateLevel::TerminalPaint, None) => Update::terminal_paint(),
+        // Same reasoning as the paint case below, and the claim is narrower still: a
+        // terminal-only repaint asserts nothing else on screen moved, which a command's effects
+        // could contradict.
+        (UpdateLevel::TerminalPaint, Some(command)) => Update::with_command(command),
         (UpdateLevel::Paint, None) => Update::paint(),
         // tui-lipan has no paint-with-command constructor. This combination is rare on inbound
         // control traffic; a full update preserves both requirements without losing the command.
@@ -777,12 +782,15 @@ fn merge_updates(mut aggregate: Update, mut next: Update) -> Update {
 }
 
 fn strongest_update_level(left: UpdateLevel, right: UpdateLevel) -> UpdateLevel {
-    use UpdateLevel::{Full, Layout, None, Paint};
+    use UpdateLevel::{Full, Layout, None, Paint, TerminalPaint};
 
     match (left, right) {
         (Full, _) | (_, Full) => Full,
         (Layout, _) | (_, Layout) => Layout,
         (Paint, _) | (_, Paint) => Paint,
+        // Below `Paint`, so anything else in the same frame widens it back: the terminal-only
+        // claim holds only if every source in the frame agrees nothing else moved.
+        (TerminalPaint, _) | (_, TerminalPaint) => TerminalPaint,
         (None, None) => None,
     }
 }

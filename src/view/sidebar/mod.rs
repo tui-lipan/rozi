@@ -380,24 +380,17 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
         let closable = row.close.is_some();
         let close = close_affordance(ctx, panel, &row, index);
         let hovered = panel_state.hovered_row == Some(index) && !panel_state.suppress_row_hover;
-        let mut element = match row.kind {
+        let element = match row.kind {
             row::RowKind::Spacer => Text::new(" ").height(Length::Px(1)).into(),
             row::RowKind::Header(element) => *element,
             row::RowKind::Item(item) => {
                 item.build(ctx, focused && cursor == Some(index), hovered, close)
             }
         };
-        let close_hovered = ctx.has_hover_within_key(row::close_hover_key(panel, index));
-        if close_hovered && !panel_state.suppress_row_hover {
-            // Hover resolves to the innermost MouseRegion, so the row's native hover effect is
-            // inactive while the keyed ✕ region owns hover. Apply the same background transform
-            // through a scope around the row; the ✕ keeps its foreground-only native effect, and
-            // nested effects compose without another hover state machine.
-            element = EffectScope::new()
-                .effect(VisualEffect::transform_bg(super::hover_lift()))
-                .child(element)
-                .into();
-        }
+        // The row used to lose its own hover effect whenever the keyed ✕ region owned hover, so
+        // this re-applied the same background transform through a scope. tui-lipan 0.7.0 makes a
+        // `MouseRegion`'s hover visuals cover interactive descendants, so the row's native effect
+        // stays on and re-applying it lifted the background twice.
         // Hover is tracked for *every* row, not only the ones a click does something to. Pointing
         // at a row is a fact about the pointer; whether the row can be activated is not. Tying the
         // two together left `hovered_row` pointing at a row whose region had gone: a host row stops

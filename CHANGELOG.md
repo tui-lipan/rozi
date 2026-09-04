@@ -4,6 +4,12 @@
 
 ### Changed
 
+- A pane streaming output no longer costs a full-window frame per changed character. A client
+  watching an agent CLI animate a spinner sat at about 8% of a core because every tiny update
+  repainted every cell on screen; it now repaints only the rows the terminal emulator reports as
+  changed. At 200x60 and 50 updates a second that is 8.2% of a core down to 2.6%, and the cost
+  stops tracking the size of the window: 320x90 was 8.9 times the cost of 80x24 for the same
+  one-row change, and is now 5.6 against 4.0 for the row width alone. Needs tui-lipan 0.7.0.
 - On macOS the runtime directory moves out of the per-user `TMPDIR` when there is no room in it for
   a socket, to `/private/tmp/rozi-<uid>` - where tmux keeps its own, for the same reason. macOS
   spends 48 bytes on `/var/folders/<two>/<hash>/T` before rozi writes anything, and a Unix socket

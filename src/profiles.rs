@@ -73,9 +73,64 @@ fn persist_session_to_disk(state: &State) {
         return;
     };
     let profile = profile_from_state(state);
-    if let Err(err) = save_profile(&path, &profile) {
+    // A path the user named is theirs to place, and gets an ordinary write. The default lives in
+    // rozi's own state directory, where the snapshot is written private — it records the layout,
+    // every pane's working directory, and the commands they were launched with, none of which has
+    // any reason to be world-readable.
+    let result = if state.config.session.path.is_some() {
+        save_profile(&path, &profile)
+    } else {
+        save_session_snapshot(&path, &profile)
+    };
+    if let Err(err) = result {
         eprintln!("rozi: session autosave failed: {err}");
     }
+}
+
+/// Write the autosave into rozi's own state directory: `0700` directory, `0600` file, replaced
+/// atomically.
+///
+/// The rename matters as much as the mode. This runs at quit, so a write interrupted in place would
+/// leave a truncated snapshot as the thing the next launch restores from; renaming a finished file
+/// over the old one means the previous layout survives anything short of a completed write. It also
+/// repairs a snapshot left world-readable by an older rozi, since the replacement carries the new
+/// file's mode rather than the old one's.
+fn save_session_snapshot(path: &Path, profile: &Profile) -> Result<(), String> {
+    let env = crate::platform::paths::PlatformEnv::from_process();
+    let directory = crate::platform::paths::private_state_dir(&env).map_err(|err| {
+        format!(
+            "Could not prepare the state directory {}: {err}",
+            crate::platform::paths::state_dir(&env).display()
+        )
+    })?;
+    write_session_snapshot(&directory, path, profile)
+}
+
+/// The write itself, given a directory already established as private. Split out so the file mode
+/// and the replacement can be tested without reaching for the process environment.
+fn write_session_snapshot(directory: &Path, path: &Path, profile: &Profile) -> Result<(), String> {
+    let text = profile
+        .to_toml_string()
+        .map_err(|err| format!("Could not serialize the session snapshot: {err}"))?;
+    // Unique per process: `write_private_file` refuses to truncate an existing path, so a temporary
+    // left behind by a killed rozi must not be the name this one tries to reuse.
+    let temporary = directory.join(format!(".session.{}.toml", std::process::id()));
+    let _ = std::fs::remove_file(&temporary);
+    crate::platform::fs_security::write_private_file(&temporary, text.as_bytes()).map_err(
+        |err| {
+            format!(
+                "Could not write the session snapshot {}: {err}",
+                temporary.display()
+            )
+        },
+    )?;
+    std::fs::rename(&temporary, path).map_err(|err| {
+        let _ = std::fs::remove_file(&temporary);
+        format!(
+            "Could not replace the session snapshot {}: {err}",
+            path.display()
+        )
+    })
 }
 
 pub fn profile_from_state(state: &State) -> Profile {
@@ -1343,6 +1398,40 @@ mod tests {
         let restored = State::from_profile(Config::default(), Theme::default(), profile);
 
         assert_eq!(restored.current().workspaces[0].name, None);
+    }
+
+    /// The autosave records the layout, every pane's working directory, and the commands they were
+    /// launched with. It was written `0644` by a plain `fs::write`; it is private now, and replacing
+    /// an old permissive snapshot carries the new mode rather than inheriting the old one.
+    #[cfg(unix)]
+    #[test]
+    fn the_session_snapshot_is_written_private_and_replaces_a_world_readable_one() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = crate::test_support::private_temp_dir("session-snapshot-mode");
+        let path = directory.join("session.toml");
+        std::fs::write(&path, "# left by an older rozi\n").expect("an existing snapshot");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("world-readable, the way it used to be written");
+
+        write_session_snapshot(&directory, &path, &Profile::default()).expect("write the snapshot");
+
+        let metadata = std::fs::metadata(&path).expect("the snapshot");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert!(
+            !std::fs::read_to_string(&path)
+                .expect("readable")
+                .contains("older rozi"),
+            "and it is the new snapshot, not the old one"
+        );
+        assert!(
+            std::fs::read_dir(&directory)
+                .expect("directory")
+                .filter_map(|entry| entry.ok())
+                .all(|entry| entry.file_name() == "session.toml"),
+            "the temporary is renamed into place, never left behind"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

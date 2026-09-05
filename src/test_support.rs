@@ -76,6 +76,15 @@ fn scratch_root() -> &'static Path {
         let root = std::env::temp_dir().join(format!("rozi-test-home-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::create_dir_all(&root);
+        // Private, like a real home: rozi refuses to write state into a directory other users can
+        // read, so a scratch root left at the umask default silently disabled every state write a
+        // test made — which is exactly the production bug that made this worth fixing, reproduced
+        // in the harness and hiding whether persistence works at all.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700));
+        }
         root
     })
 }

@@ -24,6 +24,27 @@ use unicode_width::UnicodeWidthStr;
 /// full-screen plots while bounding an eight-pane attachment to 256 MiB of decoded pixels.
 const CLIENT_IMAGE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
 
+/// Build a terminal grid without crossing Alacritty's next history allocation boundary.
+///
+/// Alacritty grows history storage in 1,000-row blocks. tui-lipan deliberately gives its eviction
+/// ledger a little headroom beyond the exposed limit, so a saturated limit on that exact boundary
+/// (including Rozi's 5,000-line default) otherwise allocates one whole extra block for the next
+/// line and retains it. Starting one row taller and immediately shrinking leaves one blank storage
+/// row for that ledger step. The logical viewport and full requested scrollback are unchanged.
+pub(crate) fn new_terminal_screen(rows: u16, cols: u16, scrollback: usize) -> TerminalScreen {
+    const HISTORY_ALLOCATION_ROWS: usize = 1_000;
+
+    let rows = rows.max(1);
+    let cols = cols.max(1);
+    if scrollback.is_multiple_of(HISTORY_ALLOCATION_ROWS) && rows < u16::MAX {
+        let mut screen = TerminalScreen::new(rows + 1, cols, scrollback);
+        screen.resize(rows, cols);
+        screen
+    } else {
+        TerminalScreen::new(rows, cols, scrollback)
+    }
+}
+
 /// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes
 /// broadcast from the session server; the server owns the actual PTY.
 pub struct TerminalPane {
@@ -96,6 +117,11 @@ pub struct TerminalPane {
     image_budget_bytes: usize,
     seen_bell_count: u64,
     scrollback_limit: usize,
+    /// Whether this parser has consumed server output since its last backend bind.
+    ///
+    /// A fresh parser may be rebuilt at the authoritative layout size without losing state. Once
+    /// bytes have arrived, ordinary terminal resize/reflow semantics must be preserved.
+    output_seen: bool,
     /// Holds forwarded pointer motion to one position in flight at a time. See
     /// [`crate::pane::pty_events::pointer_flow`].
     pub(crate) pointer_flow: crate::pane::pty_events::pointer_flow::PointerFlow,
@@ -209,7 +235,7 @@ impl TerminalPane {
     pub fn new(scrollback: usize) -> Self {
         let cols = 120;
         let rows = 32;
-        let mut screen = TerminalScreen::new(rows, cols, scrollback);
+        let mut screen = new_terminal_screen(rows, cols, scrollback);
         // Images the child draws are sized in cells against this. The same value rides to the
         // server with every resize, so the PTY reports it to the child and both ends agree on how
         // many rows a picture takes.
@@ -250,6 +276,7 @@ impl TerminalPane {
             image_budget_bytes: CLIENT_IMAGE_BUDGET_BYTES,
             seen_bell_count: 0,
             scrollback_limit: scrollback,
+            output_seen: false,
             pointer_flow: crate::pane::pty_events::pointer_flow::PointerFlow::default(),
             screen: Rc::new(RefCell::new(screen)),
         }
@@ -319,7 +346,7 @@ impl TerminalPane {
         self.bind_session(pane_id, generation);
         self.runtime_sequence = 0;
         let mut screen = self.screen.borrow_mut();
-        *screen = TerminalScreen::new(self.rows, self.cols, self.scrollback_limit);
+        *screen = new_terminal_screen(self.rows, self.cols, self.scrollback_limit);
         screen.set_cell_size(tui_lipan::host_cell_size());
         screen.set_image_media_policy(self.media_policy);
         screen.set_image_budget(self.image_budget_bytes);
@@ -327,6 +354,7 @@ impl TerminalPane {
         if let Some(palette) = self.last_palette {
             screen.set_palette(palette);
         }
+        self.output_seen = false;
         drop(screen);
     }
 
@@ -342,6 +370,7 @@ impl TerminalPane {
     pub fn process_server_output(&mut self, bytes: &[u8]) -> ProcessedOutput {
         let mut screen = self.screen.borrow_mut();
         screen.process_bytes(bytes);
+        self.output_seen = true;
         let _ = screen.drain_responses();
         let clipboard_events = screen.drain_clipboard_events();
         // Runtime metadata comes from the server. Keep the screen's bounded semantic marks, but do
@@ -415,7 +444,22 @@ impl TerminalPane {
         }
         self.cols = cols;
         self.rows = rows;
-        self.screen.borrow_mut().resize(rows, cols);
+        if self.output_seen {
+            self.screen.borrow_mut().resize(rows, cols);
+        } else {
+            // Pane construction starts at a fallback 120x32 before layout can report the real
+            // geometry. A width resize rebuilds Alacritty's rows and drops the one spare slot
+            // installed by `new_terminal_screen`, so reconstruct while the parser is still empty.
+            let mut screen = new_terminal_screen(rows, cols, self.scrollback_limit);
+            screen.set_cell_size(tui_lipan::host_cell_size());
+            screen.set_image_media_policy(self.media_policy);
+            screen.set_image_budget(self.image_budget_bytes);
+            if let Some(palette) = self.last_palette {
+                screen.set_palette(palette);
+            }
+            self.seen_bell_count = screen.bell_count();
+            *self.screen.borrow_mut() = screen;
+        }
         true
     }
 
@@ -817,6 +861,47 @@ pub(crate) fn sanitize_terminal_title(title: String) -> Option<String> {
 mod tests {
     use super::*;
     use tui_lipan::utils::{GridPos, GridSelection};
+
+    #[test]
+    fn allocation_boundary_priming_preserves_terminal_semantics_and_capacity() {
+        let mut primed = new_terminal_screen(5, 20, 1_000);
+        let mut direct = TerminalScreen::new(5, 20, 1_000);
+        let primed_initial = primed.render_snapshot();
+        let direct_initial = direct.render_snapshot();
+        assert_eq!(primed_initial.text, direct_initial.text);
+        assert_eq!(primed_initial.color_lines, direct_initial.color_lines);
+        assert_eq!(
+            (primed_initial.cursor_row, primed_initial.cursor_col),
+            (direct_initial.cursor_row, direct_initial.cursor_col)
+        );
+        assert_eq!(primed.total_scrollback_rows(), 0);
+
+        for line in 0..1_010 {
+            primed.process_bytes(format!("line-{line}\r\n").as_bytes());
+        }
+        assert_eq!(
+            primed.total_scrollback_rows(),
+            1_000,
+            "priming must not reduce the requested scrollback"
+        );
+    }
+
+    #[test]
+    fn pre_output_resize_rebuilds_at_authoritative_size_even_after_spawn_is_ready() {
+        let mut pane = TerminalPane::new(1_000);
+        pane.bind_server_backend(1, 2);
+        // SpawnResult marks the pane ready before its first output frame arrives.
+        pane.status = ManagedTerminalStatus::Ready;
+
+        assert!(pane.apply_server_resize(253, 64));
+        assert!(!pane.output_seen);
+        assert_eq!((pane.cols, pane.rows), (253, 64));
+
+        for line in 0..1_070 {
+            pane.process_server_output(format!("line-{line}\r\n").as_bytes());
+        }
+        assert_eq!(pane.screen.borrow_mut().total_scrollback_rows(), 1_000);
+    }
 
     #[test]
     fn shell_title_parser_is_narrow_and_preserves_the_user_and_cwd() {

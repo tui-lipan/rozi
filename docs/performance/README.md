@@ -4,7 +4,7 @@ This directory records performance audits for specific revisions and machines. D
 historical evidence. They are not current benchmark guidance and their source, dependency, or
 architecture descriptions may no longer match the repository.
 
-The latest report is [Idle CPU under a non-fullscreen agent spinner, 2026-09-04](audits/2026-09-04-idle-repaint.md).
+The latest report is [Pane retained-memory audit, 2026-09-05](audits/2026-09-05.md).
 
 Use the [benchmark guide](../benchmarks.md) for permanent harness commands and definitions. Use the
 [audit playbook](audit-playbook.md) to run and record a new audit.
@@ -13,6 +13,7 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
+| 2026-09-05 | `1e8f4a0` plus recorded worktree changes | fixed: default-history 253×64 pane with one client uses 14.1% less application PSS | [Pane retained-memory audit](audits/2026-09-05.md) |
 | 2026-09-04 | `ca5f34b`, fix measured at `151f175` plus the framework change | confirmed defect, fixed: one changed character repainted the whole window; damaged-row repaint cuts the reported case from 8.3% to 2.7% of a core | [Idle CPU under a non-fullscreen agent spinner](audits/2026-09-04-idle-repaint.md) |
 | 2026-09-04 | `4b8f076` plus recorded framework changes | five changes land a 32% cut | [Element-tree allocation in view and layout](audits/2026-09-04.md) |
 | 2026-09-03 | `c9e9881`, clean worktree | ready with minor improvements | [Render and ingest CPU attribution](audits/2026-09-03.md) |

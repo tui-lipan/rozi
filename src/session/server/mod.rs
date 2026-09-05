@@ -258,6 +258,12 @@ pub struct ServerPane {
     /// that file was written from, which is what lets a session with one busy pane and a dozen
     /// idle ones avoid re-exporting all thirteen.
     content_generation: u64,
+    /// Whether PTY output has reached this terminal since it was created.
+    ///
+    /// Before the first bytes arrive, a controller resize may replace the fallback-sized empty
+    /// parser with one built at the authoritative layout geometry. Afterwards every resize must
+    /// preserve the populated parser and use normal reflow.
+    output_seen: bool,
     pub cols: u16,
     pub rows: u16,
     /// Host cell size in pixels, as reported by the controller and handed to the PTY.
@@ -1054,6 +1060,13 @@ impl ServerPane {
     pub(super) fn screen_mut(&mut self) -> &mut TerminalScreen {
         self.content_generation = self.content_generation.saturating_add(1);
         &mut self.terminal
+    }
+
+    /// Replace a parser which has not consumed PTY output.
+    pub(super) fn replace_empty_screen(&mut self, screen: TerminalScreen) {
+        debug_assert!(!self.output_seen);
+        self.content_generation = self.content_generation.saturating_add(1);
+        self.terminal = screen;
     }
 
     /// The pane's terminal, for an operation that needs `&mut` but leaves persisted content

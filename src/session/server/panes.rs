@@ -136,7 +136,7 @@ impl SessionServer {
         self.next_generation = self.next_generation.max(generation.saturating_add(1));
         // Pre-17 clients report no cell size; the PTY's own default stands in until one resizes.
         let cell = request.cell.unwrap_or_default();
-        let mut screen = TerminalScreen::new(rows.max(1), cols.max(1), self.settings.scrollback);
+        let mut screen = crate::pane::new_terminal_screen(rows, cols, self.settings.scrollback);
         screen.set_cell_size(cell);
         // Clients parse the same raw stream and own rendering. The server only needs terminal
         // semantics, protocol replies, and image-implied cursor movement.
@@ -185,6 +185,7 @@ impl SessionServer {
                         pty: Some(pty),
                         terminal: screen,
                         content_generation: 0,
+                        output_seen: seed.is_some(),
                         cols: cols.max(1),
                         rows: rows.max(1),
                         cell,
@@ -228,6 +229,7 @@ impl SessionServer {
                             pty: None,
                             terminal: screen,
                             content_generation: 0,
+                            output_seen: seed.is_some(),
                             cols: cols.max(1),
                             rows: rows.max(1),
                             cell,
@@ -354,6 +356,7 @@ impl SessionServer {
                         if logging_error.is_some() {
                             pane.log = None;
                         }
+                        pane.output_seen = true;
                         pane.screen_mut().process_bytes(&bytes);
                         // Bumped directly rather than through `mark_dirty`: `pane` holds a mutable
                         // borrow of `self.panes`, and a disjoint field assignment is what the

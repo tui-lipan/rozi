@@ -122,6 +122,10 @@ harness = false
 name = "alloc_probe"
 harness = false
 
+[[bench]]
+name = "terminal_memory"
+harness = false
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

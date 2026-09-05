@@ -1251,6 +1251,7 @@ mod tests {
             pty: None,
             terminal: TerminalScreen::new(24, 80, 100),
             content_generation: 0,
+            output_seen: false,
             cols: 80,
             rows: 24,
             exited: None,

@@ -283,7 +283,10 @@ start_client() {
 }
 
 pane_command() {
-  local history=$1 content=$2 marker=$3 marker_suffix=${3#M}
+  local rows=$1 history=$2 content=$3 marker=$4
+  # Fill the requested history in addition to the visible grid, then cross the limit once so the
+  # scenario measures a saturated screen rather than `history - viewport_rows` retained lines.
+  local emitted_lines=$((history + rows + 1))
   if [[ $content == images || $content == image-stress ]]; then
     local width=384 height=256 image_count=8
     if [[ $content == image-stress ]]; then
@@ -291,11 +294,11 @@ pane_command() {
       height=1024
       image_count=12
     fi
-    printf '%s' "python3 -c 'import base64,sys,time; w=$width; h=$height; count=$image_count; marker=\"M\"+\"${marker_suffix}\"; raw=bytes((index * 17 + 23) % 251 for index in range(w * h * 3)); payload=base64.b64encode(raw).decode(); [sys.stdout.write(\"\\x1b_Ga=T,f=24,s=%d,v=%d,t=d,i=%d;%s\\x1b\\\\\\n\" % (w,h,image,payload)) for image in range(1,count+1)]; sys.stdout.write(marker+\"\\n\"); sys.stdout.flush(); time.sleep(3600)'"
+    printf '%s' "python3 -c 'import base64,sys,time; w=$width; h=$height; count=$image_count; marker=\"$marker\"; raw=bytes((index * 17 + 23) % 251 for index in range(w * h * 3)); payload=base64.b64encode(raw).decode(); [sys.stdout.write(\"\\x1b_Ga=T,f=24,s=%d,v=%d,t=d,i=%d;%s\\x1b\\\\\\n\" % (w,h,image,payload)) for image in range(1,count+1)]; sys.stdout.write(marker+\"\\n\"); sys.stdout.flush(); time.sleep(3600)'"
   elif [[ $content == styled ]]; then
-    printf "i=0; while [ \$i -lt %s ]; do printf '\\033[3%%dmrozi-%%06d styled\\033[0m\\n' \$((\$i%%7+1)) \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
+    printf "i=0; while [ \$i -lt %s ]; do printf '\\033[3%%dmrozi-%%06d styled\\033[0m\\n' \$((\$i%%7+1)) \$i; i=\$((\$i+1)); done; printf '%%s\\n' '%s'; while :; do sleep 3600; done" "$emitted_lines" "$marker"
   else
-    printf "i=0; while [ \$i -lt %s ]; do printf 'rozi-%%06d plain\\n' \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
+    printf "i=0; while [ \$i -lt %s ]; do printf 'rozi-%%06d plain\\n' \$i; i=\$((\$i+1)); done; printf '%%s\\n' '%s'; while :; do sleep 3600; done" "$emitted_lines" "$marker"
   fi
 }
 
@@ -313,22 +316,30 @@ measure_groups() {
   else
     shell_csv=$(python3 - "$SERVER_PID" <<'PY'
 import pathlib, sys
-todo = [int(sys.argv[1])]
-seen = set(todo)
-children = []
-while todo:
-    pid = todo.pop()
-    path = pathlib.Path(f"/proc/{pid}/task/{pid}/children")
+root = int(sys.argv[1])
+by_parent = {}
+start_times = {}
+for path in pathlib.Path("/proc").iterdir():
+    if not path.name.isdigit():
+        continue
     try:
-        found = [int(value) for value in path.read_text().split()]
-    except (OSError, ValueError):
-        found = []
-    for child in found:
+        fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+        pid = int(path.name)
+        parent = int(fields[1])
+        start_times[pid] = fields[19]
+        by_parent.setdefault(parent, []).append(pid)
+    except (IndexError, OSError, ValueError):
+        continue
+todo = [root]
+seen = {root}
+descendants = []
+while todo:
+    for child in by_parent.get(todo.pop(), []):
         if child not in seen:
             seen.add(child)
-            children.append(child)
+            descendants.append(child)
             todo.append(child)
-print(",".join(map(str, children)))
+print(",".join(f"{pid}@{start_times[pid]}" for pid in descendants))
 PY
     )
   fi
@@ -436,8 +447,8 @@ run_scenario() {
   ROOT=$(mktemp -d "${TMPDIR:-/tmp}/rozi-memory.XXXXXX")
   chmod 700 "$ROOT"
   mkdir -p "$ROOT"/{home,config,state,cache,data,runtime,work}
-  local command marker=M01
-  command=$(pane_command "$history" "$content" "$marker")
+  local command marker=Z
+  command=$(pane_command "$rows" "$history" "$content" "$marker")
   {
     printf '%s\n' '#!/bin/sh'
     printf 'while [ ! -e %q ]; do sleep 0.05; done\n' "$ROOT/work/start"
@@ -447,6 +458,10 @@ run_scenario() {
   export HOME="$ROOT/home" XDG_CONFIG_HOME="$ROOT/config" XDG_STATE_HOME="$ROOT/state"
   export XDG_CACHE_HOME="$ROOT/cache" XDG_DATA_HOME="$ROOT/data"
   export XDG_RUNTIME_DIR="$ROOT/runtime"
+  # The harness is commonly launched from inside a Rozi pane. Do not let that pane's control
+  # context target an unrelated source pane/socket or lend extension provenance to isolated
+  # control requests.
+  unset ROZI_PANE ROZI_SOCKET ROZI_EXTENSION ROZI_BIN ROZI
   export ROZI_CONFIG="$ROOT/config/config.toml" TERM=xterm-256color LANG=C LC_ALL=C SHELL=/bin/sh
   cat >"$ROZI_CONFIG" <<EOF
 shell = ["/bin/sh", "$ROOT/work/initial-workload.sh"]
@@ -485,8 +500,7 @@ EOF
   PANE_IDS=(1)
   PANE_MARKERS=("$marker")
   for ((pane=2; pane<=panes; pane++)); do
-    printf -v marker 'M%02d' "$pane"
-    command=$(pane_command "$history" "$content" "$marker")
+    command=$(pane_command "$rows" "$history" "$content" "$marker")
     response=$("$BIN" --socket "$control" split "$command")
     id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<<"$response")
     PANE_IDS+=("$id")

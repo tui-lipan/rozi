@@ -29,6 +29,7 @@ fn test_pane(generation: u64) -> ServerPane {
         pty: None,
         terminal: TerminalScreen::new(5, 20, 100),
         content_generation: 0,
+        output_seen: false,
         cols: 20,
         rows: 5,
         exited: None,
@@ -2416,6 +2417,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             pty: None,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
+            output_seen: false,
             cols: 20,
             rows: 5,
             exited: None,
@@ -2511,6 +2513,41 @@ fn resize_adopts_the_controllers_cell_size() {
 }
 
 #[test]
+fn resize_after_output_reflows_without_replacing_server_content() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _stream) = attach_client(&mut server);
+    server.panes.insert(1, test_pane(2));
+    server.handle_event(ServerEvent::Pty(
+        None,
+        1,
+        2,
+        TerminalPtyEvent::Output(b"content-before-resize".to_vec().into()),
+    ));
+    assert!(server.panes[&1].output_seen);
+
+    server.handle_message(
+        controller,
+        ClientMessage::Resize {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            cols: 80,
+            rows: 24,
+            cell_width: 0,
+            cell_height: 0,
+        },
+    );
+
+    let pane = server.panes.get_mut(&1).unwrap();
+    assert!(
+        pane.screen_without_change()
+            .render_snapshot()
+            .text
+            .contains("content-before-resize")
+    );
+}
+
+#[test]
 fn duplicate_spawn_is_rejected() {
     let mut server = SessionServer::new_named("dev");
     server.panes.insert(
@@ -2529,6 +2566,7 @@ fn duplicate_spawn_is_rejected() {
             pty: None,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
+            output_seen: false,
             cols: 20,
             rows: 5,
             exited: None,
@@ -2581,6 +2619,7 @@ fn exited_pane_can_be_respawned() {
             pty: None,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
+            output_seen: false,
             cols: 20,
             rows: 5,
             exited: Some(0),
@@ -2639,6 +2678,7 @@ fn attach_reports_layout_and_panes() {
         pty: None,
         terminal: TerminalScreen::new(5, 20, 100),
         content_generation: 0,
+        output_seen: false,
         cols: 20,
         rows: 5,
         exited: None,
@@ -2829,6 +2869,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             pty: None,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
+            output_seen: false,
             cols: 20,
             rows: 5,
             exited: None,
@@ -2901,6 +2942,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 pty: None,
                 terminal: screen,
                 content_generation: 0,
+                output_seen: true,
                 cols: 20,
                 rows: 5,
                 exited,

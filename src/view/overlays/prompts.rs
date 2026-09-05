@@ -102,6 +102,10 @@ struct PromptChrome<'a> {
     placeholder: &'a str,
     /// Wrapped text between the title and the field, for a question too long to be a title.
     detail: Option<&'a str>,
+    /// One string out of [`Self::detail`] repeated on a line of its own, directly above the field.
+    /// For a value that has to be compared exactly and is unreadable broken across a wrap — a
+    /// host-key fingerprint. Additive: the detail above still carries it in context.
+    highlight: Option<&'a str>,
     /// Glyph standing in for every typed character. `Some` for anything the user would not want
     /// on screen — or in a capture.
     mask: Option<char>,
@@ -128,6 +132,7 @@ impl<'a> PromptChrome<'a> {
             title,
             placeholder,
             detail: None,
+            highlight: None,
             mask: None,
             caption: None,
             caption_document: None,
@@ -155,6 +160,7 @@ fn prompt_overlay(
         title,
         placeholder,
         detail,
+        highlight,
         mask,
         caption,
         caption_document,
@@ -221,6 +227,21 @@ fn prompt_overlay(
                         // silently clipping the question it ends with.
                         .width(Length::Flex(1))
                         .style(fg_only(&theme.muted)),
+                ),
+        );
+    }
+    if let Some(highlight) = highlight {
+        // Its own line, in the accent, directly above the field: the value the answer is being
+        // checked against, where it can be read straight across instead of around a wrap.
+        body = body.child(
+            HStack::new()
+                .height(Length::Auto)
+                .padding((0, 1, 1, 1))
+                .child(
+                    Text::new(highlight)
+                        .overflow(Overflow::Wrap)
+                        .width(Length::Flex(1))
+                        .style(fg_only(&theme.accent).bold()),
                 ),
         );
     }
@@ -501,10 +522,16 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
     } else {
         "yes / no"
     };
+    // Only a confirmation names one, and only a confirmation is unmasked — repeating a fingerprint
+    // above a masked password field would be repeating the wrong prompt's business.
+    let fingerprint = (!secret)
+        .then(|| crate::session::remote::askpass::host_key_fingerprint(question))
+        .flatten();
     prompt_overlay(
         ctx,
         PromptChrome {
             detail: (!inline_title).then_some(question),
+            highlight: fingerprint,
             mask: secret.then_some('•'),
             always_cancel_hint: true,
             dim_behind: true,

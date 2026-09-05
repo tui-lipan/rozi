@@ -19,6 +19,15 @@
 - `h` and `l` walk the help overlay's tab strip alongside `Left` and `Right`, matching the vim keys
   the sidebar already accepts. Both only apply while the search field is not focused, where they
   are ordinary characters.
+- The SSH host-key confirmation repeats the fingerprint on a line of its own above the field. Inside
+  OpenSSH's sentence a 43-character digest breaks across the wrap with a full stop attached, which
+  is the one shape it cannot be compared in. The question itself stays verbatim above it: repeating
+  one token out of a security prompt is additive, and a prompt whose wording rozi does not
+  recognise loses the extra line and nothing else.
+- A remote host whose key *changed* reports `Host key changed` rather than `Host key not trusted`.
+  They are different pieces of news — OpenSSH refuses a changed key outright instead of offering the
+  yes/no prompt an unknown one gets, because it can mean somebody is in the middle — and they read
+  identically before.
 - A host that could not be reached keeps its row, marked `!` with a short reason (`SSH login
   rejected`, `Unknown host name`), alongside a toast carrying the same message. Previously a new
   host that failed to connect appeared for a few frames and vanished, leaving nothing to retry.

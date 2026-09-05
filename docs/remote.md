@@ -61,7 +61,9 @@ With `batch_mode = false`, a running Rozi client answers SSH prompts in a modal 
 them reach the terminal:
 
 - A password or key passphrase is masked and never appears on screen.
-- A host-key question shows the full fingerprint and takes `yes` or `no` unmasked.
+- A host-key question shows OpenSSH's wording verbatim and takes `yes` or `no` unmasked. The
+  fingerprint is repeated whole on its own line beneath it, where it can be compared without
+  breaking across a wrap.
 - A rejected password is reported on the prompt when SSH asks again.
 - `Esc` ends that connection's attempt. SSH re-asks three times per connection, so a refusal also
   declines those retries and gives up on the host probe that raised them. Activating the host again
@@ -246,6 +248,7 @@ its `ControlPersist` window.
 | `SSH port closed` | Check `sshd`, the configured port, and port forwarding. |
 | `SSH login rejected` | Check the user, key, agent, and server authorization. |
 | `Host key not trusted` | Connect with `ssh` and inspect `known_hosts`. |
+| `Host key changed` | The host's identity is not the one recorded. Verify the new key out of band before removing the old entry — OpenSSH refuses this one outright rather than asking. |
 | `No rozi on host` | Allow installation or set `binary_path`. |
 | Incompatible version | Update both ends and restart the named server. |
 | Git markers missing | Install `git` on the remote server and check its `PATH`. |

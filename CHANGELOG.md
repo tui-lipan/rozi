@@ -16,6 +16,9 @@
 - The Settings *Terminal padding* editor marks its active field the way the host editor does, with
   a `›` and a bold label. Two borderless fields side by side otherwise said nothing about which one
   `Enter` was aimed at.
+- `h` and `l` walk the help overlay's tab strip alongside `Left` and `Right`, matching the vim keys
+  the sidebar already accepts. Both only apply while the search field is not focused, where they
+  are ordinary characters.
 - A host that could not be reached keeps its row, marked `!` with a short reason (`SSH login
   rejected`, `Unknown host name`), alongside a toast carrying the same message. Previously a new
   host that failed to connect appeared for a few frames and vanished, leaving nothing to retry.

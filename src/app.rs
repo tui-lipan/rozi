@@ -762,8 +762,9 @@ impl AppRoot {
 
     /// How far a key moves the help tab strip, if it moves it at all.
     ///
-    /// `Tab`/`Shift+Tab` cycle from anywhere in the overlay; the arrows only do while the filter
-    /// is unfocused, where they would otherwise be the caret's.
+    /// `Tab`/`Shift+Tab` cycle from anywhere in the overlay; the arrows and their vim twins only do
+    /// while the filter is unfocused, where they would otherwise be the caret's — and where `h` and
+    /// `l` would otherwise be typed into it.
     fn help_tab_step(ctx: &Context<Self>, key: KeyEvent) -> Option<isize> {
         if key.mods.ctrl || key.mods.alt || key.mods.super_key {
             return None;
@@ -771,10 +772,14 @@ impl AppRoot {
         match key.code {
             KeyCode::Tab if !key.mods.shift => Some(1),
             KeyCode::BackTab | KeyCode::Tab => Some(-1),
-            KeyCode::Left | KeyCode::Right
+            KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l')
                 if !ctx.has_focus_within_key(crate::view::help_filter_key()) =>
             {
-                Some(if key.code == KeyCode::Left { -1 } else { 1 })
+                Some(if matches!(key.code, KeyCode::Left | KeyCode::Char('h')) {
+                    -1
+                } else {
+                    1
+                })
             }
             _ => None,
         }

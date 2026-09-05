@@ -79,14 +79,17 @@ fn body() {
         "Up does not scroll the list back"
     );
 
-    // Tab, Shift+Tab, and the horizontal arrows walk the tab strip, wrapping at both ends.
+    // Tab, Shift+Tab, the horizontal arrows, and their vim twins walk the tab strip, wrapping at
+    // both ends.
     for (key, expected) in [
         (KeyCode::Tab, rozi::state::HelpTab::Modes),
-        (KeyCode::Right, rozi::state::HelpTab::Unbound),
+        (KeyCode::Char('l'), rozi::state::HelpTab::Unbound),
         (KeyCode::Tab, rozi::state::HelpTab::All),
         (KeyCode::Tab, rozi::state::HelpTab::Global),
-        (KeyCode::Left, rozi::state::HelpTab::All),
+        (KeyCode::Char('h'), rozi::state::HelpTab::All),
         (KeyCode::BackTab, rozi::state::HelpTab::Unbound),
+        (KeyCode::Right, rozi::state::HelpTab::All),
+        (KeyCode::Left, rozi::state::HelpTab::Unbound),
     ] {
         backend
             .send_key(KeyEvent {
@@ -121,6 +124,31 @@ fn body() {
             })
             .expect("type a keybinding filter");
     }
+    // `h` and `l` step the tab strip only while the filter is not focused; inside it they are
+    // ordinary characters, or half the alphabet could not be searched for.
+    let tab_before_typing = backend.state().help_tab;
+    for character in "hl".chars() {
+        backend
+            .send_key(KeyEvent {
+                code: KeyCode::Char(character),
+                mods: KeyMods::NONE,
+            })
+            .expect("type into the focused filter");
+    }
+    assert_eq!(
+        backend.state().help_tab,
+        tab_before_typing,
+        "typing in the filter does not walk the tab strip"
+    );
+    for _ in 0..2 {
+        backend
+            .send_key(KeyEvent {
+                code: KeyCode::Backspace,
+                mods: KeyMods::NONE,
+            })
+            .expect("undo the typed characters");
+    }
+
     let filtered = frame(&mut backend);
     assert!(filtered.contains("Enable scratchpad"), "{filtered}");
     assert!(

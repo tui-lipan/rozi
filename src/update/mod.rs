@@ -135,6 +135,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::PanePaddingHorizontalChanged(event) => {
             overlays::pane_padding_horizontal_changed(ctx, event)
         }
+        Msg::PanePaddingFocus(field) => overlays::pane_padding_focus(ctx, field),
         Msg::AdvancePanePadding => overlays::advance_pane_padding(ctx),
         Msg::SubmitPanePadding => overlays::submit_pane_padding(ctx),
         Msg::CloseThemePicker => overlays::close_theme_picker(ctx),
@@ -293,13 +294,15 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::RemotePickerHostActivate(target) => {
             crate::ops::session::remotes::activate_host(ctx, target)
         }
-        Msg::RemotePickerNewHost => crate::ops::session::remotes::open_new_host_prompt(ctx),
+        Msg::RemotePickerNewHost => crate::ops::session::remotes::open_add_host_form(ctx),
+        Msg::RemotePickerEditHost => crate::ops::session::remotes::open_edit_host_form(ctx),
+        Msg::RemotePickerReconnectHost => crate::ops::session::remotes::reconnect_host(ctx),
         Msg::RemotePickerForgetHost => crate::ops::session::remotes::forget_host(ctx),
-        Msg::RemoteTargetPromptChanged(event) => {
-            crate::ops::session::remotes::target_prompt_changed(ctx, event)
+        Msg::HostFormChanged(field, event) => {
+            crate::ops::session::remotes::host_form_changed(ctx, field, event)
         }
-        Msg::SubmitRemoteTarget => crate::ops::session::remotes::submit_remote_target(ctx),
-        Msg::CloseRemoteTargetPrompt => crate::ops::session::remotes::close_target_prompt(ctx),
+        Msg::SubmitHostForm => crate::ops::session::remotes::submit_host_form(ctx),
+        Msg::CloseHostForm => crate::ops::session::remotes::close_host_form(ctx),
         Msg::RemoteHostSessionsDiscovered {
             epoch,
             target,

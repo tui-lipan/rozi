@@ -1,10 +1,15 @@
 //! The host dimension of the unified Sessions view.
 //!
 //! A remote host is *known* — and therefore listed in the Sessions view even while disconnected —
-//! when it is configured (`[remote.hosts.*]` or `default_host`), a recently used ad-hoc `--remote`
-//! target, or currently/previously attached. Keeping known hosts visible is the whole point: a
-//! user's remote workplaces are locations they return to, so a host must not vanish from the tree
-//! just because its link is down or it happens to have no live sessions right now.
+//! when it is configured (`[remote.hosts.*]` or `default_host`), saved by hand in **Remote hosts**,
+//! a recently used ad-hoc `--remote` target, or currently/previously attached. Keeping known hosts
+//! visible is the whole point: a user's remote workplaces are locations they return to, so a host
+//! must not vanish from the tree just because its link is down or it happens to have no live
+//! sessions right now.
+//!
+//! Existence and reachability are independent. A host is listed because somebody said it is one of
+//! their machines; whether this client can currently reach it is [`HostProbe`], and a failed probe
+//! annotates the row rather than removing it.
 //!
 //! The registry owns only the *host-level* connection state that has to persist across the recurring
 //! session sweep — whether each host is connected/connecting and the last probe error. A host's
@@ -14,13 +19,24 @@
 use crate::config::RemoteConfig;
 use crate::session::remote::{RemoteTarget, parse_remote_target};
 
-/// Where a known host came from. Ordered so configured hosts sort ahead of ad-hoc recents, which in
-/// turn sort ahead of hosts we only know because something is attached to them.
+/// Where a known host came from. Ordered so configured hosts sort ahead of hosts the user saved by
+/// hand, which sort ahead of ad-hoc recents, which in turn sort ahead of hosts we only know because
+/// something is attached to them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostOrigin {
     Configured,
+    /// Added by hand in **Remote hosts**. Durable and editable; rozi owns it, so rozi can forget it.
+    Saved,
     Recent,
     Attached,
+}
+
+impl HostOrigin {
+    /// Whether rozi owns this entry and can therefore edit or forget it. A configured host belongs
+    /// to the config file, and an attached-only host disappears on its own once nothing holds it.
+    pub fn is_user_owned(self) -> bool {
+        matches!(self, Self::Saved | Self::Recent)
+    }
 }
 
 /// One known remote host in the Sessions view.
@@ -112,14 +128,17 @@ impl HostRegistry {
     /// (connection) state. Called whenever the Sessions view opens or refreshes.
     ///
     /// - `remote_config`: configured `[remote.hosts.*]` aliases and `default_host`.
+    /// - `saved`: hosts the user added by hand, in roster order.
     /// - `recents`: recently used remote targets, most-recent first.
     /// - `held`: `(target, alias)` for every host a live attachment currently targets.
     ///
     /// A host present in more than one source keeps its strongest origin (Configured wins over
-    /// Recent wins over Attached) so it renders and sorts as the more permanent thing it is.
+    /// Saved wins over Recent wins over Attached) so it renders and sorts as the more permanent
+    /// thing it is.
     pub fn seed(
         &mut self,
         remote_config: &RemoteConfig,
+        saved: &[RemoteTarget],
         recents: &[RemoteTarget],
         held: &[(RemoteTarget, String)],
     ) {
@@ -155,6 +174,10 @@ impl HostRegistry {
             if let Ok(target) = parse_remote_target(&alias) {
                 upsert(target, alias, HostOrigin::Configured);
             }
+        }
+
+        for target in saved {
+            upsert(target.clone(), target.display_label(), HostOrigin::Saved);
         }
 
         for target in recents {
@@ -236,6 +259,7 @@ mod tests {
         let mut registry = HostRegistry::default();
         registry.seed(
             &config(&["workbox"], Some("prod")),
+            &[RemoteTarget::Alias("saved".into())],
             &[
                 RemoteTarget::Alias("scratch".into()),
                 RemoteTarget::Alias("workbox".into()),
@@ -243,9 +267,13 @@ mod tests {
             &[(RemoteTarget::Alias("adhoc".into()), "adhoc".into())],
         );
         let aliases: Vec<&str> = registry.iter().map(|entry| entry.alias.as_str()).collect();
-        // Configured (prod, workbox) sort ahead of recents (scratch) ahead of attached (adhoc);
-        // `workbox` appears once, keeping its Configured origin despite also being a recent.
-        assert_eq!(aliases, vec!["prod", "workbox", "scratch", "adhoc"]);
+        // Configured (prod, workbox) sort ahead of saved ahead of recents (scratch) ahead of
+        // attached (adhoc); `workbox` appears once, keeping its Configured origin despite also
+        // being a recent.
+        assert_eq!(
+            aliases,
+            vec!["prod", "workbox", "saved", "scratch", "adhoc"]
+        );
         assert_eq!(
             registry
                 .get(&RemoteTarget::Alias("workbox".into()))
@@ -258,26 +286,27 @@ mod tests {
     #[test]
     fn reseed_preserves_probe_state_for_surviving_hosts() {
         let mut registry = HostRegistry::default();
-        registry.seed(&config(&["workbox"], None), &[], &[]);
+        registry.seed(&config(&["workbox"], None), &[], &[], &[]);
         let target = RemoteTarget::Alias("workbox".into());
         registry.get_mut(&target).unwrap().probe = HostProbe::Failed("timed out".to_string());
         // A recent is added, but workbox survives and keeps its connection state.
         registry.seed(
             &config(&["workbox"], None),
+            &[],
             &[RemoteTarget::Alias("scratch".into())],
             &[],
         );
         let entry = registry.get(&target).unwrap();
         assert_eq!(entry.probe.error(), Some("timed out"));
         // A host that dropped out of every source is gone.
-        registry.seed(&config(&[], None), &[], &[]);
+        registry.seed(&config(&[], None), &[], &[], &[]);
         assert!(registry.is_empty());
     }
 
     #[test]
     fn status_reflects_attachments_then_probe_state() {
         let mut registry = HostRegistry::default();
-        registry.seed(&config(&["workbox"], None), &[], &[]);
+        registry.seed(&config(&["workbox"], None), &[], &[], &[]);
         let target = RemoteTarget::Alias("workbox".into());
         registry.get_mut(&target).unwrap().probe = HostProbe::Failed("was down".to_string());
 
@@ -333,6 +362,7 @@ mod tests {
         let mut registry = HostRegistry::default();
         registry.seed(
             &config(&["zeta", "alpha"], None),
+            &[],
             &[
                 RemoteTarget::Alias("recent-z".into()),
                 RemoteTarget::Alias("recent-a".into()),
@@ -359,6 +389,7 @@ mod tests {
         registry.seed(
             &config(&["workbox"], None),
             std::slice::from_ref(&target),
+            std::slice::from_ref(&target),
             &[(target.clone(), "workbox".into())],
         );
         assert_eq!(registry.iter().count(), 1);
@@ -366,5 +397,35 @@ mod tests {
             registry.get(&target).unwrap().origin,
             HostOrigin::Configured
         );
+    }
+
+    /// The point of saving a host: it is listed because the user said it is one of their machines,
+    /// and a failure to reach it annotates the row instead of removing it.
+    #[test]
+    fn a_saved_host_survives_a_failed_probe() {
+        let target = RemoteTarget::Alias("workbox".into());
+        let mut registry = HostRegistry::default();
+        registry.seed(&config(&[], None), std::slice::from_ref(&target), &[], &[]);
+        registry.get_mut(&target).unwrap().probe = HostProbe::Failed("timed out".to_string());
+
+        // Nothing reached it, so it never becomes a recent — and it is still here.
+        registry.seed(&config(&[], None), std::slice::from_ref(&target), &[], &[]);
+        let entry = registry
+            .get(&target)
+            .expect("the saved host is still listed");
+        assert_eq!(entry.origin, HostOrigin::Saved);
+        assert_eq!(entry.probe.error(), Some("timed out"));
+        assert_eq!(
+            registry.status_for(&target, std::iter::empty(), false),
+            HostStatus::Unreachable
+        );
+    }
+
+    #[test]
+    fn only_the_origins_rozi_owns_can_be_edited_or_forgotten() {
+        assert!(HostOrigin::Saved.is_user_owned());
+        assert!(HostOrigin::Recent.is_user_owned());
+        assert!(!HostOrigin::Configured.is_user_owned());
+        assert!(!HostOrigin::Attached.is_user_owned());
     }
 }

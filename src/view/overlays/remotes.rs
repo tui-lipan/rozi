@@ -27,6 +27,14 @@ fn remote_host_description(
         .map(|sessions| sessions.len())
         .unwrap_or_default();
     let status = remote_host_status(ctx, &entry.target);
+    // A failure is the one thing worth more than a session count: the row has to say why the last
+    // attempt did not land, or the user is left retrying something they cannot diagnose. The short
+    // phrase comes from the shared vocabulary; the raw ssh output stays in the toast.
+    if status == crate::state::HostStatus::Unreachable
+        && let Some(error) = entry.probe.error()
+    {
+        return picker_description(crate::session::discovery::probe_failure_reason(error));
+    }
     // Session counts win where they exist and the status is settled — "2 sessions" says more about
     // a reachable host than "reached" does. The status words themselves come from the one shared
     // vocabulary, so this row and the sidebar's badge never call the same state two things.
@@ -40,6 +48,7 @@ fn remote_host_description(
             crate::view::session_status::host_status_label(status).to_string()
         }
         (_, _, crate::state::HostOrigin::Configured) => "configured".to_string(),
+        (_, _, crate::state::HostOrigin::Saved) => "saved".to_string(),
         (_, _, crate::state::HostOrigin::Recent) => "recent".to_string(),
         (_, _, crate::state::HostOrigin::Attached) => "attached".to_string(),
     };
@@ -69,14 +78,22 @@ fn remote_hosts_overlay(
     ctx: &Context<AppRoot>,
     picker: &crate::state::RemotePickerState,
 ) -> Element {
-    let connecting = matches!(picker.host_probe, crate::state::HostProbe::InFlight);
-    let connecting_target = connecting.then(|| picker.selected_host.clone()).flatten();
+    let connecting_target = matches!(picker.host_probe, crate::state::HostProbe::InFlight)
+        .then(|| picker.probe_target.clone())
+        .flatten();
     let selected_entry = remote_selected_host(ctx, picker);
-    let can_forget = !connecting
-        && selected_entry.is_some_and(|entry| {
-            crate::ops::session::remotes::host_can_forget(&ctx.state, &entry.target)
-        });
-    let mut entries = ctx
+    let selected_target = selected_entry.map(|entry| entry.target.clone());
+    // Navigation stays free while a host connects — the user can read their other machines instead
+    // of watching one spinner. What waits is starting a *second* connection: this picker tracks one
+    // in-flight target, so a second ssh would strand the first host spinning with no answer coming.
+    let connecting = connecting_target.is_some();
+    let can_forget = selected_target
+        .as_ref()
+        .is_some_and(|target| crate::ops::session::remotes::host_can_forget(&ctx.state, target));
+    let can_edit = selected_target
+        .as_ref()
+        .is_some_and(|target| crate::ops::session::remotes::host_can_edit(&ctx.state, target));
+    let entries = ctx
         .state
         .hosts
         .iter()
@@ -88,35 +105,14 @@ fn remote_hosts_overlay(
             .description(remote_host_description(ctx, entry))
         })
         .collect::<Vec<_>>();
-    if let Some(target) = connecting_target.as_ref()
-        && ctx.state.hosts.get(target).is_none()
-    {
-        let alias = target.display_label();
-        entries.push(
-            SearchEntry::item(remote_host_label(ctx, &alias, target), target.clone()).description(
-                picker_description(crate::view::session_status::host_status_label(
-                    crate::state::HostStatus::Connecting,
-                )),
-            ),
-        );
-    }
     let selected = picker.selected_host.as_ref().and_then(|selected| {
         entries.iter().enumerate().find_map(|(index, entry)| {
             matches!(entry, SearchEntry::Item(item) if &item.value == selected).then_some(index)
         })
     });
-    let fallback = ctx.link().key_handler({
-        let connecting_target = connecting_target.clone();
-        move |key| {
-            if connecting {
-                connecting_target.clone().map(Msg::RemotePickerHostSelect)
-            } else if key.is(KeyCode::Esc) {
-                Some(Msg::CloseRemotePicker)
-            } else {
-                None
-            }
-        }
-    });
+    let fallback = ctx
+        .link()
+        .key_handler(|key| key.is(KeyCode::Esc).then_some(Msg::CloseRemotePicker));
     let empty_text = if picker.host_input.text().trim().is_empty() {
         "No known remote hosts".to_string()
     } else {
@@ -124,30 +120,42 @@ fn remote_hosts_overlay(
     };
     let pending_forget = picker.pending_forget.clone();
     let error_bg = ctx.state.theme.status.error;
-    let actions = if connecting {
-        vec![OverlayAction::new(
-            "esc",
-            "cancel",
-            Msg::CloseRemotePicker,
-            true,
-        )]
-    } else {
-        vec![
-            OverlayAction::new(
-                "enter",
-                "open",
-                selected_entry
-                    .map(|entry| Msg::RemotePickerHostActivate(entry.target.clone()))
-                    .unwrap_or(Msg::CloseRemotePicker),
-                selected_entry.is_some(),
-            )
-            .hint_only(),
-            OverlayAction::new("ctrl-n", "new host", Msg::RemotePickerNewHost, true),
-            OverlayAction::new("ctrl-k", "forget", Msg::RemotePickerForgetHost, can_forget)
-                .confirm_if(pending_forget.is_some(), "again to forget", error_bg, true),
-        ]
-    };
-    let mut overlay = OverlayPalette::new(
+    // `Enter` connects a host that is not yet reached and opens one that is, so the hint says which
+    // of the two the highlighted row will get.
+    let selected_reached = selected_target.as_ref().is_some_and(|target| {
+        matches!(
+            ctx.state.hosts.get(target).map(|entry| &entry.probe),
+            Some(crate::state::HostProbe::Reached)
+        )
+    });
+    let actions = vec![
+        OverlayAction::new(
+            "enter",
+            if selected_reached { "open" } else { "connect" },
+            selected_target
+                .clone()
+                .map(Msg::RemotePickerHostActivate)
+                .unwrap_or(Msg::CloseRemotePicker),
+            selected_target.is_some() && !connecting,
+        )
+        .hint_only(),
+        OverlayAction::new("ctrl-n", "add host", Msg::RemotePickerNewHost, true),
+        OverlayAction::new("ctrl-e", "edit", Msg::RemotePickerEditHost, can_edit),
+        OverlayAction::new(
+            "ctrl-r",
+            "reconnect",
+            Msg::RemotePickerReconnectHost,
+            selected_target.is_some() && !connecting,
+        ),
+        OverlayAction::new(
+            "ctrl-k",
+            "forget",
+            Msg::RemotePickerForgetHost,
+            can_forget,
+        )
+        .confirm_if(pending_forget.is_some(), "again to forget", error_bg, true),
+    ];
+    let overlay = OverlayPalette::new(
         "Remote hosts",
         remote_picker_key(),
         Msg::CloseRemotePicker,
@@ -162,7 +170,6 @@ fn remote_hosts_overlay(
     .empty_text(empty_text)
     .fallback_interceptor(fallback)
     .item_gutter(Arc::new({
-        let connecting_target = connecting_target.clone();
         let styles = crate::view::session_status::HostStatusStyles::from_theme(&ctx.state.theme);
         let statuses: Vec<(
             crate::session::remote::RemoteTarget,
@@ -202,9 +209,6 @@ fn remote_hosts_overlay(
             Msg::RemotePickerHostActivate(event.item.value.clone())
         },
     ));
-    if connecting {
-        overlay = overlay.element_key(format!("remote-hosts-{}", picker.interaction_epoch));
-    }
     overlay.render(ctx)
 }
 
@@ -369,27 +373,146 @@ fn remote_selected_session(
     })
 }
 
+/// Width of the host editor's label column, so `Host`, `Username`, and `Port` line their fields up.
+const HOST_FORM_LABEL_WIDTH: u16 = 10;
+
+/// One line of the host editor.
+///
+/// Only the line the cursor is on mounts an editable `Input`; the others show what they hold as
+/// plain text. One input in the dialog means the framework's focus ring has nothing to shuffle
+/// between, so `Tab` — claimed at the root, see `input::routing` — is the only thing that moves the
+/// cursor, and a keystroke can never land on the line being left.
+///
+/// A *Username* the host line has already answered never takes the cursor at all: there is nothing
+/// to type into it, and stopping there would only invite the user to contradict the host line.
+fn host_form_row(
+    ctx: &Context<AppRoot>,
+    form: &crate::state::HostFormState,
+    field: crate::state::HostFormField,
+) -> Element {
+    let theme = &ctx.state.theme;
+    let locked = field == crate::state::HostFormField::User && form.user_is_locked();
+    let focused = form.focus == field && !locked;
+    let label_style = if focused {
+        fg_only(&theme.primary).bold()
+    } else {
+        fg_only(&theme.muted)
+    };
+    let input: Element = if focused {
+        Input::bound(form.input(field))
+            .placeholder(field.placeholder())
+            .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
+            .focus_style(
+                Style::new()
+                    .fg(theme.border_active)
+                    .bg(theme.surface.element),
+            )
+            .selection_style(theme.text_selection)
+            .width(Length::Flex(1))
+            .border(false)
+            .padding((0, 0))
+            .on_change(
+                ctx.link()
+                    .callback(move |event: InputEvent| Msg::HostFormChanged(field, event)),
+            )
+            .on_key(ctx.link().key_handler(|key| {
+                if key.is(KeyCode::Esc) {
+                    Some(Msg::CloseHostForm)
+                } else if key.code == KeyCode::Enter && !key.mods.ctrl && !key.mods.alt {
+                    Some(Msg::SubmitHostForm)
+                } else {
+                    None
+                }
+            }))
+            .key(crate::view::host_form_input_key())
+    } else {
+        // A locked *Username* shows the host line's login rather than the user's own text, and says
+        // so by reading as derived: clearing the `user@` gives the line and its contents back.
+        let (text, derived) = if locked {
+            (form.shown_user(), true)
+        } else {
+            (form.input(field).text(), false)
+        };
+        let (text, style) = if text.is_empty() {
+            (field.placeholder(), fg_only(&theme.muted).italic())
+        } else if derived {
+            (text, fg_only(&theme.muted))
+        } else {
+            (text, fg_only(&theme.primary))
+        };
+        Text::new(text)
+            .overflow(Overflow::Clip)
+            .width(Length::Flex(1))
+            .style(style)
+            .into()
+    };
+    HStack::new()
+        .height(Length::Auto)
+        .padding((0, 1, 0, 0))
+        .child(
+            // A borderless field in a borderless dialog needs *something* saying which line the
+            // next keystroke lands on. The bold label alone is too quiet on a line whose only other
+            // content is a placeholder.
+            Text::new(if focused { "› " } else { "  " })
+                .overflow(Overflow::Clip)
+                .width(Length::Px(2))
+                .style(fg_only(&theme.accent)),
+        )
+        .child(
+            Text::new(field.label())
+                .overflow(Overflow::Clip)
+                .width(Length::Px(HOST_FORM_LABEL_WIDTH))
+                .style(label_style),
+        )
+        .child(input)
+        .into()
+}
+
+/// The *Add host* / *Edit host* form: host, login, and port, always all three.
+///
+/// Adding and editing show the same shape. A form that reveals its fields as it goes hides what it
+/// is going to ask for, and the answer to "what does rozi store about a host" should be legible
+/// from the dialog itself rather than discovered one `Enter` at a time.
+fn host_form_overlay(ctx: &Context<AppRoot>, form: &crate::state::HostFormState) -> Element {
+    let theme = &ctx.state.theme;
+    let mut body = VStack::new().height(Length::Auto).padding((1, 0, 0, 0));
+    for field in crate::state::HostFormField::ORDER {
+        body = body.child(host_form_row(ctx, form, field));
+    }
+    if let Some(error) = form.error.as_deref() {
+        body = body.child(
+            HStack::new()
+                .height(Length::Auto)
+                .padding((1, 1, 0, 1))
+                .child(
+                    Text::new(error)
+                        .overflow(Overflow::Wrap)
+                        .width(Length::Flex(1))
+                        .style(Style::new().fg(theme.status.warning).italic()),
+                ),
+        );
+    }
+    // `tab` alone: Shift+Tab goes back, but a hint bar that spells out both halves of one
+    // convention spends a pill saying what every dialog already does.
+    body = body.child(
+        hint_row()
+            .child(hint_pill(theme, "save", "enter"))
+            .child(hint_pill(theme, "next field", "tab"))
+            .child(hint_pill(theme, "cancel", "esc")),
+    );
+
+    action_palette_modal(ctx, form.title())
+        .on_close(ctx.link().callback(|_| Msg::CloseHostForm))
+        .child(action_palette_frame(body))
+        .into()
+}
+
 pub(crate) fn remote_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.remote_picker.as_ref() else {
         return Text::new("").into();
     };
-    if let Some(prompt) = picker.target_prompt.as_ref() {
-        return prompt_overlay(
-            ctx,
-            PromptChrome {
-                caption: prompt.error.as_deref().map(PromptCaption::Armed),
-                ..PromptChrome::new(
-                    "Connect new host",
-                    "host / alias / ssh://...",
-                    &[("connect", "enter")],
-                )
-            },
-            &prompt.input,
-            remote_target_input_key(),
-            Msg::RemoteTargetPromptChanged,
-            Msg::CloseRemoteTargetPrompt,
-            Msg::SubmitRemoteTarget,
-        );
+    if let Some(form) = picker.host_form.as_ref() {
+        return host_form_overlay(ctx, form);
     }
     match &picker.mode {
         crate::state::RemotePickerMode::Hosts => remote_hosts_overlay(ctx, picker),

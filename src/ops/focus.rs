@@ -1341,8 +1341,13 @@ pub(crate) fn request_remote_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::remote_picker_key());
 }
 
-pub(crate) fn request_remote_target_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::remote_target_input_key());
+/// Focus the host editor's active line.
+///
+/// Called when the form opens and when a submission is rejected — not on every keystroke. Between
+/// those, `Tab`/`Shift+Tab` traversal owns focus and the form follows it; requesting focus while
+/// the runtime is moving it is what sends the next keystroke to the line being left.
+pub(crate) fn request_host_form_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::host_form_input_key());
 }
 
 /// Focus the ssh prompt modal. It is raised by a background thread rather than by a keypress, so

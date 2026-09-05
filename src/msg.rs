@@ -71,6 +71,8 @@ pub enum Msg {
     ClosePanePaddingEditor,
     PanePaddingVerticalChanged(InputEvent),
     PanePaddingHorizontalChanged(InputEvent),
+    /// Focus landed on one of the padding editor's two fields, so the dialog can mark it.
+    PanePaddingFocus(crate::state::PanePaddingField),
     AdvancePanePadding,
     SubmitPanePadding,
     CloseThemePicker,
@@ -266,10 +268,14 @@ pub enum Msg {
     RemotePickerHostSelect(crate::session::remote::RemoteTarget),
     RemotePickerHostActivate(crate::session::remote::RemoteTarget),
     RemotePickerNewHost,
+    RemotePickerEditHost,
+    RemotePickerReconnectHost,
     RemotePickerForgetHost,
-    RemoteTargetPromptChanged(InputEvent),
-    SubmitRemoteTarget,
-    CloseRemoteTargetPrompt,
+    /// A keystroke in one line of the host editor, named rather than inferred so a stale render
+    /// cannot route it into the line the cursor has already left.
+    HostFormChanged(crate::state::HostFormField, InputEvent),
+    SubmitHostForm,
+    CloseHostForm,
     RemoteHostSessionsDiscovered {
         epoch: u64,
         target: crate::session::remote::RemoteTarget,

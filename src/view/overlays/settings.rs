@@ -440,8 +440,14 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
     };
     let theme = &ctx.state.theme;
     // A labeled, fixed-width numeric field: "Label [ 0 ]". Kept narrow so both axes sit on one row.
-    let field =
-        |label: &str, state: &TextInput, key, changed: fn(InputEvent) -> Msg, submit: Msg| {
+    let field = |field: crate::state::PanePaddingField,
+                 label: &str,
+                 state: &TextInput,
+                 key,
+                 changed: fn(InputEvent) -> Msg,
+                 submit: Msg| {
+        {
+            let focused = editor.focus == field;
             let input = Input::bound(state)
                 .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
                 .focus_style(
@@ -454,6 +460,7 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
                 .border(false)
                 .padding((0, 1))
                 .on_change(ctx.link().callback(changed))
+                .on_focus(ctx.link().callback(move |_| Msg::PanePaddingFocus(field)))
                 .on_key(ctx.link().key_handler(move |event| {
                     if event.is(KeyCode::Esc) {
                         Some(Msg::ClosePanePaddingEditor)
@@ -472,14 +479,29 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
                 .width(Length::Auto)
                 .height(Length::Auto)
                 .gap(1)
-                .child(Text::new(label.to_string()).style(fg_only(&theme.muted)))
+                .child(
+                    // The same marker the host editor wears, for the same reason: two borderless
+                    // fields side by side otherwise say nothing about which one Enter is aimed at.
+                    Text::new(if focused { "›" } else { " " })
+                        .width(Length::Px(1))
+                        .style(fg_only(&theme.accent)),
+                )
+                .child(
+                    Text::new(label.to_string()).style(if focused {
+                        fg_only(&theme.primary).bold()
+                    } else {
+                        fg_only(&theme.muted)
+                    }),
+                )
                 .child(input)
-        };
+        }
+    };
     let fields = HStack::new()
         .height(Length::Auto)
         .padding((0, 1))
         .justify(Justify::SpaceBetween)
         .child(field(
+            crate::state::PanePaddingField::Vertical,
             "Vertical",
             &editor.vertical,
             pane_padding_vertical_key(),
@@ -487,6 +509,7 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
             Msg::AdvancePanePadding,
         ))
         .child(field(
+            crate::state::PanePaddingField::Horizontal,
             "Horizontal",
             &editor.horizontal,
             pane_padding_horizontal_key(),

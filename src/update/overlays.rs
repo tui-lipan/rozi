@@ -563,6 +563,7 @@ pub(super) fn pane_padding_vertical_changed(
     if valid_padding_text(&event.value) {
         event.apply_to(&mut editor.vertical);
     }
+    editor.focus = crate::state::PanePaddingField::Vertical;
     ctx.request_focus(crate::view::pane_padding_vertical_key());
     Update::full()
 }
@@ -577,17 +578,33 @@ pub(super) fn pane_padding_horizontal_changed(
     if valid_padding_text(&event.value) {
         event.apply_to(&mut editor.horizontal);
     }
+    editor.focus = crate::state::PanePaddingField::Horizontal;
     ctx.request_focus(crate::view::pane_padding_horizontal_key());
     Update::full()
 }
 
+/// Record where focus landed, so the dialog can mark the active field. Reported by the field
+/// itself, which covers a click and `Tab` traversal alike.
+pub(super) fn pane_padding_focus(
+    ctx: &mut Context<AppRoot>,
+    field: crate::state::PanePaddingField,
+) -> Update {
+    let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
+        return Update::none();
+    };
+    editor.focus = field;
+    Update::full()
+}
+
 pub(super) fn advance_pane_padding(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(editor) = ctx.state.pane_padding_editor.as_ref() else {
+    let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
         return Update::none();
     };
     if padding_value(editor.vertical.text()).is_some() {
+        editor.focus = crate::state::PanePaddingField::Horizontal;
         ctx.request_focus(crate::view::pane_padding_horizontal_key());
     } else {
+        editor.focus = crate::state::PanePaddingField::Vertical;
         padding_error(ctx);
         ctx.request_focus(crate::view::pane_padding_vertical_key());
     }

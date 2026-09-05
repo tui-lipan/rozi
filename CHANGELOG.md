@@ -2,12 +2,44 @@
 
 ## Unreleased
 
+### Added
+
+- **Remote hosts** is a host manager rather than a list of machines that happen to be reachable.
+  `Ctrl+N` and `Ctrl+E` open the same three-line editor — host, username, port — with `Tab` and
+  `Shift+Tab` between the lines. The host line answers more than its own question: typing
+  `adam@10.0.0.5` fills the login in and makes that line read-only so the two cannot disagree,
+  and clearing the `user@` hands it back with whatever was typed there. A login left empty is a
+  real answer, and hands the question to `~/.ssh/config`. The entry is saved before the connection
+  is attempted and stays saved however it ends, so a sleeping laptop or a login typed wrong no
+  longer loses it. `Ctrl+R` connects a host again; `Ctrl+K` twice forgets it. No password is
+  stored: OpenSSH still asks for one when it needs one.
+- The Settings *Terminal padding* editor marks its active field the way the host editor does, with
+  a `›` and a bold label. Two borderless fields side by side otherwise said nothing about which one
+  `Enter` was aimed at.
+- A host that could not be reached keeps its row, marked `!` with a short reason (`SSH login
+  rejected`, `Unknown host name`), alongside a toast carrying the same message. Previously a new
+  host that failed to connect appeared for a few frames and vanished, leaving nothing to retry.
+- A saved host that could not be written to disk is still listed and usable for the rest of the
+  session, with a warning naming the reason.
+
 ### Changed
 
 - The bootstrap installers drop the extra indent and finish in two short forms: `Run rozi` when
   the command is already on PATH, or `Not on PATH` with `Run` and `Add` lines when it is not.
   Windows still names the third case, a session that has not picked up a persisted PATH entry, as
   `Not this terminal`.
+- `Enter` on **Remote hosts** connects the selected host and stays on the list, with the row moving
+  to connected and reporting its session count; a second `Enter` opens `Sessions · <host>`.
+  Connecting a machine and opening it were one keystroke doing two things, and the successful
+  transition was invisible. `rozi --remote <host>` still goes straight through — a launch that named
+  a machine has already said where it wants to work.
+- Connecting one host no longer freezes the host list. The other rows stay navigable while a probe
+  is out, and `Ctrl+E`/`Ctrl+K` keep working on them. Only one connection runs at a time, so `Enter`
+  and `Ctrl+R` wait for the outstanding one rather than starting a second ssh whose answer the
+  picker could not attribute.
+- `--remote adam@10.0.0.5` and `--remote workbox:2222` parse as SSH endpoints rather than as an
+  alias containing punctuation, so the login and port survive into the target and the host editor
+  can show them. A bare name is still an ssh_config alias.
 - A pane streaming output no longer costs a full-window frame per changed character. A client
   watching an agent CLI animate a spinner sat at about 8% of a core because every tiny update
   repainted every cell on screen; it now repaints only the rows the terminal emulator reports as
@@ -25,6 +57,18 @@
 
 ### Fixed
 
+- Rozi's own state directory is made private rather than refused when it is found world-readable,
+  and the session autosave that created it that way now writes it privately. `ensure_private_dir`
+  will not write state into a directory other users can read, so an installation whose
+  `~/.local/state/rozi` was first created by the autosave — a plain `create_dir_all`, at the umask
+  default — had every later state write silently dropped: remembered remote hosts, recent targets,
+  the last-session memory, and the cached host session lists, none of which ever persisted and none
+  of which said why. The directory is repaired once, in place, and only when this user owns it and
+  it is a real directory rather than a symlink; the repair only ever tightens.
+- The session autosave is written `0600` and replaced atomically instead of `0644` in place. It
+  records the layout, every pane's working directory, and the commands they were launched with,
+  and a snapshot left half-written at quit was what the next launch restored from. An explicitly
+  configured `[session] path` is left to the user's own placement and permissions.
 - Connecting to a remote host works on macOS. ssh's connection multiplexing puts its control socket
   in the runtime directory, and under macOS's `TMPDIR` that path was past the length a socket may be
   bound at, so ssh exited and took the attach down with it - the whole remote feature, unusable on

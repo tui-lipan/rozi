@@ -26,6 +26,13 @@ remembers on that host if the host still has it; `profile` opens or creates the 
 session there. Each falls back to `Sessions · workbox`. See
 [Choose startup behavior](sessions.md#choose-startup-behavior).
 
+Hosts you work with regularly do not need a config file. **Remote hosts** (`Ctrl+R` in Sessions)
+manages them: `Ctrl+N` adds one, asking only for what the host line leaves open, and saves it before
+attempting the connection so a first attempt that fails still leaves a row to retry or correct.
+`[remote.hosts.*]` remains the place for a host that needs settings — an identity file, extra ssh
+arguments, a pinned binary path. See
+[Browse remote hosts](sessions.md#browse-remote-hosts).
+
 Rozi supports Linux, macOS, and Windows as either client or remote server hosts. The local machine
 needs `ssh` and `curl` on `PATH`. Automatic installation also needs `tar` for a Linux or macOS
 target, or `unzip` and `scp` for a Windows target.

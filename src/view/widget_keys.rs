@@ -46,8 +46,10 @@ pub fn remote_picker_key() -> &'static str {
     "rozi-remote-picker"
 }
 
-pub fn remote_target_input_key() -> &'static str {
-    "rozi-remote-target-input"
+/// The one editable line of the *Add host* / *Edit host* form. The dialog shows three lines but
+/// mounts an input only on the one the cursor is on, so this key is stable as the cursor moves.
+pub fn host_form_input_key() -> &'static str {
+    "rozi-host-form-input"
 }
 
 /// The field that answers an OpenSSH password or host-key prompt.

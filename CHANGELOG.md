@@ -36,6 +36,11 @@
 
 ### Changed
 
+- Attaching to a populated session now streams pane replay through a 4 MiB send window instead of
+  exporting and queuing the whole session behind a 64 MiB cap. Pane output after each snapshot waits
+  behind that snapshot, while output from panes not yet exported is included in their later
+  snapshot. Large scrollback no longer makes the total snapshot size an attach limit. Live changes
+  waiting behind a slow attach remain bounded to 8 MiB for that client.
 - The bootstrap installers drop the extra indent and finish in two short forms: `Run rozi` when
   the command is already on PATH, or `Not on PATH` with `Run` and `Add` lines when it is not.
   Windows still names the third case, a session that has not picked up a persisted PATH entry, as

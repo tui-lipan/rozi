@@ -92,6 +92,12 @@ The metrics object has `sampled_at_unix_ms`, `client_inbound`, `client_outbound`
 `orphan_output`, and `server`. Queue and byte-buffer objects report current, high-water, and
 capacity bytes. Cached server data also reports `age_ms` and `stale`.
 
+Server metrics include `attach_seed`. Its `queued_bytes`, `peak_queued_bytes`, and
+`send_window_bytes` measure baseline replay in socket outboxes. `live_catch_up_bytes`,
+`peak_live_catch_up_bytes`, and `live_catch_up_limit_bytes` measure changes waiting behind replay.
+The object also reports active clients, panes remaining, lifetime replay bytes, completed and
+disconnected attach counts, last and maximum duration, and the last disconnect reason.
+
 ## One-shot requests
 
 ### Pane inspection

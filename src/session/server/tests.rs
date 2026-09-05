@@ -168,6 +168,64 @@ fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream)
     (id, stream)
 }
 
+#[derive(Debug)]
+enum DecodedOutboxFrame {
+    Control(Box<ServerMessage>),
+    Pane {
+        pane_id: PaneId,
+        generation: u64,
+        bytes: Vec<u8>,
+    },
+}
+
+fn decode_outbox_frames(client: &ClientConn) -> Vec<DecodedOutboxFrame> {
+    client
+        .outbox
+        .iter()
+        .filter_map(|outbox| {
+            let mut decoder = protocol::FrameDecoder::default();
+            let mut input = &outbox.bytes[..];
+            while !input.is_empty() {
+                decoder.read_from_status(&mut input).ok()?;
+            }
+            match decoder.next_frame::<ServerMessage>().ok()? {
+                Some(Frame::Control(message)) => {
+                    Some(DecodedOutboxFrame::Control(Box::new(message)))
+                }
+                Some(Frame::PaneBytes {
+                    pane_id,
+                    generation,
+                    bytes,
+                    ..
+                }) => Some(DecodedOutboxFrame::Pane {
+                    pane_id,
+                    generation,
+                    bytes,
+                }),
+                None => None,
+            }
+        })
+        .collect()
+}
+
+fn install_manual_replay(
+    server: &mut SessionServer,
+    client_id: ClientId,
+    key: PaneSeedKey,
+    bytes: Vec<u8>,
+) {
+    let mut seed = AttachSeedState::new(vec![key]);
+    seed.pending.clear();
+    seed.manifest.insert(key, PaneSeedState::Replaying);
+    seed.replay = Some(PaneSeedReplay {
+        key,
+        resize_frame: None,
+        bytes,
+        offset: 0,
+    });
+    server.client_mut(client_id).unwrap().seed = Some(seed);
+}
+
 #[test]
 fn session_socket_path_rejects_invalid_names() {
     assert!(session_socket_path("dev/../../x").is_err());
@@ -234,6 +292,7 @@ fn two_client_broadcast_shares_one_encoded_allocation() {
         .outbox
         .front()
         .unwrap()
+        .bytes
         .clone();
     let second_frame = server
         .client_mut(second)
@@ -241,6 +300,7 @@ fn two_client_broadcast_shares_one_encoded_allocation() {
         .outbox
         .front()
         .unwrap()
+        .bytes
         .clone();
     assert!(Arc::ptr_eq(&first_frame, &second_frame));
 }
@@ -271,6 +331,341 @@ fn aggregate_outbox_high_water_survives_flush_and_disconnect() {
     assert_eq!(disconnected.bytes.current_bytes, 0);
     assert!(disconnected.bytes.high_water_bytes >= 64);
     assert_eq!(disconnected.clients, 0);
+}
+
+#[test]
+fn pending_pane_output_is_represented_only_by_its_future_snapshot() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(7, test_pane(3));
+    let (client_id, _stream) = attach_client(&mut server);
+    server.enqueue_attach_seeds(client_id);
+
+    server
+        .panes
+        .get_mut(&7)
+        .unwrap()
+        .screen_mut()
+        .process_bytes(b"before snapshot");
+    server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        pane_id: 7,
+        local: false,
+        generation: 3,
+        bytes: b"before snapshot".to_vec(),
+    });
+
+    let client = server.client_mut(client_id).unwrap();
+    assert!(
+        client.outbox.is_empty(),
+        "pre-snapshot output is suppressed"
+    );
+    assert_eq!(client.seed.as_ref().unwrap().catch_up_bytes, 0);
+
+    assert!(server.pump_attach_seeds());
+    let replay: Vec<u8> = decode_outbox_frames(server.client_mut(client_id).unwrap())
+        .into_iter()
+        .filter_map(|frame| match frame {
+            DecodedOutboxFrame::Pane {
+                pane_id: 7,
+                generation: 3,
+                bytes,
+            } => Some(bytes),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let mut restored = TerminalScreen::new(5, 20, 100);
+    restored.process_bytes(&replay);
+    assert!(restored.snapshot().to_string().contains("before snapshot"));
+}
+
+#[test]
+fn output_after_snapshot_waits_behind_the_complete_replay() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let key = PaneSeedKey {
+        pane_id: 9,
+        generation: 4,
+    };
+    let snapshot = vec![b'x'; SEED_PUMP_BYTES_PER_TICK + 32 * 1024];
+    install_manual_replay(&mut server, client_id, key, snapshot.clone());
+
+    assert!(server.pump_attach_seeds());
+    server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        pane_id: key.pane_id,
+        local: false,
+        generation: key.generation,
+        bytes: b"after".to_vec(),
+    });
+    assert_eq!(
+        server
+            .client_mut(client_id)
+            .unwrap()
+            .seed
+            .as_ref()
+            .unwrap()
+            .catch_up_bytes,
+        protocol::PANE_FRAME_OVERHEAD + b"after".len()
+    );
+    for _ in 0..4 {
+        server.pump_attach_seeds();
+    }
+
+    let delivered: Vec<u8> = decode_outbox_frames(server.client_mut(client_id).unwrap())
+        .into_iter()
+        .filter_map(|frame| match frame {
+            DecodedOutboxFrame::Pane {
+                pane_id: 9,
+                generation: 4,
+                bytes,
+            } => Some(bytes),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(&delivered[..snapshot.len()], snapshot);
+    assert_eq!(&delivered[snapshot.len()..], b"after");
+}
+
+#[test]
+fn attach_replay_obeys_per_tick_work_and_resident_window_bounds() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let key = PaneSeedKey {
+        pane_id: 1,
+        generation: 1,
+    };
+    let replay_len = SEED_SEND_WINDOW * 2;
+    install_manual_replay(&mut server, client_id, key, vec![b'r'; replay_len]);
+
+    server.pump_attach_seeds();
+    let first = server.client_mut(client_id).unwrap();
+    assert!(first.seed_queued_bytes <= SEED_PUMP_BYTES_PER_TICK);
+    assert!(first.seed.as_ref().unwrap().replay.as_ref().unwrap().offset < replay_len);
+
+    for _ in 0..16 {
+        server.pump_attach_seeds();
+    }
+    let stalled = server.client_mut(client_id).unwrap();
+    assert!(stalled.seed_queued_bytes <= SEED_SEND_WINDOW);
+    assert!(
+        stalled.seed.is_some(),
+        "window pressure pauses, not rejects"
+    );
+    assert!(
+        stalled
+            .seed
+            .as_ref()
+            .unwrap()
+            .replay
+            .as_ref()
+            .unwrap()
+            .offset
+            < replay_len
+    );
+}
+
+#[test]
+fn concurrent_attachers_take_turns_under_the_global_work_budget() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _first_stream) = attach_client(&mut server);
+    let (second, _second_stream) = attach_client(&mut server);
+    let replay = vec![b'r'; SEED_PUMP_BYTES_PER_TICK * 2];
+    install_manual_replay(
+        &mut server,
+        first,
+        PaneSeedKey {
+            pane_id: 1,
+            generation: 1,
+        },
+        replay.clone(),
+    );
+    install_manual_replay(
+        &mut server,
+        second,
+        PaneSeedKey {
+            pane_id: 2,
+            generation: 1,
+        },
+        replay,
+    );
+
+    server.pump_attach_seeds();
+    assert!(server.client_mut(first).unwrap().seed_queued_bytes > 0);
+    assert_eq!(server.client_mut(second).unwrap().seed_queued_bytes, 0);
+
+    server.pump_attach_seeds();
+    assert!(server.client_mut(second).unwrap().seed_queued_bytes > 0);
+}
+
+#[test]
+fn pending_resize_deltas_and_snapshot_geometry_precede_replay() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(5, test_pane(2));
+    let (controller, _controller_stream) = attach_client(&mut server);
+    let (seeding, _seeding_stream) = attach_client(&mut server);
+    server.enqueue_attach_seeds(seeding);
+
+    for (cols, rows) in [(37, 11), (41, 12)] {
+        let responses = server.handle_message(controller, resize_message(5, false, 2, cols, rows));
+        for (target, message) in responses {
+            server.enqueue(controller, target, message);
+        }
+    }
+    server.pump_attach_seeds();
+
+    let frames = decode_outbox_frames(server.client_mut(seeding).unwrap());
+    let replay_index = frames
+        .iter()
+        .position(|frame| matches!(frame, DecodedOutboxFrame::Pane { pane_id: 5, .. }))
+        .expect("pane replay");
+    let resizes: Vec<_> = frames
+        .iter()
+        .enumerate()
+        .filter_map(|(index, frame)| {
+            let DecodedOutboxFrame::Control(message) = frame else {
+                return None;
+            };
+            let ServerMessage::Resized {
+                pane_id: 5,
+                generation: 2,
+                cols,
+                rows,
+                ..
+            } = message.as_ref()
+            else {
+                return None;
+            };
+            Some((index, *cols, *rows))
+        })
+        .collect();
+    assert_eq!(
+        resizes
+            .iter()
+            .map(|(_, cols, rows)| (*cols, *rows))
+            .collect::<Vec<_>>(),
+        [(37, 11), (41, 12), (41, 12)],
+        "two live resizes followed by snapshot-point geometry"
+    );
+    assert!(resizes.iter().all(|(index, _, _)| *index < replay_index));
+}
+
+#[test]
+fn resize_during_replay_waits_behind_the_last_snapshot_chunk() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let key = PaneSeedKey {
+        pane_id: 6,
+        generation: 9,
+    };
+    install_manual_replay(
+        &mut server,
+        client_id,
+        key,
+        vec![b'r'; SEED_PUMP_BYTES_PER_TICK + 1024],
+    );
+
+    server.pump_attach_seeds();
+    server.broadcast_control(&ServerMessage::Resized {
+        pane_id: key.pane_id,
+        local: false,
+        generation: key.generation,
+        cols: 55,
+        rows: 14,
+    });
+    for _ in 0..4 {
+        server.pump_attach_seeds();
+    }
+
+    let frames = decode_outbox_frames(server.client_mut(client_id).unwrap());
+    let last_replay = frames
+        .iter()
+        .rposition(|frame| matches!(frame, DecodedOutboxFrame::Pane { pane_id: 6, .. }))
+        .expect("pane replay");
+    let resize = frames
+        .iter()
+        .position(|frame| {
+            matches!(
+                frame,
+                DecodedOutboxFrame::Control(message)
+                    if matches!(message.as_ref(), ServerMessage::Resized {
+                        pane_id: 6,
+                        generation: 9,
+                        cols: 55,
+                        rows: 14,
+                        ..
+                    })
+            )
+        })
+        .expect("resize catch-up");
+    assert!(resize > last_replay);
+}
+
+#[test]
+fn pane_closed_while_pending_is_not_exported_and_its_delta_survives() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(2, test_pane(8));
+    let (client_id, _stream) = attach_client(&mut server);
+    server.enqueue_attach_seeds(client_id);
+
+    server.panes.get_mut(&2).unwrap().exited = Some(17);
+    server.broadcast_control(&ServerMessage::Exited {
+        pane_id: 2,
+        local: false,
+        generation: 8,
+        code: 17,
+    });
+    server.pump_attach_seeds();
+
+    let frames = decode_outbox_frames(server.client_mut(client_id).unwrap());
+    assert!(
+        !frames
+            .iter()
+            .any(|frame| matches!(frame, DecodedOutboxFrame::Pane { pane_id: 2, .. }))
+    );
+    assert!(frames.iter().any(|frame| {
+        matches!(
+            frame,
+            DecodedOutboxFrame::Control(message)
+                if matches!(message.as_ref(), ServerMessage::Exited {
+                    pane_id: 2,
+                    generation: 8,
+                    code: 17,
+                    ..
+                })
+        )
+    }));
+}
+
+#[test]
+fn catch_up_overflow_disconnects_only_the_slow_attacher_with_a_reason() {
+    let mut server = SessionServer::new_named("dev");
+    server.max_backlog = 20 * 1024 * 1024;
+    let (live_client, _live_stream) = attach_client(&mut server);
+    let (client_id, _stream) = attach_client(&mut server);
+    let key = PaneSeedKey {
+        pane_id: 3,
+        generation: 5,
+    };
+    install_manual_replay(&mut server, client_id, key, vec![b's']);
+    let chunk = vec![b'o'; 5 * 1024 * 1024];
+
+    for _ in 0..2 {
+        server.broadcast_outbound(&ServerOutbound::PaneOutput {
+            pane_id: key.pane_id,
+            local: false,
+            generation: key.generation,
+            bytes: chunk.clone(),
+        });
+    }
+
+    assert!(!server.client_attached(client_id));
+    assert!(server.client_attached(live_client));
+    let metrics = server.runtime_metrics().attach_seed;
+    assert_eq!(metrics.disconnected, 1);
+    assert_eq!(
+        metrics.last_disconnect_reason.as_deref(),
+        Some("attach-catch-up-overflow")
+    );
 }
 
 #[test]
@@ -723,9 +1118,12 @@ fn decode_outbox_controls(client: &ClientConn) -> Vec<ServerMessage> {
     client
         .outbox
         .iter()
-        .filter_map(|bytes| {
+        .filter_map(|frame| {
             let mut decoder = protocol::FrameDecoder::default();
-            decoder.read_from_status(&mut &bytes[..]).ok()?;
+            let mut input = &frame.bytes[..];
+            while !input.is_empty() {
+                decoder.read_from_status(&mut input).ok()?;
+            }
             match decoder.next_frame::<ServerMessage>().ok()? {
                 Some(Frame::Control(message)) => Some(message),
                 _ => None,
@@ -1829,9 +2227,12 @@ fn decode_outbox_pane_bytes(client: &ClientConn) -> Vec<(PaneId, bool, u64, Vec<
     client
         .outbox
         .iter()
-        .filter_map(|bytes| {
+        .filter_map(|frame| {
             let mut decoder = crate::session::protocol::FrameDecoder::default();
-            decoder.read_from_status(&mut &bytes[..]).ok()?;
+            let mut input = &frame.bytes[..];
+            while !input.is_empty() {
+                decoder.read_from_status(&mut input).ok()?;
+            }
             match decoder.next_frame::<ServerMessage>().ok()? {
                 Some(Frame::PaneBytes {
                     pane_id,
@@ -2900,8 +3301,11 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
         .find(|item| item.id == client)
         .unwrap();
     assert_eq!(client.outbox.len(), 2);
-    assert_eq!(client.outbox[0][4], 2, "raw pane frame must be first");
-    assert_eq!(client.outbox[1][4], 1, "runtime control frame must follow");
+    assert_eq!(client.outbox[0].bytes[4], 2, "raw pane frame must be first");
+    assert_eq!(
+        client.outbox[1].bytes[4], 1,
+        "runtime control frame must follow"
+    );
     assert_eq!(server.panes[&1].runtime.cwd.as_deref(), Some("/repo"));
 }
 

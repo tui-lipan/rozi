@@ -133,7 +133,7 @@ by the host terminal, including Kitty, iTerm2, sixel, or text-cell fallback.
 
 Images follow terminal scrolling and alternate-screen lifetime. These limits apply:
 
-- Images drawn before a client attaches are not replayed.
+- Images drawn before the pane's replay snapshot during attach are not replayed.
 - Kitty protocol animation frames are not supported. Programs that redraw an image can still
   animate.
 - Each attached client keeps up to 32 MiB of decoded pixels per pane; old images are evicted when

@@ -387,7 +387,10 @@ impl SessionServer {
         let Some(index) = self.clients.iter().position(|client| client.id == id) else {
             return;
         };
-        let removed = self.clients.remove(index);
+        let mut removed = self.clients.remove(index);
+        if let Some(seed) = removed.seed.take() {
+            self.finish_attach_seed(seed, true);
+        }
         let local_ids: Vec<_> = self
             .local_panes
             .keys()
@@ -457,12 +460,36 @@ impl SessionServer {
         });
     }
 
+    fn finish_attach_seed(&mut self, seed: AttachSeedState, disconnected: bool) {
+        let duration = crate::runtime_metrics::duration_micros(seed.started.elapsed());
+        self.attach_seed_totals.last_duration_us = duration;
+        self.attach_seed_totals.max_duration_us =
+            self.attach_seed_totals.max_duration_us.max(duration);
+        if disconnected {
+            self.attach_seed_totals.disconnected += 1;
+            self.attach_seed_totals.last_disconnect_reason = Some(
+                seed.disconnect_reason
+                    .unwrap_or("connection-closed")
+                    .to_string(),
+            );
+        } else {
+            self.attach_seed_totals.completed += 1;
+        }
+    }
+
     pub(super) fn heartbeat(&mut self) {
         let now = Instant::now();
         let mut timed_out: Vec<ClientId> = Vec::new();
         let mut pings: Vec<(ClientId, u64)> = Vec::new();
         for client in &mut self.clients {
             if !client.attached {
+                continue;
+            }
+            // A ping queued behind a replay cannot be answered yet. Start the heartbeat clock once
+            // the baseline and its catch-up have reached the socket.
+            if client.seed.is_some() {
+                client.last_pong = now;
+                client.last_ping = now;
                 continue;
             }
             if now.duration_since(client.last_pong) >= self.settings.heartbeat_timeout {
@@ -486,49 +513,23 @@ impl SessionServer {
     pub(super) fn flush_clients(&mut self) -> bool {
         let mut activity = false;
         let mut dead: Vec<ClientId> = Vec::new();
+        let mut completed_seeds = Vec::new();
+        let now = Instant::now();
         for client in &mut self.clients {
-            let mut disconnect = false;
-            while let Some(front) = client.outbox.front() {
-                let chunk = &front[client.front_offset..];
-                match client.stream.write(chunk) {
-                    Ok(0) => {
-                        activity = true;
-                        disconnect = true;
-                        break;
-                    }
-                    Ok(n) => {
-                        activity = true;
-                        client.front_offset += n;
-                        client.outbox_bytes -= n;
-                        if client.front_offset >= front.len() {
-                            client.outbox.pop_front();
-                            client.front_offset = 0;
-                        }
-                    }
-                    Err(err)
-                        if matches!(
-                            err.kind(),
-                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                        ) =>
-                    {
-                        break;
-                    }
-                    Err(_) => {
-                        activity = true;
-                        disconnect = true;
-                        break;
-                    }
-                }
+            let (client_activity, mut disconnect) = Self::flush_client_outbox(client);
+            activity |= client_activity;
+            if let Some(seed) = Self::take_completed_seed(client, now) {
+                completed_seeds.push(seed);
             }
-            if client.outbox.is_empty() {
-                client.seeding = false;
-                if client.close_after_flush {
-                    disconnect = true;
-                }
+            if client.outbox.is_empty() && client.close_after_flush {
+                disconnect = true;
             }
             if disconnect {
                 dead.push(client.id);
             }
+        }
+        for seed in completed_seeds {
+            self.finish_attach_seed(seed, false);
         }
         for id in dead {
             self.remove_client(id);
@@ -536,48 +537,117 @@ impl SessionServer {
         activity
     }
 
+    fn flush_client_outbox(client: &mut ClientConn) -> (bool, bool) {
+        let mut activity = false;
+        while let Some(front) = client.outbox.front() {
+            let class = front.class;
+            let chunk = &front.bytes[client.front_offset..];
+            match client.stream.write(chunk) {
+                Ok(0) => {
+                    if let Some(seed) = client.seed.as_mut() {
+                        seed.disconnect_reason = Some("transport-closed");
+                    }
+                    return (true, true);
+                }
+                Ok(n) => {
+                    activity = true;
+                    client.front_offset += n;
+                    client.outbox_bytes -= n;
+                    match class {
+                        OutboxClass::Normal => {}
+                        OutboxClass::SeedReplay => client.seed_queued_bytes -= n,
+                        OutboxClass::SeedCatchUp => client.seed_catch_up_queued_bytes -= n,
+                    }
+                    if client.front_offset >= front.bytes.len() {
+                        client.outbox.pop_front();
+                        client.front_offset = 0;
+                    }
+                }
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    return (activity, false);
+                }
+                Err(_) => {
+                    if let Some(seed) = client.seed.as_mut() {
+                        seed.disconnect_reason = Some("transport-write-failed");
+                    }
+                    return (true, true);
+                }
+            }
+        }
+        (activity, false)
+    }
+
+    fn take_completed_seed(client: &mut ClientConn, now: Instant) -> Option<AttachSeedState> {
+        let complete = client.seed.as_ref().is_some_and(|seed| {
+            seed.baseline_queued
+                && client.seed_queued_bytes == 0
+                && client.seed_catch_up_queued_bytes == 0
+        });
+        if !complete {
+            return None;
+        }
+        client.last_pong = now;
+        client.last_ping = now;
+        client.seed.take()
+    }
+
     pub(super) fn enqueue(&mut self, sender_id: ClientId, target: Target, message: ServerMessage) {
+        let delta = seed_delta_for_control(&message);
         let Some(bytes) = encode_control(&message) else {
             return;
         };
         let max_backlog = self.max_backlog;
         match target {
             Target::Sender => {
-                let accepted = self
+                let result = self
                     .client_mut(sender_id)
-                    .is_some_and(|client| client.try_push(bytes, max_backlog));
-                if !accepted {
+                    .map(|client| client.push_delta(bytes, delta, max_backlog));
+                if matches!(result, Some(ClientFrameResult::Overflow)) {
                     self.remove_client(sender_id);
                 }
             }
             Target::Client(id) => {
-                let accepted = self
+                let result = self
                     .client_mut(id)
                     .filter(|client| client.attached)
-                    .is_none_or(|client| client.try_push(bytes, max_backlog));
-                if !accepted {
+                    .map(|client| client.push_delta(bytes, delta, max_backlog));
+                if matches!(result, Some(ClientFrameResult::Overflow)) {
                     self.remove_client(id);
                 }
             }
             Target::Broadcast => {
-                self.push_to_attached(bytes);
+                self.push_delta_to_attached(bytes, delta);
             }
         }
+        self.note_attach_seed_high_water();
         self.note_outbox_high_water();
     }
 
     /// Queue one shared encoded frame on every attached client. Each client retains its own write
     /// offset, while the immutable payload allocation is shared.
+    #[cfg(test)]
     pub(super) fn push_to_attached(&mut self, bytes: Arc<[u8]>) {
+        self.push_delta_to_attached(bytes, SeedDelta::Control);
+    }
+
+    fn push_delta_to_attached(&mut self, bytes: Arc<[u8]>, delta: SeedDelta) {
         let mut slow = Vec::new();
         for client in &mut self.clients {
             if !client.attached {
                 continue;
             }
-            if !client.try_push(Arc::clone(&bytes), self.max_backlog) {
+            if client.push_delta(Arc::clone(&bytes), delta, self.max_backlog)
+                == ClientFrameResult::Overflow
+            {
                 slow.push(client.id);
             }
         }
+        self.note_attach_seed_high_water();
         self.note_outbox_high_water();
         for id in slow {
             self.remove_client(id);
@@ -588,81 +658,436 @@ impl SessionServer {
         let Some(bytes) = encode_control(message) else {
             return;
         };
-        self.push_to_attached(bytes);
+        self.push_delta_to_attached(bytes, seed_delta_for_control(message));
     }
 
     pub(super) fn broadcast_outbound(&mut self, outbound: &ServerOutbound) {
-        let bytes = match outbound {
-            ServerOutbound::Control(message) => encode_control(message),
+        match outbound {
+            ServerOutbound::Control(message) => self.broadcast_control(message),
             ServerOutbound::PaneOutput {
                 pane_id,
                 local,
                 generation,
                 bytes,
-            } => encode_pane_output(*pane_id, *generation, *local, bytes),
-        };
-        let Some(bytes) = bytes else {
-            return;
-        };
-        self.push_to_attached(bytes);
+            } => {
+                let Some(frame) = encode_pane_output(*pane_id, *generation, *local, bytes) else {
+                    return;
+                };
+                let delta = if *local {
+                    SeedDelta::Control
+                } else {
+                    SeedDelta::PaneOutput(PaneSeedKey {
+                        pane_id: *pane_id,
+                        generation: *generation,
+                    })
+                };
+                let mut slow = Vec::new();
+                for client in &mut self.clients {
+                    if client.attached
+                        && client.push_delta(Arc::clone(&frame), delta, self.max_backlog)
+                            == ClientFrameResult::Overflow
+                    {
+                        slow.push(client.id);
+                    }
+                }
+                self.note_attach_seed_high_water();
+                self.note_outbox_high_water();
+                for id in slow {
+                    self.remove_client(id);
+                }
+            }
+        }
     }
 
     pub(super) fn enqueue_outbound(&mut self, id: ClientId, outbound: &ServerOutbound) {
-        let bytes = match outbound {
-            ServerOutbound::Control(message) => encode_control(message),
+        let (bytes, delta) = match outbound {
+            ServerOutbound::Control(message) => {
+                (encode_control(message), seed_delta_for_control(message))
+            }
             ServerOutbound::PaneOutput {
                 pane_id,
                 local,
                 generation,
                 bytes,
                 ..
-            } => encode_pane_output(*pane_id, *generation, *local, bytes),
+            } => (
+                encode_pane_output(*pane_id, *generation, *local, bytes),
+                if *local {
+                    SeedDelta::Control
+                } else {
+                    SeedDelta::PaneOutput(PaneSeedKey {
+                        pane_id: *pane_id,
+                        generation: *generation,
+                    })
+                },
+            ),
         };
         let Some(bytes) = bytes else { return };
         let max_backlog = self.max_backlog;
-        let accepted = self
+        let result = self
             .client_mut(id)
             .filter(|client| client.attached)
-            .is_some_and(|client| client.try_push(bytes, max_backlog));
-        if !accepted {
+            .map(|client| client.push_delta(bytes, delta, max_backlog));
+        if matches!(result, Some(ClientFrameResult::Overflow) | None) {
             self.remove_client(id);
         }
+        self.note_attach_seed_high_water();
         self.note_outbox_high_water();
     }
 
-    /// Queue the initial replay seed for a freshly attached client: the exported screen of every
-    /// live pane, in 256 KiB chunks, right after `Attached` and before any subsequent live output.
+    /// Establish the pane manifest for a freshly attached client.
+    ///
+    /// No replay bytes are exported here. [`Self::pump_attach_seeds`] exports at most one pane per
+    /// server iteration and keeps only [`SEED_SEND_WINDOW`] encoded bytes queued. Output for a pane
+    /// still pending export is already represented by that future snapshot and is suppressed;
+    /// output after export is retained behind the complete baseline.
     pub(super) fn enqueue_attach_seeds(&mut self, id: ClientId) {
-        if let Some(client) = self.client_mut(id) {
-            client.seeding = true;
-        }
         let panes: Vec<_> = self
             .panes
             .iter()
             .filter(|(_, pane)| pane.exited.is_none())
-            .map(|(pane_id, pane)| (*pane_id, pane.generation))
+            .map(|(pane_id, pane)| PaneSeedKey {
+                pane_id: *pane_id,
+                generation: pane.generation,
+            })
             .collect();
-        for (pane_id, generation) in panes {
-            let bytes = self
-                .panes
-                .get_mut(&pane_id)
-                .expect("pane id came from map")
-                .screen_without_change()
-                .export_replay_bytes();
-            for chunk in bytes.chunks(SEED_CHUNK) {
-                let Some(frame) = encode_pane_output(pane_id, generation, false, chunk) else {
-                    continue;
-                };
-                let max_backlog = self.max_backlog;
-                let accepted = self
-                    .client_mut(id)
-                    .is_some_and(|client| client.try_push(frame, max_backlog));
-                if !accepted {
-                    self.remove_client(id);
-                    return;
-                }
-                self.note_outbox_high_water();
-            }
+        if let Some(client) = self.client_mut(id) {
+            client.seed = Some(AttachSeedState::new(panes));
         }
+        self.note_attach_seed_high_water();
+    }
+
+    /// Advance all active attach streams under one byte budget and one export budget.
+    pub(super) fn pump_attach_seeds(&mut self) -> bool {
+        let ids: Vec<_> = self
+            .clients
+            .iter()
+            .filter(|client| {
+                client
+                    .seed
+                    .as_ref()
+                    .is_some_and(|seed| !seed.baseline_queued)
+            })
+            .map(|client| client.id)
+            .collect();
+        if ids.is_empty() {
+            return false;
+        }
+
+        let start = self.attach_seed_cursor % ids.len();
+        self.attach_seed_cursor = self.attach_seed_cursor.wrapping_add(1);
+        let mut remaining = SEED_PUMP_BYTES_PER_TICK;
+        let mut export_available = true;
+        let mut activity = false;
+        for offset in 0..ids.len() {
+            if remaining <= protocol::PANE_FRAME_OVERHEAD {
+                break;
+            }
+            let id = ids[(start + offset) % ids.len()];
+            activity |= self.pump_client_attach_seed(id, &mut remaining, &mut export_available);
+        }
+        self.note_attach_seed_high_water();
+        self.note_outbox_high_water();
+        activity
+    }
+
+    fn pump_client_attach_seed(
+        &mut self,
+        id: ClientId,
+        remaining: &mut usize,
+        export_available: &mut bool,
+    ) -> bool {
+        let mut activity = false;
+        loop {
+            let progressed = match self.next_attach_seed_work(id) {
+                AttachSeedWork::ReplayResize => self.pump_replay_resize(id, remaining),
+                AttachSeedWork::FinishReplay => {
+                    self.finish_pane_replay(id);
+                    true
+                }
+                AttachSeedWork::ReplayChunk => self.pump_replay_chunk(id, remaining),
+                AttachSeedWork::BeginPane(key) => {
+                    if !*export_available {
+                        return activity;
+                    }
+                    self.begin_pane_replay(id, key);
+                    *export_available = false;
+                    true
+                }
+                AttachSeedWork::CatchUp => self.pump_seed_catch_up(id, remaining),
+                AttachSeedWork::Complete => {
+                    self.complete_attach_baseline(id);
+                    return true;
+                }
+                AttachSeedWork::Done => return activity,
+            };
+            if !progressed {
+                return activity;
+            }
+            activity = true;
+        }
+    }
+
+    fn next_attach_seed_work(&self, id: ClientId) -> AttachSeedWork {
+        let Some(seed) = self
+            .clients
+            .iter()
+            .find(|client| client.id == id)
+            .and_then(|client| client.seed.as_ref())
+        else {
+            return AttachSeedWork::Done;
+        };
+        if seed.baseline_queued {
+            return AttachSeedWork::Done;
+        }
+        if let Some(replay) = seed.replay.as_ref() {
+            if replay.resize_frame.is_some() {
+                return AttachSeedWork::ReplayResize;
+            }
+            if replay.offset >= replay.bytes.len() {
+                return AttachSeedWork::FinishReplay;
+            }
+            return AttachSeedWork::ReplayChunk;
+        }
+        if let Some(key) = seed.pending.front() {
+            return AttachSeedWork::BeginPane(*key);
+        }
+        if seed.catch_up.is_empty() {
+            AttachSeedWork::Complete
+        } else {
+            AttachSeedWork::CatchUp
+        }
+    }
+
+    fn pump_replay_resize(&mut self, id: ClientId, remaining: &mut usize) -> bool {
+        let Some((frame, available)) = self.clients.iter().find_map(|client| {
+            let replay = client.seed.as_ref()?.replay.as_ref()?;
+            Some((
+                Arc::clone(replay.resize_frame.as_ref()?),
+                SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes),
+            ))
+        }) else {
+            return true;
+        };
+        if frame.len() > available || frame.len() > *remaining {
+            return false;
+        }
+        let frame_len = frame.len();
+        if !self.queue_attach_frame(
+            id,
+            frame,
+            OutboxClass::SeedReplay,
+            "attach-seed-outbox-overflow",
+        ) {
+            return true;
+        }
+        self.client_mut(id)
+            .and_then(|client| client.seed.as_mut())
+            .and_then(|seed| seed.replay.as_mut())
+            .expect("replay resize was present")
+            .resize_frame = None;
+        *remaining -= frame_len;
+        true
+    }
+
+    fn finish_pane_replay(&mut self, id: ClientId) {
+        let seed = self
+            .client_mut(id)
+            .and_then(|client| client.seed.as_mut())
+            .expect("active seed");
+        let key = seed.replay.as_ref().expect("replay was present").key;
+        seed.replay = None;
+        seed.manifest.insert(key, PaneSeedState::CatchingUp);
+    }
+
+    fn pump_replay_chunk(&mut self, id: ClientId, remaining: &mut usize) -> bool {
+        let Some((frame, payload_len, available)) = self.clients.iter().find_map(|client| {
+            let replay = client.seed.as_ref()?.replay.as_ref()?;
+            let available = SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes);
+            let payload_budget = available
+                .min(*remaining)
+                .saturating_sub(protocol::PANE_FRAME_OVERHEAD);
+            let payload_len = SEED_CHUNK
+                .min(payload_budget)
+                .min(replay.bytes.len().saturating_sub(replay.offset));
+            let frame = encode_pane_output(
+                replay.key.pane_id,
+                replay.key.generation,
+                false,
+                &replay.bytes[replay.offset..replay.offset + payload_len],
+            );
+            Some((frame, payload_len, available))
+        }) else {
+            return true;
+        };
+        if available <= protocol::PANE_FRAME_OVERHEAD || payload_len == 0 {
+            return false;
+        }
+        let Some(frame) = frame else {
+            self.advance_replay(id, payload_len);
+            return true;
+        };
+        let frame_len = frame.len();
+        if !self.queue_attach_frame(
+            id,
+            frame,
+            OutboxClass::SeedReplay,
+            "attach-seed-outbox-overflow",
+        ) {
+            return true;
+        }
+        self.advance_replay(id, payload_len);
+        *remaining = remaining.saturating_sub(frame_len);
+        true
+    }
+
+    fn advance_replay(&mut self, id: ClientId, bytes: usize) {
+        self.client_mut(id)
+            .and_then(|client| client.seed.as_mut())
+            .and_then(|seed| seed.replay.as_mut())
+            .expect("replay was present")
+            .offset += bytes;
+    }
+
+    fn begin_pane_replay(&mut self, id: ClientId, key: PaneSeedKey) {
+        self.client_mut(id)
+            .and_then(|client| client.seed.as_mut())
+            .expect("active seed")
+            .pending
+            .pop_front();
+        let snapshot = self
+            .panes
+            .get_mut(&key.pane_id)
+            .filter(|pane| pane.generation == key.generation && pane.exited.is_none())
+            .map(|pane| {
+                let cols = pane.cols;
+                let rows = pane.rows;
+                let bytes = pane.screen_without_change().export_replay_bytes();
+                (bytes, cols, rows)
+            });
+        let replay_len = snapshot
+            .as_ref()
+            .map_or(0, |(bytes, _, _)| bytes.len() as u64);
+        let seed = self
+            .client_mut(id)
+            .and_then(|client| client.seed.as_mut())
+            .expect("active seed");
+        if let Some((bytes, cols, rows)) = snapshot {
+            seed.manifest.insert(key, PaneSeedState::Replaying);
+            seed.replay = Some(PaneSeedReplay {
+                key,
+                resize_frame: encode_control(&ServerMessage::Resized {
+                    pane_id: key.pane_id,
+                    local: false,
+                    generation: key.generation,
+                    cols,
+                    rows,
+                }),
+                bytes,
+                offset: 0,
+            });
+        } else {
+            seed.manifest.insert(key, PaneSeedState::CatchingUp);
+        }
+        self.attach_seed_totals.replay_bytes += replay_len;
+    }
+
+    fn pump_seed_catch_up(&mut self, id: ClientId, remaining: &mut usize) -> bool {
+        let Some((frame, available)) = self.clients.iter().find_map(|client| {
+            let seed = client.seed.as_ref()?;
+            Some((
+                Arc::clone(seed.catch_up.front()?),
+                SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes),
+            ))
+        }) else {
+            return true;
+        };
+        if frame.len() > available || frame.len() > *remaining {
+            return false;
+        }
+        let frame_len = frame.len();
+        if !self.queue_attach_frame(
+            id,
+            frame,
+            OutboxClass::SeedCatchUp,
+            "attach-catch-up-outbox-overflow",
+        ) {
+            return true;
+        }
+        let seed = self
+            .client_mut(id)
+            .and_then(|client| client.seed.as_mut())
+            .expect("active seed");
+        seed.catch_up.pop_front();
+        seed.catch_up_bytes -= frame_len;
+        *remaining -= frame_len;
+        true
+    }
+
+    fn queue_attach_frame(
+        &mut self,
+        id: ClientId,
+        frame: Arc<[u8]>,
+        class: OutboxClass,
+        overflow_reason: &'static str,
+    ) -> bool {
+        let max_backlog = self.max_backlog;
+        let Some(client) = self.client_mut(id) else {
+            return false;
+        };
+        if client.try_push_class(frame, max_backlog, class) {
+            return true;
+        }
+        if let Some(seed) = client.seed.as_mut() {
+            seed.disconnect_reason = Some(overflow_reason);
+        }
+        self.remove_client(id);
+        false
+    }
+
+    fn complete_attach_baseline(&mut self, id: ClientId) {
+        let seed = self
+            .client_mut(id)
+            .and_then(|client| client.seed.as_mut())
+            .expect("active seed");
+        for state in seed.manifest.values_mut() {
+            *state = PaneSeedState::Live;
+        }
+        seed.baseline_queued = true;
+    }
+
+    fn note_attach_seed_high_water(&mut self) {
+        let queued = self
+            .clients
+            .iter()
+            .map(|client| client.seed_queued_bytes)
+            .sum::<usize>();
+        let catch_up = self
+            .clients
+            .iter()
+            .map(|client| {
+                client.seed_catch_up_queued_bytes
+                    + client.seed.as_ref().map_or(0, |seed| seed.catch_up_bytes)
+            })
+            .sum::<usize>();
+        self.attach_seed_totals.peak_queued_bytes =
+            self.attach_seed_totals.peak_queued_bytes.max(queued);
+        self.attach_seed_totals.peak_catch_up_bytes =
+            self.attach_seed_totals.peak_catch_up_bytes.max(catch_up);
+    }
+}
+
+fn seed_delta_for_control(message: &ServerMessage) -> SeedDelta {
+    match message {
+        ServerMessage::Resized {
+            pane_id,
+            local: false,
+            generation,
+            ..
+        } => SeedDelta::PaneResize(PaneSeedKey {
+            pane_id: *pane_id,
+            generation: *generation,
+        }),
+        _ => SeedDelta::Control,
     }
 }

@@ -39,6 +39,27 @@ pub struct ServerOutboxMetrics {
     pub clients: u64,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachSeedMetrics {
+    pub active_clients: u64,
+    /// Encoded baseline replay currently waiting in socket outboxes.
+    pub queued_bytes: u64,
+    pub peak_queued_bytes: u64,
+    pub send_window_bytes: u64,
+    /// Post-baseline output/control retained in memory or queued behind replay.
+    pub live_catch_up_bytes: u64,
+    pub peak_live_catch_up_bytes: u64,
+    pub live_catch_up_limit_bytes: u64,
+    pub panes_remaining: u64,
+    /// Replay payload exported across this server process's lifetime.
+    pub replay_bytes_total: u64,
+    pub completed: u64,
+    pub disconnected: u64,
+    pub last_duration_us: u64,
+    pub max_duration_us: u64,
+    pub last_disconnect_reason: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrphanOutputMetrics {
     #[serde(flatten)]
@@ -75,6 +96,7 @@ pub struct ServerRuntimeMetrics {
     pub sampled_at_unix_ms: u64,
     pub pty_ingress: QueueMetrics,
     pub client_outboxes: ServerOutboxMetrics,
+    pub attach_seed: AttachSeedMetrics,
     pub resurrection: ResurrectionMetrics,
 }
 
@@ -139,11 +161,12 @@ impl RuntimeMetrics {
         let absent_queue = QueueMetrics::default();
         let inbound = self.client_inbound.as_ref().unwrap_or(&absent_queue);
         let outbound = self.client_outbound.as_ref().unwrap_or(&absent_queue);
-        let (pty, server_out, snapshot, server_age) = self.server.as_ref().map_or_else(
+        let (pty, server_out, seed, snapshot, server_age) = self.server.as_ref().map_or_else(
             || {
                 (
                     QueueMetrics::default(),
                     ServerOutboxMetrics::default(),
+                    AttachSeedMetrics::default(),
                     ResurrectionMetrics::default(),
                     None,
                 )
@@ -152,6 +175,7 @@ impl RuntimeMetrics {
                 (
                     server.sample.pty_ingress,
                     server.sample.client_outboxes,
+                    server.sample.attach_seed.clone(),
                     server.sample.resurrection,
                     Some((server.age_ms, server.stale)),
                 )
@@ -175,6 +199,21 @@ impl RuntimeMetrics {
                     format_bytes(server_out.bytes),
                     server_out.clients,
                     format_age(server_age)
+                ),
+            ),
+            DevToolsMetric::new(
+                "Seed",
+                format!(
+                    "{}a {}p · {}/{}/{} · catch {}/{}/{}{}",
+                    seed.active_clients,
+                    seed.panes_remaining,
+                    compact_bytes(seed.queued_bytes),
+                    compact_bytes(seed.peak_queued_bytes),
+                    compact_bytes(seed.send_window_bytes),
+                    compact_bytes(seed.live_catch_up_bytes),
+                    compact_bytes(seed.peak_live_catch_up_bytes),
+                    compact_bytes(seed.live_catch_up_limit_bytes),
+                    format_age(server_age),
                 ),
             ),
             DevToolsMetric::new("Cli in", format_queue(*inbound, None)),
@@ -384,6 +423,22 @@ mod tests {
                         "high_water_bytes": 0,
                         "capacity_bytes": 0,
                         "clients": 0
+                    },
+                    "attach_seed": {
+                        "active_clients": 0,
+                        "queued_bytes": 0,
+                        "peak_queued_bytes": 0,
+                        "send_window_bytes": 0,
+                        "live_catch_up_bytes": 0,
+                        "peak_live_catch_up_bytes": 0,
+                        "live_catch_up_limit_bytes": 0,
+                        "panes_remaining": 0,
+                        "replay_bytes_total": 0,
+                        "completed": 0,
+                        "disconnected": 0,
+                        "last_duration_us": 0,
+                        "max_duration_us": 0,
+                        "last_disconnect_reason": null
                     },
                     "resurrection": {
                         "attempts": 0,

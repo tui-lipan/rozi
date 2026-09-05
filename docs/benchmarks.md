@@ -32,6 +32,7 @@ cargo bench --bench session_pipeline
 cargo bench --bench app_render
 cargo bench --bench scrollback_search
 cargo bench --bench server_fairness
+cargo bench --bench terminal_memory
 ```
 
 Arguments after `--` select Criterion benchmark IDs or target-specific evidence modes:
@@ -65,9 +66,10 @@ Criterion writes generated measurements and reports below `target/criterion/`. D
 | `snapshot_rebuild` | Measures `render_snapshot()` by viewport, server-output processing by message size, and the difference between rebuilding after every message and once per output burst. |
 | `protocol_framing` | Measures pane-output frame encode/decode round trips and serde for generated large control frames. |
 | `session_pipeline` | Measures in-memory frame encode, decode, client terminal processing, and snapshot rebuilding. Unix also includes a socket-pair case. |
-| `app_render` | Measures whole-application view expansion and layout by pane count, with empty and populated terminals. It also measures fixed sidebar states, repository-size fixtures, per-message update overhead, and real inbound-mailbox draining for round-robin multi-pane output. The drain cases separately exercise the entry and soft byte budgets. It does not measure backend drawing or terminal buffer diffing. |
+| `app_render` | Measures whole-application view expansion and layout by pane count, with empty and populated terminals. It also measures fixed sidebar states, repository-size fixtures, per-message update overhead, and real inbound-mailbox draining for round-robin multi-pane output after pane-aware coalescing. The drain cases exercise small-frame overhead and the soft byte budget. `inbound_fairness/hot_plus_quiet` times draining one 64 KiB hot aggregation plus a quiet pane's frame, the quiet pane's extra wait from non-adjacent coalescing. It does not measure backend drawing or terminal buffer diffing. |
 | `scrollback_search` | Measures complete searches across fixed pane and history counts, scanner slices, and full production mapping for one cooperative slice. Cases cover sparse, dense, and absent matches. |
 | `server_fairness` | Measures key acknowledgement through a real server-owned PTY under paced continuous ingress, idle-settled key latency, durable resurrection snapshot attempts, and a one-shot bounded saturation probe. |
+| `terminal_memory` | Counts retained allocations for a populated production client pane at adjacent scrollback capacities. It compares the production constructor lifecycle with an unprimed `TerminalScreen`; this is allocation evidence, not a timing benchmark. |
 
 The saturation probe is not a Criterion latency statistic. It checks the configured PTY ingress
 high-water behavior under unpaced producers and reports whether the bounded downstream policy
@@ -147,8 +149,8 @@ tools/memory-matrix.sh --case ROWS COLS PANES HISTORY CONTENT CLIENTS STATE \
   --output target/memory-matrix/case
 ```
 
-`CONTENT` is `plain`, `styled`, or `images`. `STATE` is `steady`, `closed`, `disconnected`,
-`reconnected`, or `killed`.
+`CONTENT` is `plain`, `styled`, `images`, or `image-stress`. `STATE` is `steady`, `closed`,
+`disconnected`, `reconnected`, or `killed`.
 
 The runner requires Bash, Python 3, util-linux `script`, and Linux `smaps_rollup`. It takes five
 samples after a fixed settle period and reports the median in `results.json` and `results.md`.

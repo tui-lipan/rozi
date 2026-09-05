@@ -368,10 +368,20 @@ pub(crate) fn held_host_targets(
 /// live attachments. Preserves each host's expand/collapse and error state (see
 /// [`crate::state::HostRegistry::seed`]).
 pub(crate) fn seed_host_registry(ctx: &mut Context<AppRoot>) {
+    // Disk first, then anything added this run that did not reach it. The roster the user can see
+    // must not depend on a write having succeeded — see [`crate::state::State::added_hosts`].
+    let mut saved = crate::session::read_saved_hosts();
+    for target in &ctx.state.added_hosts {
+        if !saved.contains(target) {
+            saved.push(target.clone());
+        }
+    }
     let recents = crate::session::read_recent_remotes();
     let held = held_host_targets(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
-    ctx.state.hosts.seed(&remote_config, &recents, &held);
+    ctx.state
+        .hosts
+        .seed(&remote_config, &saved, &recents, &held);
     // Load the persisted last-seen sessions once the known hosts exist, so an offline host can
     // still list its workplaces. Empty on first run or any read error.
     if ctx.state.host_session_cache.is_empty() {

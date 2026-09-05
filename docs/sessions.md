@@ -51,7 +51,7 @@ Every surface names the scope it acts in, and its keys act only in that scope.
 | Surface | Scope | `Ctrl+N` | `Ctrl+T` |
 | --- | --- | --- | --- |
 | **Sessions** | Global — every host at once | New local named session | Local temporary shell |
-| **Remote hosts** | Host navigation | Connect a new host | — |
+| **Remote hosts** | Host management | Add a host | — |
 | **Sessions · host** | That one host | New named session on the host | Temporary session on the host |
 
 Sessions stays global even while a remote session fills the screen behind it. Attached to
@@ -82,41 +82,98 @@ last successful host discovery remain available from cache.
 
 ### Browse remote hosts
 
-Press `Ctrl+R` in Sessions to open **Remote hosts**. The list combines configured hosts, recently
-used hosts, and hosts with a live attachment. Opening or returning to this list is local and does
-not contact any machine.
+Press `Ctrl+R` in Sessions to open **Remote hosts**. It is a persistent host manager, not a list of
+machines that happen to be reachable: the list combines configured hosts, hosts you added by hand,
+recently used hosts, and hosts with a live attachment. Opening or returning to this list is local
+and does not contact any machine.
 
 | Key | Remote hosts | Sessions · host |
 | --- | --- | --- |
-| `Enter` | Discover and browse the selected host | Attach or switch to the selected session |
-| `Ctrl+N` | Enter a new SSH target | Create a named session on this host |
+| `Enter` | Connect the selected host, or open it if it is already connected | Attach or switch to the selected session |
+| `Ctrl+N` | Add a host | Create a named session on this host |
+| `Ctrl+E` | Edit the selected host | Restart the selected session (twice) |
+| `Ctrl+R` | Connect the selected host again | — |
 | `Ctrl+T` | — | Create or switch to a temporary session on this host |
-| `Ctrl+K` twice | Forget an offline Recent host | Kill the selected session |
-| `Ctrl+E` twice | — | Restart the selected session |
+| `Ctrl+K` twice | Forget the selected host | Kill the selected session |
 | `Ctrl+W` | — | Disconnect a retained session attachment |
 | `Ctrl+X` | — | Disconnect this client from the host |
 | `Esc` | Cancel a connecting probe, otherwise return to Sessions | Return to Remote hosts |
 
-Activating a host probes it in place. The host row shows a spinner and `connecting…`; navigation
-is locked and `Esc` cancels. A successful result opens that host's sessions and replaces the
-cache. If the host is unreachable, the row stays on Remote hosts with the failure state. A
-successfully reached new host is remembered even when it has no sessions; a failed target is not
-remembered. OpenSSH remains responsible for aliases, keys, agents, and `ProxyJump`.
+#### Connecting and opening are two steps
+
+`Enter` on a disconnected host contacts it and **leaves you on Remote hosts**. The row changes from
+`○` to `●` and reports its session count, and a toast confirms it. Nothing is attached and no shell
+is started — reaching a machine says nothing about wanting to work on it yet. A second `Enter` opens
+`Sessions · <host>`.
+
+While one host is being contacted its row shows a spinner and `connecting…`, and `Esc` cancels that
+probe. The rest of the list stays usable: you can move the highlight, read your other machines, and
+edit or forget them. What waits is a *second* connection — `Enter` and `Ctrl+R` are held until the
+outstanding one answers, and a host added meanwhile is saved and selected rather than connected.
+
+`rozi --remote <host>` is the exception. A launch that named a machine has already said where it
+wants to work, so its first probe goes straight on to that host's sessions.
+
+#### Adding a host
+
+`Ctrl+N` opens the same three lines *Edit host* uses:
+
+```text
+› Host       adam@10.0.0.5
+  Username   adam
+  Port       22
+```
+
+The host line is allowed to answer more than its own question. Typing `adam@10.0.0.5` — or
+`ssh://adam@workbox:2222` — fills the login in and makes that line read-only, so the two can never
+disagree about who logs in; clearing the `user@` hands the line back with whatever you had typed in
+it. A login left empty is a real answer, and hands the question to `~/.ssh/config`.
+
+`Tab` and `Shift+Tab` move between the lines, `Enter` saves, `Esc` cancels.
+
+**The host is saved before the connection is attempted, and stays saved however it ends.** A
+sleeping laptop, a VPN that is down, or a login typed wrong is not a reason to lose the entry.
+Rozi never stores a password: OpenSSH asks for one when it needs one, through its own prompt.
+
+The roster is written to `saved-hosts` in the state directory, which rozi keeps private to you. If
+that write still fails, the host is listed and usable for the rest of the session anyway and a
+warning names the reason; only the memory of it across restarts is lost.
+
+#### When a connection fails
+
+The row stays, marked `!` in the error colour with a short reason, and a toast carries the same
+message:
+
+```text
+!  workbox                                       SSH login rejected
+```
+
+The failure stays on the row until you retry it, edit it, forget it, or it succeeds. `Enter` retries,
+`Ctrl+R` retries a host in any state, `Ctrl+E` corrects it, `Ctrl+K` twice forgets it.
+
+#### Editing and forgetting
+
+`Ctrl+E` opens those lines filled in with what is stored, so a wrong username or a non-default port
+is a correction rather than a re-entry. Editing rewrites the entry in place and leaves you on the
+list; it does not connect. Rozi deliberately exposes only host, username, and port —
+`~/.ssh/config` remains the advanced layer, and it is still what resolves aliases, keys, agents,
+and `ProxyJump`.
+
+`Ctrl+K` twice forgets a host rozi owns: one you added, or one it remembers from a past connection.
+Configured hosts stay defined by configuration, a host known only through a live attachment goes
+when that attachment does, and a host with a live or connecting attachment must be disconnected
+first. Forgetting also removes its cached session metadata.
+
+#### Scope
 
 Opening a host never creates or attaches a session, and `[session] startup` does not apply again.
-Browsing a host is an explicit request to look at it, so it always lands on that host's launcher.
-The same is true of `Ctrl+N` on Remote hosts: a new target that discovers successfully opens
-`Sessions · <host>` and waits.
+Opening one is an explicit request to work there, so it scopes the launcher to that machine.
 
 That request outlives the overlay. `Esc` steps back to Remote hosts to let you look at the other
 machines; it does not withdraw the host you opened, so a client with nothing attached is still
 scoped to it once the picker closes. `Ctrl+X` is what leaves a host, and it is offered on
 `Sessions · <host>` whenever this client is tied to that machine at all — including when the only
 tie is the scope itself.
-
-Only offline Recent hosts can be forgotten. Configured hosts remain defined by configuration, and
-a host with a live or connecting attachment must be disconnected first. Forgetting also removes
-its cached session metadata.
 
 Switching sessions keeps the old attachment connected in the background. Its screens and
 scrollback continue to receive output. A background attachment gives up layout control. Returning

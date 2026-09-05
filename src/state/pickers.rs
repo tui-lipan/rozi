@@ -61,17 +61,185 @@ pub enum RemotePickerMode {
     },
 }
 
-pub struct RemoteTargetPromptState {
-    pub input: TextInput,
+/// Whether the host editor is creating a durable host entry or correcting one that already exists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostFormMode {
+    Add,
+    /// Editing the host that currently has this exact identity. Submitting rewrites it in place.
+    Edit(crate::session::remote::RemoteTarget),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostFormField {
+    Host,
+    User,
+    Port,
+}
+
+impl HostFormField {
+    pub const ORDER: [Self; 3] = [Self::Host, Self::User, Self::Port];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Host => "Host",
+            Self::User => "Username",
+            Self::Port => "Port",
+        }
+    }
+
+    pub fn placeholder(self) -> &'static str {
+        match self {
+            Self::Host => "host / alias / ssh://...",
+            Self::User => "leave empty to let SSH decide",
+            Self::Port => "22",
+        }
+    }
+}
+
+/// The *Add host* / *Edit host* form: host, login, port, always all three.
+///
+/// The host line is allowed to answer more than its own question. `adam@workbox` is how people
+/// write an SSH endpoint, and typing it fills the login in and takes that line out of the user's
+/// hands rather than leaving two places that disagree about who logs in. Clearing the `user@`
+/// hands the line back with whatever they had typed there still in it — the field they own and the
+/// value derived from the host are kept apart precisely so switching between them loses nothing.
+///
+/// No password lives here. SSH asks for one when it needs one, through the askpass modal, and rozi
+/// never stores it.
+pub struct HostFormState {
+    pub mode: HostFormMode,
+    pub host: TextInput,
+    /// The login the user typed on its own line. Shadowed, never overwritten, while the host line
+    /// carries one of its own.
+    pub user: TextInput,
+    pub port: TextInput,
+    pub focus: HostFormField,
     pub error: Option<String>,
 }
 
-impl RemoteTargetPromptState {
-    pub fn new(initial: impl AsRef<str>) -> Self {
+impl HostFormState {
+    pub fn add(initial: impl AsRef<str>) -> Self {
         Self {
-            input: TextInput::new(initial.as_ref()),
+            mode: HostFormMode::Add,
+            host: TextInput::new(initial.as_ref()),
+            user: TextInput::new(""),
+            port: TextInput::new(""),
+            focus: HostFormField::Host,
             error: None,
         }
+    }
+
+    pub fn edit(target: &crate::session::remote::RemoteTarget) -> Self {
+        Self {
+            mode: HostFormMode::Edit(target.clone()),
+            host: TextInput::new(target.host()),
+            user: TextInput::new(target.user().unwrap_or_default()),
+            port: TextInput::new(
+                target
+                    .port()
+                    .map(|port| port.to_string())
+                    .unwrap_or_default(),
+            ),
+            focus: HostFormField::Host,
+            error: None,
+        }
+    }
+
+    pub fn title(&self) -> &'static str {
+        match self.mode {
+            HostFormMode::Add => "Add host",
+            HostFormMode::Edit(_) => "Edit host",
+        }
+    }
+
+    pub fn input(&self, field: HostFormField) -> &TextInput {
+        match field {
+            HostFormField::Host => &self.host,
+            HostFormField::User => &self.user,
+            HostFormField::Port => &self.port,
+        }
+    }
+
+    pub fn input_mut(&mut self, field: HostFormField) -> &mut TextInput {
+        match field {
+            HostFormField::Host => &mut self.host,
+            HostFormField::User => &mut self.user,
+            HostFormField::Port => &mut self.port,
+        }
+    }
+
+    /// The login the host line spells out, if it spells one out.
+    ///
+    /// Parses first so `ssh://adam@box:22` is understood as well as `adam@box`, and falls back to
+    /// the text before `@` for a line still being typed — `adam@` is not a valid target yet, but it
+    /// has already said who logs in.
+    pub fn host_login(&self) -> Option<&str> {
+        let text = self.host.text().trim();
+        if crate::session::remote::parse_remote_target(text).is_ok() {
+            let (login, _) = text.rsplit_once('@')?;
+            let login = login.rsplit_once("//").map_or(login, |(_, rest)| rest);
+            return (!login.is_empty()).then_some(login);
+        }
+        text.split_once('@')
+            .map(|(login, _)| login)
+            .filter(|login| !login.is_empty())
+    }
+
+    /// Whether the *Username* line is the host line's to fill. Read-only while it is, so the two
+    /// can never disagree about who logs in.
+    pub fn user_is_locked(&self) -> bool {
+        self.host_login().is_some()
+    }
+
+    /// The lines the cursor can reach, in the order they are drawn. A *Username* the host line
+    /// already answered is skipped: there is nothing to type into it.
+    pub fn reachable_fields(&self) -> Vec<HostFormField> {
+        HostFormField::ORDER
+            .into_iter()
+            .filter(|field| !(*field == HostFormField::User && self.user_is_locked()))
+            .collect()
+    }
+
+    /// Move the cursor one line on, wrapping.
+    ///
+    /// The form moves its own cursor rather than leaving it to `Tab` traversal: the framework's
+    /// traversal order is its own, and on this dialog it ran host → port → username, which is not
+    /// the order the three lines are read in.
+    pub fn cycle_focus(&mut self, forward: bool) {
+        let fields = self.reachable_fields();
+        let Some(index) = fields.iter().position(|field| *field == self.focus) else {
+            self.focus = HostFormField::Host;
+            return;
+        };
+        let len = fields.len();
+        let step = if forward { 1 } else { len - 1 };
+        self.focus = fields[(index + step) % len];
+    }
+
+    /// What the *Username* line shows: the host line's login while that governs, else the user's own.
+    pub fn shown_user(&self) -> &str {
+        self.host_login().unwrap_or_else(|| self.user.text())
+    }
+
+    /// Build the target the form describes, or say what is wrong with it.
+    ///
+    /// The host line wins wherever it is specific, since that is the line the user just spelled the
+    /// endpoint into; the other two fill in what it left open.
+    pub fn target(&self) -> Result<crate::session::remote::RemoteTarget, String> {
+        let parsed = crate::session::remote::parse_remote_target(self.host.text())?;
+        let port = match self.port.text().trim() {
+            "" => parsed.port(),
+            raw => Some(
+                raw.parse::<u16>()
+                    .ok()
+                    .filter(|port| *port != 0)
+                    .ok_or_else(|| format!("invalid port `{raw}`"))?,
+            ),
+        };
+        let user = parsed
+            .user()
+            .or_else(|| Some(self.user.text().trim()).filter(|user| !user.is_empty()));
+        crate::session::remote::RemoteTarget::from_parts(parsed.host(), user, port)
     }
 }
 
@@ -87,13 +255,15 @@ pub struct RemotePickerState {
     pub sessions: Vec<DiscoveredSession>,
     pub probe_epoch: u64,
     pub host_probe: super::HostProbe,
-    pub target_prompt: Option<RemoteTargetPromptState>,
+    /// The host the in-flight probe is contacting, which is *not* necessarily the highlighted one:
+    /// connecting no longer freezes the list, so the user is free to read the other rows while one
+    /// machine is being reached. The result is matched against this rather than against the
+    /// selection, or moving the cursor would orphan the answer.
+    pub probe_target: Option<crate::session::remote::RemoteTarget>,
+    pub host_form: Option<HostFormState>,
     pub pending_forget: Option<crate::session::remote::RemoteTarget>,
     pub pending_kill: Option<RemoteSessionIdentity>,
     pub pending_restart: Option<RemoteSessionIdentity>,
-    /// Bumped to remount the hosts palette while a probe is in flight, so navigation cannot
-    /// move the highlight off the connecting row.
-    pub interaction_epoch: u64,
     /// The session `startup = "last"` remembered on this host, waiting on discovery to say whether
     /// the host still has it. Attached when the first successful probe lists it, dropped otherwise —
     /// `last` reopens a session, it never revives one, so a name the host does not report leaves the
@@ -102,6 +272,13 @@ pub struct RemotePickerState {
     /// Consumed by that first probe whatever it finds, so a host reopened by hand later is a plain
     /// browse rather than a second, surprising auto-attach.
     pub startup_resume: Option<String>,
+    /// Whether the next successful probe should step straight into `Sessions · <host>` instead of
+    /// staying on the host list.
+    ///
+    /// Set only by a launch that named a machine (`--remote <host>`). Reaching a host and opening it
+    /// are two different acts, and an ordinary `Enter` does the first one and stops so the user can
+    /// see it worked; a launch already said which machine it wants to work on, so it does both.
+    pub auto_open: bool,
 }
 
 impl RemotePickerState {
@@ -115,13 +292,20 @@ impl RemotePickerState {
             sessions: Vec::new(),
             probe_epoch: 0,
             host_probe: super::HostProbe::Idle,
-            target_prompt: None,
+            probe_target: None,
+            host_form: None,
             pending_forget: None,
             pending_kill: None,
             pending_restart: None,
-            interaction_epoch: 0,
             startup_resume: None,
+            auto_open: false,
         }
+    }
+
+    /// Whether a probe this picker started is still out at `target`.
+    pub fn is_connecting(&self, target: &crate::session::remote::RemoteTarget) -> bool {
+        matches!(self.host_probe, super::HostProbe::InFlight)
+            && self.probe_target.as_ref() == Some(target)
     }
 
     pub fn enter_host_sessions(&mut self, target: crate::session::remote::RemoteTarget) {
@@ -130,10 +314,11 @@ impl RemotePickerState {
         self.sessions.clear();
         self.selected_session = None;
         self.host_probe = super::HostProbe::Idle;
+        self.probe_target = None;
         self.pending_forget = None;
         self.pending_kill = None;
         self.pending_restart = None;
-        self.target_prompt = None;
+        self.host_form = None;
     }
 
     pub fn return_to_hosts(&mut self) {
@@ -141,9 +326,10 @@ impl RemotePickerState {
         self.sessions.clear();
         self.selected_session = None;
         self.host_probe = super::HostProbe::Idle;
+        self.probe_target = None;
         self.pending_kill = None;
         self.pending_restart = None;
-        self.target_prompt = None;
+        self.host_form = None;
     }
 
     pub fn replace_sessions(&mut self, sessions: Vec<DiscoveredSession>) {
@@ -430,6 +616,150 @@ impl SessionPickerState {
             pending_kill: None,
             pending_restart: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod host_form_tests {
+    use super::*;
+    use crate::session::remote::RemoteTarget;
+
+    fn typed(host: &str, user: &str, port: &str) -> HostFormState {
+        let mut form = HostFormState::add(host);
+        form.user = TextInput::new(user);
+        form.port = TextInput::new(port);
+        form
+    }
+
+    /// The host line is allowed to answer the login question, and while it does the *Username* line
+    /// is not the user's to contradict.
+    #[test]
+    fn a_login_in_the_host_line_fills_and_locks_the_username() {
+        let form = typed("adam@10.0.0.5", "", "");
+        assert_eq!(form.host_login(), Some("adam"));
+        assert!(form.user_is_locked());
+        assert_eq!(form.shown_user(), "adam");
+
+        let bare = typed("workbox", "", "");
+        assert!(!bare.user_is_locked());
+        assert_eq!(bare.host_login(), None);
+    }
+
+    /// A line still being typed has already said who logs in, so it locks before it parses.
+    #[test]
+    fn a_half_typed_login_locks_too() {
+        let form = typed("adam@", "", "");
+        assert_eq!(form.host_login(), Some("adam"));
+        assert!(form.user_is_locked());
+    }
+
+    /// The `ssh://` spelling is the same statement, and reads the same way.
+    #[test]
+    fn an_ssh_url_login_is_recognized_as_one() {
+        let form = typed("ssh://adam@workbox:2222", "", "");
+        assert_eq!(form.host_login(), Some("adam"));
+        assert_eq!(
+            form.target().expect("a valid endpoint"),
+            RemoteTarget::Url {
+                user: Some("adam".into()),
+                host: "workbox".into(),
+                port: Some(2222),
+            }
+        );
+    }
+
+    /// Shadowed, never overwritten: clearing the `user@` hands the line back with what was in it.
+    #[test]
+    fn the_users_own_login_survives_being_shadowed() {
+        let mut form = typed("adam@workbox", "bob", "");
+        assert_eq!(form.shown_user(), "adam", "the host line governs");
+        assert_eq!(
+            form.target().expect("valid").user(),
+            Some("adam"),
+            "and it is what gets saved"
+        );
+
+        form.host = TextInput::new("workbox");
+        assert!(!form.user_is_locked());
+        assert_eq!(form.shown_user(), "bob", "the line comes back as it was");
+        assert_eq!(form.target().expect("valid").user(), Some("bob"));
+    }
+
+    /// The host line wins where it is specific; the other lines fill in what it left open.
+    #[test]
+    fn the_host_line_wins_and_the_others_fill_the_gaps() {
+        assert_eq!(
+            typed("workbox", "adam", "2222").target().expect("valid"),
+            RemoteTarget::Url {
+                user: Some("adam".into()),
+                host: "workbox".into(),
+                port: Some(2222),
+            }
+        );
+        assert_eq!(
+            typed("adam@workbox:22", "", "").target().expect("valid"),
+            RemoteTarget::Url {
+                user: Some("adam".into()),
+                host: "workbox".into(),
+                port: Some(22),
+            }
+        );
+        assert_eq!(
+            typed("workbox", "", "").target().expect("valid"),
+            RemoteTarget::Alias("workbox".into()),
+            "nothing overridden stays an ssh_config alias"
+        );
+        assert!(typed("workbox", "", "nope").target().is_err());
+    }
+
+    /// Tab moves down the lines as they are drawn, wrapping, and Shift+Tab back up.
+    #[test]
+    fn the_cursor_cycles_the_lines_in_the_order_they_are_read() {
+        let mut form = typed("workbox", "", "");
+        assert_eq!(form.focus, HostFormField::Host);
+        for expected in [
+            HostFormField::User,
+            HostFormField::Port,
+            HostFormField::Host,
+        ] {
+            form.cycle_focus(true);
+            assert_eq!(form.focus, expected);
+        }
+        form.cycle_focus(false);
+        assert_eq!(form.focus, HostFormField::Port, "and back the other way");
+    }
+
+    /// A *Username* the host line answered is skipped: there is nothing to type into it.
+    #[test]
+    fn the_cursor_skips_a_username_the_host_line_owns() {
+        let mut form = typed("adam@workbox", "", "");
+        assert_eq!(
+            form.reachable_fields(),
+            vec![HostFormField::Host, HostFormField::Port]
+        );
+        form.cycle_focus(true);
+        assert_eq!(form.focus, HostFormField::Port);
+        form.cycle_focus(true);
+        assert_eq!(form.focus, HostFormField::Host);
+    }
+
+    /// Editing shows what is stored, split back across the three lines.
+    #[test]
+    fn editing_fills_every_line_from_the_stored_target() {
+        let target = RemoteTarget::Url {
+            user: Some("adam".into()),
+            host: "workbox".into(),
+            port: Some(2222),
+        };
+        let form = HostFormState::edit(&target);
+        assert_eq!(form.host.text(), "workbox");
+        assert_eq!(form.user.text(), "adam");
+        assert_eq!(form.port.text(), "2222");
+        assert!(
+            !form.user_is_locked(),
+            "the host line holds only the host, so the login line is the user's"
+        );
+        assert_eq!(form.target().expect("valid"), target);
     }
 }
 

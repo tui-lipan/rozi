@@ -72,7 +72,10 @@ fn session_row(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> SidebarRow 
     if let Some(badge) = crate::view::session_status::session_status_badge(status, styles) {
         row = row.badge(badge);
     } else if let Some(clients) = shared_client_count(entry, we_hold) {
-        row = row.badge_text(format!("󰍺 {clients}"), muted);
+        row = row.badge_text(
+            format!("{}{clients}", ctx.state.config.shared_clients_icon()),
+            muted,
+        );
     }
     let row = row.detail(session_detail(entry), muted);
     // The ✕ kills the session — shuts its server down, the same as the picker's `Ctrl+K`. Killing

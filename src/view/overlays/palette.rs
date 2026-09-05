@@ -190,7 +190,6 @@ pub(crate) struct OverlayPalette<'a, T> {
     render_item: Option<OverlayItemRenderer<T>>,
     item_gutter: Option<OverlayGutterRenderer<T>>,
     fallback_interceptor: Option<KeyHandler>,
-    element_key: Option<String>,
 }
 
 impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
@@ -220,7 +219,6 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             render_item: None,
             item_gutter: None,
             fallback_interceptor: None,
-            element_key: None,
         }
     }
 
@@ -299,11 +297,6 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         self
     }
 
-    pub(crate) fn element_key(mut self, key: impl Into<String>) -> Self {
-        self.element_key = Some(key.into());
-        self
-    }
-
     pub(crate) fn render(self, ctx: &Context<AppRoot>) -> Element {
         let Self {
             title,
@@ -325,7 +318,6 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             render_item,
             item_gutter,
             fallback_interceptor,
-            element_key,
         } = self;
 
         let confirm = armed_row.as_ref().and_then(|_| {
@@ -365,11 +357,6 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         };
         palette = palette.input_key_interceptor(interceptor);
 
-        let palette: Element = if let Some(element_key) = element_key {
-            Element::from(palette).key(element_key)
-        } else {
-            palette.into()
-        };
         let mut body = VStack::new().height(Length::Auto).child(palette);
         if actions.iter().any(|action| action.enabled) {
             body = body.child(overlay_hints(&ctx.state.theme, &actions));

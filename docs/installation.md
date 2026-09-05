@@ -25,8 +25,8 @@ rozi's managed installer. They do not edit shell startup files.
 
 The Unix installer puts the command at `$HOME/.local/bin/rozi`; the Windows command is
 `%LOCALAPPDATA%\rozi\bin\rozi.exe`. Neither directory is added to `PATH` unless you ask, so each
-installer finishes by reporting whether the command is reachable as a bare `rozi` and printing the
-full path when it is not.
+installer finishes with `Run rozi` when the command is already on PATH, or with `Not on PATH`,
+the full path, and a pasteable `Add` snippet when it is not.
 
 To let the Windows script add its command directory to your user `PATH`, run the downloaded script
 with `-AddToPath`:

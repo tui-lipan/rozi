@@ -128,7 +128,11 @@ fn output_frame_update(
     if indicator_raised || chrome_changed {
         Update::full()
     } else if state.pane_is_rendered(pane_id) {
-        Update::paint()
+        // Nothing but the pane's own terminal content moved: the indicator and chrome checks
+        // above are exactly what would have made that untrue. Saying so lets the framework
+        // repaint the rows the emulator reports as damaged instead of the whole window, which is
+        // the difference between a spinner costing one row and costing every cell on screen.
+        Update::terminal_paint()
     } else {
         Update::none()
     }

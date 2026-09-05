@@ -33,7 +33,16 @@ exclude = [
 # tab needs - a collapsed root no longer reads as a clean repository, and a symlink is its own row
 # rather than a second name for its target - plus `FileTreeEntry::symlink_target` for remote trees.
 # 0.6.1 puts a link's target beside its name instead of right-aligning it away from the row.
-tui-lipan = { version = "0.6.1", features = [
+# 0.7.0 adds `Update::terminal_paint()`, which is what lets a pane's own output repaint the rows
+# the emulator says changed rather than the whole window - see
+# docs/performance/audits/2026-09-04-idle-repaint.md. It is a minor bump because `UpdateLevel`
+# gained a variant below `Paint`, so the matches in `src/update/mod.rs` had to grow an arm.
+# 0.7.2 is required, not merely preferred. Both of its predecessors left the caret behind: 0.7.0's
+# row repaint never placed it at all, and 0.7.1 still let the resync that follows a repaint walk off
+# with it, which is what put the caret at the end of its row for the length of a focus transition.
+# 0.7.3 keeps provided file-tree paths in the remote host's path flavor, so a Windows client does
+# not rewrite a Linux session's `/home/...` root into `C:\home\...` and break Files and Git.
+tui-lipan = { version = "0.7.3", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
@@ -107,6 +116,14 @@ harness = false
 
 [[bench]]
 name = "server_fairness"
+harness = false
+
+[[bench]]
+name = "alloc_probe"
+harness = false
+
+[[bench]]
+name = "terminal_memory"
 harness = false
 
 [target.'cfg(unix)'.dependencies]

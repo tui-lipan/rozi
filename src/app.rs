@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::input::routing;
 use crate::layout::anim::{self, GeometryAnimation};
 use crate::session::bootstrap::{SessionStart, attach_session_client};
-use crate::state::{Pane, PaneId, State, ThemePreset};
+use crate::state::{ChromeSlot, Pane, State, ThemePreset};
 use crate::{cli, commands, config, control, events, ops, platform, profiles, state, update, view};
 
 pub struct AppRoot {
@@ -762,8 +762,9 @@ impl AppRoot {
 
     /// How far a key moves the help tab strip, if it moves it at all.
     ///
-    /// `Tab`/`Shift+Tab` cycle from anywhere in the overlay; the arrows only do while the filter
-    /// is unfocused, where they would otherwise be the caret's.
+    /// `Tab`/`Shift+Tab` cycle from anywhere in the overlay; the arrows and their vim twins only do
+    /// while the filter is unfocused, where they would otherwise be the caret's — and where `h` and
+    /// `l` would otherwise be typed into it.
     fn help_tab_step(ctx: &Context<Self>, key: KeyEvent) -> Option<isize> {
         if key.mods.ctrl || key.mods.alt || key.mods.super_key {
             return None;
@@ -771,10 +772,14 @@ impl AppRoot {
         match key.code {
             KeyCode::Tab if !key.mods.shift => Some(1),
             KeyCode::BackTab | KeyCode::Tab => Some(-1),
-            KeyCode::Left | KeyCode::Right
+            KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l')
                 if !ctx.has_focus_within_key(crate::view::help_filter_key()) =>
             {
-                Some(if key.code == KeyCode::Left { -1 } else { 1 })
+                Some(if matches!(key.code, KeyCode::Left | KeyCode::Char('h')) {
+                    -1
+                } else {
+                    1
+                })
             }
             _ => None,
         }
@@ -974,11 +979,14 @@ impl AppRoot {
     /// the fade instead of embedding its current value keeps this element identical for the whole
     /// 160ms. Each frame of a focus change is then a repaint rather than a rebuild of every pane,
     /// workbar segment and sidebar row in the window.
+    /// These take the `Pane` rather than its id because the key they need is already built and
+    /// cached on it. Formatting `rozi-pane-chrome-{id}-{slot}` here cost two allocations per slot
+    /// per pane per frame, for an identity that is fixed for the pane's whole life.
     pub(crate) fn chrome_color(
         &self,
         ctx: &Context<Self>,
-        pane: PaneId,
-        slot: &str,
+        pane: &Pane,
+        slot: ChromeSlot,
         target: Color,
     ) -> Paint {
         self.chrome_color_with(
@@ -993,8 +1001,8 @@ impl AppRoot {
     pub(crate) fn chrome_color_with(
         &self,
         ctx: &Context<Self>,
-        pane: PaneId,
-        slot: &str,
+        pane: &Pane,
+        slot: ChromeSlot,
         target: Color,
         config: TransitionConfig,
     ) -> Paint {
@@ -1004,15 +1012,15 @@ impl AppRoot {
     pub(crate) fn chrome_color_with_frame_rate(
         &self,
         ctx: &Context<Self>,
-        pane: PaneId,
-        slot: &str,
+        pane: &Pane,
+        slot: ChromeSlot,
         target: Color,
         config: TransitionConfig,
         frame_rate: Option<u16>,
     ) -> Paint {
         self.chrome_paint_with_frame_rate(
             ctx,
-            format!("rozi-pane-chrome-{pane}-{slot}"),
+            pane.keys.chrome(slot).clone(),
             target,
             config,
             frame_rate,
@@ -1023,7 +1031,7 @@ impl AppRoot {
     pub(crate) fn chrome_paint_with_frame_rate(
         &self,
         ctx: &Context<Self>,
-        key: String,
+        key: impl Into<tui_lipan::prelude::Key>,
         target: Color,
         config: TransitionConfig,
         frame_rate: Option<u16>,

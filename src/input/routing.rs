@@ -25,6 +25,20 @@ pub(crate) fn handle_key_routing(
         return (true, crate::ops::popup::close(ctx));
     }
 
+    // The host editor moves its own cursor between Host / Username / Port. Claimed here because
+    // `Tab` is the framework's focus traversal and never reaches a widget's key handler, and
+    // because that traversal visits the three inputs in an order of its own rather than the order
+    // they are drawn in.
+    if crate::ops::session::remotes::host_form_is_open(&ctx.state)
+        && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+    {
+        let forward = key.code == KeyCode::Tab && !key.mods.shift;
+        return (
+            true,
+            crate::ops::session::remotes::host_form_cycle_focus(ctx, forward),
+        );
+    }
+
     // The sidebar's row list and file tree are ordinary focusable widgets, so they consume their
     // own movement keys and only what they ignore reaches here. `FileTree` has no key-handler prop,
     // so claiming these at the root is also the one place that covers both widgets identically.

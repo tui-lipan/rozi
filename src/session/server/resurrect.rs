@@ -1513,6 +1513,7 @@ mod tests {
             pty: None,
             terminal: TerminalScreen::new(5, 40, 100),
             content_generation: 0,
+            output_seen: false,
             cols: 40,
             rows: 5,
             exited: None,

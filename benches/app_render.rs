@@ -243,14 +243,14 @@ fn message_overhead(c: &mut Criterion) {
 
 /// Client mailbox throughput when several panes produce interleaved output.
 ///
-/// Adjacent output for one pane is already coalesced on insertion. Round-robin pane order pins the
-/// multi-writer case where that optimization cannot collapse the mailbox, and therefore exposes
-/// how much dispatcher and post-update work the drain policy adds around terminal processing.
+/// Round-robin pane order pins the multi-writer case. The mailbox groups each pane's frames within
+/// an output-only segment, so these cases measure terminal processing after pane-aware coalescing
+/// rather than only the adjacent-frame fast path.
 fn inbound_drain(c: &mut Criterion) {
     let mut group = c.benchmark_group("inbound_drain");
     for panes in [1usize, 2, 4, 8] {
-        // The 64 B and 1 KiB cases hit the entry limit first. The 16 KiB / 1 MiB case
-        // independently exercises the soft 256 KiB byte budget after 16 entries.
+        // The 64 B and 1 KiB cases expose small-frame overhead. The 16 KiB / 1 MiB case exercises
+        // the soft 256 KiB byte budget after pane-aware coalescing.
         for (chunk_size, total_bytes) in [
             (64usize, 256 * 1024),
             (1024, 256 * 1024),
@@ -322,6 +322,76 @@ fn inbound_drain(c: &mut Criterion) {
     group.finish();
 }
 
+/// Delay until a quiet pane's frame is drained when a hot pane is already queued.
+///
+/// The mailbox coalesces later hot bytes into the first hot entry, up to 64 KiB. This case puts
+/// one quiet frame after the first hot chunk, then enough extra hot bytes to fill that cap, and
+/// times draining the resulting two entries. That is the quiet pane's worst-case extra wait from
+/// non-adjacent aggregation.
+fn inbound_fairness(c: &mut Criterion) {
+    const CHUNK: usize = 64;
+    const HOT_CAP: usize = 64 * 1024;
+    let mut group = c.benchmark_group("inbound_fairness");
+    group.throughput(Throughput::Bytes((HOT_CAP + CHUNK) as u64));
+    group.bench_function("hot_plus_quiet", |b| {
+        let mut backend = backend_with_panes(2, b"");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.state().command_link.is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the benchmark backend never delivered its command link"
+            );
+            backend.pump().expect("settle benchmark mount");
+            std::thread::yield_now();
+        }
+        let link = backend
+            .state()
+            .command_link
+            .clone()
+            .expect("command link settled above");
+        let epoch = backend.state().runtime_epoch;
+        let panes = &backend.state().current().workspaces[0].panes;
+        let (hot_id, hot_generation) = (panes[0].id, panes[0].pty_generation);
+        let (quiet_id, quiet_generation) = (panes[1].id, panes[1].pty_generation);
+        let hot_chunk = support::bytes_of_len(CHUNK);
+        let quiet_chunk = vec![b'q'; CHUNK];
+        let extra_hot = HOT_CAP / CHUNK - 1;
+        let mut frames = Vec::with_capacity(extra_hot + 2);
+        frames.push(Frame::PaneBytes {
+            pane_id: hot_id,
+            local: false,
+            generation: hot_generation,
+            bytes: hot_chunk.clone(),
+        });
+        frames.push(Frame::PaneBytes {
+            pane_id: quiet_id,
+            local: false,
+            generation: quiet_generation,
+            bytes: quiet_chunk,
+        });
+        frames.extend((0..extra_hot).map(|_| Frame::PaneBytes {
+            pane_id: hot_id,
+            local: false,
+            generation: hot_generation,
+            bytes: hot_chunk.clone(),
+        }));
+
+        b.iter_batched(
+            || rozi::test_support::inbound_mailbox_fixture(link.clone(), epoch, frames.clone()),
+            |mailbox| {
+                while !mailbox.is_empty() {
+                    let level = backend
+                        .update_level(mailbox.drain_message())
+                        .expect("drain fairness update");
+                    black_box(level);
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
 fn main() {
     // Criterion's harness runs on the main thread; re-host it on a deep stack so the dwindle
     // layout recursion at 16 panes does not overflow.
@@ -333,6 +403,7 @@ fn main() {
             sidebar_render(&mut criterion);
             message_overhead(&mut criterion);
             inbound_drain(&mut criterion);
+            inbound_fairness(&mut criterion);
             criterion.final_summary();
         })
         .expect("spawn bench thread")

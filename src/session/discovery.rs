@@ -282,7 +282,13 @@ pub fn probe_failure_reason(error: &str) -> &'static str {
     let error = error.to_ascii_lowercase();
     let says = |needle: &str| error.contains(needle);
 
-    if says("host key verification failed") || says("remote host identification has changed") {
+    // A key that *changed* is a different piece of news from one that was never seen, and the more
+    // urgent of the two: OpenSSH refuses it outright rather than offering the yes/no prompt an
+    // unknown key gets, precisely because it can mean somebody is in the middle. Checked first, so
+    // the generic verification failure below cannot swallow it.
+    if says("remote host identification has changed") || says("host key has changed") {
+        "Host key changed"
+    } else if says("host key verification failed") {
         "Host key not trusted"
     } else if says("permission denied") || says("authentication failed") {
         "SSH login rejected"
@@ -510,6 +516,19 @@ mod tests {
         assert_eq!(
             reason(&remote("Host key verification failed.")),
             "Host key not trusted"
+        );
+        // A key that changed is the alarming case and says so, rather than reading like a host
+        // rozi has simply not met. OpenSSH reports both in one stderr, so the order matters.
+        assert_eq!(
+            reason(&remote(
+                "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\
+                 @    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n\
+                 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\
+                 IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!\n\
+                 Host key for 127.0.0.1 has changed and you have requested strict checking.\n\
+                 Host key verification failed."
+            )),
+            "Host key changed"
         );
         // The host answered; the remote shell could not run rozi.
         assert_eq!(

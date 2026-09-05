@@ -20,6 +20,10 @@ use crate::view::fg_only;
 const MARKER_PARKED: &str = "◐";
 const MARKER_LIVE: &str = "●";
 const MARKER_ABSENT: &str = "○";
+/// A host the last attempt could not reach. Distinct from the plain ring a merely *disconnected*
+/// host wears: those are two different pieces of news, and the error colour that used to be the
+/// only thing separating them is lost the moment the row is highlighted.
+const MARKER_FAILED: &str = "!";
 
 /// Client attachment tier for a discovered session row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,7 +151,8 @@ pub(crate) fn host_status_gutter(status: HostStatus, styles: HostStatusStyles) -
     match status {
         HostStatus::Connecting => picker_circle_spinner_gutter(style),
         HostStatus::Connected | HostStatus::Reachable => picker_filled_gutter(style),
-        HostStatus::Unreachable | HostStatus::Disconnected => picker_ring_gutter(style),
+        HostStatus::Unreachable => picker_marker_gutter(MARKER_FAILED, style),
+        HostStatus::Disconnected => picker_ring_gutter(style),
     }
 }
 
@@ -161,7 +166,11 @@ pub(crate) fn host_status_badge(status: HostStatus, styles: HostStatusStyles) ->
             .style(style)
             .height(Length::Px(1))
             .into(),
-        HostStatus::Unreachable | HostStatus::Disconnected => Text::new(MARKER_ABSENT)
+        HostStatus::Unreachable => Text::new(MARKER_FAILED)
+            .style(style)
+            .height(Length::Px(1))
+            .into(),
+        HostStatus::Disconnected => Text::new(MARKER_ABSENT)
             .style(style)
             .height(Length::Px(1))
             .into(),

@@ -305,6 +305,55 @@ pub fn current_binary() -> Option<PathBuf> {
     std::env::current_exe().ok()
 }
 
+/// The state directory, made private to its owner, repairing the permissions if it is not.
+///
+/// [`fs_security::ensure_private_dir`] creates a directory `0700` but *refuses* one it finds with
+/// group or other access, and refusing is right for a path a user chose. This one rozi chose: it is
+/// rozi's own tree, created by rozi, and holding only rozi's state. Historically it was also created
+/// by whichever writer got there first, and a plain `create_dir_all` leaves it at the umask default
+/// — after which every private write into it fails silently for the life of the installation.
+/// Repairing it once is what stops a directory rozi made wrong from permanently disabling rozi's own
+/// persistence.
+///
+/// The repair is deliberately narrow. It tightens only a real directory, not a symlink, owned by the
+/// current user, and it never loosens anything. A path failing for any other reason — the wrong file
+/// type, a foreign owner, a reparse point — is reported rather than adjusted, because at that point
+/// the directory is not the one rozi believes it created.
+pub fn private_state_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
+    let dir = state_dir(env);
+    match fs_security::ensure_private_dir(&dir) {
+        Ok(()) => Ok(dir),
+        Err(error) => {
+            tighten_own_directory(&dir)?;
+            fs_security::ensure_private_dir(&dir)
+                .map(|()| dir)
+                .map_err(|_| error)
+        }
+    }
+}
+
+/// Re-apply `0700` to a directory this user owns. Errors leave the caller's original failure in
+/// place, which is the one worth reporting.
+#[cfg(unix)]
+fn tighten_own_directory(dir: &std::path::Path) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    // `symlink_metadata`, so a symlink pointing somewhere else is never the thing chmod-ed.
+    let metadata = fs::symlink_metadata(dir)?;
+    if !metadata.file_type().is_dir() || metadata.uid() != fs_security::current_uid() {
+        return Ok(());
+    }
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+}
+
+/// No repair on Windows: privacy there is a protected DACL rather than a mode, and a directory
+/// without one was not created by rozi. Rewriting a stranger's ACL is not a permissions fix.
+#[cfg(not(unix))]
+fn tighten_own_directory(_dir: &std::path::Path) -> io::Result<()> {
+    Ok(())
+}
+
 /// Directory for temporary scrollback dumps opened in `$EDITOR` (`state_dir/scrollback`).
 pub fn scrollback_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
     let dir = state_dir(env).join("scrollback");
@@ -728,6 +777,70 @@ mod tests {
     fn config_dir_falls_back_to_home_dot_config() {
         let env = env_with_home("/home/user");
         assert_eq!(config_dir(&env), PathBuf::from("/home/user/.config/rozi"));
+    }
+
+    /// The bug this exists for: whichever writer created the state directory first used a plain
+    /// `create_dir_all`, so it landed at the umask default — and every private write into it failed
+    /// silently from then on, for the life of the installation.
+    #[cfg(unix)]
+    #[test]
+    fn a_permissive_state_directory_rozi_owns_is_repaired_rather_than_refused() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = crate::test_support::private_temp_dir("state-dir-repair");
+        let env = env_with_home(home.to_str().expect("utf-8 scratch path"));
+        let dir = state_dir(&env);
+        fs::create_dir_all(&dir).expect("a state directory created the old way");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755))
+            .expect("leave it world-readable");
+        assert!(
+            fs_security::ensure_private_dir(&dir).is_err(),
+            "the directory starts in the state that broke persistence"
+        );
+
+        assert_eq!(private_state_dir(&env).expect("repaired"), dir);
+        assert_eq!(
+            fs::metadata(&dir)
+                .expect("state directory")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The repair only ever tightens, and only a real directory. A symlink is left alone, so a link
+    /// planted at the state path cannot aim a chmod at whatever it points to.
+    #[cfg(unix)]
+    #[test]
+    fn the_repair_does_not_follow_a_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = crate::test_support::private_temp_dir("state-dir-symlink");
+        let elsewhere = home.join("elsewhere");
+        fs::create_dir_all(&elsewhere).expect("target directory");
+        fs::set_permissions(&elsewhere, fs::Permissions::from_mode(0o755)).expect("permissive");
+
+        let env = env_with_home(home.to_str().expect("utf-8 scratch path"));
+        let dir = state_dir(&env);
+        fs::create_dir_all(dir.parent().expect("state parent")).expect("state parent");
+        std::os::unix::fs::symlink(&elsewhere, &dir).expect("symlink at the state path");
+
+        assert!(
+            private_state_dir(&env).is_err(),
+            "a symlink is not repaired"
+        );
+        assert_eq!(
+            fs::metadata(&elsewhere)
+                .expect("target directory")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755,
+            "and what it pointed at is untouched"
+        );
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]

@@ -163,7 +163,7 @@ function Show-Banner {
 }
 
 function Write-StatusRow([string]$Symbol, [string]$Color, [string]$Operation, [string]$Detail) {
-    $row = " $Color$Symbol$($script:CReset) $($Operation.PadRight(12))$Detail"
+    $row = "$Color$Symbol$($script:CReset) $($Operation.PadRight(12))$Detail"
     if ($script:Interactive) {
         Write-Host -NoNewline "`r$($script:Esc)[2K$row"
     } else {
@@ -216,7 +216,7 @@ function Write-Active([string]$Operation, [string]$Detail) {
         }
     })
     [void]$shell.AddArgument($shared)
-    [void]$shell.AddArgument("`r$($script:Esc)[2K $($script:CAccent)")
+    [void]$shell.AddArgument("`r$($script:Esc)[2K$($script:CAccent)")
     [void]$shell.AddArgument("$($script:CReset) $($Operation.PadRight(12))$Detail")
     [void]$shell.AddArgument($script:SpinnerFrames)
     [void]$shell.AddArgument($script:SpinnerIntervalMs)
@@ -841,25 +841,25 @@ function Write-CommandHint([string]$ManagedBin) {
     }
 
     if ($state -eq 'ready') {
-        Write-Host '    Start it with:'
-        Write-Host "      $($script:CAccent)rozi$($script:CReset)"
+        Write-Host "  Run  $($script:CAccent)rozi$($script:CReset)"
         return
     }
 
-    if ($state -eq 'stale-session') {
-        Write-Host " $($script:CWarn)!$($script:CReset)  On PATH for new terminals, but not this one. Run it with the full path:"
-    } else {
-        Write-Host " $($script:CWarn)!$($script:CReset)  Not on PATH yet. Run it with the full path:"
-    }
-    Write-Host "      $($script:CAccent)$(Join-Path $ManagedBin 'rozi.exe')$($script:CReset)"
     Write-Host ''
     if ($state -eq 'stale-session') {
-        Write-Host '    or add it to this terminal (safe to run more than once):'
+        Write-Host "$($script:CWarn)!$($script:CReset) Not this terminal"
     } else {
-        Write-Host '    or add it to PATH (safe to run more than once):'
+        Write-Host "$($script:CWarn)!$($script:CReset) Not on PATH"
     }
+    Write-Host "  Run     $($script:CAccent)$(Join-Path $ManagedBin 'rozi.exe')$($script:CReset)"
+    $first = $true
     foreach ($line in Get-PathRemediation $state) {
-        Write-Host "      $($script:CViolet)$line$($script:CReset)"
+        if ($first) {
+            Write-Host "  Add     $($script:CViolet)$line$($script:CReset)"
+            $first = $false
+        } else {
+            Write-Host "          $($script:CViolet)$line$($script:CReset)"
+        }
     }
 }
 
@@ -949,10 +949,8 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
         # The one line worth catching an eye on: the only green in the run, with the version
         # painted in the wordmark's own gradient so the result reads as the same object the banner
         # announced.
-        Write-Host " $($script:COk)$($script:GlyphOk)$($script:CReset)  $(Format-Gradient "Installed $ResolvedVersion")"
-        Write-Host ''
+        Write-Host "$($script:COk)$($script:GlyphOk)$($script:CReset) $(Format-Gradient "Installed $ResolvedVersion")"
         Write-CommandHint (Get-ManagedBinDirectory)
-        Write-Host ''
     } finally {
         if (Test-Path -LiteralPath $temporaryRoot) {
             Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
@@ -985,7 +983,7 @@ try {
     # row is spinning has to stop it first.
     Stop-Spinner
     if ($script:Interactive) { Write-Host -NoNewline "`r$($script:Esc)[2K" }
-    Write-Host " $(Format-Gradient "rozi $Version")  $($script:CDim)$($script:GlyphSep)  $($script:CViolet)$target$($script:CReset)"
+    Write-Host "$(Format-Gradient "rozi $Version")  $($script:CDim)$($script:GlyphSep)  $($script:CViolet)$target$($script:CReset)"
     Write-Host ''
     Write-Done 'Resolve' $resolvedDetail
     Install-Version $Version ([bool]$AddToPath)

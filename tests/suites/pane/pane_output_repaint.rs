@@ -1,9 +1,15 @@
-//! Streaming pane output is a repaint, not a rebuild.
+//! Streaming pane output is a terminal repaint, not a rebuild.
 //!
 //! A pane's screen is handed to the widget as a `TerminalScreenHandle`, so nothing in the element
 //! tree depends on what the child program just drew. That is what lets `Msg::SessionOutput` ask for
-//! `Update::paint()`: one agent streaming into one pane must not re-run `view()` and layout for every
-//! other pane, workbar segment and sidebar row in the window on every chunk.
+//! `Update::terminal_paint()`: one agent streaming into one pane must not re-run `view()` and layout
+//! for every other pane, workbar segment and sidebar row in the window on every chunk.
+//!
+//! `terminal_paint` claims more than `paint` - that live terminal content is the *only* thing that
+//! looks different - and the framework spends that claim on repainting only the rows the emulator
+//! reports as damaged. So the level asserted here is a contract, not a detail: widening it back to
+//! `paint` silently restores the full-window frame per changed character, and narrowing it in a
+//! frame where chrome did move would leave that chrome stale.
 
 use rozi::AppRoot;
 use rozi::layout::tiling::build_dwindle_tree;
@@ -85,8 +91,9 @@ fn output_to_a_visible_pane_asks_for_a_repaint() {
             backend
                 .update_level(output("streaming\r\n"))
                 .expect("second chunk"),
-            UpdateLevel::Paint,
-            "screen-only output must not re-run view() and layout"
+            UpdateLevel::TerminalPaint,
+            "screen-only output must not re-run view() and layout, and must say so narrowly \
+             enough for the framework to repaint only the damaged rows"
         );
 
         // And the new content still reaches the screen on a paint-only frame.

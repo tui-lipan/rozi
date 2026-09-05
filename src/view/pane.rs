@@ -4,12 +4,13 @@ use tui_lipan::style::ThemeRole;
 use crate::config::{BadgeColor, PaneConfig};
 use crate::layout::tiling::PanePlacement;
 use crate::state::{
-    AlertMode, LayoutKind, Pane, PaneBorderMode, PaneId, PaneTitlebarMode, TileGap, Workspace,
+    AlertMode, ChromeSlot, LayoutKind, Pane, PaneBorderMode, PaneId, PaneTitlebarMode, TileGap,
+    Workspace,
 };
 use crate::{AppRoot, Msg};
 
 use super::integrated_scrollbar_config;
-use super::widget_keys::{pane_body_key, pane_terminal_key, pane_window_key};
+use super::widget_keys::pane_window_key;
 
 /// Caller-decided border-merge posture for one pane (see `view::render`).
 #[derive(Clone, Copy, Default)]
@@ -184,7 +185,7 @@ fn pane_alert_pulses(
 pub(crate) fn pane_title_bg(
     app: &AppRoot,
     ctx: &Context<AppRoot>,
-    pane_id: PaneId,
+    pane: &Pane,
     focused: bool,
 ) -> Paint {
     let theme = &ctx.state.theme;
@@ -193,7 +194,7 @@ pub(crate) fn pane_title_bg(
     } else {
         theme.surface.element
     };
-    app.chrome_color(ctx, pane_id, "title-bg", target)
+    app.chrome_color(ctx, pane, ChromeSlot::TitleBg, target)
 }
 
 /// Whether `pane` has another tile immediately above it across the vertical tile gap, so its
@@ -297,8 +298,8 @@ fn title_parts(
             title_fg_background,
         )
     };
-    let title_bar_fg = app.chrome_color(ctx, id, "title-fg", title_fg_default);
-    let title_bg = pane_title_bg(app, ctx, id, titlebar_focused);
+    let title_bar_fg = app.chrome_color(ctx, pane, ChromeSlot::TitleFg, title_fg_default);
+    let title_bg = pane_title_bg(app, ctx, pane, titlebar_focused);
     let text_style = if titlebar_focused {
         Style::new()
             .fg(title_bar_fg)
@@ -314,7 +315,7 @@ fn title_parts(
         badge,
         title,
         title_bg,
-        frame_bg: app.chrome_color(ctx, id, "frame-bg", frame_bg_target),
+        frame_bg: app.chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target),
         fill_style: Style::new()
             .bg(title_bg)
             .contrast_policy(ContrastPolicy::Off),
@@ -684,8 +685,8 @@ pub(crate) fn pane_element(
     };
     let frame_fg = app.chrome_color_with_frame_rate(
         ctx,
-        pane.id,
-        "frame-fg",
+        pane,
+        ChromeSlot::FrameFg,
         frame_fg_target,
         if alert_pulses && ctx.state.alert_pulse_armed {
             app.alert_pulse_transition_config(ctx, alert_calm)
@@ -699,7 +700,7 @@ pub(crate) fn pane_element(
         focused,
         ctx.state.config.pane.highlight_focused_background,
     );
-    let frame_bg = app.chrome_color(ctx, pane.id, "frame-bg", frame_bg_target);
+    let frame_bg = app.chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target);
     let exited = matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_));
     let frame_style = if exited {
         Style::new().fg(frame_fg).bg(frame_bg).dim()
@@ -718,7 +719,7 @@ pub(crate) fn pane_element(
     } else {
         theme.surface.element
     };
-    let title_bar_bg = pane_title_bg(app, ctx, pane.id, titlebar_focused);
+    let title_bar_bg = pane_title_bg(app, ctx, pane, titlebar_focused);
     // The *target* background, not the one mid-fade: this picks a contrasting foreground, and
     // deriving it from a moving colour would make the foreground wobble through the fade.
     let title_fg_background = if titlebar.fills_strip() {
@@ -735,7 +736,7 @@ pub(crate) fn pane_element(
             title_fg_background,
         )
     };
-    let title_bar_fg = app.chrome_color(ctx, pane.id, "title-fg", title_fg_default);
+    let title_bar_fg = app.chrome_color(ctx, pane, ChromeSlot::TitleFg, title_fg_default);
     let title_bar_fill_style = Style::new()
         .bg(title_bar_bg)
         .contrast_policy(ContrastPolicy::Off);
@@ -958,7 +959,7 @@ pub(crate) fn pane_element(
         terminal_widget = terminal_widget.selection(Some(selection));
     }
     let terminal: Element = terminal_widget.into();
-    let terminal = terminal.key(pane_terminal_key(id));
+    let terminal = terminal.key(pane.keys.terminal.clone());
 
     // Border fusing is buffer-level: any two box-drawing glyphs sharing a cell merge unless the
     // later frame draws in Replace mode, so only panes in the settled merged layer may merge
@@ -1115,7 +1116,7 @@ pub(crate) fn pane_element(
         None => terminal,
     };
     let body: Element = body.child(content).into();
-    let body = body.key(pane_body_key(id));
+    let body = body.key(pane.keys.body.clone());
     window_stack = window_stack.child(body);
 
     // A pending prefix chord temporarily takes the same ownership of mouse gestures as the held

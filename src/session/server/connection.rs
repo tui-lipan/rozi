@@ -354,17 +354,35 @@ impl SessionServer {
                 if owner.is_none() && !self.is_controller(client_id) {
                     return Vec::new();
                 }
+                let scrollback = self.settings.scrollback;
+                let image_media_policy = self.image_media_policy();
                 if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
                     pane.cols = cols.max(1);
                     pane.rows = rows.max(1);
                     let (rows, cols) = (pane.rows, pane.cols);
-                    pane.screen_mut().resize(rows, cols);
                     // The controller's cell size is canonical alongside its pane size: the child
                     // reads it out of the PTY to decide how many cells a picture needs, and the
                     // pane that renders that picture is measuring against the same value.
-                    if let Some(cell) = cell_size(cell_width, cell_height) {
+                    let reported_cell = cell_size(cell_width, cell_height);
+                    if let Some(cell) = reported_cell {
                         pane.cell = cell;
-                        pane.screen_mut().set_cell_size(cell);
+                    }
+                    if pane.output_seen {
+                        pane.screen_mut().resize(rows, cols);
+                        if reported_cell.is_some() {
+                            let cell = pane.cell;
+                            pane.screen_mut().set_cell_size(cell);
+                        }
+                    } else {
+                        // The spawn request uses a fallback geometry before the client's layout is
+                        // available. Rebuild the still-empty parser at its authoritative size so a
+                        // width reflow cannot discard the spare history-allocation slot.
+                        let mut screen = crate::pane::new_terminal_screen(rows, cols, scrollback);
+                        screen.set_cell_size(pane.cell);
+                        screen.set_image_storage_enabled(false);
+                        screen.set_image_media_policy(image_media_policy);
+                        screen.set_palette(pane.palette.into());
+                        pane.replace_empty_screen(screen);
                     }
                     if let Some(pty) = &pane.pty {
                         let _ = pty.resize_with_cell_size(pane.cols, pane.rows, pane.cell);

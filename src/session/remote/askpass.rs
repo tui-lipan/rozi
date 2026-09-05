@@ -351,6 +351,28 @@ fn kind_for(prompt: &str) -> AskpassKind {
     }
 }
 
+/// The fingerprint a host-key prompt is asking the user to compare, if it names one.
+///
+/// Lifted out so the dialog can repeat it on a line of its own. It is the one string in the prompt
+/// that has to be read character by character, and inside the sentence OpenSSH wraps it in it
+/// breaks across lines with a full stop attached — which is exactly the shape you cannot compare
+/// against a fingerprint someone read out to you.
+///
+/// Deliberately additive. The verbatim question stays on screen above it, so a prompt this does not
+/// recognise costs the convenience line and nothing else. Reformatting OpenSSH's own security
+/// question would mean a phrasing change silently altering what the user agreed to; repeating one
+/// token out of it cannot.
+pub(crate) fn host_key_fingerprint(prompt: &str) -> Option<&str> {
+    prompt.split_whitespace().find_map(|token| {
+        let token = token.trim_end_matches(['.', ',', ')']);
+        let named = token
+            .strip_prefix("SHA256:")
+            .or_else(|| token.strip_prefix("MD5:"))?;
+        // Long enough to be a digest rather than a bare label at the end of a line.
+        (named.len() >= 16).then_some(token)
+    })
+}
+
 /// Length-checked, branch-free-ish comparison. The endpoint's directory permissions are the real
 /// boundary; this only keeps a wrong token from being told it was close.
 fn token_matches(candidate: &str, expected: &str) -> bool {
@@ -388,6 +410,42 @@ mod tests {
         assert_eq!(
             kind_for("Please type 'yes', 'no' or the fingerprint: "),
             AskpassKind::Confirm
+        );
+    }
+
+    /// The prompt OpenSSH 10.5 actually sends, captured from a live connection to an unknown host.
+    #[test]
+    fn the_fingerprint_is_lifted_out_of_the_sentence_that_wraps_it() {
+        let prompt = "The authenticity of host '127.0.0.1 (127.0.0.1)' can't be established.\n\
+             ED25519 key fingerprint is: SHA256:BjOtNAS/Ufwm/M92ccSyM40S6UxInjnigz9bv2mmza8\n\
+             This key is not known by any other names.\n\
+             Are you sure you want to continue connecting (yes/no/[fingerprint])? ";
+        assert_eq!(
+            host_key_fingerprint(prompt),
+            Some("SHA256:BjOtNAS/Ufwm/M92ccSyM40S6UxInjnigz9bv2mmza8")
+        );
+        // The full stop OpenSSH ends the sentence with is not part of what you compare.
+        assert_eq!(
+            host_key_fingerprint("ED25519 key fingerprint is SHA256:qJv1zHtestqJv1zHtest."),
+            Some("SHA256:qJv1zHtestqJv1zHtest")
+        );
+        assert_eq!(
+            host_key_fingerprint("MD5:0123456789abcdef0123456789abcdef"),
+            Some("MD5:0123456789abcdef0123456789abcdef")
+        );
+    }
+
+    /// Nothing to lift is a normal outcome, not a failure: the question above it is still complete.
+    #[test]
+    fn a_prompt_naming_no_fingerprint_lifts_nothing() {
+        assert_eq!(host_key_fingerprint("dev@workbox's password: "), None);
+        assert_eq!(
+            host_key_fingerprint("Please type 'yes', 'no' or the fingerprint: "),
+            None
+        );
+        assert_eq!(
+            host_key_fingerprint("the SHA256: prefix alone is a label"),
+            None
         );
     }
 

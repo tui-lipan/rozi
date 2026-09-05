@@ -138,8 +138,8 @@ fn files_tab_lists_the_focused_pane_directory() {
 }
 
 #[test]
-fn files_tab_uses_ascii_directory_markers_when_nerd_icons_are_off() {
-    let Some(repo) = Repo::new("ascii-icons") else {
+fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
+    let Some(repo) = Repo::new("unicode-icons") else {
         eprintln!("skipping: git is unavailable");
         return;
     };
@@ -183,13 +183,13 @@ fn files_tab_uses_ascii_directory_markers_when_nerd_icons_are_off() {
                 .map(|line| line.chars().take(32).collect())
                 .collect::<Vec<String>>()
         })
-        .expect("spawn ascii-icon tree smoke thread")
+        .expect("spawn unicode-icon tree smoke thread")
         .join()
-        .expect("ascii-icon tree smoke completes");
+        .expect("unicode-icon tree smoke completes");
     let joined = lines.join("\n");
     assert!(
-        joined.contains('>') || joined.contains('v'),
-        "ascii directory marker renders: {joined}"
+        joined.contains('▶') || joined.contains('▼'),
+        "unicode directory marker renders: {joined}"
     );
     assert!(
         !joined.contains('') && !joined.contains(''),

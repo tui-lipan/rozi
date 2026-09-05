@@ -3630,9 +3630,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan"
-version = "0.6.1"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f86e048d8e031e1a4104db19fd77957e4f8c75576c9a092443dd59666b3b7927"
+checksum = "026c914d561144867b6194048adfc26fc89ce51f4c1afa9a269a59bf135c493b"
 dependencies = [
  "alacritty_terminal",
  "arboard",
@@ -3661,6 +3661,7 @@ dependencies = [
  "thiserror 2.0.20",
  "toml",
  "tui-lipan-macro",
+ "typed-path",
  "undo",
  "unicode-segmentation",
  "unicode-width",
@@ -3670,9 +3671,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan-macro"
-version = "0.6.1"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7808c5fc5dc9b5644d96c539f4e4b04e39315d774b5eb19c4f3dd6f63a08de61"
+checksum = "58d09cb045bd88924da4e54a850ff66ed2cc295474a54cc979edf8e69bec68c9"
 dependencies = [
  "prettyplease",
  "proc-macro-crate",
@@ -3680,6 +3681,12 @@ dependencies = [
  "quote",
  "syn 3.0.3",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
 
 [[package]]
 name = "typenum"

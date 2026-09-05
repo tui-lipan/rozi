@@ -115,9 +115,9 @@ readonly SPINNER_FRAMES SPINNER_INTERVAL
 status_row() {
   local symbol="$1" color="$2" operation="$3" detail="$4"
   if ((INTERACTIVE)); then
-    printf '\r\033[2K %s%s%s %-12s%s' "$color" "$symbol" "$C_RESET" "$operation" "$detail"
+    printf '\r\033[2K%s%s%s %-12s%s' "$color" "$symbol" "$C_RESET" "$operation" "$detail"
   else
-    printf ' %s %-12s%s\n' "$symbol" "$operation" "$detail"
+    printf '%s %-12s%s\n' "$symbol" "$operation" "$detail"
   fi
 }
 
@@ -141,7 +141,7 @@ status_active() {
     local index=1
     while :; do
       sleep "$SPINNER_INTERVAL"
-      printf '\r\033[2K %s%s%s %-12s%s' \
+      printf '\r\033[2K%s%s%s %-12s%s' \
         "$C_ACCENT" "${SPINNER_FRAMES[index % 4]}" "$C_RESET" "$operation" "$detail"
       index=$((index + 1))
     done
@@ -479,16 +479,14 @@ command_hint() {
   local bin="$HOME/.local/bin"
   case ":$PATH:" in
     *":$bin:"*)
-      printf '    Start it with:\n'
-      printf '      %srozi%s\n' "$C_ACCENT" "$C_RESET"
+      printf '  Run  %srozi%s\n' "$C_ACCENT" "$C_RESET"
       return 0
       ;;
   esac
-  printf ' %s!%s  Not on PATH yet. Run it with the full path:\n' "$C_WARN" "$C_RESET"
-  printf '      %s%s/rozi%s\n' "$C_ACCENT" "$bin" "$C_RESET"
   printf '\n'
-  printf '    or add it to PATH by putting this in your shell profile:\n'
-  printf '      %s%s%s\n' "$C_VIOLET" 'export PATH="$HOME/.local/bin:$PATH"' "$C_RESET"
+  printf '%s!%s Not on PATH\n' "$C_WARN" "$C_RESET"
+  printf '  Run     %s%s/rozi%s\n' "$C_ACCENT" "$bin" "$C_RESET"
+  printf '  Add     %s%s%s\n' "$C_VIOLET" 'export PATH="$HOME/.local/bin:$PATH"' "$C_RESET"
 }
 
 install_version() {
@@ -542,10 +540,8 @@ install_version() {
   printf '\n'
   # The one line worth catching an eye on: the only green in the run, with the version painted
   # in the wordmark's own gradient so the result reads as the same object the banner announced.
-  printf ' %s%s%s  %s\n' "$C_OK" '✓' "$C_RESET" "$(format_gradient "Installed $version")"
-  printf '\n'
+  printf '%s%s%s %s\n' "$C_OK" '✓' "$C_RESET" "$(format_gradient "Installed $version")"
   command_hint
-  printf '\n'
   trap - EXIT
   rm -rf "$temp_extract"
 }
@@ -590,7 +586,7 @@ main() {
   if ((INTERACTIVE)); then
     printf '\r\033[2K'
   fi
-  printf ' %s  %s%s  %s%s%s\n\n' "$(format_gradient "rozi $version")" "$C_DIM" '·' "$C_VIOLET" "$target" "$C_RESET"
+  printf '%s  %s%s  %s%s%s\n\n' "$(format_gradient "rozi $version")" "$C_DIM" '·' "$C_VIOLET" "$target" "$C_RESET"
   status_done 'Resolve' "$resolved_detail"
   base="${ROZI_RELEASE_BASE_URL:-https://github.com/${RELEASE_REPO}/releases/download/v${version}}"
   install_version "$version" "$target" "$base"

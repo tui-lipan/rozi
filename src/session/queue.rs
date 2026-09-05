@@ -18,6 +18,13 @@ pub(crate) enum PushError<T> {
     TooLarge(T),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SegmentCoalesce {
+    Merged,
+    Continue,
+    Barrier,
+}
+
 struct Entry<T> {
     value: T,
     bytes: usize,
@@ -97,6 +104,31 @@ impl<T> ByteQueue<T> {
         bytes: usize,
         coalesce: impl FnOnce(&mut T, &T) -> bool,
     ) -> Result<(), PushError<T>> {
+        let mut coalesce = Some(coalesce);
+        self.push_blocking_within_segment(value, bytes, move |queued, next, _adjacent| {
+            if coalesce
+                .take()
+                .expect("adjacent coalescer called more than once")(queued, next)
+            {
+                SegmentCoalesce::Merged
+            } else {
+                SegmentCoalesce::Barrier
+            }
+        })
+    }
+
+    /// Scan the trailing queue segment backward until `coalesce` merges the value or finds a
+    /// barrier. Byte accounting includes every original value even when several share one entry.
+    ///
+    /// Cross-pane output order is intentionally not preserved. Later bytes for pane A may join an
+    /// earlier A entry that already sits ahead of pane B. Same-pane byte order and control
+    /// barriers stay intact.
+    pub(crate) fn push_blocking_within_segment(
+        &self,
+        value: T,
+        bytes: usize,
+        mut coalesce: impl FnMut(&mut T, &T, bool) -> SegmentCoalesce,
+    ) -> Result<(), PushError<T>> {
         if bytes > self.capacity {
             return Err(PushError::TooLarge(value));
         }
@@ -107,15 +139,26 @@ impl<T> ByteQueue<T> {
         if state.closed {
             return Err(PushError::Closed(value));
         }
-        if let Some(back) = state.entries.back_mut()
-            && coalesce(&mut back.value, &value)
-        {
-            back.bytes += bytes;
+
+        let mut merged = false;
+        for (offset, entry) in state.entries.iter_mut().rev().enumerate() {
+            match coalesce(&mut entry.value, &value, offset == 0) {
+                SegmentCoalesce::Merged => {
+                    entry.bytes += bytes;
+                    merged = true;
+                    break;
+                }
+                SegmentCoalesce::Continue => {}
+                SegmentCoalesce::Barrier => break,
+            }
+        }
+        if merged {
             state.bytes += bytes;
             state.high_water_bytes = state.high_water_bytes.max(state.bytes);
             self.changed.notify_all();
             return Ok(());
         }
+
         state.entries.push_back(Entry { value, bytes });
         state.bytes += bytes;
         state.high_water_bytes = state.high_water_bytes.max(state.bytes);
@@ -236,6 +279,44 @@ mod tests {
             queue.try_pop_with_bytes_and_more(),
             Some((vec![1, 2, 3, 4], 4, false))
         );
+    }
+
+    #[test]
+    fn segment_coalescing_scans_backward_until_a_barrier() {
+        let queue = ByteQueue::new(8);
+        let coalesce = |queued: &mut (u8, Vec<u8>), next: &(u8, Vec<u8>), _adjacent| {
+            if queued.0 == 0 || next.0 == 0 {
+                SegmentCoalesce::Barrier
+            } else if queued.0 == next.0 {
+                queued.1.extend_from_slice(&next.1);
+                SegmentCoalesce::Merged
+            } else {
+                SegmentCoalesce::Continue
+            }
+        };
+
+        queue
+            .push_blocking_within_segment((1, vec![1]), 1, coalesce)
+            .unwrap();
+        queue
+            .push_blocking_within_segment((2, vec![2]), 1, coalesce)
+            .unwrap();
+        queue
+            .push_blocking_within_segment((1, vec![3]), 1, coalesce)
+            .unwrap();
+        queue
+            .push_blocking_within_segment((0, Vec::new()), 0, coalesce)
+            .unwrap();
+        queue
+            .push_blocking_within_segment((1, vec![4]), 1, coalesce)
+            .unwrap();
+
+        assert_eq!(queue.stats().bytes, 4);
+        assert_eq!(queue.stats().len, 4);
+        assert_eq!(queue.try_pop(), Some((1, vec![1, 3])));
+        assert_eq!(queue.try_pop(), Some((2, vec![2])));
+        assert_eq!(queue.try_pop(), Some((0, Vec::new())));
+        assert_eq!(queue.try_pop(), Some((1, vec![4])));
     }
 
     #[test]

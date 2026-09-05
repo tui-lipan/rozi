@@ -79,8 +79,18 @@ const REQUEST_NOTIFY_COOLDOWN: Duration = Duration::from_secs(4);
 /// Default per-client outbox cap; a client backed up past this is disconnected so it can never
 /// stall the broadcast to everyone else.
 const DEFAULT_MAX_BACKLOG: usize = 8 * 1024 * 1024;
-/// Larger cap while a client is still receiving its initial replay seed.
-const SEED_MAX_BACKLOG: usize = 64 * 1024 * 1024;
+/// Maximum encoded replay retained in a seeding client's socket outbox.
+///
+/// This is a transport window, not a limit on total replay size. A replay of any size advances as
+/// the socket drains.
+const SEED_SEND_WINDOW: usize = 4 * 1024 * 1024;
+/// Post-snapshot pane output and control changes retained while a client's baseline is still being
+/// replayed. A client which cannot catch up inside this bound is disconnected without affecting
+/// other clients.
+const SEED_CATCH_UP_LIMIT: usize = 8 * 1024 * 1024;
+/// Seed encoding work admitted during one server iteration. Socket writes happen separately, so a
+/// fast local reader cannot make one attach monopolize the session pump.
+const SEED_PUMP_BYTES_PER_TICK: usize = 1024 * 1024;
 const SEED_CHUNK: usize = 256 * 1024;
 
 #[derive(Default)]
@@ -127,6 +137,9 @@ pub struct SessionServer {
     events: Arc<ByteQueue<ServerEvent>>,
     /// Aggregate high-water across every client outbox for this server process's lifetime.
     outbox_high_water_bytes: usize,
+    attach_seed_totals: AttachSeedTotals,
+    /// Rotating starting point for bounded seed work, so concurrent attachers share the pump.
+    attach_seed_cursor: usize,
     resurrection_metrics: ResurrectionMetrics,
     shutdown: bool,
     forget_snapshot: bool,
@@ -258,6 +271,12 @@ pub struct ServerPane {
     /// that file was written from, which is what lets a session with one busy pane and a dozen
     /// idle ones avoid re-exporting all thirteen.
     content_generation: u64,
+    /// Whether PTY output has reached this terminal since it was created.
+    ///
+    /// Before the first bytes arrive, a controller resize may replace the fallback-sized empty
+    /// parser with one built at the authoritative layout geometry. Afterwards every resize must
+    /// preserve the populated parser and use normal reflow.
+    output_seen: bool,
     pub cols: u16,
     pub rows: u16,
     /// Host cell size in pixels, as reported by the controller and handed to the PTY.
@@ -369,6 +388,127 @@ pub struct AgentHold {
     pub observed_at: std::time::Instant,
 }
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct PaneSeedKey {
+    pane_id: PaneId,
+    generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PaneSeedState {
+    Pending,
+    Replaying,
+    CatchingUp,
+    Live,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutboxClass {
+    Normal,
+    SeedReplay,
+    SeedCatchUp,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientFrameResult {
+    Queued,
+    Buffered,
+    Ignored,
+    Overflow,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SeedDelta {
+    Control,
+    PaneOutput(PaneSeedKey),
+    PaneResize(PaneSeedKey),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AttachSeedWork {
+    ReplayResize,
+    FinishReplay,
+    ReplayChunk,
+    BeginPane(PaneSeedKey),
+    CatchUp,
+    Complete,
+    Done,
+}
+
+struct OutboxFrame {
+    bytes: Arc<[u8]>,
+    class: OutboxClass,
+}
+
+struct PaneSeedReplay {
+    key: PaneSeedKey,
+    /// Snapshot-point geometry must reach the client before replay. The attach manifest geometry
+    /// can be stale by the time a pending pane is exported.
+    resize_frame: Option<Arc<[u8]>>,
+    bytes: Vec<u8>,
+    offset: usize,
+}
+
+/// Per-client attach barrier.
+///
+/// A `Pending` pane's output predates its baseline export and must not be forwarded separately.
+/// Once it becomes `Replaying`, subsequent output and every post-attach control frame enter
+/// `catch_up`, behind all baseline replay.
+struct AttachSeedState {
+    manifest: HashMap<PaneSeedKey, PaneSeedState>,
+    pending: VecDeque<PaneSeedKey>,
+    replay: Option<PaneSeedReplay>,
+    catch_up: VecDeque<Arc<[u8]>>,
+    catch_up_bytes: usize,
+    baseline_queued: bool,
+    started: Instant,
+    disconnect_reason: Option<&'static str>,
+}
+
+impl AttachSeedState {
+    fn new(mut panes: Vec<PaneSeedKey>) -> Self {
+        panes.sort_by_key(|pane| (pane.pane_id, pane.generation));
+        let manifest = panes
+            .iter()
+            .copied()
+            .map(|pane| (pane, PaneSeedState::Pending))
+            .collect();
+        Self {
+            manifest,
+            pending: panes.into(),
+            replay: None,
+            catch_up: VecDeque::new(),
+            catch_up_bytes: 0,
+            baseline_queued: false,
+            started: Instant::now(),
+            disconnect_reason: None,
+        }
+    }
+
+    fn output_precedes_snapshot(&self, key: PaneSeedKey) -> bool {
+        self.manifest.get(&key) == Some(&PaneSeedState::Pending)
+    }
+
+    fn panes_remaining(&self) -> usize {
+        self.manifest
+            .values()
+            .filter(|state| matches!(state, PaneSeedState::Pending | PaneSeedState::Replaying))
+            .count()
+    }
+}
+
+#[derive(Default)]
+struct AttachSeedTotals {
+    replay_bytes: u64,
+    completed: u64,
+    disconnected: u64,
+    last_duration_us: u64,
+    max_duration_us: u64,
+    peak_queued_bytes: usize,
+    peak_catch_up_bytes: usize,
+    last_disconnect_reason: Option<String>,
+}
+
 /// One attached (or connecting) client. The stream is non-blocking; outbound frames are
 /// pre-encoded and queued in `outbox`, flushed opportunistically so a slow reader never blocks the
 /// server or the other clients.
@@ -376,8 +516,10 @@ struct ClientConn {
     id: ClientId,
     stream: IpcConnection,
     decoder: protocol::FrameDecoder,
-    outbox: VecDeque<Arc<[u8]>>,
+    outbox: VecDeque<OutboxFrame>,
     outbox_bytes: usize,
+    seed_queued_bytes: usize,
+    seed_catch_up_queued_bytes: usize,
     /// Bytes of `outbox.front()` already written (non-blocking writes can be partial).
     front_offset: usize,
     attached: bool,
@@ -387,8 +529,7 @@ struct ClientConn {
     /// if a pane may hand out a frame by naming a file instead of pasting the pixels into the
     /// stream. False for an SSH attach, and until this client has attached at all.
     shares_filesystem: bool,
-    /// True while the initial replay seed is still queued; raises the backlog cap.
-    seeding: bool,
+    seed: Option<AttachSeedState>,
     /// Close this connection once its outbox drains (query probes, rejected attaches).
     close_after_flush: bool,
     last_pong: Instant,
@@ -416,12 +557,14 @@ impl ClientConn {
             decoder: protocol::FrameDecoder::default(),
             outbox: VecDeque::new(),
             outbox_bytes: 0,
+            seed_queued_bytes: 0,
+            seed_catch_up_queued_bytes: 0,
             front_offset: 0,
             attached: false,
             label: None,
             read_only: false,
             shares_filesystem: false,
-            seeding: false,
+            seed: None,
             close_after_flush: false,
             last_pong: now,
             last_ping: now,
@@ -434,20 +577,75 @@ impl ClientConn {
     }
 
     fn try_push(&mut self, bytes: Arc<[u8]>, default_cap: usize) -> bool {
-        if self.outbox_bytes.saturating_add(bytes.len()) > self.backlog_cap(default_cap) {
+        self.try_push_class(bytes, default_cap, OutboxClass::Normal)
+    }
+
+    fn try_push_class(&mut self, bytes: Arc<[u8]>, cap: usize, class: OutboxClass) -> bool {
+        if self.outbox_bytes.saturating_add(bytes.len()) > cap {
             return false;
         }
         self.outbox_bytes += bytes.len();
-        self.outbox.push_back(bytes);
+        match class {
+            OutboxClass::Normal => {}
+            OutboxClass::SeedReplay => self.seed_queued_bytes += bytes.len(),
+            OutboxClass::SeedCatchUp => self.seed_catch_up_queued_bytes += bytes.len(),
+        }
+        self.outbox.push_back(OutboxFrame { bytes, class });
         true
     }
 
-    fn backlog_cap(&self, default: usize) -> usize {
-        if self.seeding {
-            SEED_MAX_BACKLOG
-        } else {
-            default
+    /// Route one post-attach frame against this client's baseline barrier.
+    fn push_delta(
+        &mut self,
+        bytes: Arc<[u8]>,
+        delta: SeedDelta,
+        default_cap: usize,
+    ) -> ClientFrameResult {
+        let Some(seed) = self.seed.as_mut() else {
+            return if self.try_push(bytes, default_cap) {
+                ClientFrameResult::Queued
+            } else {
+                ClientFrameResult::Overflow
+            };
+        };
+        if seed.baseline_queued {
+            let accepted = self.try_push(bytes, default_cap);
+            if !accepted && let Some(seed) = self.seed.as_mut() {
+                seed.disconnect_reason = Some("attach-outbox-overflow");
+            }
+            return if accepted {
+                ClientFrameResult::Queued
+            } else {
+                ClientFrameResult::Overflow
+            };
         }
+        match delta {
+            SeedDelta::PaneOutput(key) if seed.output_precedes_snapshot(key) => {
+                return ClientFrameResult::Ignored;
+            }
+            SeedDelta::PaneResize(key) if seed.output_precedes_snapshot(key) => {
+                let accepted = self.try_push(bytes, default_cap);
+                if !accepted && let Some(seed) = self.seed.as_mut() {
+                    seed.disconnect_reason = Some("attach-outbox-overflow");
+                }
+                return if accepted {
+                    ClientFrameResult::Queued
+                } else {
+                    ClientFrameResult::Overflow
+                };
+            }
+            SeedDelta::Control | SeedDelta::PaneOutput(_) | SeedDelta::PaneResize(_) => {}
+        }
+        let retained_catch_up = seed
+            .catch_up_bytes
+            .saturating_add(self.seed_catch_up_queued_bytes);
+        if retained_catch_up.saturating_add(bytes.len()) > SEED_CATCH_UP_LIMIT {
+            seed.disconnect_reason = Some("attach-catch-up-overflow");
+            return ClientFrameResult::Overflow;
+        }
+        seed.catch_up_bytes += bytes.len();
+        seed.catch_up.push_back(bytes);
+        ClientFrameResult::Buffered
     }
 }
 
@@ -800,6 +998,8 @@ impl SessionServer {
             max_backlog: DEFAULT_MAX_BACKLOG,
             events,
             outbox_high_water_bytes: 0,
+            attach_seed_totals: AttachSeedTotals::default(),
+            attach_seed_cursor: 0,
             resurrection_metrics: ResurrectionMetrics::default(),
             shutdown: false,
             forget_snapshot: false,
@@ -905,6 +1105,7 @@ impl SessionServer {
         }
         self.credit_server_stall(iteration_started.elapsed());
         self.heartbeat();
+        activity |= self.pump_attach_seeds();
         activity |= self.flush_clients();
         self.update_ephemeral_lifetime(no_client_since);
         Ok(activity)
@@ -948,11 +1149,31 @@ impl SessionServer {
             .iter()
             .map(|client| client.outbox_bytes)
             .sum::<usize>();
-        let outbox_capacity = self
+        let outbox_capacity = self.clients.iter().map(|_| self.max_backlog).sum::<usize>();
+        let seed_queued = self
             .clients
             .iter()
-            .map(|client| client.backlog_cap(self.max_backlog))
+            .map(|client| client.seed_queued_bytes)
             .sum::<usize>();
+        let seed_catch_up = self
+            .clients
+            .iter()
+            .map(|client| {
+                client.seed_catch_up_queued_bytes
+                    + client.seed.as_ref().map_or(0, |seed| seed.catch_up_bytes)
+            })
+            .sum::<usize>();
+        let seed_panes_remaining = self
+            .clients
+            .iter()
+            .filter_map(|client| client.seed.as_ref())
+            .map(AttachSeedState::panes_remaining)
+            .sum::<usize>();
+        let active_seed_clients = self
+            .clients
+            .iter()
+            .filter(|client| client.seed.is_some())
+            .count();
         ServerRuntimeMetrics {
             sampled_at_unix_ms: unix_time_millis(),
             pty_ingress: QueueMetrics {
@@ -970,6 +1191,22 @@ impl SessionServer {
                     outbox_capacity,
                 ),
                 clients: self.clients.len() as u64,
+            },
+            attach_seed: crate::runtime_metrics::AttachSeedMetrics {
+                active_clients: active_seed_clients as u64,
+                queued_bytes: seed_queued as u64,
+                peak_queued_bytes: self.attach_seed_totals.peak_queued_bytes as u64,
+                send_window_bytes: SEED_SEND_WINDOW as u64,
+                live_catch_up_bytes: seed_catch_up as u64,
+                peak_live_catch_up_bytes: self.attach_seed_totals.peak_catch_up_bytes as u64,
+                live_catch_up_limit_bytes: SEED_CATCH_UP_LIMIT as u64,
+                panes_remaining: seed_panes_remaining as u64,
+                replay_bytes_total: self.attach_seed_totals.replay_bytes,
+                completed: self.attach_seed_totals.completed,
+                disconnected: self.attach_seed_totals.disconnected,
+                last_duration_us: self.attach_seed_totals.last_duration_us,
+                max_duration_us: self.attach_seed_totals.max_duration_us,
+                last_disconnect_reason: self.attach_seed_totals.last_disconnect_reason.clone(),
             },
             resurrection: self.resurrection_metrics,
         }
@@ -1054,6 +1291,13 @@ impl ServerPane {
     pub(super) fn screen_mut(&mut self) -> &mut TerminalScreen {
         self.content_generation = self.content_generation.saturating_add(1);
         &mut self.terminal
+    }
+
+    /// Replace a parser which has not consumed PTY output.
+    pub(super) fn replace_empty_screen(&mut self, screen: TerminalScreen) {
+        debug_assert!(!self.output_seen);
+        self.content_generation = self.content_generation.saturating_add(1);
+        self.terminal = screen;
     }
 
     /// The pane's terminal, for an operation that needs `&mut` but leaves persisted content

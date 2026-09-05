@@ -104,20 +104,32 @@ fn a_password_prompt_names_the_account_and_masks_what_is_typed() {
 #[test]
 fn a_host_key_prompt_shows_the_fingerprint_and_does_not_mask_the_answer() {
     on_large_stack(|| {
+        // A real-length digest, because the length is the point: inside OpenSSH's sentence a
+        // 43-character fingerprint is what breaks across the wrap.
         let mut backend = askpass_backend(
             AskpassKind::Confirm,
             "The authenticity of host 'workbox (192.0.2.7)' can't be established.\n\
-             ED25519 key fingerprint is SHA256:qJv1zHtest.\n\
+             ED25519 key fingerprint is SHA256:BjOtNAS/Ufwm/M92ccSyM40S6UxInjnigz9bv2mmza8.\n\
+             This key is not known by any other names.\n\
              Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
         );
         type_text(&mut backend, "yes");
         let frame = rendered_lines(&mut backend);
 
         assert!(
-            frame.contains("SHA256:qJv1zHtest"),
+            frame.contains("SHA256:BjOtNAS"),
             "the fingerprint is the thing being confirmed:\n{frame}"
         );
         assert!(frame.contains("yes"), "the answer is echoed:\n{frame}");
+        // Inside OpenSSH's sentence the fingerprint wraps mid-string with a full stop attached,
+        // which is the one shape you cannot check against one read out to you. It is repeated
+        // whole on its own line; the sentence above still carries it in context.
+        assert!(
+            frame
+                .lines()
+                .any(|line| line.contains("SHA256:BjOtNAS/Ufwm/M92ccSyM40S6UxInjnigz9bv2mmza8")),
+            "the fingerprint is repeated unbroken on one line:\n{frame}"
+        );
         // The trailing question is the last thing a wrapped prompt renders, so it is the first
         // thing lost if the modal ever measures the text unwrapped again.
         assert!(

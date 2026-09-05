@@ -26,6 +26,13 @@ remembers on that host if the host still has it; `profile` opens or creates the 
 session there. Each falls back to `Sessions · workbox`. See
 [Choose startup behavior](sessions.md#choose-startup-behavior).
 
+Hosts you work with regularly do not need a config file. **Remote hosts** (`Ctrl+R` in Sessions)
+manages them: `Ctrl+N` adds one, asking only for what the host line leaves open, and saves it before
+attempting the connection so a first attempt that fails still leaves a row to retry or correct.
+`[remote.hosts.*]` remains the place for a host that needs settings — an identity file, extra ssh
+arguments, a pinned binary path. See
+[Browse remote hosts](sessions.md#browse-remote-hosts).
+
 Rozi supports Linux, macOS, and Windows as either client or remote server hosts. The local machine
 needs `ssh` and `curl` on `PATH`. Automatic installation also needs `tar` for a Linux or macOS
 target, or `unzip` and `scp` for a Windows target.
@@ -54,7 +61,9 @@ With `batch_mode = false`, a running Rozi client answers SSH prompts in a modal 
 them reach the terminal:
 
 - A password or key passphrase is masked and never appears on screen.
-- A host-key question shows the full fingerprint and takes `yes` or `no` unmasked.
+- A host-key question shows OpenSSH's wording verbatim and takes `yes` or `no` unmasked. The
+  fingerprint is repeated whole on its own line beneath it, where it can be compared without
+  breaking across a wrap.
 - A rejected password is reported on the prompt when SSH asks again.
 - `Esc` ends that connection's attempt. SSH re-asks three times per connection, so a refusal also
   declines those retries and gives up on the host probe that raised them. Activating the host again
@@ -239,6 +248,7 @@ its `ControlPersist` window.
 | `SSH port closed` | Check `sshd`, the configured port, and port forwarding. |
 | `SSH login rejected` | Check the user, key, agent, and server authorization. |
 | `Host key not trusted` | Connect with `ssh` and inspect `known_hosts`. |
+| `Host key changed` | The host's identity is not the one recorded. Verify the new key out of band before removing the old entry — OpenSSH refuses this one outright rather than asking. |
 | `No rozi on host` | Allow installation or set `binary_path`. |
 | Incompatible version | Update both ends and restart the named server. |
 | Git markers missing | Install `git` on the remote server and check its `PATH`. |

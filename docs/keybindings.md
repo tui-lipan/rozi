@@ -259,9 +259,12 @@ background attachment, `Ctrl+X` disconnects a remote host, `Ctrl+R` opens **Remo
 `Ctrl+T` opens the temporary shell. Opening Sessions performs no remote probes. See
 [Sessions](sessions.md#use-the-session-picker).
 
-In **Remote hosts**, `Enter` probes only the selected host in place. While connecting, the row
-shows a spinner, navigation is locked, and `Esc` cancels. `Ctrl+N` opens the shared new-host
-prompt, and `Ctrl+K` twice forgets an offline Recent host. The host-scoped Sessions view uses
+In **Remote hosts**, `Enter` connects the selected host and stays on the list; a second `Enter`
+opens a host already connected. `Ctrl+N` adds a host, `Ctrl+E` edits the selected one, `Ctrl+R`
+connects it again, and `Ctrl+K` twice forgets it. While one host is connecting, `Enter` and `Ctrl+R`
+wait for it — only one connection runs at a time — while navigation, `Ctrl+E`, and `Ctrl+K` stay
+available on the other rows. `Esc` cancels the outstanding probe.
+The host editor moves between its lines with `Tab` and `Shift+Tab`. The host-scoped Sessions view uses
 `Enter` to attach, `Ctrl+N` for a named session, `Ctrl+T` for a temporary session, `Ctrl+K` twice to
 kill, `Ctrl+E` twice to restart, `Ctrl+W` to disconnect a retained attachment, and `Ctrl+X` to
 disconnect from that host. `Esc` returns from host sessions to Remote hosts, then to Sessions.
@@ -278,9 +281,9 @@ the selected row or submits a prompt.
 - Layout picker: `Ctrl+F` saves the highlighted layout as the default.
 - Scrollback search: `Enter` selects a result, `Ctrl+N` and `Ctrl+P` move among results, `Tab`
   changes scope, and `Esc` closes.
-- Help: `Tab` and `Shift+Tab` cycle the tabs, and `Left` and `Right` do the same while the search
-  field is not focused. The arrow and paging keys scroll the list. `/` searches the current help
-  tab. `Enter` or `Esc` leaves the search field, and a second `Esc` closes help.
+- Help: `Tab` and `Shift+Tab` cycle the tabs, and `Left`/`Right` or `h`/`l` do the same while the
+  search field is not focused. The arrow and paging keys scroll the list. `/` searches the current
+  help tab. `Enter` or `Esc` leaves the search field, and a second `Esc` closes help.
 - Settings: arrows move through rows. `Left` and `Right` change a setting where the row supports
   stepping.
 - Extensions: `Enter` enables or disables the selected extension, `Ctrl+D` opens details,

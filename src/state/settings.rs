@@ -182,12 +182,24 @@ impl SettingsAction {
     }
 }
 
+/// Which of the terminal-padding editor's two fields the cursor is on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PanePaddingField {
+    #[default]
+    Vertical,
+    Horizontal,
+}
+
 /// Temporary values for the Settings terminal-padding editor. Focus, rather than a second stage
 /// flag, determines whether Enter advances or applies.
 pub struct PanePaddingEditorState {
     pub vertical: TextInput,
     pub horizontal: TextInput,
     pub normalizes_asymmetric: bool,
+    /// Mirrors where the runtime put focus, so the dialog can mark the active field the way the
+    /// host editor does. Tracked rather than derived: the two fields sit side by side, and nothing
+    /// else on this state says which one the next keystroke reaches.
+    pub focus: PanePaddingField,
 }
 
 impl PanePaddingEditorState {
@@ -211,6 +223,7 @@ impl PanePaddingEditorState {
             vertical,
             horizontal,
             normalizes_asymmetric: !symmetric,
+            focus: PanePaddingField::Vertical,
         }
     }
 }

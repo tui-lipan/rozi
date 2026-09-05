@@ -326,6 +326,15 @@ pub struct State {
     /// and hosts a live attachment targets. Seeded when the Sessions view opens; carries the
     /// per-host expand/collapse and error state that must survive the recurring session sweep.
     pub hosts: HostRegistry,
+    /// Hosts added or edited in **Remote hosts** during this run, merged into the saved roster
+    /// whenever the registry is reseeded.
+    ///
+    /// The roster is normally read back from disk, which makes every row depend on a write having
+    /// succeeded — and a write into a state directory that is not private to its owner does not.
+    /// Holding them here too means a host the user just added is listed for the rest of the
+    /// session whatever the filesystem did, so a failed connection leaves a row to retry rather
+    /// than a toast about a host that is no longer anywhere.
+    pub added_hosts: Vec<crate::session::remote::RemoteTarget>,
     /// Last-seen sessions per remote host, loaded from disk when the Sessions view is seeded and
     /// refreshed on each successful probe. Lets an offline or unreachable host still list the
     /// workplaces it had, rather than reading as empty. Convenience only — never authoritative, and
@@ -491,6 +500,7 @@ impl State {
             pending_spawn_replies: HashMap::new(),
             pending_control_input: HashMap::new(),
             hosts: HostRegistry::default(),
+            added_hosts: Vec::new(),
             host_session_cache: crate::session::HostSessionCache::new(),
             pending_destructive: None,
             confirm_epoch: 0,

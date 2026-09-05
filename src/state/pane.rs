@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use tui_lipan::prelude::{FloatRect, ManagedTerminalStatus};
+use tui_lipan::prelude::{FloatRect, Key, ManagedTerminalStatus};
 
 use crate::pane::{TerminalPane, shell_title_parts};
 
@@ -28,6 +28,85 @@ pub struct Pane {
     pub logging: bool,
     pub activity: PaneActivity,
     pub terminal: TerminalPane,
+    /// This pane's element keys, built once here rather than formatted in every `view()`.
+    ///
+    /// Both are functions of [`id`](Self::id) alone, which never changes for a live pane, so a
+    /// cached key cannot go stale. The window key is deliberately absent: it also depends on
+    /// `pty_generation`, which is a public field written from many places, and a cache behind a
+    /// field that anything may assign is a correctness trap rather than a saving.
+    pub keys: PaneKeys,
+}
+
+/// A chrome colour a pane animates independently.
+///
+/// Each slot is one animation identity, so the set is closed and its names are part of the key
+/// format rather than free text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChromeSlot {
+    /// Titlebar background.
+    TitleBg,
+    /// Titlebar text.
+    TitleFg,
+    /// Pane frame background.
+    FrameBg,
+    /// Pane frame border.
+    FrameFg,
+    /// The divider drawn between this pane and its neighbour.
+    DividerFg,
+}
+
+impl ChromeSlot {
+    const ALL: [Self; 5] = [
+        Self::TitleBg,
+        Self::TitleFg,
+        Self::FrameBg,
+        Self::FrameFg,
+        Self::DividerFg,
+    ];
+
+    /// The slot's name as it appears in the animation key. Changing one restarts that fade.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::TitleBg => "title-bg",
+            Self::TitleFg => "title-fg",
+            Self::FrameBg => "frame-bg",
+            Self::FrameFg => "frame-fg",
+            Self::DividerFg => "divider-fg",
+        }
+    }
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Per-pane element and animation keys, cached for the lifetime of the pane.
+///
+/// Rebuilding these in `view()` cost a `String` from `format!` plus the `Arc<str>` that `Key`
+/// copies it into, for every pane on every frame.
+pub struct PaneKeys {
+    /// Keys the pane body element, the container holding the terminal and its chrome.
+    pub body: Key,
+    /// Keys the terminal widget itself; focus routing looks the pane up by this.
+    pub terminal: Key,
+    /// One animation key per [`ChromeSlot`], indexed by the slot.
+    chrome: [Key; ChromeSlot::ALL.len()],
+}
+
+impl PaneKeys {
+    fn new(id: PaneId) -> Self {
+        Self {
+            body: crate::view::pane_body_key(id).into(),
+            terminal: crate::view::pane_terminal_key(id).into(),
+            chrome: ChromeSlot::ALL
+                .map(|slot| Key::from(format!("rozi-pane-chrome-{id}-{}", slot.name()))),
+        }
+    }
+
+    /// The animation key for one chrome slot.
+    pub fn chrome(&self, slot: ChromeSlot) -> &Key {
+        &self.chrome[slot.index()]
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,6 +133,7 @@ impl Pane {
             closing: false,
             logging: false,
             activity: PaneActivity::default(),
+            keys: PaneKeys::new(id),
             terminal: {
                 let mut terminal = TerminalPane::new(scrollback);
                 terminal.bind_session(id, 0);

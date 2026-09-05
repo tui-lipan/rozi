@@ -347,6 +347,7 @@ pub(super) fn format_metrics_text(
     let server = metrics.get("server").filter(|value| !value.is_null());
     let pty = server.and_then(|value| value.get("pty_ingress"));
     let server_out = server.and_then(|value| value.get("client_outboxes"));
+    let attach_seed = server.and_then(|value| value.get("attach_seed"));
     let resurrection = server.and_then(|value| value.get("resurrection"));
     let server_age = server
         .and_then(|value| value_u64(value, "age_ms"))
@@ -391,6 +392,55 @@ pub(super) fn format_metrics_text(
             count_detail(server_out, "clients", "client", "clients"),
         ),
     ];
+    if let Some(seed) = attach_seed {
+        rows.push(vec![
+            TableCell::new("Attach seed", OutputTone::Accent),
+            TableCell::plain(format_bytes(value_u64(seed, "queued_bytes").unwrap_or(0))),
+            TableCell::plain(format_bytes(
+                value_u64(seed, "peak_queued_bytes").unwrap_or(0),
+            )),
+            TableCell::plain(format_bytes(
+                value_u64(seed, "send_window_bytes").unwrap_or(0),
+            )),
+            TableCell::plain(format!(
+                "{} active · {} panes",
+                value_u64(seed, "active_clients").unwrap_or(0),
+                value_u64(seed, "panes_remaining").unwrap_or(0),
+            )),
+        ]);
+        rows.push(vec![
+            TableCell::new("Attach catch-up", OutputTone::Accent),
+            TableCell::plain(format_bytes(
+                value_u64(seed, "live_catch_up_bytes").unwrap_or(0),
+            )),
+            TableCell::plain(format_bytes(
+                value_u64(seed, "peak_live_catch_up_bytes").unwrap_or(0),
+            )),
+            TableCell::plain(format_bytes(
+                value_u64(seed, "live_catch_up_limit_bytes").unwrap_or(0),
+            )),
+            TableCell::plain(format!(
+                "{} complete · {} disconnected",
+                value_u64(seed, "completed").unwrap_or(0),
+                value_u64(seed, "disconnected").unwrap_or(0),
+            )),
+        ]);
+        rows.push(vec![
+            TableCell::new("Attach duration", OutputTone::Accent),
+            TableCell::plain(format_micros(
+                value_u64(seed, "last_duration_us").unwrap_or(0),
+            )),
+            TableCell::plain(format_micros(
+                value_u64(seed, "max_duration_us").unwrap_or(0),
+            )),
+            TableCell::plain("—"),
+            TableCell::plain(format!(
+                "{} replayed · {}",
+                format_bytes(value_u64(seed, "replay_bytes_total").unwrap_or(0)),
+                value_string(seed, "last_disconnect_reason").unwrap_or("no disconnects"),
+            )),
+        ]);
+    }
     if let Some(snapshot) = resurrection {
         let attempts = value_u64(snapshot, "attempts").unwrap_or(0);
         let successes = value_u64(snapshot, "successes").unwrap_or(0);
@@ -591,5 +641,41 @@ mod tests {
         assert!(rendered.contains("1 key"));
         assert!(!rendered.contains("sampled_at_unix_ms"));
         assert!(rendered.lines().all(|line| !line.ends_with(' ')));
+    }
+
+    #[test]
+    fn metrics_text_reports_attach_windows_and_disconnect_reason() {
+        let metrics = serde_json::json!({
+            "orphan_output": null,
+            "server": {
+                "age_ms": 2,
+                "stale": false,
+                "attach_seed": {
+                    "active_clients": 1,
+                    "queued_bytes": 1048576,
+                    "peak_queued_bytes": 4194304,
+                    "send_window_bytes": 4194304,
+                    "live_catch_up_bytes": 2048,
+                    "peak_live_catch_up_bytes": 4096,
+                    "live_catch_up_limit_bytes": 8388608,
+                    "panes_remaining": 3,
+                    "replay_bytes_total": 10485760,
+                    "completed": 4,
+                    "disconnected": 1,
+                    "last_duration_us": 1250,
+                    "max_duration_us": 2500,
+                    "last_disconnect_reason": "attach-catch-up-overflow"
+                }
+            }
+        });
+
+        let rendered = format_metrics_text(Some(&metrics), OutputStyles::plain());
+
+        assert!(rendered.contains("Attach seed"));
+        assert!(rendered.contains("1 active · 3 panes"));
+        assert!(rendered.contains("Attach catch-up"));
+        assert!(rendered.contains("8.0 MiB"));
+        assert!(rendered.contains("Attach duration"));
+        assert!(rendered.contains("attach-catch-up-overflow"));
     }
 }

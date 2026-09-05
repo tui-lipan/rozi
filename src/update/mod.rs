@@ -135,6 +135,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::PanePaddingHorizontalChanged(event) => {
             overlays::pane_padding_horizontal_changed(ctx, event)
         }
+        Msg::PanePaddingFocus(field) => overlays::pane_padding_focus(ctx, field),
         Msg::AdvancePanePadding => overlays::advance_pane_padding(ctx),
         Msg::SubmitPanePadding => overlays::submit_pane_padding(ctx),
         Msg::CloseThemePicker => overlays::close_theme_picker(ctx),
@@ -293,13 +294,15 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::RemotePickerHostActivate(target) => {
             crate::ops::session::remotes::activate_host(ctx, target)
         }
-        Msg::RemotePickerNewHost => crate::ops::session::remotes::open_new_host_prompt(ctx),
+        Msg::RemotePickerNewHost => crate::ops::session::remotes::open_add_host_form(ctx),
+        Msg::RemotePickerEditHost => crate::ops::session::remotes::open_edit_host_form(ctx),
+        Msg::RemotePickerReconnectHost => crate::ops::session::remotes::reconnect_host(ctx),
         Msg::RemotePickerForgetHost => crate::ops::session::remotes::forget_host(ctx),
-        Msg::RemoteTargetPromptChanged(event) => {
-            crate::ops::session::remotes::target_prompt_changed(ctx, event)
+        Msg::HostFormChanged(field, event) => {
+            crate::ops::session::remotes::host_form_changed(ctx, field, event)
         }
-        Msg::SubmitRemoteTarget => crate::ops::session::remotes::submit_remote_target(ctx),
-        Msg::CloseRemoteTargetPrompt => crate::ops::session::remotes::close_target_prompt(ctx),
+        Msg::SubmitHostForm => crate::ops::session::remotes::submit_host_form(ctx),
+        Msg::CloseHostForm => crate::ops::session::remotes::close_host_form(ctx),
         Msg::RemoteHostSessionsDiscovered {
             epoch,
             target,
@@ -772,6 +775,11 @@ fn merge_updates(mut aggregate: Update, mut next: Update) -> Update {
     match (level, command) {
         (UpdateLevel::None, None) => Update::none(),
         (UpdateLevel::None, Some(command)) => Update::command_only(command),
+        (UpdateLevel::TerminalPaint, None) => Update::terminal_paint(),
+        // Same reasoning as the paint case below, and the claim is narrower still: a
+        // terminal-only repaint asserts nothing else on screen moved, which a command's effects
+        // could contradict.
+        (UpdateLevel::TerminalPaint, Some(command)) => Update::with_command(command),
         (UpdateLevel::Paint, None) => Update::paint(),
         // tui-lipan has no paint-with-command constructor. This combination is rare on inbound
         // control traffic; a full update preserves both requirements without losing the command.
@@ -782,12 +790,15 @@ fn merge_updates(mut aggregate: Update, mut next: Update) -> Update {
 }
 
 fn strongest_update_level(left: UpdateLevel, right: UpdateLevel) -> UpdateLevel {
-    use UpdateLevel::{Full, Layout, None, Paint};
+    use UpdateLevel::{Full, Layout, None, Paint, TerminalPaint};
 
     match (left, right) {
         (Full, _) | (_, Full) => Full,
         (Layout, _) | (_, Layout) => Layout,
         (Paint, _) | (_, Paint) => Paint,
+        // Below `Paint`, so anything else in the same frame widens it back: the terminal-only
+        // claim holds only if every source in the frame agrees nothing else moved.
+        (TerminalPaint, _) | (_, TerminalPaint) => TerminalPaint,
         (None, None) => None,
     }
 }
@@ -905,11 +916,13 @@ mod tests {
                 .expect("command link settled above"),
         );
         for index in 0..count {
+            // Distinct generations keep these as separate queue entries. These tests exercise the
+            // drain budget and command yielding, not mailbox coalescing.
             mailbox
                 .push(Frame::PaneBytes {
                     pane_id: (index % 2) as crate::state::PaneId + 1,
                     local: false,
-                    generation: 1,
+                    generation: index as u64 + 1,
                     bytes: vec![index as u8],
                 })
                 .expect("test frame must fit in the inbound mailbox");

@@ -106,7 +106,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
                     .remote
                     .hosts
                     .insert("winvm".into(), RemoteHostConfig::default());
-                state.hosts.seed(&state.config.remote, &[], &[]);
+                state.hosts.seed(&state.config.remote, &[], &[], &[]);
                 state
                     .hosts
                     .get_mut(&RemoteTarget::Alias("linvm".into()))
@@ -209,6 +209,61 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
         .expect("Sessions sidebar smoke completes");
 }
 
+#[test]
+fn sessions_sidebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
+                state.config.nerd_icons = false;
+                state.config.sidebar.tabs = vec![SidebarTab::Sessions];
+                state.config.sidebar.split = false;
+                state.sidebar.apply_configured_panels(&state.config.sidebar);
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+                state.current_mut().session_name = Some("dev".into());
+                state.sidebar.sessions = vec![session("dev", 2, 2, None)];
+            }
+
+            backend.render();
+            let lines: Vec<String> = backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .into_iter()
+                .map(|line| line.chars().take(32).collect())
+                .collect();
+            let row = lines
+                .iter()
+                .position(|line| line.contains("▍ dev"))
+                .unwrap_or_else(|| panic!("current session should be visible: {lines:#?}"));
+            assert!(
+                lines[row].contains("⋈ 2"),
+                "shared-client count uses the standard-unicode stand-in: {}",
+                lines[row]
+            );
+            assert!(
+                !lines[row].contains('󰍺')
+                    && !lines
+                        .iter()
+                        .any(|line| line.contains('󰒍') || line.contains('󰛤')),
+                "nerd glyphs stay off when nerd_icons is false: {lines:#?}"
+            );
+        })
+        .expect("spawn nerd-icons Sessions smoke thread")
+        .join()
+        .expect("nerd-icons Sessions smoke completes");
+}
+
 /// The Sessions tab with one configured host in `probe` state and nothing else, so the host row
 /// and whatever rides under it are the only things on screen.
 fn host_backend(probe: HostProbe) -> TestBackend<AppRoot> {
@@ -234,7 +289,7 @@ fn host_backend(probe: HostProbe) -> TestBackend<AppRoot> {
         .remote
         .hosts
         .insert("workbox".into(), RemoteHostConfig::default());
-    state.hosts.seed(&state.config.remote, &[], &[]);
+    state.hosts.seed(&state.config.remote, &[], &[], &[]);
     state
         .hosts
         .get_mut(&RemoteTarget::Alias("workbox".into()))
@@ -270,6 +325,38 @@ fn hover_row(backend: &mut TestBackend<AppRoot>, y: u16) -> Option<usize> {
     backend.state().sidebar.panels[0].hovered_row
 }
 
+/// Put the pointer on the host row and hold it there until that row shows `expected`.
+///
+/// Hovering by index races the session sweep that settling runs: the sweep can add rows above the
+/// host between resolving its index and the pointer arriving, and the pointer then sits on whatever
+/// slid underneath. Retrying against what the host row actually reads is what makes this a test of
+/// the affordance rather than of the sweep's timing — it still fails, after a bounded number of
+/// attempts, if the affordance never appears.
+fn hover_host_row_until(
+    backend: &mut TestBackend<AppRoot>,
+    expected: &str,
+) -> (Vec<String>, usize) {
+    let mut last = Vec::new();
+    for _ in 0..10 {
+        let row = host_row_index(&sidebar_lines(backend));
+        hover_row(backend, row as u16);
+        let lines = sidebar_lines(backend);
+        let row = host_row_index(&lines);
+        if lines[row].contains(expected) {
+            return (lines, row);
+        }
+        last = lines;
+    }
+    panic!("the hovered host row never showed {expected:?}: {last:#?}");
+}
+
+/// Hover the host row for its side effect, when the test asserts on something other than the row's
+/// own text.
+fn hover_host_row(backend: &mut TestBackend<AppRoot>) {
+    let row = host_row_index(&sidebar_lines(backend));
+    hover_row(backend, row as u16);
+}
+
 fn host_row_index(lines: &[String]) -> usize {
     lines
         .iter()
@@ -296,11 +383,7 @@ fn a_failed_host_offers_the_connect_affordance_in_place_of_its_status() {
                 lines[host]
             );
 
-            hover_row(&mut backend, host as u16);
-
-            // Re-resolve: settling runs a session sweep that can add rows above the host.
-            let lines = sidebar_lines(&mut backend);
-            let host = host_row_index(&lines);
+            let (lines, host) = hover_host_row_until(&mut backend, "Connect");
             assert!(
                 lines[host].contains("Connect"),
                 "the affordance arrives on hover: {:?}",
@@ -392,8 +475,7 @@ fn a_row_that_stops_being_selectable_still_releases_the_pointer() {
         .spawn(|| {
             let mut backend = host_backend(HostProbe::Idle);
             let target = RemoteTarget::Alias("workbox".into());
-            let host = host_row_index(&sidebar_lines(&mut backend)) as u16;
-            hover_row(&mut backend, host);
+            hover_host_row(&mut backend);
 
             // Connecting: the row goes inert, which used to take its hover region with it.
             backend
@@ -455,9 +537,7 @@ fn a_connected_host_reveals_its_disconnect_affordance_on_hover() {
                 "quiet at rest"
             );
 
-            hover_row(&mut backend, host);
-            let lines = sidebar_lines(&mut backend);
-            let host = host_row_index(&lines);
+            let (lines, host) = hover_host_row_until(&mut backend, "✕");
             assert!(
                 lines[host].contains('✕'),
                 "an inert row still takes the pointer: {:?}",

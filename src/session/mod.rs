@@ -44,8 +44,10 @@ fn write_last_sessions(entries: &std::collections::HashMap<String, String>) {
     let Some(path) = last_sessions_path() else {
         return;
     };
-    if let Some(parent) = path.parent()
-        && crate::platform::fs_security::ensure_private_dir(parent).is_err()
+    if crate::platform::paths::private_state_dir(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .is_err()
     {
         return;
     }
@@ -92,8 +94,10 @@ fn write_recent_remotes(entries: &[remote::RemoteTarget]) {
     let Some(path) = recent_remotes_path() else {
         return;
     };
-    if let Some(parent) = path.parent()
-        && crate::platform::fs_security::ensure_private_dir(parent).is_err()
+    if crate::platform::paths::private_state_dir(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .is_err()
     {
         return;
     }
@@ -147,6 +151,112 @@ pub(crate) fn read_recent_remotes() -> Vec<remote::RemoteTarget> {
             entries
         })
         .unwrap_or_default()
+}
+
+/// Hosts the user added by hand in **Remote hosts**, in the order they were added.
+///
+/// Deliberately separate from the recents list. A recent is a by-product of having reached a
+/// machine; a saved host is a statement that this machine is one of the user's workplaces, and it
+/// survives everything that makes a first connection fail — a sleeping laptop, a VPN that is down,
+/// a login typed wrong. Only the canonical target spec is stored: never a password, which SSH
+/// handles out of band and rozi never sees.
+const SAVED_HOSTS_FILE: &str = "saved-hosts";
+
+fn saved_hosts_path() -> Option<std::path::PathBuf> {
+    let env = crate::platform::paths::PlatformEnv::from_process();
+    (env.home.is_some() || env.xdg_state_home.is_some())
+        .then(|| crate::platform::paths::state_dir(&env).join(SAVED_HOSTS_FILE))
+}
+
+/// Write the roster, saying why if it could not be written.
+///
+/// Unlike the recents list beside it, this one reports its failures. A recent is a by-product
+/// nobody asked for, so losing it costs an inconvenience; a saved host is something the user typed
+/// on purpose, and silently discarding it is how a host they just added comes back missing after a
+/// restart with nothing to explain it. The usual cause is a state directory that is not private to
+/// its owner — `ensure_private_dir` refuses to write secrets-adjacent state into a directory other
+/// users can read, and says so.
+fn write_saved_hosts(entries: &[remote::RemoteTarget]) -> Result<(), String> {
+    let Some(path) = saved_hosts_path() else {
+        return Err("no state directory to save hosts in (set HOME or XDG_STATE_HOME)".to_string());
+    };
+    crate::platform::paths::private_state_dir(&crate::platform::paths::PlatformEnv::from_process())
+        .map_err(|error| {
+            format!(
+                "{} is not usable for private state: {error}",
+                crate::platform::paths::state_dir(
+                    &crate::platform::paths::PlatformEnv::from_process()
+                )
+                .display()
+            )
+        })?;
+    let text = entries
+        .iter()
+        .map(remote::RemoteTarget::to_spec)
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Hosts the user added by hand, oldest first.
+pub(crate) fn read_saved_hosts() -> Vec<remote::RemoteTarget> {
+    let Some(path) = saved_hosts_path() else {
+        return Vec::new();
+    };
+    std::fs::read_to_string(path)
+        .map(|text| {
+            let mut entries: Vec<remote::RemoteTarget> = Vec::new();
+            for target in text
+                .lines()
+                .filter_map(|line| remote::parse_remote_target(line.trim()).ok())
+            {
+                if !entries.contains(&target) {
+                    entries.push(target);
+                }
+            }
+            entries
+        })
+        .unwrap_or_default()
+}
+
+/// Add a host the user typed. Appends rather than promoting: this list is a roster, not a history,
+/// so a host does not jump around under the cursor for having been touched.
+pub(crate) fn save_host(target: &remote::RemoteTarget) -> Result<(), String> {
+    let mut entries = read_saved_hosts();
+    if entries.contains(target) {
+        return Ok(());
+    }
+    entries.push(target.clone());
+    write_saved_hosts(&entries)
+}
+
+/// Drop one saved host, keeping the position of every other.
+pub(crate) fn forget_saved_host(target: &remote::RemoteTarget) {
+    let mut entries = read_saved_hosts();
+    let before = entries.len();
+    entries.retain(|entry| entry != target);
+    if entries.len() != before {
+        let _ = write_saved_hosts(&entries);
+    }
+}
+
+/// Rewrite one saved host in place, so an edited host keeps its position in the roster instead of
+/// falling to the bottom as a fresh entry.
+///
+/// A host that is not in the roster is *added* to it. Editing a merely-recent host is the user
+/// turning something rozi happened to remember into something they have deliberately configured,
+/// and the entry should outlive the MRU it came from.
+pub(crate) fn replace_saved_host(
+    old: &remote::RemoteTarget,
+    new: &remote::RemoteTarget,
+) -> Result<(), String> {
+    let mut entries = read_saved_hosts();
+    let Some(index) = entries.iter().position(|entry| entry == old) else {
+        return save_host(new);
+    };
+    entries.retain(|entry| entry == old || entry != new);
+    entries[index] = new.clone();
+    write_saved_hosts(&entries)
 }
 
 /// A last-seen session on a remote host, cached so a host's known workplaces stay visible when it is
@@ -229,8 +339,10 @@ fn write_host_session_cache(cache: &HostSessionCache) {
     let Some(path) = host_sessions_path() else {
         return;
     };
-    if let Some(parent) = path.parent()
-        && crate::platform::fs_security::ensure_private_dir(parent).is_err()
+    if crate::platform::paths::private_state_dir(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .is_err()
     {
         return;
     }

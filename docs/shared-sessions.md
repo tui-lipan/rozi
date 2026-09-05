@@ -20,6 +20,14 @@ control, or cancel. If immediate takeover is enabled, the control option takes c
 The session picker shows when other clients are attached. The workbar shows `CTRL` while this client
 controls the layout and `FOLLOW` while it follows.
 
+Joining copies the current pane list and layout first, then streams each pane's retained terminal
+state. Replayable output produced before a pane snapshot is part of that snapshot. Output produced
+afterwards waits behind it, so a client never receives live bytes in the middle of a pane replay.
+
+The server keeps at most 4 MiB of encoded replay queued for an attaching client. Snapshot size has
+no total replay limit. If live changes waiting behind a slow attach exceed 8 MiB, the server
+disconnects that client without delaying clients which are already live.
+
 ## Layout control
 
 One writable client controls layout changes at a time. The controller can split, close, move,

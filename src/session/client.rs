@@ -17,11 +17,12 @@ use crate::session::protocol::Frame;
 use crate::session::protocol::{
     self, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
-use crate::session::queue::{ByteQueue, PushError};
+use crate::session::queue::{ByteQueue, PushError, SegmentCoalesce};
 use crate::state::PaneId;
 
 const MAX_CLIENT_INBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CLIENT_OUTBOUND_BYTES: usize = 8 * 1024 * 1024;
+const MAX_INTERLEAVED_PANE_BYTES: usize = 64 * 1024;
 /// How long [`SessionClient::shutdown`] waits for the writer thread to put the request on the wire
 /// before giving up on it. Reaching this means the socket is wedged, not that the frame is slow: a
 /// local write is microseconds.
@@ -721,14 +722,13 @@ impl InboundMailbox {
         // session: the server still owns per-client outbox isolation, so a genuinely slow client
         // cannot stall broadcasts to everyone else.
         //
-        // Keep all adjacent output for one pane in one entry, up to the mailbox's byte cap. A
-        // browser redraw is hundreds of KiB split across many server frames; delivering every
-        // 64-KiB piece as a separate UI message forces redundant paints and can make the reader
-        // outrun the parser even though one batched pass catches up.
-        let result = self.queue.push_blocking_with(
+        // Keep each pane's output in one entry within the current output-only segment. This retains
+        // per-pane byte order and control-frame boundaries while avoiding one queue lock and parser
+        // call per tiny interleaved frame. The first frame is still scheduled immediately.
+        let result = self.queue.push_blocking_within_segment(
             InboundEvent::Frame(Box::new(frame)),
             bytes,
-            coalesce_inbound,
+            coalesce_inbound_segment,
         );
         if let Err(error) = result {
             let message = match error {
@@ -811,9 +811,13 @@ fn inbound_frame_bytes(frame: &Frame<ServerMessage>) -> usize {
     }
 }
 
-fn coalesce_inbound(back: &mut InboundEvent, next: &InboundEvent) -> bool {
-    let (InboundEvent::Frame(back), InboundEvent::Frame(next)) = (back, next) else {
-        return false;
+fn coalesce_inbound_segment(
+    queued: &mut InboundEvent,
+    next: &InboundEvent,
+    adjacent: bool,
+) -> SegmentCoalesce {
+    let (InboundEvent::Frame(queued), InboundEvent::Frame(next)) = (queued, next) else {
+        return SegmentCoalesce::Barrier;
     };
     let (
         Frame::PaneBytes {
@@ -828,15 +832,20 @@ fn coalesce_inbound(back: &mut InboundEvent, next: &InboundEvent) -> bool {
             generation: next_generation,
             bytes: next_bytes,
         },
-    ) = (back.as_mut(), next.as_ref())
+    ) = (queued.as_mut(), next.as_ref())
     else {
-        return false;
+        return SegmentCoalesce::Barrier;
     };
     if pane_id != next_pane || local != next_local || generation != next_generation {
-        return false;
+        return SegmentCoalesce::Continue;
+    }
+    if !adjacent && bytes.len().saturating_add(next_bytes.len()) > MAX_INTERLEAVED_PANE_BYTES {
+        // This matching bucket cannot take the bytes. Older same-pane entries are behind it in
+        // the pane transcript, so they are no longer valid merge targets.
+        return SegmentCoalesce::Barrier;
     }
     bytes.extend_from_slice(next_bytes);
-    true
+    SegmentCoalesce::Merged
 }
 
 impl ClientOutbound {
@@ -1179,7 +1188,7 @@ mod tests {
     }
 
     #[test]
-    fn inbound_coalescing_preserves_transcript_and_control_boundaries() {
+    fn inbound_coalescing_matches_exact_pane_identity() {
         let mut output = InboundEvent::Frame(Box::new(Frame::PaneBytes {
             pane_id: 1,
             local: false,
@@ -1192,7 +1201,10 @@ mod tests {
             generation: 2,
             bytes: b"beta".to_vec(),
         }));
-        assert!(coalesce_inbound(&mut output, &continuation));
+        assert_eq!(
+            coalesce_inbound_segment(&mut output, &continuation, false),
+            SegmentCoalesce::Merged
+        );
         assert_eq!(
             output,
             InboundEvent::Frame(Box::new(Frame::PaneBytes {
@@ -1202,18 +1214,234 @@ mod tests {
                 bytes: b"alphabeta".to_vec(),
             }))
         );
-        assert!(!coalesce_inbound(
-            &mut output,
-            &InboundEvent::Frame(Box::new(Frame::PaneBytes {
+        for mismatch in [
+            Frame::PaneBytes {
+                pane_id: 2,
+                local: false,
+                generation: 2,
+                bytes: b"pane".to_vec(),
+            },
+            Frame::PaneBytes {
                 pane_id: 1,
                 local: true,
                 generation: 2,
-                bytes: b"gamma".to_vec(),
-            }))
+                bytes: b"local".to_vec(),
+            },
+            Frame::PaneBytes {
+                pane_id: 1,
+                local: false,
+                generation: 3,
+                bytes: b"generation".to_vec(),
+            },
+        ] {
+            assert_eq!(
+                coalesce_inbound_segment(
+                    &mut output,
+                    &InboundEvent::Frame(Box::new(mismatch)),
+                    false,
+                ),
+                SegmentCoalesce::Continue
+            );
+        }
+        assert_eq!(
+            coalesce_inbound_segment(
+                &mut output,
+                &InboundEvent::Frame(Box::new(Frame::Control(ServerMessage::Ping { seq: 1 }))),
+                false,
+            ),
+            SegmentCoalesce::Barrier
+        );
+    }
+
+    #[test]
+    fn inbound_coalescing_groups_interleaved_panes_without_crossing_control() {
+        let queue = ByteQueue::new(4096);
+        let push = |frame| {
+            let bytes = inbound_frame_bytes(&frame);
+            queue
+                .push_blocking_within_segment(
+                    InboundEvent::Frame(Box::new(frame)),
+                    bytes,
+                    coalesce_inbound_segment,
+                )
+                .unwrap();
+        };
+
+        push(Frame::PaneBytes {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            bytes: b"a1".to_vec(),
+        });
+        push(Frame::PaneBytes {
+            pane_id: 2,
+            local: false,
+            generation: 2,
+            bytes: b"b1".to_vec(),
+        });
+        push(Frame::PaneBytes {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            bytes: b"a2".to_vec(),
+        });
+        let control = ServerMessage::Resized {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            cols: 80,
+            rows: 24,
+        };
+        push(Frame::Control(control.clone()));
+        push(Frame::PaneBytes {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            bytes: b"a3".to_vec(),
+        });
+
+        assert_eq!(queue.stats().len, 4);
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. } if bytes == b"a1a2")
         ));
-        assert!(!coalesce_inbound(
-            &mut output,
-            &InboundEvent::Frame(Box::new(Frame::Control(ServerMessage::Ping { seq: 1 })))
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 2, bytes, .. } if bytes == b"b1")
+        ));
+        assert_eq!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(Box::new(Frame::Control(control))))
+        );
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. } if bytes == b"a3")
+        ));
+    }
+
+    #[test]
+    fn inbound_coalescing_caps_non_adjacent_aggregation_at_64kib() {
+        let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
+        let push = |pane_id, bytes: Vec<u8>| {
+            let frame = Frame::PaneBytes {
+                pane_id,
+                local: false,
+                generation: 2,
+                bytes,
+            };
+            let weight = inbound_frame_bytes(&frame);
+            queue
+                .push_blocking_within_segment(
+                    InboundEvent::Frame(Box::new(frame)),
+                    weight,
+                    coalesce_inbound_segment,
+                )
+                .unwrap();
+        };
+
+        push(1, vec![b'a'; 32 * 1024]);
+        push(2, vec![b'x']);
+        push(1, vec![b'b'; 32 * 1024]);
+        assert_eq!(queue.stats().len, 2);
+
+        push(1, vec![b'c']);
+        assert_eq!(queue.stats().len, 3);
+    }
+
+    #[test]
+    fn inbound_coalescing_does_not_merge_past_a_full_same_pane_bucket() {
+        let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
+        let push = |pane_id, bytes: Vec<u8>| {
+            let frame = Frame::PaneBytes {
+                pane_id,
+                local: false,
+                generation: 2,
+                bytes,
+            };
+            let weight = inbound_frame_bytes(&frame);
+            queue
+                .push_blocking_within_segment(
+                    InboundEvent::Frame(Box::new(frame)),
+                    weight,
+                    coalesce_inbound_segment,
+                )
+                .unwrap();
+        };
+
+        push(1, vec![b'a']);
+        push(2, vec![b'x']);
+        push(1, vec![b'b'; MAX_INTERLEAVED_PANE_BYTES]);
+        push(3, vec![b'y']);
+        push(1, vec![b'c']);
+
+        assert_eq!(queue.stats().len, 5);
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. } if bytes == b"a")
+        ));
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 2, bytes, .. } if bytes == b"x")
+        ));
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. }
+                    if bytes.len() == MAX_INTERLEAVED_PANE_BYTES && bytes[0] == b'b')
+        ));
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 3, bytes, .. } if bytes == b"y")
+        ));
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. } if bytes == b"c")
+        ));
+    }
+
+    #[test]
+    fn inbound_coalescing_delivers_quiet_output_after_one_hot_bucket() {
+        let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
+        let push = |pane_id, bytes: Vec<u8>| {
+            let frame = Frame::PaneBytes {
+                pane_id,
+                local: false,
+                generation: 2,
+                bytes,
+            };
+            let weight = inbound_frame_bytes(&frame);
+            queue
+                .push_blocking_within_segment(
+                    InboundEvent::Frame(Box::new(frame)),
+                    weight,
+                    coalesce_inbound_segment,
+                )
+                .unwrap();
+        };
+
+        push(1, vec![b'h'; 64]);
+        push(2, vec![b'q'; 64]);
+        for _ in 0..(256 * 1024 / 64) {
+            push(1, vec![b'h'; 64]);
+        }
+
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. }
+                    if bytes.len() == MAX_INTERLEAVED_PANE_BYTES)
+        ));
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneBytes { pane_id: 2, bytes, .. } if bytes.as_slice() == [b'q'; 64])
         ));
     }
 
@@ -1234,7 +1462,16 @@ mod tests {
             bytes: second,
         }));
 
-        assert!(coalesce_inbound(&mut output, &continuation));
+        assert_eq!(
+            coalesce_inbound_segment(&mut output, &continuation, false),
+            SegmentCoalesce::Barrier,
+            "non-adjacent output must stay within the drain fairness cap"
+        );
+        assert_eq!(
+            coalesce_inbound_segment(&mut output, &continuation, true),
+            SegmentCoalesce::Merged,
+            "the existing adjacent redraw path remains uncapped"
+        );
         let InboundEvent::Frame(frame) = output else {
             panic!("coalesced pane output");
         };

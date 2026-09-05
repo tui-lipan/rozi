@@ -102,7 +102,7 @@ fn cached_configured_hosts_are_available_without_a_probe() {
     let mut rows = vec![session_row("local", None)];
 
     let mut hosts = crate::state::HostRegistry::default();
-    hosts.seed(&config, &[], &[]);
+    hosts.seed(&config, &[], &[], &[]);
     push_cached_known_remote_rows(&mut rows, &hosts, &cache, &[]);
 
     let remote = rows
@@ -142,7 +142,7 @@ fn fresh_host_results_replace_cached_rows() {
     let mut rows = vec![session_row("live", Some("winvm"))];
 
     let mut hosts = crate::state::HostRegistry::default();
-    hosts.seed(&config, &[], &[]);
+    hosts.seed(&config, &[], &[], &[]);
     push_cached_known_remote_rows(&mut rows, &hosts, &cache, std::slice::from_ref(&target));
 
     assert_eq!(rows.len(), 1);
@@ -156,6 +156,7 @@ fn cached_recent_and_attached_hosts_are_available_without_a_probe() {
     let mut hosts = crate::state::HostRegistry::default();
     hosts.seed(
         &crate::config::RemoteConfig::default(),
+        &[],
         std::slice::from_ref(&recent),
         &[(attached.clone(), "attached".into())],
     );

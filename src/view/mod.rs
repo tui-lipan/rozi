@@ -125,6 +125,63 @@ impl WorkspaceLayer<'_> {
     }
 }
 
+/// A pane currently being carried, by this client or by the one holding the control lease.
+///
+/// Both are drawn the same way - lifted out of the tiling, above the settled tiles, with no merged
+/// seams or dividers touching it - so the pane a colleague is moving looks like a pane being moved
+/// rather than like a rendering fault.
+#[derive(Clone, Copy)]
+struct PaneDrag {
+    pane_id: PaneId,
+    /// Canvas-space rectangle to draw the pane at.
+    rect: FloatRect,
+    /// Floating panes are carried without leaving their layer, so they never vacate a tile.
+    floating: bool,
+}
+
+/// Resolve which pane this layer is carrying.
+///
+/// Local first: if this client is dragging, that gesture is the truth for its own screen, and a
+/// relayed copy of it would only be its own position one round trip stale. A remote drag applies to
+/// the workspace layer alone - the scratchpad is client-local, so no other client can be dragging
+/// inside it - and only while the pane is really in this workspace, because the follower chooses
+/// its own active workspace and may not be watching the one the controller is rearranging.
+fn layer_drag(
+    ctx: &Context<AppRoot>,
+    layer: &WorkspaceLayer<'_>,
+    here: &impl Fn(PaneId) -> bool,
+) -> Option<PaneDrag> {
+    if let Some(session) = ctx.state.moving_pane.filter(|session| here(session.id)) {
+        return Some(PaneDrag {
+            pane_id: session.id,
+            rect: session.drag_rect,
+            floating: session.was_floating,
+        });
+    }
+    let drag = ctx
+        .state
+        .remote_drag
+        .filter(|drag| !layer.scratch && here(drag.pane_id))?;
+    // Sent in canonical-canvas fractions, exactly like a floating pane's rect, so a follower whose
+    // viewport differs from the controller's lands it inside the same letterboxed canvas.
+    let (cols, rows) = ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .and_then(|shared| shared.canonical_canvas)?;
+    let rect = crate::layout::shared::frac_rect_to_float(drag.rect, cols, rows);
+    Some(PaneDrag {
+        pane_id: drag.pane_id,
+        rect: FloatRect {
+            x: rect.x + layer.float_origin.0,
+            y: rect.y + layer.float_origin.1,
+            ..rect
+        },
+        floating: false,
+    })
+}
+
 /// Draw one workspace - panes, dividers, seam titles, and split-resize strips - into `canvas`.
 ///
 /// Shared by the workspace layer and the scratchpad so the dropdown is a real tiling workspace
@@ -144,11 +201,10 @@ pub(crate) fn render_workspace_panes(
     // A drag session is global, so match it against this layer's panes: the dropdown must not
     // exclude a workspace pane from its tiling, nor the workspace a scratch pane.
     let moving_here = |id: PaneId| workspace.panes.iter().any(|pane| pane.id == id);
-    let moving_tiled = ctx
-        .state
-        .moving_pane
-        .filter(|session| !session.was_floating && moving_here(session.id))
-        .map(|session| session.id);
+    let dragged = layer_drag(ctx, layer, &moving_here);
+    let moving_tiled = dragged
+        .filter(|drag| !drag.floating)
+        .map(|drag| drag.pane_id);
     let placements = workspace_target_rects_excluding_with_visible(
         workspace,
         bounds,
@@ -188,10 +244,7 @@ pub(crate) fn render_workspace_panes(
         };
         let base_rect = placement_for(&placements, pane.id)
             .unwrap_or_else(|| clamp_float_rect(floating_rect, bounds));
-        let moving = ctx
-            .state
-            .moving_pane
-            .filter(|session| session.id == pane.id && moving_here(pane.id));
+        let moving = dragged.filter(|drag| drag.pane_id == pane.id);
         // A sliding pane is laid out at its real destination for the whole animation and carried in
         // by `slide_offset` below, so only the scale style rewrites the target here. A pane that
         // merely *would* slide is not sliding now - it still has to follow a drag.
@@ -208,10 +261,10 @@ pub(crate) fn render_workspace_panes(
             close_rect(floating_rect)
         } else if pane.opening {
             close_rect(base_rect)
-        } else if let Some(session) = moving
+        } else if let Some(drag) = moving
             && !pane.fullscreen
         {
-            clamp_floating_rect(session.drag_rect, bounds)
+            clamp_floating_rect(drag.rect, bounds)
         } else {
             base_rect
         };

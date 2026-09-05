@@ -513,6 +513,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             current_rev,
             layout,
         } => session::layout_rejected(ctx, epoch, current_rev, layout),
+        Msg::SessionDragChanged {
+            epoch,
+            author,
+            drag,
+        } => session::drag_changed(ctx, epoch, author, drag),
         Msg::SessionControllerChanged {
             epoch,
             controller,

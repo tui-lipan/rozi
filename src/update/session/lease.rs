@@ -36,6 +36,11 @@ pub(crate) fn controller_changed(
         }
     }
     let now_controller = ctx.state.is_controller();
+    // Whoever holds the lease now is not mid-gesture: the previous controller either released it,
+    // was taken over, or vanished. This is the backstop for a `DragEnd` that never arrived - a
+    // controller killed with a pane still lifted - so the pane falls back into the authoritative
+    // layout instead of hanging over it for the rest of the session.
+    ctx.state.remote_drag = None;
     crate::events::emit(
         &ctx.state,
         crate::events::Event::new(

@@ -5,8 +5,8 @@ pub(crate) mod pane_events;
 pub(crate) mod status;
 
 pub(crate) use control_replies::{
-    flush_layout_commit, layout_committed, layout_rejected, ping, replay_input_deadline,
-    spawn_reply_deadline, spawn_result,
+    drag_changed, flush_layout_commit, layout_committed, layout_rejected, ping,
+    replay_input_deadline, spawn_reply_deadline, spawn_result,
 };
 pub(crate) use lease::{
     clients_changed, control_declined, control_requested, controller_changed, evicted,

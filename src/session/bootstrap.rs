@@ -537,6 +537,11 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 current_rev,
                 layout,
             },
+            ServerMessage::DragChanged { author, drag } => Msg::SessionDragChanged {
+                epoch,
+                author,
+                drag,
+            },
             ServerMessage::ControllerChanged { controller, reason } => {
                 Msg::SessionControllerChanged {
                     epoch,

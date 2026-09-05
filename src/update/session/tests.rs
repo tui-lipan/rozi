@@ -776,6 +776,144 @@ fn parked_non_controller_defers_exit_until_control_returns() {
         .expect("join test");
 }
 
+/// A follower attached to a session whose lease belongs to client 2.
+fn follower_backend() -> TestBackend<crate::AppRoot> {
+    let mut backend = TestBackend::new(crate::AppRoot::default());
+    let state = backend.state_mut();
+    state.current_mut().session_attached = true;
+    let mut shared = crate::state::SharedSessionState::new(1);
+    shared.controller = Some(2);
+    state.current_mut().shared = Some(shared);
+    backend
+}
+
+fn drag_at(x: f32) -> crate::state::RemoteDrag {
+    crate::state::RemoteDrag {
+        pane_id: 4,
+        rect: crate::layout::shared::FracRect {
+            x,
+            y: 0.2,
+            w: 0.3,
+            h: 0.4,
+        },
+    }
+}
+
+#[test]
+fn a_relayed_drag_is_mirrored_and_cleared_by_its_own_end() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = follower_backend();
+
+            backend
+                .dispatch(Msg::SessionDragChanged {
+                    epoch: 0,
+                    author: 2,
+                    drag: Some(drag_at(0.1)),
+                })
+                .expect("mirror the controller's lift");
+            assert_eq!(backend.state().remote_drag, Some(drag_at(0.1)));
+
+            backend
+                .dispatch(Msg::SessionDragChanged {
+                    epoch: 0,
+                    author: 2,
+                    drag: None,
+                })
+                .expect("the gesture ends");
+            assert_eq!(backend.state().remote_drag, None);
+        })
+        .expect("spawn test")
+        .join()
+        .expect("join test");
+}
+
+/// The relay is one broadcast to everyone, author included. Adopting its own echo would make the
+/// controller carry a copy of its pane one round trip behind the pointer.
+#[test]
+fn a_client_ignores_the_echo_of_its_own_drag() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = follower_backend();
+            backend
+                .state_mut()
+                .current_mut()
+                .shared
+                .as_mut()
+                .unwrap()
+                .controller = Some(1);
+
+            backend
+                .dispatch(Msg::SessionDragChanged {
+                    epoch: 0,
+                    author: 1,
+                    drag: Some(drag_at(0.1)),
+                })
+                .expect("own echo");
+
+            assert_eq!(backend.state().remote_drag, None);
+        })
+        .expect("spawn test")
+        .join()
+        .expect("join test");
+}
+
+/// The backstop for a `DragEnd` that never arrives - a controller killed with a pane still lifted.
+/// Every disconnect, takeover, and release already broadcasts `ControllerChanged`, so the pane
+/// falls back into the authoritative layout instead of hanging over it for the rest of the session.
+#[test]
+fn losing_the_controller_stops_lifting_whatever_it_was_carrying() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = follower_backend();
+            backend.state_mut().remote_drag = Some(drag_at(0.1));
+
+            backend
+                .dispatch(Msg::SessionControllerChanged {
+                    epoch: 0,
+                    controller: Some(3),
+                    reason: crate::session::protocol::ControllerChangeReason::Expired,
+                })
+                .expect("the controller dropped mid-gesture");
+
+            assert_eq!(
+                backend.state().remote_drag,
+                None,
+                "a lift with nobody behind it must not outlive its controller"
+            );
+        })
+        .expect("spawn test")
+        .join()
+        .expect("join test");
+}
+
+/// A background attachment has no screen to lift anything on, and the position would be stale by
+/// the time it came forward.
+#[test]
+fn a_backgrounded_attachment_ignores_relayed_drags() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = follower_backend();
+
+            backend
+                .dispatch(Msg::SessionDragChanged {
+                    epoch: 9,
+                    author: 2,
+                    drag: Some(drag_at(0.1)),
+                })
+                .expect("drag for another attachment");
+
+            assert_eq!(backend.state().remote_drag, None);
+        })
+        .expect("spawn test")
+        .join()
+        .expect("join test");
+}
+
 #[test]
 fn roster_diff_emits_joins_and_leaves_with_the_new_count() {
     let client = |id, label: &str| ClientInfo {

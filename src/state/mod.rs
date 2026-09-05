@@ -128,6 +128,11 @@ pub struct State {
     pub command_link: Option<tui_lipan::CommandLink<crate::Msg>>,
     pub mode: Mode,
     pub moving_pane: Option<MoveSession>,
+    /// Another client's tiled drag, relayed by the server. Deliberately separate from
+    /// [`Self::moving_pane`]: that field also means "this client owns a pointer gesture" and gates
+    /// lease nudges, animation, and pointer routing, none of which apply to a pane someone else is
+    /// carrying.
+    pub remote_drag: Option<RemoteDrag>,
     pub resizing_pane: Option<ResizeSession>,
     pub split_drag: Option<SplitDragSession>,
     pub animation: GeometryAnimation,
@@ -399,6 +404,7 @@ impl State {
             command_link: None,
             mode: Mode::Normal,
             moving_pane: None,
+            remote_drag: None,
             resizing_pane: None,
             split_drag: None,
             animation: GeometryAnimation::None,
@@ -895,6 +901,24 @@ impl State {
             || self.resizing_pane.is_some()
             || self.split_drag.is_some()
             || self.scratch_resize_start.is_some()
+    }
+
+    /// Whether a shared-workspace pane is currently lifted out of the tiling by a local drag.
+    ///
+    /// Lifting is a view-level exclusion: the tiles left behind reflow immediately, but the tree
+    /// they reflow from has not changed, and neither has the layout every other client is drawing.
+    /// The PTY is session-global, so pushing those transient sizes to the server would reshape one
+    /// shared screen inside rectangles only this client has - and re-wrap every application in
+    /// them, on every frame of the gesture. Resizes are held until the drop makes the new geometry
+    /// real (see [`flush_pending_resizes`](crate::pane::pty_events::flush_pending_resizes)).
+    ///
+    /// Floating drags are excluded: they translate a pane without resizing it, so they report no
+    /// new sizes to hold. Scratch drags are excluded too - the dropdown is client-local, and its
+    /// panes never reach the shared namespace this defers.
+    pub fn shared_tiled_drag_in_flight(&self) -> bool {
+        self.moving_pane.is_some_and(|session| {
+            !session.was_floating && !crate::scratchpad::contains(self, session.id)
+        })
     }
 
     /// Vertical space (in rows) the workbar removes from the panes area. Independent of whether

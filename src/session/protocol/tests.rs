@@ -172,6 +172,37 @@ fn session_origin_shape_round_trips() {
 }
 
 #[test]
+fn drag_messages_round_trip() {
+    let rect = crate::layout::shared::FracRect {
+        x: 0.125,
+        y: 0.25,
+        w: 0.5,
+        h: 0.375,
+    };
+    for message in [
+        ClientMessage::DragUpdate { pane_id: 3, rect },
+        ClientMessage::DragEnd,
+    ] {
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &message).unwrap();
+        assert_eq!(
+            read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(),
+            message
+        );
+    }
+
+    for drag in [Some(crate::state::RemoteDrag { pane_id: 3, rect }), None] {
+        let message = ServerMessage::DragChanged { author: 7, drag };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &message).unwrap();
+        assert_eq!(
+            read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap(),
+            message
+        );
+    }
+}
+
+#[test]
 fn file_tree_messages_round_trip() {
     let request = ClientMessage::ListDirectory {
         path: "/srv/project".into(),

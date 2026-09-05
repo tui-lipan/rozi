@@ -66,6 +66,34 @@ pub(crate) fn handle_pane_resize(
     Update::with_command(schedule_pane_resize_flush(epoch, resize_debounce_ms))
 }
 
+/// Re-arm the debounced flush for sizes that were held back, without sending anything now.
+///
+/// Called when a tiled drag ends. Most held panes report their settled geometry on the post-drop
+/// render and re-arm the flush themselves, but a pane that ends the gesture at the size it took
+/// when the drag started never changes again - the widget reports nothing, and its held entry
+/// would sit in `pending_resizes` with no timer coming for it. Re-arming here rather than flushing
+/// keeps the settled sizes, not the transient ones: the timer outlives the render that overwrites
+/// them.
+pub(crate) fn rearm_pending_resize_flush(ctx: &mut Context<AppRoot>) {
+    let epoch = ctx.state.runtime_epoch;
+    let debounce = ctx.state.config.pane.resize_debounce_ms.max(1);
+    let attachment = ctx.state.current();
+    if attachment.pending_resizes.is_empty() || attachment.resize_flush_scheduled {
+        return;
+    }
+    let Some(link) = ctx.state.command_link.clone() else {
+        // No runtime to park a timer on. Leave the sizes pending and the flush unarmed: flushing
+        // here would send the transient geometry, because the render that settles it has not
+        // happened yet.
+        return;
+    };
+    ctx.state.current_mut().resize_flush_scheduled = true;
+    link.send_after(
+        std::time::Duration::from_millis(debounce),
+        crate::Msg::FlushPaneResizes { epoch },
+    );
+}
+
 fn schedule_pane_resize_flush(epoch: u64, resize_debounce_ms: u64) -> Command {
     Command::after(
         std::time::Duration::from_millis(resize_debounce_ms),
@@ -83,6 +111,12 @@ fn schedule_pane_resize_flush(epoch: u64, resize_debounce_ms: u64) -> Command {
 /// widget reports a viewport only when it *changes*. Nothing re-derives one. So a size dropped here
 /// leaves the PTY wrong until the pane's geometry happens to change again - which for a pane the
 /// user is not currently resizing may be never.
+///
+/// Shared-namespace sizes are also held for the length of a tiled drag (see
+/// [`State::shared_tiled_drag_in_flight`](crate::state::State::shared_tiled_drag_in_flight)).
+/// Nothing is dropped: the entries stay pending, the drop's own geometry report overwrites them
+/// under the same key, and the flush that follows the post-drop render sends the settled size once
+/// instead of every frame of the gesture.
 pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
     let Some(client) = ctx.state.current().session_client.clone() else {
         // Mid-attach or a reconnect window. Disarm so a later report can schedule a fresh flush,
@@ -90,13 +124,14 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
         ctx.state.current_mut().resize_flush_scheduled = false;
         return;
     };
-    let is_controller = ctx.state.is_controller();
+    let publishes_shared_sizes =
+        ctx.state.is_controller() && !ctx.state.shared_tiled_drag_in_flight();
     let attachment = ctx.state.current_mut();
     attachment.resize_flush_scheduled = false;
     let pending: Vec<_> = attachment.pending_resizes.drain().collect();
     let (pending, retained): (Vec<_>, Vec<_>) = pending
         .into_iter()
-        .partition(|((local, _), _)| *local || is_controller);
+        .partition(|((local, _), _)| *local || publishes_shared_sizes);
     ctx.state.current_mut().pending_resizes.extend(retained);
     for ((local, id), (cols, rows)) in pending {
         if let Some(pane) =

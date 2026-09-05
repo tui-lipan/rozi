@@ -44,6 +44,37 @@ pub(crate) fn layout_committed(
     }
 }
 
+/// Mirror (or clear) the controller's lifted pane.
+///
+/// Ignored for a background attachment: the transient is worth nothing to a session nobody is
+/// looking at, and it would be stale by the time that attachment came forward. The author ignores
+/// its own echo - its `moving_pane` is the real gesture, and adopting the round-tripped copy would
+/// make the pane it is carrying track a position one relay old.
+pub(crate) fn drag_changed(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    author: ClientId,
+    drag: Option<crate::state::RemoteDrag>,
+) -> Update {
+    if epoch != ctx.state.runtime_epoch {
+        return Update::none();
+    }
+    let my_id = ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .map(|shared| shared.client_id);
+    if my_id == Some(author) {
+        return Update::none();
+    }
+    if ctx.state.remote_drag == drag {
+        return Update::none();
+    }
+    ctx.state.remote_drag = drag;
+    Update::full()
+}
+
 pub(crate) fn layout_rejected(
     ctx: &mut Context<AppRoot>,
     epoch: u64,

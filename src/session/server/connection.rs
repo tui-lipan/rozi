@@ -460,6 +460,34 @@ impl SessionServer {
                 }
                 responses
             }
+            // Pure relay: a drag is presence, not state. Keeping none of it here is what makes a
+            // controller that vanishes mid-gesture self-healing - there is no stale lift for a new
+            // controller to inherit, and the `ControllerChanged` every disconnect already
+            // broadcasts is what tells followers to stop lifting.
+            ClientMessage::DragUpdate { pane_id, rect } => {
+                if !self.is_controller(client_id) || self.client_read_only(client_id) {
+                    return Vec::new();
+                }
+                vec![(
+                    Target::Broadcast,
+                    ServerMessage::DragChanged {
+                        author: client_id,
+                        drag: Some(crate::state::RemoteDrag { pane_id, rect }),
+                    },
+                )]
+            }
+            ClientMessage::DragEnd => {
+                if !self.is_controller(client_id) || self.client_read_only(client_id) {
+                    return Vec::new();
+                }
+                vec![(
+                    Target::Broadcast,
+                    ServerMessage::DragChanged {
+                        author: client_id,
+                        drag: None,
+                    },
+                )]
+            }
             ClientMessage::RequestControl => self.handle_request_control(client_id),
             ClientMessage::SetControlTakeover { allowed } => {
                 if !self.clients.iter().any(|client| client.id == client_id) {

@@ -663,10 +663,19 @@ pub(crate) fn pane_element(
     } else {
         ctx.state.alert_pulse_phase
     };
+    // A pane another client is carrying wears the same colour its FOLLOW chip does. That is the
+    // whole treatment: no badge, no second border, nothing that survives the drop - just enough
+    // for a rectangle moving on its own to read as somebody moving it. An alert still wins, since
+    // that one is asking the user for something.
+    // Scratch and popup panes live in client-local layers no other client can reach, and their ids
+    // are allocated separately - so a matching id there would be a coincidence, not the same pane.
+    let carried_by_other_client = !matches!(kind, PaneKind::Scratch | PaneKind::Popup)
+        && ctx.state.remote_drag.is_some_and(|drag| drag.pane_id == id);
     let frame_fg_target = match alert {
         Some((_, color)) => {
             crate::ops::theme::pane_frame_alert_color(theme, color, alert_pulses, alert_phase)
         }
+        None if carried_by_other_client => theme.status.info,
         None => crate::ops::theme::pane_frame_foreground(
             theme,
             focused,

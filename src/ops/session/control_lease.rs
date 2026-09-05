@@ -364,6 +364,57 @@ pub(crate) fn decline_control(ctx: &mut Context<AppRoot>, index: usize) -> Updat
     Update::full()
 }
 
+/// Tell the other clients where a lifted tiled pane is now.
+///
+/// Undebounced, unlike [`schedule_layout_commit`]: the intermediate positions *are* the message
+/// here, and one pointer event carries one id and four floats. Sent only for a shared workspace
+/// drag - the scratchpad is client-local, and a floating pane's rectangle already replicates
+/// through the layout document.
+pub(crate) fn publish_drag(ctx: &mut Context<AppRoot>, id: crate::state::PaneId, rect: FloatRect) {
+    if ctx.state.scratch_visible || !ctx.state.current().session_attached {
+        return;
+    }
+    if !ctx.state.is_controller() {
+        return;
+    }
+    let Some(client) = ctx.state.current().session_client.clone() else {
+        return;
+    };
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let cols = bounds.w.round().max(1.0);
+    let rows = bounds.h.round().max(1.0);
+    client.drag_update(
+        id,
+        crate::layout::shared::FracRect {
+            x: rect.x / cols,
+            y: rect.y / rows,
+            w: rect.w / cols,
+            h: rect.h / rows,
+        },
+    );
+}
+
+/// Finish a published drag: commit the layout the drop produced, *then* stop lifting the pane.
+///
+/// The order is the whole point. Both messages ride one ordered stream, so committing first means
+/// every follower has the tree holding the pane in its new slot before it is told to stop drawing
+/// the lifted copy. Letting the debounce commit the layout after `DragEnd` would put the pane back
+/// in its old slot for as long as the timer takes.
+pub(crate) fn finish_published_drag(ctx: &mut Context<AppRoot>) {
+    if ctx.state.scratch_visible || !ctx.state.current().session_attached {
+        return;
+    }
+    if !ctx.state.is_controller() {
+        return;
+    }
+    flush_layout_commit(ctx);
+    if let Some(client) = ctx.state.current().session_client.as_ref() {
+        client.drag_end();
+    }
+}
+
 pub(crate) const LAYOUT_COMMIT_DEBOUNCE_MS: u64 = 16;
 
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<AppRoot>) {

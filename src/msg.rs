@@ -478,6 +478,11 @@ pub enum Msg {
         current_rev: u64,
         layout: Option<SharedLayout>,
     },
+    SessionDragChanged {
+        epoch: u64,
+        author: ClientId,
+        drag: Option<crate::state::RemoteDrag>,
+    },
     SessionControllerChanged {
         epoch: u64,
         controller: Option<ClientId>,

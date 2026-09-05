@@ -480,6 +480,19 @@ impl SessionClient {
             cell_height: self.cell.height,
         });
     }
+    /// Publish where a lifted tiled pane currently sits. Cheap enough to send per pointer event:
+    /// the payload is one id and four floats, and it is dropped rather than queued once the
+    /// transport fails.
+    pub fn drag_update(&self, pane_id: PaneId, rect: crate::layout::shared::FracRect) {
+        self.send_control(ClientMessage::DragUpdate { pane_id, rect });
+    }
+
+    /// End the lifted-pane gesture. The caller commits the resulting layout first; see
+    /// [`ClientMessage::DragEnd`].
+    pub fn drag_end(&self) {
+        self.send_control(ClientMessage::DragEnd);
+    }
+
     pub fn kill(&self, pane_id: PaneId, generation: u64, local: bool) {
         self.send_control(ClientMessage::Kill {
             pane_id,

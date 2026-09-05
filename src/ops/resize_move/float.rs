@@ -164,7 +164,16 @@ pub(crate) fn begin_move(
     } else {
         GeometryAnimation::None
     };
+    publish_tiled_drag(ctx, session);
     Update::full()
+}
+
+/// Mirror a tiled drag to the other clients. A floating drag needs nothing: its rectangle is part
+/// of the shared document, so the ordinary layout commit already replicates it.
+fn publish_tiled_drag(ctx: &mut Context<AppRoot>, session: Option<MoveSession>) {
+    if let Some(session) = session.filter(|session| !session.was_floating) {
+        crate::ops::session::publish_drag(ctx, session.id, session.drag_rect);
+    }
 }
 
 pub(crate) fn move_pane(
@@ -204,6 +213,8 @@ pub(crate) fn move_pane(
     {
         pane.floating_rect = rect;
     }
+    let session = ctx.state.moving_pane.filter(|session| session.id == id);
+    publish_tiled_drag(ctx, session);
     Update::full()
 }
 
@@ -220,6 +231,13 @@ pub(crate) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -
         } else {
             let viewport = ctx.viewport();
             drop_tiled_pane_at(&mut ctx.state, id, x, y, viewport);
+            // Commit the tree the drop produced before retiring the lifted copy; see
+            // `finish_published_drag`. `moving_pane` is already cleared above, so the commit this
+            // flushes describes the settled layout rather than the gesture.
+            crate::ops::session::finish_published_drag(ctx);
+            // Sizes held for the length of the gesture are now free to go, but not from here: the
+            // settled geometry only exists after the next render.
+            crate::pane::pty_events::rearm_pending_resize_flush(ctx);
         }
     }
     Update::full()
@@ -1399,5 +1417,355 @@ mod tests {
                 "the dropped pane halves its new slot, got {ratio}"
             );
         });
+    }
+
+    mod collaboration {
+        use super::*;
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        use crate::state::RemoteDrag;
+        use std::sync::mpsc::Receiver;
+
+        const VIEWPORT: Rect = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+
+        /// Two tiled panes side by side in a shared session, plus an observer on the outbound
+        /// stream. `controller` decides whether this client holds the layout lease.
+        fn shared_backend(controller: bool) -> (TestBackend<AppRoot>, Receiver<ClientOutbound>) {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, rx) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_attached = true;
+                state.current_mut().session_client = Some(client);
+                let mut shared = SharedSessionState::new(1);
+                shared.controller = Some(if controller { 1 } else { 2 });
+                // The canvas a follower letterboxes remote geometry into. Matches this viewport,
+                // so canonical and local coordinates coincide and the assertions stay readable.
+                shared.canonical_canvas = Some((100, 29));
+                state.current_mut().shared = Some(shared);
+
+                let workspace = state.active_workspace_mut();
+                workspace.panes.clear();
+                for id in 1..=2 {
+                    let mut pane = Pane::new(id, 100, FloatRect::default());
+                    pane.opening = false;
+                    workspace.panes.push(pane);
+                    crate::layout::tiling::append_tiled_window(workspace, id);
+                }
+                workspace.focused_pane = Some(1);
+                state.current_mut().focused_pane = Some(1);
+            }
+            backend.render();
+            (backend, rx)
+        }
+
+        fn control_messages(rx: &Receiver<ClientOutbound>) -> Vec<ClientMessage> {
+            rx.try_iter()
+                .filter_map(|message| match message {
+                    ClientOutbound::Control(message) => Some(message),
+                    ClientOutbound::PaneInput { .. } => None,
+                })
+                .collect()
+        }
+
+        fn pickup(backend: &mut TestBackend<AppRoot>) -> FloatRect {
+            let start = placement_of(backend.state(), 1);
+            backend
+                .dispatch(Msg::BeginMove(
+                    1,
+                    start,
+                    0,
+                    0,
+                    start.w.round() as u16,
+                    start.h.round() as u16,
+                    true,
+                ))
+                .expect("begin move");
+            start
+        }
+
+        /// The gesture itself goes on the wire. Without it a follower sees the tiles behind the
+        /// lifted pane reflow around a pane that, on its screen, never moved.
+        #[test]
+        fn a_tiled_drag_publishes_every_position_it_passes_through() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(true);
+                let start = pickup(&mut backend);
+                backend
+                    .dispatch(Msg::MovePane(1, 6, 2, true))
+                    .expect("drag");
+                backend
+                    .dispatch(Msg::MovePane(1, 6, 2, true))
+                    .expect("drag");
+
+                let lifted: Vec<_> = control_messages(&rx)
+                    .into_iter()
+                    .filter_map(|message| match message {
+                        ClientMessage::DragUpdate { pane_id, rect } => Some((pane_id, rect.x)),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(lifted.len(), 3, "one for the pickup and one per move");
+                assert!(lifted.iter().all(|(pane_id, _)| *pane_id == 1));
+                assert!(
+                    lifted[0].1 < lifted[1].1 && lifted[1].1 < lifted[2].1,
+                    "each update carries the position it was sent at: {lifted:?}"
+                );
+                // Fractions of the canonical canvas, like a floating pane's rect.
+                assert!(
+                    (lifted[0].1 - start.x / 100.0).abs() < 1e-3,
+                    "pickup publishes where the pane already is"
+                );
+            });
+        }
+
+        /// A floating pane's rectangle is part of the shared document already, so dragging one
+        /// must not also open a transient - the two would replicate the same motion twice.
+        #[test]
+        fn dragging_a_floating_pane_publishes_no_transient() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(true);
+                {
+                    let state = backend.state_mut();
+                    state.active_workspace_mut().panes[0].floating = true;
+                }
+                let start = placement_of(backend.state(), 1);
+                backend
+                    .dispatch(Msg::BeginMove(1, start, 0, 0, 10, 5, true))
+                    .expect("begin move");
+                backend
+                    .dispatch(Msg::MovePane(1, 4, 0, true))
+                    .expect("drag");
+
+                assert!(
+                    !control_messages(&rx)
+                        .iter()
+                        .any(|message| matches!(message, ClientMessage::DragUpdate { .. })),
+                    "a float replicates through the layout commit alone"
+                );
+            });
+        }
+
+        /// The ordering the whole design rests on. Both messages ride one ordered stream, so a
+        /// `DragEnd` ahead of its commit would drop the pane into its old slot on every follower
+        /// for as long as the commit debounce takes.
+        #[test]
+        fn a_drop_commits_the_layout_before_it_stops_lifting_the_pane() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(true);
+                pickup(&mut backend);
+                backend
+                    .dispatch(Msg::MovePane(1, 40, 0, true))
+                    .expect("drag across");
+                let _ = control_messages(&rx);
+
+                backend
+                    .dispatch(Msg::EndMove(1, 80, 15))
+                    .expect("drop the pane");
+
+                let messages = control_messages(&rx);
+                let commit = messages
+                    .iter()
+                    .position(|message| matches!(message, ClientMessage::CommitLayout { .. }))
+                    .expect("the drop commits the tree it produced");
+                let end = messages
+                    .iter()
+                    .position(|message| matches!(message, ClientMessage::DragEnd))
+                    .expect("the drop ends the transient");
+                assert!(
+                    commit < end,
+                    "commit must precede DragEnd, got {messages:?}"
+                );
+            });
+        }
+
+        /// A follower's screen never carries the gesture, so it must not carry its own `DragEnd`
+        /// either - and `begin_move` already refuses the pickup.
+        #[test]
+        fn a_follower_publishes_no_drag_at_all() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(false);
+                let start = placement_of(backend.state(), 1);
+                backend
+                    .dispatch(Msg::BeginMove(1, start, 0, 0, 10, 5, true))
+                    .expect("begin move");
+                backend
+                    .dispatch(Msg::MovePane(1, 6, 2, true))
+                    .expect("drag");
+                backend.dispatch(Msg::EndMove(1, 40, 10)).expect("drop");
+
+                assert!(backend.state().moving_pane.is_none());
+                assert!(
+                    !control_messages(&rx).iter().any(|message| matches!(
+                        message,
+                        ClientMessage::DragUpdate { .. } | ClientMessage::DragEnd
+                    )),
+                    "a follower has no lease and publishes no gesture"
+                );
+            });
+        }
+
+        /// The PTY is session-global, but the tiles a lift vacates are not: they reflow on the
+        /// controller's screen alone. Pushing those sizes would reshape one shared screen inside a
+        /// rectangle only this client has - and re-wrap every application in it, every frame.
+        #[test]
+        fn a_tiled_drag_holds_pty_resizes_instead_of_dropping_them() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(true);
+                pickup(&mut backend);
+                let _ = control_messages(&rx);
+
+                // The reflow the lift causes: pane 2 takes the whole canvas and reports it.
+                backend
+                    .dispatch(Msg::PaneResize(2, 98, 27))
+                    .expect("neighbour reports its transient size");
+                backend
+                    .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                    .expect("flush while the drag is in flight");
+
+                assert!(
+                    !control_messages(&rx)
+                        .iter()
+                        .any(|message| matches!(message, ClientMessage::Resize { .. })),
+                    "no PTY resize may escape while the pane is lifted"
+                );
+                assert_eq!(
+                    backend.state().current().pending_resizes.get(&(false, 2)),
+                    Some(&(98, 27)),
+                    "the size is held, never dropped - nothing else records this pane's geometry"
+                );
+            });
+        }
+
+        /// And released once the drop makes the geometry real. The settled size wins because the
+        /// post-drop report overwrites the held one under the same key before the flush runs.
+        #[test]
+        fn a_drop_releases_the_sizes_the_drag_held() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(true);
+                pickup(&mut backend);
+                // Both panes report transient geometry while the lift is in flight.
+                backend
+                    .dispatch(Msg::PaneResize(2, 98, 27))
+                    .expect("neighbour's transient size");
+                backend
+                    .dispatch(Msg::PaneResize(1, 30, 12))
+                    .expect("lifted pane's transient size");
+                backend
+                    .dispatch(Msg::EndMove(1, 80, 15))
+                    .expect("drop the pane");
+                let _ = control_messages(&rx);
+
+                // The post-drop render reports the settled geometry, then the debounce fires.
+                backend
+                    .dispatch(Msg::PaneResize(2, 49, 27))
+                    .expect("neighbour's settled size");
+                backend
+                    .dispatch(Msg::PaneResize(1, 49, 27))
+                    .expect("lifted pane's settled size");
+                backend
+                    .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                    .expect("flush after the drop");
+
+                let mut sizes: Vec<_> = control_messages(&rx)
+                    .into_iter()
+                    .filter_map(|message| match message {
+                        ClientMessage::Resize {
+                            pane_id,
+                            cols,
+                            rows,
+                            ..
+                        } => Some((pane_id, cols, rows)),
+                        _ => None,
+                    })
+                    .collect();
+                sizes.sort_unstable();
+                assert_eq!(
+                    sizes,
+                    vec![(1, 49, 27), (2, 49, 27)],
+                    "one resize per pane, carrying the settled size rather than the transient one"
+                );
+                assert!(backend.state().current().pending_resizes.is_empty());
+            });
+        }
+
+        /// The follower's half: the same pane leaves the same tiling, and is drawn where the
+        /// controller is carrying it.
+        #[test]
+        fn a_follower_lifts_the_pane_the_controller_is_carrying() {
+            in_test_stack(|| {
+                let (mut backend, _rx) = shared_backend(false);
+                let settled = backend
+                    .rect_of_key(&crate::view::pane_window_key(2, 0).into())
+                    .expect("pane 2 is on screen");
+
+                backend.state_mut().remote_drag = Some(RemoteDrag {
+                    pane_id: 1,
+                    rect: crate::layout::shared::FracRect {
+                        x: 0.1,
+                        y: 0.2,
+                        w: 0.3,
+                        h: 0.4,
+                    },
+                });
+                backend.render();
+
+                let neighbour = backend
+                    .rect_of_key(&crate::view::pane_window_key(2, 0).into())
+                    .expect("pane 2 is still on screen");
+                assert!(
+                    neighbour.w > settled.w,
+                    "the tile behind the lifted pane reflows here too: {neighbour:?} vs {settled:?}"
+                );
+
+                let lifted = backend
+                    .rect_of_key(&crate::view::pane_window_key(1, 0).into())
+                    .expect("the lifted pane is still drawn");
+                let top = f32::from(backend.state().content_top_offset());
+                assert!(
+                    (f32::from(lifted.x) - 10.0).abs() <= 1.0
+                        && (f32::from(lifted.y) - (0.2 * 29.0 + top)).abs() <= 1.0,
+                    "the lifted pane follows the published rect, got {lifted:?}"
+                );
+            });
+        }
+
+        /// Workspace membership decides whether a drag applies here. A follower choosing its own
+        /// active workspace can be watching one the controller is not rearranging, and a pane it
+        /// cannot see must not vacate a tile on its screen.
+        #[test]
+        fn a_follower_ignores_a_drag_on_a_pane_it_is_not_showing() {
+            in_test_stack(|| {
+                let (mut backend, _rx) = shared_backend(false);
+                let settled = backend
+                    .rect_of_key(&crate::view::pane_window_key(2, 0).into())
+                    .expect("pane 2 is on screen");
+
+                backend.state_mut().remote_drag = Some(RemoteDrag {
+                    pane_id: 99,
+                    rect: crate::layout::shared::FracRect {
+                        x: 0.1,
+                        y: 0.2,
+                        w: 0.3,
+                        h: 0.4,
+                    },
+                });
+                backend.render();
+
+                assert_eq!(
+                    backend
+                        .rect_of_key(&crate::view::pane_window_key(2, 0).into())
+                        .expect("pane 2 is still on screen"),
+                    settled,
+                    "a drag on a pane outside this workspace changes nothing here"
+                );
+            });
+        }
     }
 }

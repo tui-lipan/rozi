@@ -154,6 +154,17 @@ pub fn cache_dir(env: &PlatformEnv) -> PathBuf {
     xdg_style_dir(env.xdg_cache_home.as_ref(), &env.home, ".cache")
 }
 
+/// Open an unnamed, automatically removed file for a terminal replay being streamed to a client.
+///
+/// Replay bytes can contain everything a program drew, including secrets. The containing cache
+/// directory is therefore validated with the same private-directory policy as session state, and
+/// the temporary file is never given a persistent name.
+pub fn replay_spool_file(env: &PlatformEnv) -> io::Result<fs::File> {
+    let dir = cache_dir(env).join("replay");
+    fs_security::ensure_private_dir(&dir)?;
+    tempfile::tempfile_in(dir)
+}
+
 /// Base data directory used by managed installations: `$XDG_DATA_HOME/rozi`, else
 /// `~/.local/share/rozi`; `%LOCALAPPDATA%\rozi` on Windows.
 pub fn data_dir(env: &PlatformEnv) -> PathBuf {

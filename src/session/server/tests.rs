@@ -214,14 +214,15 @@ fn install_manual_replay(
     key: PaneSeedKey,
     bytes: Vec<u8>,
 ) {
+    let remaining = bytes.len() as u64;
     let mut seed = AttachSeedState::new(vec![key]);
     seed.pending.clear();
     seed.manifest.insert(key, PaneSeedState::Replaying);
     seed.replay = Some(PaneSeedReplay {
         key,
         resize_frame: None,
-        bytes,
-        offset: 0,
+        spool: PaneReplayStorage::Memory(Cursor::new(bytes)),
+        remaining,
     });
     server.client_mut(client_id).unwrap().seed = Some(seed);
 }
@@ -440,7 +441,17 @@ fn attach_replay_obeys_per_tick_work_and_resident_window_bounds() {
     server.pump_attach_seeds();
     let first = server.client_mut(client_id).unwrap();
     assert!(first.seed_queued_bytes <= SEED_PUMP_BYTES_PER_TICK);
-    assert!(first.seed.as_ref().unwrap().replay.as_ref().unwrap().offset < replay_len);
+    assert!(
+        first
+            .seed
+            .as_ref()
+            .unwrap()
+            .replay
+            .as_ref()
+            .unwrap()
+            .remaining
+            < replay_len as u64
+    );
 
     for _ in 0..16 {
         server.pump_attach_seeds();
@@ -459,9 +470,94 @@ fn attach_replay_obeys_per_tick_work_and_resident_window_bounds() {
             .replay
             .as_ref()
             .unwrap()
-            .offset
-            < replay_len
+            .remaining
+            > 0
     );
+}
+
+#[test]
+fn large_pane_replay_spills_to_file_and_round_trips_exactly() {
+    let mut pane = test_pane(1);
+    pane.cols = 120;
+    pane.rows = 32;
+    pane.terminal = TerminalScreen::new(pane.rows, pane.cols, 5_000);
+    let mut input = Vec::new();
+    for _ in 0..3_000 {
+        input.extend(std::iter::repeat_n(b'x', usize::from(pane.cols) - 1));
+        input.extend_from_slice(b"\r\n");
+    }
+    pane.screen_mut().process_bytes(&input);
+    let expected = pane.screen_without_change().export_replay_bytes();
+    assert!(expected.len() > SEED_MEMORY_SPOOL_LIMIT);
+
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(1, pane);
+    let (client_id, _stream) = attach_client(&mut server);
+    server.enqueue_attach_seeds(client_id);
+    let key = PaneSeedKey {
+        pane_id: 1,
+        generation: 1,
+    };
+    server.begin_pane_replay(client_id, key);
+    assert!(matches!(
+        &server
+            .client_mut(client_id)
+            .unwrap()
+            .seed
+            .as_ref()
+            .unwrap()
+            .replay
+            .as_ref()
+            .unwrap()
+            .spool,
+        PaneReplayStorage::File(_)
+    ));
+
+    for _ in 0..4 {
+        server.pump_attach_seeds();
+    }
+    let delivered: Vec<u8> = decode_outbox_frames(server.client_mut(client_id).unwrap())
+        .into_iter()
+        .filter_map(|frame| match frame {
+            DecodedOutboxFrame::Pane {
+                pane_id: 1,
+                generation: 1,
+                bytes,
+            } => Some(bytes),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(delivered, expected);
+}
+
+#[test]
+fn small_pane_replay_stays_in_memory() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(1, test_pane(1));
+    let (client_id, _stream) = attach_client(&mut server);
+    server.enqueue_attach_seeds(client_id);
+    server.begin_pane_replay(
+        client_id,
+        PaneSeedKey {
+            pane_id: 1,
+            generation: 1,
+        },
+    );
+
+    assert!(matches!(
+        &server
+            .client_mut(client_id)
+            .unwrap()
+            .seed
+            .as_ref()
+            .unwrap()
+            .replay
+            .as_ref()
+            .unwrap()
+            .spool,
+        PaneReplayStorage::Memory(_)
+    ));
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Cursor, Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -92,6 +92,10 @@ const SEED_CATCH_UP_LIMIT: usize = 8 * 1024 * 1024;
 /// fast local reader cannot make one attach monopolize the session pump.
 const SEED_PUMP_BYTES_PER_TICK: usize = 1024 * 1024;
 const SEED_CHUNK: usize = 256 * 1024;
+/// Small replays stay in memory; crossing this threshold spills the stream into a private,
+/// unnamed cache file. This keeps the common empty-pane path off disk while bounding the complete
+/// replay allocation.
+const SEED_MEMORY_SPOOL_LIMIT: usize = SEED_CHUNK;
 
 #[derive(Default)]
 struct ServerIdleWait {
@@ -445,8 +449,80 @@ struct PaneSeedReplay {
     /// Snapshot-point geometry must reach the client before replay. The attach manifest geometry
     /// can be stale by the time a pending pane is exported.
     resize_frame: Option<Arc<[u8]>>,
-    bytes: Vec<u8>,
-    offset: usize,
+    spool: PaneReplayStorage,
+    remaining: u64,
+}
+
+enum PaneReplayStorage {
+    Memory(Cursor<Vec<u8>>),
+    File(fs::File),
+}
+
+impl Read for PaneReplayStorage {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Memory(cursor) => cursor.read(bytes),
+            Self::File(file) => file.read(bytes),
+        }
+    }
+}
+
+/// A replay sink that retains only one frame in memory before moving larger streams to an
+/// automatically removed file. If creating or writing that file fails, the caller can safely
+/// re-export into memory because `TerminalScreen::write_replay_bytes` repairs source state before
+/// returning an error.
+struct ReplaySpoolWriter {
+    memory: Vec<u8>,
+    file: Option<BufWriter<fs::File>>,
+}
+
+impl ReplaySpoolWriter {
+    fn new() -> Self {
+        Self {
+            memory: Vec::new(),
+            file: None,
+        }
+    }
+
+    fn finish(self) -> io::Result<(PaneReplayStorage, u64)> {
+        if let Some(mut writer) = self.file {
+            writer.flush()?;
+            let mut file = writer.into_inner().map_err(|error| error.into_error())?;
+            let len = file.stream_position()?;
+            file.rewind()?;
+            Ok((PaneReplayStorage::File(file), len))
+        } else {
+            let len = self.memory.len() as u64;
+            Ok((PaneReplayStorage::Memory(Cursor::new(self.memory)), len))
+        }
+    }
+}
+
+impl Write for ReplaySpoolWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if let Some(writer) = self.file.as_mut() {
+            writer.write_all(bytes)?;
+            return Ok(bytes.len());
+        }
+        if self.memory.len().saturating_add(bytes.len()) <= SEED_MEMORY_SPOOL_LIMIT {
+            self.memory.extend_from_slice(bytes);
+            return Ok(bytes.len());
+        }
+
+        let mut file = crate::platform::paths::replay_spool_file(
+            &crate::platform::paths::PlatformEnv::from_process(),
+        )?;
+        file.write_all(&self.memory)?;
+        self.memory = Vec::new();
+        let mut writer = BufWriter::with_capacity(SEED_CHUNK, file);
+        writer.write_all(bytes)?;
+        self.file = Some(writer);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.as_mut().map_or(Ok(()), Write::flush)
+    }
 }
 
 /// Per-client attach barrier.

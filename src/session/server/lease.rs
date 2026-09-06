@@ -630,7 +630,7 @@ impl SessionServer {
 
     /// Queue one shared encoded frame on every attached client. Each client retains its own write
     /// offset, while the immutable payload allocation is shared.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn push_to_attached(&mut self, bytes: Arc<[u8]>) {
         self.push_delta_to_attached(bytes, SeedDelta::Control);
     }
@@ -844,7 +844,7 @@ impl SessionServer {
             if replay.resize_frame.is_some() {
                 return AttachSeedWork::ReplayResize;
             }
-            if replay.offset >= replay.bytes.len() {
+            if replay.remaining == 0 {
                 return AttachSeedWork::FinishReplay;
             }
             return AttachSeedWork::ReplayChunk;
@@ -901,7 +901,7 @@ impl SessionServer {
     }
 
     fn pump_replay_chunk(&mut self, id: ClientId, remaining: &mut usize) -> bool {
-        let Some((frame, payload_len, available)) = self.clients.iter().find_map(|client| {
+        let Some((key, payload_len, available)) = self.clients.iter().find_map(|client| {
             let replay = client.seed.as_ref()?.replay.as_ref()?;
             let available = SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes);
             let payload_budget = available
@@ -909,22 +909,36 @@ impl SessionServer {
                 .saturating_sub(protocol::PANE_FRAME_OVERHEAD);
             let payload_len = SEED_CHUNK
                 .min(payload_budget)
-                .min(replay.bytes.len().saturating_sub(replay.offset));
-            let frame = encode_pane_output(
-                replay.key.pane_id,
-                replay.key.generation,
-                false,
-                &replay.bytes[replay.offset..replay.offset + payload_len],
-            );
-            Some((frame, payload_len, available))
+                .min(usize::try_from(replay.remaining).unwrap_or(usize::MAX));
+            Some((replay.key, payload_len, available))
         }) else {
             return true;
         };
         if available <= protocol::PANE_FRAME_OVERHEAD || payload_len == 0 {
             return false;
         }
-        let Some(frame) = frame else {
-            self.advance_replay(id, payload_len);
+        let mut payload = vec![0; payload_len];
+        let read = self
+            .client_mut(id)
+            .and_then(|client| client.seed.as_mut())
+            .and_then(|seed| seed.replay.as_mut())
+            .expect("replay was present")
+            .spool
+            .read_exact(&mut payload);
+        if read.is_err() {
+            if let Some(seed) = self.client_mut(id).and_then(|client| client.seed.as_mut()) {
+                seed.disconnect_reason = Some("attach-seed-spool-read-failed");
+            }
+            self.remove_client(id);
+            return true;
+        }
+        let Some(frame) =
+            encode_pane_output(key.pane_id, key.generation, false, payload.as_slice())
+        else {
+            if let Some(seed) = self.client_mut(id).and_then(|client| client.seed.as_mut()) {
+                seed.disconnect_reason = Some("attach-seed-frame-encode-failed");
+            }
+            self.remove_client(id);
             return true;
         };
         let frame_len = frame.len();
@@ -936,20 +950,16 @@ impl SessionServer {
         ) {
             return true;
         }
-        self.advance_replay(id, payload_len);
-        *remaining = remaining.saturating_sub(frame_len);
-        true
-    }
-
-    fn advance_replay(&mut self, id: ClientId, bytes: usize) {
         self.client_mut(id)
             .and_then(|client| client.seed.as_mut())
             .and_then(|seed| seed.replay.as_mut())
             .expect("replay was present")
-            .offset += bytes;
+            .remaining -= payload_len as u64;
+        *remaining = remaining.saturating_sub(frame_len);
+        true
     }
 
-    fn begin_pane_replay(&mut self, id: ClientId, key: PaneSeedKey) {
+    pub(super) fn begin_pane_replay(&mut self, id: ClientId, key: PaneSeedKey) {
         self.client_mut(id)
             .and_then(|client| client.seed.as_mut())
             .expect("active seed")
@@ -962,17 +972,24 @@ impl SessionServer {
             .map(|pane| {
                 let cols = pane.cols;
                 let rows = pane.rows;
-                let bytes = pane.screen_without_change().export_replay_bytes();
-                (bytes, cols, rows)
+                let screen = pane.screen_without_change();
+                let mut writer = ReplaySpoolWriter::new();
+                let replay = screen
+                    .write_replay_bytes(&mut writer)
+                    .and_then(|()| writer.finish())
+                    .unwrap_or_else(|_| {
+                        let bytes = screen.export_replay_bytes();
+                        let len = bytes.len() as u64;
+                        (PaneReplayStorage::Memory(Cursor::new(bytes)), len)
+                    });
+                (replay.0, replay.1, cols, rows)
             });
-        let replay_len = snapshot
-            .as_ref()
-            .map_or(0, |(bytes, _, _)| bytes.len() as u64);
+        let replay_len = snapshot.as_ref().map_or(0, |(_, len, _, _)| *len);
         let seed = self
             .client_mut(id)
             .and_then(|client| client.seed.as_mut())
             .expect("active seed");
-        if let Some((bytes, cols, rows)) = snapshot {
+        if let Some((spool, remaining, cols, rows)) = snapshot {
             seed.manifest.insert(key, PaneSeedState::Replaying);
             seed.replay = Some(PaneSeedReplay {
                 key,
@@ -983,8 +1000,8 @@ impl SessionServer {
                     cols,
                     rows,
                 }),
-                bytes,
-                offset: 0,
+                spool,
+                remaining,
             });
         } else {
             seed.manifest.insert(key, PaneSeedState::CatchingUp);

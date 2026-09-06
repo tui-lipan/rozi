@@ -8,6 +8,7 @@
 //! Run with `cargo bench --bench terminal_memory`.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::io::{BufWriter, Seek, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rozi::state::{Pane, PaneId};
@@ -133,6 +134,55 @@ fn direct_probe(rows: u16, cols: u16, history: usize) -> Counts {
     counts
 }
 
+fn replay_screen(rows: u16, cols: u16, history: usize) -> TerminalScreen {
+    let mut input = Vec::new();
+    for line in 0..history + usize::from(rows) + 2 {
+        for col in 0..cols {
+            write!(
+                &mut input,
+                "\x1b[38;5;{}mX",
+                (line + usize::from(col)) % 256
+            )
+            .unwrap();
+        }
+        input.extend_from_slice(b"\x1b[0m\r\n");
+    }
+    let mut screen = TerminalScreen::new(rows, cols, history);
+    screen.process_bytes(&input);
+    screen
+}
+
+fn replay_export_probe(rows: u16, cols: u16, history: usize) {
+    let mut screen = replay_screen(rows, cols, history);
+    let (replay, collected) = measure(|| screen.export_replay_bytes());
+    let replay_len = replay.len();
+    drop(replay);
+
+    let mut spool = tempfile::tempfile().expect("temporary replay spool");
+    let (result, streamed) = measure(|| {
+        let mut writer = BufWriter::with_capacity(256 * 1024, &mut spool);
+        screen.write_replay_bytes(&mut writer)?;
+        writer.flush()
+    });
+    result.expect("stream replay");
+    let streamed_len = spool.stream_position().expect("spool position") as usize;
+
+    println!();
+    println!(
+        "{:>10}  {:>9}  {:>7}  {:>12}  {:>10}  {:>10}  {:>12}  {:>12}",
+        "export", "viewport", "history", "replay_bytes", "allocs", "frees", "live", "peak_live"
+    );
+    for (export, len, counts) in [
+        ("collected", replay_len, collected),
+        ("spooled", streamed_len, streamed),
+    ] {
+        println!(
+            "{export:>10}  {cols:>4}x{rows:<4}  {history:>7}  {len:>12}  {:>10}  {:>10}  {:>12}  {:>12}",
+            counts.allocs, counts.frees, counts.live, counts.peak
+        );
+    }
+}
+
 fn main() {
     println!(
         "{:>10}  {:>9}  {:>7}  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}",
@@ -151,4 +201,5 @@ fn main() {
             }
         }
     }
+    replay_export_probe(64, 253, 5_000);
 }

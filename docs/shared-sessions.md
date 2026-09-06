@@ -28,6 +28,16 @@ The server keeps at most 4 MiB of encoded replay queued for an attaching client.
 no total replay limit. If live changes waiting behind a slow attach exceed 8 MiB, the server
 disconnects that client without delaying clients which are already live.
 
+Replays up to 256 KiB stay in memory. A larger pane is exported through an unnamed file in Rozi's
+private cache directory and read back through 256 KiB frames; closing the replay removes the file.
+If that cache is unavailable, attach falls back to the in-memory export instead of failing.
+
+With the normal disk-backed cache, large pane replays live in file cache instead of anonymous heap
+memory. This bounds Rozi's process working set and lets the kernel reclaim replay pages under
+memory pressure. It does not proportionally reduce instantaneous system-accounted memory while the
+replay remains cached. A memory-backed `XDG_CACHE_HOME` accounts those pages according to that
+filesystem instead.
+
 ## Layout control
 
 One writable client controls layout changes at a time. The controller can split, close, move,

@@ -64,6 +64,7 @@ unicode-width = "0.2.2"
 unicode-segmentation = "1.13.3"
 getrandom = "0.4.3"
 url = "2.5.8"
+tempfile = "3.27.0"
 
 [features]
 # Headless PNG/JSON capture for visual review. Opt-in so release builds do not
@@ -88,7 +89,6 @@ test = false
 
 [dev-dependencies]
 criterion = "0.8.2"
-tempfile = "3.27.0"
 
 [[bench]]
 name = "terminal_ingest"
@@ -124,6 +124,14 @@ harness = false
 
 [[bench]]
 name = "terminal_memory"
+harness = false
+
+[[bench]]
+name = "replay_export"
+harness = false
+
+[[bench]]
+name = "replay_memory"
 harness = false
 
 [target.'cfg(unix)'.dependencies]

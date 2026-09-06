@@ -40,7 +40,9 @@
   exporting and queuing the whole session behind a 64 MiB cap. Pane output after each snapshot waits
   behind that snapshot, while output from panes not yet exported is included in their later
   snapshot. Large scrollback no longer makes the total snapshot size an attach limit. Live changes
-  waiting behind a slow attach remain bounded to 8 MiB for that client.
+  waiting behind a slow attach remain bounded to 8 MiB for that client. Pane exports above 256 KiB
+  use an automatically removed file in Rozi's private cache instead of retaining the complete
+  replay on the heap; cache failures fall back to the in-memory path.
 - The bootstrap installers drop the extra indent and finish in two short forms: `Run rozi` when
   the command is already on PATH, or `Not on PATH` with `Run` and `Add` lines when it is not.
   Windows still names the third case, a session that has not picked up a persisted PATH entry, as

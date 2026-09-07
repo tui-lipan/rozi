@@ -223,3 +223,24 @@ fn the_keyboard_cursor_reveals_the_close_affordance_while_focused() {
         "the focused cursor reveals the row's ✕: {lines:#?}"
     );
 }
+
+/// A short pane name must not cap its program badge at half the row. ListItem descriptions share
+/// leftover width with the label, and the label keeps priority when both cannot fit.
+#[test]
+fn pane_row_description_shares_leftover_width_with_the_label() {
+    const PROGRAM: &str = "abcdefghijklmnop-long-bin";
+    let lines = panes_sidebar_lines(|state| {
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.set_custom_title("zsh");
+        pane.terminal.cwd = Some("/home/user/work/rozi".into());
+        pane.terminal.foreground_program = Some(PROGRAM.to_string());
+    });
+    let title = lines
+        .iter()
+        .find(|line| line.contains("zsh"))
+        .unwrap_or_else(|| panic!("pane title row is missing: {lines:#?}"));
+    assert!(
+        title.contains(PROGRAM),
+        "description should use leftover width after a short label, not half the row: {title:?}"
+    );
+}

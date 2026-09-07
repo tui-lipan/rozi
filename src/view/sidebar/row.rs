@@ -86,8 +86,9 @@ pub(crate) struct Row {
     title: String,
     title_style: Style,
     badge: Option<Element>,
-    hover_badge: Option<Element>,
-    meta: Option<Element>,
+    description: Option<(String, Style)>,
+    hover_description: Option<(String, Style)>,
+    meta: Option<(String, Style)>,
     detail: Vec<(String, Style)>,
 }
 
@@ -100,7 +101,8 @@ impl Row {
             title: title.into(),
             title_style: Style::default(),
             badge: None,
-            hover_badge: None,
+            description: None,
+            hover_description: None,
             meta: None,
             detail: Vec::new(),
         }
@@ -119,10 +121,11 @@ impl Row {
     }
 
     /// A short marker pinned to the right edge of the title line — a workspace number, a client
-    /// count, session connection chrome. The title yields to it, so a long title truncates rather
-    /// than pushing it off.
+    /// count, session connection chrome. Label and description share the row; the label keeps
+    /// priority when they both cannot fit.
     pub(super) fn badge(mut self, badge: impl Into<Element>) -> Self {
         self.badge = Some(badge.into());
+        self.description = None;
         self
     }
 
@@ -130,13 +133,14 @@ impl Row {
     /// run, say. Unlike the badge it does not pin to the right edge, so it stays attached to the
     /// name it qualifies instead of drifting away from it on a wide sidebar.
     pub(super) fn meta(mut self, text: impl Into<String>, style: Style) -> Self {
-        self.meta = Some(Text::new(text.into()).style(style).into());
+        self.meta = Some((text.into(), style));
         self
     }
 
     /// Text badge helper for the common string + style case.
     pub(super) fn badge_text(mut self, text: impl Into<String>, style: Style) -> Self {
-        self.badge = Some(Text::new(text.into()).style(style).into());
+        self.description = Some((text.into(), style));
+        self.badge = None;
         self
     }
 
@@ -145,7 +149,7 @@ impl Row {
     /// what it is and what clicking it does without growing — and a row that grows under the
     /// pointer shifts everything below it out from under the hand that is aiming.
     pub(super) fn hover_badge_text(mut self, text: impl Into<String>, style: Style) -> Self {
-        self.hover_badge = Some(Text::new(text.into()).style(style).into());
+        self.hover_description = Some((text.into(), style));
         self
     }
 
@@ -206,53 +210,49 @@ impl Row {
             cells = cells.child(glyph);
         }
 
-        // A badge pins itself to the right edge, with the title flexing into whatever is left. The
-        // title has to be the one that gives way — a workspace number pushed off the edge is worse
-        // than a truncated name, since the name is usually recoverable from the row beside it.
-        //
-        // A visible ✕ takes that slot instead of the badge rather than fighting it for width. The
-        // badge is ambient (what the pane runs) and comes back the moment the pointer leaves; the ✕
-        // is the thing being aimed at, so in a column this narrow it gets the space.
-        let trailing = match (close, hovered) {
-            (Some(close), _) => Some(close_affordance(ctx, close)),
-            (None, true) => self.hover_badge.or(self.badge),
-            (None, false) => self.badge,
+        // A visible ✕ takes the badge slot rather than fighting it for width. The badge is ambient
+        // and comes back the moment the pointer leaves; the ✕ is the thing being aimed at, so in a
+        // column this narrow it gets the space.
+        let trailing = if let Some(close) = close {
+            Some(close_affordance(ctx, close))
+        } else if hovered && self.hover_description.is_some() {
+            None
+        } else {
+            self.badge
         };
-        // The name keeps only the width it needs when something rides beside it, so the meta
-        // token stays attached to the name rather than drifting to the far edge; the flex moves to
-        // the gap between them and the badge.
-        let name = Text::new(self.title).style(self.title_style);
-        let title: Element = match (self.meta, trailing) {
-            (None, None) => name.into(),
-            (None, Some(trailing)) => HStack::new()
+        let description = if trailing.is_some() {
+            None
+        } else if hovered {
+            self.hover_description.or(self.description)
+        } else {
+            self.description
+        };
+
+        let mut spans = vec![Span::new(self.title).style(self.title_style)];
+        if let Some((meta, style)) = self.meta {
+            spans.push(Span::new(format!(" {meta}")).style(style));
+        }
+        let description_spans = description
+            .map(|(text, style)| vec![Span::new(text).style(style)])
+            .unwrap_or_default();
+        // Title-line chrome (✕, host status) pins to this line only. A two-line List beside that
+        // badge would steal width from the detail as well, which is how "Click to connect" was
+        // ellipsized with empty space still sitting to its right.
+        let mut title = item_text(labeled_item(spans, description_spans), 1);
+        if let Some(trailing) = trailing {
+            title = HStack::new()
                 .gap(1)
                 .height(Length::Px(1))
-                .child(name.width(Length::Flex(1)))
+                .child(title)
                 .child(trailing)
-                .into(),
-            (Some(meta), trailing) => {
-                let mut line = HStack::new()
-                    .gap(1)
-                    .height(Length::Px(1))
-                    .child(name)
-                    .child(meta);
-                if let Some(trailing) = trailing {
-                    line = line
-                        .child(Spacer::new().width(Length::Flex(1)))
-                        .child(trailing);
-                }
-                line.into()
-            }
-        };
+                .into();
+        }
 
         // The cursor changes the background only; every span keeps the color that carries its
         // meaning, so agent status, git state, and error red stay readable underneath it.
-        let mut text = VStack::new().gap(0).child(title);
-        if !self.detail.is_empty() {
-            text = text.child(self.detail.into_iter().fold(
-                HStack::new().gap(1).height(Length::Px(1)),
-                |line, (value, style)| line.child(Text::new(value).style(style)),
-            ));
+        let mut text = VStack::new().gap(0).height(Length::Px(lines)).child(title);
+        if let Some(detail) = detail_item(self.detail) {
+            text = text.child(item_text(detail, 1));
         }
 
         HStack::new()
@@ -273,6 +273,47 @@ impl Row {
             .child(cells.child(text))
             .into()
     }
+}
+
+fn labeled_item(label: Vec<Span>, description: Vec<Span>) -> ListItem {
+    let mut item = ListItem::from_spans(label).primary_truncate_description_first(true);
+    if !description.is_empty() {
+        item = item.description_spans(description);
+    }
+    item
+}
+
+fn item_text(item: ListItem, lines: u16) -> Element {
+    List::new()
+        .items([item])
+        .selected(None)
+        .focusable(false)
+        .tab_stop(false)
+        .symbol_column(false)
+        .scroll_wheel(false)
+        .activate_on_click(false)
+        .scroll_keys(ScrollKeymap::NONE)
+        .hover_style(Style::new())
+        .item_hover_style(Style::new())
+        .height(Length::Px(lines))
+        .width(Length::Flex(1))
+        .into()
+}
+
+fn detail_item(detail: Vec<(String, Style)>) -> Option<ListItem> {
+    let mut parts = detail.into_iter();
+    let (first, first_style) = parts.next()?;
+    let mut description = Vec::new();
+    for (index, (text, style)) in parts.enumerate() {
+        if index > 0 {
+            description.push(Span::new(" "));
+        }
+        description.push(Span::new(text).style(style));
+    }
+    Some(labeled_item(
+        vec![Span::new(first).style(first_style)],
+        description,
+    ))
 }
 
 /// The ✕ pinned to a row's title line: click or press `x` to arm, again to destroy.

@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -90,6 +91,11 @@ pub struct Attachment {
     /// Latest authoritative layout received while this attachment was in the background. Applied
     /// when it becomes current so background protocol traffic never mutates the visible session.
     pub pending_background_layout: Option<(u64, crate::layout::shared::SharedLayout)>,
+    /// Another client's in-flight tiled drag, scoped to this session attachment.
+    pub remote_drag: Option<crate::state::RemoteDrag>,
+    /// Pane whose remote drag was cleared by a controller change. It gets one instant transition
+    /// while the tiles around it animate back into the authoritative layout.
+    pub remote_drag_snap: Cell<Option<PaneId>>,
     /// Structural closes deferred while this attachment is parked. Applied after it returns to the
     /// foreground and regains layout control.
     pub pending_background_closes: Vec<(PaneId, u64)>,
@@ -98,6 +104,11 @@ pub struct Attachment {
     pub pending_resizes: HashMap<(bool, PaneId), (u16, u16)>,
     /// Whether a batched `Msg::FlushPaneResizes` timer is in flight.
     pub resize_flush_scheduled: bool,
+    /// Generation of the currently valid resize timer. Replacing it fences a queued stale timer.
+    pub resize_flush_generation: u64,
+    /// Shared resize entries observed while a tiled drag was in flight. Control loss discards only
+    /// these entries, not unrelated pending geometry reports.
+    pub drag_held_resizes: HashSet<(bool, PaneId)>,
     /// Recently removed authoritative panes retained only so a same-generation layout correction
     /// can restore the client-side terminal screen while Canvas owns the visual exit subtree.
     pub retired_panes: ExitQueue<(PaneId, u64), Pane>,
@@ -145,9 +156,13 @@ impl Attachment {
             pending_spawns: Vec::new(),
             pending_replay_inputs: HashMap::new(),
             pending_background_layout: None,
+            remote_drag: None,
+            remote_drag_snap: Cell::new(None),
             pending_background_closes: Vec::new(),
             pending_resizes: HashMap::new(),
             resize_flush_scheduled: false,
+            resize_flush_generation: 0,
+            drag_held_resizes: HashSet::new(),
             retired_panes: ExitQueue::with_exit_timeout(
                 crate::layout::anim::retained_pane_timeout(
                     crate::layout::anim::WindowAnimationConfig::default(),
@@ -258,6 +273,8 @@ impl Attachment {
         self.session_attached = false;
         self.session_client = None;
         self.shared = None;
+        self.remote_drag = None;
+        self.remote_drag_snap.set(None);
         self.prune_replay_inputs_to_pending_spawns();
         for pane in self
             .workspaces
@@ -451,5 +468,25 @@ mod tests {
         ];
         shared_session.shared = Some(shared);
         assert_eq!(shared_session.disposition(), SessionDisposition::Keep);
+    }
+
+    #[test]
+    fn disconnect_clears_transient_remote_drag_state() {
+        let mut attachment = Attachment::new();
+        attachment.remote_drag = Some(crate::state::RemoteDrag {
+            pane_id: 4,
+            rect: crate::layout::shared::FracRect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 0.0,
+            },
+        });
+        attachment.remote_drag_snap.set(Some(4));
+
+        attachment.mark_disconnected();
+
+        assert_eq!(attachment.remote_drag, None);
+        assert_eq!(attachment.remote_drag_snap.get(), None);
     }
 }

@@ -907,6 +907,36 @@ impl State {
             || self.scratch_resize_start.is_some()
     }
 
+    /// Whether a shared-workspace pane is currently lifted out of the tiling by a local drag.
+    ///
+    /// Lifting is a view-level exclusion: the tiles left behind reflow immediately, but the tree
+    /// they reflow from has not changed, and neither has the layout every other client is drawing.
+    /// The PTY is session-global, so pushing those transient sizes to the server would reshape one
+    /// shared screen inside rectangles only this client has - and re-wrap every application in
+    /// them, on every frame of the gesture. Resizes are held until the drop makes the new geometry
+    /// real (see [`flush_pending_resizes`](crate::pane::pty_events::flush_pending_resizes)).
+    ///
+    /// Floating drags are excluded: they translate a pane without resizing it, so they report no
+    /// new sizes to hold. Scratch drags are excluded too - the dropdown is client-local, and its
+    /// panes never reach the shared namespace this defers.
+    pub fn shared_tiled_drag_in_flight(&self) -> bool {
+        !self.scratch_visible
+            && self
+                .moving_pane
+                .is_some_and(|session| !session.was_floating)
+    }
+
+    /// Drop only shared resize reports from a tiled drag that lost control. Local pane reports and
+    /// unrelated pending shared reports remain queued for their normal flush.
+    pub fn discard_shared_drag_resizes(&mut self) {
+        if self.shared_tiled_drag_in_flight() {
+            let held = std::mem::take(&mut self.current_mut().drag_held_resizes);
+            self.current_mut()
+                .pending_resizes
+                .retain(|key, _| !held.contains(key));
+        }
+    }
+
     /// Vertical space (in rows) the workbar removes from the panes area. Independent of whether
     /// the workbar sits at the top or the bottom - either way it consumes the same one row.
     pub fn top_chrome_height(&self) -> u16 {
@@ -1151,6 +1181,26 @@ mod render_visibility_tests {
         assert_eq!(state.current().active_workspace, 0);
         assert_eq!(state.current().focused_pane, Some(1));
         assert_eq!(state.current().workspaces[0].panes[0].id, 1);
+    }
+
+    #[test]
+    fn hidden_scratch_id_collision_does_not_hide_a_shared_tiled_drag() {
+        let mut state = state_with_two_workspaces();
+        state
+            .scratch
+            .panes
+            .push(Pane::new(1, 100, FloatRect::default()));
+        state.moving_pane = Some(MoveSession {
+            id: 1,
+            was_floating: false,
+            drag_rect: FloatRect::default(),
+            pointer_x: 0,
+            pointer_y: 0,
+        });
+
+        assert!(state.shared_tiled_drag_in_flight());
+        state.scratch_visible = true;
+        assert!(!state.shared_tiled_drag_in_flight());
     }
 
     #[test]

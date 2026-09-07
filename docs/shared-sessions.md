@@ -18,7 +18,7 @@ When another client is already using the session, Rozi asks whether to follow, a
 control, or cancel. If immediate takeover is enabled, the control option takes control directly.
 
 The session picker shows when other clients are attached. The workbar shows `CTRL` while this client
-controls the layout and `VIEW` while it follows.
+controls the layout and `FOLLOW` while it follows.
 
 Joining copies the current pane list and layout first, then streams each pane's retained terminal
 state. Replayable output produced before a pane snapshot is part of that snapshot. Output produced
@@ -62,6 +62,21 @@ server that is already running.
 A client that moves the session into the background gives up control. If the controller disconnects,
 the oldest active writable follower becomes controller. Parked and read-only clients are skipped.
 
+## Watching a drag
+
+While the controller drags a pane, attached clients lift the same pane out of the tiling and follow
+each drag update live. A client that attaches mid-gesture starts following with the next update. The
+tiles it vacates reflow on every screen, and the carried pane is drawn in the color of the `FOLLOW`
+badge so it reads as someone else's gesture rather than a pane moving on its own.
+
+A drag is not part of the shared layout. It is never saved into a profile, never restored with a
+session, and disappears if the controller disconnects mid-gesture — the pane falls back into the
+last committed layout.
+
+Followers animate layout changes with their own settings: a new layout arrives as a destination and
+each client eases toward it locally. A pane being dragged is the exception and tracks the controller
+directly, since easing would leave it trailing the pointer.
+
 ## Terminal size
 
 The controller's content area determines the shared PTY size. Followers display that canvas inside
@@ -72,6 +87,10 @@ Changing a follower's sidebar is local and does not resize the session.
 
 Transferring control makes the new controller's size authoritative. Full-screen programs may
 reflow when this happens.
+
+Dragging a pane does not resize any PTY. The tiles reflow on screen for the length of the gesture,
+but the programs inside them keep their grid until the pane lands, so a drag across a workspace
+costs one reflow per affected pane instead of one per frame.
 
 ## Input control
 

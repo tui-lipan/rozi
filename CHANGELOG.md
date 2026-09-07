@@ -33,9 +33,23 @@
   host that failed to connect appeared for a few frames and vanished, leaving nothing to retry.
 - A saved host that could not be written to disk is still listed and usable for the rest of the
   session, with a warning naming the reason.
+- Dragging a tiled pane in a shared session is live on every attached client: the same pane lifts
+  out of the tiling everywhere and follows the controller's pointer, drawn in the `FOLLOW` color so
+  it reads as somebody else moving it. Previously only the consequence replicated - the tiles behind
+  it reflowed on the follower while the pane itself sat still, a layout that could not exist
+  locally. The drag is presence, not layout: it is never saved into a profile, never restored with a
+  session, and clears if the controller disconnects mid-gesture.
+- Followers animate layout changes with their own animation settings. A layout revision is a
+  destination rather than a path, so each client eases toward it locally instead of snapping while
+  the controller animates.
 
 ### Changed
 
+- Dragging a pane no longer resizes the PTYs of the tiles it reflows past. Lifting a pane is a
+  client-local view change, but the PTY behind each tile is shared by the whole session, so the
+  reflow was reshaping one screen inside rectangles only the controller had - re-wrapping every
+  program in them on every frame of the gesture, and leaving followers drawing a wider screen inside
+  a narrower box. Sizes now settle once, when the pane lands.
 - Attaching to a populated session now streams pane replay through a 4 MiB send window instead of
   exporting and queuing the whole session behind a 64 MiB cap. Pane output after each snapshot waits
   behind that snapshot, while output from panes not yet exported is included in their later

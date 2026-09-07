@@ -516,6 +516,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             current_rev,
             layout,
         } => session::layout_rejected(ctx, epoch, current_rev, layout),
+        Msg::SessionDragChanged {
+            epoch,
+            author,
+            drag,
+        } => session::drag_changed(ctx, epoch, author, drag),
         Msg::SessionControllerChanged {
             epoch,
             controller,
@@ -535,7 +540,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SessionRuntimeMetrics { epoch, metrics: _ } => {
             runtime_metrics_update(epoch, ctx.state.runtime_epoch, ctx.devtools_visible())
         }
-        Msg::FlushPaneResizes { epoch } => session::flush_pane_resizes(ctx, epoch),
+        Msg::FlushPaneResizes { epoch, generation } => {
+            session::flush_pane_resizes(ctx, epoch, generation)
+        }
         Msg::FlushLayoutCommit { epoch } => session::flush_layout_commit(ctx, epoch),
         Msg::SessionOutput {
             epoch,

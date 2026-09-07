@@ -198,14 +198,14 @@ mod tests {
         let latest = Version::parse("2.0.0").unwrap();
         let wrong_version = FakeDownloader {
             bytes:
-                br#"{"schema_version":1,"version":"1.0.0","extension_api":2,"session_protocol":4}"#
+                br#"{"schema_version":1,"version":"1.0.0","extension_api":2,"session_protocol":5}"#
                     .to_vec(),
         };
         assert!(fetch_compatibility(&wrong_version, &repository, &latest).is_none());
 
         let matching = FakeDownloader {
             bytes:
-                br#"{"schema_version":1,"version":"2.0.0","extension_api":2,"session_protocol":4}"#
+                br#"{"schema_version":1,"version":"2.0.0","extension_api":2,"session_protocol":5}"#
                     .to_vec(),
         };
         assert_eq!(

@@ -785,12 +785,32 @@ impl AppRoot {
         }
     }
 
-    fn geometry_animation_enabled(state: &State, pane: &Pane, viewport_changed: bool) -> bool {
-        if !state.is_controller()
-            || viewport_changed
+    /// Whether this pane's rectangle may animate to its new position.
+    ///
+    /// Followers animate too. A layout revision is an authoritative *destination*, not a path, so
+    /// the transition between the geometry a follower holds and the geometry that arrives is a
+    /// local presentation choice - the same one the controller makes, from the same
+    /// [`GeometryAnimation`] the reconciler arms in `apply_shared_layout`.
+    ///
+    /// A pane under continuous manipulation is the exception, whoever is manipulating it. Its
+    /// rectangle is being reported, not derived, so easing toward each reported position would
+    /// leave it trailing the pointer by one relay for the whole gesture. The tiles *around* it
+    /// still animate: they move once when the pane is lifted and once when it lands, which is an
+    /// ordinary discrete transition on both the controller and every follower.
+    pub(crate) fn geometry_animation_enabled(
+        state: &State,
+        pane: &Pane,
+        viewport_changed: bool,
+    ) -> bool {
+        if viewport_changed
             || state
                 .moving_pane
                 .is_some_and(|session| session.id == pane.id)
+            || state
+                .current()
+                .remote_drag
+                .is_some_and(|drag| drag.pane_id == pane.id)
+            || state.current().remote_drag_snap.get() == Some(pane.id)
             || state
                 .resizing_pane
                 .as_ref()
@@ -3173,5 +3193,87 @@ mod tests {
 
         let pane = &state.current().workspaces[0].panes[0];
         assert!(!anim::pane_slides(state.config.animations, pane));
+    }
+
+    /// Two tiled panes in a shared session whose lease belongs to `controller`.
+    fn shared_state(controller: crate::layout::shared::ClientId) -> State {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.current_mut().session_attached = true;
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.controller = Some(controller);
+        state.current_mut().shared = Some(shared);
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        for id in 1..=2 {
+            let mut pane = Pane::new(id, 100, FloatRect::default());
+            pane.opening = false;
+            workspace.panes.push(pane);
+        }
+        state
+    }
+
+    /// A layout revision is a destination, not a path. Followers reconcile toward it through the
+    /// same `GeometryAnimation` the controller uses, so they animate the same way - anything else
+    /// makes one client's workspace snap while another's eases.
+    #[test]
+    fn a_follower_animates_the_geometry_a_layout_revision_brings() {
+        let mut state = shared_state(2);
+        state.animation = GeometryAnimation::TileFloat;
+        let pane = &state.current().workspaces[0].panes[0];
+
+        assert!(
+            AppRoot::geometry_animation_enabled(&state, pane, false),
+            "a follower reconciling toward a new revision animates like the controller"
+        );
+    }
+
+    /// Continuous manipulation is direct on every screen. Easing toward each reported position
+    /// would leave the carried pane a relay behind the pointer for the whole gesture; the tiles
+    /// around it still animate, because they move once at the lift and once at the drop.
+    #[test]
+    fn a_carried_pane_tracks_directly_while_its_neighbours_still_animate() {
+        let mut state = shared_state(2);
+        state.current_mut().remote_drag = Some(crate::state::RemoteDrag {
+            pane_id: 1,
+            rect: crate::layout::shared::FracRect {
+                x: 0.1,
+                y: 0.1,
+                w: 0.4,
+                h: 0.4,
+            },
+        });
+        state.animation = anim::GeometryAnimation::TileFloat;
+
+        let carried = &state.current().workspaces[0].panes[0];
+        assert!(
+            !AppRoot::geometry_animation_enabled(&state, carried, false),
+            "the pane being carried is reported, not derived - it must not ease"
+        );
+        let neighbour = &state.current().workspaces[0].panes[1];
+        assert!(
+            AppRoot::geometry_animation_enabled(&state, neighbour, false),
+            "the tile it vacated makes one discrete move, which animates"
+        );
+    }
+
+    /// The same rule from the other side: this client's own drag is direct too.
+    #[test]
+    fn a_locally_dragged_pane_tracks_directly() {
+        let mut state = shared_state(1);
+        state.animation = GeometryAnimation::TileFloat;
+        state.moving_pane = Some(crate::state::MoveSession {
+            id: 1,
+            was_floating: false,
+            drag_rect: FloatRect::default(),
+            pointer_x: 0,
+            pointer_y: 0,
+        });
+
+        let carried = &state.current().workspaces[0].panes[0];
+        assert!(!AppRoot::geometry_animation_enabled(&state, carried, false));
+        let neighbour = &state.current().workspaces[0].panes[1];
+        assert!(AppRoot::geometry_animation_enabled(
+            &state, neighbour, false
+        ));
     }
 }

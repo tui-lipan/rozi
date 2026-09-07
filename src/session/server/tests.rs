@@ -3803,3 +3803,97 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
     assert!(text.contains("popup result"));
     assert!(text.contains("[exit 3]  Enter/Esc/Space: close"));
 }
+
+/// A drag is relayed, not recorded. The server keeps no copy of it, so the only thing it has to
+/// get right is who may speak: the controller, and nobody else.
+#[test]
+fn only_the_controller_may_publish_a_drag() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _controller_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    assert_eq!(server.controller, Some(controller));
+
+    let rect = crate::layout::shared::FracRect {
+        x: 0.25,
+        y: 0.1,
+        w: 0.5,
+        h: 0.4,
+    };
+    let responses =
+        server.handle_message(controller, ClientMessage::DragUpdate { pane_id: 7, rect });
+    assert_eq!(
+        responses
+            .iter()
+            .filter_map(|(target, message)| match (target, message) {
+                (Target::Broadcast, ServerMessage::DragChanged { author, drag }) =>
+                    Some((*author, *drag)),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![(
+            controller,
+            Some(crate::state::RemoteDrag { pane_id: 7, rect })
+        )],
+        "the controller's lift is broadcast verbatim"
+    );
+
+    assert!(
+        server
+            .handle_message(follower, ClientMessage::DragUpdate { pane_id: 7, rect })
+            .is_empty(),
+        "a follower cannot lift a pane on everyone else's screen"
+    );
+    assert!(
+        server
+            .handle_message(follower, ClientMessage::DragEnd)
+            .is_empty(),
+        "nor end a gesture it never owned"
+    );
+}
+
+/// A read-only client holding the lease is still read-only: its drag messages are as inert as its
+/// layout commits.
+#[test]
+fn a_read_only_client_cannot_publish_a_drag() {
+    let mut server = SessionServer::new_named("dev");
+    let (_controller, _stream) = attach_client(&mut server);
+    let (viewer, _viewer_stream) = attach_read_only_client(&mut server);
+    server.controller = Some(viewer);
+
+    assert!(
+        server
+            .handle_message(
+                viewer,
+                ClientMessage::DragUpdate {
+                    pane_id: 1,
+                    rect: crate::layout::shared::FracRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 0.5,
+                        h: 0.5,
+                    },
+                },
+            )
+            .is_empty()
+    );
+}
+
+/// Ending a drag broadcasts the clearing message to everyone, its author included - one relay
+/// path, with the author recognising its own echo client-side.
+#[test]
+fn ending_a_drag_broadcasts_a_cleared_drag() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _stream) = attach_client(&mut server);
+
+    let responses = server.handle_message(controller, ClientMessage::DragEnd);
+    assert!(matches!(
+        responses.as_slice(),
+        [(
+            Target::Broadcast,
+            ServerMessage::DragChanged {
+                author,
+                drag: None
+            }
+        )] if *author == controller
+    ));
+}

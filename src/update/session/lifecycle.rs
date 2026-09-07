@@ -49,8 +49,18 @@ pub(crate) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String)
         return Update::full();
     }
     ctx.state.sidebar.invalidate_sessions();
+    cancel_current_pointer_layout_sessions(&mut ctx.state);
     ctx.state.current_mut().mark_disconnected();
     crate::ops::session::reconnect_current_session(ctx)
+}
+
+fn cancel_current_pointer_layout_sessions(state: &mut crate::state::State) {
+    if state.shared_tiled_drag_in_flight() {
+        state.discard_shared_drag_resizes();
+    }
+    state.moving_pane = None;
+    state.resizing_pane = None;
+    state.split_drag = None;
 }
 
 pub(crate) fn transport_failed(
@@ -225,7 +235,8 @@ pub(crate) fn attached(
         ctx.state.animation = GeometryAnimation::None;
         bind_attached_pane_backends(ctx, panes);
         flush_pending_spawns(ctx);
-        crate::pane::pty_events::flush_pending_resizes(ctx);
+        let generation = ctx.state.current().resize_flush_generation;
+        crate::pane::pty_events::flush_pending_resizes(ctx, generation);
         Update::full()
     } else if had_panes {
         // Defensive: a live server holding panes but no committed layout (should not occur under
@@ -233,7 +244,8 @@ pub(crate) fn attached(
         apply_attached_panes(ctx, panes);
         ctx.state.animation = GeometryAnimation::None;
         flush_pending_spawns(ctx);
-        crate::pane::pty_events::flush_pending_resizes(ctx);
+        let generation = ctx.state.current().resize_flush_generation;
+        crate::pane::pty_events::flush_pending_resizes(ctx, generation);
         Update::full()
     } else {
         // An empty server (fresh ephemeral, autostarted named session, or one whose panes all
@@ -241,7 +253,8 @@ pub(crate) fn attached(
         // (controller) commits rev 1 on the tail chokepoint pass.
         let spawned = spawn_state_panes_on_session(ctx);
         flush_pending_spawns(ctx);
-        crate::pane::pty_events::flush_pending_resizes(ctx);
+        let generation = ctx.state.current().resize_flush_generation;
+        crate::pane::pty_events::flush_pending_resizes(ctx, generation);
         if spawned.is_empty() {
             Update::full()
         } else {

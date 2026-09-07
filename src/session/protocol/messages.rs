@@ -169,6 +169,23 @@ pub enum ClientMessage {
         base_rev: u64,
         layout: SharedLayout,
     },
+    /// Controller-only: a tiled pane is lifted out of the tiling and is currently at `rect`.
+    ///
+    /// Transient presence state, relayed rather than recorded: it carries no revision, is never
+    /// merged into the shared layout, and the server keeps none of it. Sent continuously for the
+    /// length of the gesture, so a follower can lift the same pane instead of watching the tiles
+    /// behind it reflow around a pane that never moved.
+    DragUpdate {
+        pane_id: PaneId,
+        /// Fractions of the controller's canonical canvas, matching `SharedPane::rect`.
+        rect: crate::layout::shared::FracRect,
+    },
+    /// Controller-only: the tiled drag is over.
+    ///
+    /// The controller commits the resulting layout *before* sending this, and both ride the same
+    /// ordered stream, so every follower has applied the authoritative tree by the time it stops
+    /// lifting the pane. Reversing the two would drop the pane back into its old slot for a frame.
+    DragEnd,
     /// Request the layout-control lease. The server grants immediately when there is no controller
     /// or takeover is enabled; otherwise it flags this client as requesting and notifies the
     /// controller (see [`ServerMessage::ControlRequested`]).
@@ -384,6 +401,17 @@ pub enum ServerMessage {
     LayoutRejected {
         current_rev: u64,
         layout: Option<SharedLayout>,
+    },
+    /// The controller's in-flight tiled drag moved, or ended (`drag: None`).
+    ///
+    /// Broadcast to every client including its author, like [`Self::LayoutCommitted`], so there is
+    /// one relay path rather than a special case; the author recognises `author` as itself and
+    /// keeps its own drag session. Nothing on the server survives this message - a client that
+    /// misses the trailing `None` clears the drag on the next
+    /// [`Self::ControllerChanged`] instead, which every disconnect and lease move already emits.
+    DragChanged {
+        author: ClientId,
+        drag: Option<crate::state::RemoteDrag>,
     },
     ControllerChanged {
         controller: Option<ClientId>,

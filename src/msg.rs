@@ -520,6 +520,7 @@ pub enum Msg {
     /// Trailing-edge flush of debounced controller pane resizes (see `pty_events::handle_pane_resize`).
     FlushPaneResizes {
         epoch: u64,
+        generation: u64,
     },
     /// Trailing-edge flush of the controller's shared layout.
     FlushLayoutCommit {

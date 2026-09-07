@@ -797,14 +797,20 @@ impl AppRoot {
     /// leave it trailing the pointer by one relay for the whole gesture. The tiles *around* it
     /// still animate: they move once when the pane is lifted and once when it lands, which is an
     /// ordinary discrete transition on both the controller and every follower.
-    fn geometry_animation_enabled(state: &State, pane: &Pane, viewport_changed: bool) -> bool {
+    pub(crate) fn geometry_animation_enabled(
+        state: &State,
+        pane: &Pane,
+        viewport_changed: bool,
+    ) -> bool {
         if viewport_changed
             || state
                 .moving_pane
                 .is_some_and(|session| session.id == pane.id)
             || state
+                .current()
                 .remote_drag
                 .is_some_and(|drag| drag.pane_id == pane.id)
+            || state.current().remote_drag_snap.get() == Some(pane.id)
             || state
                 .resizing_pane
                 .as_ref()
@@ -3192,7 +3198,6 @@ mod tests {
     /// Two tiled panes in a shared session whose lease belongs to `controller`.
     fn shared_state(controller: crate::layout::shared::ClientId) -> State {
         let mut state = State::new(crate::config::Config::default(), Default::default());
-        state.animation = anim::GeometryAnimation::TileFloat;
         state.current_mut().session_attached = true;
         let mut shared = crate::state::SharedSessionState::new(1);
         shared.controller = Some(controller);
@@ -3212,7 +3217,8 @@ mod tests {
     /// makes one client's workspace snap while another's eases.
     #[test]
     fn a_follower_animates_the_geometry_a_layout_revision_brings() {
-        let state = shared_state(2);
+        let mut state = shared_state(2);
+        state.animation = GeometryAnimation::TileFloat;
         let pane = &state.current().workspaces[0].panes[0];
 
         assert!(
@@ -3227,7 +3233,7 @@ mod tests {
     #[test]
     fn a_carried_pane_tracks_directly_while_its_neighbours_still_animate() {
         let mut state = shared_state(2);
-        state.remote_drag = Some(crate::state::RemoteDrag {
+        state.current_mut().remote_drag = Some(crate::state::RemoteDrag {
             pane_id: 1,
             rect: crate::layout::shared::FracRect {
                 x: 0.1,
@@ -3236,6 +3242,7 @@ mod tests {
                 h: 0.4,
             },
         });
+        state.animation = anim::GeometryAnimation::TileFloat;
 
         let carried = &state.current().workspaces[0].panes[0];
         assert!(
@@ -3253,6 +3260,7 @@ mod tests {
     #[test]
     fn a_locally_dragged_pane_tracks_directly() {
         let mut state = shared_state(1);
+        state.animation = GeometryAnimation::TileFloat;
         state.moving_pane = Some(crate::state::MoveSession {
             id: 1,
             was_floating: false,

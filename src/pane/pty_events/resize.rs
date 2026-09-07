@@ -14,56 +14,108 @@ pub(crate) fn handle_pane_resize(
     // and their screens reshape only via the server's broadcast `Resized`. Owner-local panes
     // (scratch/popup) do not affect canonical shared sizing, so their owner may resize them.
     let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
-    if ctx.state.current().shared.is_some() && !ctx.state.is_controller() && !local {
+    if follower_resize_is_suppressed(&ctx.state, local) {
         return Update::none();
     }
-    if crate::scratchpad::contains(&ctx.state, id) {
-        let client = ctx.state.scratch_client();
-        let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
-            return Update::none();
-        };
-        let Some(client) = client else {
-            pane.terminal.status =
-                ManagedTerminalStatus::Error("scratch runtime disconnected".into());
-            return Update::full();
-        };
-        client.resize(id, pane.pty_generation, true, cols.max(1), rows.max(1));
-        return Update::none();
+    if let Some(update) = resize_scratch_pane(ctx, id, cols, rows) {
+        return update;
     }
     // The pane rect updates immediately, but the client-side screen only reshapes on the server's
     // ordered `Resized` broadcast, so both parsers reshape at the same byte position.
     let client = ctx.state.current().session_client.clone();
     let attach_pending = ctx.state.current().pending_session_attach.is_some();
-    match find_pane_mut(&mut ctx.state, id) {
-        Some(pane) => {
-            if client.is_none() && !attach_pending {
-                pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-                return Update::full();
-            }
-        }
-        None => return Update::none(),
+    if let Some(update) = validate_session_resize_target(ctx, id, client.is_none(), attach_pending)
+    {
+        return update;
     }
     // Keep pending geometry on the attachment rather than its transport-specific shared state: a
     // reconnect replaces the latter, but the widget may not report an unchanged viewport again.
-    let epoch = ctx.state.runtime_epoch;
     let resize_debounce_ms = ctx.state.config.pane.resize_debounce_ms;
-    {
-        let attachment = ctx.state.current_mut();
-        attachment
-            .pending_resizes
-            .insert((local, id), (cols.max(1), rows.max(1)));
-        if resize_debounce_ms > 0 {
-            if attachment.resize_flush_scheduled {
-                return Update::none();
-            }
-            attachment.resize_flush_scheduled = true;
-        }
-    }
+    let held_by_drag = !local && ctx.state.shared_tiled_drag_in_flight();
+    let Some((epoch, generation)) =
+        queue_pending_resize(ctx, id, cols, rows, local, held_by_drag, resize_debounce_ms)
+    else {
+        return Update::none();
+    };
     if resize_debounce_ms == 0 {
-        flush_pending_resizes(ctx);
+        flush_pending_resizes(ctx, generation);
         return Update::none();
     }
-    Update::with_command(schedule_pane_resize_flush(epoch, resize_debounce_ms))
+    Update::with_command(schedule_pane_resize_flush(
+        epoch,
+        generation,
+        resize_debounce_ms,
+    ))
+}
+
+fn follower_resize_is_suppressed(state: &crate::state::State, local: bool) -> bool {
+    state.current().shared.is_some() && !state.is_controller() && !local
+}
+
+fn resize_scratch_pane(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    cols: u16,
+    rows: u16,
+) -> Option<Update> {
+    if !crate::scratchpad::contains(&ctx.state, id) {
+        return None;
+    }
+    let client = ctx.state.scratch_client();
+    let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
+        return Some(Update::none());
+    };
+    let Some(client) = client else {
+        pane.terminal.status = ManagedTerminalStatus::Error("scratch runtime disconnected".into());
+        return Some(Update::full());
+    };
+    client.resize(id, pane.pty_generation, true, cols.max(1), rows.max(1));
+    Some(Update::none())
+}
+
+fn validate_session_resize_target(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    disconnected: bool,
+    attach_pending: bool,
+) -> Option<Update> {
+    match find_pane_mut(&mut ctx.state, id) {
+        Some(pane) if disconnected && !attach_pending => {
+            pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
+            Some(Update::full())
+        }
+        Some(_) => None,
+        None => Some(Update::none()),
+    }
+}
+
+fn queue_pending_resize(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    cols: u16,
+    rows: u16,
+    local: bool,
+    held_by_drag: bool,
+    resize_debounce_ms: u64,
+) -> Option<(u64, u64)> {
+    let epoch = ctx.state.runtime_epoch;
+    let attachment = ctx.state.current_mut();
+    if held_by_drag {
+        attachment.drag_held_resizes.insert((local, id));
+    } else {
+        attachment.drag_held_resizes.remove(&(local, id));
+    }
+    attachment
+        .pending_resizes
+        .insert((local, id), (cols.max(1), rows.max(1)));
+    if resize_debounce_ms > 0 {
+        if attachment.resize_flush_scheduled {
+            return None;
+        }
+        attachment.resize_flush_generation = attachment.resize_flush_generation.wrapping_add(1);
+        attachment.resize_flush_scheduled = true;
+    }
+    Some((epoch, attachment.resize_flush_generation))
 }
 
 /// Re-arm the debounced flush for sizes that were held back, without sending anything now.
@@ -77,8 +129,11 @@ pub(crate) fn handle_pane_resize(
 pub(crate) fn rearm_pending_resize_flush(ctx: &mut Context<AppRoot>) {
     let epoch = ctx.state.runtime_epoch;
     let debounce = ctx.state.config.pane.resize_debounce_ms.max(1);
-    let attachment = ctx.state.current();
-    if attachment.pending_resizes.is_empty() || attachment.resize_flush_scheduled {
+    let pending = !ctx.state.current().pending_resizes.is_empty();
+    let generation = ctx.state.current().resize_flush_generation.wrapping_add(1);
+    ctx.state.current_mut().resize_flush_generation = generation;
+    ctx.state.current_mut().resize_flush_scheduled = false;
+    if !pending {
         return;
     }
     let Some(link) = ctx.state.command_link.clone() else {
@@ -90,15 +145,15 @@ pub(crate) fn rearm_pending_resize_flush(ctx: &mut Context<AppRoot>) {
     ctx.state.current_mut().resize_flush_scheduled = true;
     link.send_after(
         std::time::Duration::from_millis(debounce),
-        crate::Msg::FlushPaneResizes { epoch },
+        crate::Msg::FlushPaneResizes { epoch, generation },
     );
 }
 
-fn schedule_pane_resize_flush(epoch: u64, resize_debounce_ms: u64) -> Command {
+fn schedule_pane_resize_flush(epoch: u64, generation: u64, resize_debounce_ms: u64) -> Command {
     Command::after(
         std::time::Duration::from_millis(resize_debounce_ms),
         move |link: CommandLink<crate::Msg>| {
-            link.send(crate::Msg::FlushPaneResizes { epoch });
+            link.send(crate::Msg::FlushPaneResizes { epoch, generation });
         },
     )
 }
@@ -117,7 +172,10 @@ fn schedule_pane_resize_flush(epoch: u64, resize_debounce_ms: u64) -> Command {
 /// Nothing is dropped: the entries stay pending, the drop's own geometry report overwrites them
 /// under the same key, and the flush that follows the post-drop render sends the settled size once
 /// instead of every frame of the gesture.
-pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
+pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>, generation: u64) {
+    if ctx.state.current().resize_flush_generation != generation {
+        return;
+    }
     let Some(client) = ctx.state.current().session_client.clone() else {
         // Mid-attach or a reconnect window. Disarm so a later report can schedule a fresh flush,
         // but keep the sizes: `flush_pending_resizes` runs again once the client is installed.
@@ -132,6 +190,9 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
     let (pending, retained): (Vec<_>, Vec<_>) = pending
         .into_iter()
         .partition(|((local, _), _)| *local || publishes_shared_sizes);
+    for ((local, id), _) in &pending {
+        attachment.drag_held_resizes.remove(&(*local, *id));
+    }
     ctx.state.current_mut().pending_resizes.extend(retained);
     for ((local, id), (cols, rows)) in pending {
         if let Some(pane) =
@@ -144,10 +205,17 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
 
 /// Complete a timer that followed its attachment into the background. Parking releases the server
 /// lease, so preserve shared geometry until this attachment returns and regains control.
-pub(crate) fn flush_background_resizes(state: &mut crate::state::State, epoch: u64) -> Update {
+pub(crate) fn flush_background_resizes(
+    state: &mut crate::state::State,
+    epoch: u64,
+    generation: u64,
+) -> Update {
     let Some(attachment) = state.background.get_mut(&epoch) else {
         return Update::none();
     };
+    if attachment.resize_flush_generation != generation {
+        return Update::none();
+    }
     attachment.resize_flush_scheduled = false;
     // Popups are torn down on a switch and never belong to a background attachment. Scratch
     // resizes use the client runtime directly and never enter this map.

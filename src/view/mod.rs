@@ -160,6 +160,7 @@ fn layer_drag(
     }
     let drag = ctx
         .state
+        .current()
         .remote_drag
         .filter(|drag| !layer.scratch && here(drag.pane_id))?;
     // Sent in canonical-canvas fractions, exactly like a floating pane's rect, so a follower whose
@@ -198,8 +199,8 @@ pub(crate) fn render_workspace_panes(
     let top_offset = ctx.state.content_top_offset();
     let top_gap = layer.top_gap;
     let tile_gap = ctx.state.tile_gap();
-    // A drag session is global, so match it against this layer's panes: the dropdown must not
-    // exclude a workspace pane from its tiling, nor the workspace a scratch pane.
+    // A drag belongs to the current attachment. Match it against this layer's panes so the
+    // dropdown does not exclude a workspace pane, nor the workspace a scratch pane.
     let moving_here = |id: PaneId| workspace.panes.iter().any(|pane| pane.id == id);
     let dragged = layer_drag(ctx, layer, &moving_here);
     let moving_tiled = dragged
@@ -428,6 +429,7 @@ pub(crate) fn render_workspace_panes(
             canvas = canvas.child_at(render_rect.to_rect(), element);
         }
     }
+    ctx.state.current().remote_drag_snap.set(None);
 
     if divider_mode {
         let highlight_focused = ctx.state.config.pane.highlight_focused_border;

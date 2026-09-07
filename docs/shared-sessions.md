@@ -54,9 +54,10 @@ the oldest active writable follower becomes controller. Parked and read-only cli
 
 ## Watching a drag
 
-While the controller drags a pane, every client lifts the same pane out of the tiling and follows it
-live. The tiles it vacates reflow on every screen, and the carried pane is drawn in the color of the
-`FOLLOW` badge so it reads as someone else's gesture rather than a pane moving on its own.
+While the controller drags a pane, attached clients lift the same pane out of the tiling and follow
+each drag update live. A client that attaches mid-gesture starts following with the next update. The
+tiles it vacates reflow on every screen, and the carried pane is drawn in the color of the `FOLLOW`
+badge so it reads as someone else's gesture rather than a pane moving on its own.
 
 A drag is not part of the shared layout. It is never saved into a profile, never restored with a
 session, and disappears if the controller disconnects mid-gesture — the pane falls back into the

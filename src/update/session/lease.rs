@@ -11,18 +11,7 @@ pub(crate) fn controller_changed(
     reason: ControllerChangeReason,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
-        if let Some(shared) = ctx
-            .state
-            .background
-            .get_mut(&epoch)
-            .and_then(|attachment| attachment.shared.as_mut())
-        {
-            shared.controller = controller;
-            if shared.is_controller() {
-                shared.assumed_rev = shared.layout_rev;
-                shared.last_committed_layout = None;
-            }
-        }
+        update_background_controller(&mut ctx.state, epoch, controller);
         return Update::none();
     }
     let was_controller = ctx.state.is_controller();
@@ -36,11 +25,12 @@ pub(crate) fn controller_changed(
         }
     }
     let now_controller = ctx.state.is_controller();
+    let cleared_remote_drag = ctx.state.current_mut().remote_drag.take();
     // Whoever holds the lease now is not mid-gesture: the previous controller either released it,
     // was taken over, or vanished. This is the backstop for a `DragEnd` that never arrived - a
     // controller killed with a pane still lifted - so the pane falls back into the authoritative
     // layout instead of hanging over it for the rest of the session.
-    ctx.state.remote_drag = None;
+    snap_cleared_remote_drag(&mut ctx.state, cleared_remote_drag);
     crate::events::emit(
         &ctx.state,
         crate::events::Event::new(
@@ -55,7 +45,51 @@ pub(crate) fn controller_changed(
             ],
         ),
     );
+    apply_controller_transition(ctx, was_controller, now_controller, controller);
+    flush_controller_pending_resizes(ctx, now_controller);
+    ctx.state.commands_dirty = true;
+    Update::full()
+}
+
+fn update_background_controller(
+    state: &mut crate::state::State,
+    epoch: u64,
+    controller: Option<ClientId>,
+) {
+    let Some(attachment) = state.background.get_mut(&epoch) else {
+        return;
+    };
+    if let Some(shared) = attachment.shared.as_mut() {
+        shared.controller = controller;
+        if shared.is_controller() {
+            shared.assumed_rev = shared.layout_rev;
+            shared.last_committed_layout = None;
+        }
+    }
+    attachment.remote_drag = None;
+}
+
+fn snap_cleared_remote_drag(
+    state: &mut crate::state::State,
+    cleared_remote_drag: Option<crate::state::RemoteDrag>,
+) {
+    let Some(drag) = cleared_remote_drag else {
+        return;
+    };
+    state.current().remote_drag_snap.set(Some(drag.pane_id));
+    state.animation = crate::layout::anim::GeometryAnimation::TileFloat;
+}
+
+fn apply_controller_transition(
+    ctx: &mut Context<AppRoot>,
+    was_controller: bool,
+    now_controller: bool,
+    controller: Option<ClientId>,
+) {
     if was_controller && !now_controller {
+        if ctx.state.shared_tiled_drag_in_flight() {
+            ctx.state.discard_shared_drag_resizes();
+        }
         ctx.state.moving_pane = None;
         ctx.state.resizing_pane = None;
         ctx.state.split_drag = None;
@@ -74,11 +108,13 @@ pub(crate) fn controller_changed(
         // server handed over - either way the chip is the whole story.
         crate::ops::session::apply_pending_background_closes(ctx);
     }
+}
+
+fn flush_controller_pending_resizes(ctx: &mut Context<AppRoot>, now_controller: bool) {
     if now_controller && !ctx.state.current().pending_resizes.is_empty() {
-        crate::pane::pty_events::flush_pending_resizes(ctx);
+        let generation = ctx.state.current().resize_flush_generation;
+        crate::pane::pty_events::flush_pending_resizes(ctx, generation);
     }
-    ctx.state.commands_dirty = true;
-    Update::full()
 }
 
 pub(crate) fn clients_changed(

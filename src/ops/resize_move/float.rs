@@ -141,7 +141,12 @@ pub(crate) fn begin_move(
         pane.opening = false;
         if !pane.fullscreen {
             let was_floating = pane.floating;
-            let drag_rect = current_rect;
+            // The view supplies the rendered rectangle in root space. Layout and drag publishing
+            // use canvas space, whose origin is below a top workbar.
+            let drag_rect = FloatRect {
+                y: current_rect.y - f32::from(content_top),
+                ..current_rect
+            };
             if was_floating {
                 pane.floating_rect = drag_rect;
             }
@@ -150,10 +155,10 @@ pub(crate) fn begin_move(
                 was_floating,
                 drag_rect,
                 pointer_x: i32::from(content_left)
-                    + current_rect.x.round() as i32
+                    + drag_rect.x.round() as i32
                     + i32::from(from_local_x.min(target_w.saturating_sub(1))),
                 pointer_y: i32::from(content_top)
-                    + current_rect.y.round() as i32
+                    + drag_rect.y.round() as i32
                     + i32::from(from_local_y.min(target_h.saturating_sub(1))),
             });
         }
@@ -1208,6 +1213,54 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn begin_move_converts_root_rect_y_to_canvas_once() {
+        in_test_stack(|| {
+            let mut backend = floating_backend(FloatRect {
+                x: 10.0,
+                y: 8.0,
+                w: 30.0,
+                h: 10.0,
+            });
+            backend.state_mut().config.pane.show_workbar = true;
+            backend.state_mut().config.pane.workbar_at_bottom = false;
+            let rendered = FloatRect {
+                x: 10.0,
+                y: 9.0,
+                w: 30.0,
+                h: 10.0,
+            };
+            backend
+                .dispatch(Msg::BeginMove(1, rendered, 0, 0, 30, 10, true))
+                .expect("begin top-workbar move");
+            assert_eq!(backend.state().content_top_offset(), 1);
+            assert_eq!(backend.state().moving_pane.unwrap().drag_rect.y, 8.0);
+            assert_eq!(backend.state().moving_pane.unwrap().pointer_y, 9);
+
+            let mut backend = floating_backend(FloatRect {
+                x: 10.0,
+                y: 8.0,
+                w: 30.0,
+                h: 10.0,
+            });
+            backend.state_mut().config.pane.show_workbar = true;
+            backend.state_mut().config.pane.workbar_at_bottom = true;
+            let rendered = FloatRect {
+                x: 10.0,
+                y: 8.0,
+                w: 30.0,
+                h: 10.0,
+            };
+            backend
+                .dispatch(Msg::BeginMove(1, rendered, 0, 0, 30, 10, true))
+                .expect("begin bottom-workbar move");
+            assert_eq!(backend.state().content_top_offset(), 0);
+            assert_eq!(backend.state().moving_pane.unwrap().drag_rect.y, 8.0);
+            assert_eq!(backend.state().moving_pane.unwrap().pointer_y, 8);
+        });
+    }
+
     /// A tiled pane dragged inside the dropdown follows the pointer as a live preview, clamped to
     /// the dropdown rather than to the whole canvas - the same gesture as in a workspace, measured
     /// against the box the scratch workspace actually occupies.
@@ -1626,7 +1679,10 @@ mod tests {
                     .dispatch(Msg::PaneResize(2, 98, 27))
                     .expect("neighbour reports its transient size");
                 backend
-                    .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                    .dispatch(Msg::FlushPaneResizes {
+                        epoch: 0,
+                        generation: 1,
+                    })
                     .expect("flush while the drag is in flight");
 
                 assert!(
@@ -1662,6 +1718,21 @@ mod tests {
                     .expect("drop the pane");
                 let _ = control_messages(&rx);
 
+                // The timer armed before mouse-up is stale. It must not release the transient
+                // sizes in the gap before the post-drop geometry report arrives.
+                backend
+                    .dispatch(Msg::FlushPaneResizes {
+                        epoch: 0,
+                        generation: 1,
+                    })
+                    .expect("stale pre-drop flush");
+                assert!(
+                    control_messages(&rx)
+                        .iter()
+                        .all(|message| !matches!(message, ClientMessage::Resize { .. })),
+                    "stale timer must not send transient drag sizes"
+                );
+
                 // The post-drop render reports the settled geometry, then the debounce fires.
                 backend
                     .dispatch(Msg::PaneResize(2, 49, 27))
@@ -1670,7 +1741,10 @@ mod tests {
                     .dispatch(Msg::PaneResize(1, 49, 27))
                     .expect("lifted pane's settled size");
                 backend
-                    .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                    .dispatch(Msg::FlushPaneResizes {
+                        epoch: 0,
+                        generation: 2,
+                    })
                     .expect("flush after the drop");
 
                 let mut sizes: Vec<_> = control_messages(&rx)
@@ -1705,7 +1779,7 @@ mod tests {
                     .rect_of_key(&crate::view::pane_window_key(2, 0).into())
                     .expect("pane 2 is on screen");
 
-                backend.state_mut().remote_drag = Some(RemoteDrag {
+                backend.state_mut().current_mut().remote_drag = Some(RemoteDrag {
                     pane_id: 1,
                     rect: crate::layout::shared::FracRect {
                         x: 0.1,
@@ -1747,7 +1821,7 @@ mod tests {
                     .rect_of_key(&crate::view::pane_window_key(2, 0).into())
                     .expect("pane 2 is on screen");
 
-                backend.state_mut().remote_drag = Some(RemoteDrag {
+                backend.state_mut().current_mut().remote_drag = Some(RemoteDrag {
                     pane_id: 99,
                     rect: crate::layout::shared::FracRect {
                         x: 0.1,

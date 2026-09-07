@@ -531,6 +531,16 @@ fn parked_disconnect_preserves_identity_and_marks_attachment_offline() {
                 state.current_mut().connection = crate::state::ConnectionState::Connected;
                 state.current_mut().remote_host = Some("workbox".to_string());
                 state.current_mut().remote_target = Some(target.clone());
+                state.current_mut().remote_drag = Some(crate::state::RemoteDrag {
+                    pane_id: 4,
+                    rect: crate::layout::shared::FracRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 0.0,
+                        h: 0.0,
+                    },
+                });
+                state.current().remote_drag_snap.set(Some(4));
                 state.park_current(4, crate::state::Attachment::new());
                 state.runtime_epoch = 5;
             }
@@ -562,6 +572,8 @@ fn parked_disconnect_preserves_identity_and_marks_attachment_offline() {
             );
             assert!(!parked.session_attached);
             assert!(parked.session_client.is_none());
+            assert_eq!(parked.remote_drag, None);
+            assert_eq!(parked.remote_drag_snap.get(), None);
             assert_eq!(parked.remote_target.as_ref(), Some(&target));
             assert_eq!(parked.session_name.as_deref(), Some("dev"));
         })
@@ -806,23 +818,31 @@ fn a_relayed_drag_is_mirrored_and_cleared_by_its_own_end() {
         .spawn(|| {
             let mut backend = follower_backend();
 
-            backend
-                .dispatch(Msg::SessionDragChanged {
-                    epoch: 0,
-                    author: 2,
-                    drag: Some(drag_at(0.1)),
-                })
-                .expect("mirror the controller's lift");
-            assert_eq!(backend.state().remote_drag, Some(drag_at(0.1)));
+            assert_eq!(
+                backend
+                    .update_level(Msg::SessionDragChanged {
+                        epoch: 0,
+                        author: 2,
+                        drag: Some(drag_at(0.1)),
+                    })
+                    .expect("mirror the controller's lift"),
+                tui_lipan::UpdateLevel::Full,
+                "a foreground drag update must redraw the current attachment"
+            );
+            assert_eq!(backend.state().current().remote_drag, Some(drag_at(0.1)));
 
-            backend
-                .dispatch(Msg::SessionDragChanged {
-                    epoch: 0,
-                    author: 2,
-                    drag: None,
-                })
-                .expect("the gesture ends");
-            assert_eq!(backend.state().remote_drag, None);
+            assert_eq!(
+                backend
+                    .update_level(Msg::SessionDragChanged {
+                        epoch: 0,
+                        author: 2,
+                        drag: None,
+                    })
+                    .expect("the gesture ends"),
+                tui_lipan::UpdateLevel::Full,
+                "a foreground drag clear must redraw the current attachment"
+            );
+            assert_eq!(backend.state().current().remote_drag, None);
         })
         .expect("spawn test")
         .join()
@@ -853,7 +873,7 @@ fn a_client_ignores_the_echo_of_its_own_drag() {
                 })
                 .expect("own echo");
 
-            assert_eq!(backend.state().remote_drag, None);
+            assert_eq!(backend.state().current().remote_drag, None);
         })
         .expect("spawn test")
         .join()
@@ -869,7 +889,7 @@ fn losing_the_controller_stops_lifting_whatever_it_was_carrying() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = follower_backend();
-            backend.state_mut().remote_drag = Some(drag_at(0.1));
+            backend.state_mut().current_mut().remote_drag = Some(drag_at(0.1));
 
             backend
                 .dispatch(Msg::SessionControllerChanged {
@@ -880,7 +900,7 @@ fn losing_the_controller_stops_lifting_whatever_it_was_carrying() {
                 .expect("the controller dropped mid-gesture");
 
             assert_eq!(
-                backend.state().remote_drag,
+                backend.state().current().remote_drag,
                 None,
                 "a lift with nobody behind it must not outlive its controller"
             );
@@ -890,28 +910,404 @@ fn losing_the_controller_stops_lifting_whatever_it_was_carrying() {
         .expect("join test");
 }
 
-/// A background attachment has no screen to lift anything on, and the position would be stale by
-/// the time it came forward.
 #[test]
-fn a_backgrounded_attachment_ignores_relayed_drags() {
+fn remote_drag_presence_stays_with_the_parked_attachment_and_clears_there() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = follower_backend();
+            let mut parked = crate::state::Attachment::new();
+            parked.epoch = 9;
+            parked.session_attached = true;
+            let mut shared = crate::state::SharedSessionState::new(1);
+            shared.controller = Some(2);
+            parked.shared = Some(shared);
+            backend.state_mut().background.insert(9, parked);
 
+            assert_eq!(
+                backend
+                    .update_level(Msg::SessionDragChanged {
+                        epoch: 9,
+                        author: 2,
+                        drag: Some(drag_at(0.1)),
+                    })
+                    .expect("drag for another attachment"),
+                tui_lipan::UpdateLevel::None,
+                "a background drag update must not redraw the foreground"
+            );
+
+            assert_eq!(backend.state().current().remote_drag, None);
+            assert_eq!(
+                backend.state().background[&9].remote_drag,
+                Some(drag_at(0.1))
+            );
+            assert_eq!(
+                backend
+                    .update_level(Msg::SessionDragChanged {
+                        epoch: 9,
+                        author: 2,
+                        drag: None,
+                    })
+                    .expect("clear the parked attachment's drag"),
+                tui_lipan::UpdateLevel::None,
+                "clearing a background drag must not redraw the foreground"
+            );
+            assert_eq!(backend.state().background[&9].remote_drag, None);
+
+            backend.state_mut().current_mut().remote_drag = Some(drag_at(0.2));
             backend
-                .dispatch(Msg::SessionDragChanged {
-                    epoch: 9,
-                    author: 2,
-                    drag: Some(drag_at(0.1)),
+                .state_mut()
+                .park_current(0, crate::state::Attachment::new());
+            backend.state_mut().runtime_epoch = 1;
+            assert_eq!(
+                backend.state().background[&0].remote_drag,
+                Some(drag_at(0.2))
+            );
+            backend
+                .dispatch(Msg::SessionControllerChanged {
+                    epoch: 0,
+                    controller: Some(3),
+                    reason: crate::session::protocol::ControllerChangeReason::Expired,
                 })
-                .expect("drag for another attachment");
-
-            assert_eq!(backend.state().remote_drag, None);
+                .expect("clear the parked attachment's stale drag");
+            assert_eq!(backend.state().background[&0].remote_drag, None);
+            let restored = backend
+                .state_mut()
+                .unpark(0, 1)
+                .expect("switch back to the parked attachment");
+            backend.state_mut().runtime_epoch = restored;
+            assert_eq!(backend.state().current().remote_drag, None);
         })
         .expect("spawn test")
         .join()
         .expect("join test");
+}
+
+#[test]
+fn first_relayed_lift_arms_tile_animation_and_abnormal_clear_snaps_the_pane() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = follower_backend();
+            {
+                let workspace = backend.state_mut().current_mut().active_workspace_mut();
+                workspace.panes.clear();
+                workspace.panes.extend((1..=2).map(|id| {
+                    crate::state::Pane::new(id, 100, tui_lipan::prelude::FloatRect::default())
+                }));
+            }
+            let mut drag = drag_at(0.1);
+            drag.pane_id = 1;
+            backend
+                .dispatch(Msg::SessionDragChanged {
+                    epoch: 0,
+                    author: 2,
+                    drag: Some(drag),
+                })
+                .expect("relay the first lift");
+            assert_eq!(
+                backend.state().animation,
+                crate::layout::anim::GeometryAnimation::TileFloat
+            );
+            let carried = &backend.state().current().workspaces[0].panes[0];
+            let neighbour = &backend.state().current().workspaces[0].panes[1];
+            assert!(!crate::AppRoot::geometry_animation_enabled(
+                backend.state(),
+                carried,
+                false
+            ));
+            assert!(crate::AppRoot::geometry_animation_enabled(
+                backend.state(),
+                neighbour,
+                false
+            ));
+
+            backend
+                .update_level(Msg::SessionControllerChanged {
+                    epoch: 0,
+                    controller: Some(3),
+                    reason: crate::session::protocol::ControllerChangeReason::Expired,
+                })
+                .expect("clear the abandoned lift");
+            assert_eq!(backend.state().current().remote_drag, None);
+            assert_eq!(
+                backend.state().animation,
+                crate::layout::anim::GeometryAnimation::TileFloat
+            );
+            let carried = &backend.state().current().workspaces[0].panes[0];
+            let neighbour = &backend.state().current().workspaces[0].panes[1];
+            assert!(!crate::AppRoot::geometry_animation_enabled(
+                backend.state(),
+                carried,
+                false
+            ));
+            assert!(crate::AppRoot::geometry_animation_enabled(
+                backend.state(),
+                neighbour,
+                false
+            ));
+            backend.render();
+            assert_eq!(
+                backend.state().current().remote_drag_snap.get(),
+                None,
+                "the abnormal-clear snap marker lasts for one rendered frame"
+            );
+        })
+        .expect("spawn test")
+        .join()
+        .expect("join test");
+}
+
+#[test]
+fn losing_control_discards_only_shared_drag_resizes() {
+    let mut backend = follower_backend();
+    {
+        let state = backend.state_mut();
+        state.current_mut().shared.as_mut().unwrap().controller = Some(1);
+        state.moving_pane = Some(crate::state::MoveSession {
+            id: 4,
+            was_floating: false,
+            drag_rect: tui_lipan::prelude::FloatRect::default(),
+            pointer_x: 0,
+            pointer_y: 0,
+        });
+        state
+            .current_mut()
+            .pending_resizes
+            .insert((false, 4), (80, 20));
+        state.current_mut().drag_held_resizes.insert((false, 4));
+        state
+            .current_mut()
+            .pending_resizes
+            .insert((false, 99), (70, 18));
+    }
+    backend
+        .dispatch(Msg::SessionControllerChanged {
+            epoch: 0,
+            controller: Some(2),
+            reason: crate::session::protocol::ControllerChangeReason::Granted,
+        })
+        .expect("lose control during drag");
+    assert!(
+        !backend
+            .state()
+            .current()
+            .pending_resizes
+            .contains_key(&(false, 4))
+    );
+    assert_eq!(
+        backend.state().current().pending_resizes.get(&(false, 99)),
+        Some(&(70, 18)),
+        "an unrelated shared resize remains pending"
+    );
+}
+
+#[test]
+fn settled_resize_survives_a_later_drag_control_loss() {
+    let mut backend = follower_backend();
+    let (client, _rx) = SessionClient::test_channel();
+    {
+        let state = backend.state_mut();
+        state.current_mut().session_client = Some(client);
+        state.current_mut().shared.as_mut().unwrap().controller = Some(1);
+        state.current_mut().workspaces[0]
+            .panes
+            .push(crate::state::Pane::new(
+                2,
+                100,
+                tui_lipan::prelude::FloatRect::default(),
+            ));
+        state.moving_pane = Some(crate::state::MoveSession {
+            id: 1,
+            was_floating: false,
+            drag_rect: tui_lipan::prelude::FloatRect::default(),
+            pointer_x: 0,
+            pointer_y: 0,
+        });
+    }
+
+    backend
+        .dispatch(Msg::PaneResize(1, 80, 20))
+        .expect("record the first drag resize");
+    backend.state_mut().moving_pane = None;
+    backend
+        .dispatch(Msg::PaneResize(1, 90, 22))
+        .expect("record the settled post-drop resize");
+    assert_eq!(
+        backend.state().current().drag_held_resizes,
+        std::collections::HashSet::new(),
+        "a normal post-drop overwrite releases the old drag marker"
+    );
+
+    backend.state_mut().moving_pane = Some(crate::state::MoveSession {
+        id: 2,
+        was_floating: false,
+        drag_rect: tui_lipan::prelude::FloatRect::default(),
+        pointer_x: 0,
+        pointer_y: 0,
+    });
+    backend
+        .dispatch(Msg::PaneResize(2, 70, 18))
+        .expect("record the later drag resize");
+    backend
+        .dispatch(Msg::SessionControllerChanged {
+            epoch: 0,
+            controller: Some(2),
+            reason: crate::session::protocol::ControllerChangeReason::Granted,
+        })
+        .expect("lose control during the later drag");
+
+    assert_eq!(
+        backend.state().current().pending_resizes.get(&(false, 1)),
+        Some(&(90, 22)),
+        "the settled first-drop resize remains pending"
+    );
+    assert!(
+        !backend
+            .state()
+            .current()
+            .pending_resizes
+            .contains_key(&(false, 2)),
+        "the later drag's transient resize is discarded"
+    );
+}
+
+#[test]
+fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes() {
+    let mut backend = follower_backend();
+    let (old_client, _old_rx) = SessionClient::test_channel();
+    {
+        let state = backend.state_mut();
+        state.current_mut().session_name = Some("dev".to_string());
+        state.current_mut().session_client = Some(old_client);
+        state.current_mut().session_attached = true;
+        state.current_mut().pending_session_attach = None;
+        state.current_mut().shared.as_mut().unwrap().controller = Some(1);
+        state.current_mut().workspaces[0]
+            .panes
+            .push(crate::state::Pane::new(
+                2,
+                100,
+                tui_lipan::prelude::FloatRect::default(),
+            ));
+        state.moving_pane = Some(crate::state::MoveSession {
+            id: 1,
+            was_floating: false,
+            drag_rect: tui_lipan::prelude::FloatRect::default(),
+            pointer_x: 0,
+            pointer_y: 0,
+        });
+    }
+    backend
+        .update_level(Msg::PaneResize(1, 80, 20))
+        .expect("record the transient drag resize");
+    backend.state_mut().moving_pane = None;
+    backend
+        .update_level(Msg::PaneResize(2, 90, 22))
+        .expect("record the legitimate pending resize");
+    backend.state_mut().moving_pane = Some(crate::state::MoveSession {
+        id: 1,
+        was_floating: false,
+        drag_rect: tui_lipan::prelude::FloatRect::default(),
+        pointer_x: 0,
+        pointer_y: 0,
+    });
+    backend.state_mut().resizing_pane = Some(crate::state::ResizeSession {
+        id: 1,
+        corner: crate::state::ResizeCorner::LowerRight,
+        workspace: crate::state::LayoutTarget::Workspace(0),
+        start_x: 0,
+        start_y: 0,
+        start_tile_tree: None,
+        start_split_ratios: Vec::new(),
+        start_floating_rect: None,
+        start_scrollable_width: None,
+        start_scratch_height: None,
+    });
+    backend.state_mut().split_drag = Some(crate::state::SplitDragSession {
+        kind: crate::state::SplitDragKind::Single {
+            pane_id: 1,
+            horizontal_split: true,
+        },
+        workspace: crate::state::LayoutTarget::Workspace(0),
+        start_x: 0,
+        start_y: 0,
+        start_tile_tree: None,
+        start_split_ratios: Vec::new(),
+    });
+
+    let disconnect_epoch = backend.state().runtime_epoch;
+    assert_eq!(
+        backend.state().current().session_name.as_deref(),
+        Some("dev")
+    );
+    assert!(backend.state().current().pending_session_attach.is_none());
+    backend
+        .update_level(Msg::SessionDisconnected {
+            epoch: disconnect_epoch,
+            name: "dev".to_string(),
+        })
+        .expect("disconnect and begin reconnect");
+
+    let reconnect_epoch = backend.state().runtime_epoch;
+    assert_ne!(reconnect_epoch, disconnect_epoch);
+    assert!(backend.state().moving_pane.is_none());
+    assert!(backend.state().resizing_pane.is_none());
+    assert!(backend.state().split_drag.is_none());
+    assert!(
+        !backend
+            .state()
+            .current()
+            .pending_resizes
+            .contains_key(&(false, 1)),
+        "transient drag resize is removed before reconnect"
+    );
+    assert_eq!(
+        backend.state().current().pending_resizes.get(&(false, 2)),
+        Some(&(90, 22)),
+        "legitimate pending resize survives reconnect"
+    );
+
+    let (new_client, reconnect_rx) = SessionClient::test_channel();
+    backend
+        .state_mut()
+        .current_mut()
+        .pending_session_attach
+        .as_mut()
+        .expect("reconnect attach")
+        .client = Some(new_client);
+    backend
+        .update_level(Msg::SessionAttached {
+            epoch: reconnect_epoch,
+            session: "dev".to_string(),
+            client_id: 1,
+            panes: Vec::new(),
+            layout_rev: 0,
+            layout: None,
+            controller: Some(1),
+            clients: Vec::new(),
+            input_locked: false,
+            allow_takeover: false,
+            read_only: false,
+            created_from_profile: None,
+        })
+        .expect("flush pending geometry after reconnect");
+    let resized: Vec<_> = reconnect_rx
+        .try_iter()
+        .filter_map(|outbound| match outbound {
+            crate::session::client::ClientOutbound::Control(
+                crate::session::protocol::ClientMessage::Resize {
+                    pane_id,
+                    local,
+                    cols,
+                    rows,
+                    ..
+                },
+            ) => Some((pane_id, local, cols, rows)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(resized, vec![(2, false, 90, 22)]);
 }
 
 #[test]

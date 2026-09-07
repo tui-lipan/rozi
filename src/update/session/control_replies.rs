@@ -46,33 +46,37 @@ pub(crate) fn layout_committed(
 
 /// Mirror (or clear) the controller's lifted pane.
 ///
-/// Ignored for a background attachment: the transient is worth nothing to a session nobody is
-/// looking at, and it would be stale by the time that attachment came forward. The author ignores
-/// its own echo - its `moving_pane` is the real gesture, and adopting the round-tripped copy would
-/// make the pane it is carrying track a position one relay old.
+/// The author ignores its own echo - its `moving_pane` is the real gesture, and adopting the
+/// round-tripped copy would make the pane it is carrying track a position one relay old. Background
+/// attachments retain the latest presence so a later switch cannot resurrect an old lift.
 pub(crate) fn drag_changed(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     author: ClientId,
     drag: Option<crate::state::RemoteDrag>,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
+    let is_current = epoch == ctx.state.runtime_epoch;
+    let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch) else {
         return Update::none();
-    }
-    let my_id = ctx
-        .state
-        .current()
-        .shared
-        .as_ref()
-        .map(|shared| shared.client_id);
+    };
+    let my_id = attachment.shared.as_ref().map(|shared| shared.client_id);
     if my_id == Some(author) {
         return Update::none();
     }
-    if ctx.state.remote_drag == drag {
+    if attachment.remote_drag == drag {
         return Update::none();
     }
-    ctx.state.remote_drag = drag;
-    Update::full()
+    let first_lift = attachment.remote_drag.is_none() && drag.is_some();
+    attachment.remote_drag = drag;
+    if first_lift && is_current {
+        attachment.remote_drag_snap.set(None);
+        ctx.state.animation = crate::layout::anim::GeometryAnimation::TileFloat;
+    }
+    if is_current {
+        Update::full()
+    } else {
+        Update::none()
+    }
 }
 
 pub(crate) fn layout_rejected(

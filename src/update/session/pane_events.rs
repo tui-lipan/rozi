@@ -380,11 +380,19 @@ pub(crate) fn pane_logging_changed(
     Update::full()
 }
 
-pub(crate) fn flush_pane_resizes(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
+pub(crate) fn flush_pane_resizes(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    generation: u64,
+) -> Update {
     if epoch != ctx.state.runtime_epoch {
-        return crate::pane::pty_events::flush_background_resizes(&mut ctx.state, epoch);
+        return crate::pane::pty_events::flush_background_resizes(
+            &mut ctx.state,
+            epoch,
+            generation,
+        );
     }
-    crate::pane::pty_events::flush_pending_resizes(ctx);
+    crate::pane::pty_events::flush_pending_resizes(ctx, generation);
     Update::none()
 }
 

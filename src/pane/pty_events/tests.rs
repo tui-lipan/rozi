@@ -468,7 +468,10 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 "both resizes coalesce into the latest pending size"
             );
             backend
-                .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                .dispatch(Msg::FlushPaneResizes {
+                    epoch: 0,
+                    generation: 0,
+                })
                 .expect("dispatch flush");
             assert_eq!(
                 resizes(&controller_rx),
@@ -483,7 +486,10 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 .dispatch(Msg::PaneResize(1, 60, 22))
                 .expect("dispatch preview resize");
             backend
-                .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                .dispatch(Msg::FlushPaneResizes {
+                    epoch: 0,
+                    generation: 1,
+                })
                 .expect("dispatch flush during preview");
             assert_eq!(resizes(&controller_rx), vec![(60, 22)]);
             backend.state_mut().sidebar.width_preview = None;
@@ -540,13 +546,19 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                     });
             }
             backend
-                .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                .dispatch(Msg::FlushPaneResizes {
+                    epoch: 0,
+                    generation: 1,
+                })
                 .expect("dispatch stale pre-reconnect timer");
             backend
                 .dispatch(Msg::PaneResize(1, 55, 21))
                 .expect("dispatch resize while reconnecting");
             backend
-                .dispatch(Msg::FlushPaneResizes { epoch: 1 })
+                .dispatch(Msg::FlushPaneResizes {
+                    epoch: 1,
+                    generation: 2,
+                })
                 .expect("dispatch flush while disconnected");
             let reconnect_size = *backend
                 .state()
@@ -565,7 +577,10 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 state.current_mut().shared = Some(shared);
             }
             backend
-                .dispatch(Msg::FlushPaneResizes { epoch: 1 })
+                .dispatch(Msg::FlushPaneResizes {
+                    epoch: 1,
+                    generation: 2,
+                })
                 .expect("dispatch flush after reconnect");
             assert_eq!(
                 resizes(&reconnect_rx),
@@ -602,7 +617,10 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 state.runtime_epoch = 8;
             }
             backend
-                .dispatch(Msg::FlushPaneResizes { epoch: 7 })
+                .dispatch(Msg::FlushPaneResizes {
+                    epoch: 7,
+                    generation: 0,
+                })
                 .expect("dispatch parked resize flush");
             assert!(resizes(&parked_rx).is_empty());
             {
@@ -618,7 +636,10 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 state.runtime_epoch = restored;
             }
             backend
-                .dispatch(Msg::FlushPaneResizes { epoch: 7 })
+                .dispatch(Msg::FlushPaneResizes {
+                    epoch: 7,
+                    generation: 0,
+                })
                 .expect("dispatch flush before control returns");
             assert!(resizes(&parked_rx).is_empty());
             assert_eq!(

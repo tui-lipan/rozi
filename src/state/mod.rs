@@ -128,11 +128,6 @@ pub struct State {
     pub command_link: Option<tui_lipan::CommandLink<crate::Msg>>,
     pub mode: Mode,
     pub moving_pane: Option<MoveSession>,
-    /// Another client's tiled drag, relayed by the server. Deliberately separate from
-    /// [`Self::moving_pane`]: that field also means "this client owns a pointer gesture" and gates
-    /// lease nudges, animation, and pointer routing, none of which apply to a pane someone else is
-    /// carrying.
-    pub remote_drag: Option<RemoteDrag>,
     pub resizing_pane: Option<ResizeSession>,
     pub split_drag: Option<SplitDragSession>,
     pub animation: GeometryAnimation,
@@ -413,7 +408,6 @@ impl State {
             command_link: None,
             mode: Mode::Normal,
             moving_pane: None,
-            remote_drag: None,
             resizing_pane: None,
             split_drag: None,
             animation: GeometryAnimation::None,
@@ -926,9 +920,21 @@ impl State {
     /// new sizes to hold. Scratch drags are excluded too - the dropdown is client-local, and its
     /// panes never reach the shared namespace this defers.
     pub fn shared_tiled_drag_in_flight(&self) -> bool {
-        self.moving_pane.is_some_and(|session| {
-            !session.was_floating && !crate::scratchpad::contains(self, session.id)
-        })
+        !self.scratch_visible
+            && self
+                .moving_pane
+                .is_some_and(|session| !session.was_floating)
+    }
+
+    /// Drop only shared resize reports from a tiled drag that lost control. Local pane reports and
+    /// unrelated pending shared reports remain queued for their normal flush.
+    pub fn discard_shared_drag_resizes(&mut self) {
+        if self.shared_tiled_drag_in_flight() {
+            let held = std::mem::take(&mut self.current_mut().drag_held_resizes);
+            self.current_mut()
+                .pending_resizes
+                .retain(|key, _| !held.contains(key));
+        }
     }
 
     /// Vertical space (in rows) the workbar removes from the panes area. Independent of whether
@@ -1175,6 +1181,26 @@ mod render_visibility_tests {
         assert_eq!(state.current().active_workspace, 0);
         assert_eq!(state.current().focused_pane, Some(1));
         assert_eq!(state.current().workspaces[0].panes[0].id, 1);
+    }
+
+    #[test]
+    fn hidden_scratch_id_collision_does_not_hide_a_shared_tiled_drag() {
+        let mut state = state_with_two_workspaces();
+        state
+            .scratch
+            .panes
+            .push(Pane::new(1, 100, FloatRect::default()));
+        state.moving_pane = Some(MoveSession {
+            id: 1,
+            was_floating: false,
+            drag_rect: FloatRect::default(),
+            pointer_x: 0,
+            pointer_y: 0,
+        });
+
+        assert!(state.shared_tiled_drag_in_flight());
+        state.scratch_visible = true;
+        assert!(!state.shared_tiled_drag_in_flight());
     }
 
     #[test]

@@ -84,6 +84,12 @@
     --vp-sidebar-width: 268px;
     --vp-z-index-nav: 100;
 
+    /* One page margin, shared by the navbar, the mobile local nav, and the
+       doc column, so all three left edges and all three right edges line up.
+       VitePress ships a different number for each of them. The mobile block at
+       the end of the file narrows it; nothing else may set its own. */
+    --doc-edge: 24px;
+
     /* Font */
     --vp-font-family-base:
         "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -326,7 +332,7 @@ body {
     z-index: 70 !important;
 }
 .VPNavBar > .wrapper {
-    padding: 0 16px 0 24px !important;
+    padding: 0 var(--doc-edge) !important;
 }
 .VPNavBar > .wrapper,
 .VPNavBar > .wrapper > .container,
@@ -433,9 +439,9 @@ body {
         padding-right: 0 !important;
     }
     .VPNavBar.has-sidebar .title {
-        left: 24px !important;
+        left: var(--doc-edge) !important;
         padding: 0 !important;
-        width: calc(var(--vp-sidebar-width) - 24px) !important;
+        width: calc(var(--vp-sidebar-width) - var(--doc-edge)) !important;
     }
 }
 /* Nav menu links - match landing #topbar .nav-links a (5px 10px, 12px, 3px radius) */
@@ -476,8 +482,8 @@ body {
         padding-right: 0 !important;
     }
     .VPNavBar.has-sidebar .title {
-        left: 24px !important;
-        width: calc(var(--vp-sidebar-width) - 24px) !important;
+        left: var(--doc-edge) !important;
+        width: calc(var(--vp-sidebar-width) - var(--doc-edge)) !important;
     }
 }
 .VPNavBarMenuLink {
@@ -1420,21 +1426,79 @@ body.scanlines::after {
         width: 16px !important;
         height: 14px !important;
     }
+    /* VitePress centres the drawer's links in a 288px column inside 32px of
+       padding, so on a phone they start 51px in while the brand above them
+       starts on the page margin. Run them the width of the page instead. */
     .VPNavScreen {
         display: block !important;
+        padding: 0 var(--doc-edge) !important;
+    }
+    .VPNavScreen .container {
+        max-width: none !important;
+        margin: 0 !important;
+    }
+}
+
+/* A phone cannot hold the title, a 250px search field, and the hamburger on
+   one 48px line - the title wins the fight and the rest is pushed off the
+   right edge. Below this the search field is its icon, which is what
+   VitePress does by default and what the drawer button beside it already
+   looks like. */
+@media (max-width: 720px) {
+    .VPNavBar .search,
+    .VPNavBarSearch #local-search {
+        flex: 0 0 auto !important;
+        width: auto !important;
+        max-width: none !important;
+    }
+    .DocSearch-Button .DocSearch-Button-Placeholder,
+    .DocSearch-Button .DocSearch-Button-Keys {
+        display: none !important;
+    }
+    /* A square around the glyph, the height of the version chip beside it. */
+    .DocSearch-Button {
+        justify-content: center !important;
+        width: 30px !important;
+        min-width: 30px !important;
+        max-width: 30px !important;
+        height: 24px !important;
+        padding: 0 !important;
+    }
+    .DocSearch-Button .DocSearch-Button-Container {
+        justify-content: center !important;
+    }
+    .DocSearch-Button .DocSearch-Search-Icon {
+        margin-right: 0 !important;
+    }
+    .DocSearch-Button .DocSearch-Search-Icon::before {
+        font-size: 15px;
+    }
+}
+
+/* Narrower than this the title's own parts stop fitting. The version is the
+   half worth keeping: it is the one thing in the bar that is not repeated
+   somewhere else on the page. */
+@media (max-width: 380px) {
+    .NavTitleLabel {
+        display: none !important;
     }
 }
 
 /* The sidebar becoming a drawer is the mobile content transition too. Keep
    VitePress's internal 768px breakpoint from introducing a third layout. */
 @media (max-width: 959px) {
+    :root {
+        --doc-edge: 20px;
+    }
+    /* VitePress gives the menu button and the outline button different
+       paddings; both are on the page margin here. */
     .VPLocalNav .menu,
-    .VPLocalNav .VPOutlineDropdown {
-        padding-right: 24px !important;
-        padding-left: 24px !important;
+    .VPLocalNav .VPLocalNavOutlineDropdown {
+        padding-right: var(--doc-edge) !important;
+        padding-left: var(--doc-edge) !important;
     }
     .VPDoc .content-container {
-        padding: 24px 20px 60px !important;
+        padding: 24px var(--doc-edge) 60px !important;
     }
     .vp-doc h1 {
         font-size: 26px !important;

@@ -212,6 +212,32 @@ inlined. Regenerate them from that file rather than editing path data by hand.
 stays under them. A negative `z-index` on the layer would not work — it would
 fall behind `.lp`'s own background and disappear.
 
+## The page margin
+
+Each side of the site keeps its horizontal padding in one variable — `--lp-edge`
+on `.lp` for the landing, `--doc-edge` in `:root` for the doc pages — and every
+box that touches the page edge reads it: the topbar, the content column, the
+footer, and on a doc page the mobile local nav as well. Both narrow at their
+mobile breakpoint. VitePress ships a different number for each of those slots,
+which is what left the navbar 24px from the left and 16px from the right while
+the prose sat at 20px. **Do not write a horizontal page padding as a literal.**
+
+## The mobile topbar
+
+The landing's four links do not fit beside the brand on a phone; below 720px
+they move into a panel under the bar, opened by a hamburger that matches the one
+VitePress draws on a doc page. `.lp-top-nav` is `display: contents` above that
+width, so the wide bar is the same flex row it always was and the panel costs it
+nothing. `Landing.vue` closes the panel on Escape, on a click outside the bar,
+and when a resize crosses the breakpoint — that last one only so `aria-expanded`
+does not go stale on a rotation.
+
+Doc pages give up their search field's placeholder below the same width and keep
+the magnifier alone, which is what VitePress does by default; the theme had
+forced the full 250px field at every size. `.NavTitleLabel` is dropped at 380px
+— rozi's title has no label, but docs.tui-lipan.dev's carries `docs` after the
+name and runs out of room there, and the two stylesheets are mirrors.
+
 ## Cards and rules
 
 One convention holds the landing page together: **a filled box with a border

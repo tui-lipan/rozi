@@ -5,6 +5,10 @@
 
 .lp {
     --lp-max: 1180px;
+    /* One page margin for the topbar, the content column, and the footer, so
+       the three left edges and the three right edges line up. Anything that
+       sets its own horizontal padding here is a bug. */
+    --lp-edge: 24px;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -184,7 +188,7 @@ html.rozi-intro-pending .lp {
     align-items: center;
     gap: 2px;
     height: 48px;
-    padding: 0 16px 0 20px;
+    padding: 0 var(--lp-edge);
     background: var(--vp-c-bg-alt);
     border-bottom: 1px solid var(--vp-c-divider);
 }
@@ -215,6 +219,15 @@ html.rozi-intro-pending .lp {
 }
 .lp-top-spacer {
     flex: 1;
+}
+/* Wide enough for the links, they are flex children of the bar itself and this
+   wrapper is not a box at all. It exists so the same four anchors can become a
+   panel under the bar on a phone - see the 720px block. */
+.lp-top-nav {
+    display: contents;
+}
+.lp-top-menu {
+    display: none;
 }
 .lp-top-link {
     display: inline-flex;
@@ -257,6 +270,60 @@ html.rozi-intro-pending .lp {
     border-color: var(--vp-c-border);
 }
 
+/* The hamburger, hidden until the 720px block turns it on. The 16x14 bar box
+   is VitePress's, so the button on a doc page and the button here are the same
+   size in the same place. */
+.lp-top-menu {
+    align-items: center;
+    justify-content: flex-end;
+    width: 32px;
+    height: 48px;
+    padding: 0;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    color: var(--vp-c-text-2);
+    transition: color 0.15s;
+}
+.lp-top-menu:hover,
+.lp-top-menu[aria-expanded="true"] {
+    color: var(--vp-c-text-1);
+}
+.lp-top-menu-bars {
+    position: relative;
+    width: 16px;
+    height: 14px;
+}
+.lp-top-menu-bars span {
+    position: absolute;
+    left: 0;
+    width: 16px;
+    height: 2px;
+    border-radius: 1px;
+    background: currentColor;
+    transition:
+        transform 0.2s ease,
+        opacity 0.2s ease;
+}
+.lp-top-menu-bars span:nth-child(1) {
+    top: 1px;
+}
+.lp-top-menu-bars span:nth-child(2) {
+    top: 6px;
+}
+.lp-top-menu-bars span:nth-child(3) {
+    top: 11px;
+}
+.lp-top-menu-bars.open span:nth-child(1) {
+    transform: translateY(5px) rotate(45deg);
+}
+.lp-top-menu-bars.open span:nth-child(2) {
+    opacity: 0;
+}
+.lp-top-menu-bars.open span:nth-child(3) {
+    transform: translateY(-5px) rotate(-45deg);
+}
+
 /* ── Page shell ──────────────────────────────────────────────────────── */
 
 /* Both carry a stacking position so the decoration layer stays under them
@@ -269,7 +336,7 @@ html.rozi-intro-pending .lp {
     width: 100%;
     max-width: var(--lp-max);
     margin: 0 auto;
-    padding: 0 24px;
+    padding: 0 var(--lp-edge);
 }
 .lp-section {
     padding: 52px 0 0;
@@ -1191,7 +1258,7 @@ html.rozi-intro-pending .lp {
     align-items: center;
     max-width: var(--lp-max);
     margin: 0 auto;
-    padding: 18px 24px;
+    padding: 18px var(--lp-edge);
     font-size: 11.5px;
     color: var(--vp-c-text-3);
 }
@@ -1240,8 +1307,63 @@ html.rozi-intro-pending .lp {
 }
 
 @media (max-width: 720px) {
-    .lp-main {
-        padding: 0 16px;
+    .lp {
+        --lp-edge: 20px;
+    }
+    /* Four links and a brand do not fit on one 48px line on a phone: they wrap
+       and pile up behind each other. Below this width the bar keeps the brand
+       and a hamburger, and the links move into a panel under it. */
+    .lp-top-nav {
+        display: flex;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        align-items: stretch;
+        padding: 2px var(--lp-edge) 8px;
+        background: var(--vp-c-bg-alt);
+        border-bottom: 1px solid var(--vp-c-divider);
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-4px);
+        transition:
+            opacity 0.16s ease,
+            transform 0.16s ease,
+            visibility 0.16s;
+    }
+    .lp-top-nav.open {
+        opacity: 1;
+        visibility: visible;
+        transform: none;
+    }
+    /* One row each, on the page margin, separated by the rule the rest of the
+       page uses. The GitHub link's button border would read as a second panel
+       inside this one. */
+    .lp-top-link,
+    .lp-top-github {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
+        margin: 0;
+        padding: 12px 2px;
+        font-size: 13px;
+        color: var(--vp-c-text-2);
+        border: 0;
+        border-top: 1px solid var(--vp-c-divider);
+        border-radius: 0;
+    }
+    .lp-top-nav > :first-child {
+        border-top: 0;
+    }
+    .lp-top-link:hover,
+    .lp-top-github:hover {
+        background: none;
+        color: var(--vp-c-brand-1);
+    }
+    .lp-top-menu {
+        display: inline-flex;
     }
     .lp-wordmark {
         font-size: 56px;
@@ -1352,7 +1474,9 @@ html.rozi-intro-pending .lp {
         transition: none;
     }
     .lp-cta-btn,
-    .lp-cta-btn::after {
+    .lp-cta-btn::after,
+    .lp-top-nav,
+    .lp-top-menu-bars span {
         transition: none;
     }
     /* The ripple is travel, which is the thing being asked about. Keep the

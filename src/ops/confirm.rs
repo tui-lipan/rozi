@@ -1,7 +1,7 @@
 //! The arm-then-confirm window shared by every destructive confirmation in the app.
 //!
 //! A destructive gesture never commits on its first press or click: it *arms*, the surface it came
-//! from says so (a struck-through row, a "Click again to confirm" line, a confirm toast), and only a
+//! from says so (a struck-through row, an "Again to confirm" line, a confirm toast), and only a
 //! repeat within the window commits. This module owns the clock that makes the window the same
 //! length everywhere and the token that lets one arming's expiry not clear a later one's.
 

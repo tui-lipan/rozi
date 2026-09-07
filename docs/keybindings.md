@@ -241,6 +241,7 @@ After `Shift+B` focuses the sidebar:
 | `PageUp`, `PageDown` | Move by a page |
 | `g`, `G`, `Home`, `End` | First or last row |
 | `Enter` | Activate the selected row |
+| `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle file-tree directories |
 | `Ctrl+Shift+Left/Right` | Reorder the active tab |

@@ -368,6 +368,64 @@ fn arrow_keys_skip_headers_and_enter_activates_the_row() {
         .expect("navigation completes");
 }
 
+/// `x` is the keyboard equivalent of the row ✕: first press arms, second commits. Moving the
+/// cursor in between abandons the arming, the same as the pointer path.
+#[test]
+fn x_twice_closes_the_selected_row() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_panes();
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            settle(&mut backend);
+
+            let id = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("backend_with_panes focuses pane 1, the first selectable row");
+            let _ = backend.send_key(key(KeyCode::Char('x')));
+            settle(&mut backend);
+            assert_eq!(
+                backend.state().sidebar.pending_row_close,
+                Some(rozi::state::SidebarClose::Pane(id)),
+                "the first x arms the confirmation"
+            );
+            assert!(
+                backend
+                    .state()
+                    .current()
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| &workspace.panes)
+                    .any(|pane| pane.id == id && !pane.closing),
+                "arming leaves the pane alone"
+            );
+
+            let _ = backend.send_key(key(KeyCode::Char('x')));
+            settle(&mut backend);
+            assert!(
+                backend.state().sidebar.pending_row_close.is_none(),
+                "the second x consumes the arming"
+            );
+            assert!(
+                backend
+                    .state()
+                    .current()
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| &workspace.panes)
+                    .any(|pane| pane.id == id && pane.closing),
+                "the confirming x closes the pane"
+            );
+        })
+        .expect("spawn close thread")
+        .join()
+        .expect("close completes");
+}
+
 /// Tab cycles sidebar tabs instead of the focus ring. The sidebar is outside that ring by design,
 /// which is what frees Tab up for this.
 #[test]

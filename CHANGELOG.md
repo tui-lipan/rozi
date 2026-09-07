@@ -4,6 +4,9 @@
 
 ### Added
 
+- With the sidebar focused, `x` twice closes the selected row the same way the hover ✕ does. Panes
+  and sessions take the same two-step confirmation. The ✕ appears on the keyboard cursor so the key
+  is visible without a pointer.
 - **Remote hosts** is a host manager rather than a list of machines that happen to be reachable.
   `Ctrl+N` and `Ctrl+E` open the same three-line editor — host, username, port — with `Tab` and
   `Shift+Tab` between the lines. The host line answers more than its own question: typing

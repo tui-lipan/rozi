@@ -47,7 +47,8 @@ impl SidebarRow {
         }
     }
 
-    /// Give the row a ✕: revealed on hover, destroying `close` after a confirming second click.
+    /// Give the row a ✕: revealed on hover or on the focused keyboard cursor, destroying `close`
+    /// after a confirming second click or `x`.
     pub(super) fn closable(mut self, close: crate::state::SidebarClose) -> Self {
         self.close = Some(close);
         self
@@ -174,12 +175,12 @@ impl Row {
 
         // An armed row spells the confirmation out the way the session picker's pending kill does:
         // the title strikes through, because that is the thing about to go, and the detail line
-        // gives up whatever it was saying to ask for the second click. The ✕ itself stays a plain ✕
+        // gives up whatever it was saying to ask for the second gesture. The ✕ itself stays a plain ✕
         // — it is the target, and a target that changes shape under the pointer is one you can miss.
         if close.is_some_and(|close| close.armed) {
             self.title_style = self.title_style.strikethrough();
             self.detail = vec![(
-                "Click again to confirm".to_string(),
+                "Again to confirm".to_string(),
                 Style::new().fg(theme.status.error),
             )];
         }
@@ -274,10 +275,10 @@ impl Row {
     }
 }
 
-/// The ✕ pinned to a row's title line: click to arm, click again to destroy.
+/// The ✕ pinned to a row's title line: click or press `x` to arm, again to destroy.
 ///
-/// It renders the same armed or not — the row says what is about to happen (struck-through title, a
-/// "Click again to confirm" detail line) while the glyph stays exactly where and what it was, since
+/// It renders the same armed or not — the row says what is about to happen (struck-through title, an
+/// "Again to confirm" detail line) while the glyph stays exactly where and what it was, since
 /// the confirming click has to land back on it. Deliberately *not* recolored while armed: red is
 /// what hovering it means, so an armed ✕ painted red would answer the pointer with no change at all
 /// and stop reading as a thing you can click.

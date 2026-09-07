@@ -112,6 +112,7 @@ fn direct_mode_rows() -> Vec<HelpRow> {
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(SIDEBAR, "Enter", "Activate", SIDEBAR_EXTRA),
+        HelpRow::direct(SIDEBAR, "x", "Close the selected row", SIDEBAR_EXTRA),
         HelpRow::direct(SIDEBAR, "Tab / Shift+Tab", "Cycle tabs", SIDEBAR_EXTRA),
         HelpRow::direct(
             SIDEBAR,

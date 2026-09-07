@@ -4,14 +4,15 @@ use crate::AppRoot;
 use crate::config::{SidebarTab, SidebarTabId, UserCommandAction};
 use crate::state::RowTarget;
 
-/// A row's ✕ was clicked. The first click arms a confirmation (the row strikes through and its
-/// detail line asks for the second click), the second commits it — within
-/// [`crate::ops::confirm::CONFIRM_WINDOW`], after which the arming lapses on its own.
+/// A row's ✕ was clicked, or `x` was pressed on it while the sidebar had focus. The first gesture
+/// arms a confirmation (the row strikes through and its detail line asks for the second), the
+/// second commits it — within [`crate::ops::confirm::CONFIRM_WINDOW`], after which the arming
+/// lapses on its own.
 ///
-/// Deliberately confirms regardless of `[confirm]`, which gates the *keyboard* close/kill actions.
-/// This is a one-cell pointer target sitting on a row whose ordinary click merely focuses a pane or
-/// attaches a session, so a slip is both easy and expensive — the two are not the same gesture and
-/// do not share a switch.
+/// Deliberately confirms regardless of `[confirm]`, which gates the prefix close/kill actions.
+/// Closing a row is a different gesture from `close` / `kill-session` on whatever currently has
+/// focus: the target is whichever row the pointer or cursor is on, and a slip is both easy and
+/// expensive, so the two do not share a switch.
 pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) -> Update {
     let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
@@ -47,6 +48,18 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
 
 /// Enter: run whatever the row under the cursor does — the same path a click on it takes.
 pub(crate) fn activate_cursor(ctx: &mut Context<AppRoot>) -> Update {
+    with_cursor_row(ctx, row_activate)
+}
+
+/// `x`: destroy whatever the row under the cursor's ✕ would — the same path a click on that ✕ takes.
+pub(crate) fn close_cursor(ctx: &mut Context<AppRoot>) -> Update {
+    with_cursor_row(ctx, row_close)
+}
+
+fn with_cursor_row(
+    ctx: &mut Context<AppRoot>,
+    then: fn(&mut Context<AppRoot>, usize, usize) -> Update,
+) -> Update {
     let panel = ctx.state.sidebar.active_panel;
     let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
@@ -56,7 +69,7 @@ pub(crate) fn activate_cursor(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.sidebar.panels[panel].cursor,
         &items,
     ) {
-        Some(index) => row_activate(ctx, panel, index),
+        Some(index) => then(ctx, panel, index),
         None => Update::none(),
     }
 }

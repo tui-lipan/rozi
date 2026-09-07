@@ -18,6 +18,7 @@ After `Shift+B` focuses the sidebar:
 | `PageUp`, `PageDown` | Move by a page |
 | `g`, `G`, `Home`, `End` | First or last row |
 | `Enter` | Activate the selected row |
+| `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle directories |
 | `Ctrl+Shift+Left/Right` | Reorder the active tab |
@@ -75,8 +76,9 @@ See [Agent definitions](agents.md).
 Panes groups live panes by workspace. A row shows the pane title, foreground program, and working
 directory. Activating a row switches workspace and focuses that pane.
 
-Hover a pane row and click `x` twice to close it. The confirmation always applies to this pointer
-action, independently of `[confirm]` key settings.
+Hover a pane row and click `x` twice to close it, or press `x` twice while the sidebar is focused
+and that row is selected. The confirmation always applies to this row close, independently of
+`[confirm]` key settings.
 
 Pane titles follow the precedence described in
 [Layouts and panes](layouts-and-panes.md#titles-and-exited-panes).
@@ -94,8 +96,9 @@ Ctrl+N**. A valid target is remembered only after successful discovery. Expandin
 connecting a host probes on demand; merely opening Sessions or the sidebar does not contact every
 configured host.
 
-Hover a live session row and click `x` twice to kill it. Killing the active session leaves the
-client in the picker or sessionless launcher. See [Sessions](sessions.md).
+Hover a live session row and click `x` twice to kill it, or press `x` twice while the sidebar is
+focused and that row is selected. Killing the active session leaves the client in the picker or
+sessionless launcher. See [Sessions](sessions.md).
 
 Session names are host-local. A local `dev` session and a remote `dev` session are separate rows.
 See [Remote sessions](remote.md) for authentication and host setup.

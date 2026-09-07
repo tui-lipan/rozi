@@ -378,14 +378,13 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
     for (index, row) in rows.into_iter().enumerate() {
         let selectable = row.selectable();
         let closable = row.close.is_some();
-        let close = close_affordance(ctx, panel, &row, index);
+        let selected = focused && cursor == Some(index);
+        let close = close_affordance(ctx, panel, &row, index, selected);
         let hovered = panel_state.hovered_row == Some(index) && !panel_state.suppress_row_hover;
         let element = match row.kind {
             row::RowKind::Spacer => Text::new(" ").height(Length::Px(1)).into(),
             row::RowKind::Header(element) => *element,
-            row::RowKind::Item(item) => {
-                item.build(ctx, focused && cursor == Some(index), hovered, close)
-            }
+            row::RowKind::Item(item) => item.build(ctx, selected, hovered, close),
         };
         // The row used to lose its own hover effect whenever the keyed ✕ region owned hover, so
         // this re-applied the same background transform through a scope. tui-lipan 0.7.0 makes a
@@ -430,22 +429,25 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
 
 /// Whether a row shows its ✕ this frame, and in which state.
 ///
-/// Hover is what reveals it, so a resting list stays quiet and no row advertises a destructive
-/// action it is not being aimed at. An *armed* row keeps it regardless: hiding a live confirmation
-/// the moment the pointer drifts would leave the next click on that ✕ killing something with no
-/// warning on screen. `suppress_row_hover` gates the hover case the same way the row's hover lift
-/// is gated, so keyboard navigation does not leave a ✕ behind under a stale pointer.
+/// Aiming is what reveals it — the pointer on the row, or the keyboard cursor while the sidebar
+/// owns focus — so a resting list stays quiet and no row advertises a destructive action it is not
+/// being aimed at. An *armed* row keeps it regardless: hiding a live confirmation the moment the
+/// pointer drifts would leave the next click on that ✕ killing something with no warning on screen.
+/// `suppress_row_hover` gates the hover case the same way the row's hover lift is gated, so
+/// keyboard navigation does not leave a ✕ behind under a stale pointer; the cursor case is the
+/// keyboard's own aim and is not gated by that flag.
 fn close_affordance(
     ctx: &Context<AppRoot>,
     panel: usize,
     row: &row::SidebarRow,
     index: usize,
+    selected: bool,
 ) -> Option<row::CloseAffordance> {
     let close = row.close.as_ref()?;
     let armed = ctx.state.sidebar.pending_row_close.as_ref() == Some(close);
     let panel_state = &ctx.state.sidebar.panels[panel];
     let hovered = panel_state.hovered_row == Some(index) && !panel_state.suppress_row_hover;
-    (armed || hovered).then_some(row::CloseAffordance {
+    (armed || hovered || selected).then_some(row::CloseAffordance {
         panel,
         index,
         armed,

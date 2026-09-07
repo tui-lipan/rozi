@@ -187,10 +187,8 @@ fn an_armed_row_asks_on_its_detail_line_and_keeps_its_x_visible_unhovered() {
         state.sidebar.pending_row_close = Some(SidebarClose::Pane(id));
     });
     assert!(
-        lines
-            .iter()
-            .any(|line| line.contains("Click again to confirm")),
-        "an armed row asks for the confirming click: {lines:#?}"
+        lines.iter().any(|line| line.contains("Again to confirm")),
+        "an armed row asks for the confirming gesture: {lines:#?}"
     );
     assert!(
         lines.iter().any(|line| line.contains('✕')),
@@ -200,5 +198,20 @@ fn an_armed_row_asks_on_its_detail_line_and_keeps_its_x_visible_unhovered() {
     assert!(
         !lines.iter().any(|line| line.contains("shell")),
         "the armed row gives its detail line over to the confirmation: {lines:#?}"
+    );
+}
+
+/// The keyboard cursor is the same kind of aim as hover, so a focused sidebar reveals the ✕ on the
+/// selected row even with pointer hover suppressed.
+#[test]
+fn the_keyboard_cursor_reveals_the_close_affordance_while_focused() {
+    let lines = panes_sidebar_lines(|state| {
+        state.sidebar.focused = true;
+        state.sidebar.panels[0].cursor = PANE_ROW;
+        state.sidebar.panels[0].suppress_row_hover = true;
+    });
+    assert!(
+        lines.iter().any(|line| line.contains('✕')),
+        "the focused cursor reveals the row's ✕: {lines:#?}"
     );
 }

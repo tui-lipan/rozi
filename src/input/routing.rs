@@ -146,6 +146,7 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
         KeyCode::Home | KeyCode::Char('g') => Some(sidebar::move_cursor(ctx, isize::MIN)),
         KeyCode::End | KeyCode::Char('G') => Some(sidebar::move_cursor(ctx, isize::MAX)),
         KeyCode::Enter => Some(sidebar::activate_cursor(ctx)),
+        KeyCode::Char('x') => Some(sidebar::close_cursor(ctx)),
         _ => None,
     }
 }

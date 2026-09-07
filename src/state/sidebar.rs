@@ -659,9 +659,9 @@ pub struct SidebarState {
     /// Whether the explorer input was entered from the focused tree with `/`. App commands run
     /// before widget interceptors, so Escape uses this signal to let the input return to the tree.
     pub explorer_entered_from_tree: bool,
-    /// A row's ✕ armed for a confirming second click. Cleared by acting on anything else or by
-    /// moving the cursor, so the confirmation never outlives the moment. An armed row keeps its ✕
-    /// visible even unhovered — an invisible armed state is worse than a lingering glyph.
+    /// A row's ✕ armed for a confirming second click or `x`. Cleared by acting on anything else or
+    /// by moving the cursor, so the confirmation never outlives the moment. An armed row keeps its
+    /// ✕ visible even unhovered — an invisible armed state is worse than a lingering glyph.
     pub pending_row_close: Option<SidebarClose>,
     /// The elapsed-time text the Agents tab last rendered. Comparing against it turns most of the
     /// once-a-second duration ticks into a bare reschedule instead of a repaint, the same way the

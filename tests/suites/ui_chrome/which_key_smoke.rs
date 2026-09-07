@@ -231,7 +231,9 @@ fn the_reveal_delay_holds_the_strip_back_without_hiding_the_prefix_badge() {
             "instant chrome does not wait - the badge is how you know the key landed"
         );
 
-        std::thread::sleep(delay + Duration::from_millis(40));
+        // `TestBackend` runs on a controlled clock as of tui-lipan 0.8.0, so sleeping
+        // no longer moves the reveal delay along - only advancing does.
+        backend.advance(delay + Duration::from_millis(40));
         assert!(
             rendered(&mut backend).contains("New pane"),
             "the strip appears once the chord has been held past the delay"

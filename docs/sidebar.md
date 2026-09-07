@@ -73,8 +73,9 @@ See [Agent definitions](agents.md).
 
 ## Panes
 
-Panes groups live panes by workspace. A row shows the pane title, foreground program, and working
-directory. Activating a row switches workspace and focuses that pane.
+Panes groups live panes by workspace. A heading names the workspace. A row shows the pane title,
+foreground program, and working directory. Activating a row switches workspace and focuses that
+pane. Each group ends with **+ New pane**, which spawns on that workspace.
 
 Hover a pane row and click `x` twice to close it, or press `x` twice while the sidebar is focused
 and that row is selected. The confirmation always applies to this row close, independently of

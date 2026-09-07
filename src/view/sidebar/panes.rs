@@ -5,9 +5,10 @@ use crate::AppRoot;
 
 pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
+    let active = ctx.state.current().active_workspace;
     for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
         let panes = ordered_sidebar_panes(workspace);
-        if panes.is_empty() {
+        if panes.is_empty() && workspace_index != active {
             continue;
         }
         if !rows.is_empty() {
@@ -44,8 +45,18 @@ pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
                     .closable(crate::state::SidebarClose::Pane(id)),
             );
         }
+        rows.push(new_pane_row(ctx, workspace_index));
     }
     rows
+}
+
+/// A child-level "+ New pane" action row, matching the Sessions tab's "+ New session".
+fn new_pane_row(ctx: &Context<AppRoot>, workspace: usize) -> SidebarRow {
+    let style = super::super::fg_only(&ctx.state.theme.accent);
+    SidebarRow::item(
+        Row::new("+ New pane").title_style(style),
+        RowTarget::NewPane { workspace },
+    )
 }
 
 /// Sidebar order follows the authoritative tiling tree, while floating panes retain their

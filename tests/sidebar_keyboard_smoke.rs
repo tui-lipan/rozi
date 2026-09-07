@@ -342,9 +342,10 @@ fn arrow_keys_skip_headers_and_enter_activates_the_row() {
                 .expect("focus sidebar");
             settle(&mut backend);
 
-            // Row order is: [Workspace 1] first, second, [Workspace 2] third. Two steps down from
-            // the first selectable row lands on `third` only if both headers were skipped.
-            for _ in 0..2 {
+            // Row order is: [Workspace 1] first, second, + New pane, [Workspace 2] third. Three
+            // steps down from the first selectable row lands on `third` only if headers were
+            // skipped and the add-pane row was stepped through.
+            for _ in 0..3 {
                 let _ = backend.send_key(key(KeyCode::Down));
                 settle(&mut backend);
             }
@@ -712,7 +713,10 @@ fn keyboard_row_navigation_scrolls_the_cursor_into_view() {
             settle(&mut backend);
 
             assert!(
-                backend.capture_frame().to_fixed_grid().contains("pane-12"),
+                backend
+                    .capture_frame()
+                    .to_fixed_grid()
+                    .contains("+ New pane"),
                 "vertical row navigation keeps the cursor row visible"
             );
         })

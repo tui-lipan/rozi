@@ -983,6 +983,56 @@ fn the_close_affordance_takes_two_clicks_and_is_disarmed_by_acting_elsewhere() {
     });
 }
 
+/// "+ New pane" under a workspace heading spawns on that workspace, the same as Sessions'
+/// "+ New session" creates on that host.
+#[test]
+fn new_pane_row_spawns_on_the_named_workspace() {
+    on_test_thread(|| {
+        let mut backend = settled_backend();
+        {
+            let state = backend.state_mut();
+            state.sidebar_visible = true;
+            state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
+            // Empty but active, so the group still lists (heading + New pane) and the spawn has
+            // nothing to split from.
+            state.current_mut().active_workspace = 1;
+        }
+        let before = backend.state().current().workspaces[1]
+            .panes
+            .iter()
+            .filter(|pane| !pane.closing)
+            .count();
+        let index = backend
+            .state()
+            .sidebar_item_projections(&SidebarTab::Panes)
+            .iter()
+            .position(|item| {
+                matches!(
+                    item.target,
+                    crate::state::RowTarget::NewPane { workspace: 1 }
+                )
+            })
+            .expect("workspace 2 has a new-pane row");
+        backend
+            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index })
+            .expect("activate new pane");
+        assert_eq!(
+            backend.state().current().workspaces[1]
+                .panes
+                .iter()
+                .filter(|pane| !pane.closing)
+                .count(),
+            before + 1,
+            "the new pane lands on the workspace the row named"
+        );
+        assert_eq!(
+            backend.state().current().active_workspace,
+            1,
+            "spawning there switches to that workspace"
+        );
+    });
+}
+
 /// An arming lapses on its own after [`crate::ops::confirm::CONFIRM_WINDOW`]. The expiry is
 /// matched by token rather than by wall time here: an expiry belonging to an arming that has
 /// already been replaced must leave the replacement alone, which is the case a bare timer would

@@ -101,6 +101,7 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         RowTarget::NewSession(Some(target)) => {
             crate::ops::session::open_create_session_on_host(ctx, target)
         }
+        RowTarget::NewPane { workspace } => spawn_new_pane(ctx, workspace),
         RowTarget::ConnectHost => crate::ops::session::open_new_host_flow(ctx),
         RowTarget::Launcher {
             config_epoch,
@@ -204,6 +205,21 @@ pub(crate) fn substitute(
         // Config validation rejects placeholders here; run/popup commands are always fixed.
         action => action.clone(),
     }
+}
+
+fn spawn_new_pane(ctx: &mut Context<AppRoot>, workspace: usize) -> Update {
+    if workspace >= ctx.state.current().workspaces.len() {
+        return Update::none();
+    }
+    if crate::ops::session::needs_session_for_pty(&ctx.state) {
+        return crate::ops::session::start_launcher_shell(ctx);
+    }
+    let previous_focused = ctx.state.current().workspaces[workspace].focused_pane;
+    let identity = crate::state::PaneIdentity {
+        cwd: crate::pane::lifecycle::focused_spawn_cwd(&ctx.state),
+        ..crate::state::PaneIdentity::default()
+    };
+    crate::pane::lifecycle::spawn_interactive_pane(ctx, workspace, previous_focused, identity).1
 }
 
 pub(crate) fn focus_pane(ctx: &mut Context<AppRoot>, id: crate::state::PaneId) -> Update {

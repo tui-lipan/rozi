@@ -76,6 +76,14 @@ const PANE_ROW: usize = 1;
 fn the_close_affordance_is_revealed_by_hover_and_hidden_at_rest() {
     let resting = panes_sidebar_lines(|_| {});
     assert!(
+        resting.iter().any(|line| line.contains("Workspace 1")),
+        "the group heading names the workspace: {resting:#?}"
+    );
+    assert!(
+        resting.iter().any(|line| line.contains("+ New pane")),
+        "each workspace group ends with a new-pane row: {resting:#?}"
+    );
+    assert!(
         !resting.iter().any(|line| line.contains('✕')),
         "a resting Panes tab shows no ✕: {resting:#?}"
     );

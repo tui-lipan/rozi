@@ -472,12 +472,13 @@ fn closing_an_inactive_scrollable_anchor_remaps_its_workspace_only() {
                     crate::events::EventKind::FocusChanged,
                 ])));
 
-        // Active rows 0–3, spacer 4, inactive header 5; row 7 is pane 130 in [110, 130, 120].
+        // Active rows 0–4 (header, three panes, New pane), spacer 5, inactive header 6;
+        // row 8 is pane 130 in [110, 130, 120].
         backend
-            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 7 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 8 })
             .expect("arm inactive anchored close");
         backend
-            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 7 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 8 })
             .expect("close inactive anchored tile");
 
         let current = backend.state().current();

@@ -4,6 +4,8 @@
 
 ### Added
 
+- The Panes sidebar lists **+ New pane** under each workspace heading, matching Sessions' **+ New
+  session**. Activating it spawns on that workspace. Pane rows still close with the hover ✕ or `x`.
 - With the sidebar focused, `x` twice closes the selected row the same way the hover ✕ does. Panes
   and sessions take the same two-step confirmation. The ✕ appears on the keyboard cursor so the key
   is visible without a pointer.

@@ -45,6 +45,10 @@ pub enum RowTarget {
     HostConnect(crate::session::remote::RemoteTarget),
     /// A "New session" action row. `None` creates locally; `Some(host)` creates on that host.
     NewSession(Option<crate::session::remote::RemoteTarget>),
+    /// A "New pane" action row. Spawns an interactive pane on that workspace.
+    NewPane {
+        workspace: usize,
+    },
     /// The "Connect a host…" action row, opening the remote-host connect prompt.
     ConnectHost,
     Launcher {
@@ -133,7 +137,8 @@ impl State {
         match tab {
             SidebarTab::Panes => {
                 let mut items = Vec::new();
-                for workspace in &self.current().workspaces {
+                let active = self.current().active_workspace;
+                for (workspace_index, workspace) in self.current().workspaces.iter().enumerate() {
                     let mut ordered_ids = Vec::new();
                     for id in workspace.tiled_ids() {
                         if workspace
@@ -149,7 +154,7 @@ impl State {
                             ordered_ids.push(pane.id);
                         }
                     }
-                    if ordered_ids.is_empty() {
+                    if ordered_ids.is_empty() && workspace_index != active {
                         continue;
                     }
                     if !items.is_empty() {
@@ -168,6 +173,12 @@ impl State {
                             close: Some(SidebarClose::Pane(id)),
                         });
                     }
+                    items.push(SidebarItemProjection {
+                        target: RowTarget::NewPane {
+                            workspace: workspace_index,
+                        },
+                        close: None,
+                    });
                 }
                 items
             }

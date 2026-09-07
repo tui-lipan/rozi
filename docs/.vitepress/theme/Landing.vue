@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useData, withBase } from "vitepress";
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onMounted, ref } from "vue";
 import RoziStage from "./composition/RoziStage.vue";
 import ConfigTabs from "./ConfigTabs.vue";
 import InstallTabs from "./InstallTabs.vue";
@@ -18,41 +18,6 @@ onMounted(() => {
 
 // From Cargo.toml via config.ts - see NavTitleMeta.vue.
 const { theme } = useData();
-
-/* The topbar's links do not fit beside the brand on a phone, so below 720px
-   they live in a panel under the bar - see `.lp-top-nav` in landing.css. The
-   breakpoint is duplicated here only to close the panel when a rotation takes
-   the viewport back to the wide bar, where it would otherwise leave
-   `aria-expanded` lying. */
-const TOPBAR_WIDE = "(min-width: 721px)";
-const menuOpen = ref(false);
-const topbar = ref<HTMLElement | null>(null);
-
-const closeMenu = () => {
-  menuOpen.value = false;
-};
-const onKeydown = (event: KeyboardEvent) => {
-  if (event.key === "Escape") closeMenu();
-};
-/* Capture, so a link inside the panel still gets its own click. */
-const onPointerDown = (event: Event) => {
-  if (menuOpen.value && !topbar.value?.contains(event.target as Node)) {
-    closeMenu();
-  }
-};
-
-let wide: MediaQueryList | undefined;
-onMounted(() => {
-  wide = window.matchMedia(TOPBAR_WIDE);
-  wide.addEventListener("change", closeMenu);
-  document.addEventListener("keydown", onKeydown);
-  document.addEventListener("pointerdown", onPointerDown, true);
-});
-onBeforeUnmount(() => {
-  wide?.removeEventListener("change", closeMenu);
-  document.removeEventListener("keydown", onKeydown);
-  document.removeEventListener("pointerdown", onPointerDown, true);
-});
 
 const GITHUB = "https://github.com/tui-lipan/rozi";
 const SPONSOR = "https://github.com/sponsors/Razuer";
@@ -352,67 +317,49 @@ restart = "on-failure"`);
       <span class="lp-bg-mark m3"></span>
     </div>
 
-    <header class="lp-top" ref="topbar">
+    <!-- Every link stays on the bar at every width; the 720px block in
+         landing.css tightens them until they fit rather than hiding them
+         behind a button. -->
+    <header class="lp-top">
       <a class="lp-brand" :href="withBase('/')">
         <img :src="withBase('/logo.svg')" alt="" width="24" height="24" />
         <span class="lp-brand-name">rozi</span>
         <span class="lp-chip">v{{ theme.roziVersion }}</span>
       </a>
       <span class="lp-top-spacer" />
-      <!-- `display: contents` on a wide viewport, so these are the bar's own
-           flex children there and a panel under it on a phone. -->
-      <nav
-        id="lp-top-nav"
-        class="lp-top-nav"
-        :class="{ open: menuOpen }"
-        @click="closeMenu"
+      <a class="lp-top-link" :href="withBase('/getting-started')">Docs</a>
+      <a
+        class="lp-top-link"
+        href="https://tui-lipan.dev"
+        target="_blank"
+        rel="noopener noreferrer"
+        >tui-lipan ↗</a
       >
-        <a class="lp-top-link" :href="withBase('/getting-started')">Docs</a>
-        <a
-          class="lp-top-link"
-          href="https://tui-lipan.dev"
-          target="_blank"
-          rel="noopener noreferrer"
-          >tui-lipan ↗</a
-        >
-        <a
-          class="lp-top-link lp-sponsor"
-          :href="SPONSOR"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M8 14.25s-5.5-3.4-5.5-7.5a3.25 3.25 0 0 1 5.5-2.35A3.25 3.25 0 0 1 13.5 6.75c0 4.1-5.5 7.5-5.5 7.5z"
-            />
-          </svg>
-          <span>Sponsor</span>
-        </a>
-        <a
-          class="lp-top-github"
-          :href="GITHUB"
-          target="_blank"
-          rel="noopener noreferrer"
-          >GitHub ↗</a
-        >
-      </nav>
-      <button
-        class="lp-top-menu"
-        type="button"
-        aria-controls="lp-top-nav"
-        :aria-expanded="menuOpen"
-        :aria-label="menuOpen ? 'Close menu' : 'Open menu'"
-        @click="menuOpen = !menuOpen"
+      <a
+        class="lp-top-link lp-sponsor"
+        :href="SPONSOR"
+        target="_blank"
+        rel="noopener noreferrer"
       >
-        <span class="lp-top-menu-bars" :class="{ open: menuOpen }" aria-hidden="true">
-          <span /><span /><span />
-        </span>
-      </button>
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M8 14.25s-5.5-3.4-5.5-7.5a3.25 3.25 0 0 1 5.5-2.35A3.25 3.25 0 0 1 13.5 6.75c0 4.1-5.5 7.5-5.5 7.5z"
+          />
+        </svg>
+        <span>Sponsor</span>
+      </a>
+      <a
+        class="lp-top-github"
+        :href="GITHUB"
+        target="_blank"
+        rel="noopener noreferrer"
+        >GitHub ↗</a
+      >
     </header>
 
     <main class="lp-main">

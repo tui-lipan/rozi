@@ -224,16 +224,28 @@ the prose sat at 20px. **Do not write a horizontal page padding as a literal.**
 
 ## The mobile topbar
 
-The landing's four links do not fit beside the brand on a phone; below 720px
-they move into a panel under the bar, opened by a hamburger that matches the one
-VitePress draws on a doc page. `.lp-top-nav` is `display: contents` above that
-width, so the wide bar is the same flex row it always was and the panel costs it
-nothing. `Landing.vue` closes the panel on Escape, on a click outside the bar,
-and when a resize crosses the breakpoint — that last one only so `aria-expanded`
-does not go stale on a rotation.
+**The landing topbar keeps every link at every width.** Four links is not a
+menu, and a hamburger on a bar this short hides more than it saves — the same
+call [tui-lipan.dev](https://tui-lipan.dev)'s topbar makes, which this follows.
+They are squeezed until they fit instead, in three steps:
 
-Doc pages give up their search field's placeholder below the same width and keep
-the magnifier alone, which is what VitePress does by default; the theme had
+| Width | What gives |
+|-------|------------|
+| ≤720px | Smaller type and tighter padding on the brand, the chip, and the links; the sponsor link becomes its heart alone |
+| ≤480px | The version chip |
+| ≤360px | One more turn of type and padding |
+
+The chip goes at 480px rather than later because the four links fill a 390px
+screen exactly with it on, leaving nothing for a two-digit minor version to grow
+into — and an item that overflows this bar is clipped by `.lp`'s `overflow-x`,
+not wrapped onto a second line. That clipping is also why every bar item carries
+`flex: none` and `white-space: nowrap`: without them `tui-lipan ↗` broke across
+two lines inside a 48px row and the second line landed on the hero.
+
+Doc pages cannot do the same — VitePress's navbar already carries a title, a
+search field, and the drawer button, and its links do not fit beside them at any
+phone width. What they do give up below 720px is the search field's placeholder,
+keeping the magnifier alone, which is VitePress's own default; the theme had
 forced the full 250px field at every size. `.NavTitleLabel` is dropped at 380px
 — rozi's title has no label, but docs.tui-lipan.dev's carries `docs` after the
 name and runs out of room there, and the two stylesheets are mirrors.

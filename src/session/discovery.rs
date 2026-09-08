@@ -17,6 +17,15 @@ pub enum DiscoveredSessionStatus {
     },
     /// No server is running, but a resurrection snapshot can seed one under this name.
     Restorable,
+    /// Remembered from the last successful probe of a host this client is not connected to.
+    ///
+    /// Nothing here was confirmed by a live handshake: the pane count is what the host reported the
+    /// last time it answered, and the session may since have been killed. Kept distinct from
+    /// [`Self::Running`] precisely so no surface can quietly present a memory as a live session —
+    /// a host's known workplaces stay listed while it is offline, but they must say that they are.
+    LastSeen {
+        panes: usize,
+    },
     Busy,
     Unknown,
 }
@@ -437,6 +446,13 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                     if let Some(profile) = created_from_profile {
                         obj["created_from_profile"] = serde_json::json!(profile);
                     }
+                }
+                // The CLI probes live and never reads the client's host cache, so this does not
+                // occur today. Serialized honestly anyway: `panes` is a remembered count, and a
+                // consumer must be able to tell it apart from one a server just reported.
+                DiscoveredSessionStatus::LastSeen { panes } => {
+                    obj["status"] = serde_json::json!("last-seen");
+                    obj["panes"] = serde_json::json!(panes);
                 }
                 DiscoveredSessionStatus::Restorable => {
                     obj["status"] = serde_json::json!("restorable")

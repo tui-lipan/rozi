@@ -3,8 +3,7 @@ use tui_lipan::prelude::*;
 use super::row::{Row, RowTarget, SidebarRow};
 use crate::AppRoot;
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
-use crate::session::remote::RemoteTarget;
-use crate::state::{ConnectionState, HostEntry, HostStatus};
+use crate::state::{HostEntry, HostStatus};
 
 fn session_detail(entry: &DiscoveredSession) -> String {
     match &entry.status {
@@ -19,6 +18,12 @@ fn session_detail(entry: &DiscoveredSession) -> String {
             }
             detail
         }
+        DiscoveredSessionStatus::LastSeen { panes } => {
+            format!(
+                "{panes} pane{} · last seen",
+                if *panes == 1 { "" } else { "s" }
+            )
+        }
         DiscoveredSessionStatus::Restorable => "restorable".to_string(),
         DiscoveredSessionStatus::Busy => "busy".to_string(),
         DiscoveredSessionStatus::Unknown => "incompatible or unavailable".to_string(),
@@ -32,16 +37,6 @@ fn shared_client_count(entry: &DiscoveredSession, we_hold: bool) -> Option<u32> 
         }
         _ => None,
     }
-}
-
-/// The connection state of every live attachment (current or retained) on `target`. Feeds the host
-/// header's status dot, which describes the *host*, not any one session.
-fn attachment_connections(ctx: &Context<AppRoot>, target: &RemoteTarget) -> Vec<ConnectionState> {
-    std::iter::once(ctx.state.current())
-        .chain(ctx.state.background.values())
-        .filter(|attachment| attachment.remote_target.as_ref() == Some(target))
-        .map(|attachment| attachment.connection)
-        .collect()
 }
 
 /// One live session row: name, current/background/reconnecting state, panes, and origin.
@@ -98,28 +93,21 @@ fn cached_session_row(
     host: &HostEntry,
     cached: &crate::session::CachedHostSession,
 ) -> SidebarRow {
-    let panes = format!(
-        "{} pane{}",
-        cached.panes,
-        if cached.panes == 1 { "" } else { "s" }
-    );
     let entry = DiscoveredSession {
         name: cached.name.clone(),
         ephemeral: false,
         host: Some(host.alias.clone()),
         remote_target: Some(host.target.clone()),
-        status: DiscoveredSessionStatus::Running {
+        status: DiscoveredSessionStatus::LastSeen {
             panes: cached.panes,
-            clients: 0,
-            has_layout: false,
-            created_from_profile: None,
         },
     };
     let muted = super::super::fg_only(&ctx.state.theme.muted);
+    let detail = session_detail(&entry);
     SidebarRow::item(
         Row::new(cached.name.clone())
             .title_style(muted)
-            .detail(format!("{panes} · last seen"), muted),
+            .detail(detail, muted),
         RowTarget::Session(Box::new(entry)),
     )
 }
@@ -244,9 +232,11 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
             .iter()
             .filter(|e| e.remote_target.as_ref() == Some(&host.target))
             .collect();
-        let status = ctx.state.hosts.status_for(
+        // These rows are live discovery output, so their existence really is evidence the host
+        // answered — unlike the picker's, which are remembered.
+        let status = crate::view::session_status::host_connection_status(
+            &ctx.state,
             &host.target,
-            attachment_connections(ctx, &host.target).iter(),
             !sessions.is_empty(),
         );
         rows.push(header_row(

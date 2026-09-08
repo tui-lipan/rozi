@@ -83,6 +83,78 @@ fn picker_refresh_preserves_identity_and_clears_destructive_arms() {
         .expect("test thread panicked");
 }
 
+/// A remote session this client is *attached* to is live by definition, and it is also in the host
+/// cache — the cache is where it came from. The two rows merge by identity, so whichever is pushed
+/// first wins, and pushing the cache first handed a session filling the screen a "last seen" label.
+#[test]
+fn an_attached_remote_session_outranks_its_own_cached_row() {
+    use crate::AppRoot;
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
+            let mut backend = TestBackend::new(AppRoot::default());
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("dev".to_string());
+                state.current_mut().remote_host = Some("winvm".to_string());
+                state.current_mut().remote_target = Some(target.clone());
+                state.current_mut().session_attached = true;
+                state.hosts.seed(
+                    &crate::config::RemoteConfig::default(),
+                    std::slice::from_ref(&target),
+                    &[],
+                    &[],
+                );
+                crate::session::set_cached_host_sessions(
+                    &mut state.host_session_cache,
+                    &target,
+                    vec![crate::session::CachedHostSession {
+                        name: "dev".to_string(),
+                        ephemeral: false,
+                        panes: 9,
+                    }],
+                );
+                state.session_picker = Some(SessionPickerState::new(Vec::new()));
+                state.show_session_picker = true;
+            }
+            let epoch = backend.state().session_picker_epoch;
+
+            backend
+                .update_level(crate::Msg::SessionsDiscovered {
+                    epoch,
+                    rows: Vec::new(),
+                    host_status: Vec::new(),
+                })
+                .expect("apply picker refresh");
+
+            let picker = backend.state().session_picker.as_ref().expect("picker");
+            let dev = picker
+                .entries
+                .iter()
+                .find(|entry| entry.name == "dev")
+                .expect("the attached session is listed");
+            assert!(
+                matches!(
+                    dev.status,
+                    crate::session::discovery::DiscoveredSessionStatus::Running { .. }
+                ),
+                "a session on screen is not a memory of one: {:?}",
+                dev.status
+            );
+            assert_eq!(
+                picker.entries.iter().filter(|e| e.name == "dev").count(),
+                1,
+                "the cached row merges into the live one rather than doubling it"
+            );
+        })
+        .expect("spawn test thread")
+        .join()
+        .expect("test thread panicked");
+}
+
 #[test]
 fn cached_configured_hosts_are_available_without_a_probe() {
     let mut config = crate::config::RemoteConfig::default();
@@ -116,9 +188,10 @@ fn cached_configured_hosts_are_available_without_a_probe() {
             "winvm".to_string()
         ))
     );
+    // Cached, so it must not be able to pass for a live session anywhere downstream.
     assert!(matches!(
         remote.status,
-        crate::session::discovery::DiscoveredSessionStatus::Running { panes: 4, .. }
+        crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 4 }
     ));
 }
 

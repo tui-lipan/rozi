@@ -134,6 +134,29 @@ impl HostStatusStyles {
     }
 }
 
+/// The display status of one known host, from this client's attachments on it plus its probe state.
+///
+/// Every surface that names a host's state goes through here, so the sidebar badge, the remote-host
+/// picker row, and the session picker's group header can never call the same host three things.
+///
+/// `has_sessions` only decides the case where nothing has ever probed the host: a surface listing
+/// *live* rows for it may pass `true` and read as reachable, but one listing remembered rows must
+/// pass `false` — a memory is not evidence that anything answers there now.
+pub(crate) fn host_connection_status(
+    state: &crate::state::State,
+    target: &crate::session::remote::RemoteTarget,
+    has_sessions: bool,
+) -> HostStatus {
+    let connections: Vec<ConnectionState> = std::iter::once(state.current())
+        .chain(state.background.values())
+        .filter(|attachment| attachment.remote_target.as_ref() == Some(target))
+        .map(|attachment| attachment.connection)
+        .collect();
+    state
+        .hosts
+        .status_for(target, connections.iter(), has_sessions)
+}
+
 /// The word for a host's state, lowercase as the picker's rows read it. The sidebar capitalizes it.
 pub(crate) fn host_status_label(status: HostStatus) -> &'static str {
     match status {

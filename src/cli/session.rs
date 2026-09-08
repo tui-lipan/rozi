@@ -49,6 +49,16 @@ pub(super) fn format_sessions_text(
                     clients.to_string(),
                     if has_layout { "yes" } else { "no" }.to_string(),
                 ),
+                // Unreachable from the CLI, which probes live and never reads a client's host
+                // cache. Spelled out rather than folded into a catch-all so that if a cached row
+                // ever reaches this table it cannot be printed as `running`.
+                session::discovery::DiscoveredSessionStatus::LastSeen { panes } => (
+                    "last-seen",
+                    OutputTone::Warning,
+                    panes.to_string(),
+                    "—".to_string(),
+                    "—".to_string(),
+                ),
                 session::discovery::DiscoveredSessionStatus::Restorable => (
                     "restorable",
                     OutputTone::Accent,

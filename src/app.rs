@@ -947,6 +947,10 @@ impl AppRoot {
     }
 
     /// Progress for a centre-scaled pane while its subtree remains at the settled rectangle.
+    ///
+    /// Call this on every frame the pane is drawn, not only while it animates: the key has to hold
+    /// 1.0 before a close flips its target, or the close has nothing to depart from. See the note
+    /// at the call site in `view::render_workspace_panes`.
     pub(crate) fn scale_progress(&self, ctx: &Context<Self>, pane: &Pane, key: String) -> f32 {
         let animations = ctx.state.config.animations;
         let spec = anim::pane_animation_for_pane(animations, pane);

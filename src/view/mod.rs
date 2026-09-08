@@ -269,20 +269,30 @@ pub(crate) fn render_workspace_panes(
         // Sliding and paint-effect panes use their real destination for the whole animation. Slide
         // carries the pane in below; Portal and Scan repaint its cells in place.
         let slides = crate::layout::anim::pane_slides(ctx.state.config.animations, pane);
-        // Read every frame the pane is drawn, so the transition key stays alive for the whole slide.
+        // Read unconditionally - see the note on `scale_progress` below. Keeping the key evaluated
+        // while the pane is settled is what gives a later transition a value to depart from.
         let slide_progress = app.slide_progress(ctx, pane, layer.pane_slide_key(pane.id));
         let pane_opening = crate::layout::anim::pane_opening_transition(pane);
         let sliding_now = slides && (pane_opening || pane.closing);
         let reveal_effect =
             crate::layout::anim::pane_reveal_effects_for_pane(ctx.state.config.animations, pane);
         let revealing_now = reveal_effect && (pane_opening || pane.closing);
+        // Unconditional for the same reason as the two reads around it.
         let reveal_progress = app.pane_reveal_progress(ctx, pane, layer.pane_reveal_key(pane.id));
         let animation_spec =
             crate::layout::anim::pane_animation_for_pane(ctx.state.config.animations, pane);
-        // Read every frame the pane is drawn, exactly like the slide above. A transition read for
-        // the first time starts *at* its target, so a key created at the moment a pane begins
-        // closing would have nothing to travel from and the close would snap to its inset. The key
-        // has to already be sitting at 1.0 when the target flips.
+        // Evaluate the animation key on every frame the pane is drawn, including the frames where
+        // `scales` below is false and nothing uses the result. This read is NOT redundant, and
+        // gating it on the pane animating is the optimization that breaks it:
+        //
+        // A keyed transition read for the first time is *created at its target*. The clip only
+        // mounts once a close begins - which is also the moment the target becomes 0.0 - so a key
+        // created there has no previous value to interpolate from and lands on 0.0 immediately.
+        // The pane snaps to its `scale_from` inset and holds it until it is pruned.
+        //
+        // Keeping the key warm while the pane sits settled leaves it at 1.0, which is the value the
+        // close departs from. Mounting the visual effect stays conditional; retaining the
+        // interpolation state does not.
         let scale_progress = app.scale_progress(ctx, pane, layer.pane_scale_key(pane.id));
         // Whether to actually wrap the pane in that clip. Only a lifecycle snapshot gets the
         // fixed-allocation path; bare flags still use the legacy geometry transition that fixtures

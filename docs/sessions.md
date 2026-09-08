@@ -80,6 +80,21 @@ attached in the background, shared with other clients, restorable, or created fr
 Opening Sessions does not contact configured remote hosts. Remote sessions already known from the
 last successful host discovery remain available from cache.
 
+Because Sessions never contacts a host, it says so rather than implying otherwise. Each remote
+group's header carries the host's state — `REMOTE · workbox · disconnected` — and every row on a
+host this client holds no attachment to is marked `last seen`, with the pane count the host
+reported the last time it answered:
+
+```text
+REMOTE · workbox · disconnected
+dev@workbox                               3 panes · last seen
+```
+
+`Enter` still works on those rows: it connects the host and attaches, which is the point of keeping
+them listed. `Ctrl+E` and `Ctrl+K` are withheld, because there is no confirmed live server to
+restart or kill. To act on a host's sessions directly, connect it first — `Ctrl+R`, then the host —
+or expand it in the Sessions sidebar.
+
 ### Browse remote hosts
 
 Press `Ctrl+R` in Sessions to open **Remote hosts**. It is a persistent host manager, not a list of

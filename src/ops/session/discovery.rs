@@ -80,6 +80,10 @@ pub(crate) fn apply_discovered_sessions(
             );
         }
     }
+    // Attachments first: a session this client holds is live by definition, and the cache below
+    // merges by identity, so whichever row lands first is the one that survives. Cached rows are
+    // marked "last seen" now, and a session on screen must never wear that.
+    push_attached_session_rows(ctx, &mut rows);
     // A failed (or not-yet-run) host probe keeps its last successful snapshot visible. Successful
     // hosts use only the fresh rows above, including an empty result which clears stale sessions.
     push_cached_known_remote_rows(
@@ -88,7 +92,6 @@ pub(crate) fn apply_discovered_sessions(
         &ctx.state.host_session_cache,
         &successful_targets,
     );
-    push_attached_session_rows(ctx, &mut rows);
     sort_session_rows(&mut rows);
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         let selected_identity = picker
@@ -219,7 +222,10 @@ pub(crate) fn cached_sessions_for_target(
             name: entry.name.clone(),
             ephemeral: entry.ephemeral,
             panes: match &entry.status {
-                crate::session::discovery::DiscoveredSessionStatus::Running { panes, .. } => *panes,
+                crate::session::discovery::DiscoveredSessionStatus::Running { panes, .. }
+                // Re-caching a row that itself came from the cache must be idempotent, or a host
+                // that stays offline would watch its remembered pane counts decay to zero.
+                | crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes } => *panes,
                 crate::session::discovery::DiscoveredSessionStatus::Restorable
                 | crate::session::discovery::DiscoveredSessionStatus::Busy
                 | crate::session::discovery::DiscoveredSessionStatus::Unknown => 0,
@@ -230,6 +236,9 @@ pub(crate) fn cached_sessions_for_target(
 
 /// Add last-successful rows for every known host not present in `fresh_targets`. Live/local rows
 /// win identity collisions, especially for an attachment whose pane/client counts are newer.
+///
+/// The rows land as [`DiscoveredSessionStatus::LastSeen`], never `Running`: nothing here was
+/// confirmed by a handshake this sweep, so the surfaces that render them can say so.
 pub(crate) fn push_cached_known_remote_rows(
     rows: &mut Vec<DiscoveredSession>,
     hosts: &crate::state::HostRegistry,
@@ -253,11 +262,8 @@ pub(crate) fn push_cached_known_remote_rows(
                     ephemeral: session.ephemeral,
                     host: Some(label.clone()),
                     remote_target: Some(target.clone()),
-                    status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    status: crate::session::discovery::DiscoveredSessionStatus::LastSeen {
                         panes: session.panes,
-                        has_layout: false,
-                        clients: 0,
-                        created_from_profile: None,
                     },
                 },
             );

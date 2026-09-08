@@ -1,22 +1,10 @@
-fn remote_host_connections(
-    ctx: &Context<AppRoot>,
-    target: &crate::session::remote::RemoteTarget,
-) -> Vec<crate::state::ConnectionState> {
-    std::iter::once(ctx.state.current())
-        .chain(ctx.state.background.values())
-        .filter(|attachment| attachment.remote_target.as_ref() == Some(target))
-        .map(|attachment| attachment.connection)
-        .collect()
-}
-
+/// This surface lists remembered session *counts*, not live rows, so it never lets a cached count
+/// stand in for having reached the host.
 fn remote_host_status(
     ctx: &Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> crate::state::HostStatus {
-    let connections = remote_host_connections(ctx, target);
-    ctx.state
-        .hosts
-        .status_for(target, connections.iter(), false)
+    crate::view::session_status::host_connection_status(&ctx.state, target, false)
 }
 
 fn remote_host_description(

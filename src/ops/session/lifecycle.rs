@@ -27,9 +27,27 @@ pub(crate) fn session_row_is_restorable(entry: &DiscoveredSession) -> bool {
     )
 }
 
-/// Restart recreates a live server. A restorable snapshot has none, so the chord is omitted.
+/// A row this client only *remembers*: last-seen from a host nothing has reached this sweep. There
+/// is no live server behind it to act on, and no way to know whether one is still there.
+pub(crate) fn session_row_is_last_seen(entry: &DiscoveredSession) -> bool {
+    matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::LastSeen { .. }
+    )
+}
+
+/// Restart recreates a live server. A restorable snapshot has none, so the chord is omitted; a
+/// last-seen row is a memory of one on a host we are not connected to, so it is omitted too.
 pub(crate) fn session_row_can_restart(entry: &DiscoveredSession) -> bool {
-    !session_row_is_restorable(entry)
+    !session_row_is_restorable(entry) && !session_row_is_last_seen(entry)
+}
+
+/// Kill destroys a live session. It stays available against a server we cannot *speak* to — an
+/// incompatible `Unknown` row is exactly the one a user needs to remove — but not against a row
+/// nothing has confirmed exists: the host is offline, so there is nothing there to kill. The
+/// sidebar withholds the same affordance from its cached rows.
+pub(crate) fn session_row_can_kill(entry: &DiscoveredSession) -> bool {
+    !session_row_is_last_seen(entry)
 }
 
 /// Disconnect closes a *background* attachment. The current session is Kill or leave; a row we
@@ -538,6 +556,12 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
+    // The footer already withholds the chord from a last-seen row; guard here too, the way restart
+    // does, so a refresh landing between render and keypress cannot arm a kill against a session
+    // nothing has confirmed is there.
+    if !session_row_can_kill(&entry) {
+        return Update::none();
+    }
     let armed = picker.pending_kill == Some(index);
     if !armed {
         // First press arms the kill: drop any stale arming (kill or restart), then mark this row.
@@ -610,11 +634,9 @@ pub(crate) fn restart_discovered_session(
     ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
-    if matches!(
-        &entry.status,
-        crate::session::discovery::DiscoveredSessionStatus::Restorable
-    ) {
-        // A snapshot has no live server to recreate. Restore is Enter; restart is omitted.
+    // A snapshot has no live server to recreate (restore is Enter), and a last-seen row is a
+    // memory of one on a host nothing has reached. Neither has anything to restart.
+    if !session_row_can_restart(&entry) {
         return Update::none();
     }
     let is_current = ctx.state.current().session_attached

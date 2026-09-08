@@ -477,7 +477,13 @@ fn push_session_management_actions(
             ),
         );
         actions.push(
-            OverlayAction::new("ctrl-k", "kill", Msg::SessionPickerKillSelected, true).confirm_if(
+            OverlayAction::new(
+                "ctrl-k",
+                "kill",
+                Msg::SessionPickerKillSelected,
+                crate::ops::session::session_row_can_kill(entry),
+            )
+            .confirm_if(
                 picker.pending_kill == Some(picker.selected),
                 "again to kill",
                 ctx.state.theme.status.error,
@@ -579,7 +585,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
                 entries.push(SearchEntry::spacer());
             }
             entries.push(SearchEntry::header(match group {
-                Some(host) => format!("REMOTE · {host}"),
+                Some(host) => remote_group_header(ctx, host, entry.remote_target.as_ref()),
                 None => "LOCAL".to_string(),
             }));
             last_group = Some(group);
@@ -669,6 +675,32 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     overlay.render(ctx)
 }
 
+/// A remote group's header: the host, then what this client's link to it is doing.
+///
+/// The status belongs on the header rather than the rows because it is the *host's* news, and it
+/// has to be said at all because this picker never probes: it replays remembered rows for every
+/// host it holds no attachment on (see
+/// [`crate::ops::session::discovery::push_cached_known_remote_rows`]). Under a bare `REMOTE · host`
+/// a group of those looked exactly like a group of live ones. The sidebar has badged its host
+/// headers all along; this is the same vocabulary, lowercase as the picker's rows read.
+///
+/// The rows below are passed as *no* evidence of reachability, deliberately: a memory of a session
+/// is not proof that anything answers there now, and must not talk the header into "reached".
+fn remote_group_header(
+    ctx: &Context<AppRoot>,
+    host: &str,
+    target: Option<&crate::session::remote::RemoteTarget>,
+) -> String {
+    let Some(target) = target else {
+        return format!("REMOTE · {host}");
+    };
+    let status = crate::view::session_status::host_connection_status(&ctx.state, target, false);
+    format!(
+        "REMOTE · {host} · {}",
+        crate::view::session_status::host_status_label(status)
+    )
+}
+
 fn session_description(
     entry: &crate::session::discovery::DiscoveredSession,
     we_hold: bool,
@@ -681,11 +713,7 @@ fn session_description(
             created_from_profile,
             ..
         } => {
-            let panes_label = if *panes == 1 {
-                "1 pane".to_string()
-            } else {
-                format!("{panes} panes")
-            };
+            let panes_label = panes_label(*panes);
             // `clients` counts every client attached to the server, ours included. Drop our own
             // connection (current or retained in the background) so this reports only *other* people
             // sharing the session — the ones a new attach would join.
@@ -700,8 +728,22 @@ fn session_description(
             }
             picker_description(label)
         }
+        // A remembered row from a host nothing has reached this sweep. The pane count is still the
+        // most useful thing to say about it, but on its own it is exactly what a live session says,
+        // so it goes out qualified. Same words the sidebar's cached rows have always used.
+        DiscoveredSessionStatus::LastSeen { panes } => {
+            picker_description(format!("{} · last seen", panes_label(*panes)))
+        }
         DiscoveredSessionStatus::Restorable => picker_description("restorable"),
         DiscoveredSessionStatus::Busy => picker_description("busy"),
         DiscoveredSessionStatus::Unknown => picker_description("unavailable"),
+    }
+}
+
+fn panes_label(panes: usize) -> String {
+    if panes == 1 {
+        "1 pane".to_string()
+    } else {
+        format!("{panes} panes")
     }
 }

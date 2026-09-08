@@ -12,6 +12,8 @@ mod prefix_mouse_gestures;
 mod remote_sessions_smoke;
 #[path = "suites/ui_chrome/session_picker_ephemeral.rs"]
 mod session_picker_ephemeral;
+#[path = "suites/ui_chrome/session_picker_last_seen.rs"]
+mod session_picker_last_seen;
 #[path = "suites/ui_chrome/settings_rows_smoke.rs"]
 mod settings_rows_smoke;
 #[path = "suites/ui_chrome/which_key_smoke.rs"]

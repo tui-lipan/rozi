@@ -42,12 +42,13 @@ exclude = [
 # with it, which is what put the caret at the end of its row for the length of a focus transition.
 # 0.7.4 lets attach seeding stream terminal replays into bounded cache storage. It also keeps
 # provided file-tree paths in the remote host's path flavor for cross-platform remote sessions.
-# 0.8.0 adds the automation session: an app-authored `automation_id`, a hierarchical semantic tree
+# 0.9.0 adds validated custom cubic Bézier easing used by named pane animation recipes. 0.8.0 added
+# the automation session: an app-authored `automation_id`, a hierarchical semantic tree
 # per committed generation, typed operations over one mounted app that keeps its state, a
 # per-session clock so waiting cannot advance the app, and a versioned Unix control protocol
 # (`TUI_LIPAN_AUTOMATION_HEADLESS=1`). It is a breaking release: `TestBackend` is now controlled, so
 # a test that used to observe work settle on its own must `advance(...)` for it.
-tui-lipan = { version = "0.8.0", features = [
+tui-lipan = { version = "0.9.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

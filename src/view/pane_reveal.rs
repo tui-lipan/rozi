@@ -1,26 +1,28 @@
 use tui_lipan::prelude::{CellEffect, EffectCell, EffectContext, EffectScope, Element, Key};
 
-use crate::layout::anim::PaneAnimationStyle;
+use crate::layout::anim::{PaneAnimationSpec, PaneAnimationStyle, ScanDirection};
 
 /// Apply the optional pane reveal effect while keeping an empty keyed scope mounted at rest.
 pub(super) fn pane_reveal_scope(
     pane_tree: Element,
     key: Key,
-    style: PaneAnimationStyle,
+    spec: PaneAnimationSpec,
     progress: f32,
     seed: u64,
 ) -> Element {
     let scope = EffectScope::new();
-    let scope = match (style, progress < 1.0) {
-        (PaneAnimationStyle::Portal, true) => scope.custom_effect(PaneRevealEffect::new(
+    let scope = match (spec.kind, progress < 1.0) {
+        (PaneAnimationStyle::Portal, true) => scope.custom_effect(PaneRevealEffect::with_spec(
             PaneRevealPattern::Portal,
             progress,
             seed,
+            spec,
         )),
-        (PaneAnimationStyle::Scan, true) => scope.custom_effect(PaneRevealEffect::new(
+        (PaneAnimationStyle::Scan, true) => scope.custom_effect(PaneRevealEffect::with_spec(
             PaneRevealPattern::Scan,
             progress,
             seed,
+            spec,
         )),
         _ => scope,
     };
@@ -39,14 +41,109 @@ struct PaneRevealEffect {
     pattern: PaneRevealPattern,
     progress: f32,
     seed: u64,
+    spec: PaneAnimationSpec,
 }
 
 impl PaneRevealEffect {
+    #[cfg(test)]
     fn new(pattern: PaneRevealPattern, progress: f32, seed: u64) -> Self {
+        Self::with_spec(
+            pattern,
+            progress,
+            seed,
+            PaneAnimationSpec {
+                kind: match pattern {
+                    PaneRevealPattern::Portal => PaneAnimationStyle::Portal,
+                    PaneRevealPattern::Scan => PaneAnimationStyle::Scan,
+                },
+                ..crate::layout::anim::builtin_animation(match pattern {
+                    PaneRevealPattern::Portal => PaneAnimationStyle::Portal,
+                    PaneRevealPattern::Scan => PaneAnimationStyle::Scan,
+                })
+            },
+        )
+    }
+
+    fn with_spec(
+        pattern: PaneRevealPattern,
+        progress: f32,
+        seed: u64,
+        spec: PaneAnimationSpec,
+    ) -> Self {
         Self {
             pattern,
             progress: progress.clamp(0.0, 1.0),
             seed,
+            spec,
+        }
+    }
+
+    fn apply_portal(&self, cell: &mut EffectCell, position: RevealPosition) {
+        let (distance, maximum) = portal_distance(
+            position.x,
+            position.y,
+            position.width,
+            position.height,
+            self.spec.origin,
+        );
+        let radius = self.progress * maximum;
+        let ring = portal_frontier_width(self.spec, maximum, self.progress);
+        if distance <= radius {
+            return;
+        }
+        if distance <= radius + ring {
+            self.paint_portal_frontier(cell, pane_spatial_hash(position.x, position.y, self.seed));
+        } else {
+            cell.set_symbol(" ");
+        }
+    }
+
+    fn paint_portal_frontier(&self, cell: &mut EffectCell, hash: u64) {
+        let threshold = (self.spec.density * 256.0) as u64;
+        if self.spec.custom_glyphs || self.spec.custom_density {
+            if hash & 255 < threshold {
+                if self.spec.custom_glyphs {
+                    let glyph = [self.spec.glyphs.get((hash >> 8) as usize)];
+                    cell.set_symbol(std::str::from_utf8(&glyph).unwrap_or("."));
+                } else {
+                    cell.set_symbol(portal_symbol(hash));
+                }
+            } else {
+                cell.set_symbol(" ");
+            }
+        } else if hash & 1 == 0 {
+            cell.set_symbol(portal_symbol(hash));
+        } else {
+            cell.set_symbol(" ");
+        }
+    }
+
+    fn apply_scan(&self, cell: &mut EffectCell, position: RevealPosition) {
+        let hash = pane_spatial_hash(position.x, position.y, self.seed);
+        let quantized = quantized_progress(self.progress);
+        let scan = scan_position(
+            position.x,
+            position.y,
+            position.width,
+            position.height,
+            self.spec.scan_direction,
+        );
+        let frontier = scan_frontier_width(self.spec, self.progress);
+        if scan <= (self.progress - frontier).max(0.0) {
+            return;
+        }
+        if scan <= self.progress {
+            if self.spec.custom_glyphs {
+                let glyph = [self
+                    .spec
+                    .glyphs
+                    .get((hash.wrapping_add(u64::from(quantized))) as usize)];
+                cell.set_symbol(std::str::from_utf8(&glyph).unwrap_or("."));
+            } else {
+                cell.set_symbol(frontier_symbol(hash, quantized));
+            }
+        } else {
+            cell.set_symbol(" ");
         }
     }
 }
@@ -60,55 +157,69 @@ impl CellEffect for PaneRevealEffect {
             cell.set_symbol(" ");
             return;
         }
-
-        let x = i32::from(ctx.x.saturating_sub(ctx.bounds.x));
-        let y = i32::from(ctx.y.saturating_sub(ctx.bounds.y));
-        let width = i32::from(ctx.bounds.w);
-        let height = i32::from(ctx.bounds.h);
-        if width <= 0 || height <= 0 || x < 0 || y < 0 || x >= width || y >= height {
+        let position = reveal_position(ctx);
+        if !position.is_valid() {
             cell.set_symbol(" ");
             return;
         }
-
-        let spatial_hash = pane_spatial_hash(x, y, self.seed);
         match self.pattern {
-            PaneRevealPattern::Portal => {
-                let (distance, maximum) = portal_distance(x, y, width, height);
-                let radius = self.progress * maximum;
-                let ring = portal_ring_width(maximum, self.progress);
-                if distance <= radius {
-                    return;
-                }
-                if distance <= radius + ring {
-                    if spatial_hash & 1 == 0 {
-                        cell.set_symbol(portal_symbol(spatial_hash));
-                    } else {
-                        cell.set_symbol(" ");
-                    }
-                } else {
-                    cell.set_symbol(" ");
-                }
-            }
-            PaneRevealPattern::Scan => {
-                let quantized = quantized_progress(self.progress);
-                let position = scan_position(x, y, width, height);
-                let frontier = frontier_width(self.progress);
-                if position <= (self.progress - frontier).max(0.0) {
-                    return;
-                }
-                if position <= self.progress {
-                    cell.set_symbol(frontier_symbol(spatial_hash, quantized));
-                } else {
-                    cell.set_symbol(" ");
-                }
-            }
+            PaneRevealPattern::Portal => self.apply_portal(cell, position),
+            PaneRevealPattern::Scan => self.apply_scan(cell, position),
         }
     }
 }
 
-fn portal_distance(x: i32, y: i32, width: i32, height: i32) -> (f32, f32) {
-    let cx = (width - 1) as f32 / 2.0;
-    let cy = (height - 1) as f32 / 2.0;
+#[derive(Clone, Copy)]
+struct RevealPosition {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+impl RevealPosition {
+    fn is_valid(self) -> bool {
+        self.width > 0
+            && self.height > 0
+            && self.x >= 0
+            && self.y >= 0
+            && self.x < self.width
+            && self.y < self.height
+    }
+}
+
+fn reveal_position(ctx: &EffectContext) -> RevealPosition {
+    let x = i32::from(ctx.x.saturating_sub(ctx.bounds.x));
+    let y = i32::from(ctx.y.saturating_sub(ctx.bounds.y));
+    let width = i32::from(ctx.bounds.w);
+    let height = i32::from(ctx.bounds.h);
+    RevealPosition {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+fn portal_frontier_width(spec: PaneAnimationSpec, maximum: f32, progress: f32) -> f32 {
+    if spec.custom_frontier_width {
+        spec.frontier_width * maximum * ((1.0 - progress) / 0.12).clamp(0.0, 1.0)
+    } else {
+        portal_ring_width(maximum, progress)
+    }
+}
+
+fn scan_frontier_width(spec: PaneAnimationSpec, progress: f32) -> f32 {
+    if spec.custom_frontier_width {
+        spec.frontier_width * ((1.0 - progress) / 0.1).clamp(0.0, 1.0)
+    } else {
+        frontier_width(progress)
+    }
+}
+
+fn portal_distance(x: i32, y: i32, width: i32, height: i32, origin: [f32; 2]) -> (f32, f32) {
+    let cx = (width - 1) as f32 * origin[0];
+    let cy = (height - 1) as f32 * origin[1];
     let distance = (x as f32 - cx).hypot((y as f32 - cy) * 2.0);
     let maximum = [
         (0.0_f32 - cx).hypot((0.0_f32 - cy) * 2.0),
@@ -147,10 +258,18 @@ fn pane_spatial_hash(x: i32, y: i32, seed: u64) -> u64 {
     value ^ (value >> 31)
 }
 
-fn scan_position(x: i32, y: i32, width: i32, height: i32) -> f32 {
+fn scan_position(x: i32, y: i32, width: i32, height: i32, direction: ScanDirection) -> f32 {
     // Terminal rows are about twice as tall as columns are wide, so correct the diagonal in cell
     // space rather than making the reveal look nearly horizontal.
     const CELL_ASPECT: f32 = 2.0;
+    let x = match direction {
+        ScanDirection::TopLeft | ScanDirection::BottomLeft => x,
+        ScanDirection::TopRight | ScanDirection::BottomRight => width - 1 - x,
+    };
+    let y = match direction {
+        ScanDirection::TopLeft | ScanDirection::TopRight => y,
+        ScanDirection::BottomLeft | ScanDirection::BottomRight => height - 1 - y,
+    };
     let farthest = (width - 1) as f32 + (height - 1) as f32 * CELL_ASPECT;
     if farthest <= 0.0 {
         0.0
@@ -380,5 +499,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn unrelated_recipe_options_keep_the_builtin_frontier_policy() {
+        let builtin = crate::layout::anim::builtin_animation(PaneAnimationStyle::Portal);
+        let mut portal = builtin;
+        portal.origin = [0.2, 0.8];
+        portal.custom_glyphs = true;
+        portal.custom_density = true;
+        assert!(!portal.custom_frontier_width);
+        assert_eq!(
+            portal_frontier_width(portal, 20.0, 0.4),
+            portal_frontier_width(builtin, 20.0, 0.4)
+        );
+
+        let mut scan = crate::layout::anim::builtin_animation(PaneAnimationStyle::Scan);
+        scan.scan_direction = ScanDirection::BottomRight;
+        scan.custom_glyphs = true;
+        assert!(!scan.custom_frontier_width);
+        assert_eq!(
+            scan_frontier_width(scan, 0.4),
+            scan_frontier_width(
+                crate::layout::anim::builtin_animation(PaneAnimationStyle::Scan),
+                0.4,
+            )
+        );
     }
 }

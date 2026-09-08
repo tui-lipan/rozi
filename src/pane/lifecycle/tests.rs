@@ -976,6 +976,17 @@ fn spawning_into_the_scratchpad_parks_the_scrollable_anchor_on_the_new_pane() {
                 Some(spawned),
                 "the strip must be parked on the pane that now has focus"
             );
+            assert!(
+                backend
+                    .state()
+                    .scratch
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == spawned)
+                    .and_then(|pane| pane.opening_animation)
+                    .is_some(),
+                "an additional scratch pane must snapshot its opening recipe"
+            );
         })
         .expect("spawn scratch anchor test thread")
         .join()
@@ -1124,8 +1135,23 @@ mod close_animation {
             .find(|w| {
                 w.key
                     .as_ref()
-                    .is_some_and(|k| k.as_ref() == "rozi-pane-1-0")
+                    .is_some_and(|k| k.as_ref() == "rozi-pane-clip-1")
             })
+            .map(|w| (w.rect.x, w.rect.y, w.rect.w, w.rect.h))
+    }
+
+    fn terminal_rect(
+        backend: &tui_lipan::TestBackend<crate::AppRoot>,
+    ) -> Option<(i16, i16, u16, u16)> {
+        let key = backend.state().current().workspaces[0].panes[0]
+            .keys
+            .terminal
+            .clone();
+        backend
+            .capture_ui_snapshot()
+            .widgets
+            .iter()
+            .find(|w| w.key.as_ref() == Some(&key))
             .map(|w| (w.rect.x, w.rect.y, w.rect.w, w.rect.h))
     }
 
@@ -1148,11 +1174,17 @@ mod close_animation {
                     state.config.confirm.close_pane = false;
                     let pane = &mut state.current_mut().workspaces[0].panes[0];
                     pane.opening = false;
+                    pane.opening_animation = None;
                     pane.terminal_active = true;
                     pane.floating = floating;
                 }
                 backend.render();
-                let (_, _, w0, h0) = pane_rect(&backend).expect("pane renders");
+                backend.advance(Duration::from_millis(200));
+                backend.render();
+                let (_, _, terminal_w0, terminal_h0) =
+                    terminal_rect(&backend).expect("pane renders");
+                let w0 = terminal_w0 + 2;
+                let h0 = terminal_h0 + 2;
 
                 backend
                     .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
@@ -1161,6 +1193,7 @@ mod close_animation {
                 // Front-loaded: the shrink has to be visible before the fade hides it, so the very
                 // first tick must already move. An EaseInOutCubic ramp would still be at full size.
                 backend.advance(Duration::from_millis(25));
+                backend.render();
                 let (x1, y1, w1, h1) = pane_rect(&backend).expect("closing pane still renders");
                 assert!(
                     w1 < w0 && h1 < h0,
@@ -1172,10 +1205,14 @@ mod close_animation {
                     "the pane should pull in toward its centre"
                 );
 
-                // And it keeps shrinking rather than snapping.
-                backend.advance(Duration::from_millis(25));
+                // And it never regrows; small terminal heights can round adjacent frames alike.
+                backend.advance(Duration::from_millis(50));
+                backend.render();
                 let (_, _, w2, h2) = pane_rect(&backend).expect("still closing");
-                assert!(w2 < w1 && h2 <= h1, "the scale should continue: {w2}x{h2}");
+                assert!(
+                    w2 <= w1 && h2 <= h1,
+                    "the scale must not regrow after rounding: {w2}x{h2} after {w1}x{h1} from {w0}x{h0}"
+                );
             });
         }
     }
@@ -1198,6 +1235,7 @@ mod close_animation {
                 state.config.pane.hold_on_exit = true;
                 let pane = &mut state.current_mut().workspaces[0].panes[0];
                 pane.opening = false;
+                pane.opening_animation = None;
                 pane.terminal_active = true;
                 pane.pty_generation
             };
@@ -1255,9 +1293,12 @@ mod close_animation {
                 state.config.pane.hold_on_exit = true;
                 let pane = &mut state.current_mut().workspaces[0].panes[0];
                 pane.opening = false;
+                pane.opening_animation = None;
                 pane.terminal_active = true;
                 pane.pty_generation
             };
+            backend.render();
+            backend.advance(Duration::from_millis(250));
             backend.render();
             let epoch = backend.state().runtime_epoch;
 

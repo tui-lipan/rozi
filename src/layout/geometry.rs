@@ -243,9 +243,12 @@ pub fn grabbed_edge_on_outer_border(
 }
 
 pub fn close_rect(rect: FloatRect) -> FloatRect {
-    const SCALE: f32 = 0.9;
-    let w = (rect.w * SCALE).max(1.0);
-    let h = (rect.h * SCALE).max(1.0);
+    close_rect_scaled(rect, 0.9)
+}
+
+pub fn close_rect_scaled(rect: FloatRect, scale: f32) -> FloatRect {
+    let w = (rect.w * scale).max(1.0);
+    let h = (rect.h * scale).max(1.0);
     FloatRect {
         x: rect.x + (rect.w - w) / 2.0,
         y: rect.y + (rect.h - h) / 2.0,

@@ -122,6 +122,14 @@ Turning animations off, or changing the master, spawn, or close switch, snaps th
 state. Pane geometry still stays fixed during Portal and Scan, so terminal dimensions do not change
 on every frame.
 
+Custom recipes can change the Scale starting inset, Portal origin and ring tuning, or Scan direction
+and frontier palette. Their IDs are limited to lowercase ASCII letters, digits, `_`, and `-`, with a
+maximum length of 32. Bézier curves use CSS control points. A missing close curve reverses a custom
+Bézier mathematically; omitted recipe fields retain the selected builtin's behavior. Invalid custom
+entries are skipped with a warning rather than changing other recipes. Settings orders builtins
+before custom IDs and persists the selected recipe name, not the recipe body. See
+[Custom pane animation recipes](configuration.md#custom-pane-animation-recipes) for the keys.
+
 ## Titles and exited panes
 
 The displayed pane title uses this order:

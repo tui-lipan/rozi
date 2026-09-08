@@ -2,6 +2,8 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::layout::anim::GeometryAnimation;
+#[cfg(test)]
+use crate::layout::anim::PaneAnimationStyle;
 use crate::layout::geometry::{
     canvas_local_point_from_mouse, clamp_floating_rect, grabbed_edge_on_outer_border,
     resize_float_rect_from_corner, workspace_tile_bounds,
@@ -1427,6 +1429,7 @@ mod tests {
                 for id in [1, 2] {
                     let mut pane = Pane::new(id, 100, FloatRect::default());
                     pane.opening = false;
+                    pane.opening_animation = None;
                     workspace.panes.push(pane);
                 }
                 workspace.layout_kind = LayoutKind::Dwindle;
@@ -1502,6 +1505,7 @@ mod tests {
                 // so canonical and local coordinates coincide and the assertions stay readable.
                 shared.canonical_canvas = Some((100, 29));
                 state.current_mut().shared = Some(shared);
+                state.config.animations.pane_style = PaneAnimationStyle::Slide;
 
                 let workspace = state.active_workspace_mut();
                 workspace.panes.clear();

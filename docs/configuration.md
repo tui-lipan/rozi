@@ -200,12 +200,45 @@ Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `succes
 | `axis_change` | bool | `true` | Animates split-axis changes. |
 | `sidebar` | bool | `true` | Animates sidebar movement. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
-| `pane_style` | string | `"scale"` | `"scale"`, `"slide"`, `"portal"`, or `"scan"`. Values are case-insensitive. |
+| `pane_style` | string | `"scale"` | `"scale"`, `"slide"`, `"portal"`, `"scan"`, or a custom recipe ID. Builtin values are case-insensitive. Unknown values fall back to Scale with a warning. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds. |
 | `close_ms` | integer | `120` | Scale close duration in milliseconds. Tiled Slide, Portal, and Scan use `geometry_ms`; floating Slide uses Scale timing. |
 | `focus_chrome_ms` | integer | `160` | Focus color duration in milliseconds. |
 | `alert_pulse_ms` | integer | `1600` | Alert pulse period. Half-period is floored at 400 ms. |
 | `open_delay_ms` | integer | `36` | Spawn animation delay in milliseconds. |
+
+### Custom pane animation recipes
+
+Named curves live under `[animations.curves.<id>]` and currently require
+`bezier = [x1, y1, x2, y2]`. The x coordinates must be in `[0, 1]`; y coordinates must be finite and
+in `[-4, 4]`. Curve IDs and recipe IDs are 1 to 32 lowercase ASCII letters, digits, `_`, or `-`.
+Curve IDs must not collide with `linear`, `ease_in_quad`, `ease_out_quad`, `ease_in_out_cubic`, or
+`ease_in_out_sine`; recipe IDs that collide with `scale`, `slide`, `portal`, or `scan` are ignored.
+
+Recipes live under `[animations.pane_animations.<id>]` and require `kind = "scale"`, `"slide"`,
+`"portal"`, or `"scan"`. They may set `open_ms`, `close_ms`, `curve`, and `close_curve`. A curve
+name is either one of `linear`, `ease_in_quad`, `ease_out_quad`, `ease_in_out_cubic`, and
+`ease_in_out_sine`, or a named Bézier curve. A custom Bézier `curve` gets its mathematical reverse
+for closing when `close_curve` is omitted. Builtin curve names use the matching in/out pair where
+one exists. If no curve is specified, the recipe keeps that kind's current Rozi curve and timing.
+
+`fade` is valid for Scale, Portal, and Scan and defaults to `true`; set it to `false` to keep the
+pane fully opaque while its scale or paint reveal runs. It is invalid for Slide, which is always
+fully opaque. `scale_from` is valid only for Scale and must be in `[0.1, 1]`. Portal accepts a
+normalized `origin = [x, y]` in `[0, 1]`, plus `frontier_width` in `[0, 0.5]`, `density` in
+`[0, 1]`, and `glyphs`. Scan accepts `direction = "top-left"`, `"top-right"`, `"bottom-left"`, or
+`"bottom-right"`, plus `frontier_width` and `glyphs`. Glyph palettes contain 1 to 8 printable
+single-cell ASCII punctuation characters. Values outside these limits invalidate only that curve
+or recipe. Unknown curve references invalidate only the recipe that uses them.
+
+Settings cycles Scale, Slide, Portal, Scan, then valid custom recipes in bytewise ID order, and
+writes only `pane_style`. A missing or invalid selected recipe displays Scale until the next user
+action. Portal and Scan keep the terminal rectangle fixed, Slide clips a final-size pane, and Scale
+clips the settled pane to a centred window, so none of them resize the PTY on every frame. The
+selected recipe is snapshotted independently when opening and closing starts, so a reload cannot
+change an active transition or prune a closing pane early. Custom recipe timing covers the pane
+effect, opacity, activation delay, neighboring spawn/close movement, and close retention. Sidebar,
+scratchpad, focus chrome, and other geometry policies keep their existing settings.
 
 ### Pane open/close style
 

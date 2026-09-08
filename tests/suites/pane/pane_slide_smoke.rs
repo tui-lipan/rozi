@@ -8,10 +8,14 @@
 use std::time::Duration;
 
 use rozi::AppRoot;
-use rozi::layout::anim::{GeometryAnimation, PaneAnimationStyle, SlideEdge};
+use rozi::layout::anim::{
+    GeometryAnimation, GlyphPalette, PaneAnimationSnapshot, PaneAnimationSpec, PaneAnimationStyle,
+    ScanDirection, SlideEdge,
+};
 use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{Pane, PaneBorderMode, SplitAxis};
 use tui_lipan::TestBackend;
+use tui_lipan::animation::Easing;
 use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::{FloatRect, MouseEvent, Rect};
 
@@ -24,6 +28,32 @@ const HEIGHT: u16 = 10;
 const SETTLED_BORDERS: [usize; 4] = [0, 22, 24, 39];
 /// First column of the arriving pane's tile.
 const RIGHT_TILE_START: usize = SETTLED_BORDERS[2];
+
+fn scale_snapshot() -> PaneAnimationSnapshot {
+    PaneAnimationSnapshot {
+        spec: PaneAnimationSpec {
+            kind: PaneAnimationStyle::Scale,
+            open_duration: Duration::from_millis(200),
+            close_duration: Duration::from_millis(120),
+            open_curve: Easing::EaseInOutCubic,
+            close_curve: Easing::EaseOutQuad,
+            visual_open_curve: Easing::EaseOutQuad,
+            visual_close_curve: Easing::EaseOutQuad,
+            scale_from: 0.9,
+            origin: [0.5, 0.5],
+            frontier_width: 0.09,
+            density: 0.5,
+            glyphs: GlyphPalette::defaults(),
+            custom_glyphs: false,
+            custom_frontier_width: false,
+            fade: true,
+            custom_density: false,
+            custom_recipe: false,
+            scan_direction: ScanDirection::TopLeft,
+        },
+        active: true,
+    }
+}
 
 fn backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
@@ -63,6 +93,8 @@ fn backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
             );
             // Pane 11 is the one arriving; 10 is the tile it took the space from.
             pane.opening = id == 11;
+            pane.opening_animation =
+                (style == PaneAnimationStyle::Scale && id == 11).then(scale_snapshot);
             pane.slide_edge = SlideEdge::Right;
             pane.terminal_active = true;
             workspace.panes.push(pane);
@@ -300,13 +332,12 @@ fn a_slid_pane_is_still_clickable_once_it_has_arrived() {
 #[test]
 fn the_scale_style_grows_an_opening_pane_inside_its_tile_instead() {
     on_large_stack(|| {
-        // The contrast that makes the slide assertions meaningful. Scale places an opening pane at a
-        // shrunken rect *within* its tile, so it shows *both* of its borders, inset from the tile
-        // edges - never one border part-way across. Sampled on the frame arrival starts, since a 0.9
-        // scale of a 16-column tile is barely over a cell per side and rounding closes it quickly.
+        // Scale keeps the terminal at its settled allocation while its visible frame grows from the
+        // centre. The opening state is retained until Activate, at which point the wrapper is allowed
+        // to drop and the pane is already at its final geometry.
         let mut backend = backend(PaneAnimationStyle::Scale);
         backend.render();
-        begin_arrival(&mut backend);
+        backend.advance(Duration::from_millis(75));
 
         let in_tile: Vec<usize> = border_columns(&mut backend)
             .into_iter()
@@ -315,7 +346,7 @@ fn the_scale_style_grows_an_opening_pane_inside_its_tile_instead() {
         assert_eq!(
             in_tile.len(),
             2,
-            "a scaling pane keeps both borders on screen:\n{}",
+            "a scaling pane keeps both borders on screen: {in_tile:?}\n{}",
             grid(&mut backend)
         );
         assert!(
@@ -324,6 +355,25 @@ fn the_scale_style_grows_an_opening_pane_inside_its_tile_instead() {
             grid(&mut backend)
         );
 
+        backend.advance(Duration::from_millis(50));
+        let mid_scale: Vec<usize> = border_columns(&mut backend)
+            .into_iter()
+            .filter(|column| *column >= RIGHT_TILE_START)
+            .collect();
+        assert_eq!(
+            mid_scale.len(),
+            2,
+            "a mid-scale pane keeps both side borders: {mid_scale:?}\n{}",
+            grid(&mut backend)
+        );
+
+        begin_arrival(&mut backend);
+        backend.state_mut().current_mut().workspaces[0]
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == 11)
+            .expect("arriving pane")
+            .opening_animation = None;
         backend.advance(Duration::from_millis(400));
         assert_eq!(
             border_columns(&mut backend),

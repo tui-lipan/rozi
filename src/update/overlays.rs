@@ -288,13 +288,18 @@ fn settings_activate_dir(
             execute_action(ctx, Action::ToggleNerdIcons);
         }
         CyclePaneAnimation => {
-            let value = if reverse {
-                ctx.state.config.animations.pane_style.prev()
+            let catalog = &ctx.state.config.animation_catalog;
+            let current = ctx.state.config.animations.selected_id();
+            let current_index = catalog.index_of(current);
+            let next_index = if reverse {
+                (current_index + catalog.choices.len() - 1) % catalog.choices.len()
             } else {
-                ctx.state.config.animations.pane_style.next()
+                (current_index + 1) % catalog.choices.len()
             };
-            ctx.state.config.animations.pane_style = value;
-            if let Err(err) = crate::config::persist_animation_string("pane_style", value.id()) {
+            let choice = catalog.choices[next_index].clone();
+            let id = choice.name.clone();
+            ctx.state.config.animations.set_selection(&choice);
+            if let Err(err) = crate::config::persist_animation_string("pane_style", &id) {
                 preference_error(ctx, err);
             }
         }

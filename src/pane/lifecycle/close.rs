@@ -36,7 +36,11 @@ pub(crate) fn close_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
                     ),
                 )
             } else {
-                anim::retained_pane_timeout(ctx.state.config.animations)
+                find_pane(&ctx.state, id)
+                    .map(|pane| {
+                        anim::retained_pane_timeout_for_pane(ctx.state.config.animations, pane)
+                    })
+                    .unwrap_or_else(|| anim::retained_pane_timeout(ctx.state.config.animations))
             },
         )),
         None => Update::full(),
@@ -62,7 +66,11 @@ pub(crate) fn remove_pane_after_exit(
                     ),
                 )
             } else {
-                anim::retained_pane_timeout(ctx.state.config.animations)
+                find_pane(&ctx.state, id)
+                    .map(|pane| {
+                        anim::retained_pane_timeout_for_pane(ctx.state.config.animations, pane)
+                    })
+                    .unwrap_or_else(|| anim::retained_pane_timeout(ctx.state.config.animations))
             },
         )),
         None => Update::full(),
@@ -106,6 +114,7 @@ fn close_scratch_pane(
         ctx.state.tile_gap(),
     );
     let client = ctx.state.scratch_client();
+    let animations = ctx.state.config.animations;
     let was_focused = ctx.state.scratch.focused_pane == Some(id);
     let scrollable_neighbor = (ctx.state.scratch.layout_kind
         == crate::state::LayoutKind::Scrollable)
@@ -123,7 +132,9 @@ fn close_scratch_pane(
     }
     pane.floating_rect = crate::layout::placement_for(&placements, id).unwrap_or(bounds);
     pane.opening = false;
+    pane.opening_animation = None;
     pane.closing = true;
+    pane.begin_close_animation(animations);
     pane.terminal.kill();
     remove_tiled_window(&mut ctx.state.scratch, id);
 
@@ -133,7 +144,7 @@ fn close_scratch_pane(
             None => choose_fallback_focus_near(&mut ctx.state, Some(id), None),
         }
     }
-    ctx.state.animation = GeometryAnimation::Close;
+    ctx.state.begin_pane_event(GeometryAnimation::Close);
     if ctx.state.scratch.focused_pane.is_none() {
         crate::scratchpad::after_pane_removed(ctx);
     } else if resolve_focus {
@@ -200,6 +211,7 @@ fn mark_workspace_pane_closing(
         )
     };
     let client = ctx.state.current().session_client.clone();
+    let animations = ctx.state.config.animations;
     let wire_local = namespace.unwrap_or_else(|| pane_is_local(&ctx.state, id));
     let pane = match namespace {
         Some(false) => find_pane_in_namespace_mut(&mut ctx.state, id, false),
@@ -215,7 +227,9 @@ fn mark_workspace_pane_closing(
     pane.floating_rect =
         crate::layout::placement_for(&placements, id).unwrap_or(pane.floating_rect);
     pane.opening = false;
+    pane.opening_animation = None;
     pane.closing = true;
+    pane.begin_close_animation(animations);
     pane.terminal.kill();
     Some(generation)
 }
@@ -234,7 +248,7 @@ fn repair_workspace_focus(ctx: &mut Context<AppRoot>, plan: WorkspaceCloseFocus)
         ctx.state.current_mut().workspaces[workspace].set_scrollable_viewport(anchor, edge);
     }
     // Focus synchronization may arm AxisChange, but the retained pane needs the close transition.
-    ctx.state.animation = GeometryAnimation::Close;
+    ctx.state.begin_pane_event(GeometryAnimation::Close);
     request_current_pane_focus(ctx);
 }
 
@@ -255,7 +269,7 @@ pub(crate) fn close_pane_inner_with_focus(
     // Plan before marking the pane closing, which removes it from Scrollable's visual order.
     let focus = plan_workspace_close_focus(&ctx.state, id, resolve_focus);
     let generation = mark_workspace_pane_closing(ctx, id, kill_server_pane, namespace)?;
-    ctx.state.animation = GeometryAnimation::Close;
+    ctx.state.begin_pane_event(GeometryAnimation::Close);
     if resolve_focus {
         repair_workspace_focus(ctx, focus);
     }
@@ -290,7 +304,16 @@ pub(crate) fn prune_closed_pane(
         remove_tiled_window(&mut ctx.state.scratch, id);
         crate::scratchpad::after_pane_removed(ctx);
     } else {
-        let timeout = crate::layout::anim::retained_pane_timeout(ctx.state.config.animations);
+        let timeout = find_pane(&ctx.state, id)
+            .map(|pane| {
+                crate::layout::anim::retained_pane_timeout_for_pane(
+                    ctx.state.config.animations,
+                    pane,
+                )
+            })
+            .unwrap_or_else(|| {
+                crate::layout::anim::retained_pane_timeout(ctx.state.config.animations)
+            });
         // Take the pane out first so its terminal screen can be retired: a same-generation
         // reintroduction (a layout correction) restores its scrollback instead of starting blank.
         let removed = ctx

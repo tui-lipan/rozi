@@ -189,14 +189,18 @@ pub(super) fn finish_open(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        if pane.pty_generation != generation {
-            return Update::none();
-        }
-        if !pane.closing {
+    let opened = match find_pane_mut(&mut ctx.state, id) {
+        Some(pane) if pane.pty_generation != generation => return Update::none(),
+        Some(pane) if !pane.closing => {
             pane.opening = false;
-            ctx.state.animation = GeometryAnimation::Spawn;
+            true
         }
+        _ => false,
+    };
+    if opened {
+        // Re-arm through `begin_pane_event`, not a bare assignment: a close in the gap since the
+        // spawn would otherwise leave the neighbours moving on the close clock.
+        ctx.state.begin_pane_event(GeometryAnimation::Spawn);
     }
     Update::full()
 }
@@ -218,6 +222,7 @@ pub(super) fn activate_pane(
         }
         if !pane.closing {
             pane.terminal_active = true;
+            pane.opening_animation = None;
             if focused {
                 request_pane_focus(ctx, id);
             }
@@ -481,6 +486,56 @@ mod tests {
             .finished_unseen = true;
         state.config.pane.alert_border = AlertMode::Off;
         assert!(!alert_pulse_should_run(&state));
+    }
+
+    #[test]
+    fn finish_open_keeps_its_snapshot_until_activation() {
+        let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+        let (id, generation, original) = {
+            let state = backend.state_mut();
+            let id = state.focused_pane().expect("fresh pane focus");
+            state.config.animations.pane_style = crate::layout::anim::PaneAnimationStyle::Scale;
+            state.config.animations.geometry_duration = std::time::Duration::from_millis(300);
+            let animations = state.config.animations;
+            let pane = crate::pane::lifecycle::find_pane_mut(state, id).expect("fresh pane");
+            pane.opening = true;
+            pane.begin_open_animation(animations);
+            (
+                id,
+                pane.pty_generation,
+                pane.opening_animation.expect("snapshot").spec,
+            )
+        };
+
+        backend
+            .dispatch(crate::Msg::FinishOpen(0, id, generation))
+            .expect("finish open");
+        {
+            let state = backend.state_mut();
+            state.config.animations.pane_style = crate::layout::anim::PaneAnimationStyle::Portal;
+            state.config.animations.close_duration = std::time::Duration::from_millis(800);
+            let pane = crate::pane::lifecycle::find_pane(state, id).expect("finished pane");
+            assert!(!pane.opening);
+            assert_eq!(
+                crate::layout::anim::pane_animation_for_pane(state.config.animations, pane),
+                original
+            );
+            assert!(crate::layout::anim::pane_opacity_animates(
+                state.config.animations,
+                pane
+            ));
+        }
+
+        backend
+            .dispatch(crate::Msg::ActivatePane(0, id, generation))
+            .expect("activate pane");
+        let state = backend.state();
+        let pane = crate::pane::lifecycle::find_pane(state, id).expect("activated pane");
+        assert!(pane.opening_animation.is_none());
+        assert_eq!(
+            crate::layout::anim::pane_animation_for_pane(state.config.animations, pane).kind,
+            crate::layout::anim::PaneAnimationStyle::Portal
+        );
     }
 
     #[test]

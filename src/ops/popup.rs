@@ -73,6 +73,7 @@ pub(crate) fn open(
     );
     pane.terminal.set_palette(palette);
     pane.opening = true;
+    pane.begin_open_animation(ctx.state.config.animations);
     let env = pane_env(
         ctx.state.control_socket_path.as_deref(),
         &pane,
@@ -83,7 +84,7 @@ pub(crate) fn open(
     let (cols, rows) = (pane.terminal.cols, pane.terminal.rows);
     ctx.state.popup_return_focus = ctx.state.focused_pane();
     ctx.state.popup = Some(pane);
-    ctx.state.animation = GeometryAnimation::Spawn;
+    ctx.state.begin_pane_event(GeometryAnimation::Spawn);
     let open_delay = crate::layout::anim::open_delay(ctx.state.config.animations);
     let activate_delay = crate::layout::anim::activation_delay(ctx.state.config.animations);
     request_pane_spawn(
@@ -109,6 +110,7 @@ pub(crate) fn open(
 }
 
 pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
+    let animations = ctx.state.config.animations;
     let client = ctx.state.current().session_client.clone();
     let Some(pane) = ctx.state.popup.as_mut().filter(|pane| !pane.closing) else {
         return Update::none();
@@ -118,16 +120,20 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
         client.kill(POPUP_PANE_ID, generation, true);
     }
     pane.opening = false;
+    pane.opening_animation = None;
     // Stay described so the popup scales out the way it scaled in; `prune_closed_pane` drops it.
     pane.closing = true;
+    pane.begin_close_animation(animations);
     pane.terminal.kill();
-    ctx.state.animation = crate::layout::anim::GeometryAnimation::Close;
+    let timeout = crate::layout::anim::retained_pane_timeout_for_pane(animations, pane);
+    ctx.state
+        .begin_pane_event(crate::layout::anim::GeometryAnimation::Close);
     restore_focus(ctx);
     Update::with_command(crate::pane::lifecycle::prune_closed_command(
         ctx.state.runtime_epoch,
         POPUP_PANE_ID,
         generation,
-        crate::layout::anim::retained_pane_timeout(ctx.state.config.animations),
+        timeout,
     ))
 }
 
@@ -192,6 +198,7 @@ pub(crate) fn placement(app: &AppRoot, ctx: &Context<AppRoot>) -> Option<(FloatR
             crate::view::PaneKind::Popup,
             crate::view::PaneMerge::default(),
             app.pane_reveal_progress(ctx, pane, format!("rozi-popup-pane-reveal-{}", pane.id)),
+            false,
         ),
     ))
 }

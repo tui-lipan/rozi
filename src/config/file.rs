@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -530,6 +530,31 @@ pub(super) struct AnimationFileConfig {
     pub(super) focus_chrome_ms: Option<u64>,
     pub(super) alert_pulse_ms: Option<u64>,
     pub(super) open_delay_ms: Option<u64>,
+    pub(super) curves: BTreeMap<String, CurveFileConfig>,
+    pub(super) pane_animations: BTreeMap<String, PaneAnimationFileConfig>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct CurveFileConfig {
+    pub(super) bezier: Option<[f32; 4]>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct PaneAnimationFileConfig {
+    pub(super) kind: Option<String>,
+    pub(super) open_ms: Option<u64>,
+    pub(super) close_ms: Option<u64>,
+    pub(super) curve: Option<String>,
+    pub(super) close_curve: Option<String>,
+    pub(super) scale_from: Option<f32>,
+    pub(super) origin: Option<[f32; 2]>,
+    pub(super) frontier_width: Option<f32>,
+    pub(super) density: Option<f32>,
+    pub(super) glyphs: Option<Vec<String>>,
+    pub(super) direction: Option<String>,
+    pub(super) fade: Option<bool>,
 }
 
 /// The config text most recently read or written by this process. Lets the live-reload
@@ -673,7 +698,27 @@ fn load_config_from_text_with_extensions(
         &mut warnings,
     );
     config.input = input;
-    apply_animations(&mut config.animations, parsed.animations, &mut warnings);
+    let animation_catalog = super::appearance::build_animation_catalog(
+        &parsed.animations,
+        parsed
+            .animations
+            .geometry_ms
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(config.animations.geometry_duration),
+        parsed
+            .animations
+            .close_ms
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(config.animations.close_duration),
+        &mut warnings,
+    );
+    apply_animations(
+        &mut config.animations,
+        parsed.animations,
+        &animation_catalog,
+        &mut warnings,
+    );
+    config.animation_catalog = animation_catalog;
 
     if let Some(name) = non_empty(parsed.theme.name) {
         config.theme.name = name;
@@ -1666,6 +1711,197 @@ mod file_tests {
         let loaded = load_config_from_text("frame_rate = 1000\n", path);
         assert_eq!(loaded.config.frame_rate, MAX_FRAME_RATE);
         assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+    }
+
+    #[test]
+    fn pane_animation_recipes_resolve_after_builtins_in_byte_order() {
+        let loaded = load_config_from_text(
+            r#"
+            [animations]
+            pane_style = "soft-portal"
+            [animations.curves.soft]
+            bezier = [0.25, 0.1, 0.25, 1.0]
+            [animations.pane_animations.z-scan]
+            kind = "scan"
+            [animations.pane_animations.soft-portal]
+            kind = "portal"
+            open_ms = 280
+            close_ms = 150
+            curve = "soft"
+            origin = [0.2, 0.8]
+            frontier_width = 0.2
+            density = 0.75
+            glyphs = [".", ":", "+"]
+            "#,
+            Path::new("test.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let names: Vec<_> = loaded
+            .config
+            .animation_catalog
+            .choices
+            .iter()
+            .map(|choice| choice.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["scale", "slide", "portal", "scan", "soft-portal", "z-scan"]
+        );
+        assert_eq!(
+            loaded.config.animations.pane_style,
+            crate::layout::anim::PaneAnimationStyle::Portal
+        );
+        let selected = loaded.config.animations.selected_animation();
+        assert_eq!(
+            selected.open_duration,
+            std::time::Duration::from_millis(280)
+        );
+        assert_eq!(
+            selected.close_duration,
+            std::time::Duration::from_millis(150)
+        );
+        assert_eq!(selected.origin, [0.2, 0.8]);
+        assert_eq!(selected.glyphs.len(), 3);
+        assert!(matches!(
+            selected.open_curve,
+            tui_lipan::animation::Easing::CubicBezier(_)
+        ));
+        assert!(matches!(
+            selected.close_curve,
+            tui_lipan::animation::Easing::CubicBezier(_)
+        ));
+    }
+
+    #[test]
+    fn invalid_animation_entries_warn_without_poisoning_valid_entries() {
+        let loaded = load_config_from_text(
+            r#"
+            [animations]
+            pane_style = "good"
+            [animations.curves.bad]
+            bezier = [-0.1, 0.0, 0.5, 1.0]
+            [animations.curves.too-high]
+            bezier = [0.1, 4.1, 0.8, -4.1]
+            [animations.curves.linear]
+            bezier = [0.1, 0.2, 0.8, 0.9]
+            [animations.curves.good]
+            bezier = [0.1, 0.2, 0.8, 0.9]
+            [animations.pane_animations.bad]
+            kind = "portal"
+            curve = "missing"
+            [animations.pane_animations.good]
+            kind = "scan"
+            curve = "good"
+            direction = "bottom-right"
+            [animations.pane_animations.scale]
+            kind = "scale"
+            "#,
+            Path::new("test.toml"),
+        );
+        assert!(
+            loaded
+                .config
+                .animation_catalog
+                .choices
+                .iter()
+                .any(|choice| choice.name == "good")
+        );
+        assert!(
+            !loaded
+                .config
+                .animation_catalog
+                .choices
+                .iter()
+                .any(|choice| choice.name == "bad")
+        );
+        assert!(
+            !loaded
+                .config
+                .animation_catalog
+                .choices
+                .iter()
+                .any(|choice| choice.name == "scale"
+                    && choice.spec.kind != crate::layout::anim::PaneAnimationStyle::Scale)
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unknown curve reference"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("collides"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("y coordinates must be in [-4, 4]"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("builtin curve token"))
+        );
+    }
+
+    #[test]
+    fn animation_recipe_bounds_and_glyphs_are_rejected_without_clamping() {
+        let loaded = load_config_from_text(
+            r#"
+            [animations.pane_animations.bad-scale]
+            kind = "scale"
+            scale_from = 1.1
+            [animations.pane_animations.bad-portal]
+            kind = "portal"
+            origin = [0.5, 2.0]
+            density = -0.1
+            glyphs = ["ab"]
+            [animations.pane_animations.bad-scan]
+            kind = "scan"
+            direction = "sideways"
+            frontier_width = 0.6
+            "#,
+            Path::new("test.toml"),
+        );
+        assert_eq!(loaded.config.animation_catalog.choices.len(), 4);
+        assert!(loaded.warnings.len() >= 3, "{:?}", loaded.warnings);
+        assert!(
+            !loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("Clamped"))
+        );
+    }
+
+    #[test]
+    fn animation_fade_is_optional_except_for_slide() {
+        let loaded = load_config_from_text(
+            r#"
+            [animations]
+            pane_style = "no-fade"
+            [animations.pane_animations.no-fade]
+            kind = "portal"
+            fade = false
+            [animations.pane_animations.slide-fade]
+            kind = "slide"
+            fade = true
+            "#,
+            Path::new("test.toml"),
+        );
+        let selected = loaded.config.animations.selected_animation();
+        assert!(!selected.fade);
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("fade is not valid for Slide"))
+        );
+        assert_eq!(loaded.config.animation_catalog.choices.len(), 5);
     }
 
     #[test]

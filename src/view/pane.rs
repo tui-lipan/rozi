@@ -81,6 +81,98 @@ impl PaneKind {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct PaneFrameChrome {
+    pub show_border: bool,
+    pub border_style: BorderStyle,
+    pub frame_fg: Paint,
+    pub frame_bg: Paint,
+    pub frame_style: Style,
+}
+
+pub(crate) fn pane_frame_chrome(
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    effective_focus: Option<PaneId>,
+    kind: PaneKind,
+) -> PaneFrameChrome {
+    let theme = &ctx.state.theme;
+    let focused = effective_focus == Some(pane.id);
+    let border_mode = ctx.state.config.pane.border_mode;
+    let show_border = border_mode.draws_frames()
+        || (kind.is_special() && ctx.state.config.pane.keep_special_borders);
+    let border_style = if kind.is_special() {
+        BorderStyle::Double
+    } else {
+        ctx.state.config.pane.border_style.to_border_style()
+    };
+    let alert = border_mode
+        .draws_frames()
+        .then(|| pane_alert(pane, focused, &ctx.state.config.pane))
+        .flatten();
+    let alert_pulses = alert.is_some_and(|(_, color)| {
+        pane_alert_pulses(
+            theme,
+            color,
+            &ctx.state.config.pane,
+            ctx.state.alert_pulse_armed,
+            ctx.state.config.animations,
+        )
+    });
+    let alert_calm = alert.is_some_and(|(state, _)| state.is_calm());
+    let alert_phase = if alert_calm {
+        ctx.state.alert_pulse_calm_phase
+    } else {
+        ctx.state.alert_pulse_phase
+    };
+    let carried_by_other_client = !matches!(kind, PaneKind::Scratch | PaneKind::Popup)
+        && ctx
+            .state
+            .current()
+            .remote_drag
+            .is_some_and(|drag| drag.pane_id == pane.id);
+    let frame_fg_target = pane_frame_foreground_target(
+        theme,
+        alert,
+        alert_pulses,
+        alert_phase,
+        carried_by_other_client,
+        focused,
+        ctx.state.config.pane.highlight_focused_border,
+    );
+    let frame_fg = app.chrome_color_with_frame_rate(
+        ctx,
+        pane,
+        ChromeSlot::FrameFg,
+        frame_fg_target,
+        if alert_pulses && ctx.state.alert_pulse_armed {
+            app.alert_pulse_transition_config(ctx, alert_calm)
+        } else {
+            app.focus_chrome_transition_config(ctx)
+        },
+        alert_pulses.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
+    );
+    let frame_bg_target = crate::ops::theme::pane_frame_background(
+        theme,
+        focused,
+        ctx.state.config.pane.highlight_focused_background,
+    );
+    let frame_bg = app.chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target);
+    let frame_style = if matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_)) {
+        Style::new().fg(frame_fg).bg(frame_bg).dim()
+    } else {
+        Style::new().fg(frame_fg).bg(frame_bg)
+    };
+    PaneFrameChrome {
+        show_border,
+        border_style,
+        frame_fg,
+        frame_bg,
+        frame_style,
+    }
+}
+
 fn pane_scrollbar_variant(border_mode: PaneBorderMode) -> ScrollbarVariant {
     if border_mode.merges_frames() {
         ScrollbarVariant::Standalone
@@ -642,6 +734,7 @@ pub(crate) fn pane_element(
     kind: PaneKind,
     merge: PaneMerge,
     reveal_progress: f32,
+    hide_frame_border: bool,
 ) -> Element {
     let theme = &ctx.state.theme;
     let id = pane.id;
@@ -655,80 +748,27 @@ pub(crate) fn pane_element(
         None
     };
     let border_mode = ctx.state.config.pane.border_mode;
-    let show_border = border_mode.draws_frames()
-        || (kind.is_special() && ctx.state.config.pane.keep_special_borders);
-    let border_style = if kind.is_special() {
-        BorderStyle::Double
+    let chrome = pane_frame_chrome(app, ctx, pane, effective_focus, kind);
+    let PaneFrameChrome {
+        show_border,
+        border_style,
+        frame_fg,
+        frame_bg,
+        frame_style,
+    } = chrome;
+    // Scale keeps the frame's geometry (and therefore the terminal's settled allocation) but paints
+    // its own border glyphs with the frame background; the centred overlay owns the visible border.
+    let frame_style = if hide_frame_border {
+        frame_style.fg(frame_bg)
     } else {
-        ctx.state.config.pane.border_style.to_border_style()
+        frame_style
     };
-
-    let alert = border_mode
-        .draws_frames()
-        .then(|| pane_alert(pane, focused, &ctx.state.config.pane))
-        .flatten();
-    let alert_pulses = alert.is_some_and(|(_, color)| {
-        pane_alert_pulses(
-            theme,
-            color,
-            &ctx.state.config.pane,
-            ctx.state.alert_pulse_armed,
-            ctx.state.config.animations,
-        )
-    });
-    // A finished pane is good news you have not read; only a blocked one is asking for an answer,
-    // so the two breathe at different rates off the same beat.
-    let alert_calm = alert.is_some_and(|(state, _)| state.is_calm());
-    let alert_phase = if alert_calm {
-        ctx.state.alert_pulse_calm_phase
-    } else {
-        ctx.state.alert_pulse_phase
-    };
-    // A pane another client is carrying wears the same colour its FOLLOW chip does. That is the
-    // whole treatment: no badge, no second border, nothing that survives the drop - just enough
-    // for a rectangle moving on its own to read as somebody moving it. An alert still wins, since
-    // that one is asking the user for something.
-    // Scratch and popup panes live in client-local layers no other client can reach, and their ids
-    // are allocated separately - so a matching id there would be a coincidence, not the same pane.
-    let carried_by_other_client = !matches!(kind, PaneKind::Scratch | PaneKind::Popup)
-        && ctx
-            .state
-            .current()
-            .remote_drag
-            .is_some_and(|drag| drag.pane_id == id);
-    let frame_fg_target = pane_frame_foreground_target(
-        theme,
-        alert,
-        alert_pulses,
-        alert_phase,
-        carried_by_other_client,
-        focused,
-        ctx.state.config.pane.highlight_focused_border,
-    );
-    let frame_fg = app.chrome_color_with_frame_rate(
-        ctx,
-        pane,
-        ChromeSlot::FrameFg,
-        frame_fg_target,
-        if alert_pulses && ctx.state.alert_pulse_armed {
-            app.alert_pulse_transition_config(ctx, alert_calm)
-        } else {
-            app.focus_chrome_transition_config(ctx)
-        },
-        alert_pulses.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
-    );
+    let exited = matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_));
     let frame_bg_target = crate::ops::theme::pane_frame_background(
         theme,
         focused,
         ctx.state.config.pane.highlight_focused_background,
     );
-    let frame_bg = app.chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target);
-    let exited = matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_));
-    let frame_style = if exited {
-        Style::new().fg(frame_fg).bg(frame_bg).dim()
-    } else {
-        Style::new().fg(frame_fg).bg(frame_bg)
-    };
     let titlebar = ctx.state.config.pane.titlebar;
     let show_titles = ctx.state.config.pane.show_titles;
     // The inset title is the frame's first interior row, so the frame gives up its own padding to
@@ -1219,7 +1259,7 @@ pub(crate) fn pane_element(
     let pane_tree = pane_reveal_scope(
         pane_tree,
         pane.keys.effect_scope.clone(),
-        animations.pane_style,
+        crate::layout::anim::pane_animation_for_pane(animations, pane),
         reveal_progress,
         u64::from(id),
     );
@@ -1228,10 +1268,8 @@ pub(crate) fn pane_element(
         .opacity(opacity)
         .transition(app.window_opacity_config(ctx, pane));
     // No `Animated::auto_exit` here. Framework retention freezes the already reconciled subtree
-    // and can only clip it, so a pane would be sliced rather than scaled. The close animation is
-    // the spawn animation in reverse: `pane.closing` keeps the pane described at a rectangle that
-    // shrinks toward its centre, which re-lays the whole subtree out every frame so the border
-    // scales with it. `prune_closed_pane` drops the state once it finishes.
+    // and can only clip it, while Scale's surrounding PanView supplies the centred clip window.
+    // `prune_closed_pane` drops the state once a closing pane's clip finishes.
     let element: Element = animated.into();
 
     element.key(pane_window_key(id, pane.pty_generation))

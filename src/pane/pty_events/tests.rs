@@ -666,6 +666,268 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
 }
 
 #[test]
+fn pane_animation_styles_keep_the_pty_grid_stable_during_open_and_close() {
+    use crate::layout::anim::{PaneAnimationSnapshot, PaneAnimationStyle, builtin_animation};
+    use crate::session::client::{ClientOutbound, SessionClient};
+    use crate::state::SharedSessionState;
+    use tui_lipan::TestBackend;
+
+    for style in [
+        PaneAnimationStyle::Scale,
+        PaneAnimationStyle::Portal,
+        PaneAnimationStyle::Scan,
+        PaneAnimationStyle::Slide,
+    ] {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let (client, rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_attached = true;
+            state.current_mut().session_client = Some(client);
+            state.config.pane.resize_debounce_ms = 0;
+            let mut shared = SharedSessionState::new(1);
+            shared.controller = Some(1);
+            state.current_mut().shared = Some(shared);
+            state.config.animations.pane_style = style;
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.opening = false;
+            pane.opening_animation = None;
+        }
+        backend.render();
+        let terminal_key = backend.state().current().workspaces[0].panes[0]
+            .keys
+            .terminal
+            .clone();
+        let reported_grid = backend
+            .capture_ui_snapshot()
+            .widgets
+            .iter()
+            .find(|widget| widget.key.as_ref() == Some(&terminal_key))
+            .expect("settled terminal widget before resize report")
+            .rect;
+        backend
+            .dispatch(crate::Msg::PaneResize(1, reported_grid.w, reported_grid.h))
+            .expect("report the settled PTY grid");
+        let initial_resizes: Vec<_> = rx
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::Control(crate::session::protocol::ClientMessage::Resize {
+                    cols,
+                    rows,
+                    ..
+                }) => Some((cols, rows)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !initial_resizes.is_empty(),
+            "{style:?} must report its settled PTY grid: {initial_resizes:?}"
+        );
+        let settled_snapshot = backend.capture_ui_snapshot();
+        let settled_terminal_rect = settled_snapshot
+            .widgets
+            .iter()
+            .find(|widget| widget.key.as_ref() == Some(&terminal_key))
+            .expect("settled terminal widget")
+            .rect;
+        {
+            let state = backend.state_mut();
+            state.animation = crate::layout::anim::GeometryAnimation::Spawn;
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.opening = true;
+            let mut spec = builtin_animation(style);
+            if style == PaneAnimationStyle::Scale {
+                spec.custom_recipe = true;
+                spec.scale_from = 0.6;
+                spec.open_duration = std::time::Duration::from_millis(360);
+            }
+            pane.opening_animation = Some(PaneAnimationSnapshot { spec, active: true });
+        }
+        backend.render();
+        if style == PaneAnimationStyle::Scale {
+            let opening_snapshot = backend.capture_ui_snapshot();
+            let opening_terminal_rect = opening_snapshot
+                .widgets
+                .iter()
+                .find(|widget| widget.key.as_ref() == Some(&terminal_key))
+                .expect("opening terminal widget")
+                .rect;
+            let opening_clip_rect = opening_snapshot
+                .widgets
+                .iter()
+                .find(|widget| {
+                    widget
+                        .key
+                        .as_ref()
+                        .is_some_and(|key| key.as_ref() == "rozi-pane-clip-1")
+                })
+                .expect("opening Scale clip wrapper")
+                .rect;
+            assert_eq!(opening_terminal_rect, settled_terminal_rect);
+            assert!(opening_clip_rect.w < settled_terminal_rect.w);
+            assert!(opening_clip_rect.h < settled_terminal_rect.h);
+        }
+        backend.advance(std::time::Duration::from_millis(100));
+        backend.render();
+        if style == PaneAnimationStyle::Scale {
+            let mid_snapshot = backend.capture_ui_snapshot();
+            let mid_terminal_rect = mid_snapshot
+                .widgets
+                .iter()
+                .find(|widget| widget.key.as_ref() == Some(&terminal_key))
+                .expect("mid-animation terminal widget")
+                .rect;
+            assert_eq!(mid_terminal_rect, settled_terminal_rect);
+        }
+        backend.advance(std::time::Duration::from_millis(100));
+        backend.render();
+        let resize_count = rx
+            .try_iter()
+            .filter(|message| {
+                matches!(
+                    message,
+                    ClientOutbound::Control(crate::session::protocol::ClientMessage::Resize { .. })
+                )
+            })
+            .count();
+        assert_eq!(resize_count, 0, "{style:?} emitted a transient PTY resize");
+    }
+
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 30,
+    });
+    let (client, rx) = SessionClient::test_channel();
+    {
+        let state = backend.state_mut();
+        state.current_mut().session_attached = true;
+        state.current_mut().session_client = Some(client);
+        state.config.pane.resize_debounce_ms = 0;
+        let mut shared = SharedSessionState::new(1);
+        shared.controller = Some(1);
+        state.current_mut().shared = Some(shared);
+        state.config.animations.pane_style = PaneAnimationStyle::Scale;
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.opening = false;
+        pane.opening_animation = None;
+    }
+    backend.render();
+    let _ = rx.try_iter().collect::<Vec<ClientOutbound>>();
+    let terminal_key = backend.state().current().workspaces[0].panes[0]
+        .keys
+        .terminal
+        .clone();
+    let reported_grid = backend
+        .capture_ui_snapshot()
+        .widgets
+        .iter()
+        .find(|widget| widget.key.as_ref() == Some(&terminal_key))
+        .expect("settled terminal widget before close resize report")
+        .rect;
+    backend
+        .dispatch(crate::Msg::PaneResize(1, reported_grid.w, reported_grid.h))
+        .expect("report the attached settled PTY grid before close");
+    let attached_resizes: Vec<_> = rx
+        .try_iter()
+        .filter(|message| {
+            matches!(
+                message,
+                ClientOutbound::Control(crate::session::protocol::ClientMessage::Resize { .. })
+            )
+        })
+        .collect();
+    assert!(
+        !attached_resizes.is_empty(),
+        "Scale close must begin from an attached resize report"
+    );
+    let settled_snapshot = backend.capture_ui_snapshot();
+    let settled_terminal_rect = settled_snapshot
+        .widgets
+        .iter()
+        .find(|widget| widget.key.as_ref() == Some(&terminal_key))
+        .expect("settled terminal widget before close")
+        .rect;
+    {
+        let state = backend.state_mut();
+        state.animation = crate::layout::anim::GeometryAnimation::Close;
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.closing = true;
+        pane.floating_rect = FloatRect {
+            x: 0.0,
+            y: 1.0,
+            w: 100.0,
+            h: 28.0,
+        };
+        let mut spec = builtin_animation(PaneAnimationStyle::Scale);
+        spec.scale_from = 0.6;
+        spec.close_duration = std::time::Duration::from_millis(360);
+        pane.closing_animation = Some(PaneAnimationSnapshot { spec, active: true });
+    }
+    backend.render();
+    let closing_snapshot = backend.capture_ui_snapshot();
+    assert_eq!(
+        closing_snapshot
+            .widgets
+            .iter()
+            .find(|widget| widget.key.as_ref() == Some(&terminal_key))
+            .expect("closing terminal widget")
+            .rect,
+        settled_terminal_rect
+    );
+    let closing_clip_rect = closing_snapshot
+        .widgets
+        .iter()
+        .find(|widget| {
+            widget
+                .key
+                .as_ref()
+                .is_some_and(|key| key.as_ref() == "rozi-pane-clip-1")
+        })
+        .expect("closing Scale clip wrapper")
+        .rect;
+    assert!(closing_clip_rect.w < settled_terminal_rect.w);
+    assert!(closing_clip_rect.h < settled_terminal_rect.h);
+    backend.advance(std::time::Duration::from_millis(180));
+    backend.render();
+    let mid_closing_snapshot = backend.capture_ui_snapshot();
+    assert_eq!(
+        mid_closing_snapshot
+            .widgets
+            .iter()
+            .find(|widget| widget.key.as_ref() == Some(&terminal_key))
+            .expect("mid-close terminal widget")
+            .rect,
+        settled_terminal_rect
+    );
+    backend.advance(std::time::Duration::from_millis(180));
+    backend.render();
+    let close_resizes: Vec<_> = rx
+        .try_iter()
+        .filter_map(|message| match message {
+            ClientOutbound::Control(crate::session::protocol::ClientMessage::Resize {
+                cols,
+                rows,
+                ..
+            }) => Some((cols, rows)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        close_resizes.is_empty(),
+        "custom Scale close emitted transient PTY grids: {close_resizes:?}"
+    );
+}
+
+#[test]
 fn synchronized_targets_exclude_floating_and_scratch() {
     let mut state = State::new(crate::config::Config::default(), Theme::default());
     state.current_mut().workspaces[0].synchronized = true;

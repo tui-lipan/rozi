@@ -159,9 +159,14 @@ pub fn persist_animation_string(key: &str, value: &str) -> std::result::Result<P
         Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
     };
 
-    let updated = upsert_value_in_section(&text, "animations", key, &format!("\"{value}\""));
+    let serialized = toml_string(value);
+    let updated = upsert_value_in_section(&text, "animations", key, &serialized);
     write_config_text(&path, updated)?;
     Ok(path)
+}
+
+fn toml_string(value: &str) -> String {
+    toml::Value::String(value.to_string()).to_string()
 }
 
 pub fn persist_notification_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
@@ -977,6 +982,15 @@ mod tests {
         assert!(updated.contains("focus_on_hover = false"));
         assert!(updated.contains("# keep"));
         assert!(!updated.contains("focus_on_hover = true"));
+    }
+
+    #[test]
+    fn animation_selection_serializes_as_a_toml_string() {
+        let value = "recipe\\\"name";
+        let serialized = toml_string(value);
+        let parsed: toml::Table = toml::from_str(&format!("value = {serialized}"))
+            .expect("serialized animation ID remains valid TOML");
+        assert_eq!(parsed["value"].as_str(), Some(value));
     }
 
     #[test]

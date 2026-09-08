@@ -819,8 +819,21 @@ impl AppRoot {
             return false;
         }
         let animations = state.config.animations;
-        if !animations.enabled {
+        let opening = anim::pane_opening_transition(pane);
+        if !animations.enabled && !opening && !pane.closing {
             return false;
+        }
+        if opening {
+            return pane
+                .opening_animation
+                .map(|snapshot| snapshot.active)
+                .unwrap_or(animations.enabled && animations.spawn);
+        }
+        if pane.closing {
+            return pane
+                .closing_animation
+                .map(|snapshot| snapshot.active)
+                .unwrap_or(animations.enabled && animations.close);
         }
         match state.animation {
             GeometryAnimation::None => false,
@@ -843,37 +856,50 @@ impl AppRoot {
         }
 
         let animations = state.config.animations;
+        let spec = anim::pane_animation_for_pane(animations, pane);
+        let event_duration = matches!(
+            state.animation,
+            GeometryAnimation::Spawn | GeometryAnimation::Close
+        )
+        .then(|| state.pane_event_animation.map(|snapshot| snapshot.duration))
+        .flatten();
         // An arriving or leaving pane that slides or uses a paint effect does not animate its
         // rectangle. Slide carries it in, while Portal and Scan repaint its cells, so all three
         // keep their final size the whole way.
-        if (pane.opening || pane.closing)
-            && (anim::pane_slides(animations, pane) || anim::pane_reveal_effects(animations))
-        {
-            return anim::instant_transition();
+        let pane_transition = anim::pane_opening_transition(pane) || pane.closing;
+        if pane_transition {
+            if matches!(
+                spec.kind,
+                anim::PaneAnimationStyle::Slide
+                    | anim::PaneAnimationStyle::Portal
+                    | anim::PaneAnimationStyle::Scan
+            ) {
+                return anim::instant_transition();
+            }
+            return spec.transition(pane.closing);
         }
 
-        // The close scale has to finish inside the close animation's own window. Running it at
-        // `geometry_duration` (which is longer) means the pane is pruned part-way through, so the
-        // slow start of the easing is all that is ever seen.
-        if pane.closing {
-            return anim::close_geometry_transition(animations.close_duration);
-        }
-
+        // Every tile moving to make room for - or take back the space of - the pane in transition
+        // shares that pane's clock, so their common edges stay one moving boundary.
+        let neighbour_duration = event_duration.unwrap_or_else(|| {
+            if state.animation == GeometryAnimation::Close {
+                spec.close_duration
+            } else {
+                spec.open_duration
+            }
+        });
         // Under Slide, the tiles *around* an arriving or leaving pane are where the spring lives:
         // this is the tile that gave up the space, or the one taking it back.
-        if animations.pane_style == anim::PaneAnimationStyle::Slide
+        if spec.kind == anim::PaneAnimationStyle::Slide
             && matches!(
                 state.animation,
                 GeometryAnimation::Spawn | GeometryAnimation::Close
             )
             && let Some(rect) = target_rect
         {
-            return anim::spring_geometry_transition(
-                animations.geometry_duration,
-                anim::spring_extent(rect),
-            );
+            return anim::spring_geometry_transition(neighbour_duration, anim::spring_extent(rect));
         }
-        anim::geometry_transition(animations.geometry_duration)
+        anim::geometry_transition(neighbour_duration)
     }
 
     /// Slide progress for an opening or closing pane: `0.0` fully outside its tile, `1.0` deployed.
@@ -884,21 +910,75 @@ impl AppRoot {
     /// change mid-life does not make it jump.
     pub(crate) fn slide_progress(&self, ctx: &Context<Self>, pane: &Pane, key: String) -> f32 {
         let animations = ctx.state.config.animations;
-        if !anim::pane_slides(animations, pane) {
+        let spec = anim::pane_animation_for_pane(animations, pane);
+        if spec.kind != anim::PaneAnimationStyle::Slide || pane.floating {
             return 1.0;
         }
+        let opening = anim::pane_opening_transition(pane);
         let (target, enabled) = if pane.closing {
-            (0.0, animations.close)
+            (
+                0.0,
+                pane.closing_animation
+                    .is_none_or(|snapshot| snapshot.active),
+            )
         } else {
-            (if pane.opening { 0.0 } else { 1.0 }, animations.spawn)
+            (
+                if opening { 0.0 } else { 1.0 },
+                pane.opening_animation
+                    .is_none_or(|snapshot| snapshot.active),
+            )
         };
         // Disabled means no motion, not a pane parked outside its own tile: snap to deployed rather
         // than letting an instant transition land the target of 0.0 and hide it.
-        if !animations.enabled || !enabled {
+        if !enabled {
             return 1.0;
         }
-        let duration = anim::slide_duration(animations);
-        ctx.transition(key, target, anim::slide_transition(duration))
+        ctx.transition(
+            key,
+            target,
+            TransitionConfig {
+                duration: if pane.closing {
+                    spec.close_duration
+                } else {
+                    spec.open_duration
+                },
+                easing: if pane.closing {
+                    spec.close_curve
+                } else {
+                    spec.open_curve
+                },
+            },
+        )
+    }
+
+    /// Progress for a centre-scaled pane while its subtree remains at the settled rectangle.
+    pub(crate) fn scale_progress(&self, ctx: &Context<Self>, pane: &Pane, key: String) -> f32 {
+        let animations = ctx.state.config.animations;
+        let spec = anim::pane_animation_for_pane(animations, pane);
+        if spec.kind != anim::PaneAnimationStyle::Scale {
+            return 1.0;
+        }
+        let opening = anim::pane_opening_transition(pane);
+        if !opening && !pane.closing {
+            return ctx.transition(key, 1.0, spec.transition(false));
+        }
+        let (target, enabled) = if pane.closing {
+            (
+                0.0,
+                pane.closing_animation
+                    .is_none_or(|snapshot| snapshot.active),
+            )
+        } else {
+            (
+                if opening { 0.0 } else { 1.0 },
+                pane.opening_animation
+                    .is_none_or(|snapshot| snapshot.active),
+            )
+        };
+        if !enabled {
+            return 1.0;
+        }
+        ctx.transition(key, target, spec.transition(pane.closing))
     }
 
     /// Progress for a full-size pane paint effect. The same keyed transition runs in reverse when a
@@ -910,22 +990,31 @@ impl AppRoot {
         key: impl Into<tui_lipan::prelude::Key>,
     ) -> f32 {
         let animations = ctx.state.config.animations;
-        if !anim::pane_reveal_effects(animations) {
+        let spec = anim::pane_animation_for_pane(animations, pane);
+        if !matches!(
+            spec.kind,
+            anim::PaneAnimationStyle::Portal | anim::PaneAnimationStyle::Scan
+        ) {
             return 1.0;
         }
+        let opening = anim::pane_opening_transition(pane);
         let (target, enabled) = if pane.closing {
-            (0.0, animations.close)
+            (
+                0.0,
+                pane.closing_animation
+                    .is_none_or(|snapshot| snapshot.active),
+            )
         } else {
-            (if pane.opening { 0.0 } else { 1.0 }, animations.spawn)
+            (
+                if opening { 0.0 } else { 1.0 },
+                pane.opening_animation
+                    .is_none_or(|snapshot| snapshot.active),
+            )
         };
-        if !animations.enabled || !enabled {
+        if !enabled {
             return 1.0;
         }
-        ctx.transition(
-            key,
-            target,
-            anim::pane_reveal_transition(animations.geometry_duration, pane.closing),
-        )
+        ctx.transition(key, target, spec.transition(pane.closing))
     }
 
     pub(crate) fn window_opacity_config(
@@ -934,33 +1023,21 @@ impl AppRoot {
         pane: &Pane,
     ) -> TransitionConfig {
         let animations = ctx.state.config.animations;
-        if !animations.enabled {
+        let snapshot_active = pane
+            .closing_animation
+            .or(pane.opening_animation)
+            .is_some_and(|snapshot| snapshot.active);
+        if !animations.enabled && !snapshot_active {
             return anim::instant_transition();
         }
         // A slide is not faded: it is clipped to its tile, so it genuinely emerges. A fade on top
         // would make the leading edge ghostly instead of solid.
+        let spec = anim::pane_animation_for_pane(animations, pane);
         if !anim::pane_opacity_animates(animations, pane) {
             return anim::instant_transition();
         }
-        if anim::pane_reveal_effects(animations) {
-            return anim::pane_reveal_transition(animations.geometry_duration, pane.closing);
-        }
-        if pane.closing {
-            // The fade rides the close scale, so it has to share its duration.
-            return if animations.close {
-                TransitionConfig {
-                    duration: animations.close_duration,
-                    easing: Easing::EaseOutQuad,
-                }
-            } else {
-                anim::instant_transition()
-            };
-        }
-        if pane.opening && animations.spawn {
-            TransitionConfig {
-                duration: animations.geometry_duration,
-                easing: Easing::EaseOutQuad,
-            }
+        if anim::pane_opening_transition(pane) || pane.closing {
+            spec.visual_transition(pane.closing)
         } else {
             anim::instant_transition()
         }

@@ -712,6 +712,7 @@ mod tests {
                     for id in 1..=2 {
                         let mut pane = crate::state::Pane::new(id, 100, FloatRect::default());
                         pane.opening = false;
+                        pane.opening_animation = None;
                         state.scratch.panes.push(pane);
                         crate::layout::tiling::append_tiled_window(&mut state.scratch, id);
                     }
@@ -733,7 +734,8 @@ mod tests {
 
                 let dropdown = deployed_rect(backend.state(), VIEWPORT);
                 let live = backend
-                    .rect_of_key(&view::pane_window_key(2, generation).into())
+                    .rect_of_key(&"rozi-scratch-pane-clip-2".into())
+                    .or_else(|| backend.rect_of_key(&view::pane_window_key(2, generation).into()))
                     .expect("pane 2 is on screen");
 
                 backend
@@ -742,7 +744,7 @@ mod tests {
                 backend.advance(std::time::Duration::from_millis(400));
 
                 let closing = backend
-                    .rect_of_key(&view::pane_window_key(2, generation).into())
+                    .rect_of_key(&"rozi-scratch-pane-clip-2".into())
                     .expect("a closing pane stays mounted for its exit animation");
                 // Inside the dropdown, and shrunk toward where it was - not translated away.
                 let top = dropdown.y + f32::from(backend.state().content_top_offset());

@@ -173,6 +173,9 @@ pub(crate) fn spawn_pane_in_scratch(
     // The initial pane rides the dropdown slide, preserving the original scratch animation.
     // Additional panes use the ordinary pane open transition inside the deployed workspace.
     pane.opening = !initial_pane;
+    if pane.opening {
+        pane.begin_open_animation(ctx.state.config.animations);
+    }
     pane.terminal_active = initial_pane;
     let env = pane_env(
         ctx.state.control_socket_path.as_deref(),
@@ -217,7 +220,7 @@ pub(crate) fn spawn_pane_in_scratch(
     if ctx.state.scratch.tiled_ids().contains(&id) {
         set_scrollable_anchor_for_spawned(&mut ctx.state.scratch, id);
     }
-    ctx.state.animation = GeometryAnimation::Spawn;
+    ctx.state.begin_pane_event(GeometryAnimation::Spawn);
     request_pane_spawn(&mut ctx.state, request);
     request_pane_focus(ctx, id);
     let update = if initial_pane {
@@ -415,6 +418,7 @@ pub(crate) fn spawn_pane_in_workspace(
         pane.floating = true;
         pane.floating_rect = float.rect(bounds);
     }
+    pane.begin_open_animation(ctx.state.config.animations);
     let palette = TerminalColorPalette::from_theme(
         &ctx.state.theme,
         pane_frame_background(
@@ -469,7 +473,7 @@ pub(crate) fn spawn_pane_in_workspace(
         remove_tiled_window(workspace, id);
     }
     apply_spawn_focus(&mut ctx.state, workspace_index, id, placement);
-    ctx.state.animation = GeometryAnimation::Spawn;
+    ctx.state.begin_pane_event(GeometryAnimation::Spawn);
     let open_delay = anim::open_delay(ctx.state.config.animations);
     let activate_delay = anim::activation_delay(ctx.state.config.animations);
 

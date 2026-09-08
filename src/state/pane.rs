@@ -17,6 +17,8 @@ pub struct Pane {
     /// Scrollable layout column width as a fraction of the tile viewport.
     pub scrollable_width: f32,
     pub opening: bool,
+    /// Resolved at the start of opening so a reload cannot change the effect under a live pane.
+    pub opening_animation: Option<crate::layout::anim::PaneAnimationSnapshot>,
     /// Tile edge this pane slides in from and back out toward, under
     /// [`PaneAnimationStyle::Slide`](crate::layout::anim::PaneAnimationStyle::Slide). Set from the split that
     /// placed the pane and never changed after, so the close is the open in reverse. Purely local
@@ -25,6 +27,8 @@ pub struct Pane {
     pub terminal_active: bool,
     /// Removed from the layout but still described, so its close animation can run.
     pub closing: bool,
+    /// Resolved at the start of closing so retention and rendering share one immutable recipe.
+    pub closing_animation: Option<crate::layout::anim::PaneAnimationSnapshot>,
     pub logging: bool,
     pub activity: PaneActivity,
     pub terminal: TerminalPane,
@@ -131,9 +135,11 @@ impl Pane {
             floating_rect,
             scrollable_width: DEFAULT_SCROLLABLE_WIDTH,
             opening: true,
+            opening_animation: None,
             slide_edge: crate::layout::anim::SlideEdge::default(),
             terminal_active: false,
             closing: false,
+            closing_animation: None,
             logging: false,
             activity: PaneActivity::default(),
             keys: PaneKeys::new(id),
@@ -143,6 +149,26 @@ impl Pane {
                 terminal
             },
         }
+    }
+
+    pub(crate) fn begin_open_animation(
+        &mut self,
+        animations: crate::layout::anim::WindowAnimationConfig,
+    ) {
+        self.opening_animation = Some(crate::layout::anim::snapshot_for_open(
+            animations,
+            self.floating,
+        ));
+    }
+
+    pub(crate) fn begin_close_animation(
+        &mut self,
+        animations: crate::layout::anim::WindowAnimationConfig,
+    ) {
+        self.closing_animation = Some(crate::layout::anim::snapshot_for_close(
+            animations,
+            self.floating,
+        ));
     }
 
     pub fn display_title(&self, terminal_title: Option<String>) -> String {

@@ -450,6 +450,7 @@ fn drain_existing_panes(
 ) -> DrainedPanes {
     use crate::state::WORKSPACE_COUNT;
 
+    let animations = state.config.animations;
     let mut reusable = std::collections::HashMap::new();
     let mut closing_by_workspace = Vec::with_capacity(WORKSPACE_COUNT);
     let mut pruned = Vec::new();
@@ -460,6 +461,7 @@ fn drain_existing_panes(
                 // A commit that re-adds a pane mid-close cancels the close and hands the live
                 // pane back with its terminal screen and scrollback intact.
                 pane.closing = false;
+                pane.closing_animation = None;
                 reusable.insert(pane.id, pane);
             } else if pane.closing {
                 closing.push(pane);
@@ -467,6 +469,7 @@ fn drain_existing_panes(
                 // The server already dropped this pane. Re-killing it could race a reused id.
                 pane.opening = false;
                 pane.closing = true;
+                pane.begin_close_animation(animations);
                 pane.terminal.kill();
                 pruned.push((pane.id, pane.pty_generation));
                 closing.push(pane);
@@ -746,11 +749,26 @@ pub(crate) fn apply_shared_layout(
         }
     }
     if !pruned.is_empty() {
-        ctx.state.animation = crate::layout::anim::GeometryAnimation::Close;
+        ctx.state
+            .begin_pane_event(crate::layout::anim::GeometryAnimation::Close);
+        let timeout = pruned
+            .iter()
+            .filter_map(|(id, _)| {
+                crate::pane::lifecycle::find_pane(&ctx.state, *id).map(|pane| {
+                    crate::layout::anim::retained_pane_timeout_for_pane(
+                        ctx.state.config.animations,
+                        pane,
+                    )
+                })
+            })
+            .max()
+            .unwrap_or_else(|| {
+                crate::layout::anim::retained_pane_timeout(ctx.state.config.animations)
+            });
         return Update::with_command(crate::pane::lifecycle::prune_closed_batch_command(
             ctx.state.runtime_epoch,
             pruned,
-            crate::layout::anim::retained_pane_timeout(ctx.state.config.animations),
+            timeout,
         ));
     }
     ctx.state.animation = crate::layout::anim::GeometryAnimation::TileFloat;

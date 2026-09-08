@@ -10,8 +10,8 @@ mod widget_keys;
 mod workbar;
 
 pub(crate) use pane::{
-    PaneKind, PaneMerge, divider_title_element, has_pane_alert, pane_alert, pane_element,
-    pane_has_tile_above, seam_title_element,
+    PaneFrameChrome, PaneKind, PaneMerge, divider_title_element, has_pane_alert, pane_alert,
+    pane_element, pane_frame_chrome, pane_has_tile_above, seam_title_element,
 };
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 #[cfg(test)]
@@ -30,7 +30,8 @@ pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, worksp
 use tui_lipan::prelude::*;
 
 use crate::layout::geometry::{
-    clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect, viewport_bounds,
+    clamp_float_rect, clamp_floating_rect, close_rect, close_rect_scaled, empty_workspace_rect,
+    viewport_bounds,
 };
 use crate::layout::tiling::PanePlacement;
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding_with_visible};
@@ -111,13 +112,21 @@ impl WorkspaceLayer<'_> {
         }
     }
 
-    /// The clip window a sliding pane is drawn inside. Keyed so the wrapper - and therefore the
-    /// terminal subtree under it - survives every frame of the slide.
+    /// The clip window for a sliding or centre-scaled pane. Keyed so the wrapper - and therefore
+    /// the terminal subtree under it - survives every frame of the transition.
     fn pane_clip_key(&self, id: PaneId) -> String {
         if self.scratch {
             format!("rozi-scratch-pane-clip-{id}")
         } else {
             format!("rozi-pane-clip-{id}")
+        }
+    }
+
+    fn pane_scale_key(&self, id: PaneId) -> String {
+        if self.scratch {
+            format!("rozi-scratch-pane-scale-{id}")
+        } else {
+            format!("rozi-pane-scale-{id}")
         }
     }
 
@@ -262,18 +271,42 @@ pub(crate) fn render_workspace_panes(
         let slides = crate::layout::anim::pane_slides(ctx.state.config.animations, pane);
         // Read every frame the pane is drawn, so the transition key stays alive for the whole slide.
         let slide_progress = app.slide_progress(ctx, pane, layer.pane_slide_key(pane.id));
-        let sliding_now = slides && (pane.opening || pane.closing);
-        let reveal_effect = crate::layout::anim::pane_reveal_effects(ctx.state.config.animations);
-        let revealing_now = reveal_effect && (pane.opening || pane.closing);
+        let pane_opening = crate::layout::anim::pane_opening_transition(pane);
+        let sliding_now = slides && (pane_opening || pane.closing);
+        let reveal_effect =
+            crate::layout::anim::pane_reveal_effects_for_pane(ctx.state.config.animations, pane);
+        let revealing_now = reveal_effect && (pane_opening || pane.closing);
         let reveal_progress = app.pane_reveal_progress(ctx, pane, layer.pane_reveal_key(pane.id));
-        let canvas_target_rect = if sliding_now || revealing_now {
+        let animation_spec =
+            crate::layout::anim::pane_animation_for_pane(ctx.state.config.animations, pane);
+        // Scale's fixed-allocation path is only for a lifecycle snapshot. Bare flags still use the
+        // legacy geometry transition used by fixtures and older attach paths.
+        let scale_transition = pane
+            .opening_animation
+            .is_some_and(|snapshot| snapshot.active)
+            || pane
+                .closing_animation
+                .is_some_and(|snapshot| snapshot.active);
+        let scale_progress = if animation_spec.kind
+            == crate::layout::anim::PaneAnimationStyle::Scale
+            && scale_transition
+        {
+            app.scale_progress(ctx, pane, layer.pane_scale_key(pane.id))
+        } else {
+            1.0
+        };
+        let scales = animation_spec.kind == crate::layout::anim::PaneAnimationStyle::Scale
+            && scale_transition;
+        // Slide carries the pane inside a clip, the paint effects repaint its cells, and Scale
+        // clips the settled subtree - so all three keep the terminal grid and titlebar on their
+        // final allocation rather than re-laying it out every frame.
+        let canvas_target_rect = if sliding_now || revealing_now || scales {
             base_rect
         } else if pane.closing {
-            // The reverse of the spawn animation: shrink toward the centre of the rectangle the
-            // pane held when it was closed, which `close_pane_inner` froze into `floating_rect`
-            // before dropping it from the tiling layout.
+            // Preserve the legacy bare-flag close path for un-snapshotted panes.
             close_rect(floating_rect)
         } else if pane.opening {
+            // Preserve the legacy bare-flag open path for un-snapshotted panes.
             close_rect(base_rect)
         } else if let Some(drag) = moving
             && !pane.fullscreen
@@ -290,7 +323,9 @@ pub(crate) fn render_workspace_panes(
         let config = app.transition_config_for(ctx, pane, layer.viewport_changed, target_rect);
         let animated_rect = ctx.transition(layer.pane_rect_key(pane.id), target_rect, config);
 
-        let render_rect = animated_rect;
+        // Scale owns the visible motion in its clip viewport; its pane subtree always receives the
+        // settled destination rather than an intermediate geometry transition value.
+        let render_rect = if scales { target_rect } else { animated_rect };
         // With merged borders, a bar title must keep its left edge off a neighbor's right border,
         // or its background would cover the seam. Compact titlebars live in the frame border and
         // do not need this spacer.
@@ -314,7 +349,8 @@ pub(crate) fn render_workspace_panes(
         // junction glyphs and park a title over its empty tile.
         let settled = rect_settled(animated_rect, target_rect)
             && slide_progress >= 1.0
-            && reveal_progress >= 1.0;
+            && reveal_progress >= 1.0
+            && scale_progress >= 1.0;
         // Dividers always use target layout placements, including panes mid-open or mid-reflow.
         // Animating tiles still paint above the seams, so glyphs only show in emerging gaps
         // instead of vanishing for the whole spawn/close geometry animation. Reveal titles remain
@@ -399,6 +435,7 @@ pub(crate) fn render_workspace_panes(
             kind,
             merge,
             reveal_progress,
+            scales,
         );
         // Everything below places the pane at `render_rect`, so the clip window takes that rect and
         // the pane moves *inside* it. A `Canvas` clips its descendants to its own allocation, which
@@ -424,8 +461,24 @@ pub(crate) fn render_workspace_panes(
                     element,
                 )
                 .key(layer.pane_clip_key(pane.id))
+        } else if scales {
+            scale_pane_element(
+                element,
+                render_rect,
+                animation_spec.scale_from,
+                scale_progress,
+                layer.pane_clip_key(pane.id),
+                ScaleOverlay {
+                    chrome: pane_frame_chrome(app, ctx, pane, focused_pane, kind),
+                },
+            )
         } else {
             element
+        };
+        let element_rect = if scales {
+            scale_clip_rect(render_rect, animation_spec.scale_from, scale_progress)
+        } else {
+            render_rect
         };
         if title_on_seam && let Some(seam) = seam_title_element(app, ctx, pane, focused_pane) {
             seam_titles.push((
@@ -439,17 +492,17 @@ pub(crate) fn render_workspace_panes(
             ));
         }
         if pane.fullscreen {
-            fullscreen_panes.push((render_rect, element));
+            fullscreen_panes.push((element_rect, element));
         } else if pane.floating {
-            floating_panes.push((render_rect, element));
-        } else if (merge_layering || divider_mode) && moving.is_some() {
-            dragged_tiles.push((render_rect, element));
-        } else if (merge_layering || divider_mode)
+            floating_panes.push((element_rect, element));
+        } else if (merge_layering || divider_mode || scales) && moving.is_some() {
+            dragged_tiles.push((element_rect, element));
+        } else if (merge_layering || divider_mode || scales)
             && (!settled || (divider_mode && (pane.opening || pane.closing)))
         {
-            animating_tiles.push((render_rect, element));
+            animating_tiles.push((element_rect, element));
         } else {
-            canvas = canvas.child_at(render_rect.to_rect(), element);
+            canvas = canvas.child_at(element_rect.to_rect(), element);
         }
     }
     ctx.state.current().remote_drag_snap.set(None);
@@ -1453,6 +1506,74 @@ fn seam_neighbor_title_bgs(
     (left, right)
 }
 
+/// Clip a pane that is already laid out at `rect` to a centred, animated outer rectangle. PanView's
+/// fixed-size child keeps the pane's final allocation while its viewport supplies the moving clip
+/// window, so terminal resize callbacks see only the settled geometry.
+struct ScaleOverlay {
+    chrome: PaneFrameChrome,
+}
+
+fn scale_pane_element(
+    pane: Element,
+    rect: FloatRect,
+    scale_from: f32,
+    progress: f32,
+    key: String,
+    overlay: ScaleOverlay,
+) -> Element {
+    let visible = scale_clip_rect(rect, scale_from, progress);
+    let full = rect.to_rect();
+    let viewport = visible.to_rect();
+    let pane = Frame::new()
+        .border(false)
+        .width(Length::Px(full.w))
+        .height(Length::Px(full.h))
+        .child(pane);
+    let clipped = PanView::new()
+        .width(Length::Px(viewport.w))
+        .height(Length::Px(viewport.h))
+        .offset((
+            (visible.x - rect.x).round() as i32,
+            (visible.y - rect.y).round() as i32,
+        ))
+        .clamp(false)
+        .drag_to_pan(false)
+        .wheel_to_pan(false)
+        .child(pane);
+    let overlay_style = Style {
+        bg: None,
+        bg_transform: None,
+        ..overlay.chrome.frame_style
+    };
+    let border = Frame::new()
+        .width(Length::Px(viewport.w))
+        .height(Length::Px(viewport.h))
+        .border(overlay.chrome.show_border)
+        .border_style(overlay.chrome.border_style)
+        .style(overlay_style)
+        .child(Text::new(""));
+    let border = border
+        .key(format!("{key}-border"))
+        .min_width(Length::Px(viewport.w))
+        .max_width(Length::Px(viewport.w))
+        .min_height(Length::Px(viewport.h))
+        .max_height(Length::Px(viewport.h));
+    ZStack::new()
+        .passthrough(true)
+        .child(clipped)
+        .child(border)
+        .min_width(Length::Px(viewport.w))
+        .max_width(Length::Px(viewport.w))
+        .min_height(Length::Px(viewport.h))
+        .max_height(Length::Px(viewport.h))
+        .key(key)
+}
+
+fn scale_clip_rect(rect: FloatRect, scale_from: f32, progress: f32) -> FloatRect {
+    let scale = scale_from + (1.0 - scale_from) * progress.clamp(0.0, 1.0);
+    close_rect_scaled(rect, scale)
+}
+
 /// Whether a pane's animated rect has reached its target. Transitions end by clamping to the
 /// target value, so a tight epsilon only has to absorb float noise, not easing asymptotes.
 fn rect_settled(animated: FloatRect, target: FloatRect) -> bool {
@@ -1636,5 +1757,27 @@ mod divider_tests {
         assert!(dividers.iter().all(|divider| {
             divider.rect.y + divider.rect.h <= 10.0 || divider.rect.x + divider.rect.w <= 10.0
         }));
+    }
+
+    #[test]
+    fn scale_clip_grows_from_the_center_without_changing_the_allocated_rect() {
+        let settled = FloatRect {
+            x: 10.0,
+            y: 4.0,
+            w: 20.0,
+            h: 10.0,
+        };
+        let start = scale_clip_rect(settled, 0.6, 0.0);
+        let middle = scale_clip_rect(settled, 0.6, 0.5);
+        let end = scale_clip_rect(settled, 0.6, 1.0);
+
+        assert_eq!(start, close_rect_scaled(settled, 0.6));
+        assert_eq!(end, settled);
+        assert!(middle.x < start.x && middle.x > end.x);
+        assert!(middle.y < start.y && middle.y > end.y);
+        assert!(middle.w > start.w && middle.w < end.w);
+        assert!(middle.h > start.h && middle.h < end.h);
+        assert_eq!(start.x + start.w / 2.0, settled.x + settled.w / 2.0);
+        assert_eq!(start.y + start.h / 2.0, settled.y + settled.h / 2.0);
     }
 }

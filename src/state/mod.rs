@@ -131,6 +131,7 @@ pub struct State {
     pub resizing_pane: Option<ResizeSession>,
     pub split_drag: Option<SplitDragSession>,
     pub animation: GeometryAnimation,
+    pub pane_event_animation: Option<crate::layout::anim::PaneEventAnimationSnapshot>,
     /// Invalidates the framework-owned workspace Canvas when a pane relocates between workspace
     /// collections without a local workspace switch, so relocation is never mistaken for exit.
     pub pane_canvas_epoch: u64,
@@ -391,6 +392,28 @@ pub fn fresh_default_attachment(config: &Config) -> Attachment {
 }
 
 impl State {
+    pub(crate) fn begin_pane_event(&mut self, animation: GeometryAnimation) {
+        self.animation = animation;
+        if matches!(
+            animation,
+            GeometryAnimation::Spawn | GeometryAnimation::Close
+        ) {
+            let animations = self.config.animations;
+            let duration = if animations.selected_id().is_custom() {
+                let spec = animations.selected_animation();
+                if animation == GeometryAnimation::Close {
+                    spec.close_duration
+                } else {
+                    spec.open_duration
+                }
+            } else {
+                animations.geometry_duration
+            };
+            self.pane_event_animation =
+                Some(crate::layout::anim::PaneEventAnimationSnapshot { duration });
+        }
+    }
+
     pub fn new(mut config: Config, theme: Theme) -> Self {
         let (extension_generations, retired) =
             crate::config::reconcile_generations(None, &mut config, &HashMap::new());
@@ -411,6 +434,7 @@ impl State {
             resizing_pane: None,
             split_drag: None,
             animation: GeometryAnimation::None,
+            pane_event_animation: None,
             pane_canvas_epoch: 0,
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),

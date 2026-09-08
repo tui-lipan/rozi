@@ -191,10 +191,14 @@ pub(crate) fn spawn_state_panes_on_session(
     // out, and defer replay inserts until after the loop.
     let control_socket = ctx.state.control_socket_path.clone();
     let forwarded_environment = ctx.state.config.environment.forward.clone();
+    let animation_config = ctx.state.config.animations;
     let mut next_generation = ctx.state.current().next_pty_generation;
     let mut replay_inserts: Vec<((crate::state::PaneId, u64), String)> = Vec::new();
     for workspace in &mut ctx.state.current_mut().workspaces {
         for pane in workspace.panes.iter_mut().filter(|pane| !pane.closing) {
+            if pane.opening_animation.is_none() {
+                pane.begin_open_animation(animation_config);
+            }
             let generation = next_generation;
             next_generation = next_generation.saturating_add(1);
             pane.pty_generation = generation;

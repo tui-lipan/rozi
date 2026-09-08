@@ -134,7 +134,22 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                 ),
                 (
                     "Open/close animation",
-                    ctx.state.config.animations.pane_style.label().to_string(),
+                    ctx.state
+                        .config
+                        .animation_catalog
+                        .choices
+                        .iter()
+                        .find(|choice| {
+                            choice.id == ctx.state.config.animations.selected_id()
+                        })
+                        .map(|choice| {
+                            if choice.id.is_custom() {
+                                choice.name.clone()
+                            } else {
+                                choice.spec.kind.label().to_string()
+                            }
+                        })
+                        .unwrap_or_else(|| "Scale".to_string()),
                     CyclePaneAnimation,
                 ),
             ],

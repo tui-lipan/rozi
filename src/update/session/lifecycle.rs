@@ -258,6 +258,8 @@ pub(crate) fn attached(
         if spawned.is_empty() {
             Update::full()
         } else {
+            ctx.state
+                .begin_pane_event(crate::layout::anim::GeometryAnimation::Spawn);
             let open_delay = crate::layout::anim::open_delay(ctx.state.config.animations);
             let activate_delay = crate::layout::anim::activation_delay(ctx.state.config.animations);
             Update::with_command(crate::pane::lifecycle::open_timers_batch_command(

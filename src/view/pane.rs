@@ -10,6 +10,7 @@ use crate::state::{
 use crate::{AppRoot, Msg};
 
 use super::integrated_scrollbar_config;
+use super::pane_reveal::pane_reveal_scope;
 use super::widget_keys::pane_window_key;
 
 /// Caller-decided border-merge posture for one pane (see `view::render`).
@@ -640,6 +641,7 @@ pub(crate) fn pane_element(
     title_marker: Option<&str>,
     kind: PaneKind,
     merge: PaneMerge,
+    reveal_progress: f32,
 ) -> Element {
     let theme = &ctx.state.theme;
     let id = pane.id;
@@ -1206,17 +1208,21 @@ pub(crate) fn pane_element(
         .bubble_mouse_down(true)
         .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)));
 
-    // A sliding pane stays fully opaque; its clip, not its alpha, is what reveals it.
-    let opacity = if (pane.closing || pane.opening)
-        && !crate::layout::anim::pane_slides(ctx.state.config.animations, pane)
-    {
-        0.0
-    } else {
-        1.0
-    };
+    // A sliding pane stays fully opaque; its clip, not its alpha, is what reveals it. For every
+    // other style, opacity follows the pane lifecycle; animation gates only choose timed or instant
+    // transition policy.
+    let animations = ctx.state.config.animations;
+    let opacity = crate::layout::anim::pane_opacity_target(animations, pane);
     let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))
         .child(window_region.child(window_stack))
         .into();
+    let pane_tree = pane_reveal_scope(
+        pane_tree,
+        pane.keys.effect_scope.clone(),
+        animations.pane_style,
+        reveal_progress,
+        u64::from(id),
+    );
     let animated = Animated::new(pane_tree)
         .height(Length::Flex(1))
         .opacity(opacity)

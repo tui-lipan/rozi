@@ -14,6 +14,8 @@ mod fullscreen_tui_click_focus;
 mod merged_titlebar_seam_smoke;
 #[path = "suites/pane/pane_output_repaint.rs"]
 mod pane_output_repaint;
+#[path = "suites/pane/pane_reveal_smoke.rs"]
+mod pane_reveal_smoke;
 #[path = "suites/pane/pane_slide_smoke.rs"]
 mod pane_slide_smoke;
 #[path = "suites/pane/pane_titlebar_modes_smoke.rs"]

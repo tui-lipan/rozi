@@ -2,6 +2,7 @@ pub(crate) mod exit;
 pub(crate) mod keys_display;
 mod overlays;
 mod pane;
+mod pane_reveal;
 pub(crate) mod session_status;
 pub(crate) mod sidebar;
 mod which_key;
@@ -120,6 +121,14 @@ impl WorkspaceLayer<'_> {
         }
     }
 
+    fn pane_reveal_key(&self, id: PaneId) -> String {
+        if self.scratch {
+            format!("rozi-scratch-pane-reveal-{id}")
+        } else {
+            format!("rozi-pane-reveal-{id}")
+        }
+    }
+
     fn badge(&self) -> Option<&'static str> {
         self.scratch.then_some("S")
     }
@@ -222,10 +231,12 @@ pub(crate) fn render_workspace_panes(
     // Tiles whose rects are still animating (and the dragged tile) are lifted above merged seams
     // or stable Divider widgets. They therefore occlude chrome they sweep across instead of
     // merging with it or having a divider painted over their terminal content. Each vec keeps
-    // `ordered_panes` relative order while the focused pane stays last.
+    // `ordered_panes` relative order while the focused pane stays last; divider title ids are kept
+    // separately because a reveal must keep its title inside the effected pane frame.
     let merge_layering = ctx.state.config.pane.border_mode.merges_frames();
     let divider_mode = ctx.state.config.pane.border_mode.draws_dividers();
     let mut divider_panes = Vec::new();
+    let mut divider_title_panes = Vec::new();
     let mut divider_alerts = Vec::new();
     let mut seam_titles: Vec<(FloatRect, Element)> = Vec::new();
     let mut animating_tiles: Vec<(FloatRect, Element)> = Vec::new();
@@ -246,14 +257,16 @@ pub(crate) fn render_workspace_panes(
         let base_rect = placement_for(&placements, pane.id)
             .unwrap_or_else(|| clamp_float_rect(floating_rect, bounds));
         let moving = dragged.filter(|drag| drag.pane_id == pane.id);
-        // A sliding pane is laid out at its real destination for the whole animation and carried in
-        // by `slide_offset` below, so only the scale style rewrites the target here. A pane that
-        // merely *would* slide is not sliding now - it still has to follow a drag.
+        // Sliding and paint-effect panes use their real destination for the whole animation. Slide
+        // carries the pane in below; Portal and Scan repaint its cells in place.
         let slides = crate::layout::anim::pane_slides(ctx.state.config.animations, pane);
         // Read every frame the pane is drawn, so the transition key stays alive for the whole slide.
         let slide_progress = app.slide_progress(ctx, pane, layer.pane_slide_key(pane.id));
         let sliding_now = slides && (pane.opening || pane.closing);
-        let canvas_target_rect = if sliding_now {
+        let reveal_effect = crate::layout::anim::pane_reveal_effects(ctx.state.config.animations);
+        let revealing_now = reveal_effect && (pane.opening || pane.closing);
+        let reveal_progress = app.pane_reveal_progress(ctx, pane, layer.pane_reveal_key(pane.id));
+        let canvas_target_rect = if sliding_now || revealing_now {
             base_rect
         } else if pane.closing {
             // The reverse of the spawn animation: shrink toward the centre of the rectangle the
@@ -292,17 +305,20 @@ pub(crate) fn render_workspace_panes(
                     && other.rect.y <= base_rect.y + 0.5
                     && base_rect.y < other.rect.y + other.rect.h - 0.5
             });
-        // A tile only joins the merged border layer once its rect has settled: while its
-        // geometry animates it sweeps across settled panes, and Exact-merging every transient
+        // A tile only joins the merged border layer once its rect and paint effect have settled:
+        // while either animates it sweeps across settled panes, and Exact-merging every transient
         // overlap would smear junction glyphs along the way.
         // A sliding pane's rectangle never moves, so `rect_settled` calls it settled from the first
         // frame while it is in fact still travelling into place behind its clip. Merged seams and
         // seam titles have to wait for it to arrive, or a pane still off-screen would contribute
         // junction glyphs and park a title over its empty tile.
-        let settled = rect_settled(animated_rect, target_rect) && slide_progress >= 1.0;
+        let settled = rect_settled(animated_rect, target_rect)
+            && slide_progress >= 1.0
+            && reveal_progress >= 1.0;
         // Dividers always use target layout placements, including panes mid-open or mid-reflow.
         // Animating tiles still paint above the seams, so glyphs only show in emerging gaps
-        // instead of vanishing for the whole spawn/close geometry animation.
+        // instead of vanishing for the whole spawn/close geometry animation. Reveal titles remain
+        // in their effected pane until the paint transition settles.
         if divider_mode && !pane.floating && !pane.fullscreen && !pane.closing && moving.is_none() {
             divider_panes.push(pane.id);
             if let Some((_, color)) =
@@ -344,7 +360,13 @@ pub(crate) fn render_workspace_panes(
                 crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
             )
             && pane_has_tile_above(&placements, pane.id, tile_gap.vertical);
-        let title_on_divider = divider_mode && title_row_shared_with_tile_above;
+        // Ordinary geometry animations keep their established divider-title timing. Paint effects
+        // are different: their title may leave the effect scope only with the fully settled pane.
+        let title_on_divider =
+            divider_mode && title_row_shared_with_tile_above && (!reveal_effect || settled);
+        if title_on_divider && divider_panes.contains(&pane.id) {
+            divider_title_panes.push(pane.id);
+        }
         // Whichever pane draws later owns the shared seam row, and `ordered_panes` draws the
         // focused pane last - so a title below the focused pane would be painted over by its bottom
         // border. It moves to a strip drawn above every tile instead. Unsettled tiles keep their
@@ -376,6 +398,7 @@ pub(crate) fn render_workspace_panes(
             layer.badge(),
             kind,
             merge,
+            reveal_progress,
         );
         // Everything below places the pane at `render_rect`, so the clip window takes that rect and
         // the pane moves *inside* it. A `Canvas` clips its descendants to its own allocation, which
@@ -483,6 +506,7 @@ pub(crate) fn render_workspace_panes(
                     let mut line = Divider::horizontal().style(divider_style);
                     if title_on_dividers
                         && let Some(below) = divider.below
+                        && divider_title_panes.contains(&below)
                         && let Some(pane) = workspace.panes.iter().find(|pane| pane.id == below)
                         && let Some(label) = divider_title_element(app, ctx, pane, focused_pane)
                     {

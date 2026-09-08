@@ -65,7 +65,7 @@ pub(super) fn apply_animations(
         match PaneAnimationStyle::parse(pane_style) {
             Some(style) => target.pane_style = style,
             None => warnings.push(format!(
-                "Ignored unknown animations.pane_style \"{pane_style}\" (expected one of: scale, slide)"
+                "Ignored unknown animations.pane_style \"{pane_style}\" (expected one of: scale, slide, portal, scan)"
             )),
         }
     }
@@ -188,12 +188,15 @@ mod tests {
 
     #[test]
     fn animations_apply_pane_style_and_warn_on_an_unknown_one() {
-        let raw: AnimationFileConfig =
-            toml::from_str("pane_style = \"slide\"").expect("config parses");
         let mut animations = WindowAnimationConfig::default();
         let mut warnings = Vec::new();
-        apply_animations(&mut animations, raw, &mut warnings);
-        assert_eq!(animations.pane_style, PaneAnimationStyle::Slide);
+        for style in PaneAnimationStyle::all().iter().copied() {
+            let token = style.id().to_ascii_uppercase();
+            let raw: AnimationFileConfig =
+                toml::from_str(&format!("pane_style = \"{token}\"")).expect("config parses");
+            apply_animations(&mut animations, raw, &mut warnings);
+            assert_eq!(animations.pane_style, style);
+        }
         assert!(warnings.is_empty());
 
         let raw: AnimationFileConfig =
@@ -208,5 +211,6 @@ mod tests {
             "the warning should list the accepted values: {}",
             warnings[0]
         );
+        assert!(warnings[0].contains("portal, scan"));
     }
 }

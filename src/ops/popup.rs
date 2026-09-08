@@ -169,7 +169,8 @@ fn restore_focus(ctx: &mut Context<AppRoot>) -> Update {
 
 pub(crate) fn placement(app: &AppRoot, ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> {
     let pane = ctx.state.popup.as_ref()?;
-    let target = if pane.opening || pane.closing {
+    let full_size_reveal = crate::layout::anim::pane_reveal_effects(ctx.state.config.animations);
+    let target = if (pane.opening || pane.closing) && !full_size_reveal {
         close_rect(pane.floating_rect)
     } else {
         pane.floating_rect
@@ -190,6 +191,7 @@ pub(crate) fn placement(app: &AppRoot, ctx: &Context<AppRoot>) -> Option<(FloatR
             Some("P"),
             crate::view::PaneKind::Popup,
             crate::view::PaneMerge::default(),
+            app.pane_reveal_progress(ctx, pane, format!("rozi-popup-pane-reveal-{}", pane.id)),
         ),
     ))
 }

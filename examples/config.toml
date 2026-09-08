@@ -150,13 +150,14 @@
 #focus_chrome = true
 # Shape of the pane open/close animation. "scale" grows the pane from its own centre with a fade;
 # "slide" brings it in from the edge it was split off, clipped to its tile, and springs the tile that
-# gave up the space. Tiled panes only - floating panes and popups always scale.
+# gave up the space; "portal" materializes the full-size pane radially; "scan" reveals it along a
+# top-left to bottom-right diagonal. Portal and Scan also apply to floating panes and popups.
 #pane_style = "scale"
-# Base geometry duration, and the slide duration in both directions at every pane size. The
-# scratchpad and sidebar slides run at two-thirds of it.
+# Base geometry duration; tiled Slide uses it as its slide duration in both directions. The scratchpad
+# and sidebar slides run at two-thirds of it.
 #geometry_ms = 220
-# Close duration for "scale" only. A "slide" close uses geometry_ms, so a leaving pane stays in step
-# with the tile expanding into its place.
+# Close duration for Scale, including floating panes and popups under "slide". Tiled Slide, Portal,
+# and Scan closes use geometry_ms to stay in step with the geometry or reveal transition.
 #close_ms = 120
 #focus_chrome_ms = 160
 #alert_pulse_ms = 1600

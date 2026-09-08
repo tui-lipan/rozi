@@ -89,6 +89,8 @@ pub struct PaneKeys {
     pub body: Key,
     /// Keys the terminal widget itself; focus routing looks the pane up by this.
     pub terminal: Key,
+    /// Stable wrapper key for the pane's optional full-size paint effect.
+    pub effect_scope: Key,
     /// One animation key per [`ChromeSlot`], indexed by the slot.
     chrome: [Key; ChromeSlot::ALL.len()],
 }
@@ -98,6 +100,7 @@ impl PaneKeys {
         Self {
             body: crate::view::pane_body_key(id).into(),
             terminal: crate::view::pane_terminal_key(id).into(),
+            effect_scope: Key::from(format!("rozi-pane-effect-{id}")),
             chrome: ChromeSlot::ALL
                 .map(|slot| Key::from(format!("rozi-pane-chrome-{id}-{}", slot.name()))),
         }

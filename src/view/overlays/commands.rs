@@ -250,6 +250,10 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
             "spawn animation",
             "slide panes",
             "scale panes",
+            "portal",
+            "portal panes",
+            "scan",
+            "scan panes",
             "springy panes",
         ]),
         ToggleHighlightFocusedBackground => alias_list(&[

@@ -843,10 +843,12 @@ impl AppRoot {
         }
 
         let animations = state.config.animations;
-        // An arriving or leaving pane that slides does not animate its rectangle at all: it is placed
-        // at its destination and a rigid offset carries it in from the edge, so it keeps its final
-        // size the whole way. Animating the rect too would fight the offset for the same motion.
-        if (pane.opening || pane.closing) && anim::pane_slides(animations, pane) {
+        // An arriving or leaving pane that slides or uses a paint effect does not animate its
+        // rectangle. Slide carries it in, while Portal and Scan repaint its cells, so all three
+        // keep their final size the whole way.
+        if (pane.opening || pane.closing)
+            && (anim::pane_slides(animations, pane) || anim::pane_reveal_effects(animations))
+        {
             return anim::instant_transition();
         }
 
@@ -899,6 +901,33 @@ impl AppRoot {
         ctx.transition(key, target, anim::slide_transition(duration))
     }
 
+    /// Progress for a full-size pane paint effect. The same keyed transition runs in reverse when a
+    /// pane closes, while its rectangle remains at the destination for the whole effect.
+    pub(crate) fn pane_reveal_progress(
+        &self,
+        ctx: &Context<Self>,
+        pane: &Pane,
+        key: impl Into<tui_lipan::prelude::Key>,
+    ) -> f32 {
+        let animations = ctx.state.config.animations;
+        if !anim::pane_reveal_effects(animations) {
+            return 1.0;
+        }
+        let (target, enabled) = if pane.closing {
+            (0.0, animations.close)
+        } else {
+            (if pane.opening { 0.0 } else { 1.0 }, animations.spawn)
+        };
+        if !animations.enabled || !enabled {
+            return 1.0;
+        }
+        ctx.transition(
+            key,
+            target,
+            anim::pane_reveal_transition(animations.geometry_duration, pane.closing),
+        )
+    }
+
     pub(crate) fn window_opacity_config(
         &self,
         ctx: &Context<Self>,
@@ -910,8 +939,11 @@ impl AppRoot {
         }
         // A slide is not faded: it is clipped to its tile, so it genuinely emerges. A fade on top
         // would make the leading edge ghostly instead of solid.
-        if anim::pane_slides(animations, pane) {
+        if !anim::pane_opacity_animates(animations, pane) {
             return anim::instant_transition();
+        }
+        if anim::pane_reveal_effects(animations) {
+            return anim::pane_reveal_transition(animations.geometry_duration, pane.closing);
         }
         if pane.closing {
             // The fade rides the close scale, so it has to share its duration.
@@ -3193,6 +3225,48 @@ mod tests {
 
         let pane = &state.current().workspaces[0].panes[0];
         assert!(!anim::pane_slides(state.config.animations, pane));
+    }
+
+    #[test]
+    fn paint_effect_panes_keep_geometry_fixed_while_neighbours_use_plain_motion() {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.animation = GeometryAnimation::Spawn;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        for id in [1, 2] {
+            let mut pane = Pane::new(id, 100, FloatRect::default());
+            pane.opening = id == 2;
+            workspace.panes.push(pane);
+        }
+        let tile = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 30.0,
+            h: 20.0,
+        };
+
+        for style in [
+            anim::PaneAnimationStyle::Portal,
+            anim::PaneAnimationStyle::Scan,
+        ] {
+            state.config.animations.pane_style = style;
+            let settled = &state.current().workspaces[0].panes[0];
+            let arriving = &state.current().workspaces[0].panes[1];
+            assert_eq!(
+                AppRoot::geometry_transition_for_pane(&state, arriving, false, Some(tile)).duration,
+                Duration::ZERO,
+                "{style:?} owns its final rectangle"
+            );
+            assert_eq!(
+                AppRoot::geometry_transition_for_pane(&state, settled, false, Some(tile)).easing,
+                Easing::EaseInOutCubic,
+                "{style:?} does not spring neighbouring tiles"
+            );
+            assert_eq!(
+                anim::retained_pane_timeout(state.config.animations),
+                state.config.animations.geometry_duration + Duration::from_millis(20)
+            );
+        }
     }
 
     /// Two tiled panes in a shared session whose lease belongs to `controller`.

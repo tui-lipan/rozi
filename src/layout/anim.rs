@@ -55,12 +55,16 @@ pub enum PaneAnimationStyle {
     /// Only tiled panes slide. A floating pane has no tile edge to emerge from and no neighbour to
     /// take space from, so it keeps [`Scale`](Self::Scale).
     Slide,
+    /// Materialize the pane radially from its center with a sparse punctuation ring.
+    Portal,
+    /// Reveal the pane along a fixed, aspect-corrected diagonal.
+    Scan,
 }
 
 impl PaneAnimationStyle {
     /// Cycle order for the Settings row.
     pub fn all() -> &'static [Self] {
-        &[Self::Scale, Self::Slide]
+        &[Self::Scale, Self::Slide, Self::Portal, Self::Scan]
     }
 
     /// Config token and persisted value.
@@ -68,6 +72,8 @@ impl PaneAnimationStyle {
         match self {
             Self::Scale => "scale",
             Self::Slide => "slide",
+            Self::Portal => "portal",
+            Self::Scan => "scan",
         }
     }
 
@@ -75,6 +81,8 @@ impl PaneAnimationStyle {
         match self {
             Self::Scale => "Scale",
             Self::Slide => "Slide",
+            Self::Portal => "Portal",
+            Self::Scan => "Scan",
         }
     }
 
@@ -82,6 +90,8 @@ impl PaneAnimationStyle {
         match value.trim().to_ascii_lowercase().as_str() {
             "scale" => Some(Self::Scale),
             "slide" => Some(Self::Slide),
+            "portal" => Some(Self::Portal),
+            "scan" => Some(Self::Scan),
             _ => None,
         }
     }
@@ -89,14 +99,40 @@ impl PaneAnimationStyle {
     pub fn next(self) -> Self {
         match self {
             Self::Scale => Self::Slide,
-            Self::Slide => Self::Scale,
+            Self::Slide => Self::Portal,
+            Self::Portal => Self::Scan,
+            Self::Scan => Self::Scale,
         }
     }
 
-    /// Two styles, so stepping backwards lands on the same neighbour as stepping forwards. Kept as
-    /// its own method so the Settings row's Left/Right wiring does not have to care.
     pub fn prev(self) -> Self {
-        self.next()
+        match self {
+            Self::Scale => Self::Scan,
+            Self::Slide => Self::Scale,
+            Self::Portal => Self::Slide,
+            Self::Scan => Self::Portal,
+        }
+    }
+}
+
+/// Whether a pane style paints a full-size reveal instead of changing pane geometry.
+pub fn pane_reveal_effects(animations: WindowAnimationConfig) -> bool {
+    matches!(
+        animations.pane_style,
+        PaneAnimationStyle::Portal | PaneAnimationStyle::Scan
+    )
+}
+
+/// Direction-aware transition for the two full-size pane reveal effects. Opening uses EaseOutQuad;
+/// closing uses its temporal complement, EaseInQuad.
+pub fn pane_reveal_transition(duration: Duration, closing: bool) -> TransitionConfig {
+    TransitionConfig {
+        duration,
+        easing: if closing {
+            Easing::EaseInQuad
+        } else {
+            Easing::EaseOutQuad
+        },
     }
 }
 
@@ -124,6 +160,26 @@ pub enum SlideEdge {
 /// straight to deployed.
 pub fn pane_slides(animations: WindowAnimationConfig, pane: &crate::state::Pane) -> bool {
     animations.pane_style == PaneAnimationStyle::Slide && !pane.floating
+}
+
+/// Whether a pane should fade during its current open or close transition.
+pub fn pane_opacity_animates(animations: WindowAnimationConfig, pane: &crate::state::Pane) -> bool {
+    animations.enabled
+        && !pane_slides(animations, pane)
+        && ((pane.opening && animations.spawn) || (pane.closing && animations.close))
+}
+
+/// Visibility target for a pane's open/close opacity animation.
+///
+/// Animation gates choose whether the transition is timed, not whether a retained closing pane is
+/// visible. A pane that is opening or closing must stay at the hidden target until its lifecycle
+/// state settles; otherwise disabling close animation can make it reappear before pruning.
+pub fn pane_opacity_target(animations: WindowAnimationConfig, pane: &crate::state::Pane) -> f32 {
+    if pane_slides(animations, pane) || (!pane.opening && !pane.closing) {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 /// Rigid offset for a pane part-way through its slide, in canvas cells.
@@ -364,6 +420,8 @@ pub fn retained_pane_timeout(animations: WindowAnimationConfig) -> Duration {
         // A whole tile to cross, which `close_ms` is far too short for - it would prune the pane
         // part-way out.
         PaneAnimationStyle::Slide => slide_duration(animations),
+        // Both paint effects run on the same geometry duration in either direction.
+        PaneAnimationStyle::Portal | PaneAnimationStyle::Scan => animations.geometry_duration,
     };
     motion + Duration::from_millis(20)
 }
@@ -545,9 +603,8 @@ mod tests {
     fn pane_animation_style_round_trips_its_config_token() {
         for style in PaneAnimationStyle::all().iter().copied() {
             assert_eq!(PaneAnimationStyle::parse(style.id()), Some(style));
-            // Two styles, so either direction is the other one.
-            assert_eq!(style.next(), style.prev());
-            assert_eq!(style.next().next(), style);
+            assert_eq!(style.next().prev(), style);
+            assert_eq!(style.prev().next(), style);
         }
         assert_eq!(
             PaneAnimationStyle::parse("  SLIDE "),
@@ -555,6 +612,76 @@ mod tests {
         );
         assert_eq!(PaneAnimationStyle::parse("springy"), None);
         assert_eq!(PaneAnimationStyle::default(), PaneAnimationStyle::Scale);
+    }
+
+    #[test]
+    fn pane_opacity_target_stays_hidden_until_non_sliding_pane_settles() {
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        let mut animations = WindowAnimationConfig {
+            pane_style: PaneAnimationStyle::Portal,
+            ..WindowAnimationConfig::default()
+        };
+
+        for style in [
+            PaneAnimationStyle::Scale,
+            PaneAnimationStyle::Portal,
+            PaneAnimationStyle::Scan,
+        ] {
+            animations.pane_style = style;
+            pane.opening = true;
+            animations.spawn = false;
+            animations.enabled = false;
+            assert_eq!(pane_opacity_target(animations, &pane), 0.0);
+            assert!(!pane_opacity_animates(animations, &pane));
+
+            pane.opening = false;
+            pane.closing = true;
+            animations.close = false;
+            animations.enabled = true;
+            assert_eq!(pane_opacity_target(animations, &pane), 0.0);
+            assert!(!pane_opacity_animates(animations, &pane));
+
+            pane.closing = false;
+            assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+        }
+
+        pane.closing = true;
+        animations.pane_style = PaneAnimationStyle::Slide;
+        assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+    }
+
+    #[test]
+    fn pane_reveal_progress_and_opacity_share_complementary_open_close_policies() {
+        let mut animations = WindowAnimationConfig {
+            pane_style: PaneAnimationStyle::Portal,
+            ..WindowAnimationConfig::default()
+        };
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+
+        for style in [PaneAnimationStyle::Portal, PaneAnimationStyle::Scan] {
+            animations.pane_style = style;
+            assert!(pane_reveal_effects(animations));
+            assert!(pane_opacity_animates(animations, &pane));
+
+            pane.closing = false;
+            let opening_effect = pane_reveal_transition(animations.geometry_duration, pane.closing);
+            let opening_opacity =
+                pane_reveal_transition(animations.geometry_duration, pane.closing);
+            assert_eq!(opening_effect.duration, opening_opacity.duration);
+            assert_eq!(opening_effect.easing, opening_opacity.easing);
+            assert_eq!(opening_effect.easing, Easing::EaseOutQuad);
+
+            pane.closing = true;
+            let closing_effect = pane_reveal_transition(animations.geometry_duration, pane.closing);
+            let closing_opacity =
+                pane_reveal_transition(animations.geometry_duration, pane.closing);
+            assert_eq!(closing_effect.duration, closing_opacity.duration);
+            assert_eq!(closing_effect.easing, closing_opacity.easing);
+            assert_eq!(closing_effect.easing, Easing::EaseInQuad);
+
+            assert_eq!(opening_effect.duration, closing_effect.duration);
+            assert_ne!(opening_effect.easing, closing_effect.easing);
+        }
     }
 
     #[test]

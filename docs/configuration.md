@@ -200,16 +200,16 @@ Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `succes
 | `axis_change` | bool | `true` | Animates split-axis changes. |
 | `sidebar` | bool | `true` | Animates sidebar movement. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
-| `pane_style` | string | `"scale"` | `"scale"` or `"slide"`. |
+| `pane_style` | string | `"scale"` | `"scale"`, `"slide"`, `"portal"`, or `"scan"`. Values are case-insensitive. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds. |
-| `close_ms` | integer | `120` | Scale close duration in milliseconds. |
+| `close_ms` | integer | `120` | Scale close duration in milliseconds. Tiled Slide, Portal, and Scan use `geometry_ms`; floating Slide uses Scale timing. |
 | `focus_chrome_ms` | integer | `160` | Focus color duration in milliseconds. |
 | `alert_pulse_ms` | integer | `1600` | Alert pulse period. Half-period is floored at 400 ms. |
 | `open_delay_ms` | integer | `36` | Spawn animation delay in milliseconds. |
 
 ### Pane open/close style
 
-See [Layouts and panes](layouts-and-panes.md).
+See [Layouts and panes](layouts-and-panes.md#pane-open-close-animation-styles).
 
 ## `[theme]`
 

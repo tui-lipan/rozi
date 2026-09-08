@@ -99,6 +99,29 @@ Press `f` to make the focused pane fill the workspace. Focus and layout movement
 that pane until you leave fullscreen. A newly focused spawn can take over fullscreen while the old
 pane returns to its prior position.
 
+## Pane open/close animation styles
+
+Set `[animations].pane_style` to choose how panes appear and disappear. `Scale` grows a pane from its
+centre with a soft fade. `Slide` brings tiled panes from the split edge and clips them to their tile;
+neighboring tiles spring into their new geometry. Floating panes keep the scale behavior under
+`Slide`.
+
+`Portal` keeps the pane at its final rectangle and materializes its cells radially from the center
+with a sparse punctuation ring. `Scan` keeps the same full-size rectangle and reveals cells along a
+top-left to bottom-right diagonal corrected for terminal cell proportions. Both styles work for
+tiled and floating panes, including popups. The scratchpad dropdown keeps its independently
+animated deployment; these styles apply only to pane-level reveals within that layer, not to the
+dropdown's own geometry. Portal, Scan, and tiled Slide use `geometry_ms`; floating Slide keeps
+Scale behavior and uses `close_ms` for closing.
+
+These are character-materialization effects, not transparent cutouts: unrevealed cells are blanked
+inside the pane's own painted surface rather than exposing arbitrary content underneath. The pane's
+outer visibility transition handles the fully hidden state.
+
+Turning animations off, or changing the master, spawn, or close switch, snaps the pane to its settled
+state. Pane geometry still stays fixed during Portal and Scan, so terminal dimensions do not change
+on every frame.
+
 ## Titles and exited panes
 
 The displayed pane title uses this order:

@@ -928,6 +928,34 @@ mod tests {
         );
     }
 
+    /// A recipe describes a pane arriving and leaving, and nothing else. Fullscreen, tile/float,
+    /// and axis changes are reflows the pane lifecycle has no part in, so `geometry_ms` stays
+    /// theirs however long the selected recipe runs - otherwise one slow open animation silently
+    /// becomes the speed of the whole app.
+    #[test]
+    fn a_selected_recipe_does_not_retime_reflows_that_are_not_pane_lifecycle_events() {
+        for animation in [
+            GeometryAnimation::Fullscreen,
+            GeometryAnimation::TileFloat,
+            GeometryAnimation::AxisChange,
+        ] {
+            let mut state = spawning_state(PaneAnimationStyle::Scale, animation);
+            let mut custom = builtin_animation(PaneAnimationStyle::Scale);
+            custom.custom_recipe = true;
+            custom.open_duration = Duration::from_millis(480);
+            custom.close_duration = Duration::from_millis(640);
+            state.config.animations.pane_animation_id = AnimationId::custom("slow-scale");
+            state.config.animations.pane_animation = custom;
+
+            let pane = &state.current().workspaces[0].panes[0];
+            assert_eq!(
+                AppRoot::geometry_transition_for_pane(&state, pane, false, None).duration,
+                state.config.animations.geometry_duration,
+                "{animation:?} is not a pane opening or closing"
+            );
+        }
+    }
+
     /// A state with one settled tiled pane, mid spawn or close, for asserting transition policy.
     fn spawning_state(
         style: PaneAnimationStyle,

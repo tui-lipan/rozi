@@ -857,12 +857,8 @@ impl AppRoot {
 
         let animations = state.config.animations;
         let spec = anim::pane_animation_for_pane(animations, pane);
-        let event_duration = matches!(
-            state.animation,
-            GeometryAnimation::Spawn | GeometryAnimation::Close
-        )
-        .then(|| state.pane_event_animation.map(|snapshot| snapshot.duration))
-        .flatten();
+        // Only read below under Spawn and Close, which is what armed it.
+        let event_duration = state.pane_event_animation.map(|snapshot| snapshot.duration);
         // An arriving or leaving pane that slides or uses a paint effect does not animate its
         // rectangle. Slide carries it in, while Portal and Scan repaint its cells, so all three
         // keep their final size the whole way.
@@ -880,14 +876,18 @@ impl AppRoot {
         }
 
         // Every tile moving to make room for - or take back the space of - the pane in transition
-        // shares that pane's clock, so their common edges stay one moving boundary.
-        let neighbour_duration = event_duration.unwrap_or_else(|| {
-            if state.animation == GeometryAnimation::Close {
-                spec.close_duration
-            } else {
-                spec.open_duration
-            }
-        });
+        // shares that pane's clock, so their common edges stay one moving boundary. Only the two
+        // lifecycle events borrow it: fullscreen, tile/float, and axis changes are not a pane
+        // arriving or leaving, so a recipe's `open_ms` must not become the duration of every
+        // reflow in the app.
+        let neighbour_duration = match state.animation {
+            GeometryAnimation::Close => event_duration.unwrap_or(spec.close_duration),
+            GeometryAnimation::Spawn => event_duration.unwrap_or(spec.open_duration),
+            GeometryAnimation::None
+            | GeometryAnimation::Fullscreen
+            | GeometryAnimation::TileFloat
+            | GeometryAnimation::AxisChange => animations.geometry_duration,
+        };
         // Under Slide, the tiles *around* an arriving or leaving pane are where the spring lives:
         // this is the tile that gave up the space, or the one taking it back.
         if spec.kind == anim::PaneAnimationStyle::Slide

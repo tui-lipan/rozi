@@ -2387,6 +2387,239 @@ mod file_tests {
         }
     }
 
+    /// The chain in reverse. A close has one thing an open does not: the pane is already gone from
+    /// the layout and only stays on screen because the retention timer says so - and that timer is
+    /// computed from the same recipe the effect is drawing with. If the two ever disagree, a pane
+    /// vanishes mid-animation, which is the failure this pins.
+    #[test]
+    fn a_recipe_from_config_text_drives_a_close_through_to_the_prune() {
+        use crate::AppRoot;
+        use crate::state::Pane;
+        use tui_lipan::TestBackend;
+        use tui_lipan::prelude::{FloatRect, Rect};
+
+        let loaded = load_config_from_text(
+            r#"
+            [animations]
+            pane_style = "slow-scale"
+            geometry_ms = 200
+            close_ms = 120
+            [animations.pane_animations.slow-scale]
+            kind = "scale"
+            open_ms = 400
+            close_ms = 600
+            "#,
+            Path::new("test.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let (id, generation) = {
+            let state = backend.state_mut();
+            state.config.animations = loaded.config.animations;
+            state.config.animation_catalog = loaded.config.animation_catalog.clone();
+            // A second pane, so closing the first leaves a workspace to close it *into*.
+            let mut neighbour = Pane::new(2, 100, FloatRect::default());
+            neighbour.opening = false;
+            neighbour.opening_animation = None;
+            let workspace = state.active_workspace_mut();
+            workspace.panes.push(neighbour);
+            crate::layout::tiling::append_tiled_window(workspace, 2);
+            let pane = &mut workspace.panes[0];
+            pane.opening = false;
+            pane.opening_animation = None;
+            (pane.id, pane.pty_generation)
+        };
+        // Let the pane finish arriving before closing it. A close travels *from* wherever the open
+        // left the scale transition, so a pane closed before it ever settled has nowhere to go.
+        backend.render();
+        backend.advance(std::time::Duration::from_millis(600));
+        backend.render();
+        let live = widget_rect(&backend, "rozi-pane-clip-1");
+        assert!(
+            live.is_none(),
+            "a settled Scale pane is not wrapped in a clip: {live:?}"
+        );
+
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+            .expect("close the focused pane");
+
+        let closing = {
+            let pane = crate::pane::lifecycle::find_pane(backend.state(), id)
+                .expect("a closing pane stays described until it is pruned");
+            assert!(pane.closing);
+            pane.closing_animation.expect("the close took a snapshot")
+        };
+        assert_eq!(
+            closing.spec.close_duration,
+            std::time::Duration::from_millis(600),
+            "the close snapshot must carry the recipe's close_ms, not the builtin's close_ms"
+        );
+        assert_eq!(
+            crate::layout::anim::retained_pane_timeout_for_pane(
+                backend.state().config.animations,
+                crate::pane::lifecycle::find_pane(backend.state(), id).expect("closing pane"),
+            ),
+            std::time::Duration::from_millis(620),
+            "retention has to outlast the effect it is retaining the pane for"
+        );
+
+        backend.render();
+        let start = widget_rect(&backend, "rozi-pane-clip-1")
+            .expect("a closing Scale pane renders inside a clip");
+        backend.advance(std::time::Duration::from_millis(300));
+        backend.render();
+        let mid = widget_rect(&backend, "rozi-pane-clip-1")
+            .expect("the closing pane is still on screen halfway through its recipe");
+        assert!(
+            mid.w < start.w && mid.h < start.h,
+            "the closing clip shrinks toward the pane's centre: {start:?} -> {mid:?}"
+        );
+
+        backend
+            .dispatch(crate::Msg::PruneClosed(
+                backend.state().runtime_epoch,
+                id,
+                generation,
+            ))
+            .expect("prune the closed pane");
+        assert!(
+            crate::pane::lifecycle::find_pane(backend.state(), id).is_none(),
+            "the pane leaves the state once its retention elapses"
+        );
+        backend.render();
+        assert!(
+            widget_rect(&backend, "rozi-pane-clip-1").is_none(),
+            "and leaves the screen with it"
+        );
+    }
+
+    /// A floating pane has no tile edge to slide from, so Slide becomes Scale for it. That used to
+    /// be decided by a flag on the spec; `resolved_animation` now derives it from the selection,
+    /// and the two branches differ - a recipe keeps the timing its author wrote, a builtin takes
+    /// Scale's own.
+    #[test]
+    fn a_floating_pane_falls_back_from_slide_to_scale_and_keeps_recipe_timing() {
+        use crate::AppRoot;
+        use tui_lipan::TestBackend;
+        use tui_lipan::prelude::Rect;
+
+        let loaded = load_config_from_text(
+            r#"
+            [animations]
+            pane_style = "tuned-slide"
+            geometry_ms = 200
+            close_ms = 120
+            [animations.pane_animations.tuned-slide]
+            kind = "slide"
+            open_ms = 400
+            close_ms = 500
+            "#,
+            Path::new("test.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let animations = loaded.config.animations;
+
+        // Tiled, the selection is what the file said.
+        let tiled = animations.resolved_animation(false);
+        assert_eq!(tiled.kind, crate::layout::anim::PaneAnimationStyle::Slide);
+        assert_eq!(tiled.open_duration, std::time::Duration::from_millis(400));
+
+        // Floating, it is Scale - still on the recipe's clock, because the author asked for that
+        // motion and Scale can honour it.
+        let floating = animations.resolved_animation(true);
+        assert_eq!(
+            floating.kind,
+            crate::layout::anim::PaneAnimationStyle::Scale
+        );
+        assert_eq!(
+            floating.open_duration,
+            std::time::Duration::from_millis(400)
+        );
+        assert_eq!(
+            floating.close_duration,
+            std::time::Duration::from_millis(500)
+        );
+
+        // A builtin Slide has no authored timing to keep, so it takes builtin Scale's instead.
+        let mut builtin = crate::layout::anim::WindowAnimationConfig {
+            pane_style: crate::layout::anim::PaneAnimationStyle::Slide,
+            geometry_duration: std::time::Duration::from_millis(200),
+            close_duration: std::time::Duration::from_millis(120),
+            ..crate::layout::anim::WindowAnimationConfig::default()
+        };
+        builtin.pane_animation_id = crate::layout::anim::AnimationId::builtin(
+            crate::layout::anim::PaneAnimationStyle::Slide,
+        );
+        let builtin_floating = builtin.resolved_animation(true);
+        assert_eq!(
+            builtin_floating.kind,
+            crate::layout::anim::PaneAnimationStyle::Scale
+        );
+        assert_eq!(
+            builtin_floating.close_duration,
+            std::time::Duration::from_millis(120),
+            "a floating builtin Slide closes on Scale's own close_ms"
+        );
+
+        // And the fallback survives into the render: a floating pane opens inside a Scale clip
+        // rather than travelling in from an edge it does not have.
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let (id, generation) = {
+            let state = backend.state_mut();
+            state.config.animations = animations;
+            state.config.animation_catalog = loaded.config.animation_catalog.clone();
+            state.begin_pane_event(crate::layout::anim::GeometryAnimation::Spawn);
+            let animations = state.config.animations;
+            let pane = &mut state.active_workspace_mut().panes[0];
+            pane.floating = true;
+            pane.floating_rect = tui_lipan::prelude::FloatRect {
+                x: 10.0,
+                y: 4.0,
+                w: 60.0,
+                h: 18.0,
+            };
+            pane.opening = true;
+            pane.begin_open_animation(animations);
+            let snapshot = pane.opening_animation.expect("the spawn took a snapshot");
+            assert_eq!(
+                snapshot.spec.kind,
+                crate::layout::anim::PaneAnimationStyle::Scale,
+                "a floating pane cannot slide"
+            );
+            (pane.id, pane.pty_generation)
+        };
+        backend.render();
+        backend
+            .dispatch(crate::Msg::FinishOpen(0, id, generation))
+            .expect("finish the open");
+        backend.render();
+        let start = widget_rect(&backend, "rozi-pane-clip-1")
+            .expect("the floating fallback renders inside a Scale clip");
+        backend.advance(std::time::Duration::from_millis(200));
+        backend.render();
+        let mid = widget_rect(&backend, "rozi-pane-clip-1").expect("the clip stays mounted");
+        assert!(
+            mid.w > start.w && mid.h > start.h,
+            "the fallback scales open rather than sliding: {start:?} -> {mid:?}"
+        );
+    }
+
     fn widget_rect(
         backend: &tui_lipan::TestBackend<crate::AppRoot>,
         key: &str,

@@ -1192,12 +1192,15 @@ mod close_animation {
 
                 // Front-loaded: the shrink has to be visible before the fade hides it, so the very
                 // first tick must already move. An EaseInOutCubic ramp would still be at full size.
+                // Only the wide axis is checked here - a 21-row pane scaled by the same fraction
+                // does not cross a cell boundary this early, which is rounding rather than a
+                // height-only collapse.
                 backend.advance(Duration::from_millis(25));
                 backend.render();
                 let (x1, y1, w1, h1) = pane_rect(&backend).expect("closing pane still renders");
                 assert!(
-                    w1 < w0 && h1 < h0,
-                    "closing={floating}: both axes should shrink on the first tick, \
+                    w1 < w0,
+                    "closing={floating}: the first tick must already move, \
                      got {w1}x{h1} from {w0}x{h0}"
                 );
                 assert!(
@@ -1205,10 +1208,16 @@ mod close_animation {
                     "the pane should pull in toward its centre"
                 );
 
-                // And it never regrows; small terminal heights can round adjacent frames alike.
+                // Far enough in that both axes have somewhere to round to. This is the assertion
+                // that matters: a height-only collapse would clip the bottom border away.
                 backend.advance(Duration::from_millis(50));
                 backend.render();
                 let (_, _, w2, h2) = pane_rect(&backend).expect("still closing");
+                assert!(
+                    w2 < w0 && h2 < h0,
+                    "closing={floating}: both axes scale toward the centre, \
+                     got {w2}x{h2} from {w0}x{h0}"
+                );
                 assert!(
                     w2 <= w1 && h2 <= h1,
                     "the scale must not regrow after rounding: {w2}x{h2} after {w1}x{h1} from {w0}x{h0}"

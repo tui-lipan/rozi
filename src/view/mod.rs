@@ -279,22 +279,20 @@ pub(crate) fn render_workspace_panes(
         let reveal_progress = app.pane_reveal_progress(ctx, pane, layer.pane_reveal_key(pane.id));
         let animation_spec =
             crate::layout::anim::pane_animation_for_pane(ctx.state.config.animations, pane);
-        // Scale's fixed-allocation path is only for a lifecycle snapshot. Bare flags still use the
-        // legacy geometry transition used by fixtures and older attach paths.
+        // Read every frame the pane is drawn, exactly like the slide above. A transition read for
+        // the first time starts *at* its target, so a key created at the moment a pane begins
+        // closing would have nothing to travel from and the close would snap to its inset. The key
+        // has to already be sitting at 1.0 when the target flips.
+        let scale_progress = app.scale_progress(ctx, pane, layer.pane_scale_key(pane.id));
+        // Whether to actually wrap the pane in that clip. Only a lifecycle snapshot gets the
+        // fixed-allocation path; bare flags still use the legacy geometry transition that fixtures
+        // and older attach paths rely on.
         let scale_transition = pane
             .opening_animation
             .is_some_and(|snapshot| snapshot.active)
             || pane
                 .closing_animation
                 .is_some_and(|snapshot| snapshot.active);
-        let scale_progress = if animation_spec.kind
-            == crate::layout::anim::PaneAnimationStyle::Scale
-            && scale_transition
-        {
-            app.scale_progress(ctx, pane, layer.pane_scale_key(pane.id))
-        } else {
-            1.0
-        };
         let scales = animation_spec.kind == crate::layout::anim::PaneAnimationStyle::Scale
             && scale_transition;
         // Slide carries the pane inside a clip, the paint effects repaint its cells, and Scale

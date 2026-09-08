@@ -162,25 +162,29 @@
 #focus_chrome_ms = 160
 #alert_pulse_ms = 1600
 #open_delay_ms = 36
-# Optional named timing curves and pane recipes. These examples are inert by design.
-# [animations.curves.soft]
-# bezier = [0.25, 0.1, 0.25, 1.0]
+# Name your own pane animations: one of the four builtin effects with your own timing and motion
+# curve. Select one by putting its name in pane_style above. These examples are inert by design.
+#
+# A curve is CSS cubic-bezier control points. Omitting close_curve reverses this one for closing.
+# [animations.curves.glide]
+# bezier = [0.16, 1.0, 0.3, 1.0]
+#
+# A brisker slide, which is most of what retuning the feel of Rozi amounts to.
+# [animations.pane_animations.quick-slide]
+# kind = "slide"
+# open_ms = 130
+# close_ms = 90
+# curve = "glide"
+#
+# Each effect takes one geometry parameter: scale_from for Scale, origin for Portal, direction for
+# Scan. Slide takes none - it enters from the edge the split placed it on.
 # [animations.pane_animations.soft-portal]
 # kind = "portal"
 # open_ms = 260
 # close_ms = 180
-# curve = "soft"
-# fade = false
-# origin = [0.5, 0.45]
-# frontier_width = 0.08
-# density = 0.5
-# glyphs = [".", ":", "+"]
-# [animations.pane_animations.quick-scan]
-# kind = "scan"
 # curve = "ease_out_quad"
-# direction = "top-left"
-# frontier_width = 0.09
-# glyphs = [".", "+", "#"]
+# origin = [0.5, 0.45]
+# fade = false
 
 [theme]
 # A built-in preset id, "system" for host-derived colors, or the stem of a file in

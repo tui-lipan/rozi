@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use rozi::AppRoot;
 use rozi::layout::anim::{
-    GeometryAnimation, GlyphPalette, PaneAnimationSnapshot, PaneAnimationSpec, PaneAnimationStyle,
-    ScanDirection, SlideEdge,
+    GeometryAnimation, PaneAnimationSnapshot, PaneAnimationSpec, PaneAnimationStyle, ScanDirection,
+    SlideEdge,
 };
 use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{Pane, PaneBorderMode, SplitAxis};
@@ -39,16 +39,9 @@ fn scale_snapshot() -> PaneAnimationSnapshot {
             close_curve: Easing::EaseOutQuad,
             visual_open_curve: Easing::EaseOutQuad,
             visual_close_curve: Easing::EaseOutQuad,
+            fade: true,
             scale_from: 0.9,
             origin: [0.5, 0.5],
-            frontier_width: 0.09,
-            density: 0.5,
-            glyphs: GlyphPalette::defaults(),
-            custom_glyphs: false,
-            custom_frontier_width: false,
-            fade: true,
-            custom_density: false,
-            custom_recipe: false,
             scan_direction: ScanDirection::TopLeft,
         },
         active: true,

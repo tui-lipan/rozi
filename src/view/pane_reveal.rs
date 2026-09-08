@@ -87,32 +87,19 @@ impl PaneRevealEffect {
             self.spec.origin,
         );
         let radius = self.progress * maximum;
-        let ring = portal_frontier_width(self.spec, maximum, self.progress);
+        let ring = portal_ring_width(maximum, self.progress);
         if distance <= radius {
             return;
         }
         if distance <= radius + ring {
-            self.paint_portal_frontier(cell, pane_spatial_hash(position.x, position.y, self.seed));
-        } else {
-            cell.set_symbol(" ");
-        }
-    }
-
-    fn paint_portal_frontier(&self, cell: &mut EffectCell, hash: u64) {
-        let threshold = (self.spec.density * 256.0) as u64;
-        if self.spec.custom_glyphs || self.spec.custom_density {
-            if hash & 255 < threshold {
-                if self.spec.custom_glyphs {
-                    let glyph = [self.spec.glyphs.get((hash >> 8) as usize)];
-                    cell.set_symbol(std::str::from_utf8(&glyph).unwrap_or("."));
-                } else {
-                    cell.set_symbol(portal_symbol(hash));
-                }
+            // Half the ring's cells, chosen by position rather than by frame, so the ring reads as
+            // a sparse edge that the reveal moves through rather than as static noise.
+            let hash = pane_spatial_hash(position.x, position.y, self.seed);
+            if hash & 1 == 0 {
+                cell.set_symbol(portal_symbol(hash));
             } else {
                 cell.set_symbol(" ");
             }
-        } else if hash & 1 == 0 {
-            cell.set_symbol(portal_symbol(hash));
         } else {
             cell.set_symbol(" ");
         }
@@ -128,20 +115,12 @@ impl PaneRevealEffect {
             position.height,
             self.spec.scan_direction,
         );
-        let frontier = scan_frontier_width(self.spec, self.progress);
+        let frontier = frontier_width(self.progress);
         if scan <= (self.progress - frontier).max(0.0) {
             return;
         }
         if scan <= self.progress {
-            if self.spec.custom_glyphs {
-                let glyph = [self
-                    .spec
-                    .glyphs
-                    .get((hash.wrapping_add(u64::from(quantized))) as usize)];
-                cell.set_symbol(std::str::from_utf8(&glyph).unwrap_or("."));
-            } else {
-                cell.set_symbol(frontier_symbol(hash, quantized));
-            }
+            cell.set_symbol(frontier_symbol(hash, quantized));
         } else {
             cell.set_symbol(" ");
         }
@@ -198,22 +177,6 @@ fn reveal_position(ctx: &EffectContext) -> RevealPosition {
         y,
         width,
         height,
-    }
-}
-
-fn portal_frontier_width(spec: PaneAnimationSpec, maximum: f32, progress: f32) -> f32 {
-    if spec.custom_frontier_width {
-        spec.frontier_width * maximum * ((1.0 - progress) / 0.12).clamp(0.0, 1.0)
-    } else {
-        portal_ring_width(maximum, progress)
-    }
-}
-
-fn scan_frontier_width(spec: PaneAnimationSpec, progress: f32) -> f32 {
-    if spec.custom_frontier_width {
-        spec.frontier_width * ((1.0 - progress) / 0.1).clamp(0.0, 1.0)
-    } else {
-        frontier_width(progress)
     }
 }
 
@@ -501,29 +464,54 @@ mod tests {
         }
     }
 
+    /// The two knobs a recipe still has over the paint effects move *where* the reveal starts.
+    /// Whatever they are set to, the cell nearest the origin is revealed before the one furthest
+    /// from it - that is what makes the effect read as coming from somewhere.
     #[test]
-    fn unrelated_recipe_options_keep_the_builtin_frontier_policy() {
-        let builtin = crate::layout::anim::builtin_animation(PaneAnimationStyle::Portal);
-        let mut portal = builtin;
-        portal.origin = [0.2, 0.8];
-        portal.custom_glyphs = true;
-        portal.custom_density = true;
-        assert!(!portal.custom_frontier_width);
-        assert_eq!(
-            portal_frontier_width(portal, 20.0, 0.4),
-            portal_frontier_width(builtin, 20.0, 0.4)
+    fn origin_and_direction_decide_which_corner_arrives_first() {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 12,
+            h: 6,
+        };
+        // A cell the reveal has reached keeps the content underneath it; one it has not is blanked
+        // or wearing a frontier glyph.
+        let sample = |spec: PaneAnimationSpec, pattern, x: i16, y: i16| {
+            let mut cell = EffectCell::new("X");
+            PaneRevealEffect::with_spec(pattern, 0.25, 17, spec).apply(
+                &mut cell,
+                &EffectContext {
+                    x,
+                    y,
+                    bounds,
+                    phase: 99,
+                    terminal_bg: None,
+                },
+            );
+            cell.symbol() == "X"
+        };
+
+        let mut top_left = crate::layout::anim::builtin_animation(PaneAnimationStyle::Portal);
+        top_left.origin = [0.0, 0.0];
+        assert!(
+            sample(top_left, PaneRevealPattern::Portal, 0, 0),
+            "a portal origin of [0, 0] reveals the top-left corner first"
+        );
+        assert!(
+            !sample(top_left, PaneRevealPattern::Portal, 11, 5),
+            "and leaves the far corner for later"
         );
 
-        let mut scan = crate::layout::anim::builtin_animation(PaneAnimationStyle::Scan);
-        scan.scan_direction = ScanDirection::BottomRight;
-        scan.custom_glyphs = true;
-        assert!(!scan.custom_frontier_width);
-        assert_eq!(
-            scan_frontier_width(scan, 0.4),
-            scan_frontier_width(
-                crate::layout::anim::builtin_animation(PaneAnimationStyle::Scan),
-                0.4,
-            )
+        let mut bottom_right = crate::layout::anim::builtin_animation(PaneAnimationStyle::Scan);
+        bottom_right.scan_direction = ScanDirection::BottomRight;
+        assert!(
+            sample(bottom_right, PaneRevealPattern::Scan, 11, 5),
+            "a bottom-right scan reveals that corner first"
+        );
+        assert!(
+            !sample(bottom_right, PaneRevealPattern::Scan, 0, 0),
+            "and leaves the opposite corner for later"
         );
     }
 }

@@ -743,7 +743,6 @@ fn pane_animation_styles_keep_the_pty_grid_stable_during_open_and_close() {
             pane.opening = true;
             let mut spec = builtin_animation(style);
             if style == PaneAnimationStyle::Scale {
-                spec.custom_recipe = true;
                 spec.scale_from = 0.6;
                 spec.open_duration = std::time::Duration::from_millis(360);
             }

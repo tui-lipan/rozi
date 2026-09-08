@@ -914,8 +914,24 @@ impl AppRoot {
         if spec.kind != anim::PaneAnimationStyle::Slide || pane.floating {
             return 1.0;
         }
-        let opening = anim::pane_opening_transition(pane);
-        let (target, enabled) = if pane.closing {
+        let (target, enabled) = Self::open_close_target(pane);
+        // Disabled means no motion, not a pane parked outside its own tile: snap to deployed rather
+        // than letting an instant transition land the target of 0.0 and hide it.
+        if !enabled {
+            return 1.0;
+        }
+        ctx.transition(key, target, spec.transition(pane.closing))
+    }
+
+    /// Where a pane effect that runs forward on open and backward on close is heading, and whether
+    /// it is timed at all.
+    ///
+    /// The target follows the lifecycle flags, never the snapshot. A snapshot outlives
+    /// `Pane::opening` on purpose - it holds the effect mounted and on its original recipe until
+    /// the terminal goes live - so reading it here would park every opening pane at its starting
+    /// value for the whole transition and then snap it to settled when the snapshot cleared.
+    fn open_close_target(pane: &Pane) -> (f32, bool) {
+        if pane.closing {
             (
                 0.0,
                 pane.closing_animation
@@ -923,32 +939,11 @@ impl AppRoot {
             )
         } else {
             (
-                if opening { 0.0 } else { 1.0 },
+                if pane.opening { 0.0 } else { 1.0 },
                 pane.opening_animation
                     .is_none_or(|snapshot| snapshot.active),
             )
-        };
-        // Disabled means no motion, not a pane parked outside its own tile: snap to deployed rather
-        // than letting an instant transition land the target of 0.0 and hide it.
-        if !enabled {
-            return 1.0;
         }
-        ctx.transition(
-            key,
-            target,
-            TransitionConfig {
-                duration: if pane.closing {
-                    spec.close_duration
-                } else {
-                    spec.open_duration
-                },
-                easing: if pane.closing {
-                    spec.close_curve
-                } else {
-                    spec.open_curve
-                },
-            },
-        )
     }
 
     /// Progress for a centre-scaled pane while its subtree remains at the settled rectangle.
@@ -958,23 +953,7 @@ impl AppRoot {
         if spec.kind != anim::PaneAnimationStyle::Scale {
             return 1.0;
         }
-        let opening = anim::pane_opening_transition(pane);
-        if !opening && !pane.closing {
-            return ctx.transition(key, 1.0, spec.transition(false));
-        }
-        let (target, enabled) = if pane.closing {
-            (
-                0.0,
-                pane.closing_animation
-                    .is_none_or(|snapshot| snapshot.active),
-            )
-        } else {
-            (
-                if opening { 0.0 } else { 1.0 },
-                pane.opening_animation
-                    .is_none_or(|snapshot| snapshot.active),
-            )
-        };
+        let (target, enabled) = Self::open_close_target(pane);
         if !enabled {
             return 1.0;
         }
@@ -997,20 +976,7 @@ impl AppRoot {
         ) {
             return 1.0;
         }
-        let opening = anim::pane_opening_transition(pane);
-        let (target, enabled) = if pane.closing {
-            (
-                0.0,
-                pane.closing_animation
-                    .is_none_or(|snapshot| snapshot.active),
-            )
-        } else {
-            (
-                if opening { 0.0 } else { 1.0 },
-                pane.opening_animation
-                    .is_none_or(|snapshot| snapshot.active),
-            )
-        };
+        let (target, enabled) = Self::open_close_target(pane);
         if !enabled {
             return 1.0;
         }

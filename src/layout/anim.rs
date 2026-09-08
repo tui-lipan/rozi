@@ -64,8 +64,15 @@ pub enum PaneAnimationStyle {
 
 pub(crate) const MAX_ANIMATION_ID_LEN: usize = 32;
 
-/// The four values that affect a pane's own open/close presentation. This is deliberately compact:
-/// the view copies it into a transition closure on every frame, so it must not carry maps or strings.
+/// How one pane draws itself arriving and leaving: an effect, its timing, its curves, and the one
+/// geometry parameter that effect is shaped by.
+///
+/// Deliberately compact and `Copy`: the view reads it on every frame of every pane, and a pane
+/// snapshots it for the length of a transition. Nothing here is a map, a string, or an allocation.
+///
+/// The frontier width, ring density, and glyph palette the two paint effects use are *not* here.
+/// They are how Portal and Scan are drawn rather than choices a recipe makes, so they live as
+/// constants next to the drawing code in [`crate::view::pane_reveal`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaneAnimationSpec {
     pub kind: PaneAnimationStyle,
@@ -73,62 +80,17 @@ pub struct PaneAnimationSpec {
     pub close_duration: Duration,
     pub open_curve: Easing,
     pub close_curve: Easing,
+    /// Curves for the opacity riding the effect. Kept separate because Scale's fade leads its
+    /// scale, and Slide is opaque throughout.
     pub visual_open_curve: Easing,
     pub visual_close_curve: Easing,
-    pub scale_from: f32,
-    pub origin: [f32; 2],
-    pub frontier_width: f32,
-    pub density: f32,
-    pub glyphs: GlyphPalette,
-    pub custom_glyphs: bool,
-    pub custom_frontier_width: bool,
     pub fade: bool,
-    pub custom_density: bool,
-    pub custom_recipe: bool,
+    /// Scale only: the inset the pane grows from, as a fraction of its settled rectangle.
+    pub scale_from: f32,
+    /// Portal only: where the reveal starts, normalized within the pane.
+    pub origin: [f32; 2],
+    /// Scan only: the corner the reveal sweeps from.
     pub scan_direction: ScanDirection,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GlyphPalette {
-    bytes: [u8; 8],
-    len: u8,
-}
-
-impl GlyphPalette {
-    pub const fn defaults() -> Self {
-        Self {
-            bytes: *b".:+*#%/=",
-            len: 8,
-        }
-    }
-
-    pub fn get(self, index: usize) -> u8 {
-        self.bytes[index % usize::from(self.len.max(1))]
-    }
-
-    pub const fn len(self) -> usize {
-        self.len as usize
-    }
-
-    pub const fn is_empty(self) -> bool {
-        self.len == 0
-    }
-
-    pub(crate) fn set(&mut self, index: usize, byte: u8) {
-        self.bytes[index] = byte;
-        self.len = self.len.max((index + 1) as u8);
-    }
-
-    pub(crate) fn custom(bytes: &[u8]) -> Self {
-        let mut palette = Self {
-            bytes: [0; 8],
-            len: 0,
-        };
-        for (index, byte) in bytes.iter().copied().enumerate() {
-            palette.set(index, byte);
-        }
-        palette
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -258,16 +220,11 @@ pub(crate) fn builtin_animation(style: PaneAnimationStyle) -> PaneAnimationSpec 
         close_curve,
         visual_open_curve,
         visual_close_curve,
+        // Slide is clipped to its tile, so it genuinely emerges; a fade on top would make its
+        // leading edge ghostly instead of solid.
+        fade: !matches!(style, PaneAnimationStyle::Slide),
         scale_from: 0.9,
         origin: [0.5, 0.5],
-        frontier_width: 0.09,
-        density: 0.5,
-        glyphs: GlyphPalette::defaults(),
-        custom_glyphs: false,
-        custom_frontier_width: false,
-        fade: !matches!(style, PaneAnimationStyle::Slide),
-        custom_density: false,
-        custom_recipe: false,
         scan_direction: ScanDirection::TopLeft,
     }
 }
@@ -276,9 +233,8 @@ pub(crate) fn snapshot_for_open(
     animations: WindowAnimationConfig,
     floating: bool,
 ) -> PaneAnimationSnapshot {
-    let spec = floating_slide_fallback(animations, animations.selected_animation(), floating);
     PaneAnimationSnapshot {
-        spec,
+        spec: animations.resolved_animation(floating),
         active: animations.enabled && animations.spawn,
     }
 }
@@ -287,9 +243,8 @@ pub(crate) fn snapshot_for_close(
     animations: WindowAnimationConfig,
     floating: bool,
 ) -> PaneAnimationSnapshot {
-    let spec = floating_slide_fallback(animations, animations.selected_animation(), floating);
     PaneAnimationSnapshot {
-        spec,
+        spec: animations.resolved_animation(floating),
         active: animations.enabled && animations.close,
     }
 }
@@ -399,25 +354,42 @@ pub fn pane_animation_for_pane(
     } else {
         pane.opening_animation
     };
-    let spec = snapshot
-        .map(|snapshot| snapshot.spec)
-        .unwrap_or_else(|| animations.selected_animation());
-    floating_slide_fallback(animations, spec, pane.floating)
+    match snapshot {
+        // The fallback was already applied when the snapshot was taken, against the pane's
+        // floating state at that moment. Re-deriving it here would need provenance the snapshot
+        // deliberately no longer depends on the live selection for.
+        Some(snapshot) => snapshot.spec,
+        None => animations.resolved_animation(pane.floating),
+    }
 }
 
+/// Whether a pane is anywhere inside its open transition, from the spawn until the terminal goes
+/// live. This is the question the *mounting* asks: keep the clip, the effect scope, and the pane's
+/// own transition config alive for as long as it is true.
+///
+/// It is not the question the animation *target* asks. A pane parks at its starting value while
+/// `Pane::opening` is set and travels once the spawn timer clears it - and that happens partway
+/// through this window, not at the end of it. Anything choosing a target reads `pane.opening`.
 pub fn pane_opening_transition(pane: &crate::state::Pane) -> bool {
     pane.opening || pane.opening_animation.is_some()
 }
 
+/// A floating pane has no tile edge to emerge from and no neighbour to take space from, so Slide
+/// becomes Scale for it.
+///
+/// A recipe keeps the timing and curves its author wrote - they asked for that motion, and Scale can
+/// honour it. A builtin Slide has no authored timing to keep, so it takes builtin Scale's, which
+/// means `close_ms` rather than the `geometry_ms` a tiled slide leaves on.
 fn floating_slide_fallback(
     animations: WindowAnimationConfig,
     spec: PaneAnimationSpec,
     floating: bool,
+    authored: bool,
 ) -> PaneAnimationSpec {
     if !floating || spec.kind != PaneAnimationStyle::Slide {
         return spec;
     }
-    if spec.custom_recipe {
+    if authored {
         PaneAnimationSpec {
             kind: PaneAnimationStyle::Scale,
             ..spec
@@ -491,10 +463,12 @@ pub fn pane_opacity_animates(animations: WindowAnimationConfig, pane: &crate::st
 /// Animation gates choose whether the transition is timed, not whether a retained closing pane is
 /// visible. A pane that is opening or closing must stay at the hidden target until its lifecycle
 /// state settles; otherwise disabling close animation can make it reappear before pruning.
+///
+/// `pane.opening`, not [`pane_opening_transition`]: the fade has to *travel* once the spawn timer
+/// clears that flag, and the snapshot outlives it by design.
 pub fn pane_opacity_target(animations: WindowAnimationConfig, pane: &crate::state::Pane) -> f32 {
     let spec = pane_animation_for_pane(animations, pane);
-    let opening = pane_opening_transition(pane);
-    if !spec.fade || pane_slides(animations, pane) || (!opening && !pane.closing) {
+    if !spec.fade || pane_slides(animations, pane) || (!pane.opening && !pane.closing) {
         1.0
     } else {
         0.0
@@ -631,6 +605,18 @@ impl WindowAnimationConfig {
             };
             spec
         }
+    }
+
+    /// The selected animation as one particular pane will actually draw it.
+    ///
+    /// The only thing the pane itself changes is Slide, which a floating pane cannot perform.
+    pub(crate) fn resolved_animation(self, floating: bool) -> PaneAnimationSpec {
+        floating_slide_fallback(
+            self,
+            self.selected_animation(),
+            floating,
+            self.pane_animation_id.is_custom(),
+        )
     }
 
     pub(crate) fn selected_id(self) -> AnimationId {
@@ -893,7 +879,6 @@ mod tests {
     fn custom_event_duration_survives_selection_change_and_other_events_ignore_it() {
         let mut state = spawning_state(PaneAnimationStyle::Scale, GeometryAnimation::Spawn);
         let mut custom = builtin_animation(PaneAnimationStyle::Scale);
-        custom.custom_recipe = true;
         custom.open_duration = Duration::from_millis(480);
         state.config.animations.pane_animation_id = AnimationId::custom("long-scale");
         state.config.animations.pane_animation = custom;
@@ -941,7 +926,6 @@ mod tests {
         ] {
             let mut state = spawning_state(PaneAnimationStyle::Scale, animation);
             let mut custom = builtin_animation(PaneAnimationStyle::Scale);
-            custom.custom_recipe = true;
             custom.open_duration = Duration::from_millis(480);
             custom.close_duration = Duration::from_millis(640);
             state.config.animations.pane_animation_id = AnimationId::custom("slow-scale");
@@ -1084,6 +1068,33 @@ mod tests {
         pane.closing = true;
         animations.pane_style = PaneAnimationStyle::Slide;
         assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+    }
+
+    /// The snapshot deliberately outlives `Pane::opening` so the effect stays mounted on its
+    /// original recipe until the terminal goes live. Reading it to pick the *target* parked every
+    /// opening pane at its starting value for the whole transition, so nothing ever animated in.
+    #[test]
+    fn an_opening_pane_travels_once_its_spawn_timer_clears_the_flag() {
+        let animations = WindowAnimationConfig::default();
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        pane.opening = true;
+        pane.begin_open_animation(animations);
+
+        assert_eq!(
+            pane_opacity_target(animations, &pane),
+            0.0,
+            "parked while the spawn is still in flight"
+        );
+
+        // What `finish_open` does: clears the flag, keeps the snapshot for `activate_pane`.
+        pane.opening = false;
+        assert!(pane.opening_animation.is_some());
+        assert_eq!(
+            pane_opacity_target(animations, &pane),
+            1.0,
+            "and travels while the snapshot still holds the effect mounted"
+        );
+        assert!(pane_opacity_animates(animations, &pane));
     }
 
     #[test]

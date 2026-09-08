@@ -5,8 +5,8 @@ use std::time::Duration;
 use tui_lipan::animation::{CubicBezier, Easing};
 
 use crate::layout::anim::{
-    AnimationCatalog, AnimationChoice, GlyphPalette, PaneAnimationSpec, PaneAnimationStyle,
-    ScanDirection, WindowAnimationConfig, builtin_animation,
+    AnimationCatalog, AnimationChoice, PaneAnimationSpec, PaneAnimationStyle, ScanDirection,
+    WindowAnimationConfig, builtin_animation,
 };
 
 use super::file::{AnimationFileConfig, CurveFileConfig, PaddingSpec, PaneAnimationFileConfig};
@@ -190,29 +190,29 @@ fn build_curve(
     warnings: &mut Vec<String>,
 ) -> Option<CubicBezier> {
     if !valid_animation_id(id) {
-        warnings.push(format!("Ignored animations.curves.{id}: ID must be 1..=32 lowercase ASCII letters, digits, '_' or '-'"));
+        warnings.push(format!("Dropped animations.curves.{id}: ID must be 1..=32 lowercase ASCII letters, digits, '_' or '-'"));
         return None;
     }
     if is_builtin_curve_token(id) {
         warnings.push(format!(
-            "Ignored animations.curves.{id}: ID collides with a builtin curve token"
+            "Dropped animations.curves.{id}: ID collides with a builtin curve token"
         ));
         return None;
     }
     let Some(values) = curve.bezier else {
         warnings.push(format!(
-            "Ignored animations.curves.{id}: missing bezier = [x1, y1, x2, y2]"
+            "Dropped animations.curves.{id}: missing bezier = [x1, y1, x2, y2]"
         ));
         return None;
     };
     if let Some(error) = validate_curve_values(values) {
-        warnings.push(format!("Ignored animations.curves.{id}: {error}"));
+        warnings.push(format!("Dropped animations.curves.{id}: {error}"));
         return None;
     }
     match CubicBezier::new(values[0], values[1], values[2], values[3]) {
         Ok(value) => Some(value),
         Err(error) => {
-            warnings.push(format!("Ignored animations.curves.{id}: {error}"));
+            warnings.push(format!("Dropped animations.curves.{id}: {error}"));
             None
         }
     }
@@ -266,11 +266,11 @@ fn build_recipe(
 
 fn valid_recipe_id(id: &str, warnings: &mut Vec<String>) -> bool {
     if !valid_animation_id(id) {
-        warnings.push(format!("Ignored animations.pane_animations.{id}: ID must be 1..=32 lowercase ASCII letters, digits, '_' or '-'"));
+        warnings.push(format!("Dropped animations.pane_animations.{id}: ID must be 1..=32 lowercase ASCII letters, digits, '_' or '-'"));
         false
     } else if PaneAnimationStyle::parse(id).is_some() {
         warnings.push(format!(
-            "Ignored animations.pane_animations.{id}: ID collides with a builtin animation style"
+            "Dropped animations.pane_animations.{id}: ID collides with a builtin animation style"
         ));
         false
     } else {
@@ -284,7 +284,7 @@ fn recipe_kind(
     warnings: &mut Vec<String>,
 ) -> Option<PaneAnimationStyle> {
     recipe.kind.as_deref().and_then(PaneAnimationStyle::parse).or_else(|| {
-        warnings.push(format!("Ignored animations.pane_animations.{id}: kind must be scale, slide, portal, or scan"));
+        warnings.push(format!("Dropped animations.pane_animations.{id}: kind must be scale, slide, portal, or scan"));
         None
     })
 }
@@ -296,7 +296,6 @@ fn recipe_timing(
     close_duration: Duration,
 ) -> PaneAnimationSpec {
     let mut spec = builtin_animation(kind);
-    spec.custom_recipe = true;
     spec.open_duration = recipe
         .open_ms
         .map(Duration::from_millis)
@@ -318,7 +317,7 @@ fn apply_recipe_curves(
     if let Some(value) = recipe.curve.as_deref() {
         let Ok((curve, custom)) = resolve_curve(value, curves) else {
             warnings.push(format!(
-                "Ignored animations.pane_animations.{id}: unknown curve reference \"{value}\""
+                "Dropped animations.pane_animations.{id}: unknown curve reference \"{value}\""
             ));
             return false;
         };
@@ -335,7 +334,7 @@ fn apply_recipe_curves(
     if let Some(value) = recipe.close_curve.as_deref() {
         let Ok((curve, _)) = resolve_curve(value, curves) else {
             warnings.push(format!(
-                "Ignored animations.pane_animations.{id}: unknown curve reference \"{value}\""
+                "Dropped animations.pane_animations.{id}: unknown curve reference \"{value}\""
             ));
             return false;
         };
@@ -403,21 +402,15 @@ fn apply_recipe_options(
     if !apply_portal_origin(id, kind, recipe.origin, spec, warnings) {
         return false;
     }
-    if !apply_frontier_option(id, kind, recipe.frontier_width, spec, warnings) {
-        return false;
-    }
-    if !apply_density_option(id, kind, recipe.density, spec, warnings) {
-        return false;
-    }
-    if !apply_glyph_option(id, kind, recipe.glyphs.as_deref(), spec, warnings) {
-        return false;
-    }
     if !apply_scan_direction(id, kind, recipe.direction.as_deref(), spec, warnings) {
         return false;
     }
     apply_fade_option(id, kind, recipe.fade, spec, warnings)
 }
 
+/// A key that means nothing for the recipe's kind drops the whole recipe rather than being skipped:
+/// the author asked for something this effect cannot do, and silently animating it a different way
+/// would be worse than saying so. The warning names the recipe as the thing that went, not the key.
 fn relevant_option(
     id: &str,
     kind: PaneAnimationStyle,
@@ -427,7 +420,8 @@ fn relevant_option(
 ) -> bool {
     if !allowed {
         warnings.push(format!(
-            "Ignored animations.pane_animations.{id}: {name} is not valid for {kind:?}"
+            "Dropped animations.pane_animations.{id}: `{name}` is not valid for kind `{}`",
+            kind.id()
         ));
     }
     allowed
@@ -452,7 +446,7 @@ fn apply_scale_option(
     }
     if !(0.1..=1.0).contains(&value) || !value.is_finite() {
         warnings.push(format!(
-            "Ignored animations.pane_animations.{id}: scale_from must be finite and in [0.1, 1.0]"
+            "Dropped animations.pane_animations.{id}: scale_from must be finite and in [0.1, 1.0]"
         ));
         return false;
     }
@@ -482,110 +476,12 @@ fn apply_portal_origin(
         .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
     {
         warnings.push(format!(
-            "Ignored animations.pane_animations.{id}: origin values must be finite and in [0, 1]"
+            "Dropped animations.pane_animations.{id}: origin values must be finite and in [0, 1]"
         ));
         return false;
     }
     spec.origin = value;
     true
-}
-
-fn apply_frontier_option(
-    id: &str,
-    kind: PaneAnimationStyle,
-    value: Option<f32>,
-    spec: &mut PaneAnimationSpec,
-    warnings: &mut Vec<String>,
-) -> bool {
-    let Some(value) = value else { return true };
-    if !relevant_option(
-        id,
-        kind,
-        "frontier_width",
-        matches!(kind, PaneAnimationStyle::Portal | PaneAnimationStyle::Scan),
-        warnings,
-    ) {
-        return false;
-    }
-    if !value.is_finite() || !(0.0..=0.5).contains(&value) {
-        warnings.push(format!(
-            "Ignored animations.pane_animations.{id}: frontier_width must be finite and in [0, 0.5]"
-        ));
-        return false;
-    }
-    spec.frontier_width = value;
-    spec.custom_frontier_width = true;
-    true
-}
-
-fn apply_density_option(
-    id: &str,
-    kind: PaneAnimationStyle,
-    value: Option<f32>,
-    spec: &mut PaneAnimationSpec,
-    warnings: &mut Vec<String>,
-) -> bool {
-    let Some(value) = value else { return true };
-    if !relevant_option(
-        id,
-        kind,
-        "density",
-        kind == PaneAnimationStyle::Portal,
-        warnings,
-    ) {
-        return false;
-    }
-    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
-        warnings.push(format!(
-            "Ignored animations.pane_animations.{id}: density must be finite and in [0, 1]"
-        ));
-        return false;
-    }
-    spec.density = value;
-    spec.custom_density = true;
-    true
-}
-
-fn apply_glyph_option(
-    id: &str,
-    kind: PaneAnimationStyle,
-    glyphs: Option<&[String]>,
-    spec: &mut PaneAnimationSpec,
-    warnings: &mut Vec<String>,
-) -> bool {
-    let Some(glyphs) = glyphs else { return true };
-    if !relevant_option(
-        id,
-        kind,
-        "glyphs",
-        matches!(kind, PaneAnimationStyle::Portal | PaneAnimationStyle::Scan),
-        warnings,
-    ) {
-        return false;
-    }
-    let Some(palette) = parse_glyphs(id, glyphs, warnings) else {
-        return false;
-    };
-    spec.glyphs = palette;
-    spec.custom_glyphs = true;
-    true
-}
-
-fn parse_glyphs(id: &str, glyphs: &[String], warnings: &mut Vec<String>) -> Option<GlyphPalette> {
-    if glyphs.is_empty() || glyphs.len() > 8 {
-        warnings.push(format!("Ignored animations.pane_animations.{id}: glyphs must contain 1..=8 printable ASCII punctuation characters"));
-        return None;
-    }
-    let mut palette_bytes = [0; 8];
-    for (index, glyph) in glyphs.iter().enumerate() {
-        let bytes = glyph.as_bytes();
-        if bytes.len() != 1 || !bytes[0].is_ascii_punctuation() {
-            warnings.push(format!("Ignored animations.pane_animations.{id}: glyphs must contain 1..=8 printable ASCII punctuation characters"));
-            return None;
-        }
-        palette_bytes[index] = bytes[0];
-    }
-    Some(GlyphPalette::custom(&palette_bytes[..glyphs.len()]))
 }
 
 fn apply_scan_direction(
@@ -608,7 +504,7 @@ fn apply_scan_direction(
         return false;
     }
     let Some(direction) = parse_scan_direction(direction) else {
-        warnings.push(format!("Ignored animations.pane_animations.{id}: direction must be top-left, top-right, bottom-left, or bottom-right"));
+        warnings.push(format!("Dropped animations.pane_animations.{id}: direction must be top-left, top-right, bottom-left, or bottom-right"));
         return false;
     };
     spec.scan_direction = direction;

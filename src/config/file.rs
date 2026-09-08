@@ -548,13 +548,12 @@ pub(super) struct PaneAnimationFileConfig {
     pub(super) close_ms: Option<u64>,
     pub(super) curve: Option<String>,
     pub(super) close_curve: Option<String>,
+    pub(super) fade: Option<bool>,
+    /// One geometry knob per kind: where Scale grows from, where Portal opens, which corner Scan
+    /// sweeps from. Slide has none - its edge comes from the split that placed the pane.
     pub(super) scale_from: Option<f32>,
     pub(super) origin: Option<[f32; 2]>,
-    pub(super) frontier_width: Option<f32>,
-    pub(super) density: Option<f32>,
-    pub(super) glyphs: Option<Vec<String>>,
     pub(super) direction: Option<String>,
-    pub(super) fade: Option<bool>,
 }
 
 /// The config text most recently read or written by this process. Lets the live-reload
@@ -1729,9 +1728,6 @@ mod file_tests {
             close_ms = 150
             curve = "soft"
             origin = [0.2, 0.8]
-            frontier_width = 0.2
-            density = 0.75
-            glyphs = [".", ":", "+"]
             "#,
             Path::new("test.toml"),
         );
@@ -1761,7 +1757,6 @@ mod file_tests {
             std::time::Duration::from_millis(150)
         );
         assert_eq!(selected.origin, [0.2, 0.8]);
-        assert_eq!(selected.glyphs.len(), 3);
         assert!(matches!(
             selected.open_curve,
             tui_lipan::animation::Easing::CubicBezier(_)
@@ -1849,8 +1844,10 @@ mod file_tests {
         );
     }
 
+    /// An out-of-range value is a mistake, not a request to be silently corrected: quietly moving
+    /// `1.1` to `1.0` would leave the author wondering why their config had no effect.
     #[test]
-    fn animation_recipe_bounds_and_glyphs_are_rejected_without_clamping() {
+    fn out_of_range_recipe_values_are_rejected_rather_than_clamped() {
         let loaded = load_config_from_text(
             r#"
             [animations.pane_animations.bad-scale]
@@ -1859,22 +1856,45 @@ mod file_tests {
             [animations.pane_animations.bad-portal]
             kind = "portal"
             origin = [0.5, 2.0]
-            density = -0.1
-            glyphs = ["ab"]
             [animations.pane_animations.bad-scan]
             kind = "scan"
             direction = "sideways"
-            frontier_width = 0.6
             "#,
             Path::new("test.toml"),
         );
-        assert_eq!(loaded.config.animation_catalog.choices.len(), 4);
-        assert!(loaded.warnings.len() >= 3, "{:?}", loaded.warnings);
+        assert_eq!(
+            loaded.config.animation_catalog.choices.len(),
+            4,
+            "only the four builtins survive"
+        );
+        assert_eq!(loaded.warnings.len(), 3, "{:?}", loaded.warnings);
         assert!(
             !loaded
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("Clamped"))
+        );
+    }
+
+    /// A key the selected kind cannot honour drops its recipe, and the warning has to say that -
+    /// naming only the key reads as though the rest of the recipe survived.
+    #[test]
+    fn a_wrong_kind_key_drops_its_recipe_and_the_warning_says_so() {
+        let loaded = load_config_from_text(
+            r#"
+            [animations.pane_animations.slide-with-origin]
+            kind = "slide"
+            origin = [0.5, 0.5]
+            "#,
+            Path::new("test.toml"),
+        );
+        assert_eq!(loaded.config.animation_catalog.choices.len(), 4);
+        assert_eq!(
+            loaded.warnings,
+            vec![
+                "Dropped animations.pane_animations.slide-with-origin: `origin` is not valid for kind `slide`"
+                    .to_string()
+            ]
         );
     }
 
@@ -1899,7 +1919,7 @@ mod file_tests {
             loaded
                 .warnings
                 .iter()
-                .any(|warning| warning.contains("fade is not valid for Slide"))
+                .any(|warning| warning.contains("`fade` is not valid for kind `slide`"))
         );
         assert_eq!(loaded.config.animation_catalog.choices.len(), 5);
     }
@@ -2222,5 +2242,160 @@ mod file_tests {
         assert!(nav.is_split_editor("vimdiff"));
         assert!(!nav.is_split_editor("bash"));
         assert!(!nav.is_split_editor("less"));
+    }
+
+    /// The whole chain, once per kind: TOML text, through the catalog and the selection, into the
+    /// snapshot a real pane takes when it starts opening, and out the other side as something the
+    /// renderer actually did. Each half of this is unit tested elsewhere; nothing else joins them,
+    /// so a recipe that parses perfectly and reaches no pixel would pass every other test.
+    #[test]
+    fn a_recipe_from_config_text_reaches_the_rendered_pane() {
+        use crate::AppRoot;
+        use crate::layout::anim::PaneAnimationStyle;
+        use tui_lipan::TestBackend;
+        use tui_lipan::prelude::Rect;
+
+        const RECIPES: &str = r#"
+            geometry_ms = 200
+            [animations.curves.glide]
+            bezier = [0.16, 1.0, 0.3, 1.0]
+            [animations.pane_animations.tuned-scale]
+            kind = "scale"
+            open_ms = 400
+            curve = "glide"
+            scale_from = 0.5
+            [animations.pane_animations.tuned-slide]
+            kind = "slide"
+            open_ms = 400
+            curve = "glide"
+            [animations.pane_animations.tuned-portal]
+            kind = "portal"
+            open_ms = 400
+            origin = [0.0, 0.0]
+            [animations.pane_animations.tuned-scan]
+            kind = "scan"
+            open_ms = 400
+            direction = "bottom-right"
+        "#;
+
+        for (name, kind) in [
+            ("tuned-scale", PaneAnimationStyle::Scale),
+            ("tuned-slide", PaneAnimationStyle::Slide),
+            ("tuned-portal", PaneAnimationStyle::Portal),
+            ("tuned-scan", PaneAnimationStyle::Scan),
+        ] {
+            let text = format!("[animations]\npane_style = \"{name}\"\n{RECIPES}");
+            let loaded = load_config_from_text(&text, Path::new("test.toml"));
+            assert!(loaded.warnings.is_empty(), "{name}: {:?}", loaded.warnings);
+
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let settled_terminal = {
+                let state = backend.state_mut();
+                state.config.animations = loaded.config.animations;
+                state.config.animation_catalog = loaded.config.animation_catalog.clone();
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.opening_animation = None;
+                pane.keys.terminal.clone()
+            };
+            backend.render();
+            let settled_rect = widget_rect(&backend, settled_terminal.as_ref())
+                .expect("the settled pane has a terminal widget");
+
+            // Exactly what a spawn does, so the snapshot comes from the loaded selection rather
+            // than from anything this test hand-built.
+            let snapshot = {
+                let state = backend.state_mut();
+                state.begin_pane_event(crate::layout::anim::GeometryAnimation::Spawn);
+                let animations = state.config.animations;
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.opening = true;
+                pane.begin_open_animation(animations);
+                pane.opening_animation.expect("the spawn took a snapshot")
+            };
+
+            assert_eq!(snapshot.spec.kind, kind, "{name} selected the wrong kind");
+            assert_eq!(
+                snapshot.spec.open_duration,
+                std::time::Duration::from_millis(400),
+                "{name} lost its open_ms between the file and the pane"
+            );
+
+            backend.render();
+            // An opening pane is parked at its starting value until its lifecycle settles, so the
+            // effect only runs once the spawn timer reports back.
+            let (id, generation) = {
+                let pane = &backend.state().current().workspaces[0].panes[0];
+                (pane.id, pane.pty_generation)
+            };
+            backend
+                .dispatch(crate::Msg::FinishOpen(0, id, generation))
+                .expect("finish the open");
+            backend.render();
+            let start_clip = widget_rect(&backend, "rozi-pane-clip-1");
+
+            backend.advance(std::time::Duration::from_millis(200));
+            backend.render();
+            let mid_rect = widget_rect(&backend, settled_terminal.as_ref())
+                .expect("the opening pane still has a terminal widget");
+            assert_eq!(
+                mid_rect, settled_rect,
+                "{name} must not resize the terminal grid while it animates"
+            );
+            let mid_clip = widget_rect(&backend, "rozi-pane-clip-1");
+
+            match kind {
+                // Scale's clip *is* the animation: a centred window that opens over a pane which
+                // never moves. Halfway through the recipe's 400 ms it must have grown from the
+                // `scale_from` inset it started at.
+                PaneAnimationStyle::Scale => {
+                    let start = start_clip
+                        .unwrap_or_else(|| panic!("{name} renders inside a clip wrapper"));
+                    let mid = mid_clip.expect("the clip stays mounted for the whole transition");
+                    assert!(
+                        mid.w > start.w && mid.h > start.h,
+                        "{name} clip never opened: {start:?} -> {mid:?}"
+                    );
+                }
+                // Slide's clip is the destination tile, fixed at final size; the pane travels
+                // inside it, so the wrapper itself must not move.
+                PaneAnimationStyle::Slide => {
+                    let start = start_clip
+                        .unwrap_or_else(|| panic!("{name} renders inside a clip wrapper"));
+                    assert_eq!(
+                        mid_clip,
+                        Some(start),
+                        "{name} clips to a fixed tile, not to a shrinking window"
+                    );
+                }
+                // The paint effects repaint cells inside the settled rectangle, so there is no
+                // geometry wrapper at all.
+                PaneAnimationStyle::Portal | PaneAnimationStyle::Scan => {
+                    assert!(
+                        mid_clip.is_none(),
+                        "{name} must not be wrapped in a geometry clip: {mid_clip:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn widget_rect(
+        backend: &tui_lipan::TestBackend<crate::AppRoot>,
+        key: &str,
+    ) -> Option<tui_lipan::prelude::Rect> {
+        backend
+            .capture_ui_snapshot()
+            .widgets
+            .iter()
+            .find(|widget| widget.key.as_ref().is_some_and(|k| k.as_ref() == key))
+            .map(|widget| widget.rect)
     }
 }

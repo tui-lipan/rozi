@@ -24,6 +24,11 @@ venv/
 # fresh clone, a release build - resolves that rev instead. See AGENTS.md.
 /.cargo/
 
+# Agent worktrees: `git worktree add` checkouts parked inside the repo. Each is a working copy of
+# this same repository, so committing one would nest the tree inside itself. The branch is where
+# that work lives; merge it and remove the worktree.
+/.claude/worktrees/
+
 # Documentation site (docs/ doubles as the VitePress source for rozi.tui-lipan.dev)
 /docs/node_modules/
 /docs/.vitepress/dist/

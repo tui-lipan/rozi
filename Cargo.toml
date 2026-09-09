@@ -25,6 +25,11 @@ exclude = [
   "/docs/package.json",
   "/docs/package-lock.json",
   "/docs/wrangler.jsonc",
+  # `.claude/skills` is a symlink onto `.agents/skills`, kept so Claude Code finds the same skills
+  # this repository already documents. Cargo follows it and `.gitignore` cannot reach through it,
+  # so leaving it in packages every skill a second time and sweeps up whatever build residue
+  # (`__pycache__`, caches) happens to sit beside them. The originals still ship under `.agents/`.
+  "/.claude/",
 ]
 
 [dependencies]

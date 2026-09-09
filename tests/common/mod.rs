@@ -200,7 +200,11 @@ impl ListenerGuard {
                 let mut client = TestConnection::new(stream);
                 client.write_control(&attach_message(&self.session, "test-harness-shutdown"));
                 let mut owns_control = false;
-                read_until_deadline(&mut client, deadline, |frame| {
+                // The outcome is `owns_control`, not the wait: this loop retries until some
+                // connection is granted control, so an attach that never answered is one more
+                // attempt rather than a failure to report. The enclosing `expect` on the deadline
+                // is what reports never getting there.
+                let _ = read_until_deadline(&mut client, deadline, |frame| {
                     if let Frame::Control(ServerMessage::Attached {
                         client_id,
                         controller,
@@ -264,24 +268,54 @@ pub(crate) fn spawn_listener(settings: ServerSettings) -> ListenerGuard {
     }
 }
 
+/// Why a wait for server frames ended without the caller's condition being met.
+///
+/// A dropped connection and an expiring deadline are different failures with different causes, and
+/// reporting both as "timed out" sends anyone reading a CI log looking for a slow machine when the
+/// server may simply have gone away.
+enum WaitFailure {
+    Deadline,
+    Disconnected(io::Error),
+}
+
+/// Read frames until `done` accepts one, or fail saying how far it got.
+///
+/// `#[track_caller]` so the panic names the wait that actually stalled rather than this line. Every
+/// session test funnels through here, so without it a timeout reports one shared location and the
+/// first question — *which* wait — costs a CI round trip to answer. The frame count separates a
+/// server that said nothing from one that talked steadily and never said the awaited thing; they
+/// look identical in a bare timeout and have nothing else in common.
+#[track_caller]
 pub(crate) fn read_until(
     client: &mut TestConnection,
-    done: impl FnMut(&Frame<ServerMessage>) -> bool,
+    mut done: impl FnMut(&Frame<ServerMessage>) -> bool,
 ) {
-    assert!(
-        read_until_deadline(client, Instant::now() + IO_TIMEOUT, done),
-        "timed out waiting for server frame"
-    );
+    let started = Instant::now();
+    let mut frames = 0_usize;
+    if let Err(failure) = read_until_deadline(client, started + IO_TIMEOUT, |frame| {
+        frames += 1;
+        done(frame)
+    }) {
+        let waited = started.elapsed();
+        match failure {
+            WaitFailure::Deadline => panic!(
+                "timed out after {waited:?} waiting for a server frame; {frames} frames arrived first"
+            ),
+            WaitFailure::Disconnected(err) => panic!(
+                "server connection ended after {waited:?} ({err}); {frames} frames arrived first"
+            ),
+        }
+    }
 }
 
 fn read_until_deadline(
     client: &mut TestConnection,
     deadline: Instant,
     mut done: impl FnMut(&Frame<ServerMessage>) -> bool,
-) -> bool {
+) -> Result<(), WaitFailure> {
     loop {
         if Instant::now() >= deadline {
-            return false;
+            return Err(WaitFailure::Deadline);
         }
 
         while let Some(frame) = client
@@ -290,7 +324,7 @@ fn read_until_deadline(
             .expect("decode server frame")
         {
             if done(&frame) {
-                return true;
+                return Ok(());
             }
         }
 
@@ -303,7 +337,7 @@ fn read_until_deadline(
                         | io::ErrorKind::TimedOut
                         | io::ErrorKind::Interrupted
                 ) => {}
-            Err(_) => return false,
+            Err(err) => return Err(WaitFailure::Disconnected(err)),
         }
     }
 }

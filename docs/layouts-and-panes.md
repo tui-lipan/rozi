@@ -122,11 +122,9 @@ Turning animations off, or changing the master, spawn, or close switch, snaps th
 state. Pane geometry still stays fixed during Portal and Scan, so terminal dimensions do not change
 on every frame.
 
-You can also name your own styles. A recipe combines one of these four effects with your own
-durations and motion curve, plus the single geometry parameter that gives each effect its
-character: where Scale grows from, where Portal opens, which corner Scan sweeps from. Settings
-cycles the builtins first and then your recipes, persisting the selected name rather than its
-body. See [Custom pane animation recipes](configuration.md#custom-pane-animation-recipes).
+Each effect takes your own durations and motion curve, plus the single geometry parameter that gives
+it its character: where Scale grows from, where Portal opens, which corner Scan sweeps from. See
+[Pane animation curves and effect settings](configuration.md#pane-animation-curves-and-effect-settings).
 
 ## Titles and exited panes
 

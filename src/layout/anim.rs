@@ -62,17 +62,15 @@ pub enum PaneAnimationStyle {
     Scan,
 }
 
-pub(crate) const MAX_ANIMATION_ID_LEN: usize = 32;
-
-/// How one pane draws itself arriving and leaving: an effect, its timing, its curves, and the one
-/// geometry parameter that effect is shaped by.
+/// How one pane draws itself arriving and leaving: an effect, its timing, its curves, and the
+/// geometry parameters that shape it.
 ///
 /// Deliberately compact and `Copy`: the view reads it on every frame of every pane, and a pane
 /// snapshots it for the length of a transition. Nothing here is a map, a string, or an allocation.
 ///
 /// The frontier width, ring density, and glyph palette the two paint effects use are *not* here.
-/// They are how Portal and Scan are drawn rather than choices a recipe makes, so they live as
-/// constants next to the drawing code in [`crate::view::pane_reveal`].
+/// They are how Portal and Scan are drawn rather than something configuration chooses, so they live
+/// as constants next to the drawing code in [`crate::view::pane_reveal`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaneAnimationSpec {
     pub kind: PaneAnimationStyle,
@@ -102,73 +100,17 @@ pub enum ScanDirection {
     BottomRight,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct AnimationId {
-    bytes: [u8; MAX_ANIMATION_ID_LEN],
-    len: u8,
-    custom: bool,
-    index: u8,
-}
-
-impl AnimationId {
-    pub(crate) fn builtin(style: PaneAnimationStyle) -> Self {
-        Self {
-            bytes: [0; MAX_ANIMATION_ID_LEN],
-            len: 0,
-            custom: false,
-            index: style as u8,
-        }
-    }
-
-    pub(crate) fn custom(id: &str) -> Self {
-        let mut bytes = [0; MAX_ANIMATION_ID_LEN];
-        bytes[..id.len()].copy_from_slice(id.as_bytes());
-        Self {
-            bytes,
-            len: id.len() as u8,
-            custom: true,
-            index: 0,
-        }
-    }
-
-    pub(crate) fn is_custom(self) -> bool {
-        self.custom
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AnimationChoice {
-    pub(crate) id: AnimationId,
-    pub(crate) name: String,
-    pub(crate) spec: PaneAnimationSpec,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AnimationCatalog {
-    pub(crate) choices: Vec<AnimationChoice>,
-}
-
-impl AnimationCatalog {
-    pub(crate) fn builtin() -> Self {
-        Self {
-            choices: PaneAnimationStyle::all()
-                .iter()
-                .copied()
-                .map(|style| AnimationChoice {
-                    id: AnimationId::builtin(style),
-                    name: style.id().to_string(),
-                    spec: builtin_animation(style),
-                })
-                .collect(),
-        }
-    }
-
-    pub(crate) fn index_of(&self, id: AnimationId) -> usize {
-        self.choices
-            .iter()
-            .position(|choice| choice.id == id)
-            .unwrap_or(0)
-    }
+/// The parts of the selected effect a config may override. Each one belongs to a particular style;
+/// an override for a style that is not selected sits dormant rather than being an error, so a config
+/// can carry settings for all four and switching `pane_style` picks up the matching ones.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PaneAnimationOverrides {
+    pub curve: Option<Easing>,
+    pub close_curve: Option<Easing>,
+    pub fade: Option<bool>,
+    pub scale_from: Option<f32>,
+    pub portal_origin: Option<[f32; 2]>,
+    pub scan_direction: Option<ScanDirection>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -355,9 +297,8 @@ pub fn pane_animation_for_pane(
         pane.opening_animation
     };
     match snapshot {
-        // The fallback was already applied when the snapshot was taken, against the pane's
-        // floating state at that moment. Re-deriving it here would need provenance the snapshot
-        // deliberately no longer depends on the live selection for.
+        // Resolved against the pane's floating state at the moment the transition began, which is
+        // the state the effect it is drawing was chosen for.
         Some(snapshot) => snapshot.spec,
         None => animations.resolved_animation(pane.floating),
     }
@@ -372,34 +313,6 @@ pub fn pane_animation_for_pane(
 /// through this window, not at the end of it. Anything choosing a target reads `pane.opening`.
 pub fn pane_opening_transition(pane: &crate::state::Pane) -> bool {
     pane.opening || pane.opening_animation.is_some()
-}
-
-/// A floating pane has no tile edge to emerge from and no neighbour to take space from, so Slide
-/// becomes Scale for it.
-///
-/// A recipe keeps the timing and curves its author wrote - they asked for that motion, and Scale can
-/// honour it. A builtin Slide has no authored timing to keep, so it takes builtin Scale's, which
-/// means `close_ms` rather than the `geometry_ms` a tiled slide leaves on.
-fn floating_slide_fallback(
-    animations: WindowAnimationConfig,
-    spec: PaneAnimationSpec,
-    floating: bool,
-    authored: bool,
-) -> PaneAnimationSpec {
-    if !floating || spec.kind != PaneAnimationStyle::Slide {
-        return spec;
-    }
-    if authored {
-        PaneAnimationSpec {
-            kind: PaneAnimationStyle::Scale,
-            ..spec
-        }
-    } else {
-        let mut fallback = builtin_animation(PaneAnimationStyle::Scale);
-        fallback.open_duration = animations.geometry_duration;
-        fallback.close_duration = animations.close_duration;
-        fallback
-    }
 }
 
 pub fn pane_reveal_effects_for_pane(
@@ -559,8 +472,7 @@ pub struct WindowAnimationConfig {
     pub sidebar: bool,
     pub focus_chrome: bool,
     pub pane_style: PaneAnimationStyle,
-    pub(crate) pane_animation_id: AnimationId,
-    pub(crate) pane_animation: PaneAnimationSpec,
+    pub pane_overrides: PaneAnimationOverrides,
     pub geometry_duration: Duration,
     pub close_duration: Duration,
     pub focus_chrome_duration: Duration,
@@ -580,8 +492,7 @@ impl Default for WindowAnimationConfig {
             sidebar: true,
             focus_chrome: true,
             pane_style: PaneAnimationStyle::Scale,
-            pane_animation_id: AnimationId::builtin(PaneAnimationStyle::Scale),
-            pane_animation: builtin_animation(PaneAnimationStyle::Scale),
+            pane_overrides: PaneAnimationOverrides::default(),
             geometry_duration: Duration::from_millis(GEOMETRY_MS),
             close_duration: Duration::from_millis(CLOSE_MS),
             focus_chrome_duration: Duration::from_millis(FOCUS_CHROME_MS),
@@ -593,40 +504,87 @@ impl Default for WindowAnimationConfig {
 
 impl WindowAnimationConfig {
     pub(crate) fn selected_animation(self) -> PaneAnimationSpec {
-        if self.pane_animation_id.is_custom() {
-            self.pane_animation
+        self.resolved_animation(false)
+    }
+
+    /// The selected effect as one particular pane will actually draw it: the builtin for
+    /// `pane_style`, on the configured durations, with any override that belongs to that style.
+    ///
+    /// A floating pane has no tile edge to emerge from and no neighbour to take space from, so
+    /// Slide is not something it can perform - it resolves to Scale before anything else is
+    /// applied, and therefore picks up Scale's timing and Scale's overrides.
+    pub(crate) fn resolved_animation(self, floating: bool) -> PaneAnimationSpec {
+        let kind = if floating && self.pane_style == PaneAnimationStyle::Slide {
+            PaneAnimationStyle::Scale
         } else {
-            let mut spec = builtin_animation(self.pane_style);
-            spec.open_duration = self.geometry_duration;
-            spec.close_duration = if self.pane_style == PaneAnimationStyle::Scale {
-                self.close_duration
-            } else {
-                self.geometry_duration
-            };
-            spec
+            self.pane_style
+        };
+        let mut spec = builtin_animation(kind);
+        spec.open_duration = self.geometry_duration;
+        spec.close_duration = if kind == PaneAnimationStyle::Scale {
+            self.close_duration
+        } else {
+            self.geometry_duration
+        };
+        self.pane_overrides.apply(&mut spec);
+        spec
+    }
+}
+
+impl PaneAnimationOverrides {
+    /// Layer the configured overrides onto a builtin spec.
+    ///
+    /// Each geometry override is read only by the style it belongs to, so a config can carry all of
+    /// them at once and switching `pane_style` picks up the matching one. Nothing here reports an
+    /// error for an override the selected style ignores - `scan_direction` sitting unused under
+    /// `pane_style = "portal"` is a config someone can switch between, not a mistake.
+    fn apply(self, spec: &mut PaneAnimationSpec) {
+        if let Some(curve) = self.curve {
+            spec.open_curve = curve;
+            spec.visual_open_curve = curve;
+            // Without an explicit closing curve, the open curve runs backwards on the way out.
+            let close = self.close_curve.unwrap_or_else(|| reverse_curve(curve));
+            spec.close_curve = close;
+            spec.visual_close_curve = close;
+        } else if let Some(close) = self.close_curve {
+            spec.close_curve = close;
+            spec.visual_close_curve = close;
+        }
+        if let Some(fade) = self.fade {
+            spec.fade = fade;
+        }
+        match spec.kind {
+            PaneAnimationStyle::Scale => {
+                if let Some(scale_from) = self.scale_from {
+                    spec.scale_from = scale_from;
+                }
+            }
+            PaneAnimationStyle::Portal => {
+                if let Some(origin) = self.portal_origin {
+                    spec.origin = origin;
+                }
+            }
+            PaneAnimationStyle::Scan => {
+                if let Some(direction) = self.scan_direction {
+                    spec.scan_direction = direction;
+                }
+            }
+            // A slide enters from the edge the split placed it on; there is nothing to aim.
+            PaneAnimationStyle::Slide => {}
         }
     }
+}
 
-    /// The selected animation as one particular pane will actually draw it.
-    ///
-    /// The only thing the pane itself changes is Slide, which a floating pane cannot perform.
-    pub(crate) fn resolved_animation(self, floating: bool) -> PaneAnimationSpec {
-        floating_slide_fallback(
-            self,
-            self.selected_animation(),
-            floating,
-            self.pane_animation_id.is_custom(),
-        )
-    }
-
-    pub(crate) fn selected_id(self) -> AnimationId {
-        self.pane_animation_id
-    }
-
-    pub(crate) fn set_selection(&mut self, choice: &AnimationChoice) {
-        self.pane_style = choice.spec.kind;
-        self.pane_animation_id = choice.id;
-        self.pane_animation = choice.spec;
+/// The temporal complement of a curve, for a close that was given no curve of its own.
+///
+/// A custom Bézier reverses mathematically. The builtin easings use their in/out partner where they
+/// have one, and the symmetric ones are their own reverse.
+fn reverse_curve(curve: Easing) -> Easing {
+    match curve {
+        Easing::CubicBezier(curve) => Easing::CubicBezier(curve.reversed()),
+        Easing::EaseInQuad => Easing::EaseOutQuad,
+        Easing::EaseOutQuad => Easing::EaseInQuad,
+        other => other,
     }
 }
 
@@ -875,21 +833,16 @@ mod tests {
         assert_eq!(transition.duration, Duration::from_millis(300));
     }
 
+    /// The tiles moving around a spawning pane are timed when the event is armed, so a config
+    /// reload part-way through cannot retime motion that is already running.
     #[test]
-    fn custom_event_duration_survives_selection_change_and_other_events_ignore_it() {
+    fn the_neighbour_clock_is_captured_when_the_event_is_armed() {
         let mut state = spawning_state(PaneAnimationStyle::Scale, GeometryAnimation::Spawn);
-        let mut custom = builtin_animation(PaneAnimationStyle::Scale);
-        custom.open_duration = Duration::from_millis(480);
-        state.config.animations.pane_animation_id = AnimationId::custom("long-scale");
-        state.config.animations.pane_animation = custom;
+        state.config.animations.geometry_duration = Duration::from_millis(480);
         state.begin_pane_event(GeometryAnimation::Spawn);
-        let scan = AnimationCatalog::builtin()
-            .choices
-            .into_iter()
-            .find(|choice| choice.spec.kind == PaneAnimationStyle::Scan)
-            .expect("builtin Scan choice");
-        state.config.animations.set_selection(&scan);
-        assert_eq!(state.config.animations.selected_id(), scan.id);
+
+        // A reload lands mid-spawn and shortens everything.
+        state.config.animations.geometry_duration = Duration::from_millis(120);
         assert_eq!(
             AppRoot::geometry_transition_for_pane(
                 &state,
@@ -903,38 +856,28 @@ mod tests {
                 }),
             )
             .duration,
-            Duration::from_millis(480)
-        );
-        state.animation = GeometryAnimation::Fullscreen;
-        let pane = &state.current().workspaces[0].panes[0];
-        assert_eq!(
-            AppRoot::geometry_transition_for_pane(&state, pane, false, None).duration,
-            state.config.animations.geometry_duration
+            Duration::from_millis(480),
+            "the tiles in flight keep the clock the spawn started on"
         );
     }
 
-    /// A recipe describes a pane arriving and leaving, and nothing else. Fullscreen, tile/float,
-    /// and axis changes are reflows the pane lifecycle has no part in, so `geometry_ms` stays
-    /// theirs however long the selected recipe runs - otherwise one slow open animation silently
-    /// becomes the speed of the whole app.
+    /// The pane lifecycle owns `close_ms`; nothing else does. Fullscreen, tile/float, and axis
+    /// changes are reflows the lifecycle has no part in, so `geometry_ms` stays theirs.
     #[test]
-    fn a_selected_recipe_does_not_retime_reflows_that_are_not_pane_lifecycle_events() {
+    fn pane_close_timing_does_not_retime_reflows_that_are_not_lifecycle_events() {
         for animation in [
             GeometryAnimation::Fullscreen,
             GeometryAnimation::TileFloat,
             GeometryAnimation::AxisChange,
         ] {
             let mut state = spawning_state(PaneAnimationStyle::Scale, animation);
-            let mut custom = builtin_animation(PaneAnimationStyle::Scale);
-            custom.open_duration = Duration::from_millis(480);
-            custom.close_duration = Duration::from_millis(640);
-            state.config.animations.pane_animation_id = AnimationId::custom("slow-scale");
-            state.config.animations.pane_animation = custom;
+            state.config.animations.geometry_duration = Duration::from_millis(200);
+            state.config.animations.close_duration = Duration::from_millis(640);
 
             let pane = &state.current().workspaces[0].panes[0];
             assert_eq!(
                 AppRoot::geometry_transition_for_pane(&state, pane, false, None).duration,
-                state.config.animations.geometry_duration,
+                Duration::from_millis(200),
                 "{animation:?} is not a pane opening or closing"
             );
         }

@@ -250,6 +250,20 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
     });
 }
 
+/// Left/Right still step a highlighted value; the footer just does not spell that out.
+#[test]
+fn settings_does_not_advertise_left_right_stepping() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(80, 30);
+        backend.state_mut().settings_selected = Some(rozi::state::SettingsAction::ToggleAnimations);
+        let frame = rendered_rows(&mut backend);
+        assert!(
+            !frame.contains("previous Left") && !frame.contains("next Right"),
+            "Left/Right stepping should stay unadvertised:\n{frame}"
+        );
+    });
+}
+
 /// The behavioral group sits last and reads `[session]`, which no other row does.
 #[test]
 fn settings_reports_startup_and_session_values() {

@@ -207,71 +207,51 @@ Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `succes
 | `alert_pulse_ms` | integer | `1600` | Alert pulse period. Half-period is floored at 400 ms. |
 | `open_delay_ms` | integer | `36` | Spawn animation delay in milliseconds. |
 
-### Custom pane animation recipes
+### Pane animation curves and effect settings
 
-A recipe is one of the four builtin effects with your own timing and motion curve on it. Give it a
-name and `pane_style` selects it exactly like a builtin one.
+The four builtin effects take your own timing, motion curve, and one geometry parameter each. All of
+it lives directly under `[animations]`.
 
 ```toml
-[animations.curves.glide]
-bezier = [0.16, 1.0, 0.3, 1.0]
-
-[animations.pane_animations.quick-slide]
-kind = "slide"
-open_ms = 130
+[animations]
+pane_style = "slide"
+geometry_ms = 130
 close_ms = 90
-curve = "glide"
+curve = [0.16, 1.0, 0.3, 1.0]
 ```
 
-Recipes live under `[animations.pane_animations.<id>]` and require `kind`, one of `"scale"`,
-`"slide"`, `"portal"`, or `"scan"`. Every other key is optional and falls back to that kind's
-builtin behavior.
-
-| Key | Type | Range | Applies to |
+| Key | Type | Default | Applies to |
 | --- | --- | --- | --- |
-| `kind` | string | `scale`, `slide`, `portal`, `scan` | required |
-| `open_ms` | integer | | all |
-| `close_ms` | integer | | all |
-| `curve` | string | builtin name or curve ID | all |
-| `close_curve` | string | builtin name or curve ID | all |
-| `fade` | bool | default `true` | Scale, Portal, Scan |
-| `scale_from` | float | `[0.1, 1]` | Scale |
-| `origin` | float pair | `[0, 1]` each | Portal |
-| `direction` | string | `top-left`, `top-right`, `bottom-left`, `bottom-right` | Scan |
+| `curve` | curve | the style's own | all |
+| `close_curve` | curve | the reverse of `curve` | all |
+| `fade` | bool | `true` | Scale, Portal, Scan |
+| `scale_from` | float in `[0.1, 1]` | `0.9` | Scale |
+| `portal_origin` | float pair in `[0, 1]` | `[0.5, 0.5]` | Portal |
+| `scan_direction` | `top-left`, `top-right`, `bottom-left`, `bottom-right` | `top-left` | Scan |
 
-Each effect exposes the one geometry parameter that changes its character: where Scale grows from,
-where Portal opens, which corner Scan sweeps from. Slide has none — its edge comes from the split
-that placed the pane. How wide the paint frontier is and what it draws belong to Portal and Scan
-themselves, not to configuration.
+A **curve** is either CSS cubic-Bézier control points, `[x1, y1, x2, y2]`, or the name of a builtin
+easing: `linear`, `ease_in_quad`, `ease_out_quad`, `ease_in_out_cubic`, `ease_in_out_sine`. The x
+coordinates must be in `[0, 1]`; y coordinates must be finite and in `[-4, 4]`, so a value above 1
+overshoots and settles back. Omit `close_curve` and the closing motion runs `curve` backwards.
 
-`fade` is invalid for Slide, which is clipped to its tile and always fully opaque.
+The three geometry keys are named for the style that reads them, so a config can set all three and
+`pane_style` decides which is live — the others sit dormant rather than being an error. Slide has
+none: it enters from the edge the split placed it on. How wide Portal's ring and Scan's frontier
+are, and what they draw, belong to those effects rather than to configuration.
 
-Named curves live under `[animations.curves.<id>]` and currently require
-`bezier = [x1, y1, x2, y2]`, using CSS control points. The x coordinates must be in `[0, 1]`; y
-coordinates must be finite and in `[-4, 4]`. A `curve` may also name one of the builtins: `linear`,
-`ease_in_quad`, `ease_out_quad`, `ease_in_out_cubic`, or `ease_in_out_sine`.
+`fade` is dormant under Slide, which is clipped to its tile and always fully opaque.
 
-When `close_curve` is omitted, a custom Bézier is reversed mathematically for closing and a builtin
-takes its matching in/out partner. Omit both and the recipe keeps its kind's own curves.
+Values outside these ranges are dropped with a warning rather than clamped, so a mistake is visible
+instead of silently changing the animation. Each key is independent: one bad value does not cost the
+others.
 
-Curve and recipe IDs are 1 to 32 lowercase ASCII letters, digits, `_`, or `-`. A curve ID may not
-collide with a builtin curve name, and a recipe ID may not collide with a builtin style name.
+These settings describe a pane arriving and leaving, and nothing else. They cover the pane's own
+effect, its opacity, the spawn activation delay, and close retention. The tiles rearranging around
+that spawn or close move on `geometry_ms`, as do fullscreen, tile/float, and axis-change
+transitions; the sidebar, scratchpad, and focus chrome keep their own settings.
 
-Invalid entries are dropped with a warning rather than clamped, so a mistake is visible instead of
-silently changing the animation. The blast radius is one entry: a bad recipe leaves the others
-alone, a bad curve invalidates only the recipes referencing it, and a key that the selected `kind`
-cannot honour drops that recipe.
-
-Settings cycles Scale, Slide, Portal, Scan, then valid recipes in bytewise ID order, and writes
-only `pane_style`. A missing or invalid selection displays Scale until the next user action.
-
-A recipe describes a pane arriving and leaving, and nothing else. It covers the pane's own effect,
-its opacity, the spawn activation delay, close retention, and the movement of the tiles making room
-during that spawn or close. Fullscreen, tile/float, and axis-change transitions keep `geometry_ms`,
-and the sidebar, scratchpad, and focus chrome keep their own settings.
-
-The selected recipe is snapshotted when opening and again when closing starts, so editing the
-config mid-transition cannot change an effect already running or prune a closing pane early.
+The selected effect is snapshotted when opening and again when closing starts, so editing the config
+mid-transition cannot change an effect already running or prune a closing pane early.
 
 ### Pane open/close style
 

@@ -134,22 +134,7 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                 ),
                 (
                     "Open/close animation",
-                    ctx.state
-                        .config
-                        .animation_catalog
-                        .choices
-                        .iter()
-                        .find(|choice| {
-                            choice.id == ctx.state.config.animations.selected_id()
-                        })
-                        .map(|choice| {
-                            if choice.id.is_custom() {
-                                choice.name.clone()
-                            } else {
-                                choice.spec.kind.label().to_string()
-                            }
-                        })
-                        .unwrap_or_else(|| "Scale".to_string()),
+                    ctx.state.config.animations.pane_style.label().to_string(),
                     CyclePaneAnimation,
                 ),
             ],
@@ -360,7 +345,7 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
         );
 
     let mut body = VStack::new().height(Length::Auto).child(palette);
-    if actions.iter().any(|action| action.enabled) {
+    if actions.iter().any(OverlayAction::shows_hint) {
         body = body.child(overlay_hints(&ctx.state.theme, &actions));
     }
     let panel: Element = Frame::new()
@@ -431,13 +416,15 @@ fn settings_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
             "previous",
             Msg::SettingsStep { reverse: true },
             enabled,
-        ),
+        )
+        .hide_hint(),
         OverlayAction::new(
             "right",
             "next",
             Msg::SettingsStep { reverse: false },
             enabled,
-        ),
+        )
+        .hide_hint(),
     ]
 }
 

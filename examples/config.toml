@@ -162,29 +162,18 @@
 #focus_chrome_ms = 160
 #alert_pulse_ms = 1600
 #open_delay_ms = 36
-# Name your own pane animations: one of the four builtin effects with your own timing and motion
-# curve. Select one by putting its name in pane_style above. These examples are inert by design.
-#
-# A curve is CSS cubic-bezier control points. Omitting close_curve reverses this one for closing.
-# [animations.curves.glide]
-# bezier = [0.16, 1.0, 0.3, 1.0]
-#
-# A brisker slide, which is most of what retuning the feel of Rozi amounts to.
-# [animations.pane_animations.quick-slide]
-# kind = "slide"
-# open_ms = 130
-# close_ms = 90
-# curve = "glide"
-#
-# Each effect takes one geometry parameter: scale_from for Scale, origin for Portal, direction for
-# Scan. Slide takes none - it enters from the edge the split placed it on.
-# [animations.pane_animations.soft-portal]
-# kind = "portal"
-# open_ms = 260
-# close_ms = 180
-# curve = "ease_out_quad"
-# origin = [0.5, 0.45]
-# fade = false
+# The motion curve for the selected pane_style: CSS cubic-bezier control points, or the name of a
+# builtin easing (linear, ease_in_quad, ease_out_quad, ease_in_out_cubic, ease_in_out_sine).
+# Omitting close_curve runs `curve` backwards on the way out.
+#curve = [0.16, 1.0, 0.3, 1.0]
+#close_curve = "ease_in_quad"
+#fade = true
+# One geometry knob per style, read only by the style pane_style selects. The others sit dormant,
+# so a config can carry all three and switching pane_style picks up the matching one. Slide has
+# none: it enters from the edge the split placed it on.
+#scale_from = 0.9
+#portal_origin = [0.5, 0.5]
+#scan_direction = "top-left"
 
 [theme]
 # A built-in preset id, "system" for host-derived colors, or the stem of a file in

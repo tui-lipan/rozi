@@ -77,6 +77,7 @@ pub(crate) struct OverlayAction {
     pub msg: Msg,
     pub enabled: bool,
     pub intercept: bool,
+    pub hint: bool,
     pub confirm: Option<ConfirmCue>,
 }
 
@@ -88,6 +89,7 @@ impl OverlayAction {
             msg,
             enabled,
             intercept: true,
+            hint: true,
             confirm: None,
         }
     }
@@ -104,6 +106,7 @@ impl OverlayAction {
             msg,
             enabled,
             intercept: true,
+            hint: true,
             confirm: None,
         })
     }
@@ -112,6 +115,16 @@ impl OverlayAction {
     pub(crate) fn hint_only(mut self) -> Self {
         self.intercept = false;
         self
+    }
+
+    /// Keep the key interceptor without advertising it in the footer.
+    pub(crate) fn hide_hint(mut self) -> Self {
+        self.hint = false;
+        self
+    }
+
+    fn shows_hint(&self) -> bool {
+        self.enabled && self.hint
     }
 
     pub(crate) fn confirm(mut self, cue: impl Into<String>, accent: Color, strike: bool) -> Self {
@@ -141,7 +154,7 @@ impl OverlayAction {
 pub(crate) fn overlay_hints(theme: &Theme, actions: &[OverlayAction]) -> Element {
     let mut row = hint_row();
     let mut any = false;
-    for action in actions.iter().filter(|action| action.enabled) {
+    for action in actions.iter().filter(|action| action.shows_hint()) {
         any = true;
         row = row.child(hint_pill(
             theme,
@@ -358,7 +371,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         palette = palette.input_key_interceptor(interceptor);
 
         let mut body = VStack::new().height(Length::Auto).child(palette);
-        if actions.iter().any(|action| action.enabled) {
+        if actions.iter().any(OverlayAction::shows_hint) {
             body = body.child(overlay_hints(&ctx.state.theme, &actions));
         }
 

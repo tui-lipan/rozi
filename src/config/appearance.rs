@@ -1,15 +1,12 @@
-use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use tui_lipan::animation::{CubicBezier, Easing};
 
 use crate::layout::anim::{
-    AnimationCatalog, AnimationChoice, PaneAnimationSpec, PaneAnimationStyle, ScanDirection,
-    WindowAnimationConfig, builtin_animation,
+    PaneAnimationOverrides, PaneAnimationStyle, ScanDirection, WindowAnimationConfig,
 };
 
-use super::file::{AnimationFileConfig, CurveFileConfig, PaddingSpec, PaneAnimationFileConfig};
+use super::file::{AnimationFileConfig, CurveSpec, PaddingSpec};
 
 /// Cap defensively: padding eats terminal grid on every side, so a large value would leave no
 /// usable pane. 8 cells is already generous for a cosmetic inset.
@@ -66,51 +63,26 @@ pub(super) fn resolve_pane_padding(
 pub(super) fn apply_animations(
     target: &mut WindowAnimationConfig,
     raw: AnimationFileConfig,
-    catalog: &AnimationCatalog,
     warnings: &mut Vec<String>,
 ) {
     apply_animation_durations(target, &raw);
-    apply_animation_style(target, raw.pane_style.as_deref(), catalog, warnings);
+    apply_animation_style(target, raw.pane_style.as_deref(), warnings);
     apply_animation_flags(target, &raw);
     apply_animation_misc(target, &raw);
+    target.pane_overrides = resolve_pane_overrides(&raw, warnings);
 }
 
 fn apply_animation_style(
     target: &mut WindowAnimationConfig,
     pane_style: Option<&str>,
-    catalog: &AnimationCatalog,
     warnings: &mut Vec<String>,
 ) {
     let Some(pane_style) = pane_style else { return };
-    if let Some(style) = PaneAnimationStyle::parse(pane_style) {
-        target.pane_style = style;
-        target.pane_animation_id = crate::layout::anim::AnimationId::builtin(style);
-        target.pane_animation = builtin_animation(style);
-        target.pane_animation.open_duration = target.geometry_duration;
-        target.pane_animation.close_duration =
-            builtin_close_duration(style, target.close_duration, target.geometry_duration);
-    } else if let Some(choice) = catalog
-        .choices
-        .iter()
-        .find(|choice| choice.name == pane_style)
-    {
-        target.set_selection(choice);
-    } else {
-        warnings.push(format!(
-            "Ignored unknown animations.pane_style \"{pane_style}\" (expected one of: scale, slide, portal, scan, or a valid custom recipe ID)"
-        ));
-    }
-}
-
-fn builtin_close_duration(
-    style: PaneAnimationStyle,
-    close_duration: Duration,
-    geometry_duration: Duration,
-) -> Duration {
-    if style == PaneAnimationStyle::Scale {
-        close_duration
-    } else {
-        geometry_duration
+    match PaneAnimationStyle::parse(pane_style) {
+        Some(style) => target.pane_style = style,
+        None => warnings.push(format!(
+            "Ignored unknown animations.pane_style \"{pane_style}\" (expected one of: scale, slide, portal, scan)"
+        )),
     }
 }
 
@@ -152,394 +124,111 @@ fn apply_animation_durations(target: &mut WindowAnimationConfig, raw: &Animation
     }
 }
 
-pub(super) fn build_animation_catalog(
+/// Resolve the flat `[animations]` overrides into the typed form the layout reads.
+///
+/// Every value is checked and, if out of range, dropped with a warning rather than clamped: a
+/// silently corrected `scale_from = 1.4` looks like the setting had no effect.
+fn resolve_pane_overrides(
     raw: &AnimationFileConfig,
-    geometry_duration: Duration,
-    close_duration: Duration,
     warnings: &mut Vec<String>,
-) -> Arc<AnimationCatalog> {
-    let mut catalog = AnimationCatalog::builtin();
-    let curves = build_curve_catalog(&raw.curves, warnings);
-    for (id, recipe) in &raw.pane_animations {
-        if let Some(choice) = build_recipe(
-            id,
-            recipe,
-            &curves,
-            geometry_duration,
-            close_duration,
-            warnings,
-        ) {
-            catalog.choices.push(choice);
-        }
+) -> PaneAnimationOverrides {
+    PaneAnimationOverrides {
+        curve: raw
+            .curve
+            .as_ref()
+            .and_then(|spec| resolve_curve("curve", spec, warnings)),
+        close_curve: raw
+            .close_curve
+            .as_ref()
+            .and_then(|spec| resolve_curve("close_curve", spec, warnings)),
+        fade: raw.fade,
+        scale_from: raw
+            .scale_from
+            .and_then(|value| bounded("scale_from", value, 0.1, 1.0, warnings)),
+        portal_origin: raw.portal_origin.and_then(|value| {
+            let x = bounded("portal_origin", value[0], 0.0, 1.0, warnings)?;
+            let y = bounded("portal_origin", value[1], 0.0, 1.0, warnings)?;
+            Some([x, y])
+        }),
+        scan_direction: raw
+            .scan_direction
+            .as_deref()
+            .and_then(|value| parse_scan_direction(value, warnings)),
     }
-    Arc::new(catalog)
 }
 
-fn build_curve_catalog<'a>(
-    raw: &'a BTreeMap<String, CurveFileConfig>,
-    warnings: &mut Vec<String>,
-) -> BTreeMap<&'a str, CubicBezier> {
-    raw.iter()
-        .filter_map(|(id, curve)| build_curve(id, curve, warnings).map(|value| (&id[..], value)))
-        .collect()
+fn bounded(key: &str, value: f32, low: f32, high: f32, warnings: &mut Vec<String>) -> Option<f32> {
+    if value.is_finite() && (low..=high).contains(&value) {
+        Some(value)
+    } else {
+        warnings.push(format!(
+            "Ignored animations.{key} {value}: must be finite and in [{low}, {high}]"
+        ));
+        None
+    }
 }
 
-fn build_curve(
-    id: &str,
-    curve: &CurveFileConfig,
-    warnings: &mut Vec<String>,
-) -> Option<CubicBezier> {
-    if !valid_animation_id(id) {
-        warnings.push(format!("Dropped animations.curves.{id}: ID must be 1..=32 lowercase ASCII letters, digits, '_' or '-'"));
-        return None;
+/// A curve is either the name of a builtin easing or CSS cubic-Bezier control points.
+fn resolve_curve(key: &str, spec: &CurveSpec, warnings: &mut Vec<String>) -> Option<Easing> {
+    match spec {
+        CurveSpec::Named(name) => match name.trim().to_ascii_lowercase().as_str() {
+            "linear" => Some(Easing::Linear),
+            "ease_in_quad" => Some(Easing::EaseInQuad),
+            "ease_out_quad" => Some(Easing::EaseOutQuad),
+            "ease_in_out_cubic" => Some(Easing::EaseInOutCubic),
+            "ease_in_out_sine" => Some(Easing::EaseInOutSine),
+            _ => {
+                warnings.push(format!(
+                    "Ignored animations.{key} \"{name}\" (expected linear, ease_in_quad, \
+                     ease_out_quad, ease_in_out_cubic, ease_in_out_sine, or [x1, y1, x2, y2])"
+                ));
+                None
+            }
+        },
+        CurveSpec::Bezier(values) => resolve_bezier(key, *values, warnings),
     }
-    if is_builtin_curve_token(id) {
-        warnings.push(format!(
-            "Dropped animations.curves.{id}: ID collides with a builtin curve token"
-        ));
-        return None;
-    }
-    let Some(values) = curve.bezier else {
-        warnings.push(format!(
-            "Dropped animations.curves.{id}: missing bezier = [x1, y1, x2, y2]"
-        ));
-        return None;
+}
+
+fn resolve_bezier(key: &str, values: [f32; 4], warnings: &mut Vec<String>) -> Option<Easing> {
+    /// CSS pins the control points' x to [0, 1] so the curve stays a function of time. y is free to
+    /// leave [0, 1] - that is what produces an overshoot - but not without limit.
+    const Y_LIMIT: f32 = 4.0;
+    let error = if values.iter().any(|value| !value.is_finite()) {
+        Some("all coordinates must be finite".to_string())
+    } else if !(0.0..=1.0).contains(&values[0]) || !(0.0..=1.0).contains(&values[2]) {
+        Some("x coordinates must be in [0, 1]".to_string())
+    } else if values[1].abs() > Y_LIMIT || values[3].abs() > Y_LIMIT {
+        Some(format!("y coordinates must be in [-{Y_LIMIT}, {Y_LIMIT}]"))
+    } else {
+        CubicBezier::new(values[0], values[1], values[2], values[3])
+            .err()
+            .map(|error| error.to_string())
     };
-    if let Some(error) = validate_curve_values(values) {
-        warnings.push(format!("Dropped animations.curves.{id}: {error}"));
-        return None;
-    }
-    match CubicBezier::new(values[0], values[1], values[2], values[3]) {
-        Ok(value) => Some(value),
-        Err(error) => {
-            warnings.push(format!("Dropped animations.curves.{id}: {error}"));
+    match error {
+        Some(error) => {
+            warnings.push(format!("Ignored animations.{key} {values:?}: {error}"));
             None
         }
+        None => CubicBezier::new(values[0], values[1], values[2], values[3])
+            .ok()
+            .map(Easing::CubicBezier),
     }
 }
 
-fn validate_curve_values(values: [f32; 4]) -> Option<&'static str> {
-    const Y_LIMIT: f32 = 4.0;
-    if values.iter().any(|value| !value.is_finite()) {
-        Some("all bezier coordinates must be finite")
-    } else if !(0.0..=1.0).contains(&values[0]) || !(0.0..=1.0).contains(&values[2]) {
-        Some("bezier x coordinates must be in [0, 1]")
-    } else if values[1].abs() > Y_LIMIT || values[3].abs() > Y_LIMIT {
-        Some("bezier y coordinates must be in [-4, 4]")
-    } else {
-        None
-    }
-}
-
-fn is_builtin_curve_token(id: &str) -> bool {
-    matches!(
-        id,
-        "linear" | "ease_in_quad" | "ease_out_quad" | "ease_in_out_cubic" | "ease_in_out_sine"
-    )
-}
-
-fn build_recipe(
-    id: &str,
-    recipe: &PaneAnimationFileConfig,
-    curves: &BTreeMap<&str, CubicBezier>,
-    geometry_duration: Duration,
-    close_duration: Duration,
-    warnings: &mut Vec<String>,
-) -> Option<AnimationChoice> {
-    if !valid_recipe_id(id, warnings) {
-        return None;
-    }
-    let kind = recipe_kind(id, recipe, warnings)?;
-    let mut spec = recipe_timing(kind, recipe, geometry_duration, close_duration);
-    if !apply_recipe_curves(id, recipe, curves, &mut spec, warnings) {
-        return None;
-    }
-    if !apply_recipe_options(id, kind, recipe, &mut spec, warnings) {
-        return None;
-    }
-    Some(AnimationChoice {
-        id: crate::layout::anim::AnimationId::custom(id),
-        name: id.to_string(),
-        spec,
-    })
-}
-
-fn valid_recipe_id(id: &str, warnings: &mut Vec<String>) -> bool {
-    if !valid_animation_id(id) {
-        warnings.push(format!("Dropped animations.pane_animations.{id}: ID must be 1..=32 lowercase ASCII letters, digits, '_' or '-'"));
-        false
-    } else if PaneAnimationStyle::parse(id).is_some() {
-        warnings.push(format!(
-            "Dropped animations.pane_animations.{id}: ID collides with a builtin animation style"
-        ));
-        false
-    } else {
-        true
-    }
-}
-
-fn recipe_kind(
-    id: &str,
-    recipe: &PaneAnimationFileConfig,
-    warnings: &mut Vec<String>,
-) -> Option<PaneAnimationStyle> {
-    recipe.kind.as_deref().and_then(PaneAnimationStyle::parse).or_else(|| {
-        warnings.push(format!("Dropped animations.pane_animations.{id}: kind must be scale, slide, portal, or scan"));
-        None
-    })
-}
-
-fn recipe_timing(
-    kind: PaneAnimationStyle,
-    recipe: &PaneAnimationFileConfig,
-    geometry_duration: Duration,
-    close_duration: Duration,
-) -> PaneAnimationSpec {
-    let mut spec = builtin_animation(kind);
-    spec.open_duration = recipe
-        .open_ms
-        .map(Duration::from_millis)
-        .unwrap_or(geometry_duration);
-    spec.close_duration = recipe
-        .close_ms
-        .map(Duration::from_millis)
-        .unwrap_or_else(|| builtin_close_duration(kind, close_duration, geometry_duration));
-    spec
-}
-
-fn apply_recipe_curves(
-    id: &str,
-    recipe: &PaneAnimationFileConfig,
-    curves: &BTreeMap<&str, CubicBezier>,
-    spec: &mut PaneAnimationSpec,
-    warnings: &mut Vec<String>,
-) -> bool {
-    if let Some(value) = recipe.curve.as_deref() {
-        let Ok((curve, custom)) = resolve_curve(value, curves) else {
-            warnings.push(format!(
-                "Dropped animations.pane_animations.{id}: unknown curve reference \"{value}\""
-            ));
-            return false;
-        };
-        spec.open_curve = curve;
-        spec.visual_open_curve = curve;
-        let close = if custom {
-            reverse_easing(curve)
-        } else {
-            reverse_builtin_curve(curve)
-        };
-        spec.close_curve = close;
-        spec.visual_close_curve = close;
-    }
-    if let Some(value) = recipe.close_curve.as_deref() {
-        let Ok((curve, _)) = resolve_curve(value, curves) else {
-            warnings.push(format!(
-                "Dropped animations.pane_animations.{id}: unknown curve reference \"{value}\""
-            ));
-            return false;
-        };
-        spec.close_curve = curve;
-        spec.visual_close_curve = curve;
-    }
-    true
-}
-
-fn valid_animation_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= crate::layout::anim::MAX_ANIMATION_ID_LEN
-        && id.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
-        })
-}
-
-fn resolve_curve(
-    value: &str,
-    curves: &BTreeMap<&str, CubicBezier>,
-) -> Result<(Easing, bool), String> {
-    let builtin = match value.to_ascii_lowercase().as_str() {
-        "linear" => Some(Easing::Linear),
-        "ease_in_quad" => Some(Easing::EaseInQuad),
-        "ease_out_quad" => Some(Easing::EaseOutQuad),
-        "ease_in_out_cubic" => Some(Easing::EaseInOutCubic),
-        "ease_in_out_sine" => Some(Easing::EaseInOutSine),
-        _ => None,
-    };
-    if let Some(builtin) = builtin {
-        return Ok((builtin, false));
-    }
-    curves
-        .get(value)
-        .copied()
-        .map(|curve| (Easing::CubicBezier(curve), true))
-        .ok_or_else(|| format!("unknown curve reference \"{value}\""))
-}
-
-fn reverse_builtin_curve(curve: Easing) -> Easing {
-    match curve {
-        Easing::EaseInQuad => Easing::EaseOutQuad,
-        Easing::EaseOutQuad => Easing::EaseInQuad,
-        other => other,
-    }
-}
-
-fn reverse_easing(curve: Easing) -> Easing {
-    match curve {
-        Easing::CubicBezier(curve) => Easing::CubicBezier(curve.reversed()),
-        builtin => reverse_builtin_curve(builtin),
-    }
-}
-
-fn apply_recipe_options(
-    id: &str,
-    kind: PaneAnimationStyle,
-    recipe: &PaneAnimationFileConfig,
-    spec: &mut PaneAnimationSpec,
-    warnings: &mut Vec<String>,
-) -> bool {
-    if !apply_scale_option(id, kind, recipe.scale_from, spec, warnings) {
-        return false;
-    }
-    if !apply_portal_origin(id, kind, recipe.origin, spec, warnings) {
-        return false;
-    }
-    if !apply_scan_direction(id, kind, recipe.direction.as_deref(), spec, warnings) {
-        return false;
-    }
-    apply_fade_option(id, kind, recipe.fade, spec, warnings)
-}
-
-/// A key that means nothing for the recipe's kind drops the whole recipe rather than being skipped:
-/// the author asked for something this effect cannot do, and silently animating it a different way
-/// would be worse than saying so. The warning names the recipe as the thing that went, not the key.
-fn relevant_option(
-    id: &str,
-    kind: PaneAnimationStyle,
-    name: &str,
-    allowed: bool,
-    warnings: &mut Vec<String>,
-) -> bool {
-    if !allowed {
-        warnings.push(format!(
-            "Dropped animations.pane_animations.{id}: `{name}` is not valid for kind `{}`",
-            kind.id()
-        ));
-    }
-    allowed
-}
-
-fn apply_scale_option(
-    id: &str,
-    kind: PaneAnimationStyle,
-    value: Option<f32>,
-    spec: &mut PaneAnimationSpec,
-    warnings: &mut Vec<String>,
-) -> bool {
-    let Some(value) = value else { return true };
-    if !relevant_option(
-        id,
-        kind,
-        "scale_from",
-        kind == PaneAnimationStyle::Scale,
-        warnings,
-    ) {
-        return false;
-    }
-    if !(0.1..=1.0).contains(&value) || !value.is_finite() {
-        warnings.push(format!(
-            "Dropped animations.pane_animations.{id}: scale_from must be finite and in [0.1, 1.0]"
-        ));
-        return false;
-    }
-    spec.scale_from = value;
-    true
-}
-
-fn apply_portal_origin(
-    id: &str,
-    kind: PaneAnimationStyle,
-    value: Option<[f32; 2]>,
-    spec: &mut PaneAnimationSpec,
-    warnings: &mut Vec<String>,
-) -> bool {
-    let Some(value) = value else { return true };
-    if !relevant_option(
-        id,
-        kind,
-        "origin",
-        kind == PaneAnimationStyle::Portal,
-        warnings,
-    ) {
-        return false;
-    }
-    if value
-        .iter()
-        .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
-    {
-        warnings.push(format!(
-            "Dropped animations.pane_animations.{id}: origin values must be finite and in [0, 1]"
-        ));
-        return false;
-    }
-    spec.origin = value;
-    true
-}
-
-fn apply_scan_direction(
-    id: &str,
-    kind: PaneAnimationStyle,
-    direction: Option<&str>,
-    spec: &mut PaneAnimationSpec,
-    warnings: &mut Vec<String>,
-) -> bool {
-    let Some(direction) = direction else {
-        return true;
-    };
-    if !relevant_option(
-        id,
-        kind,
-        "direction",
-        kind == PaneAnimationStyle::Scan,
-        warnings,
-    ) {
-        return false;
-    }
-    let Some(direction) = parse_scan_direction(direction) else {
-        warnings.push(format!("Dropped animations.pane_animations.{id}: direction must be top-left, top-right, bottom-left, or bottom-right"));
-        return false;
-    };
-    spec.scan_direction = direction;
-    true
-}
-
-fn parse_scan_direction(value: &str) -> Option<ScanDirection> {
-    match value.to_ascii_lowercase().as_str() {
+fn parse_scan_direction(value: &str, warnings: &mut Vec<String>) -> Option<ScanDirection> {
+    match value.trim().to_ascii_lowercase().as_str() {
         "top-left" => Some(ScanDirection::TopLeft),
         "top-right" => Some(ScanDirection::TopRight),
         "bottom-left" => Some(ScanDirection::BottomLeft),
         "bottom-right" => Some(ScanDirection::BottomRight),
-        _ => None,
+        _ => {
+            warnings.push(format!(
+                "Ignored animations.scan_direction \"{value}\" (expected top-left, top-right, \
+                 bottom-left, or bottom-right)"
+            ));
+            None
+        }
     }
-}
-
-fn apply_fade_option(
-    id: &str,
-    kind: PaneAnimationStyle,
-    value: Option<bool>,
-    spec: &mut PaneAnimationSpec,
-    warnings: &mut Vec<String>,
-) -> bool {
-    let Some(value) = value else { return true };
-    if !relevant_option(
-        id,
-        kind,
-        "fade",
-        kind != PaneAnimationStyle::Slide,
-        warnings,
-    ) {
-        return false;
-    }
-    spec.fade = value;
-    true
 }
 
 #[cfg(test)]
@@ -613,13 +302,7 @@ mod tests {
             toml::from_str("alert_pulse_ms = 2400").expect("config parses");
         let mut animations = WindowAnimationConfig::default();
         let mut warnings = Vec::new();
-        let catalog = build_animation_catalog(
-            &raw,
-            animations.geometry_duration,
-            animations.close_duration,
-            &mut warnings,
-        );
-        apply_animations(&mut animations, raw, &catalog, &mut warnings);
+        apply_animations(&mut animations, raw, &mut warnings);
         assert_eq!(animations.alert_pulse_duration, Duration::from_millis(2400));
         assert!(warnings.is_empty());
     }
@@ -632,13 +315,7 @@ mod tests {
             let token = style.id().to_ascii_uppercase();
             let raw: AnimationFileConfig =
                 toml::from_str(&format!("pane_style = \"{token}\"")).expect("config parses");
-            let catalog = build_animation_catalog(
-                &raw,
-                animations.geometry_duration,
-                animations.close_duration,
-                &mut warnings,
-            );
-            apply_animations(&mut animations, raw, &catalog, &mut warnings);
+            apply_animations(&mut animations, raw, &mut warnings);
             assert_eq!(animations.pane_style, style);
         }
         assert!(warnings.is_empty());
@@ -646,13 +323,7 @@ mod tests {
         let raw: AnimationFileConfig =
             toml::from_str("pane_style = \"springy\"").expect("config parses");
         let mut animations = WindowAnimationConfig::default();
-        let catalog = build_animation_catalog(
-            &raw,
-            animations.geometry_duration,
-            animations.close_duration,
-            &mut warnings,
-        );
-        apply_animations(&mut animations, raw, &catalog, &mut warnings);
+        apply_animations(&mut animations, raw, &mut warnings);
         // An unknown token leaves the default rather than silently disabling pane animation.
         assert_eq!(animations.pane_style, PaneAnimationStyle::Scale);
         assert_eq!(warnings.len(), 1);

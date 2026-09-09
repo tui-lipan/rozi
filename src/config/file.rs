@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -530,30 +530,23 @@ pub(super) struct AnimationFileConfig {
     pub(super) focus_chrome_ms: Option<u64>,
     pub(super) alert_pulse_ms: Option<u64>,
     pub(super) open_delay_ms: Option<u64>,
-    pub(super) curves: BTreeMap<String, CurveFileConfig>,
-    pub(super) pane_animations: BTreeMap<String, PaneAnimationFileConfig>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-pub(super) struct CurveFileConfig {
-    pub(super) bezier: Option<[f32; 4]>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-pub(super) struct PaneAnimationFileConfig {
-    pub(super) kind: Option<String>,
-    pub(super) open_ms: Option<u64>,
-    pub(super) close_ms: Option<u64>,
-    pub(super) curve: Option<String>,
-    pub(super) close_curve: Option<String>,
+    pub(super) curve: Option<CurveSpec>,
+    pub(super) close_curve: Option<CurveSpec>,
     pub(super) fade: Option<bool>,
-    /// One geometry knob per kind: where Scale grows from, where Portal opens, which corner Scan
-    /// sweeps from. Slide has none - its edge comes from the split that placed the pane.
+    /// One geometry knob per style: where Scale grows from, where Portal opens, which corner Scan
+    /// sweeps from. Slide has none - its edge comes from the split that placed the pane. They are
+    /// named for their style so a config can set all three and `pane_style` decides which is live.
     pub(super) scale_from: Option<f32>,
-    pub(super) origin: Option<[f32; 2]>,
-    pub(super) direction: Option<String>,
+    pub(super) portal_origin: Option<[f32; 2]>,
+    pub(super) scan_direction: Option<String>,
+}
+
+/// A motion curve: either the name of a builtin easing, or CSS cubic-Bézier control points.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub(super) enum CurveSpec {
+    Named(String),
+    Bezier([f32; 4]),
 }
 
 /// The config text most recently read or written by this process. Lets the live-reload
@@ -697,27 +690,7 @@ fn load_config_from_text_with_extensions(
         &mut warnings,
     );
     config.input = input;
-    let animation_catalog = super::appearance::build_animation_catalog(
-        &parsed.animations,
-        parsed
-            .animations
-            .geometry_ms
-            .map(std::time::Duration::from_millis)
-            .unwrap_or(config.animations.geometry_duration),
-        parsed
-            .animations
-            .close_ms
-            .map(std::time::Duration::from_millis)
-            .unwrap_or(config.animations.close_duration),
-        &mut warnings,
-    );
-    apply_animations(
-        &mut config.animations,
-        parsed.animations,
-        &animation_catalog,
-        &mut warnings,
-    );
-    config.animation_catalog = animation_catalog;
+    apply_animations(&mut config.animations, parsed.animations, &mut warnings);
 
     if let Some(name) = non_empty(parsed.theme.name) {
         config.theme.name = name;
@@ -1712,216 +1685,96 @@ mod file_tests {
         assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
     }
 
+    /// The flat overrides, end to end through the loader. A curve is a builtin name or CSS control
+    /// points, and each geometry knob belongs to one style.
     #[test]
-    fn pane_animation_recipes_resolve_after_builtins_in_byte_order() {
+    fn animation_overrides_resolve_from_flat_keys() {
         let loaded = load_config_from_text(
             r#"
             [animations]
-            pane_style = "soft-portal"
-            [animations.curves.soft]
-            bezier = [0.25, 0.1, 0.25, 1.0]
-            [animations.pane_animations.z-scan]
-            kind = "scan"
-            [animations.pane_animations.soft-portal]
-            kind = "portal"
-            open_ms = 280
-            close_ms = 150
-            curve = "soft"
-            origin = [0.2, 0.8]
+            pane_style = "portal"
+            geometry_ms = 180
+            close_ms = 110
+            curve = [0.16, 1.0, 0.3, 1.0]
+            close_curve = "ease_in_quad"
+            fade = false
+            scale_from = 0.5
+            portal_origin = [0.2, 0.8]
+            scan_direction = "bottom-right"
             "#,
             Path::new("test.toml"),
         );
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-        let names: Vec<_> = loaded
-            .config
-            .animation_catalog
-            .choices
-            .iter()
-            .map(|choice| choice.name.as_str())
-            .collect();
-        assert_eq!(
-            names,
-            ["scale", "slide", "portal", "scan", "soft-portal", "z-scan"]
-        );
-        assert_eq!(
-            loaded.config.animations.pane_style,
-            crate::layout::anim::PaneAnimationStyle::Portal
-        );
-        let selected = loaded.config.animations.selected_animation();
-        assert_eq!(
-            selected.open_duration,
-            std::time::Duration::from_millis(280)
-        );
-        assert_eq!(
-            selected.close_duration,
-            std::time::Duration::from_millis(150)
-        );
-        assert_eq!(selected.origin, [0.2, 0.8]);
+
+        let animations = loaded.config.animations;
+        let portal = animations.selected_animation();
+        assert_eq!(portal.kind, crate::layout::anim::PaneAnimationStyle::Portal);
+        assert_eq!(portal.open_duration, std::time::Duration::from_millis(180));
         assert!(matches!(
-            selected.open_curve,
+            portal.open_curve,
             tui_lipan::animation::Easing::CubicBezier(_)
         ));
-        assert!(matches!(
-            selected.close_curve,
-            tui_lipan::animation::Easing::CubicBezier(_)
-        ));
+        assert_eq!(portal.close_curve, tui_lipan::animation::Easing::EaseInQuad);
+        assert!(!portal.fade);
+        assert_eq!(portal.origin, [0.2, 0.8], "Portal reads portal_origin");
+
+        // The knobs for the other styles were parsed and are simply waiting for their style. This
+        // is the point of naming them per style rather than validating them against the selection.
+        let mut switched = animations;
+        switched.pane_style = crate::layout::anim::PaneAnimationStyle::Scale;
+        assert_eq!(switched.selected_animation().scale_from, 0.5);
+        switched.pane_style = crate::layout::anim::PaneAnimationStyle::Scan;
+        assert_eq!(
+            switched.selected_animation().scan_direction,
+            crate::layout::anim::ScanDirection::BottomRight
+        );
     }
 
+    /// Omitting `close_curve` runs the open curve backwards, so one key retunes both directions.
     #[test]
-    fn invalid_animation_entries_warn_without_poisoning_valid_entries() {
+    fn a_curve_without_a_closing_partner_reverses_itself() {
         let loaded = load_config_from_text(
-            r#"
-            [animations]
-            pane_style = "good"
-            [animations.curves.bad]
-            bezier = [-0.1, 0.0, 0.5, 1.0]
-            [animations.curves.too-high]
-            bezier = [0.1, 4.1, 0.8, -4.1]
-            [animations.curves.linear]
-            bezier = [0.1, 0.2, 0.8, 0.9]
-            [animations.curves.good]
-            bezier = [0.1, 0.2, 0.8, 0.9]
-            [animations.pane_animations.bad]
-            kind = "portal"
-            curve = "missing"
-            [animations.pane_animations.good]
-            kind = "scan"
-            curve = "good"
-            direction = "bottom-right"
-            [animations.pane_animations.scale]
-            kind = "scale"
-            "#,
+            "[animations]\ncurve = \"ease_out_quad\"\n",
             Path::new("test.toml"),
         );
-        assert!(
-            loaded
-                .config
-                .animation_catalog
-                .choices
-                .iter()
-                .any(|choice| choice.name == "good")
-        );
-        assert!(
-            !loaded
-                .config
-                .animation_catalog
-                .choices
-                .iter()
-                .any(|choice| choice.name == "bad")
-        );
-        assert!(
-            !loaded
-                .config
-                .animation_catalog
-                .choices
-                .iter()
-                .any(|choice| choice.name == "scale"
-                    && choice.spec.kind != crate::layout::anim::PaneAnimationStyle::Scale)
-        );
-        assert!(
-            loaded
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("unknown curve reference"))
-        );
-        assert!(
-            loaded
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("collides"))
-        );
-        assert!(
-            loaded
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("y coordinates must be in [-4, 4]"))
-        );
-        assert!(
-            loaded
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("builtin curve token"))
-        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let spec = loaded.config.animations.selected_animation();
+        assert_eq!(spec.open_curve, tui_lipan::animation::Easing::EaseOutQuad);
+        assert_eq!(spec.close_curve, tui_lipan::animation::Easing::EaseInQuad);
     }
 
     /// An out-of-range value is a mistake, not a request to be silently corrected: quietly moving
-    /// `1.1` to `1.0` would leave the author wondering why their config had no effect.
+    /// `1.1` to `1.0` would leave the author wondering why their config had no effect. Each key is
+    /// independent, so one bad value does not cost the others.
     #[test]
-    fn out_of_range_recipe_values_are_rejected_rather_than_clamped() {
+    fn out_of_range_overrides_are_rejected_rather_than_clamped() {
         let loaded = load_config_from_text(
             r#"
-            [animations.pane_animations.bad-scale]
-            kind = "scale"
+            [animations]
             scale_from = 1.1
-            [animations.pane_animations.bad-portal]
-            kind = "portal"
-            origin = [0.5, 2.0]
-            [animations.pane_animations.bad-scan]
-            kind = "scan"
-            direction = "sideways"
+            portal_origin = [0.5, 2.0]
+            scan_direction = "sideways"
+            curve = "springy"
+            close_curve = [0.2, 0.3, 0.4, 0.5]
             "#,
             Path::new("test.toml"),
         );
-        assert_eq!(
-            loaded.config.animation_catalog.choices.len(),
-            4,
-            "only the four builtins survive"
-        );
-        assert_eq!(loaded.warnings.len(), 3, "{:?}", loaded.warnings);
+        assert_eq!(loaded.warnings.len(), 4, "{:?}", loaded.warnings);
         assert!(
             !loaded
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("Clamped"))
         );
-    }
-
-    /// A key the selected kind cannot honour drops its recipe, and the warning has to say that -
-    /// naming only the key reads as though the rest of the recipe survived.
-    #[test]
-    fn a_wrong_kind_key_drops_its_recipe_and_the_warning_says_so() {
-        let loaded = load_config_from_text(
-            r#"
-            [animations.pane_animations.slide-with-origin]
-            kind = "slide"
-            origin = [0.5, 0.5]
-            "#,
-            Path::new("test.toml"),
-        );
-        assert_eq!(loaded.config.animation_catalog.choices.len(), 4);
-        assert_eq!(
-            loaded.warnings,
-            vec![
-                "Dropped animations.pane_animations.slide-with-origin: `origin` is not valid for kind `slide`"
-                    .to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn animation_fade_is_optional_except_for_slide() {
-        let loaded = load_config_from_text(
-            r#"
-            [animations]
-            pane_style = "no-fade"
-            [animations.pane_animations.no-fade]
-            kind = "portal"
-            fade = false
-            [animations.pane_animations.slide-fade]
-            kind = "slide"
-            fade = true
-            "#,
-            Path::new("test.toml"),
-        );
-        let selected = loaded.config.animations.selected_animation();
-        assert!(!selected.fade);
+        let overrides = loaded.config.animations.pane_overrides;
+        assert_eq!(overrides.scale_from, None);
+        assert_eq!(overrides.portal_origin, None);
+        assert_eq!(overrides.scan_direction, None);
+        assert_eq!(overrides.curve, None);
         assert!(
-            loaded
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("`fade` is not valid for kind `slide`"))
+            overrides.close_curve.is_some(),
+            "a valid key survives its neighbours being wrong"
         );
-        assert_eq!(loaded.config.animation_catalog.choices.len(), 5);
     }
 
     #[test]
@@ -2244,47 +2097,34 @@ mod file_tests {
         assert!(!nav.is_split_editor("less"));
     }
 
-    /// The whole chain, once per kind: TOML text, through the catalog and the selection, into the
-    /// snapshot a real pane takes when it starts opening, and out the other side as something the
-    /// renderer actually did. Each half of this is unit tested elsewhere; nothing else joins them,
-    /// so a recipe that parses perfectly and reaches no pixel would pass every other test.
+    /// The whole chain, once per style: TOML text, through the selection, into the snapshot a real
+    /// pane takes when it starts opening, and out the other side as something the renderer actually
+    /// did. Each half of this is unit tested elsewhere; nothing else joins them, so settings that
+    /// parse perfectly and reach no pixel would pass every other test.
     #[test]
-    fn a_recipe_from_config_text_reaches_the_rendered_pane() {
+    fn animation_settings_from_config_text_reach_the_rendered_pane() {
         use crate::AppRoot;
         use crate::layout::anim::PaneAnimationStyle;
         use tui_lipan::TestBackend;
         use tui_lipan::prelude::Rect;
 
-        const RECIPES: &str = r#"
-            geometry_ms = 200
-            [animations.curves.glide]
-            bezier = [0.16, 1.0, 0.3, 1.0]
-            [animations.pane_animations.tuned-scale]
-            kind = "scale"
-            open_ms = 400
-            curve = "glide"
+        // One config carrying every style's knob at once, which is how a real one looks.
+        const SETTINGS: &str = r#"
+            geometry_ms = 400
+            close_ms = 400
+            curve = [0.16, 1.0, 0.3, 1.0]
             scale_from = 0.5
-            [animations.pane_animations.tuned-slide]
-            kind = "slide"
-            open_ms = 400
-            curve = "glide"
-            [animations.pane_animations.tuned-portal]
-            kind = "portal"
-            open_ms = 400
-            origin = [0.0, 0.0]
-            [animations.pane_animations.tuned-scan]
-            kind = "scan"
-            open_ms = 400
-            direction = "bottom-right"
+            portal_origin = [0.0, 0.0]
+            scan_direction = "bottom-right"
         "#;
 
         for (name, kind) in [
-            ("tuned-scale", PaneAnimationStyle::Scale),
-            ("tuned-slide", PaneAnimationStyle::Slide),
-            ("tuned-portal", PaneAnimationStyle::Portal),
-            ("tuned-scan", PaneAnimationStyle::Scan),
+            ("scale", PaneAnimationStyle::Scale),
+            ("slide", PaneAnimationStyle::Slide),
+            ("portal", PaneAnimationStyle::Portal),
+            ("scan", PaneAnimationStyle::Scan),
         ] {
-            let text = format!("[animations]\npane_style = \"{name}\"\n{RECIPES}");
+            let text = format!("[animations]\npane_style = \"{name}\"\n{SETTINGS}");
             let loaded = load_config_from_text(&text, Path::new("test.toml"));
             assert!(loaded.warnings.is_empty(), "{name}: {:?}", loaded.warnings);
 
@@ -2299,7 +2139,6 @@ mod file_tests {
             let settled_terminal = {
                 let state = backend.state_mut();
                 state.config.animations = loaded.config.animations;
-                state.config.animation_catalog = loaded.config.animation_catalog.clone();
                 let pane = &mut state.current_mut().workspaces[0].panes[0];
                 pane.opening = false;
                 pane.opening_animation = None;
@@ -2325,7 +2164,7 @@ mod file_tests {
             assert_eq!(
                 snapshot.spec.open_duration,
                 std::time::Duration::from_millis(400),
-                "{name} lost its open_ms between the file and the pane"
+                "{name} lost its geometry_ms between the file and the pane"
             );
 
             backend.render();
@@ -2389,10 +2228,10 @@ mod file_tests {
 
     /// The chain in reverse. A close has one thing an open does not: the pane is already gone from
     /// the layout and only stays on screen because the retention timer says so - and that timer is
-    /// computed from the same recipe the effect is drawing with. If the two ever disagree, a pane
+    /// computed from the same spec the effect is drawing with. If the two ever disagree, a pane
     /// vanishes mid-animation, which is the failure this pins.
     #[test]
-    fn a_recipe_from_config_text_drives_a_close_through_to_the_prune() {
+    fn animation_settings_drive_a_close_through_to_the_prune() {
         use crate::AppRoot;
         use crate::state::Pane;
         use tui_lipan::TestBackend;
@@ -2401,12 +2240,8 @@ mod file_tests {
         let loaded = load_config_from_text(
             r#"
             [animations]
-            pane_style = "slow-scale"
+            pane_style = "scale"
             geometry_ms = 200
-            close_ms = 120
-            [animations.pane_animations.slow-scale]
-            kind = "scale"
-            open_ms = 400
             close_ms = 600
             "#,
             Path::new("test.toml"),
@@ -2424,7 +2259,6 @@ mod file_tests {
         let (id, generation) = {
             let state = backend.state_mut();
             state.config.animations = loaded.config.animations;
-            state.config.animation_catalog = loaded.config.animation_catalog.clone();
             // A second pane, so closing the first leaves a workspace to close it *into*.
             let mut neighbour = Pane::new(2, 100, FloatRect::default());
             neighbour.opening = false;
@@ -2461,7 +2295,7 @@ mod file_tests {
         assert_eq!(
             closing.spec.close_duration,
             std::time::Duration::from_millis(600),
-            "the close snapshot must carry the recipe's close_ms, not the builtin's close_ms"
+            "the close snapshot must carry the configured close_ms"
         );
         assert_eq!(
             crate::layout::anim::retained_pane_timeout_for_pane(
@@ -2507,7 +2341,7 @@ mod file_tests {
     /// and the two branches differ - a recipe keeps the timing its author wrote, a builtin takes
     /// Scale's own.
     #[test]
-    fn a_floating_pane_falls_back_from_slide_to_scale_and_keeps_recipe_timing() {
+    fn a_floating_pane_falls_back_from_slide_to_scale_and_picks_up_scales_settings() {
         use crate::AppRoot;
         use tui_lipan::TestBackend;
         use tui_lipan::prelude::Rect;
@@ -2515,59 +2349,41 @@ mod file_tests {
         let loaded = load_config_from_text(
             r#"
             [animations]
-            pane_style = "tuned-slide"
-            geometry_ms = 200
+            pane_style = "slide"
+            geometry_ms = 400
             close_ms = 120
-            [animations.pane_animations.tuned-slide]
-            kind = "slide"
-            open_ms = 400
-            close_ms = 500
+            scale_from = 0.4
             "#,
             Path::new("test.toml"),
         );
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         let animations = loaded.config.animations;
 
-        // Tiled, the selection is what the file said.
+        // Tiled, the selection is what the file said, and `scale_from` sits dormant.
         let tiled = animations.resolved_animation(false);
         assert_eq!(tiled.kind, crate::layout::anim::PaneAnimationStyle::Slide);
         assert_eq!(tiled.open_duration, std::time::Duration::from_millis(400));
+        assert_eq!(
+            tiled.close_duration,
+            std::time::Duration::from_millis(400),
+            "a tiled slide leaves on geometry_ms, in step with the tile taking its space"
+        );
 
-        // Floating, it is Scale - still on the recipe's clock, because the author asked for that
-        // motion and Scale can honour it.
+        // Floating, Slide is not something the pane can perform. It resolves to Scale *before*
+        // anything else is applied, so it picks up Scale's close timing and Scale's knob.
         let floating = animations.resolved_animation(true);
         assert_eq!(
             floating.kind,
             crate::layout::anim::PaneAnimationStyle::Scale
         );
         assert_eq!(
-            floating.open_duration,
-            std::time::Duration::from_millis(400)
-        );
-        assert_eq!(
             floating.close_duration,
-            std::time::Duration::from_millis(500)
-        );
-
-        // A builtin Slide has no authored timing to keep, so it takes builtin Scale's instead.
-        let mut builtin = crate::layout::anim::WindowAnimationConfig {
-            pane_style: crate::layout::anim::PaneAnimationStyle::Slide,
-            geometry_duration: std::time::Duration::from_millis(200),
-            close_duration: std::time::Duration::from_millis(120),
-            ..crate::layout::anim::WindowAnimationConfig::default()
-        };
-        builtin.pane_animation_id = crate::layout::anim::AnimationId::builtin(
-            crate::layout::anim::PaneAnimationStyle::Slide,
-        );
-        let builtin_floating = builtin.resolved_animation(true);
-        assert_eq!(
-            builtin_floating.kind,
-            crate::layout::anim::PaneAnimationStyle::Scale
-        );
-        assert_eq!(
-            builtin_floating.close_duration,
             std::time::Duration::from_millis(120),
-            "a floating builtin Slide closes on Scale's own close_ms"
+            "a floating fallback closes on Scale's own close_ms"
+        );
+        assert_eq!(
+            floating.scale_from, 0.4,
+            "and reads the knob belonging to the style it resolved to"
         );
 
         // And the fallback survives into the render: a floating pane opens inside a Scale clip
@@ -2583,7 +2399,6 @@ mod file_tests {
         let (id, generation) = {
             let state = backend.state_mut();
             state.config.animations = animations;
-            state.config.animation_catalog = loaded.config.animation_catalog.clone();
             state.begin_pane_event(crate::layout::anim::GeometryAnimation::Spawn);
             let animations = state.config.animations;
             let pane = &mut state.active_workspace_mut().panes[0];

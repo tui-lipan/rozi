@@ -398,19 +398,12 @@ impl State {
             animation,
             GeometryAnimation::Spawn | GeometryAnimation::Close
         ) {
-            let animations = self.config.animations;
-            let duration = if animations.selected_id().is_custom() {
-                let spec = animations.selected_animation();
-                if animation == GeometryAnimation::Close {
-                    spec.close_duration
-                } else {
-                    spec.open_duration
-                }
-            } else {
-                animations.geometry_duration
-            };
-            self.pane_event_animation =
-                Some(crate::layout::anim::PaneEventAnimationSnapshot { duration });
+            // The tiles rearranging around the pane move on `geometry_ms` in both directions - a
+            // Scale close is a short pop the fade rides on, not motion the neighbours have to keep
+            // step with. Captured here so a reload mid-transition cannot retime them either.
+            self.pane_event_animation = Some(crate::layout::anim::PaneEventAnimationSnapshot {
+                duration: self.config.animations.geometry_duration,
+            });
         }
     }
 

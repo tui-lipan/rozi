@@ -46,10 +46,7 @@ pub enum InstallDecision {
 
 /// Fixed probe script run over ssh. Emits machine-readable lines; never trusts output as argv.
 ///
-/// Assumes a POSIX shell on the remote, which is why a Windows host cannot be the remote end of
-/// `--remote` (its sshd defaults to `cmd.exe`). Supporting one needs a `cmd`/PowerShell probe
-/// variant here, `uname`-equivalent platform detection, and the `.exe`-aware install path noted on
-/// [`install_bytes`]. See the platform matrix in `docs/remote.md`.
+/// Used for POSIX remotes. Windows sshd uses the PowerShell counterpart below.
 const PROBE_SCRIPT: &str = r#"
 set -e
 printf 'platform=%s\n' "$(uname -s 2>/dev/null || echo unknown)"
@@ -85,6 +82,9 @@ try_bin "$HOME/.local/bin/rozi"
 try_bin "$HOME/.cargo/bin/rozi"
 try_bin /opt/homebrew/bin/rozi
 try_bin /usr/local/bin/rozi
+try_bin /usr/bin/rozi
+try_bin "$HOME/bin/rozi"
+try_bin "$HOME/.nix-profile/bin/rozi"
 printf 'probe_done=1\n'
 "#;
 
@@ -273,20 +273,6 @@ pub fn decide_install(
     }
 }
 
-/// Prompt on stdin for install confirmation. Returns true only for an explicit yes.
-pub fn prompt_install_confirmation(host: &str) -> io::Result<bool> {
-    let mut stderr = io::stderr().lock();
-    write!(
-        stderr,
-        "rozi: no compatible binary on {host}. Install to ~/.local/bin/rozi? [y/N] "
-    )?;
-    stderr.flush()?;
-    let mut line = String::new();
-    io::stdin().read_line(&mut line)?;
-    let answer = line.trim();
-    Ok(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes"))
-}
-
 /// Run the probe over a short-lived ssh command. A shell-safe `binary_path` short-circuits with our
 /// protocol range; unsafe configured tokens are rejected before any remote command is spawned.
 pub fn probe_remote_report(
@@ -450,46 +436,121 @@ pub fn probe_remote(target: &RemoteTarget, config: &RemoteConfig) -> Result<Prob
     Ok(select_compatible(&probe_remote_report(target, config)?))
 }
 
-/// Install policy entry point used before connect. Returns the remote binary path to invoke.
-///
-/// Call this before the TUI takes over the terminal when `install = "prompt"`, so the yes/no
-/// prompt still has stdin to read.
+/// Shell startup entry point. Non-interactive invocations never install implicitly.
 pub fn ensure_remote_binary(
     target: &RemoteTarget,
     config: &RemoteConfig,
     interactive: bool,
+) -> Result<String, String> {
+    ensure_with_confirmation(target, config, interactive, |report, ask| {
+        if !ask {
+            return Ok(true);
+        }
+        let host = ResolvedRemote::resolve(target, config).ssh_destination();
+        let destination = install_destination(report);
+        let mut stderr = io::stderr().lock();
+        write!(
+            stderr,
+            "rozi: install compatible Rozi on {host} at {destination}? [y/N] "
+        )
+        .map_err(|error| error.to_string())?;
+        stderr.flush().map_err(|error| error.to_string())?;
+        let mut answer = String::new();
+        io::stdin()
+            .read_line(&mut answer)
+            .map_err(|error| error.to_string())?;
+        Ok(matches!(
+            answer.trim().to_ascii_lowercase().as_str(),
+            "y" | "yes"
+        ))
+    })
+}
+
+/// Explicit TUI connections may install; background discovery uses the read-only resolver.
+pub(crate) fn ensure_remote_binary_in_ui(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    probe_epoch: Option<u64>,
+) -> Result<String, String> {
+    ensure_with_confirmation(target, config, true, |report, _ask| {
+        let host = ResolvedRemote::resolve(target, config).ssh_destination();
+        super::askpass::confirm_install(
+            format!(
+                "Host: {host}\nDestination: {}\nVersion: {}",
+                install_destination(report),
+                env!("CARGO_PKG_VERSION")
+            ),
+            probe_epoch,
+        )
+    })
+}
+
+fn install_destination(report: &ProbeReport) -> &'static str {
+    if normalize_os(&report.platform) == "windows" {
+        r"%USERPROFILE%\.local\bin\rozi.exe"
+    } else {
+        "$HOME/.local/bin/rozi"
+    }
+}
+
+fn ensure_with_confirmation(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    interactive: bool,
+    confirm: impl FnOnce(&ProbeReport, bool) -> Result<bool, String>,
 ) -> Result<String, String> {
     if let Ok(path) = std::env::var("ROZI_REMOTE_BINARY") {
         let local = Path::new(&path);
         if !local.is_file() {
             return Err(format!("ROZI_REMOTE_BINARY={path} is not a regular file"));
         }
-        // The override used to upload blindly, leaving a wrong-arch binary to fail as an opaque
-        // exec-format error on the remote. Now that the probe reports platform/machine, verify the
-        // override's own binary format against it — but only hard-fail on a *confirmed* mismatch,
-        // so an unrecognized format or an unknown remote platform still installs as before.
         let report = probe_remote_report(target, config)?;
         verify_override_targets_remote(local, &report)?;
         let family = family_from_os(&normalize_os(&report.platform));
-        return install_bytes(target, config, local, "ROZI_REMOTE_BINARY override", family);
+        let path = install_bytes(target, config, local, "ROZI_REMOTE_BINARY override", family)?;
+        return verify_installed(target, config, path);
     }
-
+    if let Some(path) = super::binary::cached(target, config) {
+        return Ok(path);
+    }
     let report = probe_remote_report(target, config)?;
-    let probe = select_compatible(&report);
-    let host = ResolvedRemote::resolve(target, config).host;
-    match decide_install(&probe, config.install, interactive) {
-        InstallDecision::Use { path } => Ok(path),
-        InstallDecision::Fail { message } => Err(message),
-        InstallDecision::Install => install_for_platforms(target, config, &report),
-        InstallDecision::Ask => {
-            let accepted = prompt_install_confirmation(&host).map_err(|err| err.to_string())?;
-            if !accepted {
-                return Err(format!(
-                    "install declined for {host}; set binary_path, install a compatible rozi, or pass install = \"always\""
-                ));
-            }
-            install_for_platforms(target, config, &report)
-        }
+    let decision = decide_install(&select_compatible(&report), config.install, interactive);
+    let ask = match decision {
+        InstallDecision::Use { path } => return super::binary::remember(target, config, path),
+        InstallDecision::Fail { message } => return Err(message),
+        InstallDecision::Install => false,
+        InstallDecision::Ask => true,
+    };
+    if !confirm(&report, ask)? {
+        return Err(format!(
+            "remote installation cancelled for {}",
+            target.display_label()
+        ));
+    }
+    let path = install_for_platforms(target, config, &report)?;
+    verify_installed(target, config, path)
+}
+
+fn verify_installed(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    path: String,
+) -> Result<String, String> {
+    super::binary::invalidate(target, config);
+    let report = probe_remote_report(target, config)?;
+    let installed = ProbeReport {
+        candidates: report
+            .candidates
+            .into_iter()
+            .filter(|candidate| candidate.path == path)
+            .collect(),
+        ..report
+    };
+    match select_compatible(&installed) {
+        ProbeResult::Found { path, .. } => super::binary::remember(target, config, path),
+        ProbeResult::Missing { detail } => Err(format!(
+            "installed Rozi could not run on the remote host: {detail}"
+        )),
     }
 }
 
@@ -523,7 +584,7 @@ fn install_for_platforms(
         )
     })?;
     let version = env!("CARGO_PKG_VERSION");
-    let local_artifact = download_release_binary(triple, version)?;
+    let (_download_dir, local_artifact) = download_release_binary(triple, version)?;
     install_bytes(
         target,
         config,
@@ -583,12 +644,13 @@ fn install_bytes_posix(
         r#"set -e
 dir="$HOME/{INSTALL_DIR}"
 final="$dir/{INSTALL_NAME}"
-tmp="$dir/.rozi.install.$$"
 mkdir -p "$dir"
-if [ -e "$final" ] && [ ! -f "$final" ]; then
+if [ -L "$final" ] || {{ [ -e "$final" ] && [ ! -f "$final" ]; }}; then
   printf 'refuse_non_regular=%s\n' "$final" >&2
   exit 1
 fi
+tmp=$(mktemp "$dir/.rozi.install.XXXXXX")
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
 cat > "$tmp"
 chmod 755 "$tmp"
 mv -f "$tmp" "$final"
@@ -597,35 +659,25 @@ printf 'installed=%s\n' "$final"
     );
     let mut command = ssh_base_command(resolved, config);
     append_ssh_destination(&mut command, resolved);
-    command.arg("sh").arg("-c").arg(script);
+    // OpenSSH joins argv with spaces before the remote shell parses it.
+    command
+        .arg("sh")
+        .arg("-c")
+        .arg(format!("'{}'", script.replace('\'', "'\"'\"'")));
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    let mut file = std::fs::File::open(local)
+        .map_err(|err| format!("cannot read {}: {err}", local.display()))?;
     let mut child = command
         .spawn()
         .map_err(|err| format!("failed to start remote install: {err}"))?;
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "remote install stdin missing".to_string())?;
-        let mut file = std::fs::File::open(local)
-            .map_err(|err| format!("cannot read {}: {err}", local.display()))?;
-        let mut buf = [0u8; 64 * 1024];
-        loop {
-            let n = file
-                .read(&mut buf)
-                .map_err(|err| format!("read local binary: {err}"))?;
-            if n == 0 {
-                break;
-            }
-            stdin
-                .write_all(&buf[..n])
-                .map_err(|err| format!("upload binary: {err}"))?;
-        }
-    }
+    let transfer = {
+        let mut stdin = child.stdin.take().expect("piped install stdin");
+        io::copy(&mut file, &mut stdin)
+    };
     let output = child
         .wait_with_output()
         .map_err(|err| format!("remote install failed: {err}"))?;
@@ -635,6 +687,7 @@ printf 'installed=%s\n' "$final"
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
+    transfer.map_err(|err| format!("upload binary: {err}"))?;
     parse_installed_path(&String::from_utf8_lossy(&output.stdout))
 }
 
@@ -785,7 +838,10 @@ fn base64_standard(bytes: &[u8]) -> String {
     out
 }
 
-fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, String> {
+fn download_release_binary(
+    triple: &str,
+    version: &str,
+) -> Result<(tempfile::TempDir, PathBuf), String> {
     let base = std::env::var("ROZI_RELEASE_BASE_URL").unwrap_or_else(|_| {
         format!("https://github.com/{RELEASE_REPO}/releases/download/v{version}")
     });
@@ -797,13 +853,11 @@ fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, Strin
     let archive_url = format!("{base}/{archive_name}");
     let sha_url = format!("{archive_url}.sha256");
 
-    let tmp = std::env::temp_dir().join(format!(
-        "rozi-remote-install-{}-{}",
-        std::process::id(),
-        triple
-    ));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).map_err(|err| format!("temp dir: {err}"))?;
+    let download_dir = tempfile::Builder::new()
+        .prefix("rozi-remote-install-")
+        .tempdir()
+        .map_err(|error| format!("temp dir: {error}"))?;
+    let tmp = download_dir.path();
     let archive_path = tmp.join(&archive_name);
     let sha_path = tmp.join(format!("{archive_name}.sha256"));
 
@@ -816,7 +870,8 @@ fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, Strin
     } else {
         "rozi"
     };
-    extract_release_binary(&archive_path, &archive_name, &tmp, bin_name)
+    let binary = extract_release_binary(&archive_path, &archive_name, tmp, bin_name)?;
+    Ok((download_dir, binary))
 }
 
 /// Extract `archive_path` into `tmp` and return the path to the contained binary.

@@ -5,6 +5,7 @@
 //! endpoint. The session server itself is unchanged.
 
 pub mod askpass;
+pub(crate) mod binary;
 mod bootstrap;
 mod connect;
 pub(crate) mod monitor;
@@ -14,6 +15,7 @@ mod target;
 
 pub use askpass::AskpassKind;
 pub use bootstrap::ensure_remote_binary;
+pub(crate) use bootstrap::ensure_remote_binary_in_ui;
 pub(crate) use bootstrap::{append_ssh_destination, ssh_base_command};
 #[allow(unused_imports)] // re-exported for callers/tests
 pub use connect::RemoteConnectError;

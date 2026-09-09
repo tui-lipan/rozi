@@ -311,6 +311,16 @@ pub(super) fn collaboration_kick(ctx: &mut Context<AppRoot>, index: usize) -> Up
 ///
 /// A prompt from a connection the user already refused is declined for them: `ssh` re-asks
 /// whatever the helper says, so showing it again would make Esc mean "ask me a fourth time".
+fn install_attempt_is_current(state: &crate::state::State, probe_epoch: Option<u64>) -> bool {
+    state.config.remote.install != crate::config::RemoteInstallPolicy::Never
+        && probe_epoch.is_none_or(|epoch| {
+            state.remote_picker.as_ref().is_some_and(|picker| {
+                picker.probe_epoch == epoch
+                    && matches!(picker.host_probe, crate::state::HostProbe::InFlight)
+            })
+        })
+}
+
 pub(super) fn askpass_prompt(
     ctx: &mut Context<AppRoot>,
     id: u64,
@@ -318,6 +328,16 @@ pub(super) fn askpass_prompt(
     kind: crate::session::remote::AskpassKind,
     prompt: String,
 ) -> Update {
+    if let crate::session::remote::AskpassKind::Install { probe_epoch } = kind {
+        if !install_attempt_is_current(&ctx.state, probe_epoch) {
+            crate::session::remote::askpass::cancel(id);
+            return Update::none();
+        }
+        if ctx.state.config.remote.install == crate::config::RemoteInstallPolicy::Always {
+            crate::session::remote::askpass::answer(id, "yes".into());
+            return Update::none();
+        }
+    }
     if ctx.state.askpass_history.refuses(&session) {
         crate::session::remote::askpass::cancel(id);
         return Update::none();
@@ -368,6 +388,12 @@ pub(super) fn submit_askpass(ctx: &mut Context<AppRoot>) -> Update {
     let Some(askpass) = ctx.state.askpass.as_ref() else {
         return Update::none();
     };
+    if let crate::session::remote::AskpassKind::Install { probe_epoch } = askpass.current.kind
+        && !install_attempt_is_current(&ctx.state, probe_epoch)
+    {
+        crate::session::remote::askpass::cancel(askpass.current.id);
+        return close_or_advance_askpass(ctx);
+    }
     let session = askpass.current.session.clone();
     let (id, prompt) = (askpass.current.id, askpass.current.prompt.clone());
     let answer = askpass.input.text().to_string();

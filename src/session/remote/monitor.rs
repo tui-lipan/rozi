@@ -175,14 +175,13 @@ fn connect(
 ) -> io::Result<(IpcConnection, std::thread::JoinHandle<String>)> {
     super::validate_remote_target(target).map_err(io::Error::other)?;
     let resolved = ResolvedRemote::resolve(target, config);
-    let binary = resolved.binary_path.as_deref().unwrap_or("rozi");
-    super::validate_remote_executable_token(binary).map_err(io::Error::other)?;
     let mut config = config.clone();
     config.batch_mode = true;
+    let binary = super::binary::resolve(target, &config).map_err(io::Error::other)?;
     let mut command = super::ssh_base_command(&resolved, &config);
     super::append_ssh_destination(&mut command, &resolved);
     command
-        .args([binary, "sessions", "watch"])
+        .args([binary.as_str(), "sessions", "watch"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -271,6 +270,7 @@ fn watch(
         return Ok(());
     }
     if let Err(error) = handshake(&mut connection) {
+        super::binary::invalidate(target, config);
         let _ = connection.shutdown(std::net::Shutdown::Both);
         let detail = stderr.join().unwrap_or_default();
         return Err(handshake_error(error, &detail));

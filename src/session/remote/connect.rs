@@ -52,9 +52,8 @@ impl From<String> for RemoteConnectError {
 
 /// Spawn ssh to the resolved remote and return a protocol-ready pipe plus the preamble.
 ///
-/// `ensure_remote_binary` should already have been run before the TUI starts when install policy
-/// is `prompt`; this call re-checks and will not prompt again if a compatible
-/// binary is already present.
+/// Uses the shared executable resolver. Missing binaries can be installed through the TUI's
+/// confirmation broker; without a UI this remains a non-interactive, read-only check.
 pub fn connect_remote(
     target: &RemoteTarget,
     session: &str,
@@ -73,10 +72,12 @@ pub fn connect_remote(
         ));
     }
 
-    // Re-probe/install only when needed. Prompting here is a last resort (caller should have
-    // prompted pre-TUI); interactive=false avoids a silent install on the attach thread.
-    let remote_bin =
-        super::ensure_remote_binary(target, config, false).map_err(RemoteConnectError::Message)?;
+    let remote_bin = if super::askpass::may_prompt() {
+        super::ensure_remote_binary_in_ui(target, config, None)
+    } else {
+        super::ensure_remote_binary(target, config, false)
+    }
+    .map_err(RemoteConnectError::Message)?;
     validate_remote_executable_token(&remote_bin).map_err(RemoteConnectError::Message)?;
 
     // Keepalive comes from `ssh_base_command` now: with connection multiplexing the master decides
@@ -102,6 +103,7 @@ pub fn connect_remote(
     let preamble = match preamble::read_preamble(&mut conn) {
         Ok(preamble) => preamble,
         Err(err) => {
+            super::binary::invalidate(target, config);
             // Kill the proxy before joining stderr. The collector reaches EOF only after the child
             // exits, while the child is owned by this connection.
             let _ = conn.shutdown(std::net::Shutdown::Both);
@@ -166,14 +168,7 @@ pub fn kill_remote_session(
     }
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
-    let remote_bin = resolved
-        .binary_path
-        .clone()
-        .or_else(|| {
-            // Prefer a previously ensured path when present on PATH remotely.
-            Some("rozi".to_string())
-        })
-        .unwrap_or_else(|| "rozi".to_string());
+    let remote_bin = super::binary::resolve(target, config)?;
     validate_remote_executable_token(&remote_bin)?;
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
@@ -186,6 +181,7 @@ pub fn kill_remote_session(
         .output()
         .map_err(|err| format!("remote sessions kill ssh failed: {err}"))?;
     if !output.status.success() {
+        super::binary::invalidate(target, config);
         return Err(super::sessions_command_failure(
             "kill",
             &String::from_utf8_lossy(&output.stderr),

@@ -366,3 +366,55 @@ fn channel_sum(color: tui_lipan::prelude::Color) -> u32 {
         .expect("a captured cell reports a concrete color");
     u32::from(r) + u32::from(g) + u32::from(b)
 }
+
+#[test]
+fn remote_install_reuses_confirmation_and_echoes_the_answer() {
+    on_large_stack(|| {
+        let mut backend = askpass_backend(
+            AskpassKind::Install { probe_epoch: None },
+            "Host: dev@workbox\nDestination: $HOME/.local/bin/rozi\nVersion: 0.0.17",
+        );
+        type_text(&mut backend, "yes");
+        let frame = rendered_lines(&mut backend);
+        assert!(frame.contains("Install Rozi on remote"), "{frame}");
+        assert!(frame.contains("dev@workbox"), "{frame}");
+        assert!(frame.contains("$HOME/.local/bin/rozi"), "{frame}");
+        assert!(frame.contains("yes"), "{frame}");
+        backend.dispatch(rozi::Msg::CancelRemoteAskpass).unwrap();
+        assert!(backend.state().askpass.is_none());
+    });
+}
+
+#[test]
+fn remote_install_policy_and_abandoned_probes_do_not_open_a_modal() {
+    on_large_stack(|| {
+        for policy in [
+            rozi::config::RemoteInstallPolicy::Always,
+            rozi::config::RemoteInstallPolicy::Never,
+        ] {
+            let mut backend = picker_backend();
+            backend.state_mut().config.remote.install = policy;
+            backend
+                .dispatch(rozi::Msg::RemoteAskpassPrompt {
+                    id: 100,
+                    session: "install-policy".into(),
+                    kind: AskpassKind::Install { probe_epoch: None },
+                    prompt: "Host: workbox".into(),
+                })
+                .unwrap();
+            assert!(backend.state().askpass.is_none());
+        }
+        let mut backend = picker_backend();
+        backend
+            .dispatch(rozi::Msg::RemoteAskpassPrompt {
+                id: 101,
+                session: "abandoned-install".into(),
+                kind: AskpassKind::Install {
+                    probe_epoch: Some(u64::MAX),
+                },
+                prompt: "Host: abandoned".into(),
+            })
+            .unwrap();
+        assert!(backend.state().askpass.is_none());
+    });
+}

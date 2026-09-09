@@ -510,7 +510,9 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
     let inline_title = secret
         && !question.contains('\n')
         && question.chars().count() <= ASKPASS_TITLE_QUESTION_MAX;
-    let title = if inline_title {
+    let title = if matches!(askpass.current.kind, crate::session::remote::AskpassKind::Install { .. }) {
+        "Install Rozi on remote".to_string()
+    } else if inline_title {
         format!("SSH · {question}")
     } else if secret {
         "SSH authentication".to_string()

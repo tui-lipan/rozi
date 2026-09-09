@@ -141,9 +141,22 @@ binary_path = "/opt/rozi/bin/rozi"
 
 ## Choose an install policy
 
-Before connecting, Rozi checks for a compatible remote binary.
+Before connecting, Rozi checks for a compatible remote binary. This works both when opening a
+host inside Rozi and when starting with `rozi --remote <host>`. In the TUI, the existing
+confirmation modal shows the host, install destination, and version. Type `yes` to install, or
+press Escape to cancel. The connection continues after installation.
 
-| `[remote] install` | Interactive terminal | Non-interactive run |
+Discovery checks PATH and common install locations, including `~/.local/bin`, `~/.cargo/bin`,
+`~/bin`, `~/.nix-profile/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, and `/usr/bin` on POSIX hosts.
+Windows hosts are checked on PATH and under `%USERPROFILE%\.local\bin` and
+`%USERPROFILE%\.cargo\bin`. Session listing, attachment, monitoring, and session termination
+use the discovered path, so a non-interactive SSH PATH does not need to include these directories.
+Use `binary_path` to select an installation elsewhere.
+
+Background discovery and monitoring never install software. Installation is part of connecting to
+a host or session. Resolved paths are cached briefly and rechecked after a failed remote command.
+
+| `[remote] install` | TUI connection or interactive terminal | Non-interactive run |
 | --- | --- | --- |
 | `prompt` | Ask before installing. This is the default. | Fail without changing the host. |
 | `always` | Install when needed without asking. | Fail without changing the host. |
@@ -154,6 +167,7 @@ On Linux and macOS, automatic installation writes `$HOME/.local/bin/rozi`. On Wi
 
 When client and server platforms match, Rozi can copy the running executable. For a different
 platform, it downloads the matching release archive, verifies its checksum, and uploads the binary.
+Rozi checks that the uploaded binary runs and speaks a compatible protocol before continuing.
 Set `ROZI_REMOTE_BINARY` to upload a specific local binary, or `ROZI_RELEASE_BASE_URL` to use a
 release mirror.
 

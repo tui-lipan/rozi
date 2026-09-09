@@ -70,6 +70,8 @@ pub enum AskpassKind {
     /// A yes/no question — host-key verification, agent key confirmation. Shown in clear: the
     /// fingerprint the user is checking is the whole point of the question.
     Confirm,
+    /// Installation requested by a connection. A picker epoch rejects abandoned attempts.
+    Install { probe_epoch: Option<u64> },
 }
 
 impl AskpassKind {
@@ -141,6 +143,27 @@ fn bind() -> io::Result<(Broker, IpcListener)> {
 /// Callers use it to decide how long a wait might legitimately include a person typing.
 pub(crate) fn may_prompt() -> bool {
     BROKER.get().is_some()
+}
+
+/// Reuse the UI's queued confirmation prompt without reading the TUI's stdin.
+pub(crate) fn confirm_install(prompt: String, probe_epoch: Option<u64>) -> Result<bool, String> {
+    let broker = BROKER
+        .get()
+        .ok_or("remote installation requires an interactive UI")?;
+    let helper = Helper {
+        endpoint: broker.endpoint.clone(),
+        token: broker.token.clone(),
+        session: format!("install-{}", fresh_token()),
+        kind: AskpassKind::Install { probe_epoch },
+        prompt,
+    };
+    match helper.request().map_err(|error| error.to_string())? {
+        AskpassReply::Answer { text } => Ok(matches!(
+            text.trim().to_ascii_lowercase().as_str(),
+            "y" | "yes"
+        )),
+        AskpassReply::Cancel => Ok(false),
+    }
 }
 
 /// Retire the endpoint on the way out, so a quit does not leave a socket behind in the runtime

@@ -325,7 +325,7 @@ fn probe_session_endpoint(
     })
 }
 
-/// Discover sessions from a local runtime dir or a remote host (one ssh round-trip).
+/// Discover sessions locally or via the shared read-only remote executable resolver.
 pub fn discover_sessions_from(
     source: &SessionSource,
     config: &crate::config::RemoteConfig,
@@ -387,7 +387,12 @@ pub fn probe_failure_reason(error: &str) -> &'static str {
         "ssh not installed here"
     // The remote shell could not run the binary. Checked after the ssh-level failures because
     // "no such file or directory" is also how a local spawn failure reads.
-    } else if says("command not found")
+    } else if says("remote installation cancelled") {
+        "Install cancelled"
+    } else if says("protocol range") || says("too old for --remote") {
+        "Rozi update needed"
+    } else if says("no rozi binary found")
+        || says("command not found")
         || says("is not recognized")
         || says("no such file or directory")
     {
@@ -412,10 +417,8 @@ fn discover_remote_sessions(
             "ssh was not found on PATH",
         ));
     }
-    let remote_bin = resolved
-        .binary_path
-        .clone()
-        .unwrap_or_else(|| "rozi".to_string());
+    let remote_bin =
+        crate::session::remote::binary::resolve(target, config).map_err(std::io::Error::other)?;
     crate::session::remote::validate_remote_executable_token(&remote_bin)
         .map_err(std::io::Error::other)?;
     // `ssh_base_command` applies `ConnectTimeout`: an unreachable configured host must fail fast
@@ -430,6 +433,7 @@ fn discover_remote_sessions(
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = command.output()?;
     if !output.status.success() {
+        crate::session::remote::binary::invalidate(target, config);
         return Err(std::io::Error::other(
             crate::session::remote::sessions_command_failure(
                 "list",

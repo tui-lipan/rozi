@@ -55,8 +55,15 @@ fn host_discovery_command(
     crate::ops::session::discovery::note_remote_probe_request(&target);
     Command::spawn(move |link: CommandLink<crate::Msg>| {
         std::thread::spawn(move || {
-            let rows = crate::ops::session::discover_remote_host_sessions(&target, &remote_config)
-                .map_err(|error| error.to_string());
+            let rows = crate::session::remote::ensure_remote_binary_in_ui(
+                &target,
+                &remote_config,
+                Some(epoch),
+            )
+            .and_then(|_| {
+                crate::ops::session::discover_remote_host_sessions(&target, &remote_config)
+                    .map_err(|error| error.to_string())
+            });
             link.send(crate::Msg::RemoteHostSessionsDiscovered {
                 epoch,
                 target,

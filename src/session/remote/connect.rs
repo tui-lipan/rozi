@@ -194,7 +194,7 @@ pub fn kill_remote_session(
     Ok(())
 }
 
-fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHandle<String> {
+pub(super) fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHandle<String> {
     thread::spawn(move || {
         let mut buf = String::new();
         let mut bytes = [0u8; 4096];

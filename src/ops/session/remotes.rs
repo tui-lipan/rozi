@@ -18,11 +18,8 @@ fn cached_rows_for_target(
             ephemeral: session.ephemeral,
             host: Some(label.clone()),
             remote_target: Some(target.clone()),
-            status: crate::session::discovery::DiscoveredSessionStatus::Running {
+            status: crate::session::discovery::DiscoveredSessionStatus::LastSeen {
                 panes: session.panes,
-                clients: 0,
-                has_layout: false,
-                created_from_profile: None,
             },
         })
         .collect()
@@ -32,7 +29,15 @@ fn immediate_rows_for_target(
     state: &crate::state::State,
     target: &RemoteTarget,
 ) -> Vec<crate::session::discovery::DiscoveredSession> {
-    let mut rows = cached_rows_for_target(&state.host_session_cache, target);
+    let mut rows = state
+        .host_live_sessions
+        .iter()
+        .filter(|row| row.remote_target.as_ref() == Some(target))
+        .cloned()
+        .collect::<Vec<_>>();
+    for cached in cached_rows_for_target(&state.host_session_cache, target) {
+        crate::ops::session::discovery::merge_current_session_row(&mut rows, cached);
+    }
     for attached in crate::ops::session::attached_session_rows(state)
         .into_iter()
         .filter(|session| session.remote_target.as_ref() == Some(target))
@@ -384,6 +389,9 @@ fn connect_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
     if probe_in_flight(&ctx.state) {
         return Update::full();
     }
+    ctx.state
+        .host_monitors
+        .retain(|monitor| monitor.target != target);
     let epoch = ctx.state.mint_remote_probe_epoch();
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
         picker.selected_host = Some(target.clone());

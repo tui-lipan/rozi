@@ -1366,6 +1366,14 @@ pub fn run() -> Result<()> {
         }
         cli::ParsedCli::RemoteServe { name } => return cli::run_remote_serve_cli(&name),
         cli::ParsedCli::Sessions(command) => match command {
+            cli::SessionsCommand::Watch { config_path } => {
+                apply_config_path(config_path);
+                return crate::session::remote::monitor::serve(
+                    &mut std::io::stdin().lock(),
+                    &mut std::io::stdout().lock(),
+                )
+                .map_err(Into::into);
+            }
             cli::SessionsCommand::List {
                 format,
                 remote,

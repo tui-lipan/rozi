@@ -24,6 +24,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "list [--format text|json] [--remote <HOST>]",
                 "List connectable sessions",
             ),
+            row("watch", "Serve the host metadata protocol over stdio"),
             row(
                 "attach <NAME> [--read-only]",
                 "Attach to a running session, never create",
@@ -66,6 +67,14 @@ pub(super) fn parse(
 
     match iter.next().as_deref() {
         None => Ok(Some(ParsedCli::SessionsHelp)),
+        Some("watch") => {
+            if cli.remote.is_some() || iter.next().is_some() {
+                return Err("sessions watch accepts no arguments or remote target".into());
+            }
+            Ok(Some(ParsedCli::Sessions(SessionsCommand::Watch {
+                config_path: cli.config_path.clone(),
+            })))
+        }
         Some("list") => parse_list(iter, cli.remote.clone(), cli.config_path.clone()).map(Some),
         Some("attach") => {
             set_launch_target(iter, cli, SessionCommand::Attach, "sessions attach")?;
@@ -77,7 +86,7 @@ pub(super) fn parse(
         }
         Some("kill") => parse_kill(iter, cli.remote.clone(), cli.config_path.clone()).map(Some),
         Some(other) => Err(format!(
-            "unknown sessions command `{other}` (expected list, attach, new, or kill)"
+            "unknown sessions command `{other}` (expected list, watch, attach, new, or kill)"
         )),
     }
 }
@@ -213,7 +222,7 @@ mod tests {
         ));
         assert_eq!(
             parse_cli_args(vec!["sessions".into(), "lst".into()]).expect_err("must reject"),
-            "unknown sessions command `lst` (expected list, attach, new, or kill)"
+            "unknown sessions command `lst` (expected list, watch, attach, new, or kill)"
         );
     }
 

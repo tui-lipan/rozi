@@ -218,10 +218,36 @@ If a retained SSH connection drops, Rozi marks it offline. Selecting that attach
 reconnect in place. The remote named server keeps running independently of the SSH connection.
 Temporary servers still follow their no-client recovery timer.
 
+## Connected-host monitoring
+
+Connecting a host starts a separate metadata channel. It stays active when you close the
+Sessions sidebar or switch to another machine. Saved hosts are never contacted just because
+Rozi starts or a picker opens.
+
+The channel checks health and refreshes the host's session list every two seconds. It does not
+attach to sessions, request terminal frames, or acquire layout control. Each host reconnects
+independently, with delays from 500 ms to 30 seconds. A failed host keeps its last successful
+session list, marked as last seen. Unchanged snapshots do not trigger UI updates or cache writes.
+
+Background reconnects use noninteractive SSH. If authentication or host-key approval is needed,
+select the host and reconnect with Enter or Ctrl+R. The existing SSH modal handles the prompt
+when `[remote] batch_mode = false`.
+
+Host monitoring uses `rozi sessions watch`, a framed stdio protocol intended for Rozi clients.
+Its protocol range and `session-list` / `health-check` capabilities are negotiated independently
+of the terminal attachment protocol. Unknown capabilities are ignored. A missing required
+capability leaves a host error until you update remote Rozi and reconnect. Updating the metadata
+helper does not restart existing session servers. Terminal attachments still require the session
+protocol compatibility described above.
+
+This channel currently carries session metadata and health. Agent summaries and notifications
+from sessions without an attachment are not yet included.
+
 ## Disconnect from a host
 
 `Ctrl+W` detaches one session attachment. `Ctrl+X` disconnects this client from the whole host:
 
+- the metadata channel and its reconnect loop stop;
 - every attachment to that host closes, current and background;
 - named remote servers keep running, whichever client started them;
 - a temporary session this client created there and you never worked in is closed, because

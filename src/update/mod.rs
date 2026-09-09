@@ -1,4 +1,5 @@
 mod attach;
+mod hosts;
 pub(crate) use attach::spawn_state_panes_on_session;
 mod overlays;
 mod panes;
@@ -51,6 +52,11 @@ fn post_update_kind(msg: &Msg) -> PostUpdateKind {
 
 fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
     match msg {
+        Msg::HostMetadata {
+            target,
+            generation,
+            rows,
+        } => hosts::apply(ctx, target, generation, rows),
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::FrameworkFocusEnteredPane(pane) => {
             crate::input::routing::framework_focus_entered_pane(ctx, pane)
@@ -841,6 +847,7 @@ fn post_update_sync(
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,
     // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.
     sidebar::ensure_sessions_refresh_armed(ctx);
+    hosts::sync(ctx);
 
     if crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
         let command = update.command.take();

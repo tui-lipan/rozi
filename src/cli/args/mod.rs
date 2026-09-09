@@ -120,6 +120,9 @@ pub(crate) enum ParsedCli {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SessionsCommand {
+    Watch {
+        config_path: Option<String>,
+    },
     List {
         format: ListFormat,
         remote: Option<String>,

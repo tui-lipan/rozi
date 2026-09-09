@@ -63,29 +63,10 @@ pub(crate) fn refresh_sessions(ctx: &mut Context<AppRoot>, epoch: u64) -> Update
     let current_name = ctx.state.local_current_session_name().map(str::to_string);
     let attached = crate::ops::session::attached_session_rows(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
-    // On-demand: only *connected* hosts are contacted over ssh — those the user connected, or that
-    // already hold an attachment. `Idle` is the disconnected state and is never probed, so the sweep
-    // touches nothing the user has not asked for.
-    //
-    // A failed probe keeps being retried, because connecting is an intent the user expressed and a
-    // failure is just this sweep's outcome. Dropping a failed host from the sweep meant one blip —
-    // a laptop lid, a VPN reconnect — demoted a connected host to Offline permanently, with its
-    // sessions gone until it was connected by hand again.
-    let probe_targets: Vec<crate::session::remote::RemoteTarget> = ctx
-        .state
-        .hosts
-        .iter()
-        .filter(|host| {
-            !matches!(host.probe, crate::state::HostProbe::Idle)
-                || ctx
-                    .state
-                    .background
-                    .values()
-                    .chain(std::iter::once(ctx.state.current()))
-                    .any(|attachment| attachment.remote_target.as_ref() == Some(&host.target))
-        })
-        .map(|host| host.target.clone())
-        .collect();
+    // Host workers own remote I/O independently of sidebar visibility.
+    let probe_targets = Vec::new();
+    let mut attached = attached;
+    attached.extend(ctx.state.host_live_sessions.clone());
     Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
         let (rows, host_status) = crate::ops::session::discover_sidebar_sessions(
             current_name.as_deref(),
@@ -112,6 +93,27 @@ pub(crate) fn sessions_discovered(
     }
     if let Ok(rows) = rows {
         ctx.state.sidebar.sessions = rows;
+        // A local sweep may have started before newer host metadata arrived.
+        ctx.state
+            .sidebar
+            .sessions
+            .retain(|row| row.remote_target.is_none());
+        for row in crate::ops::session::attached_session_rows(&ctx.state)
+            .into_iter()
+            .chain(ctx.state.host_live_sessions.clone())
+        {
+            crate::ops::session::discovery::merge_current_session_row(
+                &mut ctx.state.sidebar.sessions,
+                row,
+            );
+        }
+        crate::ops::session::discovery::push_cached_known_remote_rows(
+            &mut ctx.state.sidebar.sessions,
+            &ctx.state.hosts,
+            &ctx.state.host_session_cache,
+            &[],
+        );
+        crate::ops::session::discovery::sort_session_rows(&mut ctx.state.sidebar.sessions);
     }
     crate::ops::session::seed_host_registry(ctx);
     // Apply fresh probe outcomes after the reseed so they win over the carried-over state: a host
@@ -177,6 +179,9 @@ pub(crate) fn connect_host(
         return Update::none();
     }
     entry.probe = crate::state::HostProbe::InFlight;
+    ctx.state
+        .host_monitors
+        .retain(|monitor| monitor.target != target);
     ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
     Update::full()
 }

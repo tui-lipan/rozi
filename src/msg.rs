@@ -243,6 +243,11 @@ pub enum Msg {
         epoch: u64,
         rows: Vec<crate::session::discovery::DiscoveredSession>,
     },
+    HostMetadata {
+        target: crate::session::remote::RemoteTarget,
+        generation: u64,
+        rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
+    },
     CloseSessionPicker,
     /// Off-thread auto-refresh results for the open session picker, tagged with the opening's epoch.
     SessionsDiscovered {

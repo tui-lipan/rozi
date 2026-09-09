@@ -31,6 +31,9 @@ pub(crate) fn local_picker_rows(ctx: &Context<AppRoot>) -> Vec<DiscoveredSession
     let mut rows =
         crate::session::discovery::discover_selectable_sessions(current_name).unwrap_or_default();
     push_attached_session_rows(ctx, &mut rows);
+    for row in &ctx.state.host_live_sessions {
+        merge_current_session_row(&mut rows, row.clone());
+    }
     rows
 }
 
@@ -84,6 +87,9 @@ pub(crate) fn apply_discovered_sessions(
     // merges by identity, so whichever row lands first is the one that survives. Cached rows are
     // marked "last seen" now, and a session on screen must never wear that.
     push_attached_session_rows(ctx, &mut rows);
+    for row in &ctx.state.host_live_sessions {
+        merge_current_session_row(&mut rows, row.clone());
+    }
     // A failed (or not-yet-run) host probe keeps its last successful snapshot visible. Successful
     // hosts use only the fresh rows above, including an empty result which clears stale sessions.
     push_cached_known_remote_rows(

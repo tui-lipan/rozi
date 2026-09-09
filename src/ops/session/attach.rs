@@ -894,9 +894,8 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<AppRoot>) -> Update {
 /// never worked in — nothing can reattach to it by name, so leaving it behind on a host we are
 /// walking away from would only litter the far machine.
 ///
-/// The client's shared SSH connection to the host goes too. Keeping the master alive for its last
-/// minute after an explicit disconnect would leave an authenticated channel open to a machine the
-/// user just said they were done with.
+/// The shared SSH master remains available to other clients. Only this client's metadata channel
+/// and session attachments close.
 ///
 /// The returned [`Update`] carries any picker-watch command that follows. Callers must return it;
 /// dropping it strands the client without a way to rediscover sessions.
@@ -904,6 +903,12 @@ pub(crate) fn disconnect_host(
     ctx: &mut Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> Update {
+    ctx.state
+        .host_monitors
+        .retain(|monitor| &monitor.target != target);
+    ctx.state
+        .host_live_sessions
+        .retain(|row| row.remote_target.as_ref() != Some(target));
     // Back to `Idle`, which is what stops the sweep probing it — done here rather than at each call
     // site so disconnecting from the picker stops the ssh traffic the same way the sidebar does.
     if let Some(entry) = ctx.state.hosts.get_mut(target) {

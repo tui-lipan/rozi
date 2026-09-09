@@ -1,8 +1,9 @@
 # Agent definitions
 
 Rozi detects coding-agent CLIs in panes and shows their state in the sidebar's
-[Activity tab](sidebar.md#activity). Add a `[[agents]]` entry when Rozi does not recognize a tool,
-or override a built-in entry when its screen rules do not match the installed version.
+[Activity tab](sidebar.md#activity) and in the [Agents view](sessions.md#go-to-an-agent), which adds
+the agents on every connected host. Add a `[[agents]]` entry when Rozi does not recognize a tool, or
+override a built-in entry when its screen rules do not match the installed version.
 
 Start with a process match:
 

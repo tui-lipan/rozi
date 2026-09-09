@@ -269,6 +269,13 @@ pub enum Msg {
     SessionPickerDisconnectHost,
     SessionPickerRemoteHosts,
     SessionPickerNameCurrent,
+    CloseAgentPicker,
+    AgentPickerQueryChanged(String),
+    /// Move the Agents view's cursor. Carries the row's location rather than its index: the list is
+    /// rebuilt from live panes and host-monitor polls that land on their own schedule, so an index
+    /// can point at a different agent by the time it is used.
+    AgentPickerSelect(crate::state::AgentLocation),
+    AgentPickerActivate(crate::state::AgentLocation),
     CloseRemotePicker,
     RemotePickerHostQueryChanged(String),
     RemotePickerHostSelect(crate::session::remote::RemoteTarget),

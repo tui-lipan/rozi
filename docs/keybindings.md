@@ -75,6 +75,7 @@ See [Layouts and panes](layouts-and-panes.md) for layout behavior. `Shift+N` ren
 | Profiles | `o` |
 | Capture session as profile | `Shift+O` |
 | Sessions | `s` |
+| Agents | `a` |
 | Rename or name current session | `Shift+S` |
 | Take or request layout control | `g` |
 | Grant layout control | `e` |
@@ -269,6 +270,11 @@ The host editor moves between its lines with `Tab` and `Shift+Tab`. The host-sco
 `Enter` to attach, `Ctrl+N` for a named session, `Ctrl+T` for a temporary session, `Ctrl+K` twice to
 kill, `Ctrl+E` twice to restart, `Ctrl+W` to disconnect a retained attachment, and `Ctrl+X` to
 disconnect from that host. `Esc` returns from host sessions to Remote hosts, then to Sessions.
+
+The Agents view lists every agent Rozi knows about, on this machine and on every connected host,
+with the ones wanting attention first. `Enter` goes to the highlighted one: a focus change when it
+is in the session already on screen, and an attach followed by a focus change when it is not. See
+[Go to an agent](sessions.md#go-to-an-agent).
 
 The profile picker uses `Enter` for the same-name session, `Ctrl+O` to launch under another name,
 `Ctrl+N` to capture, `Ctrl+R` twice to replace the current session, `Ctrl+F` to toggle the default,

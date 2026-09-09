@@ -450,6 +450,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::OpenAgentPicker,
+        label: "Agents…",
+        category: "Session",
+        default_keys: &["a"],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::OpenCollaborators,
         label: "Manage collaborators…",
         category: "Collaboration",

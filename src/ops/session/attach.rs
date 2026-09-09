@@ -253,6 +253,7 @@ pub(crate) fn dismiss_session_pickers(ctx: &mut Context<AppRoot>) {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     crate::ops::session::remotes::dismiss_remote_picker(&mut ctx.state);
+    ctx.state.agent_picker = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
 }

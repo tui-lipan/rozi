@@ -88,7 +88,7 @@ pub(crate) fn picker_circle_spinner_gutter(style: Style) -> ListItemGutter {
     ListItemGutter::spinner(picker_circle_spinner(style)).leading(1)
 }
 
-fn picker_marker_gutter(glyph: &str, style: Style) -> ListItemGutter {
+pub(crate) fn picker_marker_gutter(glyph: &str, style: Style) -> ListItemGutter {
     ListItemGutter::from_spans([Span::new(format!(" {glyph}")).style(style)])
 }
 

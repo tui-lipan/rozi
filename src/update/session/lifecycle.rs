@@ -85,6 +85,8 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
     let parked_epoch = pending.parked_epoch;
     ctx.state.current_mut().pending_session_attach = None;
     crate::ops::session::clear_pending_session_action(ctx, Some(&message));
+    // The session this was aiming at never arrived, so the pane inside it never will either.
+    ctx.state.pending_agent_jump = None;
     ctx.state.current_mut().connection = if was_remote {
         crate::state::ConnectionState::Unreachable
     } else {
@@ -310,6 +312,10 @@ pub(crate) fn attached(
         confirm_profile_origin(ctx, origin);
     }
     crate::update::sidebar::request_sessions_refresh(ctx);
+    // The panes are installed by here, so a jump from the global Agents view can finally land on
+    // the one it was aiming at. Before the follow prompt, which takes the keyboard for itself:
+    // choosing to follow or not is the last word on where focus sits.
+    crate::ops::agents::land_on_pending_agent(ctx);
     // Landing on a session someone else is driving is a fork in the road, not a fait accompli: ask
     // before this client settles in as a follower. Raised last so the attach is fully installed —
     // cancelling from the prompt leaves the session the same way switching away from it would.

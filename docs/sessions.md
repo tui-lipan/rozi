@@ -197,6 +197,35 @@ to it takes control when nobody else has claimed it.
 An untouched temporary session is discarded when you switch away. A temporary session that has
 been used stays available in the background.
 
+## Go to an agent
+
+`a` opens **Agents**: every coding agent Rozi currently knows about, on this machine and on every
+[connected host](remote.md#connected-host-monitoring), in one list ordered by what wants attention.
+Blocked agents lead, then working ones, then finished, then idle.
+
+```text
+Agents
+ !  Codex · workbox/backend                              Blocked
+ ⠋  Claude #2 · dev                                 Working · 4m
+ ✓  Claude · api                                            Done
+```
+
+Each row names the agent and where it is: the session on its own for an agent in the session on
+screen, `host/session` for one anywhere else. Both halves are searchable, so typing a host name
+narrows the list to that machine.
+
+`Enter` goes to the highlighted agent. In the session already on screen that is a focus change.
+Anywhere else, Rozi attaches to that session first and then lands on the pane — and on the published
+row inside it, for a program running several agents at once. Nothing has to be opened first: the
+host need not be showing in a picker, and the session need not be one you have visited. A session
+already retained in the background switches in instantly, as it does from the session picker.
+
+Only rows in the session on screen carry an age. A summary from another machine is stamped by that
+machine's clock, and presenting the difference between two clocks as a duration would be wrong by
+however far they have drifted. What the [Activity tab](sidebar.md#activity) shows about a local
+agent — its current activity, project, and branch — likewise stays behind a real attachment; see
+[Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in).
+
 ## Choose startup behavior
 
 `[session] startup` decides where a launch lands when you name no session:

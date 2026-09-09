@@ -209,6 +209,12 @@ pub struct State {
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
     pub remote_picker: Option<RemotePickerState>,
+    /// The global Agents view, listing every agent this client knows about across every machine it
+    /// is connected to. Holds no rows of its own: they are a pure projection of live pane state and
+    /// the host monitors' latest snapshots, rebuilt each frame so a poll cannot leave it stale.
+    pub agent_picker: Option<AgentPickerState>,
+    /// The pane the Agents view aimed at, waiting for the session that owns it to arrive.
+    pub pending_agent_jump: Option<PendingAgentJump>,
     /// Global remote-discovery generation. Unlike picker-local state, this survives closing and
     /// reopening the picker so a late result can never match a newer request by accident.
     pub remote_probe_epoch: u64,
@@ -480,6 +486,8 @@ impl State {
             show_session_picker: false,
             session_picker: None,
             remote_picker: None,
+            agent_picker: None,
+            pending_agent_jump: None,
             remote_probe_epoch: 0,
             collaboration: None,
             follow_prompt: None,
@@ -919,6 +927,7 @@ impl State {
             || self.show_profile_picker
             || self.show_session_picker
             || self.remote_picker.is_some()
+            || self.agent_picker.is_some()
             || self.collaboration.is_some()
             || self.follow_prompt.is_some()
             || self.askpass.is_some()

@@ -1,3 +1,4 @@
+pub(crate) mod agents;
 pub(crate) mod exit;
 pub(crate) mod keys_display;
 mod overlays;
@@ -17,13 +18,14 @@ pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 #[cfg(test)]
 pub use widget_keys::pane_window_key;
 pub use widget_keys::{
-    askpass_input_key, collaboration_key, extension_detail_key, extension_install_input_key,
-    extensions_key, follow_prompt_key, help_filter_key, help_scroll_key, host_form_input_key,
-    layout_picker_key, palette_key, pane_body_key, pane_id_from_window_key,
-    pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key, pick_key,
-    pick_prompt_input_key, profile_picker_key, remote_picker_key, rename_input_key,
-    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
-    settings_palette_key, sidebar_body_key, sidebar_region_key, theme_picker_key,
+    agent_picker_key, askpass_input_key, collaboration_key, extension_detail_key,
+    extension_install_input_key, extensions_key, follow_prompt_key, help_filter_key,
+    help_scroll_key, host_form_input_key, layout_picker_key, palette_key, pane_body_key,
+    pane_id_from_window_key, pane_padding_horizontal_key, pane_padding_vertical_key,
+    pane_terminal_key, pick_key, pick_prompt_input_key, profile_picker_key, remote_picker_key,
+    rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
+    session_picker_key, settings_palette_key, sidebar_body_key, sidebar_region_key,
+    theme_picker_key,
 };
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
 
@@ -41,7 +43,7 @@ use crate::{AppRoot, Msg};
 use pane::pane_title_bg;
 
 use overlays::{
-    askpass_overlay, collaboration_overlay, extension_detail_overlay,
+    agent_picker_overlay, askpass_overlay, collaboration_overlay, extension_detail_overlay,
     extension_install_prompt_overlay, extensions_overlay, follow_prompt_overlay, help_overlay,
     layout_picker_overlay, palette_overlay, pane_padding_overlay, pick_overlay,
     pick_prompt_overlay, profile_picker_overlay, reconnecting_overlay, remote_picker_overlay,
@@ -707,6 +709,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         || ctx.state.show_profile_picker
         || ctx.state.show_session_picker
         || ctx.state.remote_picker.is_some()
+        || ctx.state.agent_picker.is_some()
         || ctx.state.collaboration.is_some()
         || ctx.state.follow_prompt.is_some()
         || ctx.state.askpass.is_some();
@@ -968,6 +971,9 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.remote_picker.is_some() {
         root = root.child(remote_picker_overlay(ctx));
+    }
+    if ctx.state.agent_picker.is_some() {
+        root = root.child(agent_picker_overlay(ctx));
     }
     if ctx.state.collaboration.is_some() {
         root = root.child(collaboration_overlay(ctx));

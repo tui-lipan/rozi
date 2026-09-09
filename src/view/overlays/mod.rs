@@ -32,6 +32,7 @@ include!("palette.rs");
 include!("profiles.rs");
 include!("sessions.rs");
 include!("remotes.rs");
+include!("agents.rs");
 include!("commands.rs");
 include!("settings.rs");
 include!("layout.rs");

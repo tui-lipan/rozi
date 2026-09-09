@@ -1341,6 +1341,10 @@ pub(crate) fn request_remote_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::remote_picker_key());
 }
 
+pub(crate) fn request_agent_picker_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::agent_picker_key());
+}
+
 /// Focus the host editor's active line.
 ///
 /// Called when the form opens and when a submission is rejected — not on every keystroke. Between

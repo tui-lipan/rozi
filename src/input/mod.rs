@@ -53,6 +53,9 @@ pub enum Action {
     OpenProfilePicker,
     ApplyProfile,
     OpenSessionPicker,
+    /// The global Agents view: every agent this client knows about, here and on every connected
+    /// host, with `Enter` landing on the one under the cursor.
+    OpenAgentPicker,
     OpenCollaborators,
     RenameSession,
     NewTemporarySession,
@@ -168,6 +171,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::OpenProfilePicker,
     Action::ApplyProfile,
     Action::OpenSessionPicker,
+    Action::OpenAgentPicker,
     Action::OpenCollaborators,
     Action::RenameSession,
     Action::NewTemporarySession,
@@ -278,6 +282,7 @@ impl Action {
             Action::OpenProfilePicker => "open-profile",
             Action::ApplyProfile => "apply-profile",
             Action::OpenSessionPicker => "sessions",
+            Action::OpenAgentPicker => "agents",
             Action::OpenCollaborators => "collaborators",
             Action::RenameSession => "rename-session",
             Action::NewTemporarySession => "new-temporary-session",

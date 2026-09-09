@@ -68,6 +68,9 @@ The row state comes from the session server, so all attached clients see the sam
 `working`, `done`, and `idle` use their configured status roles. A completed run stays marked until
 its pane is attended.
 
+This tab covers the session on screen. For the agents on every machine at once, including hosts you
+are not attached to, use the [Agents view](sessions.md#go-to-an-agent) (`a`).
+
 Rozi ships definitions for common coding-agent CLIs. Add or override definitions with `[[agents]]`.
 See [Agent definitions](agents.md).
 

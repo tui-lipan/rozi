@@ -38,6 +38,21 @@ pub enum PendingSessionAction {
     },
 }
 
+/// The pane the global Agents view aimed at, held while the session that owns it attaches.
+///
+/// Opening a remote agent is one gesture with two halves that cannot happen in one turn: the
+/// attach is a round trip over ssh, and the pane does not exist locally until its snapshot lands.
+/// The destination is recorded by session identity rather than by attachment epoch so that a
+/// switch to an already-parked session — which never goes through an attach at all — resolves it
+/// on exactly the same rule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingAgentJump {
+    pub target: Option<crate::session::remote::RemoteTarget>,
+    pub session: String,
+    pub pane: PaneId,
+    pub row: Option<String>,
+}
+
 pub struct PendingSessionAttach {
     pub epoch: u64,
     pub name: String,

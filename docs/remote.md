@@ -272,6 +272,11 @@ been sitting on a prompt since yesterday is quiet. Do not disturb silences these
 Summaries are semantic only: session, pane, agent, state, and when the state last changed.
 Terminal contents, scrollback, working directories, and layout still require a real attachment.
 
+The [Agents view](sessions.md#go-to-an-agent) (`a`) collects these alongside the agents on this
+machine, ordered by what wants attention. `Enter` on a remote row attaches to that session and lands
+on the pane in one step, so a notification about a blocked agent on a machine you have not opened
+takes one keystroke to answer.
+
 ## Disconnect from a host
 
 `Ctrl+W` detaches one session attachment. `Ctrl+X` disconnects this client from the whole host:

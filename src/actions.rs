@@ -434,6 +434,7 @@ pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Acti
                 | Action::OpenProfilePicker
                 | Action::ApplyProfile
                 | Action::OpenSessionPicker
+                | Action::OpenAgentPicker
                 | Action::OpenCollaborators
                 | Action::RenameSession
                 | Action::NewTemporarySession
@@ -604,6 +605,7 @@ fn execute_action_inner(
         Action::OpenProfilePicker => open_profile_picker(ctx),
         Action::ApplyProfile => crate::ops::profile::open_apply_profile_picker(ctx),
         Action::OpenSessionPicker => crate::ops::session::open_session_picker(ctx),
+        Action::OpenAgentPicker => crate::ops::agents::open_agent_picker(ctx),
         Action::OpenCollaborators => crate::ops::session::open_collaborators(ctx),
         Action::RenameSession => crate::ops::session::open_rename_session(ctx),
         Action::NewTemporarySession => {
@@ -819,6 +821,7 @@ fn closes_settings(action: Action) -> bool {
             | Action::OpenProfilePicker
             | Action::ApplyProfile
             | Action::OpenSessionPicker
+            | Action::OpenAgentPicker
             | Action::OpenCollaborators
             | Action::OpenExtensions
     )
@@ -854,6 +857,7 @@ fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
+    ctx.state.agent_picker = None;
     ctx.state.extensions = None;
     ctx.state.collaboration = None;
     ctx.state.follow_prompt = None;

@@ -40,8 +40,10 @@ See [Sessions](sessions.md), [Remote sessions](remote.md), and [Profiles](profil
 - Mark coding-agent panes as working, blocked, or finished.
 - Jump to panes that need input and show alerts in pane borders or workspace tabs.
 - See which agents want attention on a connected remote host, without attaching to a session there.
+- List every agent on every connected machine in one view, and go to any of them with one key.
 
-See [Sidebar](sidebar.md#activity), [agent definitions](configuration.md#agents),
+See [Sidebar](sidebar.md#activity), [the Agents view](sessions.md#go-to-an-agent),
+[agent definitions](configuration.md#agents),
 [Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in), and
 [Agent skill](agent-skill.md).
 

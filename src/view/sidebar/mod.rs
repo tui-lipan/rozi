@@ -1,4 +1,4 @@
-mod agents;
+pub(crate) mod agents;
 mod panes;
 mod row;
 mod sessions;

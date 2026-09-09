@@ -291,6 +291,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SessionPickerDisconnectHost => prompts::session_picker_disconnect_host(ctx),
         Msg::SessionPickerRemoteHosts => prompts::session_picker_remote_hosts(ctx),
         Msg::SessionPickerNameCurrent => prompts::session_picker_name_current(ctx),
+        Msg::CloseAgentPicker => crate::ops::agents::close_agent_picker(ctx),
+        Msg::AgentPickerQueryChanged(query) => crate::ops::agents::query_changed(ctx, query),
+        Msg::AgentPickerSelect(location) => crate::ops::agents::select(ctx, location),
+        Msg::AgentPickerActivate(location) => crate::ops::agents::activate(ctx, location),
         Msg::CloseRemotePicker => crate::ops::session::remotes::close_remote_picker(ctx),
         Msg::RemotePickerHostQueryChanged(query) => {
             crate::ops::session::remotes::host_query_changed(ctx, query)

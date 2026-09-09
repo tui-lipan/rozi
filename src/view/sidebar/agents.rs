@@ -65,7 +65,7 @@ fn normalized_status(value: &str) -> &str {
 /// reported. A finished-unseen agent reports `idle` but reads "done", so it ranks with `done`:
 /// ranking it as idle would sink the row to the bottom of its group at the same moment the filled
 /// dot lights up to draw the eye to it.
-fn status_rank(status: Option<&str>, finished_unseen: bool) -> u8 {
+pub(crate) fn status_rank(status: Option<&str>, finished_unseen: bool) -> u8 {
     let Some(status) = status.map(normalized_status) else {
         return 5;
     };
@@ -499,7 +499,7 @@ pub(crate) fn status_glyph(value: &str, theme: &Theme) -> (&'static str, Color) 
 /// The smaller unit is zero-padded so the token holds a stable width as it counts, which matters
 /// now that it sits inline with the agent's name rather than alone on its own line. Precision
 /// tapers with scale: seconds stop mattering once a run is measured in hours.
-fn format_age(age: std::time::Duration) -> String {
+pub(crate) fn format_age(age: std::time::Duration) -> String {
     const MINUTE: u64 = 60;
     const HOUR: u64 = 60 * MINUTE;
     const DAY: u64 = 24 * HOUR;
@@ -616,7 +616,7 @@ fn is_finished_quiet(status: &str, finished_unseen: bool) -> bool {
 /// The status word a row displays. A finished-unseen agent reads "done" regardless of the raw
 /// status the agent last reported, which is usually "idle" — idle describes the pane, done
 /// describes the run that just ended.
-fn row_status_label(status: &str, finished_unseen: bool) -> String {
+pub(crate) fn row_status_label(status: &str, finished_unseen: bool) -> String {
     let value = if is_finished_quiet(status, finished_unseen) {
         pane_status::DONE
     } else {
@@ -637,7 +637,11 @@ fn row_status_label(status: &str, finished_unseen: bool) -> String {
 
 /// The glyph and color a row shows: the plain status glyph, except a finished-unseen agent shows a
 /// filled success-colored dot. `bool` is whether the working spinner should animate.
-fn row_glyph(status: &str, finished_unseen: bool, theme: &Theme) -> (String, Color, bool) {
+pub(crate) fn row_glyph(
+    status: &str,
+    finished_unseen: bool,
+    theme: &Theme,
+) -> (String, Color, bool) {
     if is_finished_quiet(status, finished_unseen) {
         return ("●".to_string(), theme.status.success, false);
     }

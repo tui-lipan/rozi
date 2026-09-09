@@ -190,6 +190,13 @@
 # Let programs in a pane set the system clipboard via the OSC52 escape sequence.
 #enable_osc52 = true
 
+[updates]
+# Look for a newer release shortly after a client starts, then every interval_hours while it
+# stays open. Off means rozi never contacts the release host on its own; `rozi update --check`
+# still looks when you ask it to. Minimum interval is 1 hour.
+#check = true
+#interval_hours = 6
+
 [notifications]
 # Desktop notifications via notify-send, off until you opt in. Status notifications run
 # only on the session controller and stay silent while the pane is attended (its host window and

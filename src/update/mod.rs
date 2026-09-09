@@ -67,15 +67,18 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             Update::full()
         }
         Msg::CommandLinkReady(link) => overlays::command_link_ready(ctx, link),
-        Msg::StartupUpdateAvailable {
+        Msg::UpdateAvailable {
             latest,
             hint,
             compatibility_warning,
         } => {
+            // Both shapes lead with the version. The compatibility form is the one someone acts on
+            // soonest, so it is the worst place to leave out that an update exists at all; the
+            // warning styling and the body carry the caution instead.
             let notified = match compatibility_warning {
                 Some(message) => crate::pane::pty_events::notify_warning(
                     ctx,
-                    format!("Compatibility change in v{latest}"),
+                    format!("rozi v{latest} is available"),
                     format!("{message} {hint}"),
                 ),
                 None => crate::pane::pty_events::notify_info(
@@ -85,6 +88,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             };
             notified.update()
         }
+        Msg::UpdateCheckTick => overlays::update_check_tick(ctx),
         Msg::Hangup => overlays::hangup(ctx),
         Msg::RunAction(action) => overlays::run_action(ctx, action),
         Msg::ClosePalette => overlays::close_palette(ctx),

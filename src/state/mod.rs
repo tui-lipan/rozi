@@ -270,6 +270,11 @@ pub struct State {
     pub popup: Option<Pane>,
     pub popup_return_focus: Option<PaneId>,
     pub control_socket_path: Option<PathBuf>,
+    /// Whether this client is allowed to contact the public release host. Set once from
+    /// [`crate::AppRoot`] and never from the config file: `[updates] check` may turn checking off
+    /// in a client that is allowed to check, but no config edit can turn it on in an integration
+    /// app that must stay off the network.
+    pub update_checks_allowed: bool,
     pub event_hub: crate::events::EventHub,
     /// Open `publish` streams, keyed by the pane whose program opened one.
     ///
@@ -405,6 +410,15 @@ pub fn fresh_default_attachment(config: &Config) -> Attachment {
 }
 
 impl State {
+    /// How long to wait before the next release check, or `None` when this client must not check.
+    ///
+    /// The single gate both the startup check and every re-check ask, so an integration app or a
+    /// user who set `[updates] check = false` cannot be talked onto the network by a stray tick.
+    pub(crate) fn update_check_interval(&self) -> Option<std::time::Duration> {
+        (self.update_checks_allowed && self.config.updates.check)
+            .then(|| self.config.updates.interval())
+    }
+
     pub(crate) fn begin_pane_event(&mut self, animation: GeometryAnimation) {
         self.animation = animation;
         if matches!(
@@ -513,6 +527,7 @@ impl State {
             popup: None,
             popup_return_focus: None,
             control_socket_path: None,
+            update_checks_allowed: false,
             event_hub: crate::events::EventHub::default(),
             publish_streams: std::collections::HashMap::new(),
             extension_subscriptions: HashMap::new(),

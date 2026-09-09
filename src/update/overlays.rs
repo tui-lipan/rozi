@@ -679,6 +679,15 @@ pub(super) fn workbar_tick(ctx: &mut Context<AppRoot>) -> Update {
     }
 }
 
+/// Re-check for a newer release. Turning `[updates] check` off stops the loop here rather than
+/// cancelling the tick in flight; `crate::ops::config` arms a fresh one when it comes back on.
+pub(super) fn update_check_tick(ctx: &mut Context<AppRoot>) -> Update {
+    match ctx.state.update_check_interval() {
+        Some(interval) => Update::command_only(crate::check_for_update_and_reschedule(interval)),
+        None => Update::none(),
+    }
+}
+
 pub(super) fn theme_error(ctx: &mut Context<AppRoot>, message: String) -> Update {
     crate::pane::pty_events::notify_error(ctx, "Theme reload failed", message);
     Update::full()
@@ -705,6 +714,74 @@ mod tests {
         assert!(!valid_padding_text("9"));
         assert!(!valid_padding_text("12"));
         assert!(!valid_padding_text("８"));
+    }
+
+    /// The text `notify_*` tracked for the toast it raised, title and body joined by NUL.
+    fn last_toast(backend: &TestBackend<AppRoot>) -> String {
+        let tracked = backend
+            .state()
+            .replaceable_toasts
+            .values()
+            .next()
+            .expect("a toast was raised");
+        tracked.content().replace('\u{0}', " ")
+    }
+
+    #[test]
+    fn both_update_toasts_lead_with_the_new_version() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend
+                .dispatch(Msg::UpdateAvailable {
+                    latest: semver::Version::parse("9.9.9").unwrap(),
+                    hint: "Run `rozi update`.".to_string(),
+                    compatibility_warning: None,
+                })
+                .unwrap();
+            assert!(
+                last_toast(&backend).starts_with("rozi v9.9.9 is available"),
+                "{}",
+                last_toast(&backend)
+            );
+
+            backend.state_mut().replaceable_toasts.clear();
+            backend
+                .dispatch(Msg::UpdateAvailable {
+                    latest: semver::Version::parse("9.9.9").unwrap(),
+                    hint: "Run `rozi update`.".to_string(),
+                    compatibility_warning: Some(
+                        "Session protocol 5 -> 6. Restart running sessions after updating."
+                            .to_string(),
+                    ),
+                })
+                .unwrap();
+            let toast = last_toast(&backend);
+            // The regression this guards: the compatibility toast used to open with
+            // "Compatibility change in v9.9.9" and never say an update existed.
+            assert!(toast.starts_with("rozi v9.9.9 is available"), "{toast}");
+            assert!(toast.contains("Session protocol 5 -> 6"), "{toast}");
+            assert!(toast.contains("Run `rozi update`."), "{toast}");
+        });
+    }
+
+    #[test]
+    fn a_client_that_may_not_check_stays_off_the_network_whatever_the_config_says() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            // What an integration app looks like: checking is on in config, denied by the client.
+            assert!(backend.state().config.updates.check);
+            assert!(!backend.state().update_checks_allowed);
+            assert!(backend.state().update_check_interval().is_none());
+
+            backend.state_mut().update_checks_allowed = true;
+            assert_eq!(
+                backend.state().update_check_interval(),
+                Some(std::time::Duration::from_secs(6 * 3600))
+            );
+
+            backend.state_mut().config.updates.check = false;
+            assert!(backend.state().update_check_interval().is_none());
+        });
     }
 
     #[test]

@@ -42,6 +42,11 @@ impl TrackedToast {
     pub(crate) fn id(&self) -> OverlayId {
         self.id
     }
+
+    /// The rendered text, title and body joined by the NUL separator [`toast_content`] uses.
+    pub(crate) fn content(&self) -> &str {
+        &self.content
+    }
 }
 
 /// Which slot a toast occupies for de-duplication purposes.

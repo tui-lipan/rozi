@@ -142,6 +142,10 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     let had_workbar_tick = ctx.state.config.workbar.has_clock();
     let start_workbar_tick = !had_workbar_tick && new_config.workbar.has_clock();
 
+    // And again for the release check. A changed `interval_hours` needs no kick: the loop reads
+    // the interval each time it reschedules, so the next tick already uses the new one.
+    let had_update_check = ctx.state.config.updates.check;
+
     // `[sidebar] visible` is a startup default only. A reload deliberately does not reapply it:
     // visibility is client-local view chrome, so the file must not reach in and open or close a
     // running client's sidebar - not on an unrelated edit, and not on an edit to the key itself.
@@ -160,6 +164,9 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     );
     ctx.state.extension_generations = extension_generations;
     ctx.state.config = new_config;
+    let update_check_interval = (!had_update_check)
+        .then(|| ctx.state.update_check_interval())
+        .flatten();
     crate::ops::extensions_manager::config_reloaded(ctx);
     // Agent detection runs in the session server against the server's own config load, so the
     // reload has to be forwarded rather than applied here. Only the controller may: `detected_agent`
@@ -204,7 +211,11 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
         );
     }
 
-    if start_theme_tick || start_workbar_tick || start_services_tick {
+    if start_theme_tick
+        || start_workbar_tick
+        || start_services_tick
+        || update_check_interval.is_some()
+    {
         let services_epoch = ctx.state.services.epoch;
         Update::with_command(Command::spawn(move |link: CommandLink<Msg>| {
             if start_theme_tick {
@@ -222,6 +233,11 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
                         epoch: services_epoch,
                     },
                 );
+            }
+            if let Some(interval) = update_check_interval {
+                // A full interval before the first check: turning the key back on is not a reason
+                // to reach for the network while the user is still editing the file.
+                link.send_after(interval, Msg::UpdateCheckTick);
             }
         }))
     } else {

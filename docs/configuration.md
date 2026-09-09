@@ -50,6 +50,7 @@ Most settings apply immediately. These settings have narrower behavior:
 | `scrollback` | New terminal screens. Restart an existing session server before creating panes that should use the new capacity. Existing screens never resize. |
 | `frame_rate` | Next client launch or reattach. |
 | `clipboard.enable_osc52` | Next client launch. |
+| `updates.interval_hours` | The next re-check. A check already waiting keeps the old interval. |
 | `sidebar.visible` | Client startup only. Reload never opens or closes the sidebar. |
 | `session.startup` | Next bare launch. |
 | `session.resurrect`, `session.resurrect_foreground`, `session.allow_takeover` | Session servers started after the change. |
@@ -281,6 +282,16 @@ See [Profiles](profiles.md).
 
 See [Terminal features](terminal.md#select-copy-and-paste).
 
+## `[updates]`
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `check` | bool | `true` | Look for a newer release shortly after a client starts, and again on `interval_hours`. With this off, rozi never contacts the release host on its own. |
+| `interval_hours` | integer | `6` | Hours between re-checks in a client that stays open. Clamped to a minimum of `1`. |
+
+`rozi update --check` looks on demand, whether or not `check` is on. Turning `check` back on arms
+the next check one interval later rather than immediately.
+
 ## In-app toasts
 
 Rozi uses toasts for failures, rejected actions, destructive confirmations, and results that have
@@ -290,9 +301,10 @@ or sidebar stay quiet.
 Repeated messages renew the existing toast instead of stacking copies. Scripts can report an
 off-screen result with [`rozi notify`](control.md#actions-status-and-notifications).
 
-At client startup, a short informational toast reports a newer rozi release. A release that raises
-the extension API or session protocol uses a longer warning toast instead. Failed checks stay
-silent, and each release is announced only once across clients.
+A newer rozi release gets a short informational toast. A release that raises the extension API or
+session protocol gets a warning toast instead, with the same "rozi vX.Y.Z is available" title and
+the contract change in its body. Failed checks stay silent, and each release is announced only once
+across clients.
 
 ## `[notifications]`
 

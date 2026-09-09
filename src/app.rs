@@ -48,9 +48,10 @@ pub struct AppRoot {
     /// mid-test arrives inside whatever `pump` happens to be running, which is what made
     /// assertions about panes, hosts, and in-flight polls flake under load.
     startup_tasks: bool,
-    /// Whether real startup tasks include the public release check. Integration apps keep their
-    /// session/control workers but must never contact GitHub.
-    startup_update_check: bool,
+    /// Whether this client may contact the public release host at all, for the check it runs at
+    /// startup and for the periodic ones after it. Integration apps keep their session/control
+    /// workers but must never reach GitHub, whatever `[updates]` says.
+    update_checks: bool,
     event_hub: events::EventHub,
 }
 
@@ -64,7 +65,9 @@ struct StartupProfile {
 
 struct StartupTasks {
     enabled: bool,
-    update_check: bool,
+    /// How long after the startup check the first re-check fires, or `None` when this client does
+    /// no release checks at all.
+    update_check_interval: Option<Duration>,
     watch_hangup: bool,
     control_listener: Option<crate::platform::ipc::IpcListener>,
     event_hub: events::EventHub,
@@ -82,18 +85,9 @@ impl StartupTasks {
         if !self.enabled {
             return;
         }
-        if self.update_check {
+        if let Some(interval) = self.update_check_interval {
             let update_link = link.clone();
-            std::thread::spawn(move || {
-                if let Some(update) = ops::update_check::check_startup() {
-                    let compatibility_warning = update.compatibility_warning();
-                    update_link.send(Msg::StartupUpdateAvailable {
-                        latest: update.latest,
-                        hint: update.hint,
-                        compatibility_warning,
-                    });
-                }
-            });
+            std::thread::spawn(move || check_for_update(update_link, interval));
         }
         ops::config::spawn_config_watcher(&link);
         if self.watch_hangup {
@@ -434,7 +428,7 @@ impl Default for AppRoot {
             startup_last_session: None,
             watch_hangup: false,
             startup_tasks: false,
-            startup_update_check: false,
+            update_checks: false,
             event_hub: events::EventHub::default(),
         }
     }
@@ -475,7 +469,7 @@ impl AppRoot {
             startup_last_session,
             watch_hangup: true,
             startup_tasks: true,
-            startup_update_check: true,
+            update_checks: true,
             event_hub: events::EventHub::default(),
         }
     }
@@ -501,7 +495,7 @@ impl AppRoot {
             false,
             None,
         );
-        app.startup_update_check = false;
+        app.update_checks = false;
         app
     }
 
@@ -635,6 +629,7 @@ impl Component for AppRoot {
             .control_guard
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
+        state.update_checks_allowed = self.update_checks;
         state.event_hub = self.event_hub.clone();
         state.current_mut().deferred_profile_seed =
             self.startup_profile.as_ref().and_then(|profile| {
@@ -656,7 +651,7 @@ impl Component for AppRoot {
         let start = self.prepare_session_start(ctx);
         let tasks = StartupTasks {
             enabled: self.startup_tasks,
-            update_check: self.startup_update_check,
+            update_check_interval: ctx.state.update_check_interval(),
             watch_hangup: self.watch_hangup,
             control_listener: self.control_listener.take(),
             event_hub: self.event_hub.clone(),
@@ -1172,6 +1167,21 @@ pub(crate) fn schedule_agent_tick() -> Command {
     Command::after(Duration::from_secs(1), move |link: CommandLink<Msg>| {
         link.send(Msg::AgentTick);
     })
+}
+
+/// Look for a newer release, then arm the next look.
+///
+/// The next tick is armed after the check returns rather than alongside it, so a release host that
+/// never answers costs one waiting thread instead of a growing pile of them. Blocking is fine
+/// here: every caller is already on a worker thread of its own.
+fn check_for_update(link: CommandLink<Msg>, interval: Duration) {
+    ops::update_check::announce_available(&link);
+    link.send_after(interval, Msg::UpdateCheckTick);
+}
+
+/// [`check_for_update`] as a command, for the periodic ticks that follow the startup check.
+pub(crate) fn check_for_update_and_reschedule(interval: Duration) -> Command {
+    Command::spawn(move |link: CommandLink<Msg>| check_for_update(link, interval))
 }
 
 pub(crate) fn schedule_alert_pulse_tick(half_period: Duration) -> Command {

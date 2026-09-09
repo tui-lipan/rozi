@@ -39,5 +39,6 @@ pub use ops::search::{
 };
 
 pub(crate) use app::{
-    schedule_agent_tick, schedule_alert_pulse_tick, schedule_theme_tick, schedule_workbar_tick,
+    check_for_update_and_reschedule, schedule_agent_tick, schedule_alert_pulse_tick,
+    schedule_theme_tick, schedule_workbar_tick,
 };

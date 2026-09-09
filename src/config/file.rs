@@ -62,6 +62,7 @@ struct FileConfig {
     layout: LayoutFileConfig,
     pane: PaneFileConfig,
     clipboard: ClipboardFileConfig,
+    updates: UpdatesFileConfig,
     notifications: NotificationsFileConfig,
     sounds: SoundsFileConfig,
     navigation: NavigationFileConfig,
@@ -482,6 +483,13 @@ struct ClipboardFileConfig {
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
+struct UpdatesFileConfig {
+    check: Option<bool>,
+    interval_hours: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 struct NotificationsFileConfig {
     enabled: Option<bool>,
     pane_exit: Option<bool>,
@@ -876,6 +884,12 @@ fn load_config_from_text_with_extensions(
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
     }
+    if let Some(check) = parsed.updates.check {
+        config.updates.check = check;
+    }
+    if let Some(interval_hours) = parsed.updates.interval_hours {
+        config.updates.interval_hours = clamp_update_interval(interval_hours, &mut warnings);
+    }
     if let Some(enabled) = parsed.notifications.enabled {
         config.notifications.enabled = enabled;
     }
@@ -1204,6 +1218,17 @@ fn clamp_frame_rate(value: u16, warnings: &mut Vec<String>) -> u16 {
     clamped
 }
 
+fn clamp_update_interval(value: u32, warnings: &mut Vec<String>) -> u32 {
+    let clamped = value.max(UpdatesConfig::MIN_INTERVAL_HOURS);
+    if clamped != value {
+        warnings.push(format!(
+            "Clamped updates.interval_hours {value} to {clamped} (minimum {})",
+            UpdatesConfig::MIN_INTERVAL_HOURS
+        ));
+    }
+    clamped
+}
+
 pub(super) fn non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -1493,6 +1518,35 @@ mod file_tests {
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
         assert_eq!(parsed.pane.workbar_tab_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_style.as_deref(), Some("half"));
+    }
+
+    #[test]
+    fn updates_section_applies_and_clamps_a_too_eager_interval() {
+        let loaded = load_config_from_text(
+            "[updates]\ncheck = false\ninterval_hours = 24\n",
+            Path::new("config.toml"),
+        );
+        assert!(!loaded.config.updates.check);
+        assert_eq!(loaded.config.updates.interval_hours, 24);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+
+        let loaded =
+            load_config_from_text("[updates]\ninterval_hours = 0\n", Path::new("config.toml"));
+        assert_eq!(
+            loaded.config.updates.interval_hours,
+            UpdatesConfig::MIN_INTERVAL_HOURS
+        );
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(loaded.warnings[0].contains("interval_hours"));
+    }
+
+    #[test]
+    fn update_check_interval_is_expressed_in_hours() {
+        let config = UpdatesConfig {
+            check: true,
+            interval_hours: 6,
+        };
+        assert_eq!(config.interval(), std::time::Duration::from_secs(6 * 3600));
     }
 
     #[test]

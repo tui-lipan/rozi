@@ -637,6 +637,35 @@ impl Default for ClipboardConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UpdatesConfig {
+    /// Whether a client contacts the release host at all. With this off, rozi never checks and
+    /// never toasts; `rozi update --check` still works on demand.
+    pub check: bool,
+    /// Hours between re-checks while a client stays open. A client that runs for days would
+    /// otherwise report whatever was current the morning it started.
+    pub interval_hours: u32,
+}
+
+impl UpdatesConfig {
+    /// Smallest accepted [`Self::interval_hours`]. The check costs two HTTPS requests and only
+    /// ever fires once per release, so anything under an hour is noise against the release host.
+    pub const MIN_INTERVAL_HOURS: u32 = 1;
+
+    pub fn interval(self) -> std::time::Duration {
+        std::time::Duration::from_secs(u64::from(self.interval_hours) * 60 * 60)
+    }
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check: true,
+            interval_hours: 6,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NotificationsConfig {
     pub enabled: bool,
     pub pane_exit: bool,
@@ -964,6 +993,7 @@ pub struct Config {
     pub layout: LayoutConfig,
     pub pane: PaneConfig,
     pub clipboard: ClipboardConfig,
+    pub updates: UpdatesConfig,
     pub notifications: NotificationsConfig,
     pub sounds: SoundsConfig,
     pub navigation: NavigationConfig,
@@ -1601,6 +1631,7 @@ impl Default for Config {
             layout: LayoutConfig::default(),
             pane: PaneConfig::default(),
             clipboard: ClipboardConfig::default(),
+            updates: UpdatesConfig::default(),
             notifications: NotificationsConfig::default(),
             sounds: SoundsConfig::default(),
             navigation: NavigationConfig::default(),

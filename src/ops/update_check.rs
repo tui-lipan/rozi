@@ -1,4 +1,4 @@
-//! Quiet startup update checks and the compatibility warning derived from release metadata.
+//! Quiet update checks and the compatibility warning derived from release metadata.
 
 use relswap::{Downloader, UreqDownloader};
 use semver::Version;
@@ -6,8 +6,10 @@ use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::path::Path;
+use tui_lipan::prelude::CommandLink;
 use url::Url;
 
+use crate::Msg;
 use crate::config::EXTENSION_API_VERSION;
 use crate::platform::install_source::InstallSource;
 use crate::release_app::ROZI;
@@ -18,13 +20,13 @@ const COMPATIBILITY_FILE: &str = "rozi-compatibility.json";
 const MAX_COMPATIBILITY_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct StartupUpdate {
+pub(crate) struct AvailableUpdate {
     pub(crate) latest: Version,
     pub(crate) hint: String,
     compatibility: Option<ReleaseCompatibility>,
 }
 
-impl StartupUpdate {
+impl AvailableUpdate {
     pub(crate) fn compatibility_warning(&self) -> Option<String> {
         let compatibility = self.compatibility.as_ref()?;
         let extension_bump = (compatibility.extension_api > EXTENSION_API_VERSION)
@@ -60,11 +62,27 @@ struct ReleaseCompatibility {
     session_protocol: u32,
 }
 
-/// Check signed latest-release metadata without delaying startup.
+/// Look for a newer release and toast it, if this client is the one that gets to announce it.
+///
+/// Runs on the calling worker thread and blocks it for the length of two HTTPS requests, which is
+/// why nothing that draws a frame ever calls it directly.
+pub(crate) fn announce_available(link: &CommandLink<Msg>) {
+    let Some(update) = check() else {
+        return;
+    };
+    let compatibility_warning = update.compatibility_warning();
+    link.send(Msg::UpdateAvailable {
+        latest: update.latest,
+        hint: update.hint,
+        compatibility_warning,
+    });
+}
+
+/// Check signed latest-release metadata without delaying the UI.
 ///
 /// The caller runs this on a worker thread. Network and compatibility-metadata failures stay
-/// silent: an update toast is useful, but a machine being offline is not a startup error.
-pub(crate) fn check_startup() -> Option<StartupUpdate> {
+/// silent: an update toast is useful, but a machine being offline is not an error worth a toast.
+pub(crate) fn check() -> Option<AvailableUpdate> {
     let running = Version::parse(env!("CARGO_PKG_VERSION")).ok()?;
     let repository = Url::parse(ROZI.repository_url).ok()?;
     let downloader = UreqDownloader::new();
@@ -76,10 +94,10 @@ pub(crate) fn check_startup() -> Option<StartupUpdate> {
     }
 
     let compatibility = fetch_compatibility(&downloader, &repository, &latest);
-    if !claim_startup_notice(&latest) {
+    if !claim_notice(&latest) {
         return None;
     }
-    Some(StartupUpdate {
+    Some(AvailableUpdate {
         latest,
         hint: update_hint(crate::platform::install_source::detect_current()),
         compatibility,
@@ -88,7 +106,10 @@ pub(crate) fn check_startup() -> Option<StartupUpdate> {
 
 /// Atomically let one client announce each release. If state storage is unavailable, prefer a
 /// repeated useful notice over hiding updates forever.
-fn claim_startup_notice(latest: &Version) -> bool {
+///
+/// This is also what keeps the periodic re-check quiet: every later check of the same release
+/// finds the marker and says nothing, so a client left open for a week toasts once.
+fn claim_notice(latest: &Version) -> bool {
     let env = crate::platform::paths::PlatformEnv::from_process();
     claim_notice_in(
         &crate::platform::paths::state_dir(&env).join("update-notices"),
@@ -165,8 +186,8 @@ mod tests {
         }
     }
 
-    fn compatibility(version: &str, extension_api: u32, session_protocol: u32) -> StartupUpdate {
-        StartupUpdate {
+    fn compatibility(version: &str, extension_api: u32, session_protocol: u32) -> AvailableUpdate {
+        AvailableUpdate {
             latest: Version::parse(version).unwrap(),
             hint: "Run `rozi update`.".to_string(),
             compatibility: Some(ReleaseCompatibility {

@@ -499,13 +499,21 @@ pub(crate) fn render_workspace_panes(
                 seam.element,
             ));
         }
+        // A pane arriving or leaving is drawn above the tiles rearranging around it, whatever style
+        // it uses. It is the one being watched, and its rectangle overlaps the neighbour taking its
+        // space for the whole transition: Portal and Scan hold their full rectangle by definition,
+        // Slide keeps its old tile under a clip, and Scale shrinks inside it. Left in the canvas
+        // layer they paint in pane order, so the neighbour - reaching its new size in a fraction of
+        // a slow recipe's duration - covers the pane mid-effect.
+        let transitioning = pane_opening || pane.closing;
+        let above_settled_tiles = merge_layering || divider_mode || scales || transitioning;
         if pane.fullscreen {
             fullscreen_panes.push((element_rect, element));
         } else if pane.floating {
             floating_panes.push((element_rect, element));
-        } else if (merge_layering || divider_mode || scales) && moving.is_some() {
+        } else if above_settled_tiles && moving.is_some() {
             dragged_tiles.push((element_rect, element));
-        } else if (merge_layering || divider_mode || scales)
+        } else if above_settled_tiles
             && (!settled || (divider_mode && (pane.opening || pane.closing)))
         {
             animating_tiles.push((element_rect, element));
@@ -1787,5 +1795,82 @@ mod divider_tests {
         assert!(middle.h > start.h && middle.h < end.h);
         assert_eq!(start.x + start.w / 2.0, settled.x + settled.w / 2.0);
         assert_eq!(start.y + start.h / 2.0, settled.y + settled.h / 2.0);
+    }
+}
+
+#[cfg(test)]
+mod pane_layer_tests {
+    use crate::AppRoot;
+    use crate::layout::anim::PaneAnimationStyle;
+    use crate::state::Pane;
+    use tui_lipan::TestBackend;
+    use tui_lipan::prelude::{FloatRect, Rect};
+
+    /// A leaving pane is drawn above the tile taking its space, for every style.
+    ///
+    /// Portal and Scan hold their whole rectangle while the neighbour grows into it, so with both
+    /// in the same layer the neighbour - which reaches its new size in a fraction of a slow
+    /// recipe's duration - painted straight over a pane that was a third of the way through
+    /// dissolving. Only Scale was lifted out of the canvas layer, and only because its clip
+    /// happened to satisfy the merged-border condition.
+    #[test]
+    fn a_closing_pane_is_drawn_above_the_neighbour_taking_its_space() {
+        for style in [
+            PaneAnimationStyle::Scale,
+            PaneAnimationStyle::Slide,
+            PaneAnimationStyle::Portal,
+            PaneAnimationStyle::Scan,
+        ] {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let (closing, survivor) = {
+                let state = backend.state_mut();
+                state.config.animations.pane_style = style;
+                state.config.animations.geometry_duration = std::time::Duration::from_millis(900);
+                state.config.confirm.close_pane = false;
+                let mut neighbour = Pane::new(2, 100, FloatRect::default());
+                neighbour.opening = false;
+                neighbour.opening_animation = None;
+                let workspace = state.active_workspace_mut();
+                workspace.panes.push(neighbour);
+                crate::layout::tiling::append_tiled_window(workspace, 2);
+                workspace.panes[0].opening = false;
+                workspace.panes[0].opening_animation = None;
+                let key = |pane: &Pane| super::pane_window_key(pane.id, pane.pty_generation);
+                (key(&workspace.panes[0]), key(&workspace.panes[1]))
+            };
+            backend.render();
+            backend.advance(std::time::Duration::from_millis(1000));
+            backend.render();
+
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close the focused pane");
+            backend.advance(std::time::Duration::from_millis(300));
+            backend.render();
+
+            let order = |key: &str| {
+                backend
+                    .capture_ui_snapshot()
+                    .widgets
+                    .iter()
+                    .position(|widget| widget.key.as_ref().is_some_and(|k| k.as_ref() == key))
+            };
+            let closing_at = order(&closing)
+                .unwrap_or_else(|| panic!("{style:?}: the closing pane is still rendered"));
+            let survivor_at = order(&survivor)
+                .unwrap_or_else(|| panic!("{style:?}: the surviving pane is still rendered"));
+            assert!(
+                closing_at > survivor_at,
+                "{style:?}: the closing pane must paint after the tile taking its space, \
+                 got closing at {closing_at} and survivor at {survivor_at}"
+            );
+        }
     }
 }

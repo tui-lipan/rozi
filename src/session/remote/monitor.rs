@@ -13,7 +13,18 @@ const VERSION: u32 = 1;
 const MAX_MESSAGE: usize = 1024 * 1024;
 const INTERVAL: Duration = Duration::from_secs(2);
 const DEADLINE: Duration = Duration::from_secs(10);
-const CAPABILITIES: &[&str] = &["session-list", "health-check"];
+/// What both ends must have for a host to be supervised at all. A peer missing one of these is
+/// refused with a reason rather than half-supervised: a monitor that cannot list sessions or prove
+/// the channel is alive has nothing left to do.
+const REQUIRED_CAPABILITIES: &[&str] = &["session-list", "health-check"];
+/// Everything this build advertises: the required set, plus the optional work it will do when the
+/// peer asks for it. An optional name the peer has never heard of simply goes unexercised, which
+/// is the point of negotiating a set rather than pinning both ends to one version.
+const CAPABILITIES: &[&str] = &[
+    "session-list",
+    "health-check",
+    crate::session::protocol::AGENT_SUMMARIES,
+];
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Hello {
@@ -28,7 +39,7 @@ impl Hello {
         Self {
             protocol_min: VERSION,
             protocol_max: VERSION,
-            capabilities: CAPABILITIES.iter().map(|s| (*s).into()).collect(),
+            capabilities: CAPABILITIES.iter().copied().map(str::to_owned).collect(),
         }
     }
 
@@ -40,7 +51,7 @@ impl Hello {
             self.protocol_min,
         )
         .map_err(|err| io::Error::new(io::ErrorKind::Unsupported, err.message()))?;
-        for capability in CAPABILITIES {
+        for capability in REQUIRED_CAPABILITIES {
             if !self.capabilities.iter().any(|item| item == capability) {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -50,11 +61,23 @@ impl Hello {
         }
         Ok(())
     }
+
+    fn supports(&self, capability: &str) -> bool {
+        self.capabilities.iter().any(|item| item == capability)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 struct Snapshot {
     sessions: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    agents: Vec<crate::session::protocol::AgentSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HostSnapshot {
+    pub rows: Vec<DiscoveredSession>,
+    pub agents: Vec<crate::session::protocol::AgentSummary>,
 }
 
 fn write_message(writer: &mut impl Write, value: &impl Serialize) -> io::Result<()> {
@@ -83,6 +106,10 @@ fn read_message<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> io::R
 pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Result<()> {
     let hello: Hello = read_message(reader)?;
     hello.validate()?;
+    // Optional, so an older client that cannot deserialize summaries is served without them
+    // rather than refused. Building them means one query per running session on this host, which
+    // is work worth skipping for a peer that would only discard it.
+    let include_agents = hello.supports(crate::session::protocol::AGENT_SUMMARIES);
     write_message(writer, &Hello::current())?;
     loop {
         let mut request = [0];
@@ -92,11 +119,19 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
         if request[0] != b'?' {
             return Err(io::Error::other("unknown host metadata request"));
         }
-        let rows = crate::session::discovery::discover_sessions_with_snapshots()?;
+        let (rows, agents) = if include_agents {
+            crate::session::discovery::discover_sessions_with_agents()?
+        } else {
+            (
+                crate::session::discovery::discover_sessions_with_snapshots()?,
+                Vec::new(),
+            )
+        };
         let json = crate::session::discovery::sessions_to_json(&rows).map_err(io::Error::other)?;
         write_message(
             writer,
             &Snapshot {
+                agents,
                 sessions: serde_json::from_str(&json).map_err(io::Error::other)?,
             },
         )?;
@@ -158,10 +193,7 @@ fn connect(
     Ok((connection, stderr))
 }
 
-fn snapshot(
-    connection: &mut IpcConnection,
-    target: &RemoteTarget,
-) -> io::Result<Vec<DiscoveredSession>> {
+fn snapshot(connection: &mut IpcConnection, target: &RemoteTarget) -> io::Result<HostSnapshot> {
     connection.write_all(b"?")?;
     connection.flush()?;
     let snapshot: Snapshot = read_message(connection)?;
@@ -172,7 +204,10 @@ fn snapshot(
     for row in &mut rows {
         row.remote_target = Some(target.clone());
     }
-    Ok(rows)
+    Ok(HostSnapshot {
+        rows,
+        agents: snapshot.agents,
+    })
 }
 
 fn retry_delay(attempt: u32) -> Duration {
@@ -183,7 +218,7 @@ pub(crate) fn start(
     target: RemoteTarget,
     generation: u64,
     config: crate::config::RemoteConfig,
-    report: impl Fn(Result<Vec<DiscoveredSession>, String>) + Send + 'static,
+    report: impl Fn(Result<HostSnapshot, String>) + Send + 'static,
 ) -> Monitor {
     let (stop, stopped) = mpsc::channel();
     let shared = Arc::new(Mutex::new(None));
@@ -227,7 +262,7 @@ fn watch(
     config: &crate::config::RemoteConfig,
     shared: &Mutex<Option<IpcConnection>>,
     stopped: &mpsc::Receiver<()>,
-    report: &impl Fn(Result<Vec<DiscoveredSession>, String>),
+    report: &impl Fn(Result<HostSnapshot, String>),
     attempt: &mut u32,
 ) -> io::Result<()> {
     let (mut connection, stderr) = connect(target, config)?;
@@ -292,6 +327,48 @@ mod tests {
             hello.validate().unwrap_err().kind(),
             io::ErrorKind::Unsupported
         );
+    }
+
+    /// Agent summaries are the optional half of the set. Dropping one must cost the feature and
+    /// nothing else — a client that predates them still gets a supervised host, just a quieter one.
+    #[test]
+    fn an_optional_capability_degrades_instead_of_refusing_the_connection() {
+        let mut hello = Hello::current();
+        hello
+            .capabilities
+            .retain(|value| value != crate::session::protocol::AGENT_SUMMARIES);
+        hello.validate().unwrap();
+        assert!(!hello.supports(crate::session::protocol::AGENT_SUMMARIES));
+
+        let mut request = Vec::new();
+        write_message(&mut request, &hello).unwrap();
+        request.push(b'?');
+        let mut response = Vec::new();
+        serve(&mut request.as_slice(), &mut response).unwrap();
+        let mut response = response.as_slice();
+        read_message::<Hello>(&mut response)
+            .unwrap()
+            .validate()
+            .unwrap();
+        let snapshot: Snapshot = read_message(&mut response).unwrap();
+        assert!(snapshot.sessions.is_array());
+        assert!(snapshot.agents.is_empty());
+    }
+
+    /// The snapshot's agent list is a late addition to a message older builds already send, so it
+    /// has to be absent from the wire when empty and readable when a peer omits it entirely.
+    #[test]
+    fn snapshot_agents_are_omitted_when_empty_and_optional_when_read() {
+        let empty = serde_json::to_value(Snapshot {
+            sessions: serde_json::json!([]),
+            agents: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(empty, serde_json::json!({ "sessions": [] }));
+
+        let decoded: Snapshot =
+            serde_json::from_value(serde_json::json!({ "sessions": [] })).unwrap();
+        assert!(decoded.agents.is_empty());
     }
 
     #[test]

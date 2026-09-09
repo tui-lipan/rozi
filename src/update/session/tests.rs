@@ -617,6 +617,35 @@ fn parked_rename_updates_retained_identity() {
         .expect("parked-rename test completes");
 }
 
+/// The rule a host monitor's summaries are graded against, where there is no pane to consult.
+/// The two edges it must never invent are the ones that would fire on every poll of a machine
+/// that has simply been sitting there: a standing prompt, and an agent that was already idle.
+#[test]
+fn agent_status_edges_report_transitions_rather_than_standing_states() {
+    let blocked = agent_status_edges(Some("working"), Some("blocked"));
+    assert!(blocked.became_blocked);
+    assert!(!blocked.finished);
+
+    // Still blocked on the next poll. The prompt is not new, so neither is the news.
+    assert!(!agent_status_edges(Some("blocked"), Some("blocked")).became_blocked);
+
+    // A first sighting of an agent that is already blocked *is* an edge by this rule; the caller
+    // is what keeps a freshly connected host quiet, by seeding its baseline without alerting.
+    assert!(agent_status_edges(None, Some("blocked")).became_blocked);
+
+    let finished = agent_status_edges(Some("working"), Some("idle"));
+    assert!(finished.finished);
+    assert!(!finished.became_blocked);
+    assert!(agent_status_edges(Some("working"), Some("done")).finished);
+
+    // An agent that was already quiescent has not just finished anything.
+    assert!(!agent_status_edges(Some("idle"), Some("idle")).finished);
+    assert!(!agent_status_edges(None, Some("done")).finished);
+    // Blocking is not finishing, and neither is carrying on working.
+    assert!(!agent_status_edges(Some("working"), Some("blocked")).finished);
+    assert!(!agent_status_edges(Some("working"), Some("working")).finished);
+}
+
 #[test]
 fn finished_unseen_arms_on_working_to_quiescent_and_disarms_on_resume() {
     // working -> idle arms the pulse.

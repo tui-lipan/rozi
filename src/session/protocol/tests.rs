@@ -126,6 +126,7 @@ fn golden_layout_commit_json_shape() {
 #[test]
 fn protocol_frame_round_trips() {
     let msg = ClientMessage::Attach {
+        capabilities: None,
         session: "dev".into(),
         protocol_version: PROTOCOL_VERSION,
         min_protocol_version: MIN_SUPPORTED_PROTOCOL,
@@ -507,6 +508,7 @@ fn frame_decoder_preserves_partial_bytes_until_complete() {
 #[test]
 fn golden_client_attach_json_shape() {
     let value = serde_json::to_value(ClientMessage::Attach {
+        capabilities: None,
         session: "dev".into(),
         protocol_version: PROTOCOL_VERSION,
         min_protocol_version: MIN_SUPPORTED_PROTOCOL,
@@ -539,6 +541,7 @@ fn golden_client_attach_json_shape() {
 #[test]
 fn golden_query_json_shape() {
     let value = serde_json::to_value(ClientMessage::Query {
+        capabilities: None,
         session: "dev".into(),
         protocol_version: PROTOCOL_VERSION,
         min_protocol_version: MIN_SUPPORTED_PROTOCOL,
@@ -621,6 +624,8 @@ fn golden_controller_changed_and_clients_changed_json_shape() {
 fn golden_session_info_json_shape() {
     assert_eq!(
         serde_json::to_value(ServerMessage::SessionInfo {
+            agents: Vec::new(),
+            capabilities: None,
             session: "dev".into(),
             panes: 2,
             clients: 1,
@@ -671,6 +676,7 @@ fn binary_pane_frame_has_golden_shape() {
 #[test]
 fn frame_decoder_decodes_interleaved_control_and_binary_frames() {
     let attach = ClientMessage::Attach {
+        capabilities: None,
         session: "dev".into(),
         protocol_version: PROTOCOL_VERSION,
         min_protocol_version: MIN_SUPPORTED_PROTOCOL,
@@ -817,6 +823,7 @@ fn attach_without_min_protocol_deserializes_as_legacy_exact() {
     assert_eq!(
         decoded,
         ClientMessage::Attach {
+            capabilities: None,
             session: "dev".into(),
             protocol_version: 12,
             min_protocol_version: 0,

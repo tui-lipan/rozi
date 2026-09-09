@@ -102,6 +102,50 @@ pub fn discover_session(name: &str) -> std::io::Result<Option<DiscoveredSession>
 pub fn discover_sessions_excluding(
     exclude_name: Option<&str>,
 ) -> std::io::Result<Vec<DiscoveredSession>> {
+    Ok(sweep_sessions(exclude_name, false)?
+        .into_iter()
+        .map(|probed| probed.row)
+        .collect())
+}
+
+/// What one endpoint answered. `agents` is empty unless the sweep asked for summaries and the
+/// server agreed to send them.
+pub(crate) struct ProbedSession {
+    pub row: DiscoveredSession,
+    pub agents: Vec<crate::session::protocol::AgentSummary>,
+}
+
+/// Every live local session plus the agents inside them, in one probe each.
+///
+/// The host monitor wants both halves of this on every poll, and asking for them separately would
+/// connect to every session server on the machine twice. The agent half stays opt-in because the
+/// picker and sidebar sweeps that share this path want none of it: building summaries walks every
+/// pane of every session, and those callers only ever needed the pane count.
+///
+/// Ephemeral sessions are not asked. The monitor drops their rows on arrival, so a summary from
+/// one would describe a session the client will never show.
+pub(crate) fn discover_sessions_with_agents() -> std::io::Result<(
+    Vec<DiscoveredSession>,
+    Vec<crate::session::protocol::AgentSummary>,
+)> {
+    let mut rows = Vec::new();
+    let mut agents = Vec::new();
+    for mut probed in sweep_sessions(None, true)? {
+        rows.push(probed.row);
+        agents.append(&mut probed.agents);
+    }
+    push_restorable_sessions(
+        &mut rows,
+        None,
+        crate::session::server::list_snapshot_names_by_recency(),
+    );
+    Ok((rows, agents))
+}
+
+fn sweep_sessions(
+    exclude_name: Option<&str>,
+    with_agents: bool,
+) -> std::io::Result<Vec<ProbedSession>> {
     let dir = crate::control::runtime_dir()?;
     let mut endpoints = EndpointRegistry::list_session_endpoints(&dir)?;
     endpoints.retain(|(name, _)| !crate::scratchpad::runtime::is_client_scratch_session(name));
@@ -111,19 +155,21 @@ pub fn discover_sessions_excluding(
 
     let mut handles = Vec::with_capacity(endpoints.len());
     for (name, endpoint) in endpoints {
+        let capabilities = (with_agents && !crate::state::is_ephemeral_session_name(&name))
+            .then(crate::session::protocol::Capabilities::current);
         handles.push(std::thread::spawn(move || {
-            query_session_endpoint(&name, &endpoint)
+            probe_session_endpoint(&name, &endpoint, capabilities.as_ref())
         }));
     }
 
-    let mut rows = Vec::with_capacity(handles.len());
+    let mut probed = Vec::with_capacity(handles.len());
     for handle in handles {
-        if let Ok(Some(row)) = handle.join() {
-            rows.push(row);
+        if let Ok(Some(session)) = handle.join() {
+            probed.push(session);
         }
     }
-    rows.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(rows)
+    probed.sort_by(|a, b| a.row.name.cmp(&b.row.name));
+    Ok(probed)
 }
 
 /// Session-picker/sidebar discovery policy: omit the current session while probing and hide
@@ -177,15 +223,23 @@ fn peer_hung_up(kind: std::io::ErrorKind) -> bool {
 
 /// Ask one connected endpoint what it is. `Err` means the handshake never completed; a server that
 /// answers with anything but `SessionInfo` speaks a protocol we cannot use and is `Unknown`.
+///
+/// `capabilities` is what this probe is willing to be sent. Passing `None` is the picker's cheap
+/// path and also what a pre-capability server sees, since the field is omitted from the wire.
 fn query_status(
     name: &str,
     stream: &mut IpcConnection,
-) -> std::io::Result<DiscoveredSessionStatus> {
+    capabilities: Option<&crate::session::protocol::Capabilities>,
+) -> std::io::Result<(
+    DiscoveredSessionStatus,
+    Vec<crate::session::protocol::AgentSummary>,
+)> {
     let _ = stream.set_read_timeout(Some(QUERY_TIMEOUT));
     let _ = stream.set_write_timeout(Some(QUERY_TIMEOUT));
     crate::session::protocol::write_frame(
         stream,
         &ClientMessage::Query {
+            capabilities: capabilities.cloned(),
             session: name.to_string(),
             protocol_version: PROTOCOL_VERSION,
             min_protocol_version: MIN_SUPPORTED_PROTOCOL,
@@ -197,14 +251,18 @@ fn query_status(
             clients,
             has_layout,
             created_from_profile,
+            agents,
             ..
-        } => Ok(DiscoveredSessionStatus::Running {
-            panes,
-            clients,
-            has_layout,
-            created_from_profile,
-        }),
-        _ => Ok(DiscoveredSessionStatus::Unknown),
+        } => Ok((
+            DiscoveredSessionStatus::Running {
+                panes,
+                clients,
+                has_layout,
+                created_from_profile,
+            },
+            agents,
+        )),
+        _ => Ok((DiscoveredSessionStatus::Unknown, Vec::new())),
     }
 }
 
@@ -213,16 +271,25 @@ fn query_status(
 /// is stale and gets unlinked, and one that accepts and then hangs up is still retiring and is left
 /// to unlink its own.
 pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<DiscoveredSession> {
-    let status = match endpoint.connect() {
-        Ok(mut stream) => match query_status(name, &mut stream) {
-            Ok(status) => status,
+    probe_session_endpoint(name, endpoint, None).map(|probed| probed.row)
+}
+
+/// [`query_session_endpoint`], plus whatever agent summaries `capabilities` asked the server for.
+fn probe_session_endpoint(
+    name: &str,
+    endpoint: &IpcEndpoint,
+    capabilities: Option<&crate::session::protocol::Capabilities>,
+) -> Option<ProbedSession> {
+    let (status, agents) = match endpoint.connect() {
+        Ok(mut stream) => match query_status(name, &mut stream, capabilities) {
+            Ok(answer) => answer,
             Err(err)
                 if matches!(
                     err.kind(),
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
-                DiscoveredSessionStatus::Busy
+                (DiscoveredSessionStatus::Busy, Vec::new())
             }
             // Accepted, then hung up mid-handshake: a server on its way out, whose endpoint has
             // simply not been retired yet. Drop the row rather than reporting it "unavailable" for
@@ -231,7 +298,7 @@ pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<Disc
             // next sweep once connecting is refused outright.
             Err(err) if peer_hung_up(err.kind()) => return None,
             // Answered, but not in a language we speak. Stays listed so it can be killed.
-            Err(_) => DiscoveredSessionStatus::Unknown,
+            Err(_) => (DiscoveredSessionStatus::Unknown, Vec::new()),
         },
         Err(err)
             if matches!(
@@ -239,19 +306,22 @@ pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<Disc
                 std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
             ) =>
         {
-            DiscoveredSessionStatus::Busy
+            (DiscoveredSessionStatus::Busy, Vec::new())
         }
         Err(_) => {
             let _ = std::fs::remove_file(endpoint.path());
             return None;
         }
     };
-    Some(DiscoveredSession {
-        name: name.to_string(),
-        ephemeral: crate::state::is_ephemeral_session_name(name),
-        status,
-        host: None,
-        remote_target: None,
+    Some(ProbedSession {
+        row: DiscoveredSession {
+            name: name.to_string(),
+            ephemeral: crate::state::is_ephemeral_session_name(name),
+            status,
+            host: None,
+            remote_target: None,
+        },
+        agents,
     })
 }
 

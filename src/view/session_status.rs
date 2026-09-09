@@ -275,9 +275,64 @@ pub(crate) fn session_status_badge(
     Some(badge_row(chrome, capitalized(label), styles.label))
 }
 
+/// What a host monitor knows about the agents in one session, as a compact detail token.
+///
+/// This is the payoff of the monitor layer: the answer to "does anything on that machine want me"
+/// without opening a session there. It stays deliberately thin — a state and a count — because the
+/// monitor carries semantic summaries rather than the pane runtime a real attachment streams.
+///
+/// `None` for a session this client is attached to. That attachment already publishes live pane
+/// state to the Agents tab and the pane chrome, and a snapshot taken between polls would be the
+/// staler of the two answers sitting next to each other.
+pub(crate) fn host_agent_label(
+    state: &crate::state::State,
+    entry: &crate::session::discovery::DiscoveredSession,
+) -> Option<String> {
+    use crate::session::protocol::pane_status;
+    let target = entry.remote_target.as_ref()?;
+    if state
+        .attachment_by_identity(&entry.name, Some(target))
+        .is_some()
+    {
+        return None;
+    }
+    let agents = state.host_agents.get(target)?;
+    let mine = agents.iter().filter(|agent| agent.session == entry.name);
+    // Severity order, the same rule pane chrome uses over a set of published rows: one blocked
+    // agent outranks any number of working ones, and any working one outranks the finished. Idle
+    // is deliberately absent — a state that prompts no action is not news, and spending the line
+    // on it would push a blocked agent in the *next* session off the visible part of the row.
+    let mut counts = [0_usize; 3];
+    let mut named: [Option<&str>; 3] = [None; 3];
+    for agent in mine {
+        let state = agent.state.trim();
+        let bucket = if state.eq_ignore_ascii_case(pane_status::BLOCKED) {
+            0
+        } else if !crate::session::protocol::status_is_quiescent(Some(state)) {
+            1
+        } else if state.eq_ignore_ascii_case(pane_status::DONE) {
+            2
+        } else {
+            continue;
+        };
+        counts[bucket] += 1;
+        named[bucket] = named[bucket].or(Some(agent.label.as_str()));
+    }
+    let (bucket, word) = [(0, "blocked"), (1, "working"), (2, "done")]
+        .into_iter()
+        .find(|(bucket, _)| counts[*bucket] > 0)?;
+    match (counts[bucket], named[bucket]) {
+        // One agent can be named, and its own label says more than the number 1 ever could.
+        (1, Some(label)) => Some(format!("{label} {word}")),
+        (count, _) => Some(format!("{count} {word}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::protocol::AgentSummary;
+    use crate::session::remote::RemoteTarget;
 
     /// A parked session and an offline host both used to wear `○`, which said a session in the
     /// background was as gone as a host that cannot be reached. No two states in the two
@@ -317,5 +372,120 @@ mod tests {
     fn capitalizing_leaves_the_rest_of_the_word_alone() {
         assert_eq!(capitalized("connecting…"), "Connecting…");
         assert_eq!(capitalized(""), "");
+    }
+
+    fn summary(
+        session: &str,
+        pane: crate::state::PaneId,
+        label: &str,
+        state: &str,
+    ) -> AgentSummary {
+        AgentSummary {
+            session: session.into(),
+            pane,
+            generation: 0,
+            row: None,
+            agent: label.to_lowercase(),
+            label: label.into(),
+            state: state.into(),
+            changed_at: 0,
+        }
+    }
+
+    fn discovered(
+        name: &str,
+        target: &RemoteTarget,
+    ) -> crate::session::discovery::DiscoveredSession {
+        crate::session::discovery::DiscoveredSession {
+            name: name.into(),
+            host: Some(target.display_label()),
+            remote_target: Some(target.clone()),
+            ephemeral: false,
+            status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                panes: 1,
+                clients: 0,
+                has_layout: false,
+                created_from_profile: None,
+            },
+        }
+    }
+
+    /// The row has one line to spend, so it spends it on the most urgent thing the monitor knows.
+    /// Idle is the state it must never name: a machine full of quiet agents would otherwise fill
+    /// every row with news of nothing.
+    #[test]
+    fn host_agent_label_reports_the_most_urgent_state_in_the_session() {
+        let target = RemoteTarget::Alias("workbox".into());
+        let mut state =
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
+        let entry = discovered("dev", &target);
+
+        // Nothing known about the host at all: no token, not an empty one.
+        assert_eq!(host_agent_label(&state, &entry), None);
+
+        state.host_agents.insert(
+            target.clone(),
+            vec![
+                summary("dev", 1, "Codex", "working"),
+                summary("dev", 2, "Claude Code", "blocked"),
+                summary("dev", 3, "OpenCode", "idle"),
+                // A different session on the same host must not leak into this row.
+                summary("backend", 4, "Codex", "blocked"),
+            ],
+        );
+        assert_eq!(
+            host_agent_label(&state, &entry).as_deref(),
+            Some("Claude Code blocked")
+        );
+
+        // Several in the winning bucket: a count, since no single label describes them.
+        state.host_agents.insert(
+            target.clone(),
+            vec![
+                summary("dev", 1, "Codex", "blocked"),
+                summary("dev", 2, "Claude Code", "blocked"),
+            ],
+        );
+        assert_eq!(
+            host_agent_label(&state, &entry).as_deref(),
+            Some("2 blocked")
+        );
+
+        // A custom status is an active run, by the same rule the pane chrome uses.
+        state.host_agents.insert(
+            target.clone(),
+            vec![summary("dev", 1, "Codex", "running tests")],
+        );
+        assert_eq!(
+            host_agent_label(&state, &entry).as_deref(),
+            Some("Codex working")
+        );
+
+        // Quiet agents say nothing at all.
+        state
+            .host_agents
+            .insert(target.clone(), vec![summary("dev", 1, "Codex", "idle")]);
+        assert_eq!(host_agent_label(&state, &entry), None);
+    }
+
+    /// An attachment streams live pane runtime to the Agents tab. A monitor snapshot taken between
+    /// polls is the staler of the two answers, so the row stops repeating it.
+    #[test]
+    fn an_attached_session_reports_no_monitor_token() {
+        let target = RemoteTarget::Alias("workbox".into());
+        let mut state =
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
+        state
+            .host_agents
+            .insert(target.clone(), vec![summary("dev", 1, "Codex", "blocked")]);
+        let entry = discovered("dev", &target);
+        assert_eq!(
+            host_agent_label(&state, &entry).as_deref(),
+            Some("Codex blocked")
+        );
+
+        state.current_mut().session_name = Some("dev".into());
+        state.current_mut().remote_target = Some(target.clone());
+        assert_eq!(host_agent_label(&state, &entry), None);
     }
 }

@@ -30,6 +30,8 @@ pub struct ClientInfo {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ClientMessage {
     Attach {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<super::Capabilities>,
         session: String,
         /// Client's maximum supported protocol version.
         protocol_version: u32,
@@ -56,6 +58,8 @@ pub enum ClientMessage {
     /// Picker probe: report session status without registering the connection as a client and
     /// without any replay seeding. Cheap enough to run against many sockets concurrently.
     Query {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<super::Capabilities>,
         session: String,
         /// Client's maximum supported protocol version.
         protocol_version: u32,
@@ -314,6 +318,8 @@ pub enum ServerMessage {
         message: String,
     },
     Attached {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<super::Capabilities>,
         /// Server's maximum supported protocol version.
         protocol_version: u32,
         /// Negotiated wire version for this connection. Missing (`0`) on pre-negotiation peers.
@@ -334,6 +340,10 @@ pub enum ServerMessage {
     },
     /// Reply to a [`ClientMessage::Query`] probe.
     SessionInfo {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<super::Capabilities>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        agents: Vec<super::AgentSummary>,
         session: String,
         panes: usize,
         clients: u32,

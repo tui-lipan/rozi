@@ -35,6 +35,30 @@ pub(crate) struct AgentEdges {
     pub(crate) finished: bool,
 }
 
+/// The two alertable transitions between one agent status and the next, computed from the status
+/// strings alone.
+///
+/// This is the rule for any agent whose state arrives as a value rather than as a pane: a host
+/// monitor's summary of a session nothing here is attached to, for instance. A pane knows more
+/// about itself than its reported status says — a detected blocking prompt can outrank a stale
+/// `idle` — so [`update_agent_status_edge`] keeps its own richer blocked test and takes only
+/// `finished` from here.
+///
+/// `finished` is an *ended run*, not merely a quiescent agent: it fires on `working -> anything
+/// but working or blocked`, so an agent that was already idle when it was first seen never
+/// reports having just finished.
+pub(crate) fn agent_status_edges(previous: Option<&str>, current: Option<&str>) -> AgentEdges {
+    use crate::session::protocol::pane_status;
+    AgentEdges {
+        became_blocked: !status_is(previous, pane_status::BLOCKED)
+            && status_is(current, pane_status::BLOCKED),
+        finished: status_is(previous, pane_status::WORKING)
+            && current.is_some()
+            && !status_is(current, pane_status::WORKING)
+            && !status_is(current, pane_status::BLOCKED),
+    }
+}
+
 pub(crate) fn update_agent_status_edge(
     pane: &mut crate::pane::TerminalPane,
     previous: Option<&str>,
@@ -49,19 +73,14 @@ pub(crate) fn update_agent_status_edge(
         }
         pane.status_since = Some(std::time::Instant::now());
     }
-    let became_blocked = !previous_blocked && pane.is_blocked();
-    let mut finished = false;
+    let finished = agent_status_edges(previous, current).finished;
     if status_is(current, crate::session::protocol::pane_status::WORKING) {
         pane.finished_unseen = false;
-    } else if status_is(previous, crate::session::protocol::pane_status::WORKING)
-        && current.is_some()
-        && !status_is(current, crate::session::protocol::pane_status::BLOCKED)
-    {
+    } else if finished {
         pane.finished_unseen = true;
-        finished = true;
     }
     AgentEdges {
-        became_blocked,
+        became_blocked: !previous_blocked && pane.is_blocked(),
         finished,
     }
 }

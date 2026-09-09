@@ -21,6 +21,7 @@ use crate::session::protocol::{
 use crate::session::queue::{ByteQueue, PushError};
 use crate::state::PaneId;
 
+mod agent_summary;
 mod browse;
 mod connection;
 mod lease;
@@ -330,6 +331,7 @@ pub struct AgentProbe {
 /// a `keep_open` shell swap - can do it in one assignment instead of remembering a list of fields.
 #[derive(Debug, Default)]
 pub struct AgentScratch {
+    pub summary_changed_at: u64,
     /// Foreground identity at the last sweep, so an unchanged pane can skip the next one.
     ///
     /// Naming the agent sweeps every process on the host to find this pane's process-group
@@ -613,6 +615,7 @@ struct ClientConn {
     ping_seq: u64,
     /// Negotiated wire protocol for this attached client. Zero until attach succeeds.
     effective_protocol: u32,
+    capabilities: protocol::Capabilities,
     /// True while this client has an unanswered request for the control lease.
     requesting_control: bool,
     /// True while this client keeps the session open in the background instead of using it. A
@@ -646,6 +649,7 @@ impl ClientConn {
             last_ping: now,
             ping_seq: 0,
             effective_protocol: 0,
+            capabilities: protocol::Capabilities::legacy(),
             requesting_control: false,
             parked: false,
             last_request_notify: None,

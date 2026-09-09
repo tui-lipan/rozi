@@ -69,11 +69,16 @@ pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
             target,
             generation,
             ctx.state.config.remote.clone(),
-            move |rows| {
+            move |snapshot| {
+                let (rows, agents) = match snapshot {
+                    Ok(snapshot) => (Ok(snapshot.rows), snapshot.agents),
+                    Err(error) => (Err(error), Vec::new()),
+                };
                 link.send(Msg::HostMetadata {
                     target: destination.clone(),
                     generation,
                     rows,
+                    agents,
                 });
             },
         );
@@ -86,6 +91,7 @@ pub(crate) fn apply(
     target: RemoteTarget,
     generation: u64,
     rows: std::result::Result<Vec<DiscoveredSession>, String>,
+    agents: Vec<crate::session::protocol::AgentSummary>,
 ) -> Update {
     if !ctx
         .state
@@ -100,6 +106,7 @@ pub(crate) fn apply(
         .retain(|row| row.remote_target.as_ref() != Some(&target));
     match rows {
         Ok(rows) => {
+            apply_agents(ctx, &target, agents);
             let cached = crate::ops::session::discovery::cached_sessions_for_target(&rows, &target);
             if crate::session::host_sessions_for(&ctx.state.host_session_cache, &target)
                 != Some(cached.as_slice())
@@ -117,6 +124,10 @@ pub(crate) fn apply(
             }
         }
         Err(error) => {
+            // The snapshot that would have refreshed these never arrived, and a remembered agent
+            // state is worse than none: the sidebar's cached rows already say "last seen", and a
+            // `blocked` token beside one would claim a live prompt on a machine nothing can reach.
+            ctx.state.host_agents.remove(&target);
             if let Some(host) = ctx.state.hosts.get_mut(&target) {
                 host.probe = crate::state::HostProbe::Failed(error);
             }
@@ -156,6 +167,64 @@ pub(crate) fn apply(
         picker.replace_sessions(rows);
     }
     Update::full()
+}
+
+/// Fold a host monitor's semantic agent snapshot into app state, alerting for anything that
+/// reached a state wanting attention while nothing here was watching it.
+///
+/// The first snapshot for a host only seeds the baseline. A machine that has been sitting on a
+/// permission prompt since yesterday is not news that just arrived — the user learned it by
+/// connecting, and announcing every standing prompt across a fleet at connect time is exactly how
+/// ambient awareness turns into noise.
+fn apply_agents(
+    ctx: &mut Context<AppRoot>,
+    target: &RemoteTarget,
+    agents: Vec<crate::session::protocol::AgentSummary>,
+) {
+    let previous = ctx.state.host_agents.insert(target.clone(), agents.clone());
+    let Some(previous) = previous else {
+        return;
+    };
+    if ctx.state.do_not_disturb {
+        return;
+    }
+    let host = target.display_label();
+    let mut blocked_any = false;
+    let mut finished_any = false;
+    for agent in &agents {
+        // A session this client holds reports its own pane status over the session protocol, and
+        // that path owns the attendance rules. A monitor alert would double every one of them.
+        if ctx
+            .state
+            .attachment_by_identity(&agent.session, Some(target))
+            .is_some()
+        {
+            continue;
+        }
+        let before = previous
+            .iter()
+            .find(|earlier| earlier.same_agent(agent))
+            .map(|earlier| earlier.state.as_str());
+        let edges = crate::update::session::status::agent_status_edges(before, Some(&agent.state));
+        crate::pane::pty_events::maybe_notify_host_agent(
+            &ctx.state.config,
+            &host,
+            &agent.session,
+            &agent.label,
+            edges.became_blocked,
+            edges.finished,
+        );
+        blocked_any |= edges.became_blocked;
+        finished_any |= edges.finished;
+    }
+    // One cue per snapshot, not per agent: a host that reconnects with four finished runs should
+    // sound like an event, not like a rattle.
+    if blocked_any {
+        crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Blocked);
+    }
+    if finished_any {
+        crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Done);
+    }
 }
 
 #[cfg(test)]
@@ -199,6 +268,7 @@ mod tests {
                 };
                 backend
                     .dispatch(Msg::HostMetadata {
+                        agents: Vec::new(),
                         target: target.clone(),
                         generation: 7,
                         rows: Ok(vec![row.clone()]),
@@ -208,6 +278,7 @@ mod tests {
                 assert!(!backend.state().sidebar_visible);
                 backend
                     .dispatch(Msg::HostMetadata {
+                        agents: Vec::new(),
                         target: target.clone(),
                         generation: 7,
                         rows: Err("offline".into()),
@@ -223,6 +294,7 @@ mod tests {
                     crate::state::HostProbe::Idle;
                 backend
                     .dispatch(Msg::HostMetadata {
+                        agents: Vec::new(),
                         target: target.clone(),
                         generation: 7,
                         rows: Ok(vec![row]),
@@ -233,6 +305,80 @@ mod tests {
                     backend.state().hosts.get(&target).unwrap().probe,
                     crate::state::HostProbe::Idle
                 );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn summary(session: &str, state: &str) -> crate::session::protocol::AgentSummary {
+        crate::session::protocol::AgentSummary {
+            session: session.into(),
+            pane: 1,
+            generation: 0,
+            row: None,
+            agent: "codex".into(),
+            label: "Codex".into(),
+            state: state.into(),
+            changed_at: 0,
+        }
+    }
+
+    /// The monitor's agent snapshot is state a row reads, not an event stream — so a poll that
+    /// repeats what the last one said changes nothing, and a poll that fails must not leave a
+    /// remembered `blocked` beside a host nothing can reach.
+    #[test]
+    fn agent_snapshots_replace_wholesale_and_a_failed_poll_forgets_them() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+                let target = RemoteTarget::Alias("agents-test.invalid".into());
+                {
+                    let state = backend.state_mut();
+                    state.command_link = None;
+                    state.hosts.seed(
+                        &state.config.remote,
+                        std::slice::from_ref(&target),
+                        &[],
+                        &[],
+                    );
+                    state.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::Reached;
+                    state
+                        .host_monitors
+                        .push(Monitor::dormant(target.clone(), 3));
+                }
+                let metadata = |agents: Vec<crate::session::protocol::AgentSummary>,
+                                rows: std::result::Result<Vec<DiscoveredSession>, String>| {
+                    Msg::HostMetadata {
+                        agents,
+                        target: target.clone(),
+                        generation: 3,
+                        rows,
+                    }
+                };
+
+                backend
+                    .dispatch(metadata(vec![summary("dev", "working")], Ok(Vec::new())))
+                    .unwrap();
+                assert_eq!(
+                    backend.state().host_agents[&target],
+                    vec![summary("dev", "working")]
+                );
+
+                // A second poll is the whole truth about the host, not a delta onto the first.
+                backend
+                    .dispatch(metadata(vec![summary("dev", "blocked")], Ok(Vec::new())))
+                    .unwrap();
+                assert_eq!(
+                    backend.state().host_agents[&target],
+                    vec![summary("dev", "blocked")]
+                );
+
+                backend
+                    .dispatch(metadata(Vec::new(), Err("offline".into())))
+                    .unwrap();
+                assert!(!backend.state().host_agents.contains_key(&target));
             })
             .unwrap()
             .join()

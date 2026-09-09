@@ -101,6 +101,10 @@ Hover a live session row and click `x` twice to kill it, or press `x` twice whil
 focused and that row is selected. Killing the active session leaves the client in the picker or
 sessionless launcher. See [Sessions](sessions.md).
 
+A session on a connected host you are not attached to also reports what its agents are doing —
+`4 panes · 2 blocked` — from the host's metadata channel. See
+[Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in).
+
 Session names are host-local. A local `dev` session and a remote `dev` session are separate rows.
 See [Remote sessions](remote.md) for authentication and host setup.
 

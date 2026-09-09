@@ -602,8 +602,11 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
             label.push_str(host);
         }
         let we_hold = !matches!(statuses[index], SessionConnectionStatus::Discovered);
-        entries
-            .push(SearchEntry::item(label, index).description(session_description(entry, we_hold)));
+        let agents = crate::view::session_status::host_agent_label(&ctx.state, entry);
+        entries.push(
+            SearchEntry::item(label, index)
+                .description(session_description(entry, we_hold, agents)),
+        );
     }
     // Say what is (not) there, nothing more: the footer already advertises `new ctrl+n`, and
     // repeating it in the body says the same thing twice in a longer sentence.
@@ -701,10 +704,25 @@ fn remote_group_header(
     )
 }
 
+/// A picker row's right-aligned line. `agents` is what a host monitor knows about the session's
+/// agents, already rendered by [`crate::view::session_status::host_agent_label`]; it goes last,
+/// after the facts about the session itself.
 fn session_description(
     entry: &crate::session::discovery::DiscoveredSession,
     we_hold: bool,
+    agents: Option<String>,
 ) -> ItemDescription {
+    let description = session_status_description(entry, we_hold);
+    picker_description(match agents {
+        Some(agents) => format!("{description} · {agents}"),
+        None => description,
+    })
+}
+
+fn session_status_description(
+    entry: &crate::session::discovery::DiscoveredSession,
+    we_hold: bool,
+) -> String {
     use crate::session::discovery::DiscoveredSessionStatus;
     match &entry.status {
         DiscoveredSessionStatus::Running {
@@ -726,17 +744,17 @@ fn session_description(
             if let Some(profile) = created_from_profile {
                 label.push_str(&format!(" · from {profile}"));
             }
-            picker_description(label)
+            label
         }
         // A remembered row from a host nothing has reached this sweep. The pane count is still the
         // most useful thing to say about it, but on its own it is exactly what a live session says,
         // so it goes out qualified. Same words the sidebar's cached rows have always used.
         DiscoveredSessionStatus::LastSeen { panes } => {
-            picker_description(format!("{} · last seen", panes_label(*panes)))
+            format!("{} · last seen", panes_label(*panes))
         }
-        DiscoveredSessionStatus::Restorable => picker_description("restorable"),
-        DiscoveredSessionStatus::Busy => picker_description("busy"),
-        DiscoveredSessionStatus::Unknown => picker_description("unavailable"),
+        DiscoveredSessionStatus::Restorable => "restorable".to_string(),
+        DiscoveredSessionStatus::Busy => "busy".to_string(),
+        DiscoveredSessionStatus::Unknown => "unavailable".to_string(),
     }
 }
 

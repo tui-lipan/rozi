@@ -131,6 +131,7 @@ pub fn dirty_screen(cols: u16, rows: u16) -> TerminalScreen {
 pub fn attached_message() -> ServerMessage {
     let layout = large_layout();
     ServerMessage::Attached {
+        capabilities: None,
         created_from_profile: None,
         protocol_version: PROTOCOL_VERSION,
         effective_protocol: PROTOCOL_VERSION,

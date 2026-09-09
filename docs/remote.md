@@ -160,9 +160,17 @@ release mirror.
 Rozi refuses to overwrite a non-regular install target. Set `install = "never"` or pin
 `binary_path` if remote installation is not acceptable.
 
-The current remote protocol supports one version. Update both ends together. If a running named
-server is incompatible after an update, restart that server. A configured or discovered binary
-mismatch may be rejected before attachment when Rozi can detect it.
+The session protocol answers two questions separately. Its **version range** decides whether the
+two builds can talk at all: it currently supports one version, so a client and server across a
+version boundary must be updated together, and a running named server that becomes incompatible
+after an update has to be restarted. Its **capabilities** decide which optional features a given
+connection uses. Both ends offer a set on attach and agree on the intersection, so a feature one
+side has never heard of is simply not used — one feature goes missing rather than the connection
+being refused. This is why a client update does not by itself require restarting a remote session
+server and disturbing the processes inside it.
+
+A configured or discovered binary mismatch may still be rejected before attachment when Rozi can
+detect it.
 
 ## Understand the client and server boundary
 
@@ -234,14 +242,35 @@ select the host and reconnect with Enter or Ctrl+R. The existing SSH modal handl
 when `[remote] batch_mode = false`.
 
 Host monitoring uses `rozi sessions watch`, a framed stdio protocol intended for Rozi clients.
-Its protocol range and `session-list` / `health-check` capabilities are negotiated independently
-of the terminal attachment protocol. Unknown capabilities are ignored. A missing required
-capability leaves a host error until you update remote Rozi and reconnect. Updating the metadata
-helper does not restart existing session servers. Terminal attachments still require the session
-protocol compatibility described above.
+Its protocol range and capabilities are negotiated independently of the terminal attachment
+protocol. Unknown capabilities are ignored. A missing *required* capability — `session-list` or
+`health-check` — leaves a host error until you update remote Rozi and reconnect; a missing
+*optional* one costs only that feature. Updating the metadata helper does not restart existing
+session servers.
 
-This channel currently carries session metadata and health. Agent summaries and notifications
-from sessions without an attachment are not yet included.
+### Agents on a machine you are not in
+
+When both ends support the `agent-summaries` capability, each snapshot also reports what the
+agents in those sessions are doing. A session row then reads:
+
+```text
+WORKBOX                                     ● Connected
+  dev              2 panes · Codex working
+  backend          4 panes · 2 blocked
+```
+
+The row names the most urgent state in the session — blocked, then working, then done — and names
+the agent itself when only one is in that state. Idle agents are not reported: a state that asks
+nothing of you would spend the line on nothing. A session you are attached to shows no token here;
+its live pane state is already in the Agents tab, and it is fresher than a snapshot.
+
+An agent that becomes blocked, or finishes a run, raises the same desktop notification and sound
+cue it would in an attached session, under the same `[notifications]` and `[sounds]` settings. The
+first snapshot after connecting only establishes a baseline, so connecting to a machine that has
+been sitting on a prompt since yesterday is quiet. Do not disturb silences these like any other.
+
+Summaries are semantic only: session, pane, agent, state, and when the state last changed.
+Terminal contents, scrollback, working directories, and layout still require a real attachment.
 
 ## Disconnect from a host
 

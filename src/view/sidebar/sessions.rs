@@ -5,7 +5,15 @@ use crate::AppRoot;
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use crate::state::{HostEntry, HostStatus};
 
-fn session_detail(entry: &DiscoveredSession) -> String {
+fn session_detail(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> String {
+    let mut detail = session_status_detail(entry);
+    if let Some(agents) = crate::view::session_status::host_agent_label(&ctx.state, entry) {
+        detail.push_str(&format!(" · {agents}"));
+    }
+    detail
+}
+
+fn session_status_detail(entry: &DiscoveredSession) -> String {
     match &entry.status {
         DiscoveredSessionStatus::Running {
             panes,
@@ -72,7 +80,7 @@ fn session_row(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> SidebarRow 
             muted,
         );
     }
-    let row = row.detail(session_detail(entry), muted);
+    let row = row.detail(session_detail(ctx, entry), muted);
     // The ✕ kills the session — shuts its server down, the same as the picker's `Ctrl+K`. Killing
     // the one on screen is fine; the UI lands on the picker or launcher rather than quitting.
     SidebarRow::item(row, RowTarget::Session(Box::new(entry.clone()))).closable(
@@ -103,7 +111,9 @@ fn cached_session_row(
         },
     };
     let muted = super::super::fg_only(&ctx.state.theme.muted);
-    let detail = session_detail(&entry);
+    // A cached row is a memory of a session on a host nothing can reach, so there is no monitor
+    // snapshot to draw an agent token from — `session_status_detail` alone is the whole line.
+    let detail = session_status_detail(&entry);
     SidebarRow::item(
         Row::new(cached.name.clone())
             .title_style(muted)

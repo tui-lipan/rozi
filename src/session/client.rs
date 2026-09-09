@@ -112,6 +112,7 @@ pub struct SessionClient {
     /// Wire version agreed with this server. Gates messages added after the minimum supported
     /// version so an older server never receives a variant it cannot deserialize.
     effective_protocol: u32,
+    capabilities: protocol::Capabilities,
     /// This client's host cell size in pixels, sent with the canonical PTY size so the server's
     /// PTYs report pixel dimensions the child can size images against. Read once: it is a
     /// property of the terminal this process is attached to, not of any one pane.
@@ -180,6 +181,7 @@ impl SessionClient {
                 cell: tui_lipan::TerminalCellSize::default(),
                 server_pid: None,
                 effective_protocol: PROTOCOL_VERSION,
+                capabilities: protocol::Capabilities::current(),
             },
             test_rx,
         )
@@ -292,6 +294,13 @@ impl SessionClient {
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
         reader.set_nonblocking(true)?;
         let effective_protocol = validate_attached(&attached)?;
+        let capabilities = match &attached {
+            ServerMessage::Attached { capabilities, .. } => {
+                protocol::Capabilities::negotiated(capabilities.as_ref())
+            }
+            _ => unreachable!("validated attach reply"),
+        };
+        let metrics_enabled = capabilities.supports(protocol::RUNTIME_METRICS);
         let outbound = Arc::new(ByteQueue::<ClientOutbound>::new(MAX_CLIENT_OUTBOUND_BYTES));
         let shutdown_signal = Arc::new(AtomicBool::new(false));
         // The worker threads may be blocked in platform I/O. Do not construct a transport without
@@ -362,7 +371,7 @@ impl SessionClient {
                 Some(&heartbeat_outbound),
                 Some(&reader_metrics),
                 Some(&reader_metrics_request_pending),
-                true,
+                metrics_enabled,
                 Some(&reader_shutdown_signal),
             );
             reader_outbound.close();
@@ -379,6 +388,7 @@ impl SessionClient {
             test_observer: None,
             server_pid,
             effective_protocol,
+            capabilities,
             cell: tui_lipan::host_cell_size(),
         };
         client.request_runtime_metrics();
@@ -394,7 +404,14 @@ impl SessionClient {
         self.effective_protocol
     }
 
+    pub fn capabilities(&self) -> &protocol::Capabilities {
+        &self.capabilities
+    }
+
     pub fn request_runtime_metrics(&self) {
+        if !self.capabilities.supports(protocol::RUNTIME_METRICS) {
+            return;
+        }
         try_enqueue_runtime_metrics_request(&self.outbound, &self.metrics_request_pending);
     }
 
@@ -1019,6 +1036,7 @@ mod tests {
 
     fn attached_message() -> ServerMessage {
         ServerMessage::Attached {
+            capabilities: None,
             protocol_version: PROTOCOL_VERSION,
             effective_protocol: PROTOCOL_VERSION,
             session: "test".to_string(),
@@ -1149,6 +1167,7 @@ mod tests {
             test_observer: None,
             server_pid: None,
             effective_protocol: PROTOCOL_VERSION,
+            capabilities: protocol::Capabilities::current(),
             cell: tui_lipan::TerminalCellSize::default(),
         };
 

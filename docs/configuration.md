@@ -307,6 +307,11 @@ silent, and each release is announced only once across clients.
 
 Desktop notifications use the platform notification implementation and are best effort.
 
+`pane_blocked` and `pane_done` also cover agents in sessions on a
+[connected remote host](remote.md#agents-on-a-machine-you-are-not-in) that this client holds no
+attachment to. Those alerts skip the controller and attendance tests a local pane's alert applies,
+because nothing on screen is showing the pane.
+
 ## `[sounds]`
 
 | Key | Type | Default | Constraints and behavior |

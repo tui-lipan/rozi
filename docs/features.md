@@ -39,8 +39,10 @@ See [Sessions](sessions.md), [Remote sessions](remote.md), and [Profiles](profil
 - Use the sidebar to browse panes, sessions, files, Git changes, and coding-agent activity.
 - Mark coding-agent panes as working, blocked, or finished.
 - Jump to panes that need input and show alerts in pane borders or workspace tabs.
+- See which agents want attention on a connected remote host, without attaching to a session there.
 
-See [Sidebar](sidebar.md#activity), [agent definitions](configuration.md#agents), and
+See [Sidebar](sidebar.md#activity), [agent definitions](configuration.md#agents),
+[Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in), and
 [Agent skill](agent-skill.md).
 
 ## Change the interface

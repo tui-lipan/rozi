@@ -350,6 +350,28 @@ fn pane_status_notification_policy_is_controller_only_and_configurable() {
     ));
 }
 
+/// A host monitor's alert answers the same question the pane one does — "an agent wants me, and I
+/// am not looking at it" — so it obeys the same switches. What it drops is the controller and
+/// attendance gating: neither has a counterpart on a machine this client holds no attachment to,
+/// and applying them would silence the alert exactly when it is the only signal there is.
+#[test]
+fn host_agent_alert_follows_the_pane_switches_without_the_attendance_gate() {
+    let mut config = crate::config::Config::default();
+    assert_eq!(host_agent_alert(&config, true, false), None);
+
+    config.notifications.enabled = true;
+    assert_eq!(host_agent_alert(&config, true, false), Some("blocked"));
+    assert_eq!(host_agent_alert(&config, false, true), None);
+
+    config.notifications.pane_done = true;
+    assert_eq!(host_agent_alert(&config, false, true), Some("done"));
+    // Both edges in one poll: the prompt waiting for an answer is the more urgent news.
+    assert_eq!(host_agent_alert(&config, true, true), Some("blocked"));
+
+    config.notifications.pane_blocked = false;
+    assert_eq!(host_agent_alert(&config, true, false), None);
+}
+
 #[test]
 fn status_notification_treats_a_focused_background_window_as_unattended() {
     let mut config = crate::config::Config::default();

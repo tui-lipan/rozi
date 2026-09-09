@@ -338,6 +338,9 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.launcher_scope = None;
     }
     crate::session::remove_cached_host_sessions(&mut ctx.state.host_session_cache, &target);
+    // A host may be forgotten while it is still monitored, so its agent snapshot outlives its
+    // registry entry. Left behind, it would be the baseline a re-added host is diffed against.
+    ctx.state.host_agents.remove(&target);
     crate::ops::session::seed_host_registry(ctx);
     let selected = ctx
         .state

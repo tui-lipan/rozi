@@ -1,6 +1,6 @@
 //! Parse `--remote` target syntax: bare alias/host or `ssh://[user@]host[:port]`.
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RemoteTarget {
     /// ssh_config Host alias or bare hostname (may also match `[remote.hosts.<alias>]`).
     Alias(String),

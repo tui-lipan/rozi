@@ -235,9 +235,10 @@ fn remote_host_sessions_overlay(
                 .state
                 .attachment_by_identity(&session.name, Some(target))
                 .is_some();
+            let agents = crate::view::session_status::host_agent_label(&ctx.state, session);
             Some(
                 SearchEntry::item(label, identity)
-                    .description(session_description(session, we_hold)),
+                    .description(session_description(session, we_hold, agents)),
             )
         })
         .collect::<Vec<_>>();

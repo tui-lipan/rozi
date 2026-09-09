@@ -56,7 +56,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             target,
             generation,
             rows,
-        } => hosts::apply(ctx, target, generation, rows),
+            agents,
+        } => hosts::apply(ctx, target, generation, rows, agents),
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::FrameworkFocusEnteredPane(pane) => {
             crate::input::routing::framework_focus_entered_pane(ctx, pane)

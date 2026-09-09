@@ -2,6 +2,7 @@ use super::*;
 
 /// What a client says about itself when it attaches.
 pub(super) struct AttachRequest {
+    pub capabilities: Option<protocol::Capabilities>,
     pub session: String,
     pub protocol_version: u32,
     pub min_protocol_version: u32,
@@ -134,6 +135,7 @@ impl SessionServer {
     ) -> Vec<(Target, ServerMessage)> {
         match message {
             ClientMessage::Attach {
+                capabilities,
                 session,
                 protocol_version,
                 min_protocol_version,
@@ -143,6 +145,7 @@ impl SessionServer {
             } => self.handle_attach(
                 client_id,
                 AttachRequest {
+                    capabilities,
                     session,
                     protocol_version,
                     min_protocol_version,
@@ -176,10 +179,16 @@ impl SessionServer {
                 Vec::new()
             }
             ClientMessage::Query {
+                capabilities,
                 session,
                 protocol_version,
                 min_protocol_version,
-            } => self.handle_query(session, protocol_version, min_protocol_version),
+            } => self.handle_query(
+                session,
+                protocol_version,
+                min_protocol_version,
+                capabilities,
+            ),
             ClientMessage::SetPaneLogging {
                 pane_id,
                 local,
@@ -551,7 +560,10 @@ impl SessionServer {
                 .map(|message| vec![(Target::Client(client_id), message)])
                 .unwrap_or_default(),
             ClientMessage::RequestRuntimeMetrics => {
-                let known = self.clients.iter().any(|client| client.id == client_id);
+                let known = self.clients.iter().any(|client| {
+                    client.id == client_id
+                        && client.capabilities.supports(protocol::RUNTIME_METRICS)
+                });
                 if known {
                     vec![(
                         Target::Client(client_id),
@@ -735,6 +747,7 @@ impl SessionServer {
         request: AttachRequest,
     ) -> Vec<(Target, ServerMessage)> {
         let AttachRequest {
+            capabilities,
             session,
             protocol_version,
             min_protocol_version,
@@ -771,7 +784,9 @@ impl SessionServer {
                 },
             )];
         }
+        let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());
         if let Some(client) = self.client_mut(client_id) {
+            client.capabilities = capabilities.clone();
             client.attached = true;
             client.label = Some(label);
             client.read_only = read_only;
@@ -789,6 +804,7 @@ impl SessionServer {
         };
         let clients = self.client_roster();
         let attached = ServerMessage::Attached {
+            capabilities: Some(capabilities),
             protocol_version: PROTOCOL_VERSION,
             effective_protocol: effective,
             session,
@@ -821,6 +837,7 @@ impl SessionServer {
         session: String,
         protocol_version: u32,
         min_protocol_version: u32,
+        capabilities: Option<protocol::Capabilities>,
     ) -> Vec<(Target, ServerMessage)> {
         let effective = match protocol::negotiate_protocol(
             protocol_version,
@@ -856,9 +873,17 @@ impl SessionServer {
             .values()
             .filter(|pane| pane.exited.is_none())
             .count();
+        let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());
+        let agents = if capabilities.supports(protocol::AGENT_SUMMARIES) {
+            self.agent_summaries()
+        } else {
+            Vec::new()
+        };
         vec![(
             Target::Sender,
             ServerMessage::SessionInfo {
+                capabilities: Some(capabilities),
+                agents,
                 session,
                 panes,
                 clients: self.attached_count(),

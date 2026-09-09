@@ -903,6 +903,7 @@ pub(crate) fn disconnect_host(
     ctx: &mut Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> Update {
+    ctx.state.host_agents.remove(target);
     ctx.state
         .host_monitors
         .retain(|monitor| &monitor.target != target);

@@ -392,3 +392,51 @@ pub(crate) fn should_notify_pane_status(
     }
     (config.notifications.pane_blocked && blocked) || (config.notifications.pane_done && done)
 }
+
+/// Alert for an agent a host monitor reported, in a session on a connected host this client holds
+/// no attachment to.
+///
+/// Gated on the same `[notifications]` switches a pane's own status alert uses: the user answered
+/// "tell me when an agent blocks / finishes" once, and the answer does not change because the
+/// agent is on another machine. The controller and attendance tests those alerts apply have no
+/// counterpart here — there is no shared layout to control, and nothing on this screen is showing
+/// the pane — which is the whole reason this alert exists.
+pub(crate) fn maybe_notify_host_agent(
+    config: &crate::config::Config,
+    host: &str,
+    session: &str,
+    label: &str,
+    blocked: bool,
+    done: bool,
+) {
+    let Some(state) = host_agent_alert(config, blocked, done) else {
+        return;
+    };
+    crate::platform::notifications::notify(
+        "rozi",
+        &format!("{label} in {host}/{session} is {state}"),
+    );
+}
+
+/// The word a host-monitor alert would announce, or `None` when the user has not asked for one.
+///
+/// Blocked outranks finished when a poll caught both edges at once: a prompt waiting for an answer
+/// is the more urgent of the two, and a monitor snapshot is coarse enough that a single agent can
+/// plausibly show both between polls.
+pub(crate) fn host_agent_alert(
+    config: &crate::config::Config,
+    blocked: bool,
+    done: bool,
+) -> Option<&'static str> {
+    use crate::session::protocol::pane_status;
+    if !config.notifications.enabled {
+        return None;
+    }
+    if blocked && config.notifications.pane_blocked {
+        Some(pane_status::BLOCKED)
+    } else if done && config.notifications.pane_done {
+        Some(pane_status::DONE)
+    } else {
+        None
+    }
+}

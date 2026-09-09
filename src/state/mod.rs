@@ -324,6 +324,10 @@ pub struct State {
     pub hosts: HostRegistry,
     pub(crate) host_monitors: Vec<crate::session::remote::monitor::Monitor>,
     pub(crate) host_monitor_generation: u64,
+    /// The last agent snapshot each connected host's monitor reported, keyed the way every other
+    /// runtime map on a host is. Absent for a host that is disconnected, unreachable, or forgotten.
+    pub(crate) host_agents:
+        HashMap<crate::session::remote::RemoteTarget, Vec<crate::session::protocol::AgentSummary>>,
     pub(crate) host_live_sessions: Vec<crate::session::discovery::DiscoveredSession>,
     /// Hosts added or edited in **Remote hosts** during this run, merged into the saved roster
     /// whenever the registry is reseeded.
@@ -516,6 +520,7 @@ impl State {
             hosts: HostRegistry::default(),
             host_monitors: Vec::new(),
             host_monitor_generation: 0,
+            host_agents: HashMap::new(),
             host_live_sessions: Vec::new(),
             added_hosts: Vec::new(),
             host_session_cache: crate::session::HostSessionCache::new(),

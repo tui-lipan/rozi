@@ -244,6 +244,7 @@ pub enum Msg {
         rows: Vec<crate::session::discovery::DiscoveredSession>,
     },
     HostMetadata {
+        agents: Vec<crate::session::protocol::AgentSummary>,
         target: crate::session::remote::RemoteTarget,
         generation: u64,
         rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,

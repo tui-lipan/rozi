@@ -10,6 +10,7 @@ fn version_mismatch_is_refused_without_stopping_the_listener() {
     let server = spawn_listener(ServerSettings::default());
     let mut client = TestConnection::connect(server.endpoint());
     client.write_control(&ClientMessage::Attach {
+        capabilities: None,
         session: server.session().to_string(),
         protocol_version: PROTOCOL_VERSION + 1,
         min_protocol_version: PROTOCOL_VERSION + 1,

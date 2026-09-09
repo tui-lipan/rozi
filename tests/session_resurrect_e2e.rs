@@ -69,6 +69,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     let mut server = ServerGuard::new(child, test_root.clone());
     let mut client = connect_when_ready(&endpoint, server.child_mut());
     client.write_control(&ClientMessage::Attach {
+        capabilities: None,
         session: session.clone(),
         protocol_version: PROTOCOL_VERSION,
         min_protocol_version: MIN_SUPPORTED_PROTOCOL,

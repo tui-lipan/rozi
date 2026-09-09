@@ -136,6 +136,7 @@ fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     let responses = server.handle_message(
         id,
         ClientMessage::Attach {
+            capabilities: None,
             session: server.session_name.clone(),
             protocol_version: PROTOCOL_VERSION,
             min_protocol_version: PROTOCOL_VERSION,
@@ -157,6 +158,7 @@ fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream)
     server.handle_message(
         id,
         ClientMessage::Attach {
+            capabilities: None,
             session: server.session_name.clone(),
             protocol_version: PROTOCOL_VERSION,
             min_protocol_version: PROTOCOL_VERSION,
@@ -245,6 +247,7 @@ fn a_client_that_cannot_reach_the_filesystem_withdraws_out_of_band_graphics() {
     server.handle_message(
         remote,
         ClientMessage::Attach {
+            capabilities: None,
             session: server.session_name.clone(),
             protocol_version: PROTOCOL_VERSION,
             min_protocol_version: PROTOCOL_VERSION,
@@ -779,6 +782,7 @@ fn runtime_metrics_request_serves_protocol_19_peers() {
     let responses = server.handle_message(
         legacy,
         ClientMessage::Attach {
+            capabilities: None,
             session: "dev".into(),
             protocol_version: 18,
             min_protocol_version: 12,
@@ -794,6 +798,58 @@ fn runtime_metrics_request_serves_protocol_19_peers() {
         ),
         "older peers are rejected"
     );
+}
+
+/// Protocol range answers "can we talk at all"; capabilities answer "which optional work may this
+/// connection ask for". They are separate questions, and the second must degrade one feature at a
+/// time rather than turning a perfectly usable peer away.
+#[test]
+fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
+    let mut server = SessionServer::new_named("dev");
+    let attach = |capabilities| ClientMessage::Attach {
+        capabilities,
+        session: "dev".into(),
+        protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: PROTOCOL_VERSION,
+        label: "test".into(),
+        read_only: false,
+        shares_filesystem: true,
+    };
+    let agreed = |responses: &[(Target, ServerMessage)]| match responses.first() {
+        Some((_, ServerMessage::Attached { capabilities, .. })) => capabilities.clone(),
+        other => panic!("expected an Attached reply, got {other:?}"),
+    };
+
+    // A peer that says nothing is a pre-capability build. Protocol 5 already carried runtime
+    // metrics, so a missing field has to keep meaning "metrics, and nothing added since".
+    let (legacy, _stream) = add_client(&mut server);
+    let responses = server.handle_message(legacy, attach(None));
+    assert_eq!(agreed(&responses), Some(protocol::Capabilities::legacy()));
+    assert!(matches!(
+        server
+            .handle_message(legacy, ClientMessage::RequestRuntimeMetrics)
+            .as_slice(),
+        [(Target::Client(id), ServerMessage::RuntimeMetrics { .. })] if *id == legacy
+    ));
+
+    // An explicit empty set is a client declining the optional work, which the server must then
+    // not do on its behalf — including the metrics a silent peer would have got.
+    let (quiet, _stream) = add_client(&mut server);
+    let responses = server.handle_message(quiet, attach(Some(protocol::Capabilities::default())));
+    assert_eq!(agreed(&responses), Some(protocol::Capabilities::default()));
+    assert!(
+        server
+            .handle_message(quiet, ClientMessage::RequestRuntimeMetrics)
+            .is_empty()
+    );
+
+    // A name this build has never heard of is ignored rather than refused: that is the whole point
+    // of negotiating an open set instead of pinning both ends to one version.
+    let (future, _stream) = add_client(&mut server);
+    let offered: protocol::Capabilities =
+        serde_json::from_str(r#"["runtime-metrics","teleportation"]"#).expect("capability set");
+    let responses = server.handle_message(future, attach(Some(offered)));
+    assert_eq!(agreed(&responses), Some(protocol::Capabilities::legacy()));
 }
 
 #[test]
@@ -1529,6 +1585,7 @@ fn attach_reports_protocol_mismatch() {
     let responses = server.handle_message(
         id,
         ClientMessage::Attach {
+            capabilities: None,
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION + 1,
             min_protocol_version: PROTOCOL_VERSION + 1,
@@ -1675,7 +1732,7 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
     );
     assert_eq!(server.created_from_profile.as_deref(), Some("work"));
 
-    let query = server.handle_query("dev".into(), PROTOCOL_VERSION, PROTOCOL_VERSION);
+    let query = server.handle_query("dev".into(), PROTOCOL_VERSION, PROTOCOL_VERSION, None);
     assert!(matches!(
         query.as_slice(),
         [(
@@ -1732,6 +1789,116 @@ fn server_stalls_do_not_consume_client_heartbeat_deadlines() {
     assert!(after <= Instant::now());
 }
 
+/// A query is the host monitor's only window into a session it never attaches to, and agent
+/// summaries are the payload it exists for. They are capability-gated rather than unconditional:
+/// building them walks every pane, and the picker probes that share this message want none of it.
+#[test]
+fn query_carries_agent_summaries_only_for_a_client_that_asked_for_them() {
+    let mut server = SessionServer::new_named("dev");
+    let mut pane = test_pane(2);
+    pane.runtime.status = Some(protocol::PaneStatus {
+        value: "blocked".into(),
+        reason: Some("waiting".into()),
+        set_at: 0,
+    });
+    server.panes.insert(1, pane);
+
+    let summaries = |responses: &[(Target, ServerMessage)]| match responses {
+        [(Target::Sender, ServerMessage::SessionInfo { agents, .. })] => agents.clone(),
+        other => panic!("expected one SessionInfo, got {other:?}"),
+    };
+
+    let asked = server.handle_query(
+        "dev".into(),
+        PROTOCOL_VERSION,
+        PROTOCOL_VERSION,
+        Some(protocol::Capabilities::current()),
+    );
+    let agents = summaries(&asked);
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].session, "dev");
+    assert_eq!(agents[0].pane, 1);
+    assert_eq!(agents[0].state, "blocked");
+
+    // An explicit empty set is a client asking for no optional work, and a missing field is a
+    // pre-capability peer that cannot deserialize the summaries anyway. Neither gets them.
+    for capabilities in [Some(protocol::Capabilities::default()), None] {
+        let responses = server.handle_query(
+            "dev".into(),
+            PROTOCOL_VERSION,
+            PROTOCOL_VERSION,
+            capabilities,
+        );
+        assert!(summaries(&responses).is_empty());
+    }
+}
+
+/// A pane running several agents contributes one summary each, named the way the Agents tab names
+/// them. Collapsing them to one pane-shaped row would leave an alert unable to say *which* of a
+/// program's runs is waiting, which is the only thing the alert is for.
+#[test]
+fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
+    let mut server = SessionServer::new_named("dev");
+    let mut pane = test_pane(2);
+    pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new("codex", "Codex").into(),
+        state: protocol::DetectedAgentState::Working,
+    });
+    pane.runtime.rows = vec![
+        protocol::PublishedRow {
+            id: "left".into(),
+            title: "running tests".into(),
+            status: "working".into(),
+            reason: None,
+            active: true,
+            work_started_at: None,
+        },
+        protocol::PublishedRow {
+            id: "right".into(),
+            title: "waiting on approval".into(),
+            status: "blocked".into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+        },
+    ];
+    server.panes.insert(1, pane);
+
+    let summaries = server.agent_summaries();
+    assert_eq!(summaries.len(), 2);
+    // Publish order, not row-id order: the publisher's own numbering is what the label counts.
+    assert_eq!(summaries[0].row.as_deref(), Some("left"));
+    assert_eq!(summaries[0].label, "Codex #1");
+    assert_eq!(summaries[0].state, "working");
+    assert_eq!(summaries[1].row.as_deref(), Some("right"));
+    assert_eq!(summaries[1].label, "Codex #2");
+    assert_eq!(summaries[1].state, "blocked");
+    // The title is what the row is *doing*. Identity and activity are different fields, and only
+    // the first one crosses this boundary.
+    assert!(
+        !summaries
+            .iter()
+            .any(|summary| summary.label.contains("tests"))
+    );
+    assert!(!summaries[0].same_agent(&summaries[1]));
+}
+
+/// An exited pane is not an agent that went quiet — it is a pane that is gone. Leaving it in the
+/// summary would park a `done` beside a session on a machine nobody is watching, permanently.
+#[test]
+fn agent_summaries_skip_exited_panes() {
+    let mut server = SessionServer::new_named("dev");
+    let mut pane = status_test_pane(2, Some(0));
+    pane.runtime.status = Some(protocol::PaneStatus {
+        value: "working".into(),
+        reason: None,
+        set_at: 0,
+    });
+    server.panes.insert(1, pane);
+
+    assert!(server.agent_summaries().is_empty());
+}
+
 #[test]
 fn query_registers_nothing_and_seeds_nothing() {
     let mut server = SessionServer::new_named("dev");
@@ -1739,6 +1906,7 @@ fn query_registers_nothing_and_seeds_nothing() {
     let responses = server.handle_message(
         id,
         ClientMessage::Query {
+            capabilities: None,
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
             min_protocol_version: PROTOCOL_VERSION,
@@ -3200,6 +3368,7 @@ fn attach_reports_layout_and_panes() {
     let responses = server.handle_message(
         id,
         ClientMessage::Attach {
+            capabilities: None,
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
             min_protocol_version: PROTOCOL_VERSION,

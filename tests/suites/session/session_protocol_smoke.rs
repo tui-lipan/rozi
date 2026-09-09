@@ -260,6 +260,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
 
 fn attach_message(session: &str, label: &str) -> ClientMessage {
     ClientMessage::Attach {
+        capabilities: None,
         session: session.to_string(),
         protocol_version: PROTOCOL_VERSION,
         min_protocol_version: MIN_SUPPORTED_PROTOCOL,

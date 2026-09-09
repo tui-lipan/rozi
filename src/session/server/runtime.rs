@@ -131,6 +131,7 @@ impl SessionServer {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
         pane.runtime.status = value.map(|value| PaneStatus {
             value,
             reason,
@@ -186,6 +187,7 @@ impl SessionServer {
         if rows == pane.runtime.rows {
             return Ok(None);
         }
+        pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
         pane.runtime.rows = rows;
         // A publisher that enumerates its own sessions is better informed than the scraper, which
         // can only see the one it draws. Drop anything the scraper was holding for this pane.
@@ -314,6 +316,9 @@ impl SessionServer {
         let snapshot_foreground_changed = tracks_snapshot_foreground
             && pane.launch.is_none()
             && resurrection_foreground_changed(&pane.runtime, &next);
+        if pane.runtime.detected_agent != next.detected_agent {
+            pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
+        }
         pane.runtime = next.clone();
         let message = ServerMessage::PaneRuntimeChanged {
             pane_id,

@@ -12,20 +12,48 @@ fn install_sh() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("install.sh")
 }
 
+/// Everything in `install.sh` up to `main`: every function definition, plus the top-level setup
+/// they read. Running this and stopping is what loads the real installer's functions without
+/// letting it download anything.
+///
+/// Cut here in Rust rather than by piping the script through `sed` into `source <(...)`. That
+/// depended on two things this test has no reason to depend on — a `sed` that reads
+/// `/^main() {/,$d` the way GNU does, and a shell that sources a process substitution — and when
+/// either came up empty the `source` still succeeded, so the only symptom was the *next* line
+/// failing with `command not found`. A 127 that names a function is a mystery; it says nothing
+/// about which half of the harness went missing. macOS failed exactly this way while `bash -n`
+/// on the same script passed, which is the shape of a harness bug wearing an installer's name.
+#[cfg(unix)]
+fn installer_prelude() -> String {
+    let script = std::fs::read_to_string(install_sh()).expect("read install.sh");
+    let main = script
+        .find("\nmain() {")
+        .expect("install.sh defines `main`, which is what marks the end of its function block");
+    script[..=main].to_string()
+}
+
 /// Load every function from `install.sh` without running `main`, then evaluate `body`.
 #[cfg(unix)]
 fn in_unix_installer_scope(body: &str) -> String {
-    let script = format!(
-        "source <(sed '/^main() {{/,$d' \"$1\")\n{body}",
-        body = body
+    let prelude = installer_prelude();
+    // Guards the cut itself, so a future `install.sh` that moves its functions below `main` fails
+    // saying so instead of leaving every test to report its own function as merely missing.
+    let defined = prelude
+        .lines()
+        .filter(|line| line.ends_with("() {"))
+        .count();
+    assert!(
+        defined > 1,
+        "the extracted prelude defines {defined} functions, so the cut is wrong, not the installer"
     );
+
+    let script = temp_path("rozi-install-scope", "sh");
+    std::fs::write(&script, format!("{prelude}\n{body}\n")).expect("write installer scope script");
     let output = Command::new("bash")
-        .arg("-c")
-        .arg(script)
-        .arg("install-script-test")
-        .arg(install_sh())
+        .arg(&script)
         .output()
         .expect("run bash installer scope");
+    let _ = std::fs::remove_file(&script);
     assert!(
         output.status.success(),
         "bash exited {:?}: {}",
@@ -35,6 +63,17 @@ fn in_unix_installer_scope(body: &str) -> String {
     String::from_utf8_lossy(&output.stdout)
         .trim_end()
         .replace("\r\n", "\n")
+}
+
+/// A scratch path in the system temp directory, unique per process and per call so the suite's
+/// threads never collide. Deliberately not one of rozi's own directories: those belong to the
+/// developer running the tests.
+#[cfg(unix)]
+fn temp_path(stem: &str, extension: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("{stem}-{}-{nonce}.{extension}", std::process::id()))
 }
 
 #[cfg(unix)]

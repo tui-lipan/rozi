@@ -478,6 +478,11 @@ pub(crate) fn render_workspace_panes(
                 layer.pane_clip_key(pane.id),
                 ScaleOverlay {
                     chrome: pane_frame_chrome(app, ctx, pane, focused_pane, kind),
+                    opacity: crate::layout::anim::pane_opacity_target(
+                        ctx.state.config.animations,
+                        pane,
+                    ),
+                    opacity_transition: app.window_opacity_config(ctx, pane),
                 },
             )
         } else {
@@ -499,14 +504,19 @@ pub(crate) fn render_workspace_panes(
                 seam.element,
             ));
         }
-        // A pane arriving or leaving is drawn above the tiles rearranging around it, whatever style
-        // it uses. It is the one being watched, and its rectangle overlaps the neighbour taking its
-        // space for the whole transition: Portal and Scan hold their full rectangle by definition,
-        // Slide keeps its old tile under a clip, and Scale shrinks inside it. Left in the canvas
-        // layer they paint in pane order, so the neighbour - reaching its new size in a fraction of
-        // a slow recipe's duration - covers the pane mid-effect.
-        let transitioning = pane_opening || pane.closing;
-        let above_settled_tiles = merge_layering || divider_mode || scales || transitioning;
+        // A pane in transition stays in the canvas layer, *under* the tile taking its space.
+        //
+        // Lifting it above looks wrong, and the reason is that a terminal cell has no transparency:
+        // an effect that "removes" a cell paints a blank over it, so a pane drawn on top covers its
+        // whole rectangle with a solid square whether or not the effect still has anything there.
+        // Portal's ring ends up inside an opaque box, and Scale's shrinking frame floats over a
+        // neighbour that has already claimed the space - both read as artifacts rather than motion.
+        //
+        // Underneath, the neighbour paints the space it has taken and the leaving pane shows
+        // through wherever the neighbour has not reached yet, which is what "it is going away"
+        // actually looks like. The two share a clock (see `pane_event_animation`), so the neighbour
+        // cannot outrun the effect either.
+        let above_settled_tiles = merge_layering || divider_mode;
         if pane.fullscreen {
             fullscreen_panes.push((element_rect, element));
         } else if pane.floating {
@@ -1527,6 +1537,11 @@ fn seam_neighbor_title_bgs(
 /// window, so terminal resize callbacks see only the settled geometry.
 struct ScaleOverlay {
     chrome: PaneFrameChrome,
+    /// Where the pane's own opacity is heading, and how it gets there. The overlay border is a
+    /// sibling of the clipped pane rather than a child, so without this it stays fully opaque while
+    /// everything inside it fades - a hard bright rectangle around a pane that is otherwise gone.
+    opacity: f32,
+    opacity_transition: TransitionConfig,
 }
 
 fn scale_pane_element(
@@ -1574,6 +1589,10 @@ fn scale_pane_element(
         .max_width(Length::Px(viewport.w))
         .min_height(Length::Px(viewport.h))
         .max_height(Length::Px(viewport.h));
+    let border: Element = Animated::new(border)
+        .opacity(overlay.opacity)
+        .transition(overlay.opacity_transition)
+        .into();
     ZStack::new()
         .passthrough(true)
         .child(clipped)
@@ -1806,15 +1825,16 @@ mod pane_layer_tests {
     use tui_lipan::TestBackend;
     use tui_lipan::prelude::{FloatRect, Rect};
 
-    /// A leaving pane is drawn above the tile taking its space, for every style.
+    /// A leaving pane is drawn *under* the tile taking its space, for every style.
     ///
-    /// Portal and Scan hold their whole rectangle while the neighbour grows into it, so with both
-    /// in the same layer the neighbour - which reaches its new size in a fraction of a slow
-    /// recipe's duration - painted straight over a pane that was a third of the way through
-    /// dissolving. Only Scale was lifted out of the canvas layer, and only because its clip
-    /// happened to satisfy the merged-border condition.
+    /// Terminal cells have no transparency: an effect that removes a cell paints a blank over it.
+    /// A leaving pane on top therefore covers its whole rectangle with a solid square regardless of
+    /// how much of the effect is left - Portal's ring sits inside an opaque box, and Scale's
+    /// shrinking frame floats over space the neighbour has already taken. Both read as artifacts.
+    /// Underneath, the neighbour paints what it has claimed and the leaving pane shows through the
+    /// rest, which is what going away looks like.
     #[test]
-    fn a_closing_pane_is_drawn_above_the_neighbour_taking_its_space() {
+    fn a_closing_pane_is_drawn_under_the_neighbour_taking_its_space() {
         for style in [
             PaneAnimationStyle::Scale,
             PaneAnimationStyle::Slide,
@@ -1867,8 +1887,8 @@ mod pane_layer_tests {
             let survivor_at = order(&survivor)
                 .unwrap_or_else(|| panic!("{style:?}: the surviving pane is still rendered"));
             assert!(
-                closing_at > survivor_at,
-                "{style:?}: the closing pane must paint after the tile taking its space, \
+                closing_at < survivor_at,
+                "{style:?}: the closing pane must paint before the tile taking its space, \
                  got closing at {closing_at} and survivor at {survivor_at}"
             );
         }

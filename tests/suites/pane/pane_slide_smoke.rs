@@ -29,6 +29,11 @@ const SETTLED_BORDERS: [usize; 4] = [0, 22, 24, 39];
 /// First column of the arriving pane's tile.
 const RIGHT_TILE_START: usize = SETTLED_BORDERS[2];
 
+/// A Scale transition with the fade turned off, so these tests can read the clip's geometry off the
+/// painted borders. The overlay border shares the pane's opacity, and an opening pane holds the
+/// hidden target until its spawn timer fires - which no timer does in this fixture - so with the
+/// fade on there is nothing on screen to measure. What is under test here is where the frame sits,
+/// not whether it fades.
 fn scale_snapshot() -> PaneAnimationSnapshot {
     PaneAnimationSnapshot {
         spec: PaneAnimationSpec {
@@ -39,7 +44,7 @@ fn scale_snapshot() -> PaneAnimationSnapshot {
             close_curve: Easing::EaseOutQuad,
             visual_open_curve: Easing::EaseOutQuad,
             visual_close_curve: Easing::EaseOutQuad,
-            fade: true,
+            fade: false,
             scale_from: 0.9,
             origin: [0.5, 0.5],
             scan_direction: ScanDirection::TopLeft,

@@ -1,6 +1,41 @@
 # Changelog
 
-## Unreleased
+## 0.0.18 - 2026-09-10
+
+### Changed
+
+- An SSH permission question is answered by choosing rather than by typing. A prompt with two
+  answers had been wearing a text field whose placeholder read `yes / no`, which asked for a word
+  the dialog already knew. Those prompts — agent key confirmation, and Rozi's own offer to install
+  itself on a remote host — now show two chips, `Left`/`Right` between them, `Enter` or a click to
+  commit, and the focused one filled with the highlight a selected picker row already wears.
+  Host-key verification deliberately keeps its field: OpenSSH has accepted the fingerprint itself
+  as a third answer since 8.1, and two buttons would silently drop it. Refusing is now an answer
+  the waiting SSH receives, rather than the cancellation `Esc` still performs on the whole
+  connection.
+- A client that stays open keeps looking for releases. The check ran once, on a worker thread just
+  after start, so a client left attached for a week reported whatever was current the morning it
+  opened; it now re-arms itself every `[updates] interval_hours` after each check returns. A given
+  version is still announced once per machine, so the re-checks stay quiet.
+- Both release toasts lead with `rozi vX.Y.Z is available`. The compatibility toast used to open
+  with `Compatibility change in vX.Y.Z` and never say an update existed — the toast most worth
+  acting on was the one that made you infer the point from a version number.
+
+### Fixed
+
+- Installing and discovering Rozi on a remote host works from the TUI, not only from a terminal
+  run. Discovery checks PATH and the common install locations (`~/.local/bin`, `~/.cargo/bin`,
+  `~/bin`, `~/.nix-profile/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`; on Windows
+  `%USERPROFILE%\.local\bin` and `%USERPROFILE%\.cargo\bin`), and listing, attaching, monitoring,
+  and killing all use the discovered path — so a non-interactive SSH `PATH` no longer has to
+  include them. An uploaded binary is checked for a compatible protocol before the connection
+  continues.
+- The crates.io package no longer carries the `.claude` skill mirror. It is a symlink onto
+  `.agents/skills` that Cargo follows and `.gitignore` cannot reach through, so every skill shipped
+  twice along with whatever build residue sat beside them. The originals still ship under
+  `.agents/`.
+
+## 0.0.17 - 2026-09-09
 
 ### Added
 
@@ -47,6 +82,13 @@
 - Followers animate layout changes with their own animation settings. A layout revision is a
   destination rather than a path, so each client eases toward it locally instead of snapping while
   the controller animates.
+- Connected hosts are supervised through a metadata channel, so a machine you are not attached to
+  can still report what is happening on it.
+- Terminal sessions negotiate capabilities on attach, which is what lets a session summarize the
+  agents nobody is watching and raise their notifications.
+- The **Agents** view collects every agent on every connected machine into one list, and going to
+  one from anywhere is a single activation — including agents in sessions on a remote host this
+  client holds no attachment to.
 
 ### Changed
 
@@ -92,6 +134,8 @@
 - A session name is capped at 64 characters. The name is spelled into the session's socket path, so
   a long enough one produced a session that could not be served at all - reported as whatever the
   bind happened to fail with, nowhere near the name that caused it.
+- Pane animation is configured with flat settings rather than through the recipe indirection, which
+  named combinations instead of letting you state the timing you wanted.
 
 ### Fixed
 
@@ -117,6 +161,8 @@
   path before it was recognised as a URL, and Windows answers `ERROR_INVALID_NAME` for a path
   containing `://` rather than "no such file" - which read as an unreadable source and refused every
   Git install on that platform.
+- A pane on its way out is drawn above the tile taking its space, and stays under its neighbour
+  while its frame fades, so the two no longer trade places mid-animation.
 
 ## 0.0.16 - 2026-09-03
 

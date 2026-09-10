@@ -59,6 +59,18 @@ CI is defined in `.github/workflows/ci.yml`. Dependency-resolving build, check, 
 commands use `--locked`; manifest and lockfile sources must agree. CI runs on Linux, macOS, and
 Windows. The release matrix lives in `.github/workflows/release.yml`.
 
+One extra job cross-compiles `x86_64-unknown-netbsd`. NetBSD is not supported and nothing runs
+there; the job exists because it is the only thing in CI that catches `#[cfg(target_os = "linux")]`
+paired with a `not(linux)` fallback, which quietly gives every other Unix the macOS spelling. Write
+per-OS `cfg` arms explicitly and let an unlisted target fail loudly, the way `platform::errno` does.
+To run it locally you need `cross` and a working Docker, because `ring` builds C and the NetBSD
+toolchain lives in the `cross` image:
+
+```bash
+cross check --locked --all-targets --target x86_64-unknown-netbsd
+cross clippy --locked --all-targets --target x86_64-unknown-netbsd -- -D warnings
+```
+
 ## Benchmarks and profiling
 
 ```bash

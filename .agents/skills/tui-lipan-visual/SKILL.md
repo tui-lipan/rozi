@@ -105,7 +105,7 @@ Steps are separated by `;` or newlines:
 |------|--------|
 | `key:ctrl+n` | One key event, in keybinding syntax |
 | `type:hello world` | Literal text, one key event per character |
-| `click:#submit` | Left click the widget keyed `submit` |
+| `click:#submit` | Left click the widget with automation ID `submit` |
 | `click:12,7` | Left click a cell |
 | `rclick:` / `mclick:` | Right / middle click |
 | `hover:#sidebar` | Move the pointer over a widget |
@@ -126,13 +126,14 @@ finished starting. Waiting *between* steps is `sleep:`'s job — which is also h
 capture mid-animation, since a settle after the script would run every animation the
 script just started to completion.
 
-**Target by key, not coordinate.** `click:#submit` resolves through the current
-tree and *fails loudly* when the key is absent; `click:42,7` silently clicks
+**Target by automation ID, not coordinate.** `click:#submit` resolves through the current
+tree and *fails loudly* when the ID is absent; `click:42,7` silently clicks
 empty space after a layout change and still reports success. Use coordinates
-only for widgets that have no key of their own.
+only for widgets that have no automation ID of their own.
 
-**Give widgets keys to make them scriptable.** A markdown snapshot lists every
-key an app exposes - read it first to learn what you can target.
+**Give widgets IDs to make them scriptable.** Add
+`.automation_id("name")`; `.key(...)` remains sibling-scoped reconciliation
+identity and is never an automation fallback.
 
 **Check where focus starts before scripting `tab`.** Many apps focus their
 primary input on mount, so a leading `tab` moves focus *off* the thing you meant
@@ -281,8 +282,8 @@ fn view() -> Element {
                 .gap(1)
                 .padding(1)
                 .child(Text::new("Welcome back."))
-                .child(Input::new("alice@example.com").placeholder("Email").key("email"))
-                .child(Input::new("").mask(Some('*')).placeholder("Password").key("password")),
+                .child(Input::new("alice@example.com").placeholder("Email").automation_id("email"))
+                .child(Input::new("").mask(Some('*')).placeholder("Password").automation_id("password")),
         )
         .into()
 }
@@ -488,16 +489,19 @@ TUI_LIPAN_CONTROL=/tmp/app.sock cargo run --example todo
 ```
 
 Use a **short** socket path - `AF_UNIX` caps them near 100 bytes. Then talk to it
-with `examples/control/client.py` in the framework repo, or a few lines of your
-own; the protocol is one command per line and a length-prefixed reply.
+with `examples/control/client.py` in the framework repo. Requests use
+`tui-lipan/1 <request-id> <deadline-ms> <command>` and replies are
+ID-correlated, length-prefixed, and structured.
 
 | Command | Reply |
 |---------|-------|
+| `hello` | Protocol and build capabilities |
 | `ping` | `pong` |
-| `keys` | Reconciliation keys currently rendered |
-| `snapshot` / `snapshot json` / `snapshot png <path>` | The widget tree |
+| `keys` | Automation IDs currently rendered |
+| `snapshot` / `snapshot json` / `snapshot png` | Snapshot bytes |
 | `act <script>` | Runs an action script (same syntax as above) |
-| `highlight <key>` / `highlight <col>,<row>` / `highlight clear` | Outline a widget |
+| `highlight <automation-id>` / `highlight <col>,<row>` / `highlight clear` | Outline a widget |
+| `cancel <request-id>` | Cancel an active request |
 | `quit` | Ask the app to exit |
 
 ### The loop that makes this work
@@ -507,7 +511,7 @@ confirm dialog adds `modal-cancel` and `modal-delete` to the list, so you learn
 the app's structure by acting on it rather than by reading its source.
 
 ```
-act click:61,3     # the row's ✕ has no key, so target its cell
+act click:61,3     # the row's ✕ has no automation ID, so target its cell
 keys               # → modal-cancel, modal-delete appeared
 act click:#modal-delete
 keys               # → both modal keys gone, and the row with them
@@ -538,6 +542,10 @@ Use the `Read` tool on each `.png` path; the image renders inline.
 Markdown and JSON are for structure and assertions. **PNG is for design
 judgment** — colour, focus chrome, proportion, whitespace weight. Do not declare
 visual polish done without looking at one.
+
+PNG and recording artifacts faithfully capture rendered pixels; they do not
+apply semantic-value redaction. Treat them as sensitive when the visible UI can
+contain secrets.
 
 | Check | What you're looking for |
 |-------|-------------------------|

@@ -71,6 +71,10 @@ Sketch::view("login", view)
 Changed captures write a `*.diff.png` beside the baseline: unchanged pixels
 dimmed, changed pixels magenta.
 
+PNG captures and baselines contain the pixels the user sees. They do not apply
+semantic-value redaction and must be handled as sensitive when visible content
+can include secrets.
+
 The same affordance exists on `TestBackend` and `UiSnapshot`:
 
 ```rust
@@ -227,7 +231,8 @@ Pending requests are last-writer-wins. Both request methods schedule a full repa
 
 - Colors: stable strings: `rgb(r,g,b)`, `indexed(n)`, snake_case names (not `Debug`)
 - Checkbox: `"unchecked"`, `"checked"`, `"indeterminate"`
-- Keys: reconciliation key strings via `Key::as_ref()`
+- Legacy `UiSnapshot` keys: reconciliation strings; automation checkpoint JSON
+  instead emits app-authored automation IDs
 
 ## Markdown conventions
 
@@ -237,7 +242,7 @@ Pending requests are last-writer-wins. Both request methods schedule a full repa
 
 ## Action scripts
 
-Steps separated by `;` or newlines. `#name` targets a key; `col,row` a cell.
+Steps separated by `;` or newlines. `#name` targets an automation ID; `col,row` a cell.
 
 | Step | Effect |
 |------|--------|
@@ -252,7 +257,7 @@ Steps separated by `;` or newlines. `#name` targets a key; `col,row` a cell.
 | `wait:500` | Advance the virtual clock (animations, `Command::after`) |
 | `sleep:500` | Wait real time, pumping messages, for async work |
 
-Keys fail loudly when absent; coordinates do not. Prefer keys.
+Automation IDs fail loudly when absent; coordinates do not. Prefer IDs.
 
 ## Control channel (live sessions)
 
@@ -261,12 +266,15 @@ near 100 bytes. The app needs a real terminal, so an operator must start it.
 
 | Command | Reply |
 |---------|-------|
+| `hello` | Protocol and build capabilities |
 | `ping` | `pong` |
-| `keys` | Rendered reconciliation keys |
-| `snapshot` / `snapshot json` / `snapshot png <path>` | Widget tree |
+| `keys` | Rendered automation IDs |
+| `snapshot` / `snapshot json` / `snapshot png` | Snapshot bytes |
 | `act <script>` | Runs an action script |
-| `highlight <key>` / `highlight <col>,<row>` / `highlight clear` | Inspector outline |
+| `highlight <automation-id>` / `highlight <col>,<row>` / `highlight clear` | Inspector outline |
+| `cancel <request-id>` | Cancel an active request |
 | `quit` | Ask the app to exit |
 
-Wire format: one command per line; reply is `ok <len>\n<payload>` or
-`err <len>\n<message>`. Client: `examples/control/client.py`.
+Wire requests are `tui-lipan/1 <id> <deadline-ms> <command>`. Replies preserve
+the ID and include status, structured error code, and byte length. Client:
+`examples/control/client.py`.

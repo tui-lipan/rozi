@@ -40,22 +40,12 @@ pub fn is_hidden() -> bool {
 #[cfg(unix)]
 mod imp {
     use super::{HIDDEN, Ordering};
+    use crate::platform::errno::errno_slot;
     use std::sync::OnceLock;
 
     /// The show-cursor escape as raw bytes. The handler cannot format a string - no allocation is
     /// async-signal-safe - so the sequence is a constant it can hand straight to `write`.
     const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
-
-    // `errno` lives behind a different accessor per platform; same split as `server_lifecycle`.
-    #[cfg(target_os = "linux")]
-    unsafe fn errno_slot() -> *mut libc::c_int {
-        unsafe { libc::__errno_location() }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    unsafe fn errno_slot() -> *mut libc::c_int {
-        unsafe { libc::__error() }
-    }
 
     /// Async-signal-safe: a relaxed atomic load, one `write`, and re-raising with the default
     /// disposition. `errno` is saved and restored around the write because the interrupted code may

@@ -127,22 +127,13 @@ fn spawn_server_with_flags(
 #[cfg(unix)]
 mod imp {
     use super::{Ordering, SHUTDOWN_REQUESTED};
+    use crate::platform::errno::errno_slot;
     use std::io;
     use std::sync::OnceLock;
     use std::sync::atomic::AtomicI32;
 
     /// Write end of the self-pipe the signal handler pokes. `-1` until [`super::on_hangup`] runs.
     static HANGUP_PIPE_WRITE: AtomicI32 = AtomicI32::new(-1);
-
-    #[cfg(target_os = "linux")]
-    unsafe fn errno_slot() -> *mut libc::c_int {
-        unsafe { libc::__errno_location() }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    unsafe fn errno_slot() -> *mut libc::c_int {
-        unsafe { libc::__error() }
-    }
 
     /// Async-signal-safe: only `write(2)` on a pipe, with `errno` saved and restored so the
     /// interrupted thread never observes a clobbered value.

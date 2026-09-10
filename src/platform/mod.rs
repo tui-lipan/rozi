@@ -21,6 +21,8 @@
 //!   pane/hook/workbar/`[keys] run` spawn path, plus Windows `PATH`/`PATHEXT` program lookup
 //!   (Phase 10).
 //! - [`environment`] - the safe client environment overlay for newly created local panes.
+//! - `errno` (Unix only) - the per-libc `errno` accessor the signal handlers in [`cursor`] and
+//!   [`server_lifecycle`] need to save and restore it around their writes.
 //! - [`ipc`] - transport-neutral `IpcEndpoint`/`IpcListener`/`IpcConnection`/`BoundEndpoint`/
 //!   `EndpointRegistry` (Phase 5), wired into `control.rs`, `session/client.rs`,
 //!   `session/discovery.rs`, `session/server/*`, `cli.rs`, and `ops/session.rs`. Unix-domain sockets
@@ -55,6 +57,8 @@ pub mod ansi;
 pub mod command;
 pub mod cursor;
 pub mod environment;
+#[cfg(unix)]
+pub(crate) mod errno;
 pub(crate) mod extensions;
 pub mod ipc;
 pub mod notifications;

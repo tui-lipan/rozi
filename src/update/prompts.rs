@@ -388,6 +388,35 @@ pub(super) fn submit_askpass(ctx: &mut Context<AppRoot>) -> Update {
     let Some(askpass) = ctx.state.askpass.as_ref() else {
         return Update::none();
     };
+    let answer = askpass.input.text().to_string();
+    send_askpass_answer(ctx, answer)
+}
+
+/// Answer a chosen-rather-than-typed prompt.
+///
+/// Both answers are sent as words, because both ends of every question this reaches read words: a
+/// host-key `confirm` compares the reply against `yes`, `ask_permission` treats anything that is
+/// not `yes` (or empty) as a refusal, and rozi's own install prompt matches on `y`/`yes`. A
+/// refusal is deliberately an *answer* rather than a cancellation — the ssh that asked gets its
+/// no and fails on its own terms, instead of the whole connection being called off.
+pub(super) fn answer_askpass(ctx: &mut Context<AppRoot>, affirmative: bool) -> Update {
+    let answer = if affirmative { "yes" } else { "no" };
+    send_askpass_answer(ctx, answer.to_string())
+}
+
+/// Move focus within the answer row of the prompt on screen. Focus is the selection, so this is
+/// the whole of its cursor movement.
+pub(super) fn askpass_focus_answer(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    if ctx.state.askpass.is_some() {
+        crate::ops::focus::request_dialog_answer_focus(ctx, index);
+    }
+    Update::full()
+}
+
+fn send_askpass_answer(ctx: &mut Context<AppRoot>, answer: String) -> Update {
+    let Some(askpass) = ctx.state.askpass.as_ref() else {
+        return Update::none();
+    };
     if let crate::session::remote::AskpassKind::Install { probe_epoch } = askpass.current.kind
         && !install_attempt_is_current(&ctx.state, probe_epoch)
     {
@@ -396,7 +425,6 @@ pub(super) fn submit_askpass(ctx: &mut Context<AppRoot>) -> Update {
     }
     let session = askpass.current.session.clone();
     let (id, prompt) = (askpass.current.id, askpass.current.prompt.clone());
-    let answer = askpass.input.text().to_string();
     crate::session::remote::askpass::answer(id, answer);
     ctx.state.askpass_history.answered(&session, &prompt);
     close_or_advance_askpass(ctx)

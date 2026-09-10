@@ -355,6 +355,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::RemoteAskpassExpired { id } => prompts::askpass_expired(ctx, id),
         Msg::RemoteAskpassChanged(event) => prompts::askpass_changed(ctx, event),
         Msg::SubmitRemoteAskpass => prompts::submit_askpass(ctx),
+        Msg::AnswerRemoteAskpass(affirmative) => prompts::answer_askpass(ctx, affirmative),
+        Msg::RemoteAskpassFocusAnswer(index) => prompts::askpass_focus_answer(ctx, index),
         Msg::CancelRemoteAskpass => prompts::cancel_askpass(ctx),
         Msg::FollowPromptSelect(index) => prompts::follow_prompt_select(ctx, index),
         Msg::FollowPromptChoose(index) => prompts::follow_prompt_choose(ctx, index),

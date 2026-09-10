@@ -120,9 +120,10 @@ fn the_helper_prints_the_answer_the_ui_gave_it() {
 }
 
 /// Host-key verification is the prompt worth *not* masking, and ssh sets no prompt-kind hint for
-/// it — the text is all the helper has to go on.
+/// it — the text is all the helper has to go on. It is also the one question that keeps a field,
+/// because the fingerprint is a third answer only the user can supply.
 #[test]
-fn a_host_key_question_is_classified_as_a_confirmation() {
+fn a_host_key_question_is_classified_by_the_answers_it_names() {
     let dir = private_temp_dir();
     let prompt = "The authenticity of host 'workbox (192.0.2.7)' can't be established.\n\
          ED25519 key fingerprint is SHA256:qJv1zH.\n\
@@ -134,7 +135,7 @@ fn a_host_key_question_is_classified_as_a_confirmation() {
         serde_json::json!({ "answer": { "text": "yes" } }),
     );
 
-    assert_eq!(run.request["kind"], "confirm");
+    assert_eq!(run.request["kind"], "host_key");
     assert_eq!(run.request["prompt"], prompt);
     assert_eq!(run.stdout, "yes\n");
 }

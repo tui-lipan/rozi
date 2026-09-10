@@ -326,6 +326,12 @@ pub enum Msg {
     },
     RemoteAskpassChanged(InputEvent),
     SubmitRemoteAskpass,
+    /// Answer a prompt that is chosen rather than typed with `yes` or `no`. Distinct from
+    /// [`Msg::CancelRemoteAskpass`]: a refusal is an answer this ssh gets, while cancelling gives
+    /// up on the connection that raised it and silences the retries it would ask for.
+    AnswerRemoteAskpass(bool),
+    /// Move focus onto the `index`-th chip of that prompt's answer row.
+    RemoteAskpassFocusAnswer(usize),
     CancelRemoteAskpass,
     CloseCollaboration,
     CollaborationQueryChanged(String),

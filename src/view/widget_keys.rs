@@ -61,6 +61,12 @@ pub fn askpass_input_key() -> &'static str {
     "rozi-askpass-input"
 }
 
+/// One chip in the answer row of a prompt that is chosen rather than typed. Focus is the
+/// selection here, so the key is what moves it — and what a capture asserts against.
+pub fn dialog_answer_key(index: usize) -> String {
+    format!("rozi-dialog-answer-{index}")
+}
+
 pub fn collaboration_key() -> &'static str {
     "rozi-collaboration"
 }

@@ -18,10 +18,10 @@ pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 #[cfg(test)]
 pub use widget_keys::pane_window_key;
 pub use widget_keys::{
-    agent_picker_key, askpass_input_key, collaboration_key, extension_detail_key,
-    extension_install_input_key, extensions_key, follow_prompt_key, help_filter_key,
-    help_scroll_key, host_form_input_key, layout_picker_key, palette_key, pane_body_key,
-    pane_id_from_window_key, pane_padding_horizontal_key, pane_padding_vertical_key,
+    agent_picker_key, askpass_input_key, collaboration_key, dialog_answer_key,
+    extension_detail_key, extension_install_input_key, extensions_key, follow_prompt_key,
+    help_filter_key, help_scroll_key, host_form_input_key, layout_picker_key, palette_key,
+    pane_body_key, pane_id_from_window_key, pane_padding_horizontal_key, pane_padding_vertical_key,
     pane_terminal_key, pick_key, pick_prompt_input_key, profile_picker_key, remote_picker_key,
     rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
     session_picker_key, settings_palette_key, sidebar_body_key, sidebar_region_key,
@@ -41,6 +41,8 @@ use crate::state::{ChromeSlot, PaneId, WORKBAR_HEIGHT};
 use crate::{AppRoot, Msg};
 
 use pane::pane_title_bg;
+
+pub(crate) use overlays::DIALOG_AFFIRM;
 
 use overlays::{
     agent_picker_overlay, askpass_overlay, collaboration_overlay, extension_detail_overlay,

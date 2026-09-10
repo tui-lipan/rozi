@@ -67,9 +67,16 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 pub enum AskpassKind {
     /// A password or key passphrase. Masked, and never echoed anywhere.
     Secret,
-    /// A yes/no question — host-key verification, agent key confirmation. Shown in clear: the
-    /// fingerprint the user is checking is the whole point of the question.
+    /// A permission question OpenSSH asks through the helper — agent key confirmation, and
+    /// anything else it flags with `SSH_ASKPASS_PROMPT`. Two answers and no third: `ask_permission`
+    /// takes an empty reply or `yes` as consent and everything else as a refusal, so the dialog
+    /// offers the two words rather than a field to type one into.
     Confirm,
+    /// Host-key verification. Shown in clear — the fingerprint the user is checking is the whole
+    /// point of the question — and answered by typing, because which answers OpenSSH accepts here
+    /// has changed across versions: `yes` and `no` always, the fingerprint itself only since 8.1.
+    /// Offering two buttons would quietly drop the third answer on the versions that take it.
+    HostKey,
     /// Installation requested by a connection. A picker epoch rejects abandoned attempts.
     Install { probe_epoch: Option<u64> },
 }
@@ -77,6 +84,12 @@ pub enum AskpassKind {
 impl AskpassKind {
     pub fn is_secret(self) -> bool {
         matches!(self, Self::Secret)
+    }
+
+    /// Whether the answer is one of two words rather than something typed. Decides whether the
+    /// modal shows a button row or a field.
+    pub fn is_choice(self) -> bool {
+        matches!(self, Self::Confirm | Self::Install { .. })
     }
 }
 
@@ -356,21 +369,22 @@ impl Helper {
     }
 }
 
-/// Whether the prompt wants a secret or a yes/no answer.
+/// Whether the prompt wants a secret, a typed host-key answer, or one of two words.
 ///
-/// `SSH_ASKPASS_PROMPT` is authoritative when OpenSSH sets it, but it is empty for host-key
-/// verification — the prompt most worth showing in clear — so the text decides when it is not.
+/// The text is read first, and only for the one shape it identifies beyond doubt: a prompt that
+/// spells out its own answers is host-key verification, whatever `SSH_ASKPASS_PROMPT` says about
+/// it — and that env var says nothing at all on the versions where it is unset for this prompt.
+/// Getting it wrong the other way costs the user the fingerprint answer, so the words win.
+///
+/// Everything else defers to `SSH_ASKPASS_PROMPT`, which is authoritative where OpenSSH sets it.
 fn kind_for(prompt: &str) -> AskpassKind {
-    match std::env::var(SSH_PROMPT_KIND_ENV).as_deref() {
-        Ok("confirm") | Ok("none") => return AskpassKind::Confirm,
-        Ok("password") => return AskpassKind::Secret,
-        _ => {}
-    }
     let lowered = prompt.to_ascii_lowercase();
     if lowered.contains("(yes/no") || lowered.contains("type 'yes'") {
-        AskpassKind::Confirm
-    } else {
-        AskpassKind::Secret
+        return AskpassKind::HostKey;
+    }
+    match std::env::var(SSH_PROMPT_KIND_ENV).as_deref() {
+        Ok("confirm") | Ok("none") => AskpassKind::Confirm,
+        _ => AskpassKind::Secret,
     }
 }
 
@@ -424,16 +438,28 @@ fn fresh_token() -> String {
 mod tests {
     use super::*;
 
+    /// The prompt that keeps its field: it names its own answers, and one of them is a string only
+    /// the user can supply.
     #[test]
-    fn host_key_verification_is_a_confirmation_even_though_ssh_sets_no_prompt_kind() {
+    fn host_key_verification_is_recognised_by_its_words_and_not_by_a_prompt_kind() {
         let prompt = "The authenticity of host 'localhost (::1)' can't be established.\n\
              ED25519 key fingerprint is: SHA256:abc\n\
              Are you sure you want to continue connecting (yes/no/[fingerprint])? ";
-        assert_eq!(kind_for(prompt), AskpassKind::Confirm);
+        assert_eq!(kind_for(prompt), AskpassKind::HostKey);
         assert_eq!(
             kind_for("Please type 'yes', 'no' or the fingerprint: "),
-            AskpassKind::Confirm
+            AskpassKind::HostKey
         );
+        assert!(!AskpassKind::HostKey.is_choice());
+    }
+
+    /// A permission question carries no answers in its text, so the env var is all there is to go
+    /// on — and it is enough, because `ask_permission` only ever takes two answers.
+    #[test]
+    fn a_permission_prompt_is_answered_by_choosing_rather_than_typing() {
+        assert!(AskpassKind::Confirm.is_choice());
+        assert!(AskpassKind::Install { probe_epoch: None }.is_choice());
+        assert!(!AskpassKind::Secret.is_choice());
     }
 
     /// The prompt OpenSSH 10.5 actually sends, captured from a live connection to an unknown host.

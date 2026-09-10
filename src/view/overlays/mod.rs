@@ -27,6 +27,7 @@ use super::{
 };
 
 include!("search.rs");
+include!("confirm.rs");
 include!("prompts.rs");
 include!("palette.rs");
 include!("profiles.rs");

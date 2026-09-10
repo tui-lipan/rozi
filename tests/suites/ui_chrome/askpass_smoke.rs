@@ -107,7 +107,7 @@ fn a_host_key_prompt_shows_the_fingerprint_and_does_not_mask_the_answer() {
         // A real-length digest, because the length is the point: inside OpenSSH's sentence a
         // 43-character fingerprint is what breaks across the wrap.
         let mut backend = askpass_backend(
-            AskpassKind::Confirm,
+            AskpassKind::HostKey,
             "The authenticity of host 'workbox (192.0.2.7)' can't be established.\n\
              ED25519 key fingerprint is SHA256:BjOtNAS/Ufwm/M92ccSyM40S6UxInjnigz9bv2mmza8.\n\
              This key is not known by any other names.\n\
@@ -368,20 +368,108 @@ fn channel_sum(color: tui_lipan::prelude::Color) -> u32 {
 }
 
 #[test]
-fn remote_install_reuses_confirmation_and_echoes_the_answer() {
+fn remote_install_names_what_it_would_write_and_offers_the_two_answers() {
     on_large_stack(|| {
         let mut backend = askpass_backend(
             AskpassKind::Install { probe_epoch: None },
             "Host: dev@workbox\nDestination: $HOME/.local/bin/rozi\nVersion: 0.0.17",
         );
-        type_text(&mut backend, "yes");
         let frame = rendered_lines(&mut backend);
         assert!(frame.contains("Install Rozi on remote"), "{frame}");
         assert!(frame.contains("dev@workbox"), "{frame}");
         assert!(frame.contains("$HOME/.local/bin/rozi"), "{frame}");
-        assert!(frame.contains("yes"), "{frame}");
+        // The buttons name the action rather than agreeing with an unstated question: nothing on
+        // screen asks "install?", so a bare `Yes` would answer nothing.
+        assert!(frame.contains("Install"), "{frame}");
+        assert!(frame.contains("Cancel"), "{frame}");
         backend.dispatch(rozi::Msg::CancelRemoteAskpass).unwrap();
         assert!(backend.state().askpass.is_none());
+    });
+}
+
+/// A permission question has two answers and no field. Both of them are answers: refusing tells
+/// the ssh that asked, which is not the same as calling the connection off.
+#[test]
+fn a_permission_prompt_is_answered_by_choosing_and_no_is_still_an_answer() {
+    on_large_stack(|| {
+        let mut backend = askpass_backend(
+            AskpassKind::Confirm,
+            "Allow use of key /home/dev/.ssh/id_ed25519?\n\
+             Key fingerprint SHA256:BjOtNAS/Ufwm/M92ccSyM40S6UxInjnigz9bv2mmza8.",
+        );
+        let frame = rendered_lines(&mut backend);
+        assert!(frame.contains("SSH confirmation"), "{frame}");
+        assert!(frame.contains("Allow use of key"), "{frame}");
+        assert!(frame.contains("Yes") && frame.contains("No"), "{frame}");
+        // No field: nothing typed can reach the answer.
+        assert!(!frame.contains("Password or passphrase"), "{frame}");
+
+        backend
+            .dispatch(rozi::Msg::AnswerRemoteAskpass(false))
+            .unwrap();
+        assert!(backend.state().askpass.is_none());
+        assert!(
+            !backend.state().askpass_history.refuses("ssh-1"),
+            "a refusal answers this question; only Esc gives up on the connection"
+        );
+    });
+}
+
+/// Where a label starts, in grid cells. Byte offsets are not columns once the modal's own border
+/// glyphs are in the line.
+fn label_cell(backend: &mut TestBackend<AppRoot>, label: &str) -> (u16, u16) {
+    backend.render();
+    let lines = backend.capture_frame().to_fixed_grid_lines();
+    for (y, line) in lines.iter().enumerate() {
+        if let Some(offset) = line.find(label) {
+            return (line[..offset].chars().count() as u16, y as u16);
+        }
+    }
+    panic!("`{label}` is not on screen:\n{}", lines.join("\n"));
+}
+
+/// The whole point of the answer row: which answer `Enter` commits is legible without reading a
+/// word of it. A grid of characters cannot see that, so this measures the fill.
+#[test]
+fn the_focused_answer_is_filled_and_the_other_one_is_not() {
+    on_large_stack(|| {
+        let mut backend = askpass_backend(AskpassKind::Confirm, "Allow use of key?");
+        let (yes_x, yes_y) = label_cell(&mut backend, "Yes");
+        let (no_x, no_y) = label_cell(&mut backend, "No");
+        let filled = backend.capture_frame().cell(yes_x, yes_y).bg;
+        let plain = backend.capture_frame().cell(no_x, no_y).bg;
+        assert_ne!(
+            filled, plain,
+            "the focused chip carries a fill the unfocused one does not: {filled:?} / {plain:?}"
+        );
+    });
+}
+
+/// Focus is the selection in an answer row, so what the arrows move is what `Enter` commits.
+#[test]
+fn the_answer_row_opens_on_the_affirmative_and_the_arrows_walk_it() {
+    on_large_stack(|| {
+        let mut backend = askpass_backend(AskpassKind::Confirm, "Allow use of key?");
+        backend.render();
+        assert!(
+            backend
+                .focused_key()
+                .is_some_and(|key| key.as_ref() == "rozi-dialog-answer-1"),
+            "the dialog opens on the answer the user came for"
+        );
+        backend
+            .send_key(KeyEvent {
+                code: KeyCode::Left,
+                mods: KeyMods::NONE,
+            })
+            .expect("walk the answer row");
+        backend.render();
+        assert!(
+            backend
+                .focused_key()
+                .is_some_and(|key| key.as_ref() == "rozi-dialog-answer-0"),
+            "Left moves onto the refusal"
+        );
     });
 }
 

@@ -61,9 +61,12 @@ With `batch_mode = false`, a running Rozi client answers SSH prompts in a modal 
 them reach the terminal:
 
 - A password or key passphrase is masked and never appears on screen.
-- A host-key question shows OpenSSH's wording verbatim and takes `yes` or `no` unmasked. The
-  fingerprint is repeated whole on its own line beneath it, where it can be compared without
-  breaking across a wrap.
+- A host-key question shows OpenSSH's wording verbatim and keeps a field, because OpenSSH accepts
+  the fingerprint itself as an answer alongside `yes` and `no`. What you type is unmasked, and the
+  fingerprint is repeated whole on its own line beneath the question, where it can be compared
+  without breaking across a wrap.
+- Any other permission question SSH raises is answered by choosing `Yes` or `No`. `←` and `→` move
+  between them, `Enter` picks the highlighted one, and a click works too.
 - A rejected password is reported on the prompt when SSH asks again.
 - `Esc` ends that connection's attempt. SSH re-asks three times per connection, so a refusal also
   declines those retries and gives up on the host probe that raised them. Activating the host again
@@ -143,8 +146,8 @@ binary_path = "/opt/rozi/bin/rozi"
 
 Before connecting, Rozi checks for a compatible remote binary. This works both when opening a
 host inside Rozi and when starting with `rozi --remote <host>`. In the TUI, the existing
-confirmation modal shows the host, install destination, and version. Type `yes` to install, or
-press Escape to cancel. The connection continues after installation.
+confirmation modal shows the host, install destination, and version, and offers `Install` or
+`Cancel`; `Escape` cancels too. The connection continues after installation.
 
 Discovery checks PATH and common install locations, including `~/.local/bin`, `~/.cargo/bin`,
 `~/bin`, `~/.nix-profile/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, and `/usr/bin` on POSIX hosts.

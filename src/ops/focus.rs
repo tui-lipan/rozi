@@ -1357,8 +1357,25 @@ pub(crate) fn request_host_form_focus(ctx: &mut Context<AppRoot>) {
 /// Focus the ssh prompt modal. It is raised by a background thread rather than by a keypress, so
 /// nothing else is moving focus onto it — and it has to take focus, or the answer would be typed
 /// into whatever was focused when ssh asked.
+///
+/// A prompt answered by choosing has no field to focus; its answer row carries the cursor instead,
+/// and opens on the affirmative.
 pub(crate) fn request_askpass_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::askpass_input_key());
+    let choice = ctx
+        .state
+        .askpass
+        .as_ref()
+        .is_some_and(|askpass| askpass.current.kind.is_choice());
+    if choice {
+        request_dialog_answer_focus(ctx, view::DIALOG_AFFIRM);
+    } else {
+        focus_key(ctx, view::askpass_input_key());
+    }
+}
+
+/// Focus one chip of a dialog's answer row.
+pub(crate) fn request_dialog_answer_focus(ctx: &mut Context<AppRoot>, index: usize) {
+    focus_key(ctx, view::dialog_answer_key(index));
 }
 
 pub(crate) fn request_pick_focus(ctx: &mut Context<AppRoot>) {

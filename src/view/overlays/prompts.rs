@@ -86,6 +86,49 @@ impl<'a> PromptCaption<'a> {
     }
 }
 
+/// The question above the answer, wrapped, for one too long to be a title.
+///
+/// Flex, not intrinsic: an intrinsically-sized child is measured unwrapped, so a multi-line ssh
+/// prompt would be given three rows and render five — silently clipping the question it ends with.
+fn prompt_detail_row(theme: &Theme, detail: &str) -> Element {
+    HStack::new()
+        .height(Length::Auto)
+        .padding((0, 1, 1, 1))
+        .child(
+            Text::new(detail)
+                .overflow(Overflow::Wrap)
+                .width(Length::Flex(1))
+                .style(fg_only(&theme.muted)),
+        )
+        .into()
+}
+
+/// One string out of the question, repeated on a line of its own directly above the answer: the
+/// value being compared, where it can be read straight across instead of around a wrap.
+fn prompt_highlight_row(theme: &Theme, highlight: &str) -> Element {
+    HStack::new()
+        .height(Length::Auto)
+        .padding((0, 1, 1, 1))
+        .child(
+            Text::new(highlight)
+                .overflow(Overflow::Wrap)
+                .width(Length::Flex(1))
+                .style(fg_only(&theme.accent).bold()),
+        )
+        .into()
+}
+
+/// The colour a caption speaks in, and recolours the chrome to when it is armed.
+fn prompt_caption_accent(theme: &Theme, caption: PromptCaption<'_>) -> Color {
+    if caption.arms_chrome() {
+        theme.status.error
+    } else if caption.is_busy() {
+        theme.status.info
+    } else {
+        theme.status.warning
+    }
+}
+
 /// What one single-input prompt differs by. Grouped so [`prompt_overlay`] keeps a readable
 /// signature as prompts grow options: the messages stay positional, the appearance does not.
 struct PromptDocument {
@@ -215,45 +258,14 @@ fn prompt_overlay(
 
     let mut body = VStack::new().height(Length::Auto).padding((1, 0, 0, 0));
     if let Some(detail) = detail {
-        body = body.child(
-            HStack::new()
-                .height(Length::Auto)
-                .padding((0, 1, 1, 1))
-                .child(
-                    Text::new(detail)
-                        .overflow(Overflow::Wrap)
-                        // Flex, not intrinsic: an intrinsically-sized child is measured unwrapped,
-                        // so a multi-line ssh prompt would be given three rows and render five —
-                        // silently clipping the question it ends with.
-                        .width(Length::Flex(1))
-                        .style(fg_only(&theme.muted)),
-                ),
-        );
+        body = body.child(prompt_detail_row(theme, detail));
     }
     if let Some(highlight) = highlight {
-        // Its own line, in the accent, directly above the field: the value the answer is being
-        // checked against, where it can be read straight across instead of around a wrap.
-        body = body.child(
-            HStack::new()
-                .height(Length::Auto)
-                .padding((0, 1, 1, 1))
-                .child(
-                    Text::new(highlight)
-                        .overflow(Overflow::Wrap)
-                        .width(Length::Flex(1))
-                        .style(fg_only(&theme.accent).bold()),
-                ),
-        );
+        body = body.child(prompt_highlight_row(theme, highlight));
     }
     body = body.child(input.key(input_key));
     if let Some(caption) = caption {
-        let accent = if caption.arms_chrome() {
-            theme.status.error
-        } else if caption.is_busy() {
-            theme.status.info
-        } else {
-            theme.status.warning
-        };
+        let accent = prompt_caption_accent(theme, caption);
         let caption_content: Element = if caption.is_busy() {
             Spinner::new()
                 .spinner_style(SpinnerStyle::Dots)
@@ -498,7 +510,8 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(askpass) = ctx.state.askpass.as_ref() else {
         return Text::new("").into();
     };
-    let secret = askpass.current.kind.is_secret();
+    let kind = askpass.current.kind;
+    let secret = kind.is_secret();
     // Trailing prompt punctuation reads as a stray colon once the text is a label rather than
     // something a cursor sits after.
     let question = askpass
@@ -507,28 +520,32 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
         .trim()
         .trim_end_matches(':')
         .trim_end();
+    // Only a question shown in clear names one, and only those are unmasked — repeating a
+    // fingerprint above a masked password field would be repeating the wrong prompt's business.
+    let fingerprint = (!secret)
+        .then(|| crate::session::remote::askpass::host_key_fingerprint(question))
+        .flatten();
+    // A rejected password is news, not a warning: the error accent is reserved for a dialog that
+    // is about to destroy something.
+    let caption = askpass.current.error.as_deref().map(PromptCaption::Note);
+    if kind.is_choice() {
+        return askpass_choice_overlay(ctx, kind, question, fingerprint, caption);
+    }
     let inline_title = secret
         && !question.contains('\n')
         && question.chars().count() <= ASKPASS_TITLE_QUESTION_MAX;
-    let title = if matches!(askpass.current.kind, crate::session::remote::AskpassKind::Install { .. }) {
-        "Install Rozi on remote".to_string()
-    } else if inline_title {
+    let title = if inline_title {
         format!("SSH · {question}")
     } else if secret {
         "SSH authentication".to_string()
     } else {
-        "SSH confirmation".to_string()
+        "SSH host key".to_string()
     };
     let placeholder = if secret {
         "Password or passphrase"
     } else {
-        "yes / no"
+        "yes / no / fingerprint"
     };
-    // Only a confirmation names one, and only a confirmation is unmasked — repeating a fingerprint
-    // above a masked password field would be repeating the wrong prompt's business.
-    let fingerprint = (!secret)
-        .then(|| crate::session::remote::askpass::host_key_fingerprint(question))
-        .flatten();
     prompt_overlay(
         ctx,
         PromptChrome {
@@ -537,9 +554,7 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
             mask: secret.then_some('•'),
             always_cancel_hint: true,
             dim_behind: true,
-            // A rejected password is news, not a warning: the error accent is reserved for a
-            // dialog that is about to destroy something.
-            caption: askpass.current.error.as_deref().map(PromptCaption::Note),
+            caption,
             ..PromptChrome::new(&title, placeholder, &[("send", "enter")])
         },
         &askpass.input,
@@ -547,6 +562,56 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
         Msg::RemoteAskpassChanged,
         Msg::CancelRemoteAskpass,
         Msg::SubmitRemoteAskpass,
+    )
+}
+
+/// The two-answer form of the ssh modal: a permission question, or rozi's own offer to install
+/// itself on the far side.
+///
+/// Both are questions the user answers by picking, not by typing, so they get the button row
+/// instead of a field. The labels differ because the questions do: OpenSSH asks something ending
+/// in a question mark, while the install prompt is a fact sheet about what is about to be written
+/// where — which is named by the button rather than by a "yes" that names nothing.
+fn askpass_choice_overlay(
+    ctx: &Context<AppRoot>,
+    kind: crate::session::remote::AskpassKind,
+    question: &str,
+    fingerprint: Option<&str>,
+    caption: Option<PromptCaption<'_>>,
+) -> Element {
+    let install = matches!(
+        kind,
+        crate::session::remote::AskpassKind::Install { .. }
+    );
+    let (title, affirm) = if install {
+        ("Install Rozi on remote", "Install")
+    } else {
+        ("SSH confirmation", "Yes")
+    };
+    let refuse = if install { "Cancel" } else { "No" };
+    let buttons = [
+        DialogButton::new(
+            refuse,
+            Msg::AnswerRemoteAskpass(false),
+            Msg::RemoteAskpassFocusAnswer(DIALOG_REFUSE),
+        ),
+        DialogButton::new(
+            affirm,
+            Msg::AnswerRemoteAskpass(true),
+            Msg::RemoteAskpassFocusAnswer(DIALOG_AFFIRM),
+        ),
+    ];
+    dialog_overlay(
+        ctx,
+        DialogChrome {
+            title,
+            detail: Some(question),
+            highlight: fingerprint,
+            caption,
+            dim_behind: true,
+        },
+        Msg::CancelRemoteAskpass,
+        &buttons,
     )
 }
 

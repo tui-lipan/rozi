@@ -36,6 +36,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Set by [`install_shutdown_handler`]'s handler; polled by the session server's accept loop.
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+/// Set once [`on_hangup`] has actually claimed this process's signal dispositions.
+static HANGUP_WATCH_INSTALLED: AtomicBool = AtomicBool::new(false);
+
 /// Whether a signal (Unix) or console control event (Windows) has asked this server to stop.
 ///
 /// The server loop polls this and takes the *same* teardown path an authenticated
@@ -411,7 +414,20 @@ mod imp {
 /// which is what keeps the handler itself async-signal-safe), so it may do arbitrary work - in
 /// practice it pushes one `Msg` onto the app's `CommandLink` and returns.
 pub fn on_hangup(callback: impl Fn() + Send + 'static) -> io::Result<()> {
-    imp::on_hangup(Box::new(callback))
+    imp::on_hangup(Box::new(callback))?;
+    HANGUP_WATCH_INSTALLED.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+/// Whether [`on_hangup`] has claimed this process's signal dispositions.
+///
+/// The distinction that matters is "a real client run" versus "a test dispatching `Msg::Hangup` by
+/// hand". Only the former installs the watch, and only the former owns a terminal it is entitled to
+/// reset on the way out - a test process shares its terminal with the harness and everything else
+/// in the suite. Callers that would touch process-wide or terminal-wide state on hangup should ask
+/// this first rather than assume the message could only have come from a signal.
+pub fn hangup_watch_installed() -> bool {
+    HANGUP_WATCH_INSTALLED.load(Ordering::SeqCst)
 }
 
 /// Server-side: route a stop signal/console event onto the same graceful teardown the authenticated

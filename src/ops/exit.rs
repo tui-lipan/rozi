@@ -167,7 +167,18 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<AppRoot>, session: Option<
 /// usually followed by the emulator exiting). So a temporary session skips the "name it first" flow
 /// and simply detaches: its server shuts itself down after the no-client grace period, which is the
 /// right outcome for a session nobody can reattach to by name anyway.
+///
+/// The terminal is released *first*, before any of the detach work. Everything below writes files,
+/// talks to the server, and stops services, which took ~0.5s on an idle single-pane session and
+/// grows from there; the terminal reset used to land after all of it, on the way out through the
+/// runner's own teardown. Over ssh that ordering loses a race it does not need to enter: the modes
+/// rozi turns on (alternate screen, mouse tracking, bracketed paste, hidden cursor) live in the
+/// user's terminal emulator, not in the tty, so nothing but rozi will ever turn them back off, and
+/// on a remote poweroff the connection is already going away while that half-second of bookkeeping
+/// runs. Resetting up front costs nothing (there is no UI left to draw, and the process is
+/// quitting) and means the bytes are out of the door before the pty can disappear (issue #2).
 pub(crate) fn detach_on_hangup(ctx: &mut Context<AppRoot>) -> Update {
+    release_terminal_for_exit(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     crate::ops::pick::cancel_pick(ctx, Some("detached"));
     mark_session_detached(ctx, None);
@@ -179,6 +190,29 @@ pub(crate) fn detach_on_hangup(ctx: &mut Context<AppRoot>) -> Update {
     profiles::persist_session_on_detach(&ctx.state);
     ctx.quit();
     Update::none()
+}
+
+/// Hand the terminal back to whatever comes next, without waiting for the runner's teardown.
+///
+/// This is the framework's external-program handoff used as a one-way door: it leaves the alternate
+/// screen, disables mouse tracking, bracketed paste and focus reporting, drops raw mode, and shows
+/// the cursor. There is no matching resume, because the caller is on its way out. The runner's own
+/// exit plan repeats most of it a moment later, which is harmless, and still pops the keyboard
+/// enhancement flags that the handoff deliberately leaves alone.
+///
+/// The error is discarded on purpose. There is no UI left to raise a toast in, the client has no
+/// log file of its own, and writing to stderr would only add noise to the terminal this is trying
+/// to hand back tidily. Failing here also leaves the runner's exit plan as a second chance at the
+/// same reset, so the detach below is worth more than the report.
+///
+/// Skipped entirely unless this process installed the hangup watch. `Msg::Hangup` is also reachable
+/// from a `TestBackend` dispatch, and a test has no business resetting the terminal `cargo test` is
+/// running in, let alone doing it from several tests at once.
+fn release_terminal_for_exit(ctx: &Context<AppRoot>) {
+    if !crate::platform::server_lifecycle::hangup_watch_installed() {
+        return;
+    }
+    let _ = tui_lipan::terminal_handoff::suspend_for_external_process(ctx.surface_mode());
 }
 
 /// Whether any tiled/floating pane still has a running process. Used to decide whether quitting

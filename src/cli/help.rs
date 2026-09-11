@@ -417,10 +417,39 @@ pub(super) fn endpoint_help() -> String {
     }
 }
 
+/// The commit a nightly archive was built from, set by `.github/workflows/nightly.yml`.
+const NIGHTLY_COMMIT: Option<&str> = option_env!("ROZI_NIGHTLY_COMMIT");
+
+/// When that nightly archive was built, in the same RFC 3339 form the nightly manifest uses.
+const NIGHTLY_BUILT: Option<&str> = option_env!("ROZI_NIGHTLY_BUILT");
+
+/// The `key=value` lines that identify a nightly build, and nothing at all for a release build.
+///
+/// A nightly is built from master between releases, so its `CARGO_PKG_VERSION` is whatever the
+/// last release left in `Cargo.toml`: without these lines a bug report from tonight's build and
+/// one from the published release read identically. Both values are optional and only the nightly
+/// workflow sets them, so a release binary keeps exactly the output it had before.
+///
+/// They stay `key=value` because the release workflow parses every line after the first one that
+/// way when it derives `rozi-compatibility.json`.
+fn nightly_version_lines(commit: Option<&str>, built: Option<&str>) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(commit) = commit {
+        lines.push(format!("nightly_commit={commit}"));
+    }
+    if let Some(built) = built {
+        lines.push(format!("nightly_built={built}"));
+    }
+    lines
+}
+
 pub(crate) fn print_version() {
     use crate::config::EXTENSION_API_VERSION;
     use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
     println!("rozi {}", env!("CARGO_PKG_VERSION"));
+    for line in nightly_version_lines(NIGHTLY_COMMIT, NIGHTLY_BUILT) {
+        println!("{line}");
+    }
     println!("extension_api={EXTENSION_API_VERSION}");
     println!("protocol_min={MIN_SUPPORTED_PROTOCOL}");
     println!("protocol_max={PROTOCOL_VERSION}");
@@ -634,6 +663,29 @@ mod tests {
         }
         stripped.push_str(rest);
         assert_eq!(stripped, plain);
+    }
+
+    #[test]
+    fn a_release_build_reports_no_nightly_provenance() {
+        assert!(nightly_version_lines(None, None).is_empty());
+    }
+
+    #[test]
+    fn a_nightly_build_reports_the_commit_it_came_from() {
+        // Every added line stays `key=value`: the release workflow reads `--version` that way to
+        // build rozi-compatibility.json, and a bare word there would fail the release, not this.
+        let lines = nightly_version_lines(Some("a257206"), Some("2026-09-10T03:17:00Z"));
+        assert_eq!(
+            lines,
+            vec![
+                "nightly_commit=a257206".to_string(),
+                "nightly_built=2026-09-10T03:17:00Z".to_string(),
+            ]
+        );
+        for line in &lines {
+            let (key, value) = line.split_once('=').expect("nightly line is key=value");
+            assert!(!key.is_empty() && !value.is_empty());
+        }
     }
 
     #[test]

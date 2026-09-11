@@ -25,6 +25,35 @@ npm run docs:dev
 npm run docs:build
 ```
 
+## Branches and pull requests
+
+`master` is the latest code that has passed CI and is expected to work. It is not the stable
+release: the `v*` tags are, and a signed release is cut from a commit on master. Keep master in a
+state you would be willing to tag.
+
+Work on a short-lived branch and merge it through a pull request:
+
+```text
+feat/headless-control
+fix/ssh-terminal-restore
+perf/session-memory
+```
+
+- Branch, push, open a pull request, and let CI finish before merging. Squash or rebase onto
+  master; keep the branch short-lived and delete it after the merge.
+- A code change should go through a branch even when you are merging it yourself. A typo or a
+  docs-only change can go straight to master.
+- There is no `develop` branch and there should not be one. Long-lived integration branches only
+  add a second thing to diverge and a second merge to perform.
+
+The required CI gate before a merge is the core matrix — fmt, Clippy, tests, and a release build
+on Linux, macOS, and Windows. Slower checks stay advisory unless the change touches what they
+measure: benchmarks are evidence, not a merge gate.
+
+Nightly builds are produced from master after CI passes, so anything merged is in the next
+nightly and in front of whoever is testing it. See
+[Nightly builds](docs/installation.md#nightly-builds).
+
 ## Development workflow
 
 Keep the edit loop focused. Run one test by name or one integration-test target while changing

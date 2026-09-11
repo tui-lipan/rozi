@@ -1,0 +1,469 @@
+# Nightly builds of master.
+#
+# A nightly is not a release channel. It is a disposable binary of the newest master commit that
+# already passed the CI matrix, published to one rolling `nightly` prerelease so a bug report can
+# be answered with "try tonight's build" instead of cutting a version to test one fix. Nothing
+# here signs anything, `rozi update` never selects it, and the published tag moves every night.
+#
+# The shape is deliberately:
+#
+#   master -> CI passes -> nightly artifact
+#
+# so the only commits that ever reach a user this way are commits the matrix in `ci.yml` already
+# agreed about. `release.yml` remains the only workflow that signs, publishes versions, or
+# touches crates.io; the two share no secrets.
+name: Nightly
+
+on:
+  schedule:
+    # 03:17 UTC, off the hour because scheduled workflows queue behind everything else that asked
+    # for midnight. Late enough that a normal day's merges have finished their CI run.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Publish even when master has not moved since the published nightly"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Two nightlies must not publish to the same rolling tag at once, and a queued one is worth
+# keeping rather than cancelling: it is the newer commit.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  NIGHTLY_TAG: nightly
+
+jobs:
+  # Pick the commit before paying for five builds of it. This is the CI gate: `gh run list` is
+  # asked only for CI runs on master that concluded successfully, so a red tip means the nightly
+  # falls back to the newest green commit rather than shipping something the matrix rejected.
+  select:
+    name: select commit
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.pick.outputs.build }}
+      sha: ${{ steps.pick.outputs.sha }}
+      short: ${{ steps.pick.outputs.short }}
+      built: ${{ steps.pick.outputs.built }}
+      stem: ${{ steps.pick.outputs.stem }}
+    steps:
+      - name: Pick the newest green master commit
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sha="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow ci.yml \
+            --branch master \
+            --status success \
+            --limit 20 \
+            --json headSha \
+            --jq '.[0].headSha // ""')"
+          if [[ -z "$sha" ]]; then
+            echo "No successful CI run on master to build a nightly from." >> "$GITHUB_STEP_SUMMARY"
+            printf 'build=false\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # A successful run is not by itself proof the commit is still on master: a reverted or
+          # force-pushed commit keeps its green run. Compare against the branch and require that
+          # master contains it.
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...master" --jq .status)"
+          if [[ "$status" != "identical" && "$status" != "ahead" ]]; then
+            echo "Newest green commit $sha is not reachable from master ($status)." \
+              >> "$GITHUB_STEP_SUMMARY"
+            printf 'build=false\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The published nightly records the commit it was built from. Comparing against that,
+          # rather than against "did anything land today", means a skipped or failed night is
+          # picked up the next night instead of leaving a gap.
+          published=""
+          if gh release download "$NIGHTLY_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern rozi-nightly.json \
+            --dir published 2>/dev/null; then
+            published="$(python3 -c \
+              'import json;print(json.load(open("published/rozi-nightly.json"))["commit"])')"
+          fi
+
+          if [[ "$sha" == "$published" && "$FORCE" != "true" ]]; then
+            echo "master is unchanged since the published nightly (\`$sha\`); nothing to build." \
+              >> "$GITHUB_STEP_SUMMARY"
+            printf 'build=false\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          short="${sha:0:7}"
+          built="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            printf 'build=true\n'
+            printf 'sha=%s\n' "$sha"
+            printf 'short=%s\n' "$short"
+            printf 'built=%s\n' "$built"
+            printf 'stem=nightly-%s-%s\n' "$(date -u +%Y%m%d)" "$short"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building nightly from \`$sha\`." >> "$GITHUB_STEP_SUMMARY"
+
+  # The same five targets a release ships, built the same way. The Linux payloads keep the pinned
+  # manylinux containers and the GLIBC_2.28 ceiling: a nightly exists to be run on a tester's own
+  # distro, and one built against the runner's newer glibc would refuse to start on exactly the
+  # machines most worth hearing from.
+  #
+  # Nothing here is cached, just as the release matrix caches nothing: a nightly is built once
+  # from a fixed commit and superseded tomorrow, so a restored `target/` would be carried a long
+  # way for one build. Correctness does not rest on that - rustc records the two stamp variables
+  # as dependencies of the crate, so Cargo rebuilds when they change - and the packaging step
+  # below re-reads the stamp out of the built binary anyway.
+  build:
+    name: build ${{ matrix.target }}
+    needs: select
+    if: needs.select.outputs.build == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            glibc: "2.28"
+            linux_builder: quay.io/pypa/manylinux_2_28_x86_64@sha256:4dc41da7df20400310c80d162a2fe2d2c2f3d9734d8dec20f6b9843711618deb
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            archive: tar.gz
+            glibc: "2.28"
+            linux_builder: quay.io/pypa/manylinux_2_28_aarch64@sha256:29a6ceb78de5b00494e6e7456a72782a4cb54238de102e7491d15fe47789b4d1
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+    env:
+      # Compiled into the binary so `rozi --version` says which nightly it is. A release build
+      # sets neither and prints exactly what it always printed.
+      ROZI_NIGHTLY_COMMIT: ${{ needs.select.outputs.short }}
+      ROZI_NIGHTLY_BUILT: ${{ needs.select.outputs.built }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@1.90
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ matrix.glibc }}" ]]; then
+            docker run --rm \
+              --env CARGO_TERM_COLOR=always \
+              --env BUILD_UID="$(id -u)" \
+              --env BUILD_GID="$(id -g)" \
+              --env ROZI_NIGHTLY_COMMIT \
+              --env ROZI_NIGHTLY_BUILT \
+              --volume "$GITHUB_WORKSPACE:/work" \
+              --workdir /work \
+              "${{ matrix.linux_builder }}" \
+              bash -c '
+                set -euo pipefail
+                curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs \
+                  | sh -s -- -y --profile minimal --default-toolchain 1.90.0 --no-modify-path
+                export PATH=/root/.cargo/bin:$PATH
+                cargo build --locked --release --target "${{ matrix.target }}"
+                chown -R "$BUILD_UID:$BUILD_GID" target
+              '
+          else
+            cargo build --locked --release --target "${{ matrix.target }}"
+          fi
+
+      - name: Build Windows launcher
+        if: matrix.archive == 'zip'
+        run: >
+          cargo build --locked --release --target ${{ matrix.target }}
+          --features windows-launcher --bin rozi-launcher
+
+      - name: Smoke-test payload provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/rozi"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then binary="$binary.exe"; fi
+          "$binary" --version
+          "$binary" --version | grep -Fx "nightly_commit=${{ needs.select.outputs.short }}"
+          "$binary" --help >/dev/null
+
+      - name: Enforce Linux glibc compatibility ceiling
+        if: matrix.glibc
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/rozi"
+          newest="$(readelf --version-info "$binary" \
+            | sed -n 's/.*Name: GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+            | sort -V | tail -n 1)"
+          test -n "$newest"
+          test "$(printf '%s\n%s\n' "$newest" "${{ matrix.glibc }}" | sort -V | tail -n 1)" = "${{ matrix.glibc }}" || {
+            echo "payload requires GLIBC_$newest; nightly ceiling is GLIBC_${{ matrix.glibc }}" >&2
+            exit 1
+          }
+
+      # The asset name is stable so a download link can be written down once; the directory inside
+      # the archive, and the NIGHTLY file beside the binary, are what say which build this is.
+      - name: Package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          stem="rozi-${{ needs.select.outputs.stem }}-${{ matrix.target }}"
+          asset="rozi-nightly-${{ matrix.target }}"
+          mkdir -p "dist/${stem}"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            cp "target/${{ matrix.target }}/release/rozi.exe" "dist/${stem}/rozi.exe"
+            cp "target/${{ matrix.target }}/release/rozi-launcher.exe" \
+              "dist/${stem}/rozi-launcher.exe"
+          else
+            cp "target/${{ matrix.target }}/release/rozi" "dist/${stem}/rozi"
+          fi
+          cp README.md LICENSE "dist/${stem}/"
+          cp -R examples "dist/${stem}/examples"
+          cat > "dist/${stem}/NIGHTLY" <<EOF
+          rozi nightly build - unsigned, unsupported, and replaced every night.
+
+          commit: ${{ needs.select.outputs.sha }}
+          built:  ${{ needs.select.outputs.built }}
+          target: ${{ matrix.target }}
+          run:    $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          This is not a release. Releases are the v-tagged, signed archives at
+          $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/latest, and only those are verified by
+          rozi's managed installer and selected by \`rozi update\`.
+          EOF
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            (cd dist && 7z a -tzip "${asset}.zip" "$stem" >/dev/null)
+          else
+            tar -czf "dist/${asset}.tar.gz" -C dist "$stem"
+          fi
+          rm -rf "dist/${stem}"
+
+      - name: Smoke-test extracted archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          stem="rozi-${{ needs.select.outputs.stem }}-${{ matrix.target }}"
+          asset="rozi-nightly-${{ matrix.target }}"
+          mkdir -p dist/verify
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            7z x "dist/${asset}.zip" -odist/verify >/dev/null
+            "dist/verify/${stem}/rozi.exe" --version >/dev/null
+            test -f "dist/verify/${stem}/rozi-launcher.exe"
+          else
+            tar -xzf "dist/${asset}.tar.gz" -C dist/verify
+            "dist/verify/${stem}/rozi" --version >/dev/null
+          fi
+          test -f "dist/verify/${stem}/NIGHTLY"
+          rm -rf dist/verify
+
+      # A nightly is not signed, so this checksum is a corruption check and nothing more. It is
+      # written next to the archive the way the release checksums are, and carries no authority:
+      # it travels from the same place as the file it describes.
+      - name: Write checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          for archive in *.tar.gz *.zip; do
+            [[ -e "$archive" ]] || continue
+            if command -v sha256sum >/dev/null; then
+              sha256sum "$archive" > "$archive.sha256"
+            else
+              shasum -a 256 "$archive" > "$archive.sha256"
+            fi
+          done
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          overwrite: false
+          # A nightly is superseded tomorrow. Keeping a fortnight of them is a fortnight of
+          # storage nobody reads; the published rolling prerelease is what testers use.
+          retention-days: 7
+
+  # One rolling `nightly` prerelease. Every asset name is stable, so the tag move and the uploads
+  # replace last night's build rather than piling up beside it.
+  publish:
+    name: publish nightly
+    needs: [select, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-*
+          path: dist
+          merge-multiple: true
+
+      - name: Check every target arrived
+        shell: bash
+        run: |
+          set -euo pipefail
+          for asset in \
+            "rozi-nightly-x86_64-unknown-linux-gnu.tar.gz" \
+            "rozi-nightly-aarch64-unknown-linux-gnu.tar.gz" \
+            "rozi-nightly-x86_64-apple-darwin.tar.gz" \
+            "rozi-nightly-aarch64-apple-darwin.tar.gz" \
+            "rozi-nightly-x86_64-pc-windows-msvc.zip"; do
+            test -f "dist/$asset" || {
+              echo "nightly artifact is missing: $asset" >&2
+              exit 1
+            }
+            test -f "dist/$asset.sha256"
+          done
+
+      # Deliberately not named like a release manifest. `rozi-release.json` is a signed document
+      # the update engine trusts; this one is a plain record of what was built, and the next run
+      # reads its `commit` to decide whether master has moved.
+      - name: Record what was built
+        shell: bash
+        env:
+          NIGHTLY_SHA: ${{ needs.select.outputs.sha }}
+          NIGHTLY_BUILT: ${{ needs.select.outputs.built }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          targets = {}
+          for archive in sorted(Path("dist").glob("rozi-nightly-*")):
+              if archive.name.endswith(".sha256"):
+                  continue
+              target = archive.name.removeprefix("rozi-nightly-")
+              target = target.removesuffix(".tar.gz").removesuffix(".zip")
+              digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+              targets[target] = {
+                  "archive": archive.name,
+                  "sha256": digest,
+                  "size": archive.stat().st_size,
+              }
+
+          document = {
+              "schema_version": 1,
+              "signed": False,
+              "commit": os.environ["NIGHTLY_SHA"],
+              "built_at": os.environ["NIGHTLY_BUILT"],
+              "workflow_run": (
+                  f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+              ),
+              "targets": targets,
+          }
+          Path("dist/rozi-nightly.json").write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+
+      # A published release will not move its own tag, so move the ref first and let the release
+      # follow it. `refs/tags/nightly` is excluded from `ci.yml`, which triggers on branches and
+      # v-tags, so this does not start a second matrix every night.
+      - name: Move the rolling nightly tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_SHA: ${{ needs.select.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$NIGHTLY_TAG" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$NIGHTLY_TAG" \
+              -f sha="$NIGHTLY_SHA" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$NIGHTLY_TAG" -f sha="$NIGHTLY_SHA" >/dev/null
+          fi
+
+      - name: Publish the rolling nightly prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_SHA: ${{ needs.select.outputs.sha }}
+          NIGHTLY_BUILT: ${{ needs.select.outputs.built }}
+          NIGHTLY_SHORT: ${{ needs.select.outputs.short }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > notes.md <<EOF
+          Disposable build of master. **Not a release**, not signed, and replaced every night.
+
+          \`\`\`text
+          rozi-nightly
+          commit: $NIGHTLY_SHORT
+          built:  ${NIGHTLY_BUILT%T*}
+          \`\`\`
+
+          - commit: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$NIGHTLY_SHA
+          - built from the newest master commit whose CI matrix passed
+          - workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          Unpack the archive for your platform and run the binary from where you unpacked it.
+          \`rozi --version\` prints \`nightly_commit=\` so a report from this build is
+          distinguishable from one from a release.
+
+          A nightly is not part of any update channel: \`rozi update\` and the install scripts
+          only ever select signed, v-tagged releases, and the checksums here detect corruption
+          rather than prove authenticity. For anything but testing, use
+          [the latest release]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/latest).
+          EOF
+
+          if gh release view "$NIGHTLY_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$NIGHTLY_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "rozi nightly" \
+              --notes-file notes.md \
+              --prerelease \
+              --latest=false \
+              --draft=false
+          else
+            gh release create "$NIGHTLY_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "rozi nightly" \
+              --notes-file notes.md \
+              --prerelease \
+              --latest=false
+          fi
+
+          gh release upload "$NIGHTLY_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            dist/rozi-nightly.json \
+            dist/*.tar.gz \
+            dist/*.zip \
+            dist/*.sha256 \
+            --clobber
+
+          {
+            echo "Published nightly \`$NIGHTLY_SHORT\`:"
+            echo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$NIGHTLY_TAG"
+          } >> "$GITHUB_STEP_SUMMARY"

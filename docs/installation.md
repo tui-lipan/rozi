@@ -152,6 +152,65 @@ An install made this way is **not** a managed installation: mise owns the binary
 so `rozi update` will decline and point you back at `mise upgrade rozi`. Use whichever owns your
 install, not both.
 
+## Nightly builds
+
+A nightly is a disposable build of the newest `master` commit whose CI matrix passed. It exists so
+a fix can be tried before it is released — "try tonight's build" instead of cutting a version to
+test one change — and so a regression can be found in daily use rather than at release time.
+
+Nightlies are published to one rolling prerelease that is replaced every night:
+
+<https://github.com/tui-lipan/rozi/releases/tag/nightly>
+
+The assets are named for the platform rather than a version, so the same link keeps working:
+
+```text
+rozi-nightly-x86_64-unknown-linux-gnu.tar.gz
+rozi-nightly-aarch64-unknown-linux-gnu.tar.gz
+rozi-nightly-x86_64-apple-darwin.tar.gz
+rozi-nightly-aarch64-apple-darwin.tar.gz
+rozi-nightly-x86_64-pc-windows-msvc.zip
+```
+
+Unpack one and run the binary from where you unpacked it:
+
+```bash
+curl -fsSLO https://github.com/tui-lipan/rozi/releases/download/nightly/rozi-nightly-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rozi-nightly-x86_64-unknown-linux-gnu.tar.gz
+./rozi-nightly-*/rozi --version
+```
+
+The archive directory is named for the build date and commit, the archive contains a `NIGHTLY`
+file with the same detail, and the binary reports it too:
+
+```console
+$ rozi --version
+rozi 0.0.18
+nightly_commit=a257206
+nightly_built=2026-09-10T03:17:00Z
+extension_api=1
+protocol_min=5
+protocol_max=5
+```
+
+Quote those lines in a bug report from a nightly. The first line is whatever version the last
+release left in `Cargo.toml`, so on its own it cannot tell tonight's master from the published
+release.
+
+What a nightly is not:
+
+- **Not a release channel.** `rozi update` and the bootstrap installers only ever select signed,
+  v-tagged releases. Nothing moves a stable install onto nightly, and installing a nightly by hand
+  does not make a managed installation.
+- **Not signed.** The `.sha256` files beside the archives come from the same place as the archives
+  and detect corruption only. Managed releases are verified against a signed manifest; nightlies
+  have no equivalent.
+- **Not kept.** Tonight's build replaces last night's, and the tag moves with it. Keep a copy if
+  you need to come back to a particular nightly.
+
+Run it beside a release rather than over one — a nightly unpacked in its own directory leaves a
+managed install untouched, and going back is deleting the directory.
+
 ## Build from source
 
 rozi uses Rust edition 2024 and requires Rust 1.90 or newer.

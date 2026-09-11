@@ -57,7 +57,21 @@ cargo build --release --features windows-launcher --bin rozi-launcher
 
 CI is defined in `.github/workflows/ci.yml`. Dependency-resolving build, check, Clippy, and test
 commands use `--locked`; manifest and lockfile sources must agree. CI runs on Linux, macOS, and
-Windows. The release matrix lives in `.github/workflows/release.yml`.
+Windows, on every branch push, every pull request, and every `v*` tag. The release matrix lives in
+`.github/workflows/release.yml`.
+
+Code changes belong on a short-lived branch merged through a pull request; `master` is the latest
+CI-passed code and the base a release is tagged from. `CONTRIBUTING.md` has the branch conventions.
+
+`.github/workflows/nightly.yml` publishes a disposable build of master every night to one rolling
+`nightly` prerelease. It selects the newest master commit with a successful CI run, so it adds no
+gate of its own, and it holds no signing secret: nightlies are unsigned and no install or update
+path selects them. Its build matrix mirrors the release targets, including the manylinux
+containers and the `GLIBC_2.28` ceiling, and it compiles `ROZI_NIGHTLY_COMMIT` and
+`ROZI_NIGHTLY_BUILT` into the binary so `rozi --version` names the build. Keep those two lines
+`key=value`: the release workflow parses `--version` that way. `docs/release-process.md` covers
+the workflow, `docs/installation.md` what a user gets. CI deliberately ignores the moving
+`nightly` tag.
 
 One extra job cross-compiles `x86_64-unknown-netbsd`. NetBSD is not supported and nothing runs
 there; the job exists because it is the only thing in CI that catches `#[cfg(target_os = "linux")]`

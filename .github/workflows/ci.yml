@@ -2,6 +2,12 @@ name: CI
 
 on:
   push:
+    branches: ["**"]
+    # Tag pushes keep running the matrix, because a release tag is worth checking on its own.
+    # The exception is the rolling `nightly` tag: `nightly.yml` moves it every night onto a
+    # commit this matrix has already passed, so re-running there would buy no new fact and
+    # would make every nightly cost a second full matrix.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 

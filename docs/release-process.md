@@ -198,6 +198,45 @@ as release-test state.
 Check that `https://github.com/tui-lipan/rozi/releases/latest` resolves to the new tag and that the
 documentation-site installers resolve the expected archive names.
 
+## Nightly builds
+
+`.github/workflows/nightly.yml` publishes a disposable build of master every night. It is not a
+release channel and shares nothing with release signing: no protected environment, no private key,
+no crates.io token. User-facing behavior is documented in
+[Installation and releases](installation.md#nightly-builds).
+
+The workflow runs at 03:17 UTC and can be started by hand with `workflow_dispatch`. It does three
+things in order:
+
+1. **Select.** It asks GitHub for the newest successful `ci.yml` run on master, confirms master
+   still contains that commit, and compares it with the `commit` recorded in the published
+   `rozi-nightly.json`. Identical means master has not moved and nothing is built; the
+   `force` dispatch input builds anyway. A red tip falls back to the newest green commit rather
+   than publishing something the matrix rejected.
+2. **Build.** The same five targets a release ships, from the selected commit. Linux payloads use
+   the same pinned manylinux 2.28 containers and the same `GLIBC_2.28` ceiling, so a nightly runs
+   where a release runs. `ROZI_NIGHTLY_COMMIT` and `ROZI_NIGHTLY_BUILT` are compiled into the
+   payload, and each one is checked for its own commit stamp before it is packaged. Nothing is
+   cached, the way the release matrix caches nothing.
+3. **Publish.** It moves the `nightly` tag onto the selected commit, updates one rolling
+   prerelease, and uploads the archives, their `.sha256` files, and `rozi-nightly.json` with
+   `--clobber`. Asset names carry the target and no version, so download links stay valid and last
+   night's assets are replaced rather than accumulated.
+
+A nightly build failing on one target fails the whole night: the publication job checks that all
+five archives arrived, so a partial set is never published.
+
+The tag is `nightly`, not `vX.Y.Z`, and the release is always a prerelease. Both matter. The
+bootstrap installers resolve `/releases/latest` and reject a tag without a `v` prefix, `rozi
+update` selects signed release metadata only, and GitHub never reports a prerelease as the latest
+release — so no stable user is moved onto nightly by any of the paths that install rozi. Keep it
+that way: an explicit opt-in such as `rozi update --channel nightly` is a separate decision, worth
+making only if people start using nightlies.
+
+`ci.yml` triggers on branches and `v*` tags, deliberately not on the moving `nightly` tag. A
+nightly is built from a commit the matrix has already passed, so re-running it there would cost a
+second full matrix for no new fact.
+
 ## Failed release and rollback response
 
 If a workflow fails before publication, inspect the failed job and keep the tag fixed while

@@ -45,6 +45,10 @@ cargo install rozi
 Building from source requires Rust 1.90 or newer. See [Installation](docs/installation.md) for
 PATH setup, updates, rollback, and source builds.
 
+There are also [nightly builds](docs/installation.md#nightly-builds): a disposable binary of the
+newest `master` commit that passed CI, for trying a fix before it is released. They are unsigned,
+replaced every night, and no install or update path selects them.
+
 ## First five minutes
 
 Run `rozi`. The session picker opens without creating or attaching to a session.

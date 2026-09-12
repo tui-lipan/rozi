@@ -1135,7 +1135,7 @@ fn detect_binary_target(path: &Path) -> Option<(String, String)> {
 }
 
 fn binary_target_from_header(head: &[u8], path: &Path) -> Option<(String, String)> {
-    // ELF (Linux): 0x7f 'E' 'L' 'F', e_machine at offset 18 (little-endian when EI_DATA == 1).
+    // ELF: 0x7f 'E' 'L' 'F', e_machine at offset 18 (little-endian when EI_DATA == 1).
     if head.len() >= 20 && head[..4] == [0x7f, b'E', b'L', b'F'] {
         let machine = u16::from_le_bytes([head[18], head[19]]);
         let arch = match machine {
@@ -1143,7 +1143,7 @@ fn binary_target_from_header(head: &[u8], path: &Path) -> Option<(String, String
             0xb7 => "aarch64",
             _ => return None,
         };
-        return Some(("linux".to_string(), arch.to_string()));
+        return Some((elf_os(head, path)?, arch.to_string()));
     }
     // Mach-O (macOS): 64-bit magic FEEDFACF (either endianness), cputype in the next 4 bytes.
     if head.len() >= 8
@@ -1166,6 +1166,170 @@ fn binary_target_from_header(head: &[u8], path: &Path) -> Option<(String, String
         return pe_target_from_file(path);
     }
     None
+}
+
+/// The operating system an ELF executable targets, or `None` when the file does not say.
+///
+/// ELF has a byte for this, `e_ident[EI_OSABI]`, and it is very nearly useless: Linux, NetBSD and
+/// FreeBSD toolchains all routinely leave it `ELFOSABI_NONE`. Reading every ELF as Linux because
+/// of that is what refused a NetBSD-built rozi as a wrong-target upload (issue #3), the same
+/// "Linux, or else" shape as the `__errno` bug that opened it.
+///
+/// So take the byte when it is set, and otherwise ask the vendor note each system stamps into a
+/// `PT_NOTE` segment. A file that answers neither way is `None`, which leaves the upload alone:
+/// this check exists to block a *confirmed* mismatch, and an unreadable file confirms nothing.
+fn elf_os(head: &[u8], path: &Path) -> Option<String> {
+    const ELFOSABI_NONE: u8 = 0;
+    const ELFOSABI_NETBSD: u8 = 2;
+    const ELFOSABI_GNU: u8 = 3;
+    const ELFOSABI_SOLARIS: u8 = 6;
+    const ELFOSABI_FREEBSD: u8 = 9;
+    const ELFOSABI_OPENBSD: u8 = 12;
+
+    let os = match *head.get(7)? {
+        ELFOSABI_NETBSD => "netbsd",
+        ELFOSABI_GNU => "linux",
+        ELFOSABI_SOLARIS => "solaris",
+        ELFOSABI_FREEBSD => "freebsd",
+        ELFOSABI_OPENBSD => "openbsd",
+        ELFOSABI_NONE => return elf_os_from_notes(head, path),
+        _ => return None,
+    };
+    Some(os.to_string())
+}
+
+/// Walk the `PT_NOTE` segments of `path` and return the OS the first recognised vendor note names.
+fn elf_os_from_notes(head: &[u8], path: &Path) -> Option<String> {
+    /// One note segment big enough to hold the identifying notes and small enough that a corrupt
+    /// or hostile `p_filesz` cannot ask us to buffer the machine.
+    const MAX_NOTE_BYTES: u64 = 64 * 1024;
+    const PT_NOTE: u32 = 4;
+
+    let sixty_four = match *head.get(4)? {
+        1 => false,
+        2 => true,
+        _ => return None,
+    };
+    let little = match *head.get(5)? {
+        1 => true,
+        2 => false,
+        _ => return None,
+    };
+
+    let read_u16 = |b: &[u8]| -> u16 {
+        let raw = [b[0], b[1]];
+        if little {
+            u16::from_le_bytes(raw)
+        } else {
+            u16::from_be_bytes(raw)
+        }
+    };
+
+    let (phoff_at, phentsize_at, phnum_at) = if sixty_four {
+        (32, 54, 56)
+    } else {
+        (28, 42, 44)
+    };
+    let phoff = read_elf_addr(head.get(phoff_at..)?, sixty_four, little)?;
+    let phentsize = read_u16(head.get(phentsize_at..phentsize_at + 2)?) as u64;
+    let phnum = read_u16(head.get(phnum_at..phnum_at + 2)?) as u64;
+    if phentsize == 0 {
+        return None;
+    }
+
+    let mut file = std::fs::File::open(path).ok()?;
+    for index in 0..phnum {
+        let mut entry = vec![0u8; phentsize as usize];
+        seek_read(
+            &mut file,
+            phoff.checked_add(index.checked_mul(phentsize)?)?,
+            &mut entry,
+        )
+        .ok()?;
+        let p_type = read_elf_u32(entry.get(0..4)?, little);
+        if p_type != PT_NOTE {
+            continue;
+        }
+        let (offset_at, filesz_at) = if sixty_four { (8, 32) } else { (4, 16) };
+        let offset = read_elf_addr(entry.get(offset_at..)?, sixty_four, little)?;
+        let size = read_elf_addr(entry.get(filesz_at..)?, sixty_four, little)?;
+        if size == 0 || size > MAX_NOTE_BYTES {
+            continue;
+        }
+        let mut notes = vec![0u8; size as usize];
+        if seek_read(&mut file, offset, &mut notes).is_err() {
+            continue;
+        }
+        if let Some(os) = os_from_note_segment(&notes, little) {
+            return Some(os.to_string());
+        }
+    }
+    None
+}
+
+/// The OS named by the first recognised note in one `PT_NOTE` segment.
+///
+/// Each note is `namesz`, `descsz`, `type`, then the name and descriptor, both padded to four
+/// bytes. Only the name is needed here: every system stamps its own.
+fn os_from_note_segment(notes: &[u8], little: bool) -> Option<&'static str> {
+    let align = |n: usize| n.div_ceil(4) * 4;
+    let mut at = 0usize;
+    while at + 12 <= notes.len() {
+        let namesz = read_elf_u32(notes.get(at..at + 4)?, little) as usize;
+        let descsz = read_elf_u32(notes.get(at + 4..at + 8)?, little) as usize;
+        let name_at = at + 12;
+        let name = notes.get(name_at..name_at.checked_add(namesz)?)?;
+        let name = std::str::from_utf8(name).ok()?.trim_end_matches('\0');
+        if let Some(os) = os_from_note_name(name) {
+            return Some(os);
+        }
+        at = name_at
+            .checked_add(align(namesz))?
+            .checked_add(align(descsz))?;
+    }
+    None
+}
+
+/// The OS a note vendor name identifies. `GNU` is Linux in practice: the note is the GNU ABI tag,
+/// and the toolchains that emit it on another kernel also set `EI_OSABI`, which is read first.
+fn os_from_note_name(name: &str) -> Option<&'static str> {
+    match name {
+        "NetBSD" => Some("netbsd"),
+        "OpenBSD" => Some("openbsd"),
+        "FreeBSD" => Some("freebsd"),
+        "DragonFly" => Some("dragonfly"),
+        "Android" | "GNU" => Some("linux"),
+        _ => None,
+    }
+}
+
+fn read_elf_u32(bytes: &[u8], little: bool) -> u32 {
+    let raw = [bytes[0], bytes[1], bytes[2], bytes[3]];
+    if little {
+        u32::from_le_bytes(raw)
+    } else {
+        u32::from_be_bytes(raw)
+    }
+}
+
+/// A `u32` or `u64` offset, depending on the ELF class, widened to `u64`.
+fn read_elf_addr(bytes: &[u8], sixty_four: bool, little: bool) -> Option<u64> {
+    if sixty_four {
+        let raw: [u8; 8] = bytes.get(0..8)?.try_into().ok()?;
+        Some(if little {
+            u64::from_le_bytes(raw)
+        } else {
+            u64::from_be_bytes(raw)
+        })
+    } else {
+        Some(read_elf_u32(bytes.get(0..4)?, little) as u64)
+    }
+}
+
+fn seek_read(file: &mut std::fs::File, at: u64, into: &mut [u8]) -> std::io::Result<()> {
+    use std::io::{Seek, SeekFrom};
+    file.seek(SeekFrom::Start(at))?;
+    file.read_exact(into)
 }
 
 fn pe_target_from_file(path: &Path) -> Option<(String, String)> {
@@ -1344,10 +1508,11 @@ protocol_max={beyond}
 
     #[test]
     fn detects_executable_target_from_headers() {
-        // ELF x86_64: magic, then e_machine 0x3e at offset 18.
+        // ELF x86_64: magic, EI_OSABI at offset 7, then e_machine 0x3e at offset 18.
         let mut elf = vec![0u8; 20];
         elf[..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
         elf[5] = 1; // EI_DATA = little-endian
+        elf[7] = 3; // ELFOSABI_GNU
         elf[18] = 0x3e;
         elf[19] = 0x00;
         assert_eq!(
@@ -1362,6 +1527,20 @@ protocol_max={beyond}
             binary_target_from_header(&arm, Path::new("/x")),
             Some(("linux".into(), "aarch64".into()))
         );
+
+        // The same header with NetBSD's EI_OSABI is NetBSD, not Linux. Reading this one as Linux
+        // is what refused a NetBSD-built rozi as a wrong-target upload (issue #3).
+        let mut netbsd = elf.clone();
+        netbsd[7] = 2; // ELFOSABI_NETBSD
+        assert_eq!(
+            binary_target_from_header(&netbsd, Path::new("/x")),
+            Some(("netbsd".into(), "x86_64".into()))
+        );
+
+        // ELFOSABI_NONE with no notes to read names no OS at all, rather than guessing one.
+        let mut bare = elf.clone();
+        bare[7] = 0;
+        assert_eq!(binary_target_from_header(&bare, Path::new("/x")), None);
 
         // Mach-O 64-bit little-endian, cputype x86_64 (0x01000007).
         let mut macho = vec![0u8; 8];
@@ -1379,6 +1558,100 @@ protocol_max={beyond}
         );
     }
 
+    /// Build a minimal little-endian ELF64 carrying one `PT_NOTE` segment with `vendor`'s note.
+    fn elf_with_note(vendor: &str) -> Vec<u8> {
+        const EHDR: usize = 64;
+        const PHDR: usize = 56;
+
+        let mut name: Vec<u8> = vendor.as_bytes().to_vec();
+        name.push(0);
+        let namesz = name.len();
+        while !name.len().is_multiple_of(4) {
+            name.push(0);
+        }
+        let mut notes = Vec::new();
+        notes.extend_from_slice(&(namesz as u32).to_le_bytes());
+        notes.extend_from_slice(&4u32.to_le_bytes()); // descsz
+        notes.extend_from_slice(&1u32.to_le_bytes()); // type
+        notes.extend_from_slice(&name);
+        notes.extend_from_slice(&0u32.to_le_bytes()); // descriptor
+
+        let mut elf = vec![0u8; EHDR + PHDR];
+        elf[..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+        elf[4] = 2; // ELFCLASS64
+        elf[5] = 1; // little-endian
+        elf[7] = 0; // ELFOSABI_NONE, so only the note identifies the system
+        elf[18] = 0x3e; // x86_64
+        elf[32..40].copy_from_slice(&(EHDR as u64).to_le_bytes()); // e_phoff
+        elf[54..56].copy_from_slice(&(PHDR as u16).to_le_bytes()); // e_phentsize
+        elf[56..58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+
+        let ph = EHDR;
+        elf[ph..ph + 4].copy_from_slice(&4u32.to_le_bytes()); // PT_NOTE
+        elf[ph + 8..ph + 16].copy_from_slice(&((EHDR + PHDR) as u64).to_le_bytes()); // p_offset
+        elf[ph + 32..ph + 40].copy_from_slice(&(notes.len() as u64).to_le_bytes()); // p_filesz
+        elf.extend_from_slice(&notes);
+        elf
+    }
+
+    /// Every Unix leaves `EI_OSABI` as `ELFOSABI_NONE`, so the vendor note is what actually
+    /// separates them. This is the case a real NetBSD binary hits.
+    #[test]
+    fn a_vendor_note_names_the_system_when_the_osabi_byte_does_not() {
+        let dir = std::env::temp_dir().join(format!("rozi-notes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        for (vendor, expected) in [
+            ("NetBSD", "netbsd"),
+            ("GNU", "linux"),
+            ("FreeBSD", "freebsd"),
+        ] {
+            let path = dir.join(vendor);
+            std::fs::write(&path, elf_with_note(vendor)).unwrap();
+            let head = std::fs::read(&path).unwrap();
+            assert_eq!(
+                binary_target_from_header(&head[..64], &path),
+                Some((expected.to_string(), "x86_64".to_string())),
+                "{vendor}"
+            );
+        }
+
+        // A note segment naming nobody we know leaves the OS unidentified.
+        let unknown = dir.join("unknown");
+        std::fs::write(&unknown, elf_with_note("Weird")).unwrap();
+        let head = std::fs::read(&unknown).unwrap();
+        assert_eq!(binary_target_from_header(&head[..64], &unknown), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A NetBSD host must accept a NetBSD binary. This is the pkgsrc case from issue #3.
+    #[test]
+    fn a_netbsd_binary_is_not_refused_by_a_netbsd_host() {
+        let dir = std::env::temp_dir().join(format!("rozi-netbsd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let bin = dir.join("rozi");
+        std::fs::write(&bin, elf_with_note("NetBSD")).unwrap();
+        let netbsd = ProbeReport {
+            platform: "NetBSD".into(),
+            machine: "x86_64".into(),
+            candidates: Vec::new(),
+        };
+        verify_override_targets_remote(&bin, &netbsd).expect("a NetBSD binary installs on NetBSD");
+
+        let linux = ProbeReport {
+            platform: "Linux".into(),
+            machine: "x86_64".into(),
+            candidates: Vec::new(),
+        };
+        assert!(verify_override_targets_remote(&bin, &linux).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn override_check_blocks_only_a_confirmed_mismatch() {
         let dir = std::env::temp_dir().join(format!("rozi-override-{}", std::process::id()));
@@ -1390,6 +1663,7 @@ protocol_max={beyond}
         let mut elf = vec![0u8; 20];
         elf[..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
         elf[5] = 1;
+        elf[7] = 3; // ELFOSABI_GNU, so the fixture says Linux rather than merely being an ELF.
         elf[18] = 0x3e;
         std::fs::write(&bin, &elf).unwrap();
 

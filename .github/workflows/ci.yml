@@ -116,8 +116,26 @@ jobs:
           # pkgsrc is where a NetBSD user gets rozi, so use its Rust rather than rustup. `-u`
           # updates the package when the cached VM image already carries it; it is a modifier on
           # the named package, not a standalone "update everything", and on its own it is an error.
+          #
+          # Python is here for the same reason it is on the other three runners: the extension
+          # suites launch the example extensions, and those are Python. GitHub's images ship it
+          # preinstalled, this VM does not. pkgsrc names the package after the version and installs
+          # `python3.13` rather than `python3`, so take the newest that installs and give it both
+          # names rozi looks for. `--version` last, so a missing interpreter fails here with an
+          # obvious reason rather than as eleven puzzling test failures twelve minutes later.
           prepare: |
             /usr/sbin/pkg_add -u rust
+            for candidate in python313 python312 python311; do
+              /usr/sbin/pkg_add -u "$candidate" && break
+            done
+            for version in 3.13 3.12 3.11; do
+              if [ -x "/usr/pkg/bin/python$version" ]; then
+                ln -sf "/usr/pkg/bin/python$version" /usr/pkg/bin/python3
+                ln -sf "/usr/pkg/bin/python$version" /usr/pkg/bin/python
+                break
+              fi
+            done
+            /usr/pkg/bin/python3 --version
           run: |
             export PATH=/usr/pkg/bin:$PATH
             cd $GITHUB_WORKSPACE

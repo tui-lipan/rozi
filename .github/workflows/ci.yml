@@ -135,7 +135,11 @@ jobs:
                 break
               fi
             done
+            # git for the same reason: `extensions_cli` installs an extension from a git remote it
+            # builds on the fly, and NetBSD keeps git in pkgsrc rather than the base system.
+            /usr/sbin/pkg_add -u git-base || /usr/sbin/pkg_add -u git
             /usr/pkg/bin/python3 --version
+            /usr/pkg/bin/git --version
           run: |
             export PATH=/usr/pkg/bin:$PATH
             cd $GITHUB_WORKSPACE

@@ -113,10 +113,11 @@ jobs:
           # `target/` is built inside the VM and means nothing on the host; syncing it back would
           # copy gigabytes to be thrown away.
           copyback: false
-          # pkgsrc is where a NetBSD user gets rozi, so use its Rust rather than rustup.
+          # pkgsrc is where a NetBSD user gets rozi, so use its Rust rather than rustup. `-u`
+          # updates the package when the cached VM image already carries it; it is a modifier on
+          # the named package, not a standalone "update everything", and on its own it is an error.
           prepare: |
-            /usr/sbin/pkg_add -u
-            /usr/sbin/pkg_add rust
+            /usr/sbin/pkg_add -u rust
           run: |
             export PATH=/usr/pkg/bin:$PATH
             cd $GITHUB_WORKSPACE

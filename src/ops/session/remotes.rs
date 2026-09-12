@@ -984,6 +984,7 @@ mod tests {
 
     #[test]
     fn only_explicit_host_activation_records_a_probe_request() {
+        let _observer = crate::ops::session::discovery::remote_probe_observer_guard();
         let target = RemoteTarget::Alias("workbox".into());
         let _ = crate::ops::session::discovery::take_remote_probe_requests();
         let _picker = RemotePickerState::new(Some(target.clone()));
@@ -999,6 +1000,7 @@ mod tests {
 
     #[test]
     fn main_session_discovery_records_no_remote_probe_request() {
+        let _observer = crate::ops::session::discovery::remote_probe_observer_guard();
         let _ = crate::ops::session::discovery::take_remote_probe_requests();
         let _ = crate::ops::session::discover_picker_sessions(None);
         assert!(crate::ops::session::discovery::take_remote_probe_requests().is_empty());

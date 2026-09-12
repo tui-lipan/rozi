@@ -145,8 +145,9 @@ registry entry:
 mise use -g github:tui-lipan/rozi
 ```
 
-It picks the archive for your platform, checks the published checksum, and verifies the release's
-GitHub artifact attestations and SLSA provenance before extracting.
+It picks the archive for your platform, checks the published checksum, and — for releases that
+carry them — verifies the GitHub artifact attestations described in
+[Download checks](#download-checks) before extracting.
 
 An install made this way is **not** a managed installation: mise owns the binary and its versions,
 so `rozi update` will decline and point you back at `mise upgrade rozi`. Use whichever owns your
@@ -202,9 +203,18 @@ What a nightly is not:
 - **Not a release channel.** `rozi update` and the bootstrap installers only ever select signed,
   v-tagged releases. Nothing moves a stable install onto nightly, and installing a nightly by hand
   does not make a managed installation.
-- **Not signed.** The `.sha256` files beside the archives come from the same place as the archives
-  and detect corruption only. Managed releases are verified against a signed manifest; nightlies
-  have no equivalent.
+- **Not signed.** There is no release manifest and there never will be: signing unreviewed master
+  commits with the release key is the one thing the nightly workflow must not do. The `.sha256`
+  files beside the archives come from the same place as the archives, so they detect corruption
+  only. What a nightly does carry is a build provenance attestation, which is signed by GitHub
+  rather than by rozi's key, so you can still confirm the file came out of this repository's
+  nightly workflow before you run it:
+
+  ```bash
+  gh attestation verify rozi-nightly-x86_64-unknown-linux-gnu.tar.gz --repo tui-lipan/rozi
+  ```
+
+  That says where the file came from. It says nothing about the commit having been reviewed.
 - **Not kept.** Tonight's build replaces last night's, and the tag moves with it. Keep a copy if
   you need to come back to a particular nightly.
 
@@ -227,13 +237,54 @@ The manifest resolves `tui-lipan` from crates.io. A separate `tui-lipan` checkou
 
 ## Download checks
 
-The bootstrap scripts require HTTPS, validate archive paths and sizes, and compare the downloaded
-archive with its published checksum. A checksum fetched from the same release location detects
-corruption, but it cannot protect against a compromised release account or compromised release
-assets.
+Three different things check a rozi download, and it is worth knowing which one covers what.
 
-The managed updater verifies signed release metadata before it activates a downloaded version. If
+**The bootstrap scripts** require HTTPS, validate archive paths and sizes, and compare the
+downloaded archive with its published checksum. That checksum comes from the same release location
+as the archive, so it detects corruption and nothing else: whoever could replace the archive could
+replace the checksum beside it.
+
+**The managed updater** verifies signed release metadata before it activates a downloaded version.
+A release manifest is signed with Ed25519, and the public key is compiled into every rozi binary,
+so `rozi update` accepts only archives whose hashes appear in a manifest that key signed. If
 installation or activation fails, the previously active version remains available.
+
+This is the part worth being precise about: that signature is checked when rozi **installs or
+updates**, not when it runs. A rozi binary that was never signed — one you built, one from a
+distribution package, a nightly — runs normally and warns about nothing. Nothing in rozi verifies
+rozi; the signature decides only whether the managed updater will replace your install with bytes
+it just downloaded.
+
+**Build provenance attestations** cover the gap the other two leave. Releases from this change
+onwards, and every nightly, publish a GitHub artifact attestation: a Sigstore signature over the
+archive's digest, bound to the workflow that produced it and recorded in a public transparency
+log. It is signed by GitHub rather than by rozi's release key, which makes it an independent
+answer to a different question — did this file come out of this repository's workflow? — and one
+you can ask *before* running anything:
+
+```bash
+gh attestation verify rozi-0.1.0-x86_64-unknown-linux-gnu.tar.gz --repo tui-lipan/rozi
+```
+
+That matters most for a first install, because the bootstrap scripts have to execute a downloaded
+binary before any signed manifest is consulted. Verifying the archive yourself first closes that
+step; an installed rozi's own updates were already covered by the manifest.
+
+To check a signed release the way the updater does, use the release tool pinned by `Cargo.lock`:
+
+```bash
+gh release download v0.1.0 --dir rozi-check
+relswap verify \
+  --name rozi \
+  --manifest rozi-check/rozi-release.json \
+  --signatures rozi-check/rozi-release.signatures.json \
+  --keys release-keys.json \
+  --artifacts-dir rozi-check
+```
+
+A signed manifest also carries an expiry, so clients refuse one that has lapsed. A scheduled
+workflow watches the published release's remaining validity and fails long before that can happen;
+see [Release process](release-process.md#release-health).
 
 ## Maintainers
 

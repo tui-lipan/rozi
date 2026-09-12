@@ -12,6 +12,24 @@ on:
 permissions:
   contents: read
 
+env:
+  # How long a signed manifest stays acceptable to clients. `relswap manifest` defaults to 365 days
+  # when no `--expires-at` is given, and this workflow used to take that default silently - which
+  # made the most consequential number in the release a thing nobody had chosen.
+  #
+  # It is a two-sided number, not a maximum to be raised for convenience. Short windows bound a
+  # freeze attack: an attacker who can keep serving an old release cannot do it past the expiry,
+  # because every client refuses a manifest it believes has lapsed (`ReleaseManifest::
+  # ensure_not_expired`, minus a 12-hour clock-skew allowance). Long windows protect liveness: the
+  # moment the latest release's manifest lapses, `rozi update` and the startup update check start
+  # failing for *every* user with a verification error, whether or not anything is wrong.
+  #
+  # 365 days is the inherited value, kept deliberately: rozi has a single maintainer, and a window
+  # short enough to be interesting to an attacker is also short enough to break every install
+  # during one quiet summer. `release-health.yml` is what makes that safe to rely on - it watches
+  # the published manifest's remaining runway every week and fails loudly long before a lapse.
+  MANIFEST_LIFETIME_DAYS: "365"
+
 jobs:
   # Every platform this release ships a binary for, not just the one that is cheapest to run.
   #
@@ -440,12 +458,16 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
+          # Canonical UTC RFC3339 with second precision; the tool rejects any other spelling.
+          expires_at="$(date -u -d "+${MANIFEST_LIFETIME_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "manifest expires at $expires_at (${MANIFEST_LIFETIME_DAYS} days)"
           release-tool/relswap manifest \
             --name rozi \
             --version "$version" \
+            --expires-at "$expires_at" \
             --artifacts-dir dist \
             --output dist/rozi-release.json
-          python3 - "$version" <<'PY'
+          python3 - "$version" "$MANIFEST_LIFETIME_DAYS" <<'PY'
           import json
           import sys
           from datetime import datetime
@@ -454,9 +476,16 @@ jobs:
           assert manifest["schema_version"] == 2
           assert manifest["version"] == sys.argv[1]
           assert manifest["published_at"].endswith("Z")
-          datetime.fromisoformat(manifest["published_at"].replace("Z", "+00:00"))
+          published_at = datetime.fromisoformat(manifest["published_at"].replace("Z", "+00:00"))
           assert manifest["expires_at"].endswith("Z")
-          datetime.fromisoformat(manifest["expires_at"].replace("Z", "+00:00"))
+          expires_at = datetime.fromisoformat(manifest["expires_at"].replace("Z", "+00:00"))
+          # The lifetime the workflow asked for is the one that got signed. Without this, dropping
+          # the `--expires-at` flag would silently fall back to the tool's own default and nothing
+          # would say so until a client refused a manifest a year later.
+          lifetime_days = (expires_at - published_at).total_seconds() / 86400
+          assert abs(lifetime_days - float(sys.argv[2])) < 1, (
+              f"manifest lifetime is {lifetime_days:.2f} days, expected {sys.argv[2]}"
+          )
           assert set(manifest["targets"]) == {
               "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
               "x86_64-apple-darwin", "aarch64-apple-darwin",
@@ -540,12 +569,38 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Both are for the attestation below and nothing else: `id-token` mints the short-lived OIDC
+      # token that identifies this workflow to GitHub's signing service, and `attestations` lets
+      # the result be recorded against the repository.
+      id-token: write
+      attestations: write
     steps:
       - name: Download verified publication bundle
         uses: actions/download-artifact@v4
         with:
           name: verified-release-bundle
           path: dist
+
+      # A second, independent way to answer "did this archive come from this repository's release
+      # workflow?" - one that does not go through rozi's own signing key at all.
+      #
+      # The Ed25519 manifest and this attestation fail differently, which is the entire point of
+      # having both. The manifest is what an installed rozi checks before it activates an update,
+      # and it is only as good as the key in the release environment. The attestation is signed by
+      # GitHub's own Sigstore instance against this workflow's OIDC identity, logged publicly, and
+      # verifiable by anyone with `gh attestation verify` before a single byte is executed - which
+      # is exactly the gap the bootstrap installers sit in, since they must run a downloaded
+      # binary to reach the signed manifest at all. Whoever loses control of the signing key does
+      # not thereby gain the ability to forge one of these.
+      #
+      # Subjects are the final archives, after signing and verification, so an attestation exists
+      # only for bytes that already satisfied the manifest.
+      - name: Attest release archive provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
 
       - name: Publish verified assets
         env:

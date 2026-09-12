@@ -1,0 +1,154 @@
+# Does the published release still verify, and how long has it got left?
+#
+# Everything this workflow checks was already true the day the release was signed. That is the
+# point: a signed release is not a fact that stays true on its own. Its manifest carries an expiry,
+# its assets live somewhere mutable, `/releases/latest` is a pointer anything can move, and the
+# trust store that has to verify all of it is a file in this repository that a later commit can
+# break. None of those failures announce themselves - they surface as a user's `rozi update`
+# failing, which is both the worst place to learn it and the last.
+#
+# So this runs weekly and fails loudly, long before a user would notice. It holds no secret, reads
+# only public assets, and can be run by hand at any time.
+name: Release health
+
+on:
+  schedule:
+    # Monday morning, off the hour. Early enough in the week that a finding is still actionable.
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Fail while there is still a whole quarter to act in. At a weekly cadence that is roughly
+  # thirteen notices before the manifest would actually lapse, which is enough to cut a release,
+  # or to re-sign the existing one, without either being an emergency.
+  EXPIRY_FAIL_DAYS: "90"
+
+jobs:
+  published-release:
+    name: verify the published release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.90
+
+      # The same derivation the release workflow uses: the tool that verifies a manifest and the
+      # engine that produced it share a wire format, so both come from the version Cargo.lock pins
+      # rather than from whatever is newest.
+      - name: Build the pinned release tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --format-version 1 --locked \
+            | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="relswap"))')
+          test -n "$version"
+          cargo install relswap --version "=$version" --locked --features release-tool \
+            --root "$RUNNER_TEMP/release-tool"
+          printf '%s/bin\n' "$RUNNER_TEMP/release-tool" >> "$GITHUB_PATH"
+
+      # This is the pointer every install path follows: the bootstrap scripts resolve
+      # `/releases/latest` and refuse a tag without a `v` prefix, and `rozi update` reads its
+      # metadata from `/releases/latest/download/`. A prerelease cannot become latest by itself,
+      # but "cannot" is worth checking rather than assuming - the rolling `nightly` prerelease and
+      # any hand-published draft both sit one wrong click away from this pointer.
+      - name: Resolve the latest release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)"
+          if [[ -z "$tag" ]]; then
+            echo "No published release yet; nothing to verify." >> "$GITHUB_STEP_SUMMARY"
+            printf 'found=false\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$tag" == v* ]] || {
+            echo "/releases/latest resolves to \`$tag\`, which is not a v-prefixed release tag." \
+              "Every installer rejects this, and \`rozi update\` reads its metadata from here." \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "latest release tag is not a release: $tag" >&2
+            exit 1
+          }
+          {
+            printf 'found=true\n'
+            printf 'tag=%s\n' "$tag"
+            printf 'version=%s\n' "${tag#v}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download the published assets
+        if: steps.latest.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release download "${{ steps.latest.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --dir dist
+
+      # Fails closed on an empty or malformed trust store, which is the one way this repository can
+      # ship binaries that verify nothing at all.
+      - name: Check the committed trust store
+        if: steps.latest.outputs.found == 'true'
+        shell: bash
+        run: relswap trust-check --keys release-keys.json
+
+      # The real question: would an installed rozi accept what is published right now? This is the
+      # same verification the update engine performs - trusted signature over the exact manifest
+      # bytes, then every archive's hash against that manifest - run against the bytes a user would
+      # actually download today, not against the bytes that were signed at release time.
+      - name: Verify the published release against the committed keys
+        if: steps.latest.outputs.found == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          relswap verify \
+            --name rozi \
+            --manifest dist/rozi-release.json \
+            --signatures dist/rozi-release.signatures.json \
+            --keys release-keys.json \
+            --artifacts-dir dist
+
+      - name: Check the manifest version and expiry runway
+        if: steps.latest.outputs.found == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "${{ steps.latest.outputs.version }}" "$EXPIRY_FAIL_DAYS" <<'PY'
+          import json
+          import os
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          expected_version, fail_days = sys.argv[1], float(sys.argv[2])
+          manifest = json.loads(Path("dist/rozi-release.json").read_text(encoding="utf-8"))
+
+          # The tag and the signed manifest must describe the same release. relswap already refuses
+          # a manifest whose version differs from the URL it resolved from, so a mismatch here
+          # means the published assets and the tag have diverged.
+          if manifest["version"] != expected_version:
+              raise SystemExit(
+                  f"published manifest is version {manifest['version']}, "
+                  f"but the latest tag is v{expected_version}"
+              )
+
+          expires_at = datetime.fromisoformat(manifest["expires_at"].replace("Z", "+00:00"))
+          remaining = (expires_at - datetime.now(timezone.utc)).total_seconds() / 86400
+          line = (
+              f"rozi v{expected_version} manifest expires {manifest['expires_at']} "
+              f"({remaining:.0f} days left)"
+          )
+          print(line)
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as out:
+                  out.write(line + "\n")
+          if remaining < fail_days:
+              raise SystemExit(
+                  f"less than {fail_days:.0f} days of manifest validity remain. Every client "
+                  "refuses an expired manifest, so `rozi update` and the startup update check "
+                  "will start failing for everyone once it lapses. Cut a release, or re-sign this "
+                  "version with a new expiry."
+              )
+          PY

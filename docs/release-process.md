@@ -34,10 +34,8 @@ RELSWAP_VERSION=$(
 cargo install relswap --version "=$RELSWAP_VERSION" --locked --features release-tool
 ```
 
-Key generation and rotation are separate from a normal release. `relswap keygen` requires explicit
-private and public output paths and refuses to overwrite either. Review any trust-store change,
-preserve still-supported public keys, and commit the public document before selecting the new key
-in the release environment. Never commit a private key.
+Key generation and rotation are separate from a normal release, and have their own section below.
+Never commit a private key.
 
 ## Prepare the release
 
@@ -103,7 +101,8 @@ The workflow performs these gates:
    and runs `relswap trust-check` against the committed trust store before reading the private key.
 6. The workflow generates the manifest and checksums from final archive bytes, signs the exact
    manifest bytes, and verifies every archive against `release-keys.json`.
-7. The GitHub publication job receives only the verified bundle. It has no signing secret.
+7. The GitHub publication job receives only the verified bundle. It has no signing secret. It
+   attests each final archive's provenance before uploading.
 8. After the signed GitHub release exists, a final protected job rechecks the tag and runs
    `cargo publish --locked` with `CARGO_REGISTRY_TOKEN`.
 
@@ -149,6 +148,14 @@ signed release manifest and archive hash.
 The adjacent `.sha256` files let bootstrap installers detect corruption. They come from the same
 release location as the archives, so they are not an independent authenticity check. Managed
 updates verify the signed manifest against the public keys compiled into Rozi.
+
+The publication job also attests every archive with `actions/attest-build-provenance`. That is a
+Sigstore signature over each archive's digest, bound to this workflow's OIDC identity and recorded
+in a public transparency log, and it is deliberately independent of rozi's own release key: losing
+control of that key does not confer the ability to forge an attestation, and a user can check one
+before executing anything, which is the one thing the bootstrap installers cannot do for
+themselves. Users verify with `gh attestation verify <archive> --repo tui-lipan/rozi`. Nightly
+archives carry the same attestation; they have no manifest and no signature.
 
 Package and verified-bundle workflow artifacts are retained for 14 days. The published GitHub
 release is the durable public copy.
@@ -198,6 +205,91 @@ as release-test state.
 Check that `https://github.com/tui-lipan/rozi/releases/latest` resolves to the new tag and that the
 documentation-site installers resolve the expected archive names.
 
+## Signing keys and rotation
+
+The trust anchor is `release-keys.json`, compiled into every binary at build time
+(`src/release_app.rs`). That single fact decides everything about rotation: **a binary only ever
+trusts the keys that existed when it was built.** A key added today reaches an installed rozi only
+through an update signed by a key that binary already carries.
+
+Three consequences follow, and the order of operations below exists because of them:
+
+- Retiring a key in the same release that introduces its replacement strands every install made
+  before that release. Those binaries will not accept the new key, because the release carrying it
+  is signed with a key they do not trust.
+- A key added to the trust store is inert until a release is built with it committed. Committing
+  the public half is what puts it into binaries; selecting it in the release environment is what
+  starts signing with it. Those are two separate steps, and they belong in two separate releases.
+- If the only trusted key is lost or compromised, there is no recovery path through `rozi update`
+  at all. Every user has to reinstall by hand, from a channel they trust.
+
+The third is the reason to hold **two** keys before you need them: an active signing key and a
+cold spare whose private half never touches CI. Both public halves ship in every binary, so if the
+active key has to be abandoned, the next release is signed with the spare and existing installs
+accept it. Generating the spare after a compromise is too late — it would not be in anybody's
+binary.
+
+Generate a key with the tool pinned by `Cargo.lock`; it requires explicit output paths and refuses
+to overwrite either:
+
+```bash
+relswap keygen --private release-2027-a.private --public release-2027-a.public
+```
+
+Keep the private half offline. Then rotate in this order, one release at a time:
+
+1. Commit the new public key **alongside** every still-supported key in `release-keys.json`. Do not
+   remove anything yet. `cargo test` covers the shape of this file, and the release workflow's
+   `relswap trust-check` fails closed on an empty or malformed one.
+2. Cut a release signed with the **old** key. Its only job is to distribute the new key: after it,
+   installs that have updated carry both.
+3. Store the new private key in the `release` environment and set `ROZI_RELEASE_KEY_ID` to its id.
+   The next release is signed with the new key, and every install from step 2 accepts it.
+4. Remove the retired public key only once you are willing to abandon installs that never took
+   step 2. There is no telemetry saying how many those are, so prefer leaving a retired key in
+   place for several releases; a public key that signs nothing costs nothing.
+
+Treat a compromise differently: abandoning the key is urgent, but the steps do not change, because
+nothing can reach a binary except through a release it will accept. Remove the compromised key,
+sign with the spare, publish, and say plainly in the release notes that anyone who cannot update
+should reinstall. A published release cannot be un-signed, and removing a release does not revoke
+a key already trusted by installed binaries.
+
+## Manifest lifetime and expiry
+
+`relswap manifest` writes an `expires_at` into every manifest, and clients refuse one that has
+lapsed (allowing 12 hours of clock skew). The window is set explicitly by `MANIFEST_LIFETIME_DAYS`
+at the top of `.github/workflows/release.yml`, and the workflow asserts that the signed manifest
+actually carries the lifetime it asked for.
+
+It is a two-sided number. A short window bounds a freeze attack, where someone who can keep serving
+an old release indefinitely holds users on a version with a known bug. A long window protects
+liveness: the day the latest release's manifest lapses, `rozi update` and the startup check begin
+failing for every user, with a verification error, whether or not anything is actually wrong.
+
+The current value is 365 days. Shortening it is defensible, but only alongside a release cadence
+that reliably beats it — for a single maintainer, a window short enough to matter to an attacker is
+also short enough to break every install during one quiet stretch.
+
+## Release health
+
+`.github/workflows/release-health.yml` runs every Monday, and by hand on demand. It holds no
+secret, reads only public assets, and asks whether the published release is still one an installed
+rozi would accept:
+
+- `/releases/latest` resolves to a `v`-prefixed release tag. Every installer rejects a tag without
+  that prefix and `rozi update` reads its metadata from this pointer, so a prerelease or draft that
+  somehow became "latest" is a user-visible outage; the rolling `nightly` prerelease sits one wrong
+  click from here.
+- `relswap trust-check` passes against the committed `release-keys.json`.
+- `relswap verify` accepts the manifest, signature, and every archive **as published right now**,
+  which is the same check the update engine performs against the bytes a user would download today.
+- The manifest version matches the tag, and more than 90 days of validity remain.
+
+A failure is not an emergency by design — the expiry threshold leaves a full quarter to act — but
+it is real. Cut a release, or re-sign the current version with a fresh expiry, and confirm the
+workflow goes green.
+
 ## Nightly builds
 
 `.github/workflows/nightly.yml` publishes a disposable build of master every night. It is not a
@@ -212,7 +304,11 @@ things in order:
    still contains that commit, and compares it with the `commit` recorded in the published
    `rozi-nightly.json`. Identical means master has not moved and nothing is built; the
    `force` dispatch input builds anyway. A red tip falls back to the newest green commit rather
-   than publishing something the matrix rejected.
+   than publishing something the matrix rejected. Finding *no* green run in the last twenty is a
+   job failure, not a skip: it means CI has been red for a long time or the query has stopped
+   matching the repository, and a nightly that quietly skips forever looks exactly like one that
+   is working. A green commit that is not reachable from master only skips, because a force-push
+   or revert produces that for a few hours and it resolves itself.
 2. **Build.** The same five targets a release ships, from the selected commit. Linux payloads use
    the same pinned manylinux 2.28 containers and the same `GLIBC_2.28` ceiling, so a nightly runs
    where a release runs. `ROZI_NIGHTLY_COMMIT` and `ROZI_NIGHTLY_BUILT` are compiled into the
@@ -258,5 +354,6 @@ If a published release is defective:
 Treat a signing-key or release-account compromise as a security incident. Restrict the affected
 secret, preserve workflow and publication evidence, and contact
 [security@tui-lipan.dev](mailto:security@tui-lipan.dev). Removing a release does not revoke a key
-already trusted by installed binaries. A trust-store update and replacement release need a
-separate reviewed response.
+already trusted by installed binaries; moving off a compromised key follows
+[Signing keys and rotation](#signing-keys-and-rotation), which is also why a cold spare key is
+worth holding before one is needed.

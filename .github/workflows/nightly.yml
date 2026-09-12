@@ -70,9 +70,17 @@ jobs:
             --json headSha \
             --jq '.[0].headSha // ""')"
           if [[ -z "$sha" ]]; then
-            echo "No successful CI run on master to build a nightly from." >> "$GITHUB_STEP_SUMMARY"
-            printf 'build=false\n' >> "$GITHUB_OUTPUT"
-            exit 0
+            # Deliberately a failure rather than a quiet skip. Finding no green run in the last
+            # twenty on master means either CI has been red for a week or this query has stopped
+            # matching reality - a renamed `ci.yml`, a changed default branch, a `gh` output
+            # change. Every one of those makes the nightly silently stop forever, and a workflow
+            # that skips is indistinguishable from one that is working until somebody asks why
+            # tonight's build is three months old.
+            echo "No successful \`ci.yml\` run found in the last 20 on master." \
+              "Either CI is failing, or this workflow's query no longer matches the repository." \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "no successful CI run on master to build a nightly from" >&2
+            exit 1
           fi
 
           # A successful run is not by itself proof the commit is still on master: a reverted or
@@ -80,8 +88,11 @@ jobs:
           # master contains it.
           status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...master" --jq .status)"
           if [[ "$status" != "identical" && "$status" != "ahead" ]]; then
-            echo "Newest green commit $sha is not reachable from master ($status)." \
-              >> "$GITHUB_STEP_SUMMARY"
+            # A skip rather than a failure: this is what a force-push or a revert looks like for
+            # the few hours until CI runs again on the new tip, and it resolves itself. The case
+            # above cannot resolve itself, which is why it is treated differently.
+            echo "Newest green commit $sha is not reachable from master ($status);" \
+              "waiting for a CI run on the current tip." >> "$GITHUB_STEP_SUMMARY"
             printf 'build=false\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -318,6 +329,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # For the provenance attestation below only: `id-token` mints the OIDC token that identifies
+      # this workflow, `attestations` records the result against the repository.
+      id-token: write
+      attestations: write
     steps:
       - name: Download archives
         uses: actions/download-artifact@v4
@@ -387,6 +402,24 @@ jobs:
               json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
           )
           PY
+
+      # A nightly has no signed manifest and never will - signing unreviewed master commits with
+      # the release key is the one thing this workflow must not do. An attestation is the part of
+      # that guarantee it *can* have: signed by GitHub's Sigstore instance against this workflow's
+      # OIDC identity rather than by rozi's key, so a tester can still answer "did this actually
+      # come out of the nightly workflow in this repository?" before running it:
+      #
+      #   gh attestation verify rozi-nightly-<target>.tar.gz --repo tui-lipan/rozi
+      #
+      # That is strictly more than the adjacent checksum can offer, which travels from the same
+      # place as the file it describes. It still is not a release: nothing here says the commit
+      # was reviewed, and no update path will ever select it.
+      - name: Attest nightly archive provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
 
       # A published release will not move its own tag, so move the ref first and let the release
       # follow it. `refs/tags/nightly` is excluded from `ci.yml`, which triggers on branches and

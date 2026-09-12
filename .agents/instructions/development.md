@@ -63,6 +63,16 @@ Windows, on every branch push, every pull request, and every `v*` tag. The relea
 Code changes belong on a short-lived branch merged through a pull request; `master` is the latest
 CI-passed code and the base a release is tagged from. `CONTRIBUTING.md` has the branch conventions.
 
+`.github/workflows/release-health.yml` runs weekly with no secret and verifies the *published*
+release the way an installed rozi would: `/releases/latest` resolves to a `v`-tag, the committed
+trust store passes `relswap trust-check`, `relswap verify` accepts the live assets, and more than
+90 days of manifest validity remain. A signed release stops being valid on its own schedule, so
+treat a failure there as release work, not as a flaky job. Signing keys, the manifest lifetime
+(`MANIFEST_LIFETIME_DAYS` in `release.yml`) and the rotation order are documented in
+`docs/release-process.md`; the trust anchor's shape is covered by tests in `src/release_app.rs`.
+Release and nightly archives both carry `actions/attest-build-provenance` attestations, which are
+independent of rozi's signing key - do not describe them as a replacement for it.
+
 `.github/workflows/nightly.yml` publishes a disposable build of master every night to one rolling
 `nightly` prerelease. It selects the newest master commit with a successful CI run, so it adds no
 gate of its own, and it holds no signing secret: nightlies are unsigned and no install or update

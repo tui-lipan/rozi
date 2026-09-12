@@ -57,15 +57,15 @@ jobs:
       - name: Release build
         run: cargo build --locked --release
 
-  # NetBSD is not a supported platform and has no runner, but it is the one target that catches a
-  # whole class of `cfg` mistake the matrix above cannot: code written as `linux` versus
-  # `not(linux)`, which silently hands every other Unix the macOS spelling. That is exactly how
-  # `libc::__error` reached the netbsd-likes and broke the pkgsrc build (issue #3), and neither
+  # NetBSD ships no rozi binary and nothing in the matrix above runs there, but it is the one
+  # target that catches a whole class of `cfg` mistake those three cannot: code written as `linux`
+  # versus `not(linux)`, which silently hands every other Unix the macOS spelling. That is exactly
+  # how `libc::__error` reached the netbsd-likes and broke the pkgsrc build (issue #3), and neither
   # Linux, macOS nor Windows would ever have noticed.
   #
   # A plain `cargo check --target` is not enough here: `ring` builds C, so this needs a NetBSD C
-  # toolchain, and `cross` carries one in its image. Compilation only. Nothing here claims rozi
-  # runs on NetBSD, and a green tick on this job must not be read as support.
+  # toolchain, and `cross` carries one in its image. Compilation only: a green tick here says the
+  # code still builds for NetBSD, nothing more. Whether it runs is the `netbsd-native` job below.
   netbsd-cross:
     name: netbsd cross-check
     runs-on: ubuntu-latest
@@ -81,6 +81,48 @@ jobs:
         run: cross check --locked --all-targets --target x86_64-unknown-netbsd
       - name: Lint
         run: cross clippy --locked --all-targets --target x86_64-unknown-netbsd -- -D warnings
+
+  # The cross-check above proves rozi still compiles for NetBSD. It cannot say whether it runs,
+  # and rozi leans on ptys, signals and Unix sockets hard enough that compiling was never the
+  # interesting half. This job boots a real NetBSD VM and runs the test suite in it, which is as
+  # close to the pkgsrc build as CI gets without a NetBSD machine.
+  #
+  # It does not gate anything. NetBSD has no maintainer hardware and no promise of support behind
+  # it, so a failure here is a bug report from a platform nobody develops on, not a reason to hold
+  # a change to the three platforms that do ship binaries. Read it, do not merge past it twice.
+  #
+  # Branch pushes skip it: the VM boots and builds the whole dependency tree from scratch every
+  # time, with no cache carried between runs, and paying that on every push would slow the loop
+  # down for a platform none of it is aimed at.
+  netbsd-native:
+    name: netbsd native
+    runs-on: ubuntu-latest
+    if: >-
+      github.ref == 'refs/heads/master'
+      || startsWith(github.ref, 'refs/tags/v')
+      || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test in a NetBSD VM
+        uses: vmactions/netbsd-vm@v1
+        with:
+          # Pinned rather than tracking the action's default, so a new NetBSD release changes this
+          # job in a commit instead of overnight. Bumping it is a one-line change.
+          release: "10.1"
+          # `target/` is built inside the VM and means nothing on the host; syncing it back would
+          # copy gigabytes to be thrown away.
+          copyback: false
+          # pkgsrc is where a NetBSD user gets rozi, so use its Rust rather than rustup.
+          prepare: |
+            /usr/sbin/pkg_add -u
+            /usr/sbin/pkg_add rust
+          run: |
+            export PATH=/usr/pkg/bin:$PATH
+            cd $GITHUB_WORKSPACE
+            cargo --version
+            cargo build --locked
+            cargo test --locked --no-fail-fast
 
   # The OpenCode plugin is the authoritative status source for a pane running OpenCode, and it
   # ships in this repository with its own tests. Linux only: it is platform-independent JavaScript,

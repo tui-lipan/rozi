@@ -1,6 +1,8 @@
 # Platform support
 
-rozi supports Linux, macOS, and Windows with native PTYs and local session servers.
+rozi supports Linux, macOS, and Windows with native PTYs and local session servers. It also
+builds and runs on NetBSD, which is community-supported rather than released; see
+[NetBSD](#netbsd) below.
 
 | | Linux | macOS | Windows |
 | --- | --- | --- | --- |
@@ -21,6 +23,26 @@ Windows requires Windows 10 version 1809, build 17763, or newer because rozi use
 Terminal is recommended but not required.
 
 Building from source requires Rust 1.90 or newer. See [Installation](installation.md).
+
+## NetBSD
+
+rozi builds and runs on NetBSD on x86-64. The pkgsrc maintainer confirmed a working session on
+bare metal, and rozi has been packaged in pkgsrc since v0.0.18, so `pkgin install rozi` is the
+usual way to get it there. The install scripts and `rozi update` do not cover NetBSD: there are no
+prebuilt NetBSD archives, so a pkgsrc install is updated through pkgsrc, and anything else is a
+build from source.
+
+NetBSD is community-supported, which is a narrower promise than the three platforms above:
+
+- Every push is cross-compiled for `x86_64-unknown-netbsd`, and pushes to `master` also build and
+  run the test suite in a NetBSD VM. Neither job blocks a merge.
+- Nobody developing rozi runs NetBSD day to day, so a regression is likely to be found by a NetBSD
+  user rather than by CI.
+- Nothing on the platform is special-cased. NetBSD gets whatever the Unix paths do, and where a
+  platform needs its own behavior it belongs in `src/platform/` like any other.
+
+Bug reports are welcome and patches more so. Other BSDs are not packaged or tested, though the
+same Unix code paths cover them and `platform::errno` already names FreeBSD and DragonFly.
 
 ## Files and directories
 

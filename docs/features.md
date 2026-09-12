@@ -70,6 +70,7 @@ See [Scripting](scripting.md), [Control CLI](control.md), [Hooks](hooks.md), and
 ## Use it on your operating system
 
 rozi supports Linux, macOS, and Windows. Shell integration, process inspection, paths, and PTY
-support differ where the operating systems require it.
+support differ where the operating systems require it. NetBSD builds and runs from pkgsrc as a
+community-supported platform.
 
 See [Platform support](platform-support.md) and [Installation](installation.md).

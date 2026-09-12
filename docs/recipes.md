@@ -205,14 +205,19 @@ To do the same on another machine, run the same script over `ssh` — `--session
 ## Report a script's progress into a session
 
 A long job can report its own status onto the pane it runs in, which is what the sidebar's Activity
-list and the pane border read. From inside a pane, `ROZI_PANE` names it; from outside, `--target`
-does:
+list and the pane border read. A session endpoint always wants the pane named, because a pane id
+means nothing without the session it belongs to — a job inside the session it is reporting on
+passes its own `ROZI_PANE`:
 
 ```sh
 ROZI=${ROZI_BIN:-rozi}
-"$ROZI" --session dev status working --target 3 --reason "building"
-trap '"$ROZI" --session dev status --clear --target 3' EXIT
+pane=${ROZI_PANE:?run this inside a rozi pane, or pass a pane id}
+"$ROZI" --session dev status working --target "$pane" --reason "building"
+trap '"$ROZI" --session dev status --clear --target "$pane"' EXIT
 ```
+
+Only pass `$ROZI_PANE` to the session that pane is actually in. It is a bare number: `--session`
+somewhere else would be naming a different pane that happens to share the id.
 
 ## Publish a build row
 

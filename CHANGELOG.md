@@ -27,6 +27,18 @@
   that could only address the pane it ran inside, which a script driving a session it is not
   running in has no way to be.
 
+### Fixed
+
+- A script's own `ROZI_PANE` can no longer address a pane in a different session. The CLI stamps
+  it on every request, and `--session` names a different pane namespace, so a job inside pane 3 of
+  `work` running `rozi --session dev send-text …` would have typed into `dev`'s pane 3 — and the
+  inherited id looked enough like an explicit `--target` that the "name a pane or get an error"
+  check never ran. A session endpoint now ignores it entirely; a pane addressing its own session
+  passes `--target "$ROZI_PANE"`.
+- A headless `split` reads `[[rules]]` and the configured shell when it spawns, not when the
+  server started. A rule edited today applies to a session server that has been running since last
+  week, which is what makes "the same spawn policy" true of the inputs and not just the code path.
+
 ### Changed
 
 - Session protocol 6. The wire carries one new request and one new reply for the above; as ever,

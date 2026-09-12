@@ -54,7 +54,7 @@ Every request has `cmd`. These optional envelope fields apply to commands:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `source_pane` | integer or null | Calling pane. Used as the default target where supported. |
+| `source_pane` | integer or null | Calling pane. Used as the default target where supported. Ignored by a session endpoint, which is a different pane namespace — see [Session transport](#session-transport). |
 | `extension` | object | Extension ownership with `id` and opaque `generation`. The CLI adds it from the extension environment. |
 
 Do not synthesize extension provenance. A retired generation is rejected.
@@ -239,10 +239,10 @@ Differences from the same request against a UI:
 
 | Request | Against a session server |
 | --- | --- |
-| Any `target` | No focused-pane fallback. A session with one pane resolves to it; otherwise the error lists the pane ids. |
+| Any `target` | `source_pane` is ignored, and there is no focused-pane fallback. A pane id carries no session identity, so an inherited one would address a stranger in the named session. A session with one pane resolves to it; otherwise the error lists the pane ids. |
 | `list-panes` | Every pane in the session, including exited ones, whose `status` is `exited (<CODE>)`. `workspace` comes from the shared layout, or `0` when the session has no layout document. |
 | `metrics` | `server` only, sampled at request time, so `age_ms` is `0` and `stale` is `false`. Client counters are absent. |
-| `new-pane` | `focus` must be `false`. Refused while any client holds layout control. The server picks the pane id, applies `[[rules]]` from its own config, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision authored by client `0`. `pty_ready` reports whether the PTY spawned. |
+| `new-pane` | `focus` must be `false`. Refused while any client holds layout control. The server re-reads `[[rules]]` and the configured shell from its own config, picks the pane id, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision authored by client `0`. `pty_ready` reports whether the PTY spawned. |
 | `send-text`, `send-keys` | Refused while the session's input lock is on, which only an attached client can release. |
 | Any request with `extension` provenance | Refused. The generation is a fencing token minted per UI process; a server cannot check it and does not act on an extension's behalf without checking. |
 

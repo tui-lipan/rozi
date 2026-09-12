@@ -339,8 +339,13 @@ fn ask_ui_endpoint(
 /// the same two outcomes whichever endpoint served it.
 fn ask_session_endpoint(
     session: &str,
-    request: control::ControlRequest,
+    mut request: control::ControlRequest,
 ) -> Result<serde_json::Value> {
+    // `ROZI_PANE` is a bare pane id with no session attached to it, and `--session` names a
+    // different namespace than the one the caller is sitting in. Sending it would let a script in
+    // pane 3 of one session address pane 3 of another, so the field is dropped rather than left
+    // for the server to ignore. A pane addressing its own session passes `--target "$ROZI_PANE"`.
+    request.source_pane = None;
     match crate::session::headless::run_session_control(session, request) {
         Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
         Err(err) => {

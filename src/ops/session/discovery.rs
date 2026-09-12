@@ -24,6 +24,30 @@ pub(crate) fn take_remote_probe_requests() -> Vec<crate::session::remote::Remote
     std::mem::take(&mut *REMOTE_PROBE_REQUESTS.lock().unwrap())
 }
 
+/// Held for the whole body of any test that observes [`take_remote_probe_requests`].
+///
+/// The queue above is one process-wide `static`, and `cargo test` runs tests on several threads at
+/// once. To a test draining the queue to prove its own code path recorded nothing, an entry pushed
+/// by a *different* test is indistinguishable from the regression it is looking for. That is not
+/// hypothetical: `main_session_discovery_records_no_remote_probe_request` failed in CI having seen
+/// the entry `only_explicit_host_activation_records_a_probe_request` had just pushed, on a commit
+/// whose other run of the same tree passed.
+///
+/// Serialising the observers is deliberate, where making the queue thread-local would have been
+/// less code. A per-thread queue would also hide a real regression - one that moved the recording
+/// off the calling thread and onto the worker `host_discovery_command` spawns - and it would hide
+/// it by making the assertion vacuously true, which is the failure mode worth paying a lock to
+/// avoid.
+#[cfg(test)]
+pub(crate) fn remote_probe_observer_guard() -> std::sync::MutexGuard<'static, ()> {
+    static OBSERVERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // A test that fails while holding this must fail on its own assertion. Poisoning would turn
+    // one real failure into an unrelated panic in every test that ran after it.
+    OBSERVERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Fast, local-only rows used by the picker and Sessions sidebar: local named sessions plus the
 /// attached session, with no remote ssh.
 pub(crate) fn local_picker_rows(ctx: &Context<AppRoot>) -> Vec<DiscoveredSession> {

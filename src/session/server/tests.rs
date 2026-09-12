@@ -309,6 +309,29 @@ fn two_client_broadcast_shares_one_encoded_allocation() {
     assert!(Arc::ptr_eq(&first_frame, &second_frame));
 }
 
+/// A connection that answers one message and hangs up is not an occupant, and the metric that
+/// counts occupants must not count it. Otherwise a detached session asked for its own metrics
+/// reports a client - the request asking the question.
+#[test]
+fn outbox_metrics_count_attached_clients_rather_than_open_sockets() {
+    let mut server = SessionServer::new_named("dev");
+    let (_attached, _stream) = attach_client(&mut server);
+    assert_eq!(server.runtime_metrics().client_outboxes.clients, 1);
+
+    // A second socket that has not attached: a discovery probe, or a headless control request
+    // between `accept` and `close_after_flush`.
+    let (probe, _probe_stream) = add_client(&mut server);
+    assert!(
+        !server.client_attached(probe),
+        "the probe must not be attached for this test to mean anything"
+    );
+    assert_eq!(
+        server.runtime_metrics().client_outboxes.clients,
+        1,
+        "an unattached socket is a connection, not a client"
+    );
+}
+
 #[test]
 fn aggregate_outbox_high_water_survives_flush_and_disconnect() {
     let mut server = SessionServer::new_named("dev");

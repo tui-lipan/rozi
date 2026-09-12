@@ -195,6 +195,10 @@ The pane stays in workspace 9 with its scrollback intact, so the failure is stil
 when someone attaches. Use `--workspace` for exactly that reason: a pane spawned into the workspace
 someone is working in re-tiles their layout.
 
+`split` is refused while a client holds layout control of the session, so a job like this belongs
+on a session nobody is sitting in — which is the case it is for. The `list-panes` check at the top
+is what turns "someone is attached" into one clear failure instead of a surprise halfway through.
+
 To do the same on another machine, run the same script over `ssh` — `--session` is local only, and
 `ssh workbox rozi --session dev …` makes it local again.
 

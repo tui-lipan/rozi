@@ -8,6 +8,7 @@
 
 use std::time::{Duration, Instant};
 
+use rozi::config::ExtensionProvenance;
 use rozi::control::{ControlCommand, ControlRequest, ControlResponse};
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::headless::run_session_control;
@@ -194,6 +195,83 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
         .expect("a server-committed layout must satisfy the same rules a client's does");
 }
 
+/// The whole feature is for sessions nobody is driving. When somebody *is* driving one, opening a
+/// pane means committing a layout revision over their arrangement, and that is the controller's
+/// call - the same rule the protocol already applies to a non-controller's `SpawnPane`.
+#[test]
+fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+
+    let (controller, attached) = attach_client(server.endpoint(), &session, "controller");
+    let ServerMessage::Attached {
+        client_id,
+        controller: holder,
+        ..
+    } = attached
+    else {
+        panic!("expected an attach response");
+    };
+    assert_eq!(
+        holder,
+        Some(client_id),
+        "the first attacher takes the lease; this test needs it to"
+    );
+
+    let refused = control(
+        &session,
+        ControlCommand::NewPane {
+            command: None,
+            argv: None,
+            cwd: None,
+            title: None,
+            keep_open: false,
+            focus: false,
+            workspace: None,
+        },
+    );
+    assert!(!refused.ok, "a controller is driving this session");
+    let error = refused.error.unwrap_or_default();
+    assert!(error.contains("layout control"), "{error}");
+    assert_eq!(
+        expect_ok(&session, ControlCommand::ListPanes)
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "the refused spawn left no pane behind"
+    );
+
+    // Reading and typing never needed the lease; a follower client may already do both.
+    expect_ok(&session, ControlCommand::ListPanes);
+
+    // Once the client lets go, the same request is simply allowed.
+    drop(controller);
+    let deadline = Instant::now() + IO_TIMEOUT;
+    let allowed = loop {
+        let response = control(
+            &session,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: None,
+            },
+        );
+        if response.ok || Instant::now() >= deadline {
+            break response;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    assert!(
+        allowed.ok,
+        "the lease released with the client: {:?}",
+        allowed.error
+    );
+}
+
 #[test]
 fn commands_that_need_a_screen_say_so_instead_of_failing_obscurely() {
     let server = spawn_listener(headless_settings());
@@ -220,6 +298,34 @@ fn commands_that_need_a_screen_say_so_instead_of_failing_obscurely() {
             "{command:?} was refused without saying a UI is what it needs: {error}"
         );
     }
+}
+
+/// The CLI attaches extension provenance automatically from the environment, so this is the shape
+/// a real extension's request arrives in. A session server cannot check the fencing token, so it
+/// declines to act on the extension's behalf at all rather than becoming the way around it.
+#[test]
+fn an_extension_cannot_use_a_session_endpoint_to_escape_its_own_generation_fence() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+
+    let response = run_session_control(
+        &session,
+        ControlRequest {
+            command: ControlCommand::ListPanes,
+            source_pane: None,
+            extension: Some(ExtensionProvenance {
+                id: "git-tools".to_string(),
+                generation: "a-token-only-a-client-could-mint".to_string(),
+            }),
+        },
+    )
+    .expect("the session answered");
+    assert!(!response.ok);
+    let error = response.error.unwrap_or_default();
+    assert!(error.contains("git-tools"), "{error}");
+
+    // The same command without provenance is ordinary and works.
+    expect_ok(&session, ControlCommand::ListPanes);
 }
 
 #[test]

@@ -394,6 +394,10 @@ Nothing attaches. The session's client count and layout control are unchanged, s
 make an idle session look occupied, and a pane it opens is already placed when a client does
 attach.
 
+A script also gains nothing an attached client would not have. `split` needs the layout-control
+lease to be free, because opening a shared pane means committing a layout revision; typing
+respects the session's input lock. Both refuse with the reason rather than going around it.
+
 Commands that only mean something on a screen — focus, workspace switching, toasts, pickers,
 actions, and event subscriptions — are refused with the reason rather than silently accepted. See
 [Control CLI](control.md#two-endpoints) for the full list and

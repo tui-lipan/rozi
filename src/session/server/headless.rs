@@ -19,11 +19,9 @@
 use serde::Serialize;
 
 use super::*;
-use crate::control::{
-    CaptureScrollback, CaptureScrollbackNamed, ControlCommand, ControlRequest, ControlResponse,
-};
+use crate::control::{CaptureScrollback, ControlCommand, ControlRequest, ControlResponse};
 use crate::layout::shared::{
-    FracRect, SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace,
+    SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace, float_rect_to_frac,
 };
 
 /// Geometry a headless spawn uses when the session has no live pane to copy a size from.
@@ -33,6 +31,11 @@ use crate::layout::shared::{
 /// meantime rather than a guess at anyone's terminal.
 const HEADLESS_SPAWN_COLS: u16 = DEFAULT_COLS;
 const HEADLESS_SPAWN_ROWS: u16 = DEFAULT_ROWS;
+
+/// Where a headless `split` lands when neither the caller nor a `[[rules]]` entry named a
+/// workspace. A client would use the one it is looking at; there is nothing to look at here, so
+/// the first workspace is the only answer that is the same on every run.
+const HEADLESS_DEFAULT_WORKSPACE: usize = 0;
 
 /// `author` on a [`ServerMessage::LayoutCommitted`] the server wrote itself.
 ///
@@ -127,6 +130,25 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
     }
 }
 
+/// Why a session server cannot accept a request carrying extension provenance.
+///
+/// The generation is a fencing token a *client* mints on each config reload and injects into the
+/// extension's environment, so a retired runtime definition's leftover processes stop being obeyed
+/// (see [`crate::config::provenance_is_active`], which the UI endpoint checks first thing). A
+/// session server never sees that token: it is minted per client process, and the server's own
+/// config load would produce a different one.
+///
+/// So the choice is between honouring a token nobody checked and refusing. Accepting would quietly
+/// turn `--session` into the way around a fence the UI endpoint enforces - a disabled extension's
+/// `send-text` would keep landing in panes. Refusing costs an extension the headless path until
+/// there is a real way to validate it, and says so rather than failing obscurely.
+fn unverifiable_extension_provenance(provenance: &crate::config::ExtensionProvenance) -> String {
+    format!(
+        "a session server cannot check whether extension `{}` is still active, and will not act on its behalf; reach a running rozi instead, or clear ROZI_EXTENSION when the caller is not the extension",
+        provenance.id
+    )
+}
+
 impl SessionServer {
     /// Answer one headless control request.
     ///
@@ -190,6 +212,9 @@ impl SessionServer {
         request: ControlRequest,
         broadcasts: &mut Vec<(Target, ServerMessage)>,
     ) -> ControlResponse {
+        if let Some(provenance) = &request.extension {
+            return ControlResponse::error(unverifiable_extension_provenance(provenance));
+        }
         if let Some(reason) = session_control_unsupported(&request.command) {
             return ControlResponse::error(reason);
         }
@@ -374,27 +399,10 @@ impl SessionServer {
         };
         // Reading a snapshot does not change what a replay would contain, so this must not bump
         // `content_generation` and make every snapshot re-export the pane it just captured.
-        let screen = pane.screen_without_change();
-        let text = match scrollback {
-            None => screen.render_snapshot().text.to_string(),
-            Some(CaptureScrollback::Lines(lines)) => {
-                let total = screen.total_text_lines();
-                screen.export_text(total.saturating_sub(lines), total)
-            }
-            Some(CaptureScrollback::Named(CaptureScrollbackNamed::Full)) => {
-                let total = screen.total_text_lines();
-                screen.export_text(0, total)
-            }
-            Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput)) => {
-                match screen.export_last_command_output() {
-                    Some(text) => text,
-                    None => {
-                        return ControlResponse::error(
-                            "no last command output (shell integration marks missing)",
-                        );
-                    }
-                }
-            }
+        let text = match crate::pane::capture_screen_text(pane.screen_without_change(), scrollback)
+        {
+            Ok(text) => text,
+            Err(error) => return ControlResponse::error(error),
         };
         let title = pane.screen().title();
         ControlResponse::ok(SessionPaneCapture { id, text, title })
@@ -543,27 +551,44 @@ impl SessionServer {
                 "split --focus needs a UI; a session server has no focus to move",
             );
         }
-        let workspace_index = match spawn.workspace {
-            None => 0,
-            Some(index) if (1..=crate::state::WORKSPACE_COUNT).contains(&index) => index - 1,
-            Some(index) => {
-                return ControlResponse::error(format!(
-                    "workspace {index} is out of range (1-{})",
-                    crate::state::WORKSPACE_COUNT
-                ));
-            }
+        // Opening a shared pane means committing a layout revision, and the lease says who may do
+        // that. A client holding it is arranging this session right now; a revision arriving from
+        // somewhere else would reflow its screen and race its next commit. The same rule the
+        // protocol already applies to `SpawnPane` from a non-controller applies here, and it is
+        // what keeps "no new authority" true: nothing reaches this server headlessly that an
+        // attached client could not have sent.
+        if let Some(controller) = self.controller {
+            return ControlResponse::error(format!(
+                "client {controller} holds layout control of session `{}`; ask it to open the pane, or detach it first",
+                self.session_name
+            ));
+        }
+        let launch = match crate::pane::spawn_policy::requested_launch(spawn.command, spawn.argv) {
+            Ok(launch) => launch,
+            Err(error) => return ControlResponse::error(error),
         };
-        let launch = match (spawn.command, spawn.argv) {
-            (Some(_), Some(_)) => {
-                return ControlResponse::error("split accepts either COMMAND or --argv, not both");
-            }
-            (Some(command), None) => Some(crate::pane::launch::PaneLaunch::shell(command)),
-            (None, Some(argv)) => match crate::pane::launch::PaneLaunch::direct(argv) {
-                Ok(launch) => Some(launch),
-                Err(error) => return ControlResponse::error(error),
-            },
-            (None, None) => None,
+        let requested_workspace = match spawn
+            .workspace
+            .map(crate::pane::spawn_policy::workspace_index)
+        {
+            Some(Ok(index)) => Some(index),
+            Some(Err(error)) => return ControlResponse::error(error),
+            None => None,
         };
+        // `[[rules]]` decide float, fullscreen, and - unless the caller named one - the workspace,
+        // exactly as they do for a pane a person opens. `focus` is resolved and then ignored:
+        // there is no focus here, which is why `--focus` was refused above.
+        let rule_command = launch
+            .as_ref()
+            .map(crate::pane::launch::PaneLaunch::display);
+        let (placement_workspace, placement) = crate::pane::spawn_policy::resolve_placement(
+            &self.settings.rules,
+            rule_command.as_deref(),
+            requested_workspace,
+            Some(false),
+        );
+        let workspace_index = placement_workspace.unwrap_or(HEADLESS_DEFAULT_WORKSPACE);
+
         // A layout is the only thing that makes a pane visible to a client, and a session that has
         // panes but no layout document is one whose panes were placed by something this server
         // cannot reconstruct. Adding a pane there would commit a document claiming the others do
@@ -574,7 +599,6 @@ impl SessionServer {
                 self.session_name
             ));
         }
-
         let Some(pane_id) = self.next_headless_pane_id() else {
             return ControlResponse::error(format!(
                 "session `{}` has no free pane id below the reserved {}",
@@ -582,35 +606,53 @@ impl SessionServer {
                 crate::state::POPUP_PANE_ID
             ));
         };
+        // `spawn_pane` raises `next_generation` past whatever it is handed, so nothing is consumed
+        // by a request that turns out to be refused below.
         let generation = self.next_generation;
-        self.next_generation += 1;
+
+        // Build and validate the document *before* the PTY exists. A layout this server would
+        // itself reject leaves the old revision standing, and a pane committed to nothing is a
+        // process no client can see and nobody asked to keep.
+        let Some(layout) = self.headless_layout_with_pane(
+            pane_id,
+            generation,
+            workspace_index,
+            &placement,
+            launch.clone(),
+            spawn.cwd.clone(),
+            spawn.title.clone(),
+            spawn.keep_open,
+        ) else {
+            return ControlResponse::error(format!(
+                "placing pane {pane_id} in workspace {} would produce an invalid layout",
+                workspace_index + 1
+            ));
+        };
+
         let (cols, rows) = self.headless_spawn_size();
         let palette = self
             .panes
             .values()
             .next()
             .map(|pane| pane.palette)
-            .unwrap_or_else(|| WirePalette::from(tui_lipan::TerminalColorPalette::default()));
+            .unwrap_or_else(|| WirePalette::from(TerminalColorPalette::default()));
         let shell = self.settings.shell.clone();
         let command_shell = self.settings.command_shell.clone();
         let result = self.spawn_pane(SpawnRequest {
             pane_id,
             owner: None,
             generation,
-            launch: launch.clone(),
-            cwd: spawn.cwd.clone(),
-            title: spawn.title.clone(),
+            launch,
+            cwd: spawn.cwd,
+            title: spawn.title,
             cols,
             rows,
             keep_open: spawn.keep_open,
-            // A headless spawn has no UI to advertise. `ROZI_SOCKET` and `ROZI_BIN` name a
-            // client process and there is not one, so the child gets the same two variables a
-            // remote pane does rather than a path that resolves to nothing or to some unrelated
-            // rozi that happens to be running.
-            env: vec![
-                ("ROZI".to_string(), "1".to_string()),
-                ("ROZI_PANE".to_string(), pane_id.to_string()),
-            ],
+            env: crate::pane::spawn_policy::spawn_environment(
+                crate::pane::spawn_policy::SpawnOrigin::Headless,
+                pane_id,
+                &[],
+            ),
             palette,
             shell,
             command_shell,
@@ -619,7 +661,7 @@ impl SessionServer {
         // `SpawnResult` answers the client that asked; a follower learns about a new pane from
         // the layout revision below, exactly as it does for a controller's split. Broadcasting it
         // would hand every client a reply to a request it never made.
-        let ok = match result {
+        let pty_ready = match result {
             ServerMessage::SpawnResult { ok: true, .. } => true,
             ServerMessage::SpawnResult { error, .. } => {
                 return ControlResponse::error(error.unwrap_or_else(|| "spawn failed".to_string()));
@@ -627,36 +669,26 @@ impl SessionServer {
             _ => false,
         };
 
-        if let Some(layout) = self.headless_layout_with_pane(
-            pane_id,
-            generation,
-            workspace_index,
-            launch,
-            spawn.cwd,
-            spawn.title,
-            spawn.keep_open,
-        ) {
-            self.layout_rev += 1;
-            self.layout = Some(layout.clone());
-            self.mark_dirty();
-            broadcasts.push((
-                Target::Broadcast,
-                ServerMessage::LayoutCommitted {
-                    rev: self.layout_rev,
-                    // Client ids start at 1, so `0` is a document no client authored. Every
-                    // client, the controller included, therefore reconciles this revision instead
-                    // of recognising it as its own echo — which is right: none of them wrote it.
-                    // The lease does not move; the controller keeps control throughout.
-                    author: SERVER_LAYOUT_AUTHOR,
-                    layout,
-                },
-            ));
-        }
+        self.layout_rev += 1;
+        self.layout = Some(layout.clone());
+        self.mark_dirty();
+        broadcasts.push((
+            Target::Broadcast,
+            ServerMessage::LayoutCommitted {
+                rev: self.layout_rev,
+                // Client ids start at 1, so `0` is a document no client authored. Every
+                // client therefore reconciles this revision instead of recognising it as the
+                // echo of its own commit - which is right: none of them wrote it. Nobody holds
+                // the lease while this runs; the gate at the top of this function saw to that.
+                author: SERVER_LAYOUT_AUTHOR,
+                layout,
+            },
+        ));
 
         ControlResponse::ok(SessionNewPane {
             id: pane_id,
             accepted: true,
-            pty_ready: ok,
+            pty_ready,
         })
     }
 
@@ -700,7 +732,8 @@ impl SessionServer {
             .unwrap_or((HEADLESS_SPAWN_COLS, HEADLESS_SPAWN_ROWS))
     }
 
-    /// The shared layout with the new pane appended to `workspace_index`.
+    /// The shared layout with the new pane appended to `workspace_index`, or `None` when the
+    /// result would not validate.
     ///
     /// The workspace's tiling tree is deliberately left alone: a client places a pane missing from
     /// the tree through `effective_tile_tree`, which appends it in the workspace's own start axis.
@@ -712,11 +745,18 @@ impl SessionServer {
         pane_id: PaneId,
         generation: u64,
         workspace_index: usize,
+        placement: &crate::pane::lifecycle::SpawnPlacement,
         launch: Option<crate::pane::launch::PaneLaunch>,
         cwd: Option<String>,
         title: Option<String>,
         keep_open: bool,
     ) -> Option<SharedLayout> {
+        let mut layout = self.layout.clone().unwrap_or_else(|| SharedLayout {
+            version: SHARED_LAYOUT_VERSION,
+            canvas_cols: HEADLESS_SPAWN_COLS,
+            canvas_rows: HEADLESS_SPAWN_ROWS,
+            workspaces: Vec::new(),
+        });
         let shared_pane = SharedPane {
             pane_id,
             generation,
@@ -726,23 +766,41 @@ impl SessionServer {
             launch,
             replay: false,
             keep_open,
-            floating: false,
-            fullscreen: false,
-            rect: None::<FracRect>,
+            floating: placement.float.is_some(),
+            fullscreen: placement.fullscreen,
+            // A floating pane must carry a rect, and `SpawnFloat::rect` is the one implementation
+            // of where a float lands. It works in canvas cells, so it is run against the canvas
+            // this document declares and divided back into the fractions the document stores -
+            // the same round trip a client's own float makes on its way onto the wire.
+            rect: placement.float.map(|float| {
+                float_rect_to_frac(
+                    float.rect(FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: f32::from(layout.canvas_cols.max(1)),
+                        h: f32::from(layout.canvas_rows.max(1)),
+                    }),
+                    layout.canvas_cols,
+                    layout.canvas_rows,
+                )
+            }),
             scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
         };
-        let mut layout = self.layout.clone().unwrap_or_else(|| SharedLayout {
-            version: SHARED_LAYOUT_VERSION,
-            canvas_cols: HEADLESS_SPAWN_COLS,
-            canvas_rows: HEADLESS_SPAWN_ROWS,
-            workspaces: Vec::new(),
-        });
         match layout
             .workspaces
             .iter_mut()
             .find(|workspace| workspace.index == workspace_index)
         {
-            Some(workspace) => workspace.panes.push(shared_pane.clone()),
+            Some(workspace) => {
+                // At most one pane per workspace is fullscreen: two would stack, and which one a
+                // client drew would come down to order. Same rule `spawn_pane_in_workspace` keeps.
+                if placement.fullscreen {
+                    for other in &mut workspace.panes {
+                        other.fullscreen = false;
+                    }
+                }
+                workspace.panes.push(shared_pane);
+            }
             None => layout.workspaces.push(SharedWorkspace {
                 index: workspace_index,
                 name: None,
@@ -754,8 +812,8 @@ impl SessionServer {
                 panes: vec![shared_pane],
             }),
         }
-        // A document the server would itself reject is worse than no document: the pane exists
-        // either way, and leaving the old revision in place keeps every attached client consistent.
+        // A document the server would itself reject is worse than no document: the caller is told
+        // so before a PTY exists, and the revision every attached client holds is left standing.
         layout.validate().ok()?;
         Some(layout)
     }
@@ -1048,6 +1106,201 @@ mod tests {
             "exhaustion must be reported, not worked around"
         );
         assert!(broadcasts.is_empty());
+    }
+
+    /// Committing a layout revision is the controller's job. A headless caller is not the
+    /// controller and cannot become one, so while a client holds the lease this is refused rather
+    /// than racing that client's next commit and reflowing the screen it is working in.
+    #[test]
+    fn a_headless_spawn_is_refused_while_a_client_holds_layout_control() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 1, b"");
+        server.layout = Some(one_pane_layout(1));
+        let before_rev = server.layout_rev;
+        server.controller = Some(7);
+
+        let (response, broadcasts) = control(
+            &mut server,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: None,
+            },
+        );
+        assert!(!response.ok);
+        let error = response.error.unwrap_or_default();
+        assert!(error.contains("layout control"), "{error}");
+        assert!(broadcasts.is_empty(), "a refused spawn changes nothing");
+        assert_eq!(server.panes.len(), 1, "and leaves no pane behind");
+        assert_eq!(server.layout_rev, before_rev);
+
+        // The lease moving away is all it takes; nothing else about the request changed.
+        server.controller = None;
+        let (allowed, _) = control(
+            &mut server,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: None,
+            },
+        );
+        assert!(allowed.ok, "{:?}", allowed.error);
+    }
+
+    /// Reading and typing are not layout changes, so the lease does not gate them - a follower
+    /// client may already do both. Only the commit is controller-only.
+    #[test]
+    fn a_controller_does_not_stop_headless_reads() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 1, b"hello\r\n");
+        server.controller = Some(7);
+
+        let (listed, _) = control(&mut server, ControlCommand::ListPanes);
+        assert!(listed.ok);
+        let (captured, _) = control(
+            &mut server,
+            ControlCommand::CapturePane {
+                target: Some(1),
+                scrollback: None,
+            },
+        );
+        assert!(captured.ok, "{:?}", captured.error);
+    }
+
+    /// The generation on an extension's request is a fencing token only the client that minted it
+    /// can check. A server that cannot check it must not act on it, or `--session` becomes the way
+    /// around a fence the UI endpoint enforces.
+    #[test]
+    fn a_request_carrying_extension_provenance_is_refused_rather_than_trusted() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 1, b"");
+
+        for command in [
+            ControlCommand::ListPanes,
+            ControlCommand::SendText {
+                target: Some(1),
+                text: "rm -rf /\n".to_string(),
+            },
+        ] {
+            let messages = server.handle_session_control(
+                "dev".to_string(),
+                PROTOCOL_VERSION,
+                protocol::MIN_SUPPORTED_PROTOCOL,
+                None,
+                ControlRequest {
+                    command,
+                    source_pane: None,
+                    extension: Some(crate::config::ExtensionProvenance {
+                        id: "git-tools".to_string(),
+                        generation: "whatever-the-caller-claims".to_string(),
+                    }),
+                },
+            );
+            let [(Target::Sender, ServerMessage::SessionControlResult { response, .. })] =
+                messages.as_slice()
+            else {
+                panic!("expected exactly one control result, got {messages:?}");
+            };
+            assert!(!response.ok);
+            let error = response.error.clone().unwrap_or_default();
+            assert!(error.contains("git-tools"), "{error}");
+            assert!(error.contains("cannot check"), "{error}");
+        }
+    }
+
+    /// `[[rules]]` are config, not UI: the same entry that floats a command for a keypress floats
+    /// it for a script. The server holds its own copy precisely because no client is there to
+    /// apply one.
+    #[test]
+    fn a_headless_spawn_obeys_the_same_rules_a_client_spawn_would() {
+        let mut server = SessionServer::new_named("dev");
+        server.settings.rules = vec![crate::config::RuleConfig {
+            matcher: crate::config::RuleMatcher::Substring("btop".to_string()),
+            float: true,
+            width: Some(0.5),
+            height: Some(0.4),
+            workspace: Some(2),
+            focus: true,
+            fullscreen: false,
+            position: crate::config::FloatPosition::Center,
+        }];
+
+        let (response, broadcasts) = control(
+            &mut server,
+            ControlCommand::NewPane {
+                command: Some("btop".to_string()),
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: None,
+            },
+        );
+        assert!(response.ok, "{:?}", response.error);
+        let [(_, ServerMessage::LayoutCommitted { layout, .. })] = broadcasts.as_slice() else {
+            panic!("expected a layout commit, got {broadcasts:?}");
+        };
+        let workspace = layout
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.index == 2)
+            .expect("the rule's workspace, not the headless default");
+        let pane = &workspace.panes[0];
+        assert!(pane.floating, "the rule floats this command");
+        let rect = pane.rect.expect("a floating pane carries a rect");
+        // Fractions of the document's canvas, centred, at the rule's size.
+        assert!((rect.w - 0.5).abs() < 0.02, "{rect:?}");
+        assert!((rect.h - 0.4).abs() < 0.02, "{rect:?}");
+        assert!((rect.x - 0.25).abs() < 0.02, "{rect:?}");
+        layout.validate().expect("a ruled float still validates");
+    }
+
+    /// The PTY is the expensive, visible half of a spawn. A layout that would not validate is
+    /// found before one exists, so a refused request leaves no orphan process behind.
+    #[test]
+    fn a_layout_that_would_not_validate_is_refused_before_any_pty_is_started() {
+        let mut server = SessionServer::new_named("dev");
+        // A document from a future build: the server can hold it, and must not extend it.
+        server.layout = Some(SharedLayout {
+            version: SHARED_LAYOUT_VERSION + 1,
+            canvas_cols: 80,
+            canvas_rows: 24,
+            workspaces: Vec::new(),
+        });
+        let before_rev = server.layout_rev;
+
+        let (response, broadcasts) = control(
+            &mut server,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: None,
+            },
+        );
+        assert!(!response.ok);
+        assert!(
+            response
+                .error
+                .unwrap_or_default()
+                .contains("invalid layout"),
+            "the refusal must name what went wrong"
+        );
+        assert!(server.panes.is_empty(), "no pane, and therefore no PTY");
+        assert!(broadcasts.is_empty());
+        assert_eq!(server.layout_rev, before_rev);
     }
 
     #[test]

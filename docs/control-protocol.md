@@ -227,8 +227,9 @@ build is answered with a session-protocol `error` frame carrying `session-mismat
 `protocol-mismatch` instead, because neither is a rejected command.
 
 The connection never becomes a client. It gets no client id, does not appear in the session roster
-or client count, never holds layout control, and receives no replay. A script cannot make an idle
-session look occupied.
+or client count (including `metrics`, which counts attached clients rather than open sockets),
+never holds layout control, and receives no replay. A script cannot make an idle session look
+occupied — and equally gains nothing an attached client would not have.
 
 Supported requests are `list-panes`, `metrics`, `capture-pane`, `send-text`, `send-keys`,
 `new-pane`, `set-status`, and `pane-logging`. Every other `cmd` is answered with `ok: false` and a
@@ -241,8 +242,9 @@ Differences from the same request against a UI:
 | Any `target` | No focused-pane fallback. A session with one pane resolves to it; otherwise the error lists the pane ids. |
 | `list-panes` | Every pane in the session, including exited ones, whose `status` is `exited (<CODE>)`. `workspace` comes from the shared layout, or `0` when the session has no layout document. |
 | `metrics` | `server` only, sampled at request time, so `age_ms` is `0` and `stale` is `false`. Client counters are absent. |
-| `new-pane` | `focus` must be `false`. The server picks the pane id, appends it to `workspace` (default 1) in the shared layout, and broadcasts the new revision. `pty_ready` reports whether the PTY spawned. |
+| `new-pane` | `focus` must be `false`. Refused while any client holds layout control. The server picks the pane id, applies `[[rules]]` from its own config, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision authored by client `0`. `pty_ready` reports whether the PTY spawned. |
 | `send-text`, `send-keys` | Refused while the session's input lock is on, which only an attached client can release. |
+| Any request with `extension` provenance | Refused. The generation is a fencing token minted per UI process; a server cannot check it and does not act on an extension's behalf without checking. |
 
 The CLI speaks this transport for `rozi --session <NAME> <COMMAND>`. As with the UI endpoint,
 prefer invoking `rozi` over opening the endpoint yourself: the framing, the Windows pipe

@@ -78,8 +78,29 @@ impl SessionServer {
         if self.client_read_only(client_id) {
             return Err(("read-only", "read-only client".to_string()));
         }
+        self.apply_pane_status(
+            local.then_some(client_id),
+            pane_id,
+            generation,
+            status,
+            reason,
+        )
+    }
 
-        let owner = local.then_some(client_id);
+    /// Record a pane's reported status, with no claim about who asked.
+    ///
+    /// Split out of [`Self::set_pane_status`] so the headless control path
+    /// ([`SessionServer::handle_session_control`](super::headless)) can report the same status
+    /// without inventing a client to authorize. Everything after the caller check is identical, and
+    /// sanitization lives here so neither entry point can skip it.
+    pub(super) fn apply_pane_status(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        status: Option<String>,
+        reason: Option<String>,
+    ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
         };

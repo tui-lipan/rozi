@@ -24,6 +24,8 @@ use crate::state::PaneId;
 mod agent_summary;
 mod browse;
 mod connection;
+mod headless;
+pub use headless::session_control_unsupported;
 mod lease;
 mod pane_log;
 mod panes;

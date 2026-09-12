@@ -14,7 +14,7 @@ fn test_palette() -> WirePalette {
 }
 
 /// A 20x5 pane with no PTY behind it, for tests that only exercise server-side pane bookkeeping.
-fn test_pane(generation: u64) -> ServerPane {
+pub(super) fn test_pane(generation: u64) -> ServerPane {
     ServerPane {
         generation,
         title: None,

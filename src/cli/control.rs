@@ -9,7 +9,9 @@ use std::path::PathBuf;
 
 use tui_lipan::Result;
 
-use super::args::{ControlCli, ListFormat, PickCli, PublishCli, SubscribeCli, control_request};
+use super::args::{
+    ControlCli, ControlEndpoint, ListFormat, PickCli, PublishCli, SubscribeCli, control_request,
+};
 use super::output::{OutputStyles, format_control_text};
 use crate::control;
 use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
@@ -295,10 +297,12 @@ fn classify_pick_stream_event(value: &serde_json::Value) -> PickStreamEvent<'_> 
     }
 }
 
-pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
-    use std::io::IsTerminal;
-
-    let path = match discover_socket(command.socket) {
+/// Ask the UI endpoint, returning its raw reply line.
+fn ask_ui_endpoint(
+    socket: Option<PathBuf>,
+    request: &control::ControlRequest,
+) -> Result<serde_json::Value> {
+    let path = match discover_socket(socket) {
         Ok(path) => path,
         Err(err) => {
             eprintln!("{err}");
@@ -312,31 +316,57 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
             std::process::exit(2);
         }
     };
-    writeln!(
-        stream,
-        "{}",
-        serde_json::to_string(&command.request).unwrap()
-    )?;
+    writeln!(stream, "{}", serde_json::to_string(request).unwrap())?;
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;
     if line.trim().is_empty() {
         eprintln!("empty response from rozi");
         std::process::exit(2);
     }
-    let value: serde_json::Value = match serde_json::from_str(&line) {
-        Ok(value) => value,
+    match serde_json::from_str(&line) {
+        Ok(value) => Ok(value),
         Err(err) => {
             eprintln!("invalid JSON response: {err}");
             std::process::exit(2);
         }
+    }
+}
+
+/// Ask a named session server directly, with no UI in the picture.
+///
+/// A failure to *reach* the session exits 2 like an unreachable UI endpoint; a command the server
+/// answered with `ok: false` flows on and exits 1 through the shared path below, so a script sees
+/// the same two outcomes whichever endpoint served it.
+fn ask_session_endpoint(
+    session: &str,
+    request: control::ControlRequest,
+) -> Result<serde_json::Value> {
+    match crate::session::headless::run_session_control(session, request) {
+        Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    }
+}
+
+pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
+    use std::io::IsTerminal;
+
+    let value = match command.endpoint {
+        ControlEndpoint::Ui(socket) => ask_ui_endpoint(socket, &command.request)?,
+        ControlEndpoint::Session(session) => {
+            ask_session_endpoint(&session, command.request.clone())?
+        }
     };
+    let line = serde_json::to_string(&value).unwrap_or_default();
     let human_output = match command.output_format {
         Some(ListFormat::Text) => true,
         Some(ListFormat::Json) => false,
         None => std::io::stdout().is_terminal(),
     };
     if !human_output {
-        println!("{}", line.trim_end());
+        println!("{line}");
     }
     if value.get("ok").and_then(|v| v.as_bool()) == Some(false) {
         if let Some(error) = value.get("error").and_then(|v| v.as_str()) {

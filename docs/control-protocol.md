@@ -1,8 +1,15 @@
 # Control protocol
 
-This page documents Rozi's raw UI control transport. Prefer the portable commands in
+This page documents Rozi's raw control transports. Prefer the portable commands in
 [Control CLI](control.md) when a process can invoke `rozi`. The CLI handles endpoint discovery,
 Windows named-pipe derivation, extension provenance, timeouts, and stream bridging.
+
+There are two transports carrying the same request and response documents:
+
+- A running UI serves newline-delimited JSON on a per-process control endpoint. Everything below
+  describes this one unless it says otherwise.
+- A named session server serves the same requests, wrapped in one length-prefixed session-protocol
+  frame, on its session endpoint. See [Session transport](#session-transport).
 
 ## Transport
 
@@ -186,6 +193,60 @@ An empty status clears the report. `notify.level` is `"info"` or `"error"`.
 ```
 
 Omit `enabled` to toggle. Omit `target` to use `source_pane`, then the focused pane.
+
+## Session transport
+
+A named session server answers control requests on its own endpoint, with no UI in the picture.
+This is what makes a detached session scriptable.
+
+The endpoint is the session's, not a UI's: `$XDG_RUNTIME_DIR/rozi/session-<NAME>.sock` on Linux,
+Rozi's private runtime directory on macOS, and a current-user named pipe behind an equivalent
+discovery entry on Windows. The same ownership, mode, symlink, and DACL rules apply.
+
+Unlike the UI endpoint, this one is framed, not line-delimited: it is the
+[session protocol](sessions.md), so each message is a 4-byte big-endian length, a 1-byte frame
+kind, and a JSON body. One exchange is:
+
+1. Connect to the session endpoint.
+2. Write one `session-control` frame.
+3. Read one `session-control-result` frame.
+4. The server closes the connection.
+
+```json
+{"type":"session-control","session":"dev","protocol_version":6,"min_protocol_version":6,
+ "request":{"cmd":"capture-pane","target":3}}
+```
+
+```json
+{"type":"session-control-result","effective_protocol":6,
+ "response":{"ok":true,"data":{"id":3,"text":"…","title":"zsh"}}}
+```
+
+`response` is the same envelope the UI endpoint returns. A wrong session name or an incompatible
+build is answered with a session-protocol `error` frame carrying `session-mismatch` or
+`protocol-mismatch` instead, because neither is a rejected command.
+
+The connection never becomes a client. It gets no client id, does not appear in the session roster
+or client count, never holds layout control, and receives no replay. A script cannot make an idle
+session look occupied.
+
+Supported requests are `list-panes`, `metrics`, `capture-pane`, `send-text`, `send-keys`,
+`new-pane`, `set-status`, and `pane-logging`. Every other `cmd` is answered with `ok: false` and a
+reason naming what it needed a UI for; none is silently accepted.
+
+Differences from the same request against a UI:
+
+| Request | Against a session server |
+| --- | --- |
+| Any `target` | No focused-pane fallback. A session with one pane resolves to it; otherwise the error lists the pane ids. |
+| `list-panes` | Every pane in the session, including exited ones, whose `status` is `exited (<CODE>)`. `workspace` comes from the shared layout, or `0` when the session has no layout document. |
+| `metrics` | `server` only, sampled at request time, so `age_ms` is `0` and `stale` is `false`. Client counters are absent. |
+| `new-pane` | `focus` must be `false`. The server picks the pane id, appends it to `workspace` (default 1) in the shared layout, and broadcasts the new revision. `pty_ready` reports whether the PTY spawned. |
+| `send-text`, `send-keys` | Refused while the session's input lock is on, which only an attached client can release. |
+
+The CLI speaks this transport for `rozi --session <NAME> <COMMAND>`. As with the UI endpoint,
+prefer invoking `rozi` over opening the endpoint yourself: the framing, the Windows pipe
+derivation, and the session-name validation are all handled there.
 
 ## Subscription stream
 

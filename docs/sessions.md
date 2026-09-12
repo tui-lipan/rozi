@@ -377,6 +377,28 @@ Scratch panes are not discoverable as a normal session. They are not shared with
 saved in profiles, or included in resurrection snapshots. Exiting the UI shuts down their private
 server.
 
+## Script a session with no client attached
+
+A named session keeps running whether or not anybody is looking at it, and it can be driven that
+way too. `rozi --session <NAME>` followed by a control command talks to the session server
+directly:
+
+```bash
+rozi --session dev list-panes
+rozi --session dev capture-pane --target 3
+rozi --session dev send-keys --target 3 'cargo test' Enter
+rozi --session dev split --workspace 9 --argv cargo watch -x test
+```
+
+Nothing attaches. The session's client count and layout control are unchanged, so a script cannot
+make an idle session look occupied, and a pane it opens is already placed when a client does
+attach.
+
+Commands that only mean something on a screen — focus, workspace switching, toasts, pickers,
+actions, and event subscriptions — are refused with the reason rather than silently accepted. See
+[Control CLI](control.md#two-endpoints) for the full list and
+[Automation recipes](recipes.md) for worked examples.
+
 ## Share a live session
 
 More than one client can attach to a session. One client controls the shared layout while followers

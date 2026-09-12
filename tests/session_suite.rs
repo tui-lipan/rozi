@@ -1,5 +1,7 @@
 mod common;
 
+#[path = "suites/session/headless_control_e2e.rs"]
+mod headless_control_e2e;
 #[path = "suites/session/pane_status_e2e.rs"]
 mod pane_status_e2e;
 #[path = "suites/session/published_rows_e2e.rs"]

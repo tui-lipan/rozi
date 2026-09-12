@@ -200,13 +200,23 @@ impl SessionServer {
                 protocol_version,
                 min_protocol_version,
                 request,
-            } => self.handle_session_control(
-                session,
-                protocol_version,
-                min_protocol_version,
-                capabilities,
-                request,
-            ),
+            } => {
+                // Spawn policy describes the *next* pane, so a request that opens one re-reads it
+                // rather than using whatever config this server started with - which for a session
+                // nobody has attached to in a week is config from a week ago. Only spawns pay the
+                // read; a polling `list-panes` must not stat the config file every few seconds.
+                // See [`SessionServer::reload_spawn_policy`].
+                if matches!(request.command, control::ControlCommand::NewPane { .. }) {
+                    self.reload_spawn_policy();
+                }
+                self.handle_session_control(
+                    session,
+                    protocol_version,
+                    min_protocol_version,
+                    capabilities,
+                    request,
+                )
+            }
             ClientMessage::SetPaneLogging {
                 pane_id,
                 local,

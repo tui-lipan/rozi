@@ -328,6 +328,80 @@ fn an_extension_cannot_use_a_session_endpoint_to_escape_its_own_generation_fence
     expect_ok(&session, ControlCommand::ListPanes);
 }
 
+/// A script running inside pane 3 of one session, addressing another with `--session`, must not
+/// have its inherited `ROZI_PANE` treated as a target. The id says nothing about which session it
+/// belongs to, and the session being addressed may well have a pane 3 of its own.
+#[test]
+fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+
+    let first = expect_ok(
+        &session,
+        ControlCommand::NewPane {
+            command: None,
+            argv: None,
+            cwd: None,
+            title: None,
+            keep_open: false,
+            focus: false,
+            workspace: None,
+        },
+    )["id"]
+        .as_u64()
+        .expect("first spawn reported a pane id") as u32;
+    expect_ok(
+        &session,
+        ControlCommand::NewPane {
+            command: None,
+            argv: None,
+            cwd: None,
+            title: None,
+            keep_open: false,
+            focus: false,
+            workspace: None,
+        },
+    );
+
+    // The caller is sitting in a pane whose id this session also happens to use.
+    let response = run_session_control(
+        &session,
+        ControlRequest {
+            command: ControlCommand::SendText {
+                target: None,
+                text: "this must not be typed anywhere\n".to_string(),
+            },
+            source_pane: Some(first),
+            extension: None,
+        },
+    )
+    .expect("the session answered");
+    assert!(
+        !response.ok,
+        "an inherited pane id must not silently become the target"
+    );
+    let error = response.error.unwrap_or_default();
+    assert!(error.contains("--target"), "{error}");
+
+    // Nothing was typed: the pane's screen is still whatever its shell drew.
+    let text = expect_ok(
+        &session,
+        ControlCommand::CapturePane {
+            target: Some(first),
+            scrollback: Some(rozi::control::CaptureScrollback::Named(
+                rozi::control::CaptureScrollbackNamed::Full,
+            )),
+        },
+    )["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        !text.contains("this must not be typed anywhere"),
+        "the refused command still reached a pane:\n{text}"
+    );
+}
+
 #[test]
 fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
     let server = spawn_listener(headless_settings());

@@ -111,14 +111,26 @@ every pane in that session, including panes whose process has exited, which repo
 
 ## Target selection
 
-Commands that accept `--target` use it first. Otherwise the CLI sends `ROZI_PANE` as
-`source_pane`.
+Commands that accept `--target` use it first.
 
-A UI endpoint then falls back to the focused pane. A session endpoint has no focus, so it resolves
-a session with exactly one pane and otherwise fails with the pane ids to choose from:
+Against a **UI endpoint**, the CLI otherwise sends `ROZI_PANE` as `source_pane`, and Rozi falls
+back to the focused pane.
+
+Against a **session endpoint**, `ROZI_PANE` is not sent and not honoured. A pane id says nothing
+about which session it belongs to, and `--session` names a different one than the caller is
+sitting in: a script inside pane 3 of `work` running `rozi --session dev send-text …` would
+otherwise type into `dev`'s pane 3, a pane it never looked at. So a session endpoint takes
+`--target` or resolves a session with exactly one pane, and otherwise fails with the ids to choose
+from:
 
 ```text
 session `dev` has 3 panes and no focused pane; pass --target (ids: 1, 2, 5)
+```
+
+A pane addressing its own session names itself explicitly:
+
+```sh
+rozi --session dev status working --target "$ROZI_PANE"
 ```
 
 Target a pane explicitly when a script drives a pane it created:
@@ -167,6 +179,10 @@ A headless pane's environment is `ROZI` and `ROZI_PANE` only. `ROZI_SOCKET` and 
 UI process and there is not one, and the desktop variables a client forwards (`DISPLAY`,
 `WAYLAND_DISPLAY`, and whatever `[environment] forward` adds) are deliberately not taken from the
 one-shot CLI process either: that process is gone seconds later, and the pane is not.
+
+`[[rules]]` and the configured shell are read from the server's config when the spawn happens, not
+when the server started, so an edited rule applies to the next headless `split` without restarting
+a session that has been running for days.
 
 A positional `COMMAND` is interpreted by the configured `command_shell`. `--argv` launches a
 program directly and consumes the remaining arguments, so all pane options must come first.

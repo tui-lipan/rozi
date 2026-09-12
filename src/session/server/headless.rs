@@ -218,7 +218,21 @@ impl SessionServer {
         if let Some(reason) = session_control_unsupported(&request.command) {
             return ControlResponse::error(reason);
         }
-        let source_pane = request.source_pane;
+        // `source_pane` is deliberately not read here, and the CLI does not send it to a session
+        // endpoint either.
+        //
+        // It carries a bare pane id taken from the caller's `ROZI_PANE`, with nothing saying which
+        // session that id belongs to. `--session` changes the namespace, so a script run inside
+        // pane 3 of `work` that says `--session dev` would arrive claiming pane 3 - and `dev`'s
+        // pane 3 is a different pane, in a session the caller never looked at. Worse, an inherited
+        // id looks exactly like an explicit `--target`, so the ambiguity check below never runs and
+        // a five-pane session gets typed into silently instead of refusing.
+        //
+        // Honouring it would need a session identity beside the pane id. A spawn-time
+        // `ROZI_SESSION` is the obvious shape and is not safe as written: a session can be renamed
+        // (`ClientMessage::Rename`) long after a pane's environment was fixed, and a stale value
+        // could later match a *different* session that took the old name. Until that is designed,
+        // a pane naming a pane in its own session says so with `--target "$ROZI_PANE"`.
         match request.command {
             ControlCommand::ListPanes => ControlResponse::ok(self.session_pane_report()),
             // A headless sample is taken now rather than read from a client's cache, so it is
@@ -232,16 +246,16 @@ impl SessionServer {
                 },
             })),
             ControlCommand::CapturePane { target, scrollback } => {
-                self.session_capture_pane(target.or(source_pane), scrollback)
+                self.session_capture_pane(target, scrollback)
             }
             ControlCommand::SendText { target, text } => {
-                self.session_send_bytes(target.or(source_pane), text.into_bytes())
+                self.session_send_bytes(target, text.into_bytes())
             }
             ControlCommand::SendKeys {
                 target,
                 keys,
                 literal,
-            } => self.session_send_keys(target.or(source_pane), &keys, literal),
+            } => self.session_send_keys(target, &keys, literal),
             ControlCommand::NewPane {
                 command,
                 argv,
@@ -266,9 +280,9 @@ impl SessionServer {
                 target,
                 status,
                 reason,
-            } => self.session_set_status(target.or(source_pane), status, reason, broadcasts),
+            } => self.session_set_status(target, status, reason, broadcasts),
             ControlCommand::PaneLogging { target, enabled } => {
-                self.session_pane_logging(target.or(source_pane), enabled, broadcasts)
+                self.session_pane_logging(target, enabled, broadcasts)
             }
             // Every remaining variant was refused above by `session_control_unsupported`.
             other => ControlResponse::error(
@@ -563,6 +577,10 @@ impl SessionServer {
                 self.session_name
             ));
         }
+        // `[[rules]]`, the shell, and the command runner used here were re-read from config just
+        // before this ran - see the `SessionControl` arm in `connection.rs`, which does it for
+        // every request that opens a pane. They describe the pane about to exist, not the ones
+        // this server opened when it started.
         let launch = match crate::pane::spawn_policy::requested_launch(spawn.command, spawn.argv) {
             Ok(launch) => launch,
             Err(error) => return ControlResponse::error(error),
@@ -1153,6 +1171,97 @@ mod tests {
             },
         );
         assert!(allowed.ok, "{:?}", allowed.error);
+    }
+
+    /// A pane id is not a session. `ROZI_PANE` names pane 3 of whatever session the caller is
+    /// sitting in, and `--session` says the request is for a different one, where pane 3 - if it
+    /// exists at all - is a stranger. Honouring it would also disarm the ambiguity check, since an
+    /// inherited id is indistinguishable from an explicit `--target`.
+    #[test]
+    fn an_inherited_pane_id_never_addresses_a_pane_in_the_session_being_targeted() {
+        let mut server = SessionServer::new_named("dev");
+        for id in [3, 4] {
+            pane_with_screen(&mut server, id, b"");
+        }
+
+        // The caller is inside pane 3 of some *other* session. `dev` has a pane 3 too.
+        let messages = server.handle_session_control(
+            "dev".to_string(),
+            PROTOCOL_VERSION,
+            protocol::MIN_SUPPORTED_PROTOCOL,
+            None,
+            ControlRequest {
+                command: ControlCommand::SendText {
+                    target: None,
+                    text: "cargo test\n".to_string(),
+                },
+                source_pane: Some(3),
+                extension: None,
+            },
+        );
+        let [(Target::Sender, ServerMessage::SessionControlResult { response, .. })] =
+            messages.as_slice()
+        else {
+            panic!("expected one control result, got {messages:?}");
+        };
+        assert!(
+            !response.ok,
+            "an inherited pane id must not stand in for a target"
+        );
+        let error = response.error.clone().unwrap_or_default();
+        assert!(error.contains("--target"), "{error}");
+        assert!(
+            error.contains("3, 4"),
+            "the ambiguity check still runs: {error}"
+        );
+
+        // Naming the pane explicitly is how a caller addresses one.
+        let (targeted, _) = control(
+            &mut server,
+            ControlCommand::SendText {
+                target: Some(3),
+                text: "ok".to_string(),
+            },
+        );
+        // Pane 3 has no PTY in this fixture, so this reaches the liveness check rather than the
+        // ambiguity one - which is the point: the target resolved.
+        assert!(
+            targeted
+                .error
+                .unwrap_or_default()
+                .contains("PTY is not running"),
+            "an explicit target resolves"
+        );
+    }
+
+    /// Spawn policy describes the next pane, so it is re-read rather than frozen at startup. The
+    /// read itself belongs to the socket path; this covers the swap it performs.
+    #[test]
+    fn refreshed_spawn_policy_replaces_what_the_server_started_with() {
+        let mut server = SessionServer::new_named("dev");
+        assert!(server.settings.rules.is_empty());
+
+        let rule = crate::config::RuleConfig {
+            matcher: crate::config::RuleMatcher::Substring("btop".to_string()),
+            float: false,
+            width: None,
+            height: None,
+            workspace: Some(5),
+            focus: true,
+            fullscreen: false,
+            position: crate::config::FloatPosition::Center,
+        };
+        server.apply_spawn_policy(
+            vec![rule.clone()],
+            vec!["/bin/dash".to_string()],
+            vec!["/bin/dash".to_string(), "-c".to_string()],
+        );
+        assert_eq!(server.settings.rules, vec![rule]);
+        assert_eq!(server.settings.shell, vec!["/bin/dash".to_string()]);
+
+        // An edit that removes every rule has to take effect too, not just one that adds them.
+        server.apply_spawn_policy(Vec::new(), Vec::new(), Vec::new());
+        assert!(server.settings.rules.is_empty());
     }
 
     /// Reading and typing are not layout changes, so the lease does not gate them - a follower

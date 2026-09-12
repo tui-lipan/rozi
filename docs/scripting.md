@@ -29,7 +29,10 @@ rozi --session dev send-keys --target 3 'cargo test' Enter
 ```
 
 The commands that need a screen — `focus`, `run-action`, `notify`, `pick`, `subscribe`, workspace
-switching — say so instead of running. See [Control CLI](control.md#two-endpoints).
+switching — say so instead of running. `ROZI_PANE` is not used as a default target there either: it
+is a bare pane id, and `--session` names a different pane namespace than the caller is sitting in.
+Pass `--target` (a pane in its own session passes `--target "$ROZI_PANE"`). See
+[Control CLI](control.md#two-endpoints).
 
 Human-readable CLI help and reports use Rozi's palette when written to a terminal.
 Redirected output stays plain. `NO_COLOR`, `CLICOLOR=0`, and `TERM=dumb` disable CLI styling;

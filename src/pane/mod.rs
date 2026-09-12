@@ -7,12 +7,45 @@ pub mod launch;
 pub mod lifecycle;
 pub mod pty_events;
 pub mod rules;
+pub(crate) mod spawn_policy;
+
+/// What `capture-pane` returns for one pane, whichever endpoint was asked.
+///
+/// Both the UI control endpoint and the session server answer this command, from two different
+/// copies of the same screen. Writing it once against [`TerminalScreen`] is what keeps `--scrollback
+/// full` from quietly meaning two things, and is why a new [`CaptureScrollback`] variant cannot be
+/// added to one endpoint and forgotten in the other.
+///
+/// `Err` carries the message the caller sees; the only failure is asking for command output from a
+/// pane whose shell never reported any.
+pub(crate) fn capture_screen_text(
+    screen: &mut TerminalScreen,
+    scrollback: Option<CaptureScrollback>,
+) -> std::result::Result<String, &'static str> {
+    let text = match scrollback {
+        None => screen.render_snapshot().text.to_string(),
+        Some(CaptureScrollback::Lines(lines)) => {
+            let total = screen.total_text_lines();
+            screen.export_text(total.saturating_sub(lines), total)
+        }
+        Some(CaptureScrollback::Named(CaptureScrollbackNamed::Full)) => {
+            let total = screen.total_text_lines();
+            screen.export_text(0, total)
+        }
+        Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput)) => screen
+            .export_last_command_output()
+            .ok_or("no last command output (shell integration marks missing)")?,
+    };
+    Ok(text)
+}
 
 use std::cell::RefCell;
 use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
 
+#[allow(clippy::useless_attribute)]
+use crate::control::{CaptureScrollback, CaptureScrollbackNamed};
 use tui_lipan::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -562,6 +595,16 @@ impl TerminalPane {
 
     pub fn total_scrollback_rows(&self) -> usize {
         self.screen.borrow_mut().total_scrollback_rows()
+    }
+
+    /// Run `read` against the pane's terminal.
+    ///
+    /// The screen is shared (`Rc<RefCell<_>>`), so this needs no `&mut self`. It exists so code
+    /// that must work against *either* a client's terminal or the session server's own copy -
+    /// `capture-pane`, which both endpoints answer - can be written once against
+    /// [`TerminalScreen`] instead of twice.
+    pub(crate) fn with_screen_mut<R>(&self, read: impl FnOnce(&mut TerminalScreen) -> R) -> R {
+        read(&mut self.screen.borrow_mut())
     }
 
     /// Plain text of the current visible snapshot grid (reflecting whatever scrollback offset

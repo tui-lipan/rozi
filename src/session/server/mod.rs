@@ -218,6 +218,14 @@ pub struct ServerSettings {
     /// originally spawned) does not yet require.
     pub shell: Vec<String>,
     pub command_shell: Vec<String>,
+    /// `[[rules]]` placement, for a pane this server opens itself.
+    ///
+    /// A client applies these from its own config before asking for a spawn, so this is not a
+    /// second opinion about a client's pane: it is the only copy available when the request
+    /// arrives headlessly and no client was involved. Both paths run it through
+    /// `pane::spawn_policy::resolve_placement`, so a rule cannot mean one thing to a keypress and
+    /// another to a script.
+    pub rules: Vec<crate::config::RuleConfig>,
     /// Agent definitions this session detects with: the built-in catalog merged with whatever
     /// `config.toml` and installed extensions declared.
     ///
@@ -243,6 +251,7 @@ impl Default for ServerSettings {
             scrollback: DEFAULT_SCROLLBACK,
             shell: Vec::new(),
             command_shell: Vec::new(),
+            rules: Vec::new(),
             agents: crate::agent_detection::AgentCatalog::shared_builtin(),
         }
     }
@@ -1226,36 +1235,28 @@ impl SessionServer {
 
     pub(crate) fn runtime_metrics(&self) -> ServerRuntimeMetrics {
         let ingress = self.events.stats();
-        let current_outbox = self
-            .clients
-            .iter()
-            .map(|client| client.outbox_bytes)
-            .sum::<usize>();
-        let outbox_capacity = self.clients.iter().map(|_| self.max_backlog).sum::<usize>();
-        let seed_queued = self
-            .clients
-            .iter()
+        // Clients, not connections. A discovery probe and a headless control request each open a
+        // socket, answer one message and hang up without ever attaching; counting those would have
+        // a detached session report occupants it does not have - and `rozi --session dev metrics`
+        // would always count the request asking the question. Their outboxes hold one reply frame
+        // between accept and close, which is not the backlog pressure this measures.
+        let attached = || self.clients.iter().filter(|client| client.attached);
+        let current_outbox = attached().map(|client| client.outbox_bytes).sum::<usize>();
+        let outbox_capacity = attached().count() * self.max_backlog;
+        let seed_queued = attached()
             .map(|client| client.seed_queued_bytes)
             .sum::<usize>();
-        let seed_catch_up = self
-            .clients
-            .iter()
+        let seed_catch_up = attached()
             .map(|client| {
                 client.seed_catch_up_queued_bytes
                     + client.seed.as_ref().map_or(0, |seed| seed.catch_up_bytes)
             })
             .sum::<usize>();
-        let seed_panes_remaining = self
-            .clients
-            .iter()
+        let seed_panes_remaining = attached()
             .filter_map(|client| client.seed.as_ref())
             .map(AttachSeedState::panes_remaining)
             .sum::<usize>();
-        let active_seed_clients = self
-            .clients
-            .iter()
-            .filter(|client| client.seed.is_some())
-            .count();
+        let active_seed_clients = attached().filter(|client| client.seed.is_some()).count();
         ServerRuntimeMetrics {
             sampled_at_unix_ms: unix_time_millis(),
             pty_ingress: QueueMetrics {
@@ -1272,7 +1273,7 @@ impl SessionServer {
                     self.outbox_high_water_bytes,
                     outbox_capacity,
                 ),
-                clients: self.clients.len() as u64,
+                clients: attached().count() as u64,
             },
             attach_seed: crate::runtime_metrics::AttachSeedMetrics {
                 active_clients: active_seed_clients as u64,
@@ -1294,10 +1295,14 @@ impl SessionServer {
         }
     }
 
+    /// Track the peak over the same set [`Self::runtime_metrics`] reports as current: attached
+    /// clients. A peak that counted one-shot probe and control connections too would sit above a
+    /// capacity those connections were never measured against.
     fn note_outbox_high_water(&mut self) {
         let current = self
             .clients
             .iter()
+            .filter(|client| client.attached)
             .map(|client| client.outbox_bytes)
             .sum::<usize>();
         self.outbox_high_water_bytes = self.outbox_high_water_bytes.max(current);
@@ -1545,6 +1550,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
             scrollback: loaded.config.scrollback,
             shell,
             command_shell,
+            rules: loaded.config.rules,
             agents: agent_catalog(loaded.config.agents),
             ..ServerSettings::default()
         },

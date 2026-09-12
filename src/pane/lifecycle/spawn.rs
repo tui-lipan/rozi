@@ -363,15 +363,13 @@ pub(crate) fn interactive_spawn_target(
     focus: Option<bool>,
     workspace: Option<usize>,
 ) -> (usize, Option<PaneId>, SpawnPlacement) {
-    let (rule_workspace, mut placement) = command
-        .map(|command| crate::pane::rules::placement_for_command(&state.config.rules, command))
-        .unwrap_or_default();
-    if let Some(focus) = focus {
-        placement.focus = focus;
-    }
-    // A caller that named a workspace means it: `[[rules]]` placement is a default for the panes a
-    // person opens, not an override of an explicit instruction from automation.
-    let workspace_index = workspace.or(rule_workspace).unwrap_or(source_workspace);
+    let (resolved_workspace, placement) = crate::pane::spawn_policy::resolve_placement(
+        &state.config.rules,
+        command,
+        workspace,
+        focus,
+    );
+    let workspace_index = resolved_workspace.unwrap_or(source_workspace);
     let previous_focused = source.or(state.current().workspaces[workspace_index].focused_pane);
     (workspace_index, previous_focused, placement)
 }

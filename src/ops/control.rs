@@ -3,9 +3,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::actions::execute_action;
-use crate::control::{
-    CaptureScrollback, CaptureScrollbackNamed, ControlCommand, ControlEnvelope, ControlResponse,
-};
+use crate::control::{CaptureScrollback, ControlCommand, ControlEnvelope, ControlResponse};
 use crate::input::Action;
 use crate::input::send_keys::{SendKeysItem, parse_send_keys_arg};
 use crate::ops::focus::{
@@ -13,7 +11,7 @@ use crate::ops::focus::{
 };
 use crate::pane::lifecycle::{find_pane_mut, spawn_interactive_pane_with_focus};
 use crate::pane::pty_events::terminal_key_event_bytes;
-use crate::state::{PaneId, PaneIdentity, WORKSPACE_COUNT};
+use crate::state::{PaneId, PaneIdentity};
 
 #[derive(Serialize)]
 struct PaneInfo {
@@ -525,22 +523,12 @@ fn capture_pane(
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
         return ControlResponse::error(format!("pane {id} not found"));
     };
-    let text = match scrollback {
-        None => pane.terminal.capture_text(),
-        Some(CaptureScrollback::Lines(n)) => pane.terminal.capture_scrollback_text(Some(n)),
-        Some(CaptureScrollback::Named(CaptureScrollbackNamed::Full)) => {
-            pane.terminal.capture_scrollback_text(None)
-        }
-        Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput)) => {
-            match pane.terminal.capture_last_command_output() {
-                Some(text) => text,
-                None => {
-                    return ControlResponse::error(
-                        "no last command output (shell integration marks missing)",
-                    );
-                }
-            }
-        }
+    let text = match pane
+        .terminal
+        .with_screen_mut(|screen| crate::pane::capture_screen_text(screen, scrollback))
+    {
+        Ok(text) => text,
+        Err(error) => return ControlResponse::error(error),
     };
     let title = pane.terminal.title();
     ControlResponse::ok(PaneCapture { id, text, title })
@@ -607,13 +595,9 @@ fn move_to_workspace_command(ctx: &mut Context<AppRoot>, index: usize) -> Contro
 /// `Some(error response)` when `index` (1-based) is out of the `1..=WORKSPACE_COUNT` range,
 /// `None` when it is valid.
 fn validate_workspace_index(index: usize) -> Option<ControlResponse> {
-    if index == 0 || index > WORKSPACE_COUNT {
-        Some(ControlResponse::error(format!(
-            "workspace index must be between 1 and {WORKSPACE_COUNT}"
-        )))
-    } else {
-        None
-    }
+    crate::pane::spawn_policy::workspace_index(index)
+        .err()
+        .map(ControlResponse::error)
 }
 
 struct PreparedNewPane {
@@ -630,15 +614,13 @@ fn prepare_new_pane(
     workspace: Option<usize>,
 ) -> std::result::Result<PreparedNewPane, ControlResponse> {
     let workspace = match workspace {
-        Some(index) => {
-            if let Some(response) = validate_workspace_index(index) {
-                return Err(response);
-            }
-            Some(index - 1)
-        }
+        Some(index) => Some(
+            crate::pane::spawn_policy::workspace_index(index).map_err(ControlResponse::error)?,
+        ),
         None => None,
     };
-    let launch = requested_pane_launch(command, argv).map_err(ControlResponse::error)?;
+    let launch = crate::pane::spawn_policy::requested_launch(command, argv)
+        .map_err(ControlResponse::error)?;
     let scratch_source = source.is_some_and(|id| crate::scratchpad::contains(state, id));
     if state.scratch_visible && source.is_some() && !scratch_source {
         return Err(ControlResponse::error(
@@ -867,20 +849,6 @@ fn spawn_new_pane(
     )
 }
 
-fn requested_pane_launch(
-    command: Option<String>,
-    argv: Option<Vec<String>>,
-) -> std::result::Result<Option<crate::pane::launch::PaneLaunch>, String> {
-    match (command, argv) {
-        (Some(_), Some(_)) => {
-            Err("new-pane accepts either `command` or `argv`, not both".to_string())
-        }
-        (Some(command), None) => Ok(Some(crate::pane::launch::PaneLaunch::shell(command))),
-        (None, Some(argv)) => crate::pane::launch::PaneLaunch::direct(argv).map(Some),
-        (None, None) => Ok(None),
-    }
-}
-
 fn workspace_for_source(
     state: &crate::state::State,
     source: Option<PaneId>,
@@ -905,19 +873,6 @@ mod tests {
     use crate::state::{Pane, State};
     use std::sync::mpsc;
     use tui_lipan::TestBackend;
-
-    #[test]
-    fn new_pane_launch_requires_one_valid_process_model() {
-        assert_eq!(
-            requested_pane_launch(None, Some(vec!["tool".into(), "space; $literal".into()]))
-                .unwrap(),
-            Some(crate::pane::launch::PaneLaunch::Direct {
-                argv: vec!["tool".into(), "space; $literal".into()]
-            })
-        );
-        assert!(requested_pane_launch(None, Some(Vec::new())).is_err());
-        assert!(requested_pane_launch(Some("echo hi".into()), Some(vec!["echo".into()])).is_err());
-    }
 
     #[test]
     fn stale_extension_generation_is_rejected_at_execution_time() {

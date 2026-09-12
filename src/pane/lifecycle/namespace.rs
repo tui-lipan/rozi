@@ -181,28 +181,13 @@ pub(crate) fn pane_env(
     remote_attached: bool,
     forwarded_environment: &[String],
 ) -> Vec<(String, String)> {
-    // A persistent server may have been created by an older SSH or desktop client. Sample the
-    // client that initiates this spawn instead, but never send local capabilities to another host.
-    let mut env = if remote_attached {
-        Vec::new()
-    } else {
-        crate::platform::environment::forwarded_client_environment(forwarded_environment)
-    };
-    env.extend([
-        ("ROZI".to_string(), "1".to_string()),
-        ("ROZI_PANE".to_string(), pane.id.to_string()),
-    ]);
-    // Under `--remote`, the control socket lives on the client machine and must not be advertised
-    // into remote PTYs (it may collide with an unrelated path on the remote host).
-    if !remote_attached && let Some(path) = control_socket_path {
-        env.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
-    }
-    // Same reasoning for the binary: a remote PTY runs on the other host, where this client's own
-    // path means nothing. A remote pane falls back to whatever `rozi` the remote has on `PATH`.
-    if !remote_attached && let Some(path) = crate::platform::paths::current_binary() {
-        env.push(("ROZI_BIN".to_string(), path.display().to_string()));
-    }
-    // Per-spawn additions last so a caller-supplied value wins over the standard set.
-    env.extend(pane.identity.env.iter().cloned());
-    env
+    crate::pane::spawn_policy::spawn_environment(
+        crate::pane::spawn_policy::SpawnOrigin::Client {
+            control_socket: control_socket_path,
+            forward: forwarded_environment,
+            remote: remote_attached,
+        },
+        pane.id,
+        &pane.identity.env,
+    )
 }

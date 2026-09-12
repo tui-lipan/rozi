@@ -28,6 +28,12 @@ rozi --session dev split --workspace 9 --argv cargo watch -x test
 The two endpoints return the same `{ok, data, error}` document and the same tables, so a script
 reads one format either way.
 
+A session endpoint serves what a server can decide on its own. It does not gain a script any
+authority an attached client would not have: opening a pane still needs the layout-control lease to
+be free, typing still respects the session's input lock, and a request carrying extension
+provenance is refused because a server cannot check whether that extension is still active (see
+[Extensions and `--session`](#extensions-and-session)).
+
 `--session` and `--socket` name different endpoints and cannot be combined. A bare session name is
 a launch target, not a control target: `rozi dev` starts a UI, so `rozi dev list-panes` is refused
 and points at `--session dev` instead.
@@ -139,12 +145,28 @@ Options:
 - `--keep-open`
 - `--argv PROGRAM [ARG...]`
 
-Against `--session`, `split` appends the pane to the named workspace (workspace 1 by default) and
-commits the layout revision itself, so a client attaching later finds the pane already placed. The
-workspace's tiling arrangement is left alone: the new pane is tiled beside the others when a client
-draws it, and a deliberate split ratio survives. `--focus` is refused, since there is no focus to
-move, and a session that has panes but has never had a client — and therefore has no layout
-document — refuses the spawn rather than committing one that claims its other panes do not exist.
+Against `--session`, `split` commits the layout revision itself, so a client attaching later finds
+the pane already placed. `[[rules]]` apply exactly as they do to a pane a person opens: a rule may
+float it, make it fullscreen, and choose its workspace, and an explicit `--workspace` still wins
+over the rule. Without either, the pane lands in workspace 1. The workspace's tiling arrangement is
+left alone: the new pane is tiled beside the others when a client draws it, and a deliberate split
+ratio survives.
+
+Three refusals are specific to a session endpoint:
+
+- **A client holds layout control.** Opening a shared pane means committing a layout revision over
+  whatever that client is arranging, which is the controller's call — the session protocol already
+  refuses the same thing from a non-controller client. Detach it, or ask it to open the pane.
+  Reading and typing never needed the lease and keep working.
+- **`--focus`** — there is no focus to move.
+- **The session has panes but no layout document**, which happens only if nothing ever attached to
+  place them. Committing one would claim the other panes do not exist, so the spawn is refused
+  instead.
+
+A headless pane's environment is `ROZI` and `ROZI_PANE` only. `ROZI_SOCKET` and `ROZI_BIN` name a
+UI process and there is not one, and the desktop variables a client forwards (`DISPLAY`,
+`WAYLAND_DISPLAY`, and whatever `[environment] forward` adds) are deliberately not taken from the
+one-shot CLI process either: that process is gone seconds later, and the pane is not.
 
 A positional `COMMAND` is interpreted by the configured `command_shell`. `--argv` launches a
 program directly and consumes the remaining arguments, so all pane options must come first.
@@ -281,6 +303,26 @@ The session must already exist. Start one with `rozi sessions new dev`, or leave
 There is no event stream against a session endpoint. `subscribe` reports UI events, which a server
 does not raise; poll `list-panes` for pane lifecycle, reported status, and detected agent state
 instead — all three are server-owned and current in every reply.
+
+## Extensions and `--session`
+
+The CLI stamps every request with the calling extension's id and generation when it finds
+`ROZI_EXTENSION` in the environment. That generation is a fencing token a running rozi mints on
+each config reload, so a disabled or reloaded extension's leftover processes stop being obeyed.
+
+A session server cannot check it — the token is minted per UI process and the server never sees it
+— so it refuses such requests rather than honouring a fence nobody checked:
+
+```text
+a session server cannot check whether extension `git-tools` is still active, and will not act on
+its behalf; reach a running rozi instead, or clear ROZI_EXTENSION when the caller is not the
+extension
+```
+
+An extension that wants to drive a session should go through a running rozi, which does check. A
+person typing in a pane that an extension happened to open inherits `ROZI_EXTENSION` from it and
+hits the same refusal; `env -u ROZI_EXTENSION rozi --session …` says the request is theirs, not the
+extension's.
 
 ## Session lifecycle
 

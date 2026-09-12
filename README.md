@@ -87,8 +87,12 @@ The [documentation index](docs/index.md) links to every guide.
 ## Platforms
 
 rozi supports Linux, macOS, and Windows. Windows requires Windows 10 version 1809 or newer.
-Some process inspection and shell integration details differ by platform. See
-[Platform support](docs/platform-support.md).
+Some process inspection and shell integration details differ by platform.
+
+It also builds and runs on NetBSD, where it is packaged in pkgsrc. That platform is
+community-supported: no prebuilt binaries, and CI builds and tests it without gating a merge.
+
+See [Platform support](docs/platform-support.md).
 
 ## Contributing
 

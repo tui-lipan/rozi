@@ -20,6 +20,15 @@ With Cargo:
 cargo install rozi
 ```
 
+On NetBSD, from pkgsrc:
+
+```sh
+pkgin install rozi
+```
+
+There are no prebuilt NetBSD archives, so the bootstrap scripts and `rozi update` do not cover it;
+pkgsrc owns that install. See [Platform support](platform-support.md#netbsd).
+
 The bootstrap scripts download the release for your platform, verify its checksum, and hand it to
 rozi's managed installer. They do not edit shell startup files.
 

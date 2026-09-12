@@ -83,17 +83,24 @@ containers and the `GLIBC_2.28` ceiling, and it compiles `ROZI_NIGHTLY_COMMIT` a
 the workflow, `docs/installation.md` what a user gets. CI deliberately ignores the moving
 `nightly` tag.
 
-One extra job cross-compiles `x86_64-unknown-netbsd`. NetBSD is not supported and nothing runs
-there; the job exists because it is the only thing in CI that catches `#[cfg(target_os = "linux")]`
-paired with a `not(linux)` fallback, which quietly gives every other Unix the macOS spelling. Write
-per-OS `cfg` arms explicitly and let an unlisted target fail loudly, the way `platform::errno` does.
-To run it locally you need `cross` and a working Docker, because `ring` builds C and the NetBSD
-toolchain lives in the `cross` image:
+Two extra jobs cover NetBSD, which is community-supported and ships no binary. `netbsd-cross`
+cross-compiles `x86_64-unknown-netbsd` on every push; it is the only thing in CI that catches
+`#[cfg(target_os = "linux")]` paired with a `not(linux)` fallback, which quietly gives every other
+Unix the macOS spelling. Write per-OS `cfg` arms explicitly and let an unlisted target fail loudly,
+the way `platform::errno` does. To run it locally you need `cross` and a working Docker, because
+`ring` builds C and the NetBSD toolchain lives in the `cross` image:
 
 ```bash
 cross check --locked --all-targets --target x86_64-unknown-netbsd
 cross clippy --locked --all-targets --target x86_64-unknown-netbsd -- -D warnings
 ```
+
+`netbsd-native` boots a NetBSD VM and runs `cargo build` and the test suite against pkgsrc's Rust,
+because compiling was never the interesting half for a program built on ptys, signals, and Unix
+sockets. It runs on `master`, on tags, and on demand, and it is `continue-on-error`: nobody here
+has NetBSD hardware, so treat a failure as a bug report from that platform rather than as a gate on
+a change aimed at the other three. Do not read it twice and merge past it.
+`docs/platform-support.md` states the support level a user can rely on; keep the two in step.
 
 ## Benchmarks and profiling
 

@@ -105,7 +105,15 @@ impl InstallSource {
         // Deliberately not `/usr/local/bin`: a distribution owns `/usr/bin`, but `/usr/local/bin`
         // is equally the place people copy a binary by hand, and telling those users that a
         // package manager owns it would be wrong. They fall through to `Unknown`.
-        if within_any(executable, [Some(PathBuf::from("/usr/bin"))]) {
+        // `/usr/pkg` is pkgsrc's default prefix, and unlike `/usr/local` nothing else puts a
+        // binary there: on NetBSD that path means a package.
+        if within_any(
+            executable,
+            [
+                Some(PathBuf::from("/usr/bin")),
+                Some(PathBuf::from("/usr/pkg")),
+            ],
+        ) {
             return Self::SystemPackage;
         }
         Self::Unknown
@@ -272,12 +280,14 @@ mod tests {
     }
 
     #[test]
-    fn distribution_prefix_is_a_system_package() {
-        let exe = Path::new("/usr/bin/rozi");
-        assert_eq!(
-            InstallSource::detect(exe, &env()),
-            InstallSource::SystemPackage
-        );
+    fn distribution_prefixes_are_system_packages() {
+        for exe in ["/usr/bin/rozi", "/usr/pkg/bin/rozi"] {
+            assert_eq!(
+                InstallSource::detect(Path::new(exe), &env()),
+                InstallSource::SystemPackage,
+                "{exe}"
+            );
+        }
     }
 
     /// `/usr/local/bin` is as often a hand-placed binary as a packaged one, so it must not claim a

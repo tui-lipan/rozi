@@ -8,7 +8,12 @@ pub mod app;
 pub mod cli;
 mod commands;
 pub mod config;
-mod control;
+/// The control-request vocabulary, shared by the UI endpoint and the session wire.
+///
+/// Public because [`session::protocol::ClientMessage::SessionControl`] carries a
+/// [`control::ControlRequest`] and answers with a [`control::ControlResponse`]: a type on the wire
+/// cannot be named only inside this crate.
+pub mod control;
 pub mod events;
 mod extension_installation;
 pub mod input;

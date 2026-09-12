@@ -858,3 +858,84 @@ fn attached_without_effective_protocol_deserializes_as_zero() {
     };
     assert_eq!(effective_protocol, 0);
 }
+
+#[test]
+fn session_control_messages_round_trip_with_the_documented_wire_shape() {
+    let request = crate::control::ControlRequest {
+        command: crate::control::ControlCommand::CapturePane {
+            target: Some(3),
+            scrollback: Some(crate::control::CaptureScrollback::Named(
+                crate::control::CaptureScrollbackNamed::Full,
+            )),
+        },
+        source_pane: None,
+        extension: None,
+    };
+    let msg = ClientMessage::SessionControl {
+        capabilities: None,
+        session: "dev".into(),
+        protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+        request,
+    };
+    let mut buf = Vec::new();
+    write_frame(&mut buf, &msg).unwrap();
+    assert_eq!(read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(), msg);
+    assert_eq!(
+        serde_json::to_value(&msg).unwrap(),
+        serde_json::json!({
+            "type": "session-control",
+            "session": "dev",
+            "protocol_version": PROTOCOL_VERSION,
+            "min_protocol_version": MIN_SUPPORTED_PROTOCOL,
+            // The request is the UI endpoint's own document, flattened exactly as that endpoint
+            // receives it, so `docs/control-protocol.md` describes one request vocabulary rather
+            // than two spellings of it.
+            "request": {
+                "cmd": "capture-pane",
+                "target": 3,
+                "scrollback": "full",
+                "source_pane": null
+            }
+        })
+    );
+
+    let reply = ServerMessage::SessionControlResult {
+        capabilities: Some(Capabilities::current()),
+        effective_protocol: PROTOCOL_VERSION,
+        response: crate::control::ControlResponse::ok(serde_json::json!({"id": 3})),
+    };
+    let mut buf = Vec::new();
+    write_frame(&mut buf, &reply).unwrap();
+    assert_eq!(
+        read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap(),
+        reply
+    );
+    let encoded = serde_json::to_value(&reply).unwrap();
+    assert_eq!(encoded["type"], "session-control-result");
+    assert_eq!(
+        encoded["response"],
+        serde_json::json!({"ok": true, "data": {"id": 3}})
+    );
+}
+
+/// A refusal is the whole answer, so it has to survive the trip back with its `ok: false` and its
+/// sentence intact rather than collapsing into an absent field.
+#[test]
+fn a_refused_control_response_round_trips_through_the_session_wire() {
+    let reply = ServerMessage::SessionControlResult {
+        capabilities: None,
+        effective_protocol: PROTOCOL_VERSION,
+        response: crate::control::ControlResponse::error("pane 9 not found"),
+    };
+    let mut buf = Vec::new();
+    write_frame(&mut buf, &reply).unwrap();
+    let ServerMessage::SessionControlResult { response, .. } =
+        read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap()
+    else {
+        panic!("expected a control result");
+    };
+    assert!(!response.ok);
+    assert_eq!(response.error.as_deref(), Some("pane 9 not found"));
+    assert!(response.data.is_none());
+}

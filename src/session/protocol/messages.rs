@@ -55,6 +55,30 @@ pub enum ClientMessage {
     SetSessionOrigin {
         profile: String,
     },
+    /// Headless control: run one [`crate::control::ControlCommand`] against this session and
+    /// answer with its [`crate::control::ControlResponse`].
+    ///
+    /// Like [`Self::Query`] and unlike [`Self::Attach`], the connection is never registered as a
+    /// client: no client id, no roster entry, no layout lease, no replay seeding, and the server
+    /// closes it once the reply has flushed. That is the whole point — a script inspecting or
+    /// driving a detached session must not make the session look occupied, and must not pay for a
+    /// full attach to type one line into a pane.
+    ///
+    /// Only the subset of commands a session server can answer on its own is accepted; the rest
+    /// belong to a UI process and are refused by name (see
+    /// [`crate::session::server::session_control_unsupported`]).
+    SessionControl {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<super::Capabilities>,
+        session: String,
+        /// Client's maximum supported protocol version.
+        protocol_version: u32,
+        /// Client's minimum supported protocol version. Missing on pre-negotiation peers; treat a
+        /// default of `0` as "exactly `protocol_version`".
+        #[serde(default)]
+        min_protocol_version: u32,
+        request: crate::control::ControlRequest,
+    },
     /// Picker probe: report session status without registering the connection as a client and
     /// without any replay seeding. Cheap enough to run against many sockets concurrently.
     Query {
@@ -353,6 +377,18 @@ pub enum ServerMessage {
         effective_protocol: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         created_from_profile: Option<String>,
+    },
+    /// Reply to a [`ClientMessage::SessionControl`] request.
+    ///
+    /// The payload is the same `{ok, data, error}` document the UI control endpoint returns, so a
+    /// script reads one response shape whether it reached a running UI or a detached session.
+    SessionControlResult {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<super::Capabilities>,
+        /// Negotiated wire version for this request. Missing (`0`) on pre-negotiation peers.
+        #[serde(default)]
+        effective_protocol: u32,
+        response: crate::control::ControlResponse,
     },
     SessionOriginSet {
         created_from_profile: String,

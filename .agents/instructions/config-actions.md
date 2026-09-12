@@ -26,7 +26,11 @@ instead of adding an unlinked snippet.
 - `ROZI_CONFIG` and `--config <PATH>` select config for every command that loads it.
 - `ROZI_SOCKET` points control commands at a live UI.
 - Spawned panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SOCKET`, and `ROZI_BIN`. Remote panes suppress
-  local `ROZI_SOCKET` and `ROZI_BIN`.
+  local `ROZI_SOCKET` and `ROZI_BIN`, and so does a pane spawned headlessly through
+  `rozi --session <NAME> split`, which has no UI to name.
+- `--session <NAME>` before a control command routes it to that session server instead of a UI.
+  `src/session/server/headless.rs` decides which commands a server can answer; adding a
+  `ControlCommand` means choosing a side there.
 - `PaneIdentity::env` carries per-spawn values that must never be persisted. File-tree actions pass
   paths through `ROZI_FILE`; never splice a selected filename into a command.
 - Hook commands receive `ROZI_EVENT`, event fields, `ROZI_SOCKET`, and `ROZI_BIN`, plus

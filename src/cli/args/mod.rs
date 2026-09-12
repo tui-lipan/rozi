@@ -28,6 +28,12 @@ pub(crate) struct CliArgs {
     pub(crate) profile: Option<String>,
     pub(crate) config_path: Option<String>,
     pub(crate) attach_session: Option<String>,
+    /// Whether [`Self::attach_session`] was spelled `--session <NAME>` rather than positionally.
+    ///
+    /// The two are interchangeable for launching, and deliberately not for control: `rozi dev`
+    /// starts a UI, so reading `rozi dev list-panes` as "talk to the session server called dev"
+    /// would let one trailing word change what the command *is*. `--session` says it outright.
+    pub(crate) session_flag_target: bool,
     /// Force the startup session picker, overriding whatever `[session] startup` selects. A target
     /// wins over it, and `--remote` skips it: the session lives on the far host, which local
     /// discovery does not describe.
@@ -47,10 +53,24 @@ pub(crate) enum SessionCommand {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ControlCli {
-    pub(super) socket: Option<PathBuf>,
+    pub(super) endpoint: ControlEndpoint,
     pub(super) request: control::ControlRequest,
     /// Explicit report format. Without one, a terminal gets human output and a pipe gets JSON.
     pub(super) output_format: Option<ListFormat>,
+}
+
+/// Which rozi a control command talks to.
+///
+/// Two endpoints answer the same commands. A UI endpoint belongs to a running rozi and can serve
+/// everything, including the parts that only mean something on a screen. A session endpoint
+/// belongs to a named session server and serves the subset that does not need one — which is what
+/// makes a detached session scriptable at all.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ControlEndpoint {
+    /// The local UI endpoint named by `--socket`, `ROZI_SOCKET`, or discovery.
+    Ui(Option<PathBuf>),
+    /// The named session server, reached with no UI in the picture (`--session <NAME>`).
+    Session(String),
 }
 
 /// `rozi publish`: the stdio bridge a program uses to publish the activity rows running inside its
@@ -223,7 +243,6 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     let mut cli = CliArgs::default();
     let mut socket: Option<PathBuf> = None;
     let mut socket_flag_seen = false;
-    let mut session_flag_target = false;
     let mut iter = args.into_iter().peekable();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -264,7 +283,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
                 let name = match cli.attach_session.take() {
                     Some(name) => {
-                        if !session_flag_target || cli.session_command != SessionCommand::Dwim {
+                        if !cli.session_flag_target || cli.session_command != SessionCommand::Dwim {
                             return Err("--server must follow --session <NAME>".to_string());
                         }
                         name
@@ -282,7 +301,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let Some(name) = cli.attach_session.take() else {
                     return Err("--fresh-server must follow --session <NAME>".to_string());
                 };
-                if !session_flag_target || cli.session_command != SessionCommand::Dwim {
+                if !cli.session_flag_target || cli.session_command != SessionCommand::Dwim {
                     return Err("--fresh-server must follow --session <NAME>".to_string());
                 }
                 if cli.remote.is_some() {
@@ -324,7 +343,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
                 cli.attach_session = Some(name);
                 cli.session_command = SessionCommand::Dwim;
-                session_flag_target = true;
+                cli.session_flag_target = true;
             }
             "--profile" => {
                 let profile = require_value(&mut iter, "--profile requires a profile name")?;
@@ -353,17 +372,19 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
             "list-panes" => {
                 let output_format = parse_output_format(&mut iter, "list-panes")?;
+                let command = control::ControlCommand::ListPanes;
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::ListPanes),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format,
                 }));
             }
             "metrics" => {
                 let output_format = parse_output_format(&mut iter, "metrics")?;
+                let command = control::ControlCommand::Metrics;
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::Metrics),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format,
                 }));
             }
@@ -374,9 +395,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     .parse()
                     .map_err(|_| "focus requires a numeric pane id".to_string())?;
                 reject_trailing_control_args(&mut iter, "focus")?;
+                let command = control::ControlCommand::Focus { target };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::Focus { target }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format: None,
                 }));
             }
@@ -393,9 +415,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                 }
                 let text = text.ok_or_else(|| "send-text requires literal text".to_string())?;
+                let command = control::ControlCommand::SendText { target, text };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::SendText { target, text }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format: None,
                 }));
             }
@@ -427,13 +450,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 if keys.is_empty() {
                     return Err("send-keys requires at least one key or text argument".to_string());
                 }
+                let command = control::ControlCommand::SendKeys {
+                    target,
+                    keys,
+                    literal,
+                };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::SendKeys {
-                        target,
-                        keys,
-                        literal,
-                    }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format: None,
                 }));
             }
@@ -462,53 +486,73 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let Some(message) = message else {
                     return Err("notify requires a message".to_string());
                 };
+                let command = control::ControlCommand::Notify {
+                    message,
+                    title,
+                    level,
+                };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::Notify {
-                        message,
-                        title,
-                        level,
-                    }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format: None,
                 }));
             }
             "status" => {
-                let first = iter
-                    .next()
-                    .ok_or_else(|| "status requires a value or --clear".to_string())?;
-                let (status, reason) = if first == "--clear" {
-                    reject_trailing_control_args(&mut iter, "status --clear")?;
-                    (None, None)
-                } else {
-                    if first.starts_with('-') {
-                        return Err(format!("unexpected status flag `{first}`"));
+                // A script driving a session it is not running inside has no `ROZI_PANE` and no
+                // focused pane to fall back to, so `--target` is the only way it can name a pane.
+                // It is accepted on either side of the value, since `status working --target 3`
+                // and `status --target 3 working` both read naturally.
+                let mut target = None;
+                let mut value = None;
+                let mut reason = None;
+                let mut clear = false;
+                while let Some(arg) = iter.next() {
+                    match arg.as_str() {
+                        "--target" => {
+                            if target.replace(parse_target(&mut iter)?).is_some() {
+                                return Err("status --target specified more than once".to_string());
+                            }
+                        }
+                        "--clear" => clear = true,
+                        "--reason" => {
+                            if reason
+                                .replace(require_value(&mut iter, "--reason requires text")?)
+                                .is_some()
+                            {
+                                return Err("status --reason specified more than once".to_string());
+                            }
+                        }
+                        other if other.starts_with('-') && other != "-" => {
+                            return Err(format!("unexpected status flag `{other}`"));
+                        }
+                        _ if value.is_none() => value = Some(arg),
+                        _ => return Err(format!("unexpected argument `{arg}` after status")),
                     }
-                    let reason = match iter.next() {
-                        None => None,
-                        Some(flag) if flag == "--reason" => {
-                            Some(require_value(&mut iter, "--reason requires text")?)
-                        }
-                        Some(extra) => {
-                            return Err(format!("unexpected argument `{extra}` after status"));
-                        }
-                    };
-                    reject_trailing_control_args(&mut iter, "status")?;
-                    (Some(first), reason)
+                }
+                if clear && value.is_some() {
+                    return Err("status takes a value or --clear, not both".to_string());
+                }
+                if clear && reason.is_some() {
+                    return Err("status --clear takes no --reason".to_string());
+                }
+                if !clear && value.is_none() {
+                    return Err("status requires a value or --clear".to_string());
+                }
+                let command = control::ControlCommand::SetStatus {
+                    target,
+                    status: value,
+                    reason,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::SetStatus {
-                        target: None,
-                        status,
-                        reason,
-                    }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format: None,
                 }));
             }
             "publish" => {
                 reject_trailing_control_args(&mut iter, "publish")?;
                 return Ok(ParsedCli::Publish(PublishCli {
-                    socket: reject_launch_flags(&cli, socket)?,
+                    socket: ui_stream_socket(&cli, socket, &control::ControlCommand::Publish)?,
                 }));
             }
             "subscribe" => {
@@ -524,7 +568,13 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                 }
                 return Ok(ParsedCli::Subscribe(SubscribeCli {
-                    socket: reject_launch_flags(&cli, socket)?,
+                    socket: ui_stream_socket(
+                        &cli,
+                        socket,
+                        &control::ControlCommand::Subscribe {
+                            events: events.clone(),
+                        },
+                    )?,
                     events,
                 }));
             }
@@ -564,9 +614,18 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                 }
                 return Ok(ParsedCli::Pick(PickCli {
+                    socket: ui_stream_socket(
+                        &cli,
+                        socket,
+                        &control::ControlCommand::Pick {
+                            title: title.clone(),
+                            placeholder: placeholder.clone(),
+                            width: None,
+                            actions: Vec::new(),
+                        },
+                    )?,
                     title,
                     placeholder,
-                    socket: reject_launch_flags(&cli, socket)?,
                     json,
                 }));
             }
@@ -633,26 +692,28 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         }
                     }
                 }
+                let command = control::ControlCommand::NewPane {
+                    command,
+                    argv,
+                    cwd,
+                    title,
+                    keep_open,
+                    focus,
+                    workspace,
+                };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::NewPane {
-                        command,
-                        argv,
-                        cwd,
-                        title,
-                        keep_open,
-                        focus,
-                        workspace,
-                    }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format: None,
                 }));
             }
             "run-action" => {
                 let action = require_value(&mut iter, "run-action requires an action id")?;
                 reject_trailing_control_args(&mut iter, "run-action")?;
+                let command = control::ControlCommand::RunAction { action };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::RunAction { action }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format: None,
                 }));
             }
@@ -692,12 +753,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         }
                     }
                 }
+                let command = control::ControlCommand::CapturePane { target, scrollback };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::CapturePane {
-                        target,
-                        scrollback,
-                    }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format,
                 }));
             }
@@ -710,9 +769,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         "switch-workspace requires a numeric workspace number".to_string()
                     })?;
                 reject_trailing_control_args(&mut iter, "switch-workspace")?;
+                let command = control::ControlCommand::SwitchWorkspace { index };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::SwitchWorkspace { index }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format: None,
                 }));
             }
@@ -725,9 +785,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         "move-to-workspace requires a numeric workspace number".to_string()
                     })?;
                 reject_trailing_control_args(&mut iter, "move-to-workspace")?;
+                let command = control::ControlCommand::MoveToWorkspace { index };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket: reject_launch_flags(&cli, socket)?,
-                    request: control_request(control::ControlCommand::MoveToWorkspace { index }),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
                     output_format: None,
                 }));
             }
@@ -831,15 +892,20 @@ pub(super) fn parse_output_format(
     Ok(output_format)
 }
 
-/// Pass `socket` through to a control command, rejecting launch-only options.
+/// Decide which endpoint a control command talks to, rejecting launch-only options.
 ///
-/// A control command talks to the local UI endpoint named by `--socket`/`ROZI_SOCKET` and never
-/// loads config or attaches anything. Accepting these silently let `rozi --remote box list-panes`
-/// answer from the *local* rozi while the caller believed it had reached another host.
-pub(super) fn reject_launch_flags(
+/// A control command never loads config and never attaches anything, so the launch options are
+/// rejected rather than ignored: accepting them silently let `rozi --remote box list-panes` answer
+/// from the *local* rozi while the caller believed it had reached another host.
+///
+/// `--session <NAME>` is the one target that does apply. It selects the named session server
+/// instead of a UI, for the commands a server can answer on its own; the rest say what they would
+/// have needed a UI for, rather than reporting the session as unreachable.
+pub(super) fn control_endpoint(
     cli: &CliArgs,
     socket: Option<PathBuf>,
-) -> std::result::Result<Option<PathBuf>, String> {
+    command: &control::ControlCommand,
+) -> std::result::Result<ControlEndpoint, String> {
     let offender = if cli.remote.is_some() {
         "--remote"
     } else if cli.config_path.is_some() {
@@ -850,19 +916,54 @@ pub(super) fn reject_launch_flags(
         "--pick"
     } else if cli.profile.is_some() {
         "--profile"
-    } else if cli.attach_session.is_some() {
-        "a session target"
-    } else {
-        return Ok(socket);
-    };
-    let hint = if offender == "--remote" {
-        " (use `sessions list --remote` or `sessions kill --remote` to reach another host)"
     } else {
         ""
     };
-    Err(format!(
-        "{offender} does not apply to control commands{hint}"
-    ))
+    if !offender.is_empty() {
+        let hint = if offender == "--remote" {
+            " (use `sessions list --remote` or `sessions kill --remote` to reach another host)"
+        } else {
+            ""
+        };
+        return Err(format!(
+            "{offender} does not apply to control commands{hint}"
+        ));
+    }
+    let Some(session) = cli.attach_session.as_deref() else {
+        return Ok(ControlEndpoint::Ui(socket));
+    };
+    if !cli.session_flag_target {
+        return Err(format!(
+            "`{session}` is a launch target; write `--session {session}` before a control command to reach that session"
+        ));
+    }
+    if socket.is_some() {
+        return Err("--socket and --session name two different endpoints".to_string());
+    }
+    if let Some(reason) = crate::session::server::session_control_unsupported(command) {
+        return Err(reason.to_string());
+    }
+    Ok(ControlEndpoint::Session(session.to_string()))
+}
+
+/// The endpoint for a control command that is always a bidirectional UI stream (`publish`,
+/// `subscribe`, `pick`).
+///
+/// Routing them through [`control_endpoint`] rather than a separate check keeps their refusal
+/// wording identical to every other command's.
+pub(super) fn ui_stream_socket(
+    cli: &CliArgs,
+    socket: Option<PathBuf>,
+    command: &control::ControlCommand,
+) -> std::result::Result<Option<PathBuf>, String> {
+    match control_endpoint(cli, socket, command)? {
+        ControlEndpoint::Ui(socket) => Ok(socket),
+        // `session_control_unsupported` refuses all three against a session, so this cannot be
+        // reached; spelled out rather than unwrapped so a later addition cannot slip past it.
+        ControlEndpoint::Session(_) => {
+            Err("this command needs a running rozi, not a session server".to_string())
+        }
+    }
 }
 
 pub(super) fn reject_trailing_control_args(
@@ -999,6 +1100,155 @@ mod tests {
     }
 
     #[test]
+    fn a_session_target_routes_a_control_command_to_that_session_server() {
+        let ParsedCli::Control(control) = parse_cli_args(vec![
+            "--session".into(),
+            "dev".into(),
+            "capture-pane".into(),
+            "--target".into(),
+            "3".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            control.endpoint,
+            ControlEndpoint::Session("dev".to_string())
+        );
+        assert_eq!(
+            control.request.command,
+            control::ControlCommand::CapturePane {
+                target: Some(3),
+                scrollback: None,
+            }
+        );
+    }
+
+    /// `rozi dev` launches a UI, so one trailing word must not silently turn the same target into
+    /// "talk to the session server instead". The error says how to ask for that.
+    #[test]
+    fn a_positional_launch_target_is_not_a_control_target() {
+        let error = parse_cli_args(vec!["dev".into(), "list-panes".into()])
+            .expect_err("a positional target must not route a control command");
+        assert!(error.contains("--session dev"), "{error}");
+    }
+
+    #[test]
+    fn a_command_that_needs_a_screen_is_refused_at_parse_time_with_its_reason() {
+        for (args, marker) in [
+            (
+                vec!["--session", "dev", "focus", "3"],
+                "focus is client-local",
+            ),
+            (
+                vec!["--session", "dev", "run-action", "toggle-float"],
+                "actions run inside a UI",
+            ),
+            (
+                vec!["--session", "dev", "switch-workspace", "2"],
+                "active workspace is client-local",
+            ),
+            (
+                vec!["--session", "dev", "subscribe"],
+                "subscribe streams UI events",
+            ),
+            (
+                vec!["--session", "dev", "pick"],
+                "pick opens a modal in a UI",
+            ),
+            (
+                vec!["--session", "dev", "publish"],
+                "publish belongs to the pane",
+            ),
+        ] {
+            let error = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect())
+                .expect_err("a UI-only command must not reach a session server");
+            assert!(error.contains(marker), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_socket_and_a_session_cannot_both_name_the_endpoint() {
+        let error = parse_cli_args(vec![
+            "--socket".into(),
+            "/tmp/rozi.sock".into(),
+            "--session".into(),
+            "dev".into(),
+            "list-panes".into(),
+        ])
+        .expect_err("two endpoints is a mistake, not a precedence question");
+        assert!(error.contains("two different endpoints"), "{error}");
+    }
+
+    /// The launch-only options stay rejected now that one target is accepted, so
+    /// `rozi --remote box --session dev list-panes` cannot look like it reached another host.
+    #[test]
+    fn launch_options_are_still_rejected_alongside_a_session_target() {
+        for args in [
+            vec!["--remote", "box", "--session", "dev", "list-panes"],
+            vec!["--config", "/tmp/c.toml", "--session", "dev", "list-panes"],
+            vec!["--read-only", "--session", "dev", "list-panes"],
+        ] {
+            let error = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect())
+                .expect_err("launch options do not apply to control commands");
+            assert!(
+                error.contains("does not apply to control commands"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn status_accepts_a_target_on_either_side_of_its_value() {
+        let expected = control::ControlCommand::SetStatus {
+            target: Some(3),
+            status: Some("working".to_string()),
+            reason: Some("building".to_string()),
+        };
+        for args in [
+            vec!["status", "--target", "3", "working", "--reason", "building"],
+            vec!["status", "working", "--target", "3", "--reason", "building"],
+            vec!["status", "working", "--reason", "building", "--target", "3"],
+        ] {
+            let ParsedCli::Control(control) =
+                parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect())
+                    .expect("parses")
+            else {
+                panic!("expected control");
+            };
+            assert_eq!(control.request.command, expected);
+        }
+        let ParsedCli::Control(cleared) = parse_cli_args(vec![
+            "status".into(),
+            "--clear".into(),
+            "--target".into(),
+            "3".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            cleared.request.command,
+            control::ControlCommand::SetStatus {
+                target: Some(3),
+                status: None,
+                reason: None,
+            }
+        );
+        assert!(parse_cli_args(vec!["status".into()]).is_err());
+        assert!(parse_cli_args(vec!["status".into(), "--clear".into(), "working".into()]).is_err());
+        assert!(
+            parse_cli_args(vec![
+                "status".into(),
+                "--clear".into(),
+                "--reason".into(),
+                "why".into()
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
     fn cli_control_socket_flag_is_preserved() {
         let parsed = parse_cli_args(vec![
             "--socket".into(),
@@ -1011,8 +1261,8 @@ mod tests {
             panic!("expected control");
         };
         assert_eq!(
-            control.socket.as_deref(),
-            Some(std::path::Path::new("/tmp/rozi.sock"))
+            control.endpoint,
+            ControlEndpoint::Ui(Some(PathBuf::from("/tmp/rozi.sock")))
         );
         assert!(matches!(
             control.request.command,

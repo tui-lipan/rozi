@@ -2,9 +2,13 @@
 ///
 /// Every peer is built from this same tree, so there is one version and no skew to straddle. Bump
 /// this for any wire change, additive or not; a mismatched peer is rejected at the handshake rather
-/// than shimmed. Per-message capability gates are not worth keeping while that holds — a gate below
-/// the floor is a branch that cannot be taken.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// than shimmed.
+///
+/// This is the only question about *shape*. Whether a connection may ask for a particular piece of
+/// optional work is the separate question [`super::Capabilities`] answers, and the two are
+/// deliberately not merged: a capability can go missing on a peer that declines the work while the
+/// connection stays fully usable, which a version bump cannot express.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Oldest wire protocol version this build can still speak.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;

@@ -60,6 +60,8 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
 
 - Inspect panes and run actions from scripts.
 - Send keys or text, open panes, capture terminal content, and switch workspaces.
+- Drive a detached session with no client attached: list, capture, type, and open panes from a
+  script or an SSH login that never starts a terminal.
 - Run hooks when pane, focus, workspace, session, or profile events occur.
 - Build extensions with static navigation targets plus out-of-process commands, services, pickers,
   activity rows, and notifications.

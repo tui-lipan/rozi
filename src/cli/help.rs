@@ -145,6 +145,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Attach to TARGET, or launch its profile",
             ),
             row("rozi <COMMAND> [ARGS]", ""),
+            row(
+                "rozi --session <NAME> <COMMAND>",
+                "Run a pane command against a session with no UI",
+            ),
         ],
     },
     HelpSection {
@@ -173,7 +177,8 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
         heading: "PANES",
         advanced_only: false,
-        note: "",
+        note: "With --session <NAME> these reach that session server directly, with\n    \
+               nothing attached. focus and the workspace commands need a UI.",
         rows: &[
             row(
                 "list-panes [--format text|json]",
@@ -205,8 +210,11 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("status <VALUE> [--reason <TEXT>]", ""),
-            row("status --clear", "Set or clear this pane's reported status"),
+            row("status [--target <ID>] <VALUE> [--reason <TEXT>]", ""),
+            row(
+                "status --clear [--target <ID>]",
+                "Set or clear a pane's reported status",
+            ),
             row(
                 "run-action <ACTION_ID>",
                 "Run a bindable action by its command id",

@@ -19,6 +19,18 @@ ROZI_CMD=${ROZI_BIN:-rozi}
 The CLI discovers the endpoint from `ROZI_SOCKET`. Outside Rozi, pass one explicitly with
 `--socket PATH`, or let the CLI use the only live endpoint in the runtime directory.
 
+A script does not need a UI at all. `--session <NAME>` sends the same commands straight to a named
+session server, so a detached session can be inspected and driven from a cron job, a hook on
+another machine's CI, or an SSH login that never starts a terminal:
+
+```sh
+rozi --session dev list-panes --format json
+rozi --session dev send-keys --target 3 'cargo test' Enter
+```
+
+The commands that need a screen — `focus`, `run-action`, `notify`, `pick`, `subscribe`, workspace
+switching — say so instead of running. See [Control CLI](control.md#two-endpoints).
+
 Human-readable CLI help and reports use Rozi's palette when written to a terminal.
 Redirected output stays plain. `NO_COLOR`, `CLICOLOR=0`, and `TERM=dumb` disable CLI styling;
 `CLICOLOR_FORCE` enables it for a consumer that renders ANSI color from a pipe. JSON,
@@ -55,6 +67,15 @@ pane=$("$ROZI_CMD" list-panes --format json | jq -r '.data[0].id')
 ```
 
 Use `send-text` for literal text and `send-keys` for named keys such as `Enter`, `C-c`, and `F2`.
+
+### Read a detached session's screen
+
+```sh
+rozi --session dev capture-pane --target 3 --scrollback full --format text
+```
+
+Nothing needs to be attached. The text comes from the session server's own terminal, which is the
+same screen a client would draw.
 
 ### Pick and switch a branch
 

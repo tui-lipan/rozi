@@ -205,12 +205,18 @@ impl NotifyLevel {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+/// The answer to one control request, in the `{ok, data, error}` shape every control surface
+/// speaks.
+///
+/// `Deserialize` because this crosses the session wire as well as the UI endpoint: a headless
+/// [`ClientMessage::SessionControl`](crate::session::protocol::ClientMessage::SessionControl)
+/// reply carries one of these, and the CLI reads it back as the same type the UI produced.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ControlResponse {
     pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 

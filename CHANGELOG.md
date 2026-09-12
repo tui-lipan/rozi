@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A detached session can be driven from a script. `rozi --session <NAME>` in front of a pane
+  command sends it to that session server instead of to a running UI, so `dev` can be listed,
+  captured, typed into, and grown a pane with nothing attached — from a shell script, a cron job,
+  or an SSH login that never starts a terminal. `list-panes`, `capture-pane`, `send-text`,
+  `send-keys`, `split`, `status`, and `metrics` are answered by the server itself, out of the
+  screens and runtime state it already owns; the reply is the same `{ok, data, error}` document
+  and the same table a UI returns. The connection is never registered as a client, so a script
+  cannot make an idle session look occupied, and a pane it opens is placed in the shared layout
+  before anyone attaches. The commands that only mean something on a screen — `focus`, workspace
+  switching, `run-action`, `notify`, `pick`, `publish`, `subscribe` — are refused by name with the
+  reason, rather than silently accepted. `--session` is local: to drive a session on another
+  machine, run the same command over `ssh`, where it is local again.
+- `status` takes `--target <PANE_ID>`, on either side of its value. It was the one pane command
+  that could only address the pane it ran inside, which a script driving a session it is not
+  running in has no way to be.
+
+### Changed
+
+- Session protocol 6. The wire carries one new request and one new reply for the above; as ever,
+  client and server must be the same build, so restart a session server after upgrading.
+
 ## 0.0.18 - 2026-09-10
 
 ### Changed

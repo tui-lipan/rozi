@@ -12,9 +12,22 @@ pub(crate) const SESSION_PICKER_REFRESH_INTERVAL: Duration = Duration::from_mill
 static REMOTE_PROBE_REQUESTS: std::sync::Mutex<Vec<crate::session::remote::RemoteTarget>> =
     std::sync::Mutex::new(Vec::new());
 
+#[cfg(test)]
+static REMOTE_PROBE_OBSERVERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+thread_local! {
+    static HOLDING_REMOTE_PROBE_OBSERVER: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
 pub(crate) fn note_remote_probe_request(target: &crate::session::remote::RemoteTarget) {
     #[cfg(test)]
-    REMOTE_PROBE_REQUESTS.lock().unwrap().push(target.clone());
+    {
+        let _observer = (!HOLDING_REMOTE_PROBE_OBSERVER.with(std::cell::Cell::get))
+            .then(remote_probe_observer_guard);
+        REMOTE_PROBE_REQUESTS.lock().unwrap().push(target.clone());
+    }
     #[cfg(not(test))]
     let _ = target;
 }
@@ -38,14 +51,33 @@ pub(crate) fn take_remote_probe_requests() -> Vec<crate::session::remote::Remote
 /// off the calling thread and onto the worker `host_discovery_command` spawns - and it would hide
 /// it by making the assertion vacuously true, which is the failure mode worth paying a lock to
 /// avoid.
+///
+/// Recording itself waits on the same lock. The two observer tests are not the only producers:
+/// `connect_host` records as soon as the command is built, and reconnect / add-host tests go
+/// through that path without taking this guard. A drain-and-assert can still see one of those
+/// pushes unless producers block while an observer is in its body. Nested recording from a test
+/// that already holds the guard skips the lock so it cannot deadlock on itself.
 #[cfg(test)]
-pub(crate) fn remote_probe_observer_guard() -> std::sync::MutexGuard<'static, ()> {
-    static OBSERVERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) struct RemoteProbeObserverGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for RemoteProbeObserverGuard {
+    fn drop(&mut self) {
+        HOLDING_REMOTE_PROBE_OBSERVER.with(|flag| flag.set(false));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn remote_probe_observer_guard() -> RemoteProbeObserverGuard {
     // A test that fails while holding this must fail on its own assertion. Poisoning would turn
     // one real failure into an unrelated panic in every test that ran after it.
-    OBSERVERS
+    let _lock = REMOTE_PROBE_OBSERVERS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    HOLDING_REMOTE_PROBE_OBSERVER.with(|flag| flag.set(true));
+    RemoteProbeObserverGuard { _lock }
 }
 
 /// Fast, local-only rows used by the picker and Sessions sidebar: local named sessions plus the

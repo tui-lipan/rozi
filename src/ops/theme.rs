@@ -374,8 +374,20 @@ pub(crate) fn pane_frame_alert_trough(theme: &Theme, color: BadgeColor) -> Color
     )
 }
 
+/// Whether a chrome color target is safe to fade. Only truecolor (`Color::Rgb`) targets
+/// animate; named/indexed palette colors snap so the terminal palette stays in control.
+pub(crate) fn chrome_color_animates(target: Color) -> bool {
+    matches!(target, Color::Rgb(..))
+}
+
+/// A chrome breathe can move only between distinct truecolor endpoints. Named/indexed palette
+/// colors deliberately snap so terminal palette ownership remains intact.
+pub(crate) fn chrome_colors_animate(peak: Color, trough: Color) -> bool {
+    peak != trough && chrome_color_animates(peak) && chrome_color_animates(trough)
+}
+
 pub(crate) fn pane_frame_alert_can_pulse(theme: &Theme, color: BadgeColor) -> bool {
-    crate::view::animation::chrome_colors_animate(
+    chrome_colors_animate(
         pane_frame_alert_foreground(theme, color),
         pane_frame_alert_trough(theme, color),
     )
@@ -450,9 +462,8 @@ pub(crate) fn tab_foreground(theme: &Theme) -> Color {
 pub(crate) fn tab_alert_can_pulse(theme: &Theme, color: BadgeColor, paint: AlertPaint) -> bool {
     let (peak_fg, peak_bg) = tab_alert_colors(theme, color, paint, true, false);
     let (trough_fg, trough_bg) = tab_alert_colors(theme, color, paint, true, true);
-    let channel_ok = |peak: Color, trough: Color| {
-        peak == trough || crate::view::animation::chrome_colors_animate(peak, trough)
-    };
+    let channel_ok =
+        |peak: Color, trough: Color| peak == trough || chrome_colors_animate(peak, trough);
     (peak_fg != trough_fg || peak_bg != trough_bg)
         && channel_ok(peak_fg, trough_fg)
         && channel_ok(peak_bg, trough_bg)
@@ -562,6 +573,17 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::state::{Pane, PaneId};
+
+    #[test]
+    fn chrome_color_snaps_palette_colors_but_fades_truecolor() {
+        // Named/indexed colors must not animate: blending always produces Color::Rgb,
+        // which bypasses the terminal palette and flips the hue mid-fade. Truecolor
+        // targets are safe to fade.
+        assert!(!chrome_color_animates(Color::LightCyan));
+        assert!(!chrome_color_animates(Color::Black));
+        assert!(!chrome_color_animates(Color::Indexed(14)));
+        assert!(chrome_color_animates(Color::Rgb(0, 255, 255)));
+    }
 
     /// Both ends of a marked tab's breathe must be readable *on their own background*. The bug this
     /// pins is pairing a foreground with the wrong end: the renderer's own contrast policy is off

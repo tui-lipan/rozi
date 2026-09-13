@@ -97,11 +97,7 @@ pub(crate) fn execute_with_env(
 /// Spawned like a hook - one thread, `command_shell`, null stdio - but unlike a hook it is waited
 /// on, so a non-zero exit can raise a toast. A binding that quietly does nothing when its command
 /// is missing is indistinguishable from a binding that is not wired up at all.
-pub(crate) fn exec_shell(
-    ctx: &mut Context<AppRoot>,
-    command: &str,
-    env: Vec<(String, String)>,
-) -> Update {
+fn exec_shell(ctx: &mut Context<AppRoot>, command: &str, env: Vec<(String, String)>) -> Update {
     let runner = crate::platform::command::resolve_command_shell(
         ctx.state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
@@ -112,11 +108,7 @@ pub(crate) fn exec_shell(
     exec_argv(ctx, argv, crate::config::truncate_for_label(command), env)
 }
 
-pub(crate) fn exec_direct(
-    ctx: &mut Context<AppRoot>,
-    argv: &[String],
-    env: Vec<(String, String)>,
-) -> Update {
+fn exec_direct(ctx: &mut Context<AppRoot>, argv: &[String], env: Vec<(String, String)>) -> Update {
     exec_argv(
         ctx,
         argv.to_vec(),
@@ -125,7 +117,7 @@ pub(crate) fn exec_direct(
     )
 }
 
-pub(crate) fn exec_argv(
+fn exec_argv(
     ctx: &mut Context<AppRoot>,
     argv: Vec<String>,
     label: String,

@@ -125,7 +125,7 @@ impl OverlayAction {
         self
     }
 
-    pub(crate) fn shows_hint(&self) -> bool {
+    pub(super) fn shows_hint(&self) -> bool {
         self.enabled && self.hint
     }
 

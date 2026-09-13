@@ -222,7 +222,7 @@ pub(crate) fn chrome_paint_with_frame_rate(
     // palette and flips the hue mid-fade - e.g. an ANSI theme's `LightCyan` chrome
     // shows as true cyan while the focus animation runs but as the palette color at
     // rest. Snapping keeps palette themes consistent (and matching the workbar).
-    let config = if chrome_color_animates(target) {
+    let config = if crate::ops::theme::chrome_color_animates(target) {
         config
     } else {
         anim::instant_transition()
@@ -230,33 +230,5 @@ pub(crate) fn chrome_paint_with_frame_rate(
     match frame_rate {
         Some(frame_rate) => ctx.animated_color_with_frame_rate(key, target, config, frame_rate),
         None => ctx.animated_color(key, target, config),
-    }
-}
-
-/// Whether a chrome color target is safe to fade. Only truecolor (`Color::Rgb`) targets
-/// animate; named/indexed palette colors snap so the terminal palette stays in control.
-pub(crate) fn chrome_color_animates(target: Color) -> bool {
-    matches!(target, Color::Rgb(..))
-}
-
-/// A chrome breathe can move only between distinct truecolor endpoints. Named/indexed palette
-/// colors deliberately snap so terminal palette ownership remains intact.
-pub(crate) fn chrome_colors_animate(peak: Color, trough: Color) -> bool {
-    peak != trough && chrome_color_animates(peak) && chrome_color_animates(trough)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chrome_color_snaps_palette_colors_but_fades_truecolor() {
-        // Named/indexed colors must not animate: blending always produces Color::Rgb,
-        // which bypasses the terminal palette and flips the hue mid-fade. Truecolor
-        // targets are safe to fade.
-        assert!(!chrome_color_animates(Color::LightCyan));
-        assert!(!chrome_color_animates(Color::Black));
-        assert!(!chrome_color_animates(Color::Indexed(14)));
-        assert!(chrome_color_animates(Color::Rgb(0, 255, 255)));
     }
 }

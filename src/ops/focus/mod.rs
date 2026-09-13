@@ -3,7 +3,7 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::geometry::{closest_pane_to_rect, directional_score, workspace_tile_bounds};
-use crate::layout::tiling::{self, append_tiled_window, remove_tiled_window};
+use crate::layout::tiling;
 use crate::layout::{
     placement_for, scrollable_viewport_anchor, workspace_target_rects,
     workspace_target_rects_with_visible_bounds,
@@ -12,7 +12,12 @@ use crate::state::{
     Direction, DirectionalFocusHint, LayoutKind, Pane, PaneId, ScrollableRevealEdge, State,
     Workspace,
 };
-use crate::view;
+
+mod requests;
+mod workspace;
+
+pub(crate) use requests::*;
+pub(crate) use workspace::*;
 
 pub(crate) fn split_axis_for_direction(direction: Direction) -> crate::state::SplitAxis {
     match direction {
@@ -647,215 +652,6 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
     true
 }
 
-pub(crate) fn switch_workspace(state: &mut State, index: usize) {
-    if state.scratch_visible {
-        return;
-    }
-    if index >= state.current().workspaces.len() {
-        return;
-    }
-    let previous = state.current().active_workspace;
-    state.current_mut().active_workspace = index;
-    state.animation = GeometryAnimation::None;
-    choose_fallback_focus(state);
-    if let Some(focus) = state.current().focused_pane {
-        // Normalize Scrollable viewport for the newly active focus (covers inactive reconcile
-        // fallback under a surviving foreign anchor, and other stale local viewport state).
-        sync_scrollable_reveal(state, focus, false);
-    }
-    state.animation = GeometryAnimation::None;
-    if previous != index {
-        emit_workspace_switched(state, index);
-    }
-}
-
-/// Emit the public `workspace-switched` event. Every mutation of `active_workspace` must go
-/// through this (switch, move-with-pane, relocate) so subscribers never see a stale workspace.
-fn emit_workspace_switched(state: &State, index: usize) {
-    crate::events::emit(
-        state,
-        crate::events::Event::new(
-            crate::events::EventKind::WorkspaceSwitched,
-            vec![("workspace", (index + 1).to_string())],
-        ),
-    );
-}
-
-pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) {
-    if target_index >= state.current().workspaces.len() {
-        return;
-    }
-    let source_index = state.current().active_workspace;
-    let Some(focused) = state.current().focused_pane else {
-        return;
-    };
-    if source_index == target_index {
-        return;
-    }
-
-    let Some(position) = state.current().workspaces[source_index]
-        .panes
-        .iter()
-        .position(|pane| pane.id == focused)
-    else {
-        choose_fallback_focus(state);
-        return;
-    };
-
-    let mut pane = state.current_mut().workspaces[source_index]
-        .panes
-        .remove(position);
-    let tiled = !pane.floating;
-    if tiled {
-        remove_tiled_window(&mut state.current_mut().workspaces[source_index], pane.id);
-    }
-    pane.opening = false;
-    pane.closing = false;
-
-    choose_fallback_focus(state);
-
-    if tiled {
-        append_tiled_window(&mut state.current_mut().workspaces[target_index], pane.id);
-    }
-    state.current_mut().workspaces[target_index]
-        .panes
-        .push(pane);
-
-    state.current_mut().active_workspace = target_index;
-    let scrollable = state.current().workspaces[target_index].layout_kind == LayoutKind::Scrollable;
-    let (prior_anchor, prior_edge, reveal_decision) = if tiled && scrollable {
-        let ws = &state.current().workspaces[target_index];
-        let prior = scrollable_viewport_anchor(ws, &ws.tiled_ids());
-        let edge = ws.scrollable_reveal_edge;
-        // Classify before overwriting target focus so a missing stored anchor still uses the
-        // previous tiled focus as the strip reference.
-        let decision = classify_scrollable_reveal(state, focused, prior);
-        (prior, Some(edge), decision)
-    } else {
-        (None, None, None)
-    };
-    state.current_mut().focused_pane = Some(focused);
-    state.current_mut().workspaces[target_index].focused_pane = Some(focused);
-    if tiled && scrollable {
-        apply_scrollable_reveal_decision(
-            state,
-            focused,
-            prior_anchor,
-            prior_edge,
-            reveal_decision,
-            false,
-        );
-    }
-    state.animation = GeometryAnimation::None;
-    emit_workspace_switched(state, target_index);
-}
-
-/// Move every pane from the active workspace into `target_index`, carry the source workspace
-/// name and layout over when set, then switch to the target workspace and keep focus on the
-/// previously focused pane when it moved with the batch. An empty target slot receives the
-/// source content wholesale; a occupied target swaps content with the source so both layouts
-/// stay intact.
-pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) {
-    if target_index >= state.current().workspaces.len() {
-        return;
-    }
-    let source_index = state.current().active_workspace;
-    if source_index == target_index {
-        return;
-    }
-
-    let previous_focus = state.current().focused_pane;
-    let source_empty = workspace_is_empty(&state.current().workspaces[source_index]);
-    if source_empty {
-        state.current_mut().active_workspace = target_index;
-        choose_fallback_focus(state);
-        state.animation = GeometryAnimation::None;
-        emit_workspace_switched(state, target_index);
-        return;
-    }
-
-    let target_empty = workspace_is_empty(&state.current().workspaces[target_index]);
-    if target_empty {
-        transfer_workspace_content(state, source_index, target_index);
-    } else {
-        swap_workspace_content(state, source_index, target_index);
-    }
-
-    let target = &mut state.current_mut().workspaces[target_index];
-    if let Some(id) = previous_focus
-        && target
-            .panes
-            .iter()
-            .any(|pane| pane.id == id && !pane.closing)
-    {
-        target.focused_pane = Some(id);
-    } else if target.focused_pane.is_none() {
-        target.focused_pane = first_visible_pane(target);
-    }
-    let target_focus = target.focused_pane;
-
-    state.current_mut().active_workspace = target_index;
-    state.current_mut().focused_pane = target_focus;
-    state.animation = GeometryAnimation::None;
-    emit_workspace_switched(state, target_index);
-}
-
-fn workspace_is_empty(workspace: &Workspace) -> bool {
-    !workspace.panes.iter().any(|pane| !pane.closing)
-}
-
-fn swap_workspace_content(state: &mut State, source_index: usize, target_index: usize) {
-    if source_index < target_index {
-        let (left, right) = state.current_mut().workspaces.split_at_mut(target_index);
-        swap_workspace_fields(&mut left[source_index], &mut right[0]);
-    } else {
-        let (left, right) = state.current_mut().workspaces.split_at_mut(source_index);
-        swap_workspace_fields(&mut right[0], &mut left[target_index]);
-    }
-}
-
-fn transfer_workspace_content(state: &mut State, source_index: usize, target_index: usize) {
-    if source_index < target_index {
-        let (left, right) = state.current_mut().workspaces.split_at_mut(target_index);
-        transfer_workspace_fields(&mut left[source_index], &mut right[0]);
-        left[source_index] = Workspace::new(source_index);
-    } else {
-        let (left, right) = state.current_mut().workspaces.split_at_mut(source_index);
-        transfer_workspace_fields(&mut right[0], &mut left[target_index]);
-        right[0] = Workspace::new(source_index);
-    }
-}
-
-fn swap_workspace_fields(a: &mut Workspace, b: &mut Workspace) {
-    std::mem::swap(&mut a.panes, &mut b.panes);
-    std::mem::swap(&mut a.tile_tree, &mut b.tile_tree);
-    std::mem::swap(&mut a.focused_pane, &mut b.focused_pane);
-    std::mem::swap(&mut a.synchronized, &mut b.synchronized);
-    std::mem::swap(&mut a.layout_kind, &mut b.layout_kind);
-    std::mem::swap(&mut a.start_axis, &mut b.start_axis);
-    std::mem::swap(&mut a.split_ratios, &mut b.split_ratios);
-    std::mem::swap(&mut a.last_move_swap, &mut b.last_move_swap);
-    std::mem::swap(&mut a.last_directional_focus, &mut b.last_directional_focus);
-    std::mem::swap(&mut a.scrollable_anchor, &mut b.scrollable_anchor);
-    std::mem::swap(&mut a.scrollable_reveal_edge, &mut b.scrollable_reveal_edge);
-    std::mem::swap(&mut a.name, &mut b.name);
-}
-
-fn transfer_workspace_fields(from: &mut Workspace, to: &mut Workspace) {
-    to.panes = std::mem::take(&mut from.panes);
-    to.tile_tree = from.tile_tree.take();
-    to.focused_pane = from.focused_pane.take();
-    to.synchronized = from.synchronized;
-    to.layout_kind = from.layout_kind;
-    to.start_axis = from.start_axis;
-    to.split_ratios.clone_from(&from.split_ratios);
-    to.last_move_swap = from.last_move_swap.take();
-    to.last_directional_focus = from.last_directional_focus.take();
-    to.scrollable_anchor = from.scrollable_anchor.take();
-    to.scrollable_reveal_edge = std::mem::take(&mut from.scrollable_reveal_edge);
-    to.name = from.name.take();
-}
-
 /// Apply the focus-follows-mouse policy for a pane the pointer is over. Returns a full repaint
 /// only when focus actually moved.
 ///
@@ -1264,128 +1060,6 @@ pub(crate) fn active_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane
         .panes
         .iter_mut()
         .find(|pane| pane.id == id)
-}
-
-pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {
-    if crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
-        .is_some_and(|pane| pane.terminal_active && !pane.opening && !pane.closing)
-    {
-        focus_key(ctx, view::pane_terminal_key(id));
-    }
-}
-
-pub(crate) fn request_current_pane_focus(ctx: &mut Context<AppRoot>) {
-    if let Some(id) = ctx.state.focused_pane() {
-        request_pane_focus(ctx, id);
-    }
-}
-
-/// Every "give focus to something that is not the sidebar" goes through here.
-///
-/// `sidebar.focused` records command-entered sidebar modality rather than framework focus alone,
-/// so this is the one place that retracts it when an explicit request targets another region.
-fn focus_key(ctx: &mut Context<AppRoot>, key: impl Into<tui_lipan::Key>) {
-    ctx.state.sidebar.focused = false;
-    ctx.request_focus(key);
-}
-
-pub(crate) fn request_search_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::search_input_key());
-}
-
-pub(crate) fn request_rename_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::rename_input_key());
-}
-
-pub(crate) fn request_rename_session_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::rename_session_input_key());
-}
-
-pub(crate) fn request_save_profile_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::save_profile_key());
-}
-
-pub(crate) fn request_profile_picker_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::profile_picker_key());
-}
-
-pub(crate) fn request_theme_picker_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::theme_picker_key());
-}
-
-pub(crate) fn request_layout_picker_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::layout_picker_key());
-}
-
-pub(crate) fn request_extensions_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::extensions_key());
-}
-
-pub(crate) fn request_extension_detail_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::extension_detail_key());
-}
-
-pub(crate) fn request_extension_install_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::extension_install_input_key());
-}
-
-pub(crate) fn request_palette_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::palette_key());
-}
-
-pub(crate) fn request_session_picker_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::session_picker_key());
-}
-
-pub(crate) fn request_remote_picker_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::remote_picker_key());
-}
-
-pub(crate) fn request_agent_picker_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::agent_picker_key());
-}
-
-/// Focus the host editor's active line.
-///
-/// Called when the form opens and when a submission is rejected — not on every keystroke. Between
-/// those, `Tab`/`Shift+Tab` traversal owns focus and the form follows it; requesting focus while
-/// the runtime is moving it is what sends the next keystroke to the line being left.
-pub(crate) fn request_host_form_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::host_form_input_key());
-}
-
-/// Focus the ssh prompt modal. It is raised by a background thread rather than by a keypress, so
-/// nothing else is moving focus onto it — and it has to take focus, or the answer would be typed
-/// into whatever was focused when ssh asked.
-///
-/// A prompt answered by choosing has no field to focus; its answer row carries the cursor instead,
-/// and opens on the affirmative.
-pub(crate) fn request_askpass_focus(ctx: &mut Context<AppRoot>) {
-    let choice = ctx
-        .state
-        .askpass
-        .as_ref()
-        .is_some_and(|askpass| askpass.current.kind.is_choice());
-    if choice {
-        request_dialog_answer_focus(ctx, view::DIALOG_AFFIRM);
-    } else {
-        focus_key(ctx, view::askpass_input_key());
-    }
-}
-
-/// Focus one chip of a dialog's answer row.
-pub(crate) fn request_dialog_answer_focus(ctx: &mut Context<AppRoot>, index: usize) {
-    focus_key(ctx, view::dialog_answer_key(index));
-}
-
-pub(crate) fn request_pick_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::pick_key());
-}
-
-/// Focus the text prompt an action raised over the picker. The picker stays mounted underneath,
-/// so focus has to move explicitly rather than being inherited.
-pub(crate) fn request_pick_prompt_focus(ctx: &mut Context<AppRoot>) {
-    focus_key(ctx, view::pick_prompt_input_key());
 }
 
 #[cfg(test)]
@@ -2852,8 +2526,12 @@ mod tests {
                 );
                 assert_right_edge_aligned(backend.state(), 3);
                 let sibling = &backend.state().current().workspaces[0].panes[0];
-                let cfg =
-                    AppRoot::geometry_transition_for_pane(backend.state(), sibling, false, None);
+                let cfg = crate::layout::anim::geometry_transition_for_pane(
+                    backend.state(),
+                    sibling,
+                    false,
+                    None,
+                );
                 assert!(cfg.duration > std::time::Duration::ZERO);
             })
             .expect("spawn")

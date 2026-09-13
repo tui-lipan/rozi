@@ -1,19 +1,19 @@
-use std::str::FromStr;
-use std::sync::Arc;
+pub(in crate::view::overlays) use std::str::FromStr;
+pub(in crate::view::overlays) use std::sync::Arc;
 
-use tui_lipan::Justify::SpaceBetween;
-use tui_lipan::prelude::*;
-use tui_lipan::rank_search_palette_indices_with_mode;
-use tui_lipan::utils::color_contrast::readable_text_color;
+pub(in crate::view::overlays) use tui_lipan::Justify::SpaceBetween;
+pub(in crate::view::overlays) use tui_lipan::prelude::*;
+pub(in crate::view::overlays) use tui_lipan::rank_search_palette_indices_with_mode;
+pub(in crate::view::overlays) use tui_lipan::utils::color_contrast::readable_text_color;
 
-use crate::input::Action;
-use crate::state::{
+pub(in crate::view::overlays) use crate::input::Action;
+pub(in crate::view::overlays) use crate::state::{
     MAX_MATCHES, ProfilePickerState, RemoteSessionIdentity, ScrollbackSearchState,
     SessionPickerState, SettingsAction, cap_style_label,
 };
-use crate::{AppRoot, Msg};
+pub(in crate::view::overlays) use crate::{AppRoot, Msg};
 
-use super::widget_keys::{
+pub(in crate::view::overlays) use super::widget_keys::{
     askpass_input_key, collaboration_key, extension_detail_key, extension_install_error_key,
     extension_install_input_key, extensions_key, help_filter_key, help_scroll_key,
     layout_picker_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
@@ -21,24 +21,58 @@ use super::widget_keys::{
     rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
     settings_palette_key, theme_picker_key,
 };
-use super::{
+pub(in crate::view::overlays) use super::{
     action_palette_frame, action_palette_modal, action_palette_modal_with_width, fg_only,
     modal_scrollbar_config, search_entries_with_groups, shared_search_palette, styled_modal,
 };
 
-include!("search.rs");
-include!("confirm.rs");
-include!("prompts.rs");
-include!("palette.rs");
-include!("profiles.rs");
-include!("sessions.rs");
-include!("remotes.rs");
-include!("agents.rs");
-include!("commands.rs");
-include!("settings.rs");
-include!("layout.rs");
-include!("pick.rs");
-include!("extensions.rs");
-// Last: help.rs ends in a `#[cfg(test)]` module, and `include!` splices these files into one
-// module, so any include after it would put items behind that test module.
-include!("help.rs");
+mod agents;
+mod commands;
+mod common;
+mod confirm;
+mod extensions;
+mod help;
+mod layout;
+mod palette;
+mod pick;
+mod profiles;
+mod prompts;
+mod remotes;
+mod search;
+mod sessions;
+mod settings;
+
+pub(crate) use agents::agent_picker_overlay;
+pub(crate) use commands::palette_overlay;
+pub(crate) use confirm::{DIALOG_AFFIRM, DIALOG_REFUSE};
+pub(crate) use extensions::{extension_detail_overlay, extensions_overlay};
+pub(crate) use help::help_overlay;
+pub(crate) use layout::layout_picker_overlay;
+pub(crate) use pick::{pick_overlay, pick_prompt_overlay};
+pub(crate) use profiles::profile_picker_overlay;
+pub(crate) use prompts::{
+    askpass_overlay, extension_install_prompt_overlay, rename_overlay, rename_session_overlay,
+    save_profile_overlay,
+};
+pub(crate) use remotes::remote_picker_overlay;
+pub(crate) use search::search_overlay;
+pub(crate) use sessions::{
+    collaboration_overlay, follow_prompt_overlay, reconnecting_overlay, session_picker_overlay,
+};
+pub(crate) use settings::{pane_padding_overlay, settings_overlay, theme_picker_overlay};
+
+pub(in crate::view::overlays) use commands::settings_palette_aliases;
+pub(in crate::view::overlays) use common::{ctrl_letter, hint_pill, hint_row};
+pub(in crate::view::overlays) use confirm::{DialogButton, DialogChrome, dialog_overlay};
+pub(in crate::view::overlays) use palette::{
+    OverlayAction, OverlayItemRenderer, OverlayPalette, overlay_hints, overlay_interceptor,
+    picker_description, picker_row, picker_selection_style,
+};
+pub(in crate::view::overlays) use pick::fit_description;
+pub(in crate::view::overlays) use profiles::render_ephemeral_session_item;
+pub(in crate::view::overlays) use prompts::{
+    BACKDROP_RECESSION, PromptCaption, PromptChrome, action_palette, prompt_caption_accent,
+    prompt_detail_row, prompt_highlight_row, prompt_overlay,
+};
+pub(in crate::view::overlays) use sessions::session_description;
+pub(in crate::view::overlays) use settings::action_search_palette;

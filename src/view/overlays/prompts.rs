@@ -1,37 +1,8 @@
-/// Ctrl plus `letter`, case-insensitive. Overlay interceptors share this so a chord the footer
-/// omitted is the same test the handler uses when it stays silent.
-fn ctrl_letter(key: &KeyEvent, letter: char) -> bool {
-    key.mods.ctrl && matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&letter))
-}
-
-/// A single `label key` footer hint (e.g. `submit enter`), styled like the palette hint bar.
-fn hint_pill(theme: &Theme, label: &str, key: &str) -> Element {
-    HStack::new()
-        .gap(1)
-        .width(Length::Auto)
-        .height(Length::Auto)
-        .child(
-            Text::new(label)
-                .overflow(Overflow::Clip)
-                .style(fg_only(&theme.primary).bold()),
-        )
-        .child(
-            Text::new(crate::view::keys_display::format_keys(key))
-                .overflow(Overflow::Clip)
-                .style(fg_only(&theme.muted)),
-        )
-        .into()
-}
-
-/// The base footer row shared by every overlay hint bar: content-height with a leading gap above
-/// it. Callers add [`hint_pill`] children and may override justify/gap.
-fn hint_row() -> Flow {
-    Flow::new().padding((1, 1, 0, 1)).gap(3).row_gap(0)
-}
+use super::*;
 
 /// How far a dialog behind another one recedes: the same half-strength Settings fades by behind
 /// the padding editor, so a stack of two dialogs reads the same wherever it occurs.
-const BACKDROP_RECESSION: f32 = 0.5;
+pub(super) const BACKDROP_RECESSION: f32 = 0.5;
 
 /// Footer hints shared by the single-input prompt overlays (rename pane/workspace/session, save
 /// profile) so they read like the command palette instead of a bare dialog.
@@ -59,7 +30,7 @@ fn prompt_hints(ctx: &Context<AppRoot>, submit: &[(&str, &str)], cancel: bool) -
 /// on news the user merely needs to read would make every rejected password look like a warning
 /// about to close their sessions.
 #[derive(Clone, Copy)]
-enum PromptCaption<'a> {
+pub(super) enum PromptCaption<'a> {
     /// Something is about to be destroyed or overwritten and a second Enter will do it. Recolors
     /// the modal to the error accent so the whole dialog reads as armed.
     Armed(&'a str),
@@ -71,7 +42,7 @@ enum PromptCaption<'a> {
 }
 
 impl<'a> PromptCaption<'a> {
-    fn text(self) -> &'a str {
+    pub(super) fn text(self) -> &'a str {
         match self {
             Self::Armed(text) | Self::Note(text) | Self::Busy(text) => text,
         }
@@ -90,7 +61,7 @@ impl<'a> PromptCaption<'a> {
 ///
 /// Flex, not intrinsic: an intrinsically-sized child is measured unwrapped, so a multi-line ssh
 /// prompt would be given three rows and render five — silently clipping the question it ends with.
-fn prompt_detail_row(theme: &Theme, detail: &str) -> Element {
+pub(super) fn prompt_detail_row(theme: &Theme, detail: &str) -> Element {
     HStack::new()
         .height(Length::Auto)
         .padding((0, 1, 1, 1))
@@ -105,7 +76,7 @@ fn prompt_detail_row(theme: &Theme, detail: &str) -> Element {
 
 /// One string out of the question, repeated on a line of its own directly above the answer: the
 /// value being compared, where it can be read straight across instead of around a wrap.
-fn prompt_highlight_row(theme: &Theme, highlight: &str) -> Element {
+pub(super) fn prompt_highlight_row(theme: &Theme, highlight: &str) -> Element {
     HStack::new()
         .height(Length::Auto)
         .padding((0, 1, 1, 1))
@@ -119,7 +90,7 @@ fn prompt_highlight_row(theme: &Theme, highlight: &str) -> Element {
 }
 
 /// The colour a caption speaks in, and recolours the chrome to when it is armed.
-fn prompt_caption_accent(theme: &Theme, caption: PromptCaption<'_>) -> Color {
+pub(super) fn prompt_caption_accent(theme: &Theme, caption: PromptCaption<'_>) -> Color {
     if caption.arms_chrome() {
         theme.status.error
     } else if caption.is_busy() {
@@ -140,7 +111,7 @@ struct PromptDocument {
     scroll_down: Msg,
 }
 
-struct PromptChrome<'a> {
+pub(super) struct PromptChrome<'a> {
     title: &'a str,
     placeholder: &'a str,
     /// Wrapped text between the title and the field, for a question too long to be a title.
@@ -170,7 +141,11 @@ struct PromptChrome<'a> {
 }
 
 impl<'a> PromptChrome<'a> {
-    fn new(title: &'a str, placeholder: &'a str, submit_hints: &'a [(&'a str, &'a str)]) -> Self {
+    pub(super) fn new(
+        title: &'a str,
+        placeholder: &'a str,
+        submit_hints: &'a [(&'a str, &'a str)],
+    ) -> Self {
         Self {
             title,
             placeholder,
@@ -190,7 +165,7 @@ impl<'a> PromptChrome<'a> {
 /// palette placement/border, no inner input border, a leading gap, and a submit/cancel hint footer.
 /// Callers supply only what differs (see [`PromptChrome`], plus the bound state, focus key, and
 /// messages).
-fn prompt_overlay(
+pub(super) fn prompt_overlay(
     ctx: &Context<AppRoot>,
     chrome: PromptChrome<'_>,
     input_state: &TextInput,
@@ -320,9 +295,8 @@ fn prompt_overlay(
     if dim_behind {
         // The same recession the workspace makes for any dialog, applied by the overlay stack, so
         // every layer already on screen fades together rather than one panel at a time.
-        modal = modal.backdrop_style(
-            Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION),
-        );
+        modal =
+            modal.backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION));
     }
     if caption.is_some_and(PromptCaption::arms_chrome) {
         // Recolor the shared modal chrome to the error accent so the whole dialog reads as "armed"
@@ -357,12 +331,12 @@ pub(crate) fn extension_install_prompt_overlay(ctx: &Context<AppRoot>) -> Elemen
         key: extension_install_error_key(),
         max_height: 6,
         scroll_offset: prompt.error_scroll_offset,
-        on_scroll: ctx.link().callback(|event: ScrollEvent| {
-            Msg::ExtensionsInstallErrorScrolled {
+        on_scroll: ctx
+            .link()
+            .callback(|event: ScrollEvent| Msg::ExtensionsInstallErrorScrolled {
                 offset: event.offset,
                 max_offset: event.metrics.max_offset,
-            }
-        }),
+            }),
         scroll_up: Msg::ExtensionsInstallErrorScrollBy(-1),
         scroll_down: Msg::ExtensionsInstallErrorScrollBy(1),
     });
@@ -579,10 +553,7 @@ fn askpass_choice_overlay(
     fingerprint: Option<&str>,
     caption: Option<PromptCaption<'_>>,
 ) -> Element {
-    let install = matches!(
-        kind,
-        crate::session::remote::AskpassKind::Install { .. }
-    );
+    let install = matches!(kind, crate::session::remote::AskpassKind::Install { .. });
     let (title, affirm) = if install {
         ("Install Rozi on remote", "Install")
     } else {
@@ -618,7 +589,7 @@ fn askpass_choice_overlay(
 /// Assemble a palette-style overlay: shared modal chrome, a borderless frame, a close handler, and
 /// the overlay's focus key. `content` is the palette itself, or a body wrapping a palette plus a
 /// hint footer.
-fn action_palette(
+pub(super) fn action_palette(
     ctx: &Context<AppRoot>,
     title: &str,
     key: &'static str,

@@ -375,7 +375,7 @@ pub(crate) fn pane_frame_alert_trough(theme: &Theme, color: BadgeColor) -> Color
 }
 
 pub(crate) fn pane_frame_alert_can_pulse(theme: &Theme, color: BadgeColor) -> bool {
-    crate::app::chrome_colors_animate(
+    crate::view::animation::chrome_colors_animate(
         pane_frame_alert_foreground(theme, color),
         pane_frame_alert_trough(theme, color),
     )
@@ -451,7 +451,7 @@ pub(crate) fn tab_alert_can_pulse(theme: &Theme, color: BadgeColor, paint: Alert
     let (peak_fg, peak_bg) = tab_alert_colors(theme, color, paint, true, false);
     let (trough_fg, trough_bg) = tab_alert_colors(theme, color, paint, true, true);
     let channel_ok = |peak: Color, trough: Color| {
-        peak == trough || crate::app::chrome_colors_animate(peak, trough)
+        peak == trough || crate::view::animation::chrome_colors_animate(peak, trough)
     };
     (peak_fg != trough_fg || peak_bg != trough_bg)
         && channel_ok(peak_fg, trough_fg)

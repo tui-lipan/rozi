@@ -1,3 +1,5 @@
+use super::*;
+
 pub(crate) fn search_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(search) = ctx.state.search.as_ref() else {
         return Text::new("").into();

@@ -1,4 +1,5 @@
 pub(crate) mod agents;
+pub(crate) mod animation;
 pub(crate) mod exit;
 pub(crate) mod keys_display;
 mod overlays;
@@ -210,7 +211,6 @@ fn layer_drag(
 /// Shared by the workspace layer and the scratchpad so the dropdown is a real tiling workspace
 /// rather than a second, thinner implementation of one.
 pub(crate) fn render_workspace_panes(
-    app: &AppRoot,
     ctx: &Context<AppRoot>,
     mut canvas: Canvas,
     layer: &WorkspaceLayer<'_>,
@@ -275,14 +275,15 @@ pub(crate) fn render_workspace_panes(
         let slides = crate::layout::anim::pane_slides(ctx.state.config.animations, pane);
         // Read unconditionally - see the note on `scale_progress` below. Keeping the key evaluated
         // while the pane is settled is what gives a later transition a value to depart from.
-        let slide_progress = app.slide_progress(ctx, pane, layer.pane_slide_key(pane.id));
+        let slide_progress = animation::slide_progress(ctx, pane, layer.pane_slide_key(pane.id));
         let pane_opening = crate::layout::anim::pane_opening_transition(pane);
         let sliding_now = slides && (pane_opening || pane.closing);
         let reveal_effect =
             crate::layout::anim::pane_reveal_effects_for_pane(ctx.state.config.animations, pane);
         let revealing_now = reveal_effect && (pane_opening || pane.closing);
         // Unconditional for the same reason as the two reads around it.
-        let reveal_progress = app.pane_reveal_progress(ctx, pane, layer.pane_reveal_key(pane.id));
+        let reveal_progress =
+            animation::pane_reveal_progress(ctx, pane, layer.pane_reveal_key(pane.id));
         let animation_spec =
             crate::layout::anim::pane_animation_for_pane(ctx.state.config.animations, pane);
         // Evaluate the animation key on every frame the pane is drawn, including the frames where
@@ -297,7 +298,7 @@ pub(crate) fn render_workspace_panes(
         // Keeping the key warm while the pane sits settled leaves it at 1.0, which is the value the
         // close departs from. Mounting the visual effect stays conditional; retaining the
         // interpolation state does not.
-        let scale_progress = app.scale_progress(ctx, pane, layer.pane_scale_key(pane.id));
+        let scale_progress = animation::scale_progress(ctx, pane, layer.pane_scale_key(pane.id));
         // Whether to actually wrap the pane in that clip. Only a lifecycle snapshot gets the
         // fixed-allocation path; bare flags still use the legacy geometry transition that fixtures
         // and older attach paths rely on.
@@ -332,7 +333,8 @@ pub(crate) fn render_workspace_panes(
         } else {
             canvas_rect_to_root(canvas_target_rect, top_offset)
         };
-        let config = app.transition_config_for(ctx, pane, layer.viewport_changed, target_rect);
+        let config =
+            animation::transition_config_for(ctx, pane, layer.viewport_changed, target_rect);
         let animated_rect = ctx.transition(layer.pane_rect_key(pane.id), target_rect, config);
 
         // Scale owns the visible motion in its clip viewport; its pane subtree always receives the
@@ -390,7 +392,7 @@ pub(crate) fn render_workspace_panes(
                 .glyphs()
                 .is_some()
         {
-            seam_neighbor_title_bgs(app, ctx, &placements, pane.id, base_rect, focused_pane)
+            seam_neighbor_title_bgs(ctx, &placements, pane.id, base_rect, focused_pane)
         } else {
             (None, None)
         };
@@ -438,7 +440,6 @@ pub(crate) fn render_workspace_panes(
             PaneKind::Tiled
         };
         let element = pane_element(
-            app,
             ctx,
             pane,
             render_rect,
@@ -481,12 +482,12 @@ pub(crate) fn render_workspace_panes(
                 scale_progress,
                 layer.pane_clip_key(pane.id),
                 ScaleOverlay {
-                    chrome: pane_frame_chrome(app, ctx, pane, focused_pane, kind),
+                    chrome: pane_frame_chrome(ctx, pane, focused_pane, kind),
                     opacity: crate::layout::anim::pane_opacity_target(
                         ctx.state.config.animations,
                         pane,
                     ),
-                    opacity_transition: app.window_opacity_config(ctx, pane),
+                    opacity_transition: animation::window_opacity_config(ctx, pane),
                 },
             )
         } else {
@@ -497,7 +498,7 @@ pub(crate) fn render_workspace_panes(
         } else {
             render_rect
         };
-        if title_on_seam && let Some(seam) = seam_title_element(app, ctx, pane, focused_pane) {
+        if title_on_seam && let Some(seam) = seam_title_element(ctx, pane, focused_pane) {
             seam_titles.push((
                 FloatRect {
                     x: render_rect.x + seam.inset,
@@ -547,7 +548,7 @@ pub(crate) fn render_workspace_panes(
             let fg = focused_pane
                 .and_then(|id| crate::pane::lifecycle::find_pane(&ctx.state, id))
                 .map_or(Paint::Solid(target), |pane| {
-                    app.chrome_color(ctx, pane, ChromeSlot::DividerFg, target)
+                    animation::chrome_color(ctx, pane, ChromeSlot::DividerFg, target)
                 });
             Style::new().fg(fg)
         } else {
@@ -591,7 +592,7 @@ pub(crate) fn render_workspace_panes(
                         && let Some(below) = divider.below
                         && divider_title_panes.contains(&below)
                         && let Some(pane) = workspace.panes.iter().find(|pane| pane.id == below)
-                        && let Some(label) = divider_title_element(app, ctx, pane, focused_pane)
+                        && let Some(label) = divider_title_element(ctx, pane, focused_pane)
                     {
                         line = match ctx.state.config.pane.titlebar {
                             // Embed the title in the line, like a Frame border header: one leading
@@ -655,7 +656,7 @@ pub(crate) fn render_workspace_panes(
     canvas
 }
 
-pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
+pub fn render(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let viewport = ctx.viewport();
     // Sampled before anything derives geometry, because the columns the sidebar reserves are a
@@ -685,7 +686,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let root_bounds = viewport_bounds(content_viewport);
     // Sampled every frame (even while closed) so the slide transition is seeded at 0.0 and the
     // first open animates up from below.
-    let scratch_progress = crate::scratchpad::scratch_progress(app, ctx);
+    let scratch_progress = crate::scratchpad::scratch_progress(ctx);
     // Centered modal dialogs dim the workspace behind them the same way the scratchpad does, so
     // the dialog reads as the focused layer. The scrollback search is excluded: it scrolls the
     // panes to reveal matches, so they must stay readable.
@@ -718,7 +719,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let dialog_dim_progress = ctx.transition::<f32>(
         "rozi-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
-        app.scratch_transition_config(ctx),
+        animation::scratch_transition_config(ctx),
     );
     // The workspace layer dims for whichever focused layer is most deployed; the dims never
     // compound.
@@ -767,11 +768,10 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                 h: f32::from(WORKBAR_HEIGHT),
             }
         };
-        canvas = canvas.child_at(workbar_rect.to_rect(), workbar(app, ctx));
+        canvas = canvas.child_at(workbar_rect.to_rect(), workbar(ctx));
     }
 
     canvas = render_workspace_panes(
-        app,
         ctx,
         canvas,
         &WorkspaceLayer {
@@ -836,7 +836,6 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                 scratch_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
         scratch_canvas = crate::scratchpad::scratch_panes(
-            app,
             ctx,
             scratch_canvas,
             scratch_progress,
@@ -864,7 +863,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             popup_canvas =
                 popup_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
-        if let Some((rect, element)) = crate::ops::popup::placement(app, ctx) {
+        if let Some((rect, element)) = crate::ops::popup::placement(ctx) {
             popup_canvas =
                 popup_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
@@ -890,7 +889,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         root = root.child(palette_overlay(ctx));
     }
     if ctx.state.show_settings {
-        root = root.child(settings_overlay(app, ctx));
+        root = root.child(settings_overlay(ctx));
     }
     if ctx.state.show_settings && ctx.state.pane_padding_editor.is_some() {
         root = root.child(pane_padding_overlay(ctx));
@@ -1506,7 +1505,6 @@ pub(crate) fn action_palette_frame(child: impl Into<Element>) -> Element {
 /// shared cell). A taller pane above the seam shows a border there instead and yields `None`, so
 /// the cap falls back to the backdrop. Returns `(left, right)`.
 fn seam_neighbor_title_bgs(
-    app: &AppRoot,
     ctx: &Context<AppRoot>,
     placements: &[PanePlacement],
     pane_id: PaneId,
@@ -1516,7 +1514,7 @@ fn seam_neighbor_title_bgs(
     let same_top_row = |other: &PanePlacement| (other.rect.y - base_rect.y).abs() < 0.5;
     let color_of = |id: PaneId| {
         crate::pane::lifecycle::find_pane(&ctx.state, id)
-            .map(|pane| pane_title_bg(app, ctx, pane, focused_pane == Some(id)))
+            .map(|pane| pane_title_bg(ctx, pane, focused_pane == Some(id)))
     };
 
     // A neighbor across the left seam has its right border column on our left column; across the

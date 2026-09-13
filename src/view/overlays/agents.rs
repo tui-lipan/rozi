@@ -1,3 +1,5 @@
+use super::*;
+
 /// The global Agents view: every agent this client knows about, wherever it is running, ordered by
 /// what wants attention. `Enter` lands on the one under the cursor — a focus change for a pane in
 /// the session on screen, and an attach followed by a focus change for anything else.
@@ -84,8 +86,9 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     .fallback_interceptor(fallback)
     .item_gutter(Arc::new(
         move |item: &SearchItem<crate::state::AgentLocation>, _hl| {
-            let (_, glyph, color, working) =
-                gutters.iter().find(|(location, ..)| location == &item.value)?;
+            let (_, glyph, color, working) = gutters
+                .iter()
+                .find(|(location, ..)| location == &item.value)?;
             let style = Style::new().fg(*color);
             Some(if *working {
                 crate::view::session_status::picker_circle_spinner_gutter(style)

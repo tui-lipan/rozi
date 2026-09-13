@@ -9,6 +9,8 @@ use crate::state::{
 };
 use crate::{AppRoot, Msg};
 
+use super::animation;
+
 use super::integrated_scrollbar_config;
 use super::pane_reveal::pane_reveal_scope;
 use super::widget_keys::pane_window_key;
@@ -91,7 +93,6 @@ pub(crate) struct PaneFrameChrome {
 }
 
 pub(crate) fn pane_frame_chrome(
-    app: &AppRoot,
     ctx: &Context<AppRoot>,
     pane: &Pane,
     effective_focus: Option<PaneId>,
@@ -141,15 +142,15 @@ pub(crate) fn pane_frame_chrome(
         focused,
         ctx.state.config.pane.highlight_focused_border,
     );
-    let frame_fg = app.chrome_color_with_frame_rate(
+    let frame_fg = animation::chrome_color_with_frame_rate(
         ctx,
         pane,
         ChromeSlot::FrameFg,
         frame_fg_target,
         if alert_pulses && ctx.state.alert_pulse_armed {
-            app.alert_pulse_transition_config(ctx, alert_calm)
+            animation::alert_pulse_transition_config(ctx, alert_calm)
         } else {
-            app.focus_chrome_transition_config(ctx)
+            animation::focus_chrome_transition_config(ctx)
         },
         alert_pulses.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
     );
@@ -158,7 +159,7 @@ pub(crate) fn pane_frame_chrome(
         focused,
         ctx.state.config.pane.highlight_focused_background,
     );
-    let frame_bg = app.chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target);
+    let frame_bg = animation::chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target);
     let frame_style = if matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_)) {
         Style::new().fg(frame_fg).bg(frame_bg).dim()
     } else {
@@ -293,19 +294,14 @@ fn pane_frame_foreground_target(
 
 /// A pane's titlebar background: the active border color when focused, otherwise the neutral
 /// surface element color, honoring any per-pane `title-bg` chrome override.
-pub(crate) fn pane_title_bg(
-    app: &AppRoot,
-    ctx: &Context<AppRoot>,
-    pane: &Pane,
-    focused: bool,
-) -> Paint {
+pub(crate) fn pane_title_bg(ctx: &Context<AppRoot>, pane: &Pane, focused: bool) -> Paint {
     let theme = &ctx.state.theme;
     let target = if focused {
         theme.border_active
     } else {
         theme.surface.element
     };
-    app.chrome_color(ctx, pane, ChromeSlot::TitleBg, target)
+    animation::chrome_color(ctx, pane, ChromeSlot::TitleBg, target)
 }
 
 /// Whether `pane` has another tile immediately above it across the vertical tile gap, so its
@@ -364,12 +360,7 @@ fn status_title(ctx: &Context<AppRoot>, pane: &Pane) -> String {
     title
 }
 
-fn title_parts(
-    app: &AppRoot,
-    ctx: &Context<AppRoot>,
-    pane: &Pane,
-    focused_pane: Option<PaneId>,
-) -> TitleParts {
+fn title_parts(ctx: &Context<AppRoot>, pane: &Pane, focused_pane: Option<PaneId>) -> TitleParts {
     let theme = &ctx.state.theme;
     let id = pane.id;
     let titlebar = ctx.state.config.pane.titlebar;
@@ -409,8 +400,8 @@ fn title_parts(
             title_fg_background,
         )
     };
-    let title_bar_fg = app.chrome_color(ctx, pane, ChromeSlot::TitleFg, title_fg_default);
-    let title_bg = pane_title_bg(app, ctx, pane, titlebar_focused);
+    let title_bar_fg = animation::chrome_color(ctx, pane, ChromeSlot::TitleFg, title_fg_default);
+    let title_bg = pane_title_bg(ctx, pane, titlebar_focused);
     let text_style = if titlebar_focused {
         Style::new()
             .fg(title_bar_fg)
@@ -426,7 +417,7 @@ fn title_parts(
         badge,
         title,
         title_bg,
-        frame_bg: app.chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target),
+        frame_bg: animation::chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target),
         fill_style: Style::new()
             .bg(title_bg)
             .contrast_policy(ContrastPolicy::Off),
@@ -494,7 +485,6 @@ fn filled_title_row(
 /// `border` embeds the icon and title in the line (like a Frame border header). `integrated`
 /// fills the whole divider row with the titlebar strip, replacing the line.
 pub(crate) fn divider_title_element(
-    app: &AppRoot,
     ctx: &Context<AppRoot>,
     pane: &Pane,
     focused_pane: Option<PaneId>,
@@ -519,7 +509,7 @@ pub(crate) fn divider_title_element(
         frame_bg,
         fill_style: title_bar_fill_style,
         text_style,
-    } = title_parts(app, ctx, pane, focused_pane);
+    } = title_parts(ctx, pane, focused_pane);
 
     match titlebar {
         PaneTitlebarMode::Border => {
@@ -587,7 +577,6 @@ pub(crate) struct SeamTitle {
 /// Only plain tiles reach a seam - floating and fullscreen panes never merge - so there is no
 /// badge to place here.
 pub(crate) fn seam_title_element(
-    app: &AppRoot,
     ctx: &Context<AppRoot>,
     pane: &Pane,
     focused_pane: Option<PaneId>,
@@ -597,7 +586,7 @@ pub(crate) fn seam_title_element(
     }
     let id = pane.id;
     let title_style = title_cap_style(ctx);
-    let parts = title_parts(app, ctx, pane, focused_pane);
+    let parts = title_parts(ctx, pane, focused_pane);
     let label = titled(parts.icon, &parts.title);
 
     match ctx.state.config.pane.titlebar {
@@ -725,7 +714,6 @@ fn integrated_half_titlebar_top_edge(title_bg: Paint, frame_bg: Paint) -> EdgeDe
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pane_element(
-    app: &AppRoot,
     ctx: &Context<AppRoot>,
     pane: &Pane,
     animated_rect: FloatRect,
@@ -748,7 +736,7 @@ pub(crate) fn pane_element(
         None
     };
     let border_mode = ctx.state.config.pane.border_mode;
-    let chrome = pane_frame_chrome(app, ctx, pane, effective_focus, kind);
+    let chrome = pane_frame_chrome(ctx, pane, effective_focus, kind);
     let PaneFrameChrome {
         show_border,
         border_style,
@@ -781,7 +769,7 @@ pub(crate) fn pane_element(
     } else {
         theme.surface.element
     };
-    let title_bar_bg = pane_title_bg(app, ctx, pane, titlebar_focused);
+    let title_bar_bg = pane_title_bg(ctx, pane, titlebar_focused);
     // The *target* background, not the one mid-fade: this picks a contrasting foreground, and
     // deriving it from a moving colour would make the foreground wobble through the fade.
     let title_fg_background = if titlebar.fills_strip() {
@@ -798,7 +786,7 @@ pub(crate) fn pane_element(
             title_fg_background,
         )
     };
-    let title_bar_fg = app.chrome_color(ctx, pane, ChromeSlot::TitleFg, title_fg_default);
+    let title_bar_fg = animation::chrome_color(ctx, pane, ChromeSlot::TitleFg, title_fg_default);
     let title_bar_fill_style = Style::new()
         .bg(title_bar_bg)
         .contrast_policy(ContrastPolicy::Off);
@@ -1266,7 +1254,7 @@ pub(crate) fn pane_element(
     let animated = Animated::new(pane_tree)
         .height(Length::Flex(1))
         .opacity(opacity)
-        .transition(app.window_opacity_config(ctx, pane));
+        .transition(animation::window_opacity_config(ctx, pane));
     // No `Animated::auto_exit` here. Framework retention freezes the already reconciled subtree
     // and can only clip it, while Scale's surrounding PanView supplies the centred clip window.
     // `prune_closed_pane` drops the state once a closing pane's clip finishes.

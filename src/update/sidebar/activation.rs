@@ -141,7 +141,7 @@ pub(crate) fn launcher_activate(
             _ => None,
         });
     found.map_or_else(Update::none, |(action, env)| {
-        crate::actions::execute_user_command_action_with_env(ctx, &action, env)
+        crate::ops::user_command::execute_with_env(ctx, &action, env)
     })
 }
 
@@ -183,11 +183,7 @@ pub(crate) fn command_row_activate(
         // row is command output and must not compose a command line — so they receive it as
         // `$ROZI_ROW` instead, the same bargain the file tree makes with `$ROZI_FILE`.
         env.push(("ROZI_ROW".to_string(), line.clone()));
-        crate::actions::execute_user_command_action_with_env(
-            ctx,
-            &resolve_row_action(&action, &line),
-            env,
-        )
+        crate::ops::user_command::execute_with_env(ctx, &resolve_row_action(&action, &line), env)
     })
 }
 

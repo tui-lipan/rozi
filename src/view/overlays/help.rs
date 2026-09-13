@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HelpKind {
     Global,
@@ -463,9 +465,10 @@ fn help_row(keys: &str, desc: &str, theme: &Theme) -> Element {
 
 #[cfg(test)]
 mod palette_alias_tests {
+    use super::super::commands::{command_entries_with_groups, command_palette_aliases};
     use super::{
-        HelpRow, command_entries_with_groups, command_palette_aliases, filtered_help_groups,
-        help_category_priority, scheme_rows, settings_palette_aliases,
+        HelpRow, filtered_help_groups, help_category_priority, scheme_rows,
+        settings_palette_aliases,
     };
     use crate::state::{HelpTab, SettingsAction};
     use tui_lipan::prelude::SearchEntry;

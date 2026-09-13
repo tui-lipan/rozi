@@ -23,3 +23,4 @@ pub(crate) mod session;
 pub(crate) mod sound;
 pub(crate) mod theme;
 pub(crate) mod update_check;
+pub(crate) mod user_command;

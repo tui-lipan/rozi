@@ -30,12 +30,13 @@ fn immediate_rows_for_target(
     target: &RemoteTarget,
 ) -> Vec<crate::session::discovery::DiscoveredSession> {
     let mut rows = state
-        .host_live_sessions
+        .remote
+        .live_sessions
         .iter()
         .filter(|row| row.remote_target.as_ref() == Some(target))
         .cloned()
         .collect::<Vec<_>>();
-    for cached in cached_rows_for_target(&state.host_session_cache, target) {
+    for cached in cached_rows_for_target(&state.remote.session_cache, target) {
         crate::ops::session::discovery::merge_current_session_row(&mut rows, cached);
     }
     for attached in crate::ops::session::attached_session_rows(state)
@@ -76,9 +77,10 @@ fn host_discovery_command(
 fn install_remote_hosts(ctx: &mut Context<AppRoot>, query: String, selected: Option<RemoteTarget>) {
     crate::ops::session::seed_host_registry(ctx);
     let selected = selected
-        .filter(|target| ctx.state.hosts.get(target).is_some())
+        .filter(|target| ctx.state.remote.hosts.get(target).is_some())
         .or_else(|| {
             ctx.state
+                .remote
                 .hosts
                 .iter()
                 .next()
@@ -104,10 +106,10 @@ fn abandon_remote_probe(state: &mut crate::state::State) {
     });
     if let Some(target) = target
         && matches!(
-            state.hosts.get(&target).map(|entry| &entry.probe),
+            state.remote.hosts.get(&target).map(|entry| &entry.probe),
             Some(crate::state::HostProbe::InFlight)
         )
-        && let Some(entry) = state.hosts.get_mut(&target)
+        && let Some(entry) = state.remote.hosts.get_mut(&target)
     {
         entry.probe = crate::state::HostProbe::Idle;
     }
@@ -169,7 +171,7 @@ pub(crate) fn restore_remote_host_sessions(
     install_remote_hosts(ctx, String::new(), Some(target.clone()));
     let rows = immediate_rows_for_target(&ctx.state, &target);
     scope_launcher_to(ctx, &target);
-    if let Some(entry) = ctx.state.hosts.get_mut(&target) {
+    if let Some(entry) = ctx.state.remote.hosts.get_mut(&target) {
         entry.probe = crate::state::HostProbe::Reached;
     }
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
@@ -287,6 +289,7 @@ fn host_is_connecting(state: &crate::state::State, target: &RemoteTarget) -> boo
 /// defines and not one that only exists because something is attached to it.
 pub(crate) fn host_can_edit(state: &crate::state::State, target: &RemoteTarget) -> bool {
     state
+        .remote
         .hosts
         .get(target)
         .is_some_and(|entry| entry.origin.is_user_owned())
@@ -294,7 +297,7 @@ pub(crate) fn host_can_edit(state: &crate::state::State, target: &RemoteTarget) 
 }
 
 pub(crate) fn host_can_forget(state: &crate::state::State, target: &RemoteTarget) -> bool {
-    let Some(entry) = state.hosts.get(target) else {
+    let Some(entry) = state.remote.hosts.get(target) else {
         return false;
     };
     entry.origin.is_user_owned()
@@ -336,7 +339,10 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
         }
         return crate::ops::confirm::arm(ctx);
     }
-    ctx.state.added_hosts.retain(|entry| entry != &target);
+    ctx.state
+        .remote
+        .added_hosts
+        .retain(|entry| entry != &target);
     crate::session::forget_saved_host(&target);
     crate::session::forget_recent_remote(&target);
     crate::session::forget_host_sessions(&target);
@@ -344,13 +350,14 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.launcher_scope.as_ref() == Some(&target) {
         ctx.state.launcher_scope = None;
     }
-    crate::session::remove_cached_host_sessions(&mut ctx.state.host_session_cache, &target);
+    crate::session::remove_cached_host_sessions(&mut ctx.state.remote.session_cache, &target);
     // A host may be forgotten while it is still monitored, so its agent snapshot outlives its
     // registry entry. Left behind, it would be the baseline a re-added host is diffed against.
-    ctx.state.host_agents.remove(&target);
+    ctx.state.remote.agents.remove(&target);
     crate::ops::session::seed_host_registry(ctx);
     let selected = ctx
         .state
+        .remote
         .hosts
         .iter()
         .next()
@@ -400,7 +407,8 @@ fn connect_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
         return Update::full();
     }
     ctx.state
-        .host_monitors
+        .remote
+        .monitors
         .retain(|monitor| monitor.target != target);
     let epoch = ctx.state.mint_remote_probe_epoch();
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
@@ -412,7 +420,7 @@ fn connect_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
     } else {
         return Update::none();
     }
-    if let Some(entry) = ctx.state.hosts.get_mut(&target) {
+    if let Some(entry) = ctx.state.remote.hosts.get_mut(&target) {
         entry.probe = crate::state::HostProbe::InFlight;
     }
     crate::ops::focus::request_remote_picker_focus(ctx);
@@ -435,7 +443,11 @@ pub(crate) fn activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) ->
         return Update::none();
     }
     let reached = matches!(
-        ctx.state.hosts.get(&target).map(|entry| &entry.probe),
+        ctx.state
+            .remote
+            .hosts
+            .get(&target)
+            .map(|entry| &entry.probe),
         Some(crate::state::HostProbe::Reached)
     );
     if reached {
@@ -490,13 +502,13 @@ pub(crate) fn apply_host_discovery(
             let cached = crate::ops::session::discovery::cached_sessions_for_target(&rows, &target);
             crate::session::record_host_sessions(&target, cached.clone());
             crate::session::set_cached_host_sessions(
-                &mut ctx.state.host_session_cache,
+                &mut ctx.state.remote.session_cache,
                 &target,
                 cached,
             );
             crate::session::record_recent_remote(&target);
             crate::ops::session::seed_host_registry(ctx);
-            if let Some(entry) = ctx.state.hosts.get_mut(&target) {
+            if let Some(entry) = ctx.state.remote.hosts.get_mut(&target) {
                 entry.probe = crate::state::HostProbe::Reached;
             }
             let mut auto_open = false;
@@ -547,7 +559,7 @@ pub(crate) fn apply_host_discovery(
                 picker.startup_resume = None;
                 picker.auto_open = false;
             }
-            if let Some(entry) = ctx.state.hosts.get_mut(&target) {
+            if let Some(entry) = ctx.state.remote.hosts.get_mut(&target) {
                 entry.probe = crate::state::HostProbe::Failed(error.clone());
             }
             let reason = crate::session::discovery::probe_failure_reason(&error);
@@ -696,7 +708,10 @@ pub(crate) fn submit_host_form(ctx: &mut Context<AppRoot>) -> Update {
             if ctx.state.launcher_scope.as_ref() == Some(previous) {
                 ctx.state.launcher_scope = None;
             }
-            ctx.state.added_hosts.retain(|entry| entry != previous);
+            ctx.state
+                .remote
+                .added_hosts
+                .retain(|entry| entry != previous);
             // An edited host that was only a recent becomes a saved one: correcting an entry is
             // the user deliberately configuring it, and the result should outlive the MRU it came
             // from. `replace_saved_host` adds it when the old identity was never in the roster.
@@ -705,7 +720,7 @@ pub(crate) fn submit_host_form(ctx: &mut Context<AppRoot>) -> Update {
             crate::session::forget_host_sessions(previous);
             crate::session::forget_last_session(Some(previous));
             crate::session::remove_cached_host_sessions(
-                &mut ctx.state.host_session_cache,
+                &mut ctx.state.remote.session_cache,
                 previous,
             );
             stored
@@ -713,8 +728,8 @@ pub(crate) fn submit_host_form(ctx: &mut Context<AppRoot>) -> Update {
     };
     // Held for this run whatever the disk did, so the row exists to retry, correct, or forget even
     // when it could not be written.
-    if !ctx.state.added_hosts.contains(&target) {
-        ctx.state.added_hosts.push(target.clone());
+    if !ctx.state.remote.added_hosts.contains(&target) {
+        ctx.state.remote.added_hosts.push(target.clone());
     }
     crate::ops::session::seed_host_registry(ctx);
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
@@ -856,7 +871,7 @@ pub(crate) fn kill_session(ctx: &mut Context<AppRoot>) -> Update {
     }
     let update = crate::ops::session::kill_discovered_session(ctx, session.clone());
     let removed = session.remote_target.as_ref().is_some_and(|target| {
-        crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
+        crate::session::host_sessions_for(&ctx.state.remote.session_cache, target)
             .is_none_or(|sessions| sessions.iter().all(|cached| cached.name != session.name))
     });
     if removed && let Some(picker) = ctx.state.remote_picker.as_mut() {
@@ -972,14 +987,14 @@ mod tests {
             target.display_label(),
             crate::config::RemoteHostConfig::default(),
         );
-        state.hosts.seed(&state.config.remote, &[], &[], &[]);
-        state.hosts.get_mut(target).unwrap().probe = crate::state::HostProbe::InFlight;
+        state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
+        state.remote.hosts.get_mut(target).unwrap().probe = crate::state::HostProbe::InFlight;
         let mut picker = RemotePickerState::new(Some(target.clone()));
         picker.host_probe = crate::state::HostProbe::InFlight;
         picker.probe_target = Some(target.clone());
         picker.probe_epoch = epoch;
         state.remote_picker = Some(picker);
-        state.remote_probe_epoch = epoch;
+        state.remote.probe_epoch = epoch;
     }
 
     #[test]
@@ -1038,7 +1053,7 @@ mod tests {
         state.current_mut().remote_target = Some(target.clone());
         state.current_mut().remote_host = Some("workbox".into());
         crate::session::set_cached_host_sessions(
-            &mut state.host_session_cache,
+            &mut state.remote.session_cache,
             &target,
             vec![
                 crate::session::CachedHostSession {
@@ -1097,7 +1112,7 @@ mod tests {
             crate::config::RemoteHostConfig::default(),
         );
         let mut state = crate::state::State::new(config, tui_lipan::prelude::Theme::default());
-        state.hosts.seed(
+        state.remote.hosts.seed(
             &state.config.remote,
             std::slice::from_ref(&saved),
             std::slice::from_ref(&recent),
@@ -1115,7 +1130,7 @@ mod tests {
         state.current_mut().connection = crate::state::ConnectionState::Disconnected;
         assert!(host_can_forget(&state, &recent));
 
-        state.hosts.get_mut(&recent).unwrap().probe = crate::state::HostProbe::InFlight;
+        state.remote.hosts.get_mut(&recent).unwrap().probe = crate::state::HostProbe::InFlight;
         assert!(!host_can_forget(&state, &recent));
     }
 
@@ -1146,8 +1161,8 @@ mod tests {
             .remote
             .hosts
             .insert("workbox".into(), crate::config::RemoteHostConfig::default());
-        state.hosts.seed(&state.config.remote, &[], &[], &[]);
-        state.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::InFlight;
+        state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
+        state.remote.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::InFlight;
         let mut picker = RemotePickerState::new(Some(target.clone()));
         picker.host_probe = crate::state::HostProbe::InFlight;
         picker.probe_target = Some(target.clone());
@@ -1157,7 +1172,7 @@ mod tests {
 
         assert!(state.remote_picker.is_none());
         assert_eq!(
-            state.hosts.get(&target).map(|entry| &entry.probe),
+            state.remote.hosts.get(&target).map(|entry| &entry.probe),
             Some(&crate::state::HostProbe::Idle)
         );
     }
@@ -1171,8 +1186,8 @@ mod tests {
             .remote
             .hosts
             .insert("workbox".into(), crate::config::RemoteHostConfig::default());
-        state.hosts.seed(&state.config.remote, &[], &[], &[]);
-        state.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::InFlight;
+        state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
+        state.remote.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::InFlight;
         let mut picker = RemotePickerState::new(Some(target.clone()));
         picker.host_probe = crate::state::HostProbe::InFlight;
         picker.probe_target = Some(target.clone());
@@ -1194,7 +1209,7 @@ mod tests {
             Some(&crate::state::HostProbe::Idle)
         );
         assert_eq!(
-            state.hosts.get(&target).map(|entry| &entry.probe),
+            state.remote.hosts.get(&target).map(|entry| &entry.probe),
             Some(&crate::state::HostProbe::Idle)
         );
     }
@@ -1221,7 +1236,7 @@ mod tests {
             assert_eq!(picker.host_probe, crate::state::HostProbe::Reached);
             assert_eq!(picker.selected_host.as_ref(), Some(&target));
             assert_eq!(
-                state.hosts.get(&target).map(|entry| &entry.probe),
+                state.remote.hosts.get(&target).map(|entry| &entry.probe),
                 Some(&crate::state::HostProbe::Reached),
                 "the row itself reports the host as reached"
             );
@@ -1401,6 +1416,7 @@ mod tests {
                 crate::state::HostProbe::Failed(_)
             ));
             let entry = state
+                .remote
                 .hosts
                 .get(&target)
                 .expect("the host that could not be reached is still listed");
@@ -1535,7 +1551,7 @@ mod tests {
             );
             let state = backend.state();
             assert_eq!(
-                state.hosts.get(&endpoint).map(|entry| entry.origin),
+                state.remote.hosts.get(&endpoint).map(|entry| entry.origin),
                 Some(crate::state::HostOrigin::Saved),
                 "the row exists before the probe has answered anything"
             );
@@ -1567,14 +1583,14 @@ mod tests {
     fn a_host_added_this_run_is_listed_even_if_it_reached_no_disk() {
         with_backend(|backend| {
             let target = RemoteTarget::Alias("unwritable".into());
-            backend.state_mut().added_hosts.push(target.clone());
+            backend.state_mut().remote.added_hosts.push(target.clone());
             backend
                 .dispatch(Msg::SessionPickerRemoteHosts)
                 .expect("open remote hosts");
 
             let state = backend.state();
             assert_eq!(
-                state.hosts.get(&target).map(|entry| entry.origin),
+                state.remote.hosts.get(&target).map(|entry| entry.origin),
                 Some(crate::state::HostOrigin::Saved),
                 "a host held for this run is listed like any other saved host"
             );

@@ -212,7 +212,7 @@ impl State {
                     close: None,
                 });
 
-                for host in self.hosts.iter() {
+                for host in self.remote.hosts.iter() {
                     items.push(SidebarItemProjection {
                         target: RowTarget::Inert,
                         close: None,
@@ -230,7 +230,8 @@ impl State {
                         .map(|a| a.connection)
                         .collect();
                     let status =
-                        self.hosts
+                        self.remote
+                            .hosts
                             .status_for(&host.target, conns.iter(), !live.is_empty());
                     // A connected host offers no activation: disconnecting is the hover ✕, the same
                     // affordance (and the same confirmation) every other closable row uses.
@@ -278,7 +279,7 @@ impl State {
                         }
                         HostStatus::Disconnected | HostStatus::Unreachable => {
                             if let Some(cached) = crate::session::host_sessions_for(
-                                &self.host_session_cache,
+                                &self.remote.session_cache,
                                 &host.target,
                             ) {
                                 for cached_entry in cached.iter().filter(|s| !s.ephemeral) {

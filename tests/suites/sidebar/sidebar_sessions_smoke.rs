@@ -106,8 +106,9 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
                     .remote
                     .hosts
                     .insert("winvm".into(), RemoteHostConfig::default());
-                state.hosts.seed(&state.config.remote, &[], &[], &[]);
+                state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
                 state
+                    .remote
                     .hosts
                     .get_mut(&RemoteTarget::Alias("linvm".into()))
                     .expect("linvm")
@@ -118,7 +119,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
                     session("test", 3, 0, None),
                     session("dev", 4, 0, Some("linvm")),
                 ];
-                state.host_session_cache.insert(
+                state.remote.session_cache.insert(
                     "winvm".into(),
                     vec![CachedHostSession {
                         name: "dev".into(),
@@ -289,8 +290,9 @@ fn host_backend(probe: HostProbe) -> TestBackend<AppRoot> {
         .remote
         .hosts
         .insert("workbox".into(), RemoteHostConfig::default());
-    state.hosts.seed(&state.config.remote, &[], &[], &[]);
+    state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
     state
+        .remote
         .hosts
         .get_mut(&RemoteTarget::Alias("workbox".into()))
         .expect("workbox")
@@ -511,6 +513,7 @@ fn a_row_that_stops_being_selectable_still_releases_the_pointer() {
             // Connecting: the row goes inert, which used to take its hover region with it.
             backend
                 .state_mut()
+                .remote
                 .hosts
                 .get_mut(&target)
                 .expect("workbox")
@@ -536,6 +539,7 @@ fn a_row_that_stops_being_selectable_still_releases_the_pointer() {
             // The probe fails; the row is selectable again and must read as unreachable.
             backend
                 .state_mut()
+                .remote
                 .hosts
                 .get_mut(&target)
                 .expect("workbox")

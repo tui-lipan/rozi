@@ -15,12 +15,10 @@ use crate::ops::resize_move::{
     toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_tiling,
 };
 use crate::ops::search::open_search;
-use crate::ops::theme::{apply_terminal_palette_to_state, open_theme_picker};
+use crate::ops::theme::open_theme_picker;
 use crate::ops::user_command;
 use crate::pane::lifecycle::{find_pane, spawn_floating_pane_at_cursor, spawn_pane};
-use crate::state::{
-    Direction, Mode, ToastChannel, cap_style_id, next_badge_cap_style, next_cap_style,
-};
+use crate::state::{Direction, Mode};
 
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
 /// shells/editors that opt in treat it as one paste instead of simulated keystrokes.
@@ -130,69 +128,6 @@ fn navigation_key(direction: Direction) -> KeyEvent {
             ctrl: true,
             ..KeyMods::NONE
         },
-    }
-}
-
-fn persist_pane_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) {
-    if let Err(err) = crate::config::persist_pane_flag(key, value) {
-        crate::pane::pty_events::notify_on(
-            ctx,
-            ToastChannel::PreferenceSave,
-            Some("Preference not saved".to_string()),
-            err,
-        );
-    }
-}
-
-macro_rules! toggle_pane_flag {
-    ($ctx:ident, $field:ident) => {{
-        $ctx.state.config.pane.$field = !$ctx.state.config.pane.$field;
-        persist_pane_toggle($ctx, stringify!($field), $ctx.state.config.pane.$field);
-        Update::full()
-    }};
-}
-
-fn persist_animation_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) {
-    if let Err(err) = crate::config::persist_animation_flag(key, value) {
-        crate::pane::pty_events::notify_on(
-            ctx,
-            ToastChannel::PreferenceSave,
-            Some("Preference not saved".to_string()),
-            err,
-        );
-    }
-}
-
-fn persist_nerd_icons_toggle(ctx: &mut Context<AppRoot>, value: bool) {
-    if let Err(err) = crate::config::persist_top_level_flag("nerd_icons", value) {
-        crate::pane::pty_events::notify_on(
-            ctx,
-            ToastChannel::PreferenceSave,
-            Some("Preference not saved".to_string()),
-            err,
-        );
-    }
-}
-
-fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
-    if let Err(err) = crate::config::persist_pane_string(key, value) {
-        crate::pane::pty_events::notify_on(
-            ctx,
-            ToastChannel::PreferenceSave,
-            Some("Preference not saved".to_string()),
-            err,
-        );
-    }
-}
-
-fn persist_workbar_alert_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
-    if let Err(err) = crate::config::persist_workbar_alert_string(key, value) {
-        crate::pane::pty_events::notify_on(
-            ctx,
-            ToastChannel::PreferenceSave,
-            Some("Preference not saved".to_string()),
-            err,
-        );
     }
 }
 
@@ -498,17 +433,12 @@ fn execute_action_inner(
             ctx.toggle_devtools();
             Update::none()
         }
-        Action::ToggleTitles => toggle_pane_flag!(ctx, show_titles),
-        Action::CycleTitlebar => {
-            let next = ctx.state.config.pane.titlebar.next();
-            ctx.state.config.pane.titlebar = next;
-            persist_pane_string_or_toast(ctx, "titlebar", next.id());
-            Update::full()
-        }
-        Action::ToggleWorkbar => toggle_pane_flag!(ctx, show_workbar),
-        Action::ToggleWorkbarGap => toggle_pane_flag!(ctx, workbar_gap),
-        Action::ToggleWorkbarPosition => toggle_pane_flag!(ctx, workbar_at_bottom),
-        Action::ToggleWorkbarPowerline => toggle_pane_flag!(ctx, workbar_powerline),
+        Action::ToggleTitles => crate::ops::preferences::toggle_titles(ctx),
+        Action::CycleTitlebar => crate::ops::preferences::cycle_titlebar(ctx),
+        Action::ToggleWorkbar => crate::ops::preferences::toggle_workbar(ctx),
+        Action::ToggleWorkbarGap => crate::ops::preferences::toggle_workbar_gap(ctx),
+        Action::ToggleWorkbarPosition => crate::ops::preferences::toggle_workbar_position(ctx),
+        Action::ToggleWorkbarPowerline => crate::ops::preferences::toggle_workbar_powerline(ctx),
         Action::ToggleSidebar => crate::update::sidebar::toggle_visible(ctx),
         Action::ToggleSidebarSplit => crate::update::sidebar::toggle_split(ctx),
         Action::FocusSidebar => crate::update::sidebar::focus_body(ctx),
@@ -526,86 +456,30 @@ fn execute_action_inner(
                 Update::none()
             }
         }
-        Action::ToggleAnimations => {
-            ctx.state.config.animations.enabled = !ctx.state.config.animations.enabled;
-            persist_animation_toggle(ctx, "enabled", ctx.state.config.animations.enabled);
-            Update::full()
-        }
-        Action::ToggleNerdIcons => {
-            ctx.state.config.nerd_icons = !ctx.state.config.nerd_icons;
-            persist_nerd_icons_toggle(ctx, ctx.state.config.nerd_icons);
-            Update::full()
-        }
-        Action::ToggleFocusOnHover => toggle_pane_flag!(ctx, focus_on_hover),
+        Action::ToggleAnimations => crate::ops::preferences::toggle_animations(ctx),
+        Action::ToggleNerdIcons => crate::ops::preferences::toggle_nerd_icons(ctx),
+        Action::ToggleFocusOnHover => crate::ops::preferences::toggle_focus_on_hover(ctx),
         Action::ToggleHighlightFocusedBackground => {
-            toggle_pane_flag!(ctx, highlight_focused_background);
-            apply_terminal_palette_to_state(&mut ctx.state);
-            Update::full()
+            crate::ops::preferences::toggle_highlight_focused_background(ctx)
         }
         Action::ToggleHighlightFocusedBorder => {
-            toggle_pane_flag!(ctx, highlight_focused_border)
+            crate::ops::preferences::toggle_highlight_focused_border(ctx)
         }
         Action::ToggleHighlightFocusedTitlebar => {
-            toggle_pane_flag!(ctx, highlight_focused_titlebar)
+            crate::ops::preferences::toggle_highlight_focused_titlebar(ctx)
         }
-        Action::CycleBorderMode => {
-            let next = ctx.state.config.pane.border_mode.next();
-            ctx.state.config.pane.border_mode = next;
-            persist_pane_string_or_toast(ctx, "border_mode", next.id());
-            Update::full()
-        }
-        Action::CycleAlertBorder => {
-            let next = ctx.state.config.pane.alert_border.next();
-            ctx.state.config.pane.alert_border = next;
-            persist_pane_string_or_toast(ctx, "alert_border", next.id());
-            Update::full()
-        }
-        Action::CycleWorkbarAlert => {
-            let next = ctx.state.config.workbar.alert.mode.next();
-            ctx.state.config.workbar.alert.mode = next;
-            persist_workbar_alert_string_or_toast(ctx, "mode", next.id());
-            Update::full()
-        }
-        Action::CycleWorkbarAlertPaint => {
-            let next = ctx.state.config.workbar.alert.paint.next();
-            ctx.state.config.workbar.alert.paint = next;
-            persist_workbar_alert_string_or_toast(ctx, "paint", next.id());
-            Update::full()
-        }
+        Action::CycleBorderMode => crate::ops::preferences::cycle_border_mode(ctx),
+        Action::CycleAlertBorder => crate::ops::preferences::cycle_alert_border(ctx),
+        Action::CycleWorkbarAlert => crate::ops::preferences::cycle_workbar_alert(ctx),
+        Action::CycleWorkbarAlertPaint => crate::ops::preferences::cycle_workbar_alert_paint(ctx),
         Action::ToggleBackgroundFollowsTerminal => {
-            toggle_pane_flag!(ctx, background_follows_terminal);
-            crate::ops::theme::reapply_active_theme(ctx)
+            crate::ops::preferences::toggle_background_follows_terminal(ctx)
         }
-        Action::CycleBorderStyle => {
-            let next = ctx.state.config.pane.border_style.next();
-            ctx.state.config.pane.border_style = next;
-            persist_pane_string_or_toast(ctx, "border_style", next.id());
-            Update::full()
-        }
-        Action::CycleTitleStyle => {
-            let next = next_cap_style(ctx.state.config.pane.title_style);
-            ctx.state.config.pane.title_style = next;
-            persist_pane_string_or_toast(ctx, "title_style", cap_style_id(next));
-            Update::full()
-        }
-        Action::CycleWorkbarBadgeStyle => {
-            let next = next_badge_cap_style(ctx.state.config.pane.workbar_badge_style);
-            ctx.state.config.pane.workbar_badge_style = next;
-            persist_pane_string_or_toast(ctx, "workbar_badge_style", cap_style_id(next));
-            Update::full()
-        }
-        Action::CycleWorkbarTabStyle => {
-            let next = next_badge_cap_style(ctx.state.config.pane.workbar_tab_style);
-            ctx.state.config.pane.workbar_tab_style = next;
-            persist_pane_string_or_toast(ctx, "workbar_tab_style", cap_style_id(next));
-            Update::full()
-        }
-        Action::CycleWorkbarStyle => {
-            let next = next_cap_style(ctx.state.config.pane.workbar_style);
-            ctx.state.config.pane.workbar_style = next;
-            persist_pane_string_or_toast(ctx, "workbar_style", cap_style_id(next));
-            Update::full()
-        }
+        Action::CycleBorderStyle => crate::ops::preferences::cycle_border_style(ctx),
+        Action::CycleTitleStyle => crate::ops::preferences::cycle_title_style(ctx),
+        Action::CycleWorkbarBadgeStyle => crate::ops::preferences::cycle_workbar_badge_style(ctx),
+        Action::CycleWorkbarTabStyle => crate::ops::preferences::cycle_workbar_tab_style(ctx),
+        Action::CycleWorkbarStyle => crate::ops::preferences::cycle_workbar_style(ctx),
         Action::RunUserCommand(index) => run_user_command(ctx, index),
         Action::RunNamedCommand(index) => run_named_command(ctx, index),
         Action::OpenConfigFile => crate::ops::config::open_config_file(ctx),
@@ -686,6 +560,7 @@ fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
 mod tests {
     use super::*;
     use crate::pane::lifecycle::find_pane_mut;
+    use crate::state::ToastChannel;
 
     #[test]
     fn layout_mutating_classification_gates_structure_not_navigation() {

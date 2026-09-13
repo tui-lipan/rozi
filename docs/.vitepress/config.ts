@@ -54,7 +54,7 @@ const ROZI_FACTS = (() => {
     // The palette, the help overlay, and `[keys]` all render from this list.
     // Anchored and indented so the struct's own declaration is not an entry.
     commands: many(
-      read("../../src/commands.rs"),
+      read("../../src/commands/catalog.rs"),
       /^ {4}BuiltinCommand \{$/gm,
       "BUILTIN_COMMANDS entries",
     ),

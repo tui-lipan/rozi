@@ -233,7 +233,7 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
     // One group per known remote host — configured, recently used, or currently attached — so a
     // host stays listed even while offline. Connecting a host lists its sessions; disconnecting
     // returns it to offline.
-    for host in ctx.state.hosts.iter() {
+    for host in ctx.state.remote.hosts.iter() {
         rows.push(SidebarRow::spacer());
         let sessions: Vec<&DiscoveredSession> = ctx
             .state
@@ -275,7 +275,7 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
             HostStatus::Disconnected | HostStatus::Unreachable => {
                 // Offline: the host row connects it; last-seen sessions remain visible from cache.
                 if let Some(cached) =
-                    crate::session::host_sessions_for(&ctx.state.host_session_cache, &host.target)
+                    crate::session::host_sessions_for(&ctx.state.remote.session_cache, &host.target)
                 {
                     for entry in cached.iter().filter(|s| !s.ephemeral) {
                         rows.push(cached_session_row(ctx, host, entry));

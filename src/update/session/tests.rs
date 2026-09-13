@@ -1040,12 +1040,12 @@ fn first_relayed_lift_arms_tile_animation_and_abnormal_clear_snaps_the_pane() {
             );
             let carried = &backend.state().current().workspaces[0].panes[0];
             let neighbour = &backend.state().current().workspaces[0].panes[1];
-            assert!(!crate::AppRoot::geometry_animation_enabled(
+            assert!(!crate::layout::anim::geometry_animation_enabled(
                 backend.state(),
                 carried,
                 false
             ));
-            assert!(crate::AppRoot::geometry_animation_enabled(
+            assert!(crate::layout::anim::geometry_animation_enabled(
                 backend.state(),
                 neighbour,
                 false
@@ -1065,12 +1065,12 @@ fn first_relayed_lift_arms_tile_animation_and_abnormal_clear_snaps_the_pane() {
             );
             let carried = &backend.state().current().workspaces[0].panes[0];
             let neighbour = &backend.state().current().workspaces[0].panes[1];
-            assert!(!crate::AppRoot::geometry_animation_enabled(
+            assert!(!crate::layout::anim::geometry_animation_enabled(
                 backend.state(),
                 carried,
                 false
             ));
-            assert!(crate::AppRoot::geometry_animation_enabled(
+            assert!(crate::layout::anim::geometry_animation_enabled(
                 backend.state(),
                 neighbour,
                 false

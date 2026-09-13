@@ -829,7 +829,7 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<AppRoot>) -> Update {
             )
         }
         crate::state::PendingSessionAction::UserCommand { action, env } => {
-            crate::actions::execute_user_command_action_with_env(ctx, &action, env)
+            crate::ops::user_command::execute_with_env(ctx, &action, env)
         }
         crate::state::PendingSessionAction::NewPane {
             source,

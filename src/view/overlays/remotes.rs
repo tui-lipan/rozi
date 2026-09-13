@@ -1,3 +1,5 @@
+use super::*;
+
 /// This surface lists remembered session *counts*, not live rows, so it never lets a cached count
 /// stand in for having reached the host.
 fn remote_host_status(
@@ -116,33 +118,29 @@ fn remote_hosts_overlay(
             Some(crate::state::HostProbe::Reached)
         )
     });
-    let actions = vec![
-        OverlayAction::new(
-            "enter",
-            if selected_reached { "open" } else { "connect" },
-            selected_target
-                .clone()
-                .map(Msg::RemotePickerHostActivate)
-                .unwrap_or(Msg::CloseRemotePicker),
-            selected_target.is_some() && !connecting,
-        )
-        .hint_only(),
-        OverlayAction::new("ctrl-n", "add host", Msg::RemotePickerNewHost, true),
-        OverlayAction::new("ctrl-e", "edit", Msg::RemotePickerEditHost, can_edit),
-        OverlayAction::new(
-            "ctrl-r",
-            "reconnect",
-            Msg::RemotePickerReconnectHost,
-            selected_target.is_some() && !connecting,
-        ),
-        OverlayAction::new(
-            "ctrl-k",
-            "forget",
-            Msg::RemotePickerForgetHost,
-            can_forget,
-        )
-        .confirm_if(pending_forget.is_some(), "again to forget", error_bg, true),
-    ];
+    let actions =
+        vec![
+            OverlayAction::new(
+                "enter",
+                if selected_reached { "open" } else { "connect" },
+                selected_target
+                    .clone()
+                    .map(Msg::RemotePickerHostActivate)
+                    .unwrap_or(Msg::CloseRemotePicker),
+                selected_target.is_some() && !connecting,
+            )
+            .hint_only(),
+            OverlayAction::new("ctrl-n", "add host", Msg::RemotePickerNewHost, true),
+            OverlayAction::new("ctrl-e", "edit", Msg::RemotePickerEditHost, can_edit),
+            OverlayAction::new(
+                "ctrl-r",
+                "reconnect",
+                Msg::RemotePickerReconnectHost,
+                selected_target.is_some() && !connecting,
+            ),
+            OverlayAction::new("ctrl-k", "forget", Msg::RemotePickerForgetHost, can_forget)
+                .confirm_if(pending_forget.is_some(), "again to forget", error_bg, true),
+        ];
     let overlay = OverlayPalette::new(
         "Remote hosts",
         remote_picker_key(),

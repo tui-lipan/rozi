@@ -173,7 +173,7 @@ fn restore_focus(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
-pub(crate) fn placement(app: &AppRoot, ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> {
+pub(crate) fn placement(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> {
     let pane = ctx.state.popup.as_ref()?;
     let full_size_reveal = crate::layout::anim::pane_reveal_effects(ctx.state.config.animations);
     let target = if (pane.opening || pane.closing) && !full_size_reveal {
@@ -184,12 +184,11 @@ pub(crate) fn placement(app: &AppRoot, ctx: &Context<AppRoot>) -> Option<(FloatR
     let rect = ctx.transition(
         format!("rozi-pane-rect-{}", pane.id),
         target,
-        app.transition_config_for(ctx, pane, false, target),
+        crate::view::animation::transition_config_for(ctx, pane, false, target),
     );
     Some((
         rect,
         crate::view::pane_element(
-            app,
             ctx,
             pane,
             rect,
@@ -197,7 +196,11 @@ pub(crate) fn placement(app: &AppRoot, ctx: &Context<AppRoot>) -> Option<(FloatR
             Some("P"),
             crate::view::PaneKind::Popup,
             crate::view::PaneMerge::default(),
-            app.pane_reveal_progress(ctx, pane, format!("rozi-popup-pane-reveal-{}", pane.id)),
+            crate::view::animation::pane_reveal_progress(
+                ctx,
+                pane,
+                format!("rozi-popup-pane-reveal-{}", pane.id),
+            ),
             false,
         ),
     ))

@@ -1,3 +1,5 @@
+use super::*;
+
 use std::borrow::Cow;
 
 pub(crate) type OverlayItemRenderer<T> =
@@ -5,11 +7,11 @@ pub(crate) type OverlayItemRenderer<T> =
 pub(crate) type OverlayGutterRenderer<T> =
     Arc<dyn Fn(&SearchItem<T>, &SearchHighlight) -> Option<ListItemGutter>>;
 
-fn picker_description(description: impl AsRef<str>) -> ItemDescription {
+pub(super) fn picker_description(description: impl AsRef<str>) -> ItemDescription {
     ItemDescription::new().right(format!("  {}", description.as_ref()))
 }
 
-fn picker_row(
+pub(super) fn picker_row(
     label: impl IntoIterator<Item = Span>,
     description: impl Into<Arc<str>>,
     description_style: Style,
@@ -26,7 +28,7 @@ fn picker_row(
 }
 
 /// Selection highlight shared by pickers while an action awaits a confirming second press.
-fn picker_selection_style(theme: &Theme, pending_accent: Option<Color>) -> Style {
+pub(super) fn picker_selection_style(theme: &Theme, pending_accent: Option<Color>) -> Style {
     if let Some(accent) = pending_accent {
         Style::new()
             .bg(accent)
@@ -43,7 +45,7 @@ fn picker_selection_style(theme: &Theme, pending_accent: Option<Color>) -> Style
 }
 
 /// Armed second-press row shared by destructive and cautionary picker actions.
-fn render_pending_confirm_item(
+pub(super) fn render_pending_confirm_item(
     label: &str,
     accent: Color,
     cue: &str,
@@ -123,7 +125,7 @@ impl OverlayAction {
         self
     }
 
-    fn shows_hint(&self) -> bool {
+    pub(super) fn shows_hint(&self) -> bool {
         self.enabled && self.hint
     }
 
@@ -354,13 +356,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             on_activate,
             item_gutter,
         );
-        palette = apply_item_rendering(
-            palette,
-            &ctx.state.theme,
-            armed_row,
-            confirm,
-            render_item,
-        );
+        palette = apply_item_rendering(palette, &ctx.state.theme, armed_row, confirm, render_item);
 
         let action_interceptor = overlay_interceptor(ctx, &actions);
         let interceptor = if let Some(fallback) = fallback_interceptor {
@@ -379,7 +375,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
     }
 }
 
-fn apply_palette_options<T: Clone + PartialEq + 'static>(
+pub(super) fn apply_palette_options<T: Clone + PartialEq + 'static>(
     mut palette: SearchPalette<T>,
     empty_text: Option<Cow<'_, str>>,
     preserve_groups: Option<bool>,
@@ -409,7 +405,7 @@ fn apply_palette_options<T: Clone + PartialEq + 'static>(
     palette
 }
 
-fn apply_item_rendering<T: Clone + PartialEq + 'static>(
+pub(super) fn apply_item_rendering<T: Clone + PartialEq + 'static>(
     mut palette: SearchPalette<T>,
     theme: &Theme,
     armed_row: Option<T>,
@@ -442,7 +438,7 @@ fn apply_item_rendering<T: Clone + PartialEq + 'static>(
     }))
 }
 
-fn wrap_palette(
+pub(super) fn wrap_palette(
     ctx: &Context<AppRoot>,
     title: Cow<'_, str>,
     header_right: Option<Cow<'_, str>>,

@@ -1,4 +1,6 @@
-pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
+use super::*;
+
+pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
     use SettingsAction::*;
 
     let pane = &ctx.state.config.pane;
@@ -364,7 +366,7 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
         } else {
             0.0
         },
-        app.scratch_transition_config(ctx),
+        crate::view::animation::scratch_transition_config(ctx),
     );
     let panel: Element = if dim_progress > 0.0 {
         Animated::new(panel)
@@ -488,13 +490,11 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
                         .width(Length::Px(1))
                         .style(fg_only(&theme.accent)),
                 )
-                .child(
-                    Text::new(label.to_string()).style(if focused {
-                        fg_only(&theme.primary).bold()
-                    } else {
-                        fg_only(&theme.muted)
-                    }),
-                )
+                .child(Text::new(label.to_string()).style(if focused {
+                    fg_only(&theme.primary).bold()
+                } else {
+                    fg_only(&theme.muted)
+                }))
                 .child(input)
         }
     };
@@ -577,7 +577,7 @@ fn current_theme_label(ctx: &Context<AppRoot>) -> String {
         .unwrap_or_else(|| current.clone())
 }
 
-fn action_search_palette(
+pub(super) fn action_search_palette(
     ctx: &Context<AppRoot>,
     entries: Vec<SearchEntry<Callback<()>>>,
     placeholder: &str,

@@ -5,7 +5,9 @@ use crate::input::Action;
 use crate::state::{AlertMode, AlertPaint, Mode, Pane, WORKBAR_HEIGHT, Workspace};
 use crate::{AppRoot, Msg};
 
-pub(crate) fn workbar(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
+use super::animation;
+
+pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let workbar_cfg = &state.config.workbar;
@@ -24,7 +26,7 @@ pub(crate) fn workbar(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let mut right_cap_color = panel_bg;
 
     for item in &workbar_cfg.left {
-        if let Some(element) = left_segment_element(app, ctx, item) {
+        if let Some(element) = left_segment_element(ctx, item) {
             row = row.child(element);
             let color = segment_edge_color(ctx, item);
             left_cap_color.get_or_insert(color);
@@ -91,7 +93,7 @@ pub(crate) fn workbar(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         trailing.push(TrailingChip::badge(label, text_fg, color));
     }
     for item in &workbar_cfg.right {
-        if let Some(chip) = trailing_chip(app, ctx, item) {
+        if let Some(chip) = trailing_chip(ctx, item) {
             trailing.push(chip);
         }
     }
@@ -192,15 +194,11 @@ impl TrailingChip {
 /// The trailing chip for a configured right-region segment, or `None` when it renders nothing.
 /// Every segment that has a text label becomes a colored `Badge` chip (so it can chain into the
 /// powerline); the workspace tab strip is the one non-badge entry and rides along as a `Flex` chip.
-fn trailing_chip(
-    app: &AppRoot,
-    ctx: &Context<AppRoot>,
-    item: &WorkbarItem,
-) -> Option<TrailingChip> {
+fn trailing_chip(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<TrailingChip> {
     match &item.segment {
-        WorkbarSegment::Workspaces => Some(TrailingChip::Flex(Box::new(workspace_tabs_element(
-            app, ctx,
-        )))),
+        WorkbarSegment::Workspaces => {
+            Some(TrailingChip::Flex(Box::new(workspace_tabs_element(ctx))))
+        }
         _ => {
             let label = segment_label(ctx, &item.segment)?;
             let (bg, fg) = item_colors(ctx, item);
@@ -592,13 +590,9 @@ fn session_badge_label(name: &str, clients: u32, icon: &str) -> String {
 /// The element for a left-region workbar item: the workspace tab strip, or a colored badge. Left
 /// badges cap on their right (leading pills, like the title chip) and stay gap-separated by the row
 /// - powerline chaining is a trailing-cluster feature.
-fn left_segment_element(
-    app: &AppRoot,
-    ctx: &Context<AppRoot>,
-    item: &WorkbarItem,
-) -> Option<Element> {
+fn left_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<Element> {
     if matches!(item.segment, WorkbarSegment::Workspaces) {
-        return Some(workspace_tabs_element(app, ctx));
+        return Some(workspace_tabs_element(ctx));
     }
     let label = segment_label(ctx, &item.segment)?;
     let (bg, fg) = item_colors(ctx, item);
@@ -667,7 +661,7 @@ fn workbar_hostname() -> String {
     crate::platform::user::hostname().unwrap_or_else(|| "localhost".to_string())
 }
 
-fn workspace_tabs_element(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
+fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let shown = workspace_tab_count(state);
@@ -713,20 +707,20 @@ fn workspace_tabs_element(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                 let (fg_target, target) =
                     crate::ops::theme::tab_alert_colors(theme, role, paint, pulse, phase);
                 let transition = if pulse && state.alert_pulse_armed {
-                    app.alert_pulse_transition_config(ctx, calm)
+                    animation::alert_pulse_transition_config(ctx, calm)
                 } else {
                     crate::layout::anim::instant_transition()
                 };
                 tab = tab.style(
                     Style::new()
-                        .fg(app.chrome_paint_with_frame_rate(
+                        .fg(animation::chrome_paint_with_frame_rate(
                             ctx,
                             format!("rozi-workspace-tab-{idx}-fg"),
                             fg_target,
                             transition,
                             pulse.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
                         ))
-                        .bg(app.chrome_paint_with_frame_rate(
+                        .bg(animation::chrome_paint_with_frame_rate(
                             ctx,
                             format!("rozi-workspace-tab-{idx}"),
                             target,

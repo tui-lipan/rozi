@@ -83,7 +83,7 @@ pub(crate) fn deployed_rect(state: &crate::state::State, viewport: Rect) -> Floa
 /// Slide progress for the dropdown: `1.0` fully deployed, `0.0` hidden below the bottom edge.
 /// Sampled every frame from `render` (even while closed) so the keyed transition is seeded at
 /// `0.0` from startup - that way the very first open still slides up instead of snapping in.
-pub(crate) fn scratch_progress(app: &AppRoot, ctx: &Context<AppRoot>) -> f32 {
+pub(crate) fn scratch_progress(ctx: &Context<AppRoot>) -> f32 {
     let target = if ctx.state.scratch_visible && !ctx.state.scratch.panes.is_empty() {
         1.0
     } else {
@@ -92,7 +92,7 @@ pub(crate) fn scratch_progress(app: &AppRoot, ctx: &Context<AppRoot>) -> f32 {
     ctx.transition::<f32>(
         "rozi-scratch-progress",
         target,
-        app.scratch_transition_config(ctx),
+        crate::view::animation::scratch_transition_config(ctx),
     )
 }
 
@@ -398,7 +398,6 @@ pub(crate) fn backdrop_dim(progress: f32) -> f32 {
 /// workspace layer. `progress` drives the slide; the pane stays mounted while it animates
 /// back down on hide, and is dropped once fully retracted.
 pub(crate) fn scratch_panes(
-    app: &AppRoot,
     ctx: &Context<AppRoot>,
     canvas: Canvas,
     progress: f32,
@@ -419,7 +418,6 @@ pub(crate) fn scratch_panes(
     let placed = view::canvas_rect_to_root(deploying, ctx.state.content_top_offset()).to_rect();
     let scratch_moved = ctx.state.last_scratch_rect.replace(Some(placed)) != Some(placed);
     view::render_workspace_panes(
-        app,
         ctx,
         canvas,
         &view::WorkspaceLayer {

@@ -1,3 +1,5 @@
+use super::*;
+
 const EXTENSIONS_WIDTH: u16 = 84;
 const EXTENSION_DETAIL_WIDTH: u16 = 76;
 
@@ -22,8 +24,7 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
         extension_group("Problems", state, &descriptions, |status| {
             !matches!(
                 status,
-                crate::config::ExtensionStatus::Loaded
-                    | crate::config::ExtensionStatus::Disabled
+                crate::config::ExtensionStatus::Loaded | crate::config::ExtensionStatus::Disabled
             )
         }),
     ]);
@@ -31,8 +32,7 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     let toggle = selected.is_some_and(|entry| {
         matches!(
             entry.status,
-            crate::config::ExtensionStatus::Loaded
-                | crate::config::ExtensionStatus::Disabled
+            crate::config::ExtensionStatus::Loaded | crate::config::ExtensionStatus::Disabled
         )
     });
     let manifest =
@@ -52,9 +52,9 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     let actions = vec![
         OverlayAction::new(
             "enter",
-            if selected.is_some_and(|entry| {
-                entry.status == crate::config::ExtensionStatus::Disabled
-            }) {
+            if selected
+                .is_some_and(|entry| entry.status == crate::config::ExtensionStatus::Disabled)
+            {
                 "enable"
             } else {
                 "disable"
@@ -63,7 +63,12 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
             toggle,
         )
         .hint_only(),
-        OverlayAction::new("ctrl-d", "details", Msg::ExtensionsOpenDetail, selected.is_some()),
+        OverlayAction::new(
+            "ctrl-d",
+            "details",
+            Msg::ExtensionsOpenDetail,
+            selected.is_some(),
+        ),
         OverlayAction::new("ctrl-i", "install", Msg::ExtensionsOpenInstall, true),
         OverlayAction::new(
             "ctrl-u",
@@ -76,7 +81,12 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
             updatable,
         ),
         OverlayAction::new("ctrl-r", "reload", Msg::ExtensionsReload, true),
-        OverlayAction::new("ctrl-o", "open manifest", Msg::ExtensionsOpenManifest, manifest),
+        OverlayAction::new(
+            "ctrl-o",
+            "open manifest",
+            Msg::ExtensionsOpenManifest,
+            manifest,
+        ),
         OverlayAction::new(
             "ctrl-k",
             if armed.is_some() {
@@ -113,67 +123,58 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
         Msg::CloseExtensions,
         EXTENSIONS_WIDTH,
     )
-        .entries(entries)
-        .actions(actions)
-        .armed_row(armed)
-        .placeholder("Search extensions…")
-        .empty_text("No extensions installed")
-        .initial_query(state.restore_query.clone())
-        .preserve_groups(true)
-        .selected(selected_index)
-        .render_item(Arc::new(move |item: &SearchItem<usize>, _highlight| {
-            let entry = &rows[item.value];
-            let problem = !matches!(
-                entry.status,
-                crate::config::ExtensionStatus::Loaded
-                    | crate::config::ExtensionStatus::Disabled
-            );
-            let label_style = if problem {
-                muted_style
-            } else {
-                item_style
-            };
-            let description_style = if problem {
-                muted_style
-            } else {
-                item_style
-            };
-            let updating = entry
-                .id
-                .as_deref()
-                .is_some_and(|id| updating_id.as_deref() == Some(id));
-            let row = picker_row(
-                [Span::new(item.label.as_ref()).style(label_style)],
-                fit_description(
-                    item.label.as_ref(),
-                    &descriptions[item.value],
-                    EXTENSIONS_WIDTH,
-                ),
-                description_style,
-            );
-            Some(if updating {
-                row.description(crate::ops::extensions_manager::EXTENSION_UPDATING_LABEL)
-                    .description_style(description_style)
-                    .description_spinner(crate::view::session_status::picker_circle_spinner(
-                        updating_style,
-                    ))
-            } else {
-                row
-            })
-        }))
-        .on_query_change(
-            ctx.link()
-                .callback(|query: Arc<str>| Msg::ExtensionsQueryChanged(query.to_string())),
-        )
-        .on_select(
-            ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::ExtensionsSelect(event.item.value)),
-        )
-        .on_activate(
-            ctx.link()
-                .callback(|_: SearchEvent<usize>| Msg::ExtensionsToggleSelected),
-        )
-        .render(ctx)
+    .entries(entries)
+    .actions(actions)
+    .armed_row(armed)
+    .placeholder("Search extensions…")
+    .empty_text("No extensions installed")
+    .initial_query(state.restore_query.clone())
+    .preserve_groups(true)
+    .selected(selected_index)
+    .render_item(Arc::new(move |item: &SearchItem<usize>, _highlight| {
+        let entry = &rows[item.value];
+        let problem = !matches!(
+            entry.status,
+            crate::config::ExtensionStatus::Loaded | crate::config::ExtensionStatus::Disabled
+        );
+        let label_style = if problem { muted_style } else { item_style };
+        let description_style = if problem { muted_style } else { item_style };
+        let updating = entry
+            .id
+            .as_deref()
+            .is_some_and(|id| updating_id.as_deref() == Some(id));
+        let row = picker_row(
+            [Span::new(item.label.as_ref()).style(label_style)],
+            fit_description(
+                item.label.as_ref(),
+                &descriptions[item.value],
+                EXTENSIONS_WIDTH,
+            ),
+            description_style,
+        );
+        Some(if updating {
+            row.description(crate::ops::extensions_manager::EXTENSION_UPDATING_LABEL)
+                .description_style(description_style)
+                .description_spinner(crate::view::session_status::picker_circle_spinner(
+                    updating_style,
+                ))
+        } else {
+            row
+        })
+    }))
+    .on_query_change(
+        ctx.link()
+            .callback(|query: Arc<str>| Msg::ExtensionsQueryChanged(query.to_string())),
+    )
+    .on_select(
+        ctx.link()
+            .callback(|event: SearchEvent<usize>| Msg::ExtensionsSelect(event.item.value)),
+    )
+    .on_activate(
+        ctx.link()
+            .callback(|_: SearchEvent<usize>| Msg::ExtensionsToggleSelected),
+    )
+    .render(ctx)
 }
 
 fn extension_group(
@@ -209,11 +210,7 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     else {
         return Text::new("").into();
     };
-    let Some(entry) = state
-        .entries
-        .iter()
-        .find(|entry| entry.path == detail.path)
-    else {
+    let Some(entry) = state.entries.iter().find(|entry| entry.path == detail.path) else {
         return Text::new("").into();
     };
     let actions = vec![
@@ -280,7 +277,9 @@ fn report_height(ctx: &Context<AppRoot>, formatter: &ExtensionReportFormatter) -
                 .iter()
                 .map(|line| {
                     let budget = usize::from(TEXT_WIDTH.saturating_sub(line.indent)).max(1);
-                    tui_lipan::utils::spans::line_width(&line.spans).div_ceil(budget).max(1) as u32
+                    tui_lipan::utils::spans::line_width(&line.spans)
+                        .div_ceil(budget)
+                        .max(1) as u32
                 })
                 .sum(),
             _ => 0,
@@ -366,17 +365,9 @@ impl ExtensionReportFormatter {
                     ],
                     2,
                 ),
-                _ => (
-                    vec![Span::new(row.label.as_str()).style(tone.bold())],
-                    1,
-                ),
+                _ => (vec![Span::new(row.label.as_str()).style(tone.bold())], 1),
             };
-            push_report_line(
-                lines,
-                source_line,
-                0,
-                label,
-            );
+            push_report_line(lines, source_line, 0, label);
             for detail in row.value.lines() {
                 let detail = compact_home_paths(detail, self.home.as_deref());
                 let spans = match detail.split_once(": ") {

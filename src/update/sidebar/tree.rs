@@ -76,7 +76,7 @@ pub(crate) fn tree_activate(
         // `$ROZI_FILE` instead, which a shell expands as one word inside quotes.
         let with_path = substitute(&action, "{path}", &path);
         let env = vec![("ROZI_FILE".to_string(), path)];
-        crate::actions::execute_user_command_action_with_env(ctx, &with_path, env)
+        crate::ops::user_command::execute_with_env(ctx, &with_path, env)
     })
 }
 

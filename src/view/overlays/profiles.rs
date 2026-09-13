@@ -1,3 +1,5 @@
+use super::*;
+
 pub(crate) fn profile_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.profile_picker.as_ref() else {
         return Text::new("").into();
@@ -201,7 +203,7 @@ fn selected_profile(picker: &ProfilePickerState) -> Option<&crate::config::Profi
         .filter(|entry| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
 }
 
-fn render_ephemeral_session_item(
+pub(super) fn render_ephemeral_session_item(
     item: &SearchItem<usize>,
     label_style: &Style,
     description_style: &Style,

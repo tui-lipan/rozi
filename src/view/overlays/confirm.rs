@@ -1,3 +1,5 @@
+use super::*;
+
 /// The chips of a two-answer dialog, in the order the row draws them.
 ///
 /// The refusal comes first and the affirmative last, where a dialog's commit belongs. The
@@ -11,7 +13,7 @@ pub(crate) const DIALOG_AFFIRM: usize = 1;
 /// Focus *is* the selection here, so a chip carries the message that moves focus onto it as well
 /// as the one that commits it: its neighbours send the first, and `Enter`, `Space`, or a click
 /// send the second.
-struct DialogButton<'a> {
+pub(super) struct DialogButton<'a> {
     label: &'a str,
     answer: Msg,
     focus: Msg,
@@ -21,7 +23,7 @@ struct DialogButton<'a> {
 }
 
 impl<'a> DialogButton<'a> {
-    fn new(label: &'a str, answer: Msg, focus: Msg) -> Self {
+    pub(super) fn new(label: &'a str, answer: Msg, focus: Msg) -> Self {
         Self {
             label,
             answer,
@@ -47,7 +49,9 @@ fn dialog_button_row(ctx: &Context<AppRoot>, close: &Msg, buttons: &[DialogButto
         .justify(Justify::End);
     for (index, button) in buttons.iter().enumerate() {
         // Wrapping, so two chips swap on either arrow and a longer row still walks end to end.
-        let previous = buttons[(index + buttons.len() - 1) % buttons.len()].focus.clone();
+        let previous = buttons[(index + buttons.len() - 1) % buttons.len()]
+            .focus
+            .clone();
         let next = buttons[(index + 1) % buttons.len()].focus.clone();
         let close = close.clone();
         let answer = button.answer.clone();
@@ -71,13 +75,11 @@ fn dialog_button_row(ctx: &Context<AppRoot>, close: &Msg, buttons: &[DialogButto
                 .on_click(ctx.link().callback(move |_| answer.clone()))
                 // `Enter` and `Space` fall through to the button's own activation, which is what
                 // fires `on_click`; only movement and the escape hatch are claimed here.
-                .on_key(ctx.link().key_handler(move |key| {
-                    match key.code {
-                        KeyCode::Left | KeyCode::Char('h') => Some(previous.clone()),
-                        KeyCode::Right | KeyCode::Char('l') => Some(next.clone()),
-                        KeyCode::Esc => Some(close.clone()),
-                        _ => None,
-                    }
+                .on_key(ctx.link().key_handler(move |key| match key.code {
+                    KeyCode::Left | KeyCode::Char('h') => Some(previous.clone()),
+                    KeyCode::Right | KeyCode::Char('l') => Some(next.clone()),
+                    KeyCode::Esc => Some(close.clone()),
+                    _ => None,
                 }))
                 .key(key),
         );
@@ -103,24 +105,24 @@ fn dialog_caption_row(theme: &Theme, caption: PromptCaption<'_>) -> Element {
 
 /// What one chosen-answer dialog differs by. The mirror of [`PromptChrome`] for a question with
 /// no field: same modal, same body slots, an answer row where the input would be.
-struct DialogChrome<'a> {
-    title: &'a str,
+pub(super) struct DialogChrome<'a> {
+    pub(super) title: &'a str,
     /// Wrapped text between the title and the answers, for a question too long to be a title.
-    detail: Option<&'a str>,
+    pub(super) detail: Option<&'a str>,
     /// One string out of [`Self::detail`] repeated unbroken on its own line. See
     /// [`PromptChrome::highlight`].
-    highlight: Option<&'a str>,
+    pub(super) highlight: Option<&'a str>,
     /// An inline caption above the hints. See [`PromptCaption`] for what each kind costs the
     /// chrome.
-    caption: Option<PromptCaption<'a>>,
+    pub(super) caption: Option<PromptCaption<'a>>,
     /// Fade whatever is already on screen behind this dialog. See [`PromptChrome::dim_behind`].
-    dim_behind: bool,
+    pub(super) dim_behind: bool,
 }
 
 /// Shared chrome for the dialogs answered by choosing rather than typing: the palette modal every
 /// prompt wears, the same detail and caption rows, and a right-aligned answer row in place of the
 /// field.
-fn dialog_overlay(
+pub(super) fn dialog_overlay(
     ctx: &Context<AppRoot>,
     chrome: DialogChrome<'_>,
     close: Msg,
@@ -155,8 +157,8 @@ fn dialog_overlay(
         .on_close(ctx.link().callback(move |_| close.clone()))
         .child(action_palette_frame(body));
     if dim_behind {
-        modal = modal
-            .backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION));
+        modal =
+            modal.backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION));
     }
     modal.into()
 }

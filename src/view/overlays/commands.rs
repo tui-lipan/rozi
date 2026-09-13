@@ -1,3 +1,5 @@
+use super::*;
+
 pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
     // Commands (labels, categories, live keybinding hints, and the handler to run) come
     // straight from the registry `commands.rs` builds. Only palette-eligible ids appear here
@@ -46,9 +48,10 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
                 .then_some(toggle_sidebar_index)
                 .flatten(),
         )
-        .on_query_change(ctx.link().callback(|query: Arc<str>| {
-            Msg::CommandPaletteQueryChanged(query.to_string())
-        }));
+        .on_query_change(
+            ctx.link()
+                .callback(|query: Arc<str>| Msg::CommandPaletteQueryChanged(query.to_string())),
+        );
 
     action_palette(
         ctx,
@@ -62,7 +65,7 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
 
 /// Flatten command groups with one non-selectable blank row between adjacent sections. SearchPalette
 /// hides these structural entries while fuzzy results are score-ordered.
-fn command_entries_with_groups<T>(
+pub(super) fn command_entries_with_groups<T>(
     groups: impl IntoIterator<Item = (impl Into<Arc<str>>, Vec<SearchEntry<T>>)>,
 ) -> Vec<SearchEntry<T>> {
     let mut entries = Vec::new();
@@ -76,7 +79,7 @@ fn command_entries_with_groups<T>(
     entries
 }
 
-fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
+pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
     match id {
         "settings" => alias_list(&[
             "settings",
@@ -180,20 +183,14 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
     }
 }
 
-fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>> {
+pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>> {
     use SettingsAction::*;
 
     let mut aliases = match action {
         Theme => alias_list(&["themes", "color scheme", "colour scheme"]),
         Extensions => alias_list(&["plugins", "addons", "extension manager"]),
-        EditPadding => {
-            alias_list(&["pane padding", "terminal insets", "pane margins"])
-        }
-        ToggleTitles => alias_list(&[
-            "title bar",
-            "show titles",
-            "toggle titlebar",
-        ]),
+        EditPadding => alias_list(&["pane padding", "terminal insets", "pane margins"]),
+        ToggleTitles => alias_list(&["title bar", "show titles", "toggle titlebar"]),
         CycleTitleStyle => alias_list(&[
             "titlebar cap style",
             "titlebar caps",
@@ -210,40 +207,25 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
             "inset titlebar",
         ]),
         ToggleWorkbar => alias_list(&["show workbar", "toggle workbar"]),
-        ToggleWorkbarGap => {
-            alias_list(&["workbar gap", "workbar spacing", "workbar separator"])
-        }
+        ToggleWorkbarGap => alias_list(&["workbar gap", "workbar spacing", "workbar separator"]),
         ToggleWorkbarPosition => alias_list(&[
             "workbar position",
             "workbar placement",
             "workbar top",
             "workbar bottom",
         ]),
-        CycleWorkbarStyle => {
-            alias_list(&["workbar style", "workbar caps", "workbar pill"])
+        CycleWorkbarStyle => alias_list(&["workbar style", "workbar caps", "workbar pill"]),
+        CycleWorkbarBadgeStyle => {
+            alias_list(&["workbar badge style", "workbar badges", "workbar chips"])
         }
-        CycleWorkbarBadgeStyle => alias_list(&[
-            "workbar badge style",
-            "workbar badges",
-            "workbar chips",
-        ]),
-        ToggleWorkbarPowerline => {
-            alias_list(&["workbar powerline", "workbar badge chain"])
+        ToggleWorkbarPowerline => alias_list(&["workbar powerline", "workbar badge chain"]),
+        CycleWorkbarTabStyle => {
+            alias_list(&["workbar tab style", "workspace tab style", "workbar tabs"])
         }
-        CycleWorkbarTabStyle => alias_list(&[
-            "workbar tab style",
-            "workspace tab style",
-            "workbar tabs",
-        ]),
-        ToggleAnimations => {
-            alias_list(&["animation effects", "motion effects", "transitions"])
+        ToggleAnimations => alias_list(&["animation effects", "motion effects", "transitions"]),
+        ToggleNerdIcons => {
+            alias_list(&["nerd font", "nerd icons", "patched font", "powerline icons"])
         }
-        ToggleNerdIcons => alias_list(&[
-            "nerd font",
-            "nerd icons",
-            "patched font",
-            "powerline icons",
-        ]),
         CyclePaneAnimation => alias_list(&[
             "pane open animation",
             "pane close animation",
@@ -256,18 +238,13 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
             "scan panes",
             "springy panes",
         ]),
-        ToggleHighlightFocusedBackground => alias_list(&[
-            "focused pane background",
-            "active pane background",
-        ]),
-        ToggleHighlightFocusedBorder => alias_list(&[
-            "focused pane border",
-            "active pane border",
-        ]),
-        ToggleHighlightFocusedTitlebar => alias_list(&[
-            "focused pane titlebar",
-            "active pane titlebar",
-        ]),
+        ToggleHighlightFocusedBackground => {
+            alias_list(&["focused pane background", "active pane background"])
+        }
+        ToggleHighlightFocusedBorder => alias_list(&["focused pane border", "active pane border"]),
+        ToggleHighlightFocusedTitlebar => {
+            alias_list(&["focused pane titlebar", "active pane titlebar"])
+        }
         CycleBorderMode => alias_list(&[
             "border mode",
             "border merge",
@@ -302,14 +279,8 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
             "attention border",
             "alert pulse",
         ]),
-        CycleWorkbarAlert => alias_list(&[
-            "workspace tab alert",
-            "workspace marker",
-            "tab pulse",
-        ]),
-        CycleWorkbarAlertPaint => {
-            alias_list(&["workspace tab alert paint", "marker fill"])
-        }
+        CycleWorkbarAlert => alias_list(&["workspace tab alert", "workspace marker", "tab pulse"]),
+        CycleWorkbarAlertPaint => alias_list(&["workspace tab alert paint", "marker fill"]),
         CycleStartupMode => alias_list(&[
             "session startup",
             "launch",
@@ -340,9 +311,11 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
             "system notifications",
             "notify send",
         ]),
-        ToggleDesktopBlocked => {
-            alias_list(&["blocked notification", "waiting notification", "agent prompt"])
-        }
+        ToggleDesktopBlocked => alias_list(&[
+            "blocked notification",
+            "waiting notification",
+            "agent prompt",
+        ]),
         ToggleDesktopDone => alias_list(&["finished notification", "done notification"]),
         ToggleDesktopExit => alias_list(&["exit notification", "pane exit notification"]),
         ToggleDesktopExitError => alias_list(&[
@@ -360,6 +333,6 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
     aliases
 }
 
-fn alias_list(values: &[&str]) -> Vec<Arc<str>> {
+pub(super) fn alias_list(values: &[&str]) -> Vec<Arc<str>> {
     values.iter().copied().map(Arc::from).collect()
 }

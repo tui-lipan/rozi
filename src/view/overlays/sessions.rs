@@ -1,3 +1,5 @@
+use super::*;
+
 pub(crate) fn session_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Text::new("").into();
@@ -102,10 +104,7 @@ pub(crate) fn collaboration_overlay(ctx: &Context<AppRoot>) -> Element {
 fn collaborator_rows(
     shared: &crate::state::SharedSessionState,
     can_evict: bool,
-) -> (
-    Vec<SearchItem<CollaboratorItem>>,
-    Vec<CollaboratorItem>,
-) {
+) -> (Vec<SearchItem<CollaboratorItem>>, Vec<CollaboratorItem>) {
     let mut rows = Vec::new();
     let mut items = Vec::new();
     for (roster_index, client) in shared.clients.iter().enumerate() {
@@ -338,18 +337,16 @@ fn push_session_activation(
     actions: &mut Vec<OverlayAction>,
 ) {
     if picker_list_is_empty(picker) {
-        actions.push(
-            OverlayAction::new(
-                "enter",
-                if remote_is_in_play(&ctx.state) {
-                    "local ephemeral"
-                } else {
-                    "ephemeral shell"
-                },
-                Msg::SessionPickerEphemeral,
-                true,
-            ),
-        );
+        actions.push(OverlayAction::new(
+            "enter",
+            if remote_is_in_play(&ctx.state) {
+                "local ephemeral"
+            } else {
+                "ephemeral shell"
+            },
+            Msg::SessionPickerEphemeral,
+            true,
+        ));
     }
     let Some(entry) = selected else {
         return;
@@ -365,12 +362,13 @@ fn push_session_activation(
             .hint_only(),
         );
         actions.push(
-            OverlayAction::new("ctrl-k", "forget", Msg::SessionPickerKillSelected, true).confirm_if(
-                picker.pending_kill == Some(picker.selected),
-                "again to forget",
-                ctx.state.theme.status.error,
-                true,
-            ),
+            OverlayAction::new("ctrl-k", "forget", Msg::SessionPickerKillSelected, true)
+                .confirm_if(
+                    picker.pending_kill == Some(picker.selected),
+                    "again to forget",
+                    ctx.state.theme.status.error,
+                    true,
+                ),
         );
     } else if !crate::ops::session::session_row_is_current(&ctx.state, entry) {
         let held = ctx
@@ -402,46 +400,38 @@ fn push_session_creation_actions(
     // is only worth the width once a remote host is in play; with nothing remote anywhere, "new"
     // has nothing to be mistaken for.
     let remote_in_play = remote_is_in_play(&ctx.state);
-    actions.push(
-        OverlayAction::new(
-            "ctrl-n",
-            if remote_in_play { "new local" } else { "new" },
-            Msg::SessionPickerCreateFromQuery,
-            true,
-        ),
-    );
+    actions.push(OverlayAction::new(
+        "ctrl-n",
+        if remote_in_play { "new local" } else { "new" },
+        Msg::SessionPickerCreateFromQuery,
+        true,
+    ));
     let show_ephemeral = !picker_list_is_empty(picker)
         && crate::ops::session::held_ephemeral_session_in(&ctx.state, None).is_none();
-    actions.push(
-        OverlayAction::new(
-            "ctrl-t",
-            if remote_in_play {
-                "local ephemeral"
-            } else {
-                "ephemeral shell"
-            },
-            Msg::SessionPickerEphemeral,
-            show_ephemeral,
-        ),
-    );
+    actions.push(OverlayAction::new(
+        "ctrl-t",
+        if remote_in_play {
+            "local ephemeral"
+        } else {
+            "ephemeral shell"
+        },
+        Msg::SessionPickerEphemeral,
+        show_ephemeral,
+    ));
     if ctx.state.current().session_attached && ctx.state.is_ephemeral_session() {
-        actions.push(
-            OverlayAction::new(
-                "ctrl-s",
-                "name current",
-                Msg::SessionPickerNameCurrent,
-                true,
-            ),
-        );
-    }
-    actions.push(
-        OverlayAction::new(
-            "ctrl-r",
-            "remote hosts",
-            Msg::SessionPickerRemoteHosts,
+        actions.push(OverlayAction::new(
+            "ctrl-s",
+            "name current",
+            Msg::SessionPickerNameCurrent,
             true,
-        ),
-    );
+        ));
+    }
+    actions.push(OverlayAction::new(
+        "ctrl-r",
+        "remote hosts",
+        Msg::SessionPickerRemoteHosts,
+        true,
+    ));
 }
 
 fn push_session_management_actions(
@@ -707,7 +697,7 @@ fn remote_group_header(
 /// A picker row's right-aligned line. `agents` is what a host monitor knows about the session's
 /// agents, already rendered by [`crate::view::session_status::host_agent_label`]; it goes last,
 /// after the facts about the session itself.
-fn session_description(
+pub(super) fn session_description(
     entry: &crate::session::discovery::DiscoveredSession,
     we_hold: bool,
     agents: Option<String>,

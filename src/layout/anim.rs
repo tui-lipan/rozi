@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::state::{Pane, State};
 use tui_lipan::animation::Easing;
 use tui_lipan::prelude::{FloatRect, TransitionConfig};
 
@@ -722,10 +723,129 @@ pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
     (geometry_duration / SCRATCH_DURATION_DENOMINATOR) * SCRATCH_DURATION_NUMERATOR
 }
 
+/// Whether this pane's rectangle may animate to its new position.
+///
+/// Followers animate too. A layout revision is an authoritative *destination*, not a path, so
+/// the transition between the geometry a follower holds and the geometry that arrives is a
+/// local presentation choice - the same one the controller makes, from the same
+/// [`GeometryAnimation`] the reconciler arms in `apply_shared_layout`.
+///
+/// A pane under continuous manipulation is the exception, whoever is manipulating it. Its
+/// rectangle is being reported, not derived, so easing toward each reported position would
+/// leave it trailing the pointer by one relay for the whole gesture. The tiles *around* it
+/// still animate: they move once when the pane is lifted and once when it lands, which is an
+/// ordinary discrete transition on both the controller and every follower.
+pub(crate) fn geometry_animation_enabled(
+    state: &State,
+    pane: &Pane,
+    viewport_changed: bool,
+) -> bool {
+    if viewport_changed
+        || state
+            .moving_pane
+            .is_some_and(|session| session.id == pane.id)
+        || state
+            .current()
+            .remote_drag
+            .is_some_and(|drag| drag.pane_id == pane.id)
+        || state.current().remote_drag_snap.get() == Some(pane.id)
+        || state
+            .resizing_pane
+            .as_ref()
+            .is_some_and(|session| session.id == pane.id)
+    {
+        return false;
+    }
+    let animations = state.config.animations;
+    let opening = pane_opening_transition(pane);
+    if !animations.enabled && !opening && !pane.closing {
+        return false;
+    }
+    if opening {
+        return pane
+            .opening_animation
+            .map(|snapshot| snapshot.active)
+            .unwrap_or(animations.enabled && animations.spawn);
+    }
+    if pane.closing {
+        return pane
+            .closing_animation
+            .map(|snapshot| snapshot.active)
+            .unwrap_or(animations.enabled && animations.close);
+    }
+    match state.animation {
+        GeometryAnimation::None => false,
+        GeometryAnimation::Spawn => animations.spawn,
+        GeometryAnimation::Close => animations.close,
+        GeometryAnimation::Fullscreen => animations.fullscreen,
+        GeometryAnimation::TileFloat => animations.tile_float,
+        GeometryAnimation::AxisChange => animations.axis_change,
+    }
+}
+
+/// Geometry transition policy for a pane. Extracted so tests can assert Scrollable resize
+/// instant-vs-AxisChange behavior without constructing a live [`tui_lipan::prelude::Context`].
+///
+/// `target_rect` sizes the Slide spring's amplitude and is only known to the view; without it the
+/// spring degrades to the plain geometry curve rather than guessing an amplitude.
+pub(crate) fn geometry_transition_for_pane(
+    state: &State,
+    pane: &Pane,
+    viewport_changed: bool,
+    target_rect: Option<FloatRect>,
+) -> TransitionConfig {
+    if !geometry_animation_enabled(state, pane, viewport_changed) {
+        return instant_transition();
+    }
+
+    let animations = state.config.animations;
+    let spec = pane_animation_for_pane(animations, pane);
+    // Only read below under Spawn and Close, which is what armed it.
+    let event_duration = state.pane_event_animation.map(|snapshot| snapshot.duration);
+    // An arriving or leaving pane that slides or uses a paint effect does not animate its
+    // rectangle. Slide carries it in, while Portal and Scan repaint its cells, so all three
+    // keep their final size the whole way.
+    let pane_transition = pane_opening_transition(pane) || pane.closing;
+    if pane_transition {
+        if matches!(
+            spec.kind,
+            PaneAnimationStyle::Slide | PaneAnimationStyle::Portal | PaneAnimationStyle::Scan
+        ) {
+            return instant_transition();
+        }
+        return spec.transition(pane.closing);
+    }
+
+    // Every tile moving to make room for - or take back the space of - the pane in transition
+    // shares that pane's clock, so their common edges stay one moving boundary. Only the two
+    // lifecycle events borrow it: fullscreen, tile/float, and axis changes are not a pane
+    // arriving or leaving, so a recipe's `open_ms` must not become the duration of every
+    // reflow in the app.
+    let neighbour_duration = match state.animation {
+        GeometryAnimation::Close => event_duration.unwrap_or(spec.close_duration),
+        GeometryAnimation::Spawn => event_duration.unwrap_or(spec.open_duration),
+        GeometryAnimation::None
+        | GeometryAnimation::Fullscreen
+        | GeometryAnimation::TileFloat
+        | GeometryAnimation::AxisChange => animations.geometry_duration,
+    };
+    // Under Slide, the tiles *around* an arriving or leaving pane are where the spring lives:
+    // this is the tile that gave up the space, or the one taking it back.
+    if spec.kind == PaneAnimationStyle::Slide
+        && matches!(
+            state.animation,
+            GeometryAnimation::Spawn | GeometryAnimation::Close
+        )
+        && let Some(rect) = target_rect
+    {
+        return spring_geometry_transition(neighbour_duration, spring_extent(rect));
+    }
+    geometry_transition(neighbour_duration)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::AppRoot;
     use crate::state::Pane;
 
     #[test]
@@ -781,7 +901,7 @@ mod tests {
         let leaving = slide.selected_animation().close_duration;
         assert_eq!(leaving, slide.geometry_duration);
         let state = spawning_state(PaneAnimationStyle::Slide, GeometryAnimation::Close);
-        let tile_making_room = AppRoot::geometry_transition_for_pane(
+        let tile_making_room = geometry_transition_for_pane(
             &state,
             // The settled survivor, not the pane on its way out.
             &state.current().workspaces[0].panes[0],
@@ -819,7 +939,7 @@ mod tests {
         state.config.animations.close_duration = Duration::from_millis(80);
         state.begin_pane_event(GeometryAnimation::Close);
         let pane = &state.current().workspaces[0].panes[0];
-        let transition = AppRoot::geometry_transition_for_pane(
+        let transition = geometry_transition_for_pane(
             &state,
             pane,
             false,
@@ -844,7 +964,7 @@ mod tests {
         // A reload lands mid-spawn and shortens everything.
         state.config.animations.geometry_duration = Duration::from_millis(120);
         assert_eq!(
-            AppRoot::geometry_transition_for_pane(
+            geometry_transition_for_pane(
                 &state,
                 &state.current().workspaces[0].panes[0],
                 false,
@@ -876,7 +996,7 @@ mod tests {
 
             let pane = &state.current().workspaces[0].panes[0];
             assert_eq!(
-                AppRoot::geometry_transition_for_pane(&state, pane, false, None).duration,
+                geometry_transition_for_pane(&state, pane, false, None).duration,
                 Duration::from_millis(200),
                 "{animation:?} is not a pane opening or closing"
             );
@@ -1191,5 +1311,241 @@ mod tests {
             alert_pulse_half_period(animations),
             Duration::from_millis(400)
         );
+    }
+
+    #[test]
+    fn slide_springs_the_neighbours_and_leaves_the_travelling_pane_alone() {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.config.animations.pane_style = PaneAnimationStyle::Slide;
+        state.animation = GeometryAnimation::Spawn;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        for id in [1, 2] {
+            let mut pane = Pane::new(id, 100, FloatRect::default());
+            pane.opening = id == 2;
+            workspace.panes.push(pane);
+        }
+
+        let tile = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 30.0,
+            h: 20.0,
+        };
+        let settled = &state.current().workspaces[0].panes[0];
+        let arriving = &state.current().workspaces[0].panes[1];
+
+        let neighbour = geometry_transition_for_pane(&state, settled, false, Some(tile));
+        assert!(
+            matches!(
+                neighbour.easing,
+                Easing::EaseOutBack { overshoot_permille } if overshoot_permille > 0
+            ),
+            "the tile making room springs, got {:?}",
+            neighbour.easing
+        );
+        assert_eq!(
+            neighbour.duration,
+            state.config.animations.geometry_duration
+        );
+
+        // A bigger tile asks for a proportionally *smaller* amplitude, which is what keeps the nudge
+        // a couple of cells instead of a tenth of the pane.
+        let wide = FloatRect { w: 300.0, ..tile };
+        let wide_neighbour = geometry_transition_for_pane(&state, settled, false, Some(wide));
+        let amplitude = |config: TransitionConfig| match config.easing {
+            Easing::EaseOutBack { overshoot_permille } => overshoot_permille,
+            other => panic!("expected a spring, got {other:?}"),
+        };
+        assert!(amplitude(wide_neighbour) < amplitude(neighbour));
+
+        // Without a rect there is no amplitude to size, so the spring degrades rather than guessing.
+        let unsized_neighbour = geometry_transition_for_pane(&state, settled, false, None);
+        assert_eq!(unsized_neighbour.easing, Easing::EaseInOutCubic);
+
+        // The travelling pane's rectangle does not animate at all - `slide_offset` moves it.
+        let travelling = geometry_transition_for_pane(&state, arriving, false, Some(tile));
+        assert_eq!(travelling.duration, Duration::ZERO);
+
+        // Scale is untouched: neighbours keep the plain geometry curve.
+        state.config.animations.pane_style = PaneAnimationStyle::Scale;
+        let settled = &state.current().workspaces[0].panes[0];
+        let scale_neighbour = geometry_transition_for_pane(&state, settled, false, Some(tile));
+        assert_eq!(scale_neighbour.easing, Easing::EaseInOutCubic);
+    }
+
+    /// The spring is scoped to spawn and close. A fullscreen toggle or an axis flip under Slide is
+    /// still an ordinary geometry move, and springing those would make the whole layout wobble
+    /// whenever anything changed shape.
+    #[test]
+    fn slide_does_not_spring_unrelated_geometry_animations() {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.config.animations.pane_style = PaneAnimationStyle::Slide;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        pane.opening = false;
+        workspace.panes.push(pane);
+
+        for animation in [
+            GeometryAnimation::Fullscreen,
+            GeometryAnimation::TileFloat,
+            GeometryAnimation::AxisChange,
+        ] {
+            state.animation = animation;
+            let pane = &state.current().workspaces[0].panes[0];
+            let config = geometry_transition_for_pane(
+                &state,
+                pane,
+                false,
+                Some(FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 30.0,
+                    h: 20.0,
+                }),
+            );
+            assert_eq!(
+                config.easing,
+                Easing::EaseInOutCubic,
+                "{animation:?} is not a spawn or close"
+            );
+        }
+    }
+
+    /// A floating pane has no tile edge to emerge from and no neighbour to take space from, so it
+    /// keeps the scale whatever the style says - and therefore keeps its fade.
+    #[test]
+    fn floating_panes_never_slide() {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.config.animations.pane_style = PaneAnimationStyle::Slide;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        pane.opening = true;
+        pane.floating = true;
+        workspace.panes.push(pane);
+
+        let pane = &state.current().workspaces[0].panes[0];
+        assert!(!pane_slides(state.config.animations, pane));
+    }
+
+    #[test]
+    fn paint_effect_panes_keep_geometry_fixed_while_neighbours_use_plain_motion() {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.animation = GeometryAnimation::Spawn;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        for id in [1, 2] {
+            let mut pane = Pane::new(id, 100, FloatRect::default());
+            pane.opening = id == 2;
+            workspace.panes.push(pane);
+        }
+        let tile = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 30.0,
+            h: 20.0,
+        };
+
+        for style in [PaneAnimationStyle::Portal, PaneAnimationStyle::Scan] {
+            state.config.animations.pane_style = style;
+            let settled = &state.current().workspaces[0].panes[0];
+            let arriving = &state.current().workspaces[0].panes[1];
+            assert_eq!(
+                geometry_transition_for_pane(&state, arriving, false, Some(tile)).duration,
+                Duration::ZERO,
+                "{style:?} owns its final rectangle"
+            );
+            assert_eq!(
+                geometry_transition_for_pane(&state, settled, false, Some(tile)).easing,
+                Easing::EaseInOutCubic,
+                "{style:?} does not spring neighbouring tiles"
+            );
+            assert_eq!(
+                retained_pane_timeout(state.config.animations),
+                state.config.animations.geometry_duration + Duration::from_millis(20)
+            );
+        }
+    }
+
+    /// Two tiled panes in a shared session whose lease belongs to `controller`.
+    fn shared_state(controller: crate::layout::shared::ClientId) -> State {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        state.current_mut().session_attached = true;
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.controller = Some(controller);
+        state.current_mut().shared = Some(shared);
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        for id in 1..=2 {
+            let mut pane = Pane::new(id, 100, FloatRect::default());
+            pane.opening = false;
+            workspace.panes.push(pane);
+        }
+        state
+    }
+
+    /// A layout revision is a destination, not a path. Followers reconcile toward it through the
+    /// same `GeometryAnimation` the controller uses, so they animate the same way - anything else
+    /// makes one client's workspace snap while another's eases.
+    #[test]
+    fn a_follower_animates_the_geometry_a_layout_revision_brings() {
+        let mut state = shared_state(2);
+        state.animation = GeometryAnimation::TileFloat;
+        let pane = &state.current().workspaces[0].panes[0];
+
+        assert!(
+            geometry_animation_enabled(&state, pane, false),
+            "a follower reconciling toward a new revision animates like the controller"
+        );
+    }
+
+    /// Continuous manipulation is direct on every screen. Easing toward each reported position
+    /// would leave the carried pane a relay behind the pointer for the whole gesture; the tiles
+    /// around it still animate, because they move once at the lift and once at the drop.
+    #[test]
+    fn a_carried_pane_tracks_directly_while_its_neighbours_still_animate() {
+        let mut state = shared_state(2);
+        state.current_mut().remote_drag = Some(crate::state::RemoteDrag {
+            pane_id: 1,
+            rect: crate::layout::shared::FracRect {
+                x: 0.1,
+                y: 0.1,
+                w: 0.4,
+                h: 0.4,
+            },
+        });
+        state.animation = GeometryAnimation::TileFloat;
+
+        let carried = &state.current().workspaces[0].panes[0];
+        assert!(
+            !geometry_animation_enabled(&state, carried, false),
+            "the pane being carried is reported, not derived - it must not ease"
+        );
+        let neighbour = &state.current().workspaces[0].panes[1];
+        assert!(
+            geometry_animation_enabled(&state, neighbour, false),
+            "the tile it vacated makes one discrete move, which animates"
+        );
+    }
+
+    /// The same rule from the other side: this client's own drag is direct too.
+    #[test]
+    fn a_locally_dragged_pane_tracks_directly() {
+        let mut state = shared_state(1);
+        state.animation = GeometryAnimation::TileFloat;
+        state.moving_pane = Some(crate::state::MoveSession {
+            id: 1,
+            was_floating: false,
+            drag_rect: FloatRect::default(),
+            pointer_x: 0,
+            pointer_y: 0,
+        });
+
+        let carried = &state.current().workspaces[0].panes[0];
+        assert!(!geometry_animation_enabled(&state, carried, false));
+        let neighbour = &state.current().workspaces[0].panes[1];
+        assert!(geometry_animation_enabled(&state, neighbour, false));
     }
 }

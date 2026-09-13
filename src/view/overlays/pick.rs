@@ -1,3 +1,5 @@
+use super::*;
+
 /// Room the modal frame and its padding take before a row's own text starts.
 const PICK_ROW_CHROME: usize = 4;
 /// Blank cells kept between a label and the description right-aligned after it. The description is
@@ -14,7 +16,7 @@ const PICK_MIN_DESCRIPTION: usize = 8;
 /// entirely. The label is the thing being chosen between, so it is served first; the description
 /// takes what is left, loses its tail to an ellipsis, and is dropped outright when the remainder is
 /// too small to carry meaning.
-fn fit_description(label: &str, description: &str, width: u16) -> String {
+pub(super) fn fit_description(label: &str, description: &str, width: u16) -> String {
     let available = usize::from(width).saturating_sub(PICK_ROW_CHROME);
     let budget = available
         .saturating_sub(label.chars().count())
@@ -102,15 +104,17 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
         rows.iter()
             .position(|row| row.id.as_ref().unwrap_or(&row.label) == armed)
     });
-    let mut actions = vec![OverlayAction::new(
-        "enter",
-        "select",
-        Msg::PickActivate(pick.selected),
-        pick.rows
-            .get(pick.selected)
-            .is_some_and(|row| row.disabled.is_none()),
-    )
-    .hint_only()];
+    let mut actions = vec![
+        OverlayAction::new(
+            "enter",
+            "select",
+            Msg::PickActivate(pick.selected),
+            pick.rows
+                .get(pick.selected)
+                .is_some_and(|row| row.disabled.is_none()),
+        )
+        .hint_only(),
+    ];
     actions.extend(
         pick.actions
             .iter()

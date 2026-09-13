@@ -8,7 +8,9 @@ input routing, profiles, and terminal palette synchronization.
 CLI / thin main.rs
   |
   v
-lib.rs -> app.rs: AppRoot
+lib.rs -> app/: AppRoot
+  |-- app/startup.rs  session-policy / StartupPlan
+  |-- app/entry.rs    run() / CLI dispatch
   |-- state/ + msg.rs
   |-- update/::handle_msg -> update/ and ops/
   |-- input/routing.rs -> actions.rs or pane input
@@ -62,18 +64,19 @@ claiming a new domain, so say why in the change that introduces it.
 
 1. Keys arrive through `Component::on_key` or focused terminal callbacks.
 2. `input/routing.rs` runs an app `Action` or forwards input to the session server.
-3. `actions.rs` dispatches app operations.
+3. `actions.rs` dispatches app operations. User-command execution lives in `ops/user_command.rs`.
 4. `update/mod.rs` routes messages and performs post-update synchronization.
 5. `view/` renders the canvas and overlays.
 
 Start with these paths rather than a static module inventory:
 
-- Runtime wiring: `app.rs`, `msg.rs`, `update/`, `state/`
+- Runtime wiring: `app/` (`AppRoot`, `startup.rs`, `entry.rs`), `msg.rs`, `update/`, `state/`
 - Input: `input/`, `actions.rs`, `commands.rs`
 - Panes: `pane/` (widget, `lifecycle/`, `pty_events/`, `launch.rs`, `rules.rs`)
 - Layout: `layout/` (`tiling.rs`, `geometry.rs`, `anim.rs`, `shared.rs`), `ops/resize_move/`
 - Sessions: `session/`, `ops/session/`, `layout/shared.rs`
-- Rendering: `view/`
+- Rendering: `view/` (`animation.rs` for keyed chrome/transitions; overlays are real modules)
+- Focus ops: `ops/focus/` (spatial algorithm, `requests.rs`, `workspace.rs`)
 - Platform boundary: `src/platform/mod.rs`
 
 Read `docs/sessions.md`, `docs/terminal.md`, and `docs/layouts-and-panes.md` for product behavior.

@@ -15,7 +15,7 @@ use rozi::session::headless::run_session_control;
 use rozi::session::protocol::ServerMessage;
 use rozi::session::server::ServerSettings;
 
-use crate::common::{IO_TIMEOUT, attach_client, spawn_listener};
+use crate::common::{attach_client, io_timeout, spawn_listener};
 
 fn request(command: ControlCommand) -> ControlRequest {
     ControlRequest {
@@ -55,7 +55,7 @@ fn headless_settings() -> ServerSettings {
 /// on a sleep long enough to be flaky on a loaded runner.
 #[track_caller]
 fn capture_until(session: &str, pane: u32, predicate: impl Fn(&str) -> bool) -> String {
-    let deadline = Instant::now() + IO_TIMEOUT;
+    let deadline = Instant::now() + io_timeout();
     loop {
         let data = expect_ok(
             session,
@@ -246,7 +246,7 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
 
     // Once the client lets go, the same request is simply allowed.
     drop(controller);
-    let deadline = Instant::now() + IO_TIMEOUT;
+    let deadline = Instant::now() + io_timeout();
     let allowed = loop {
         let response = control(
             &session,

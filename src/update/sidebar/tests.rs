@@ -849,10 +849,16 @@ fn host_connect_and_two_click_disconnect() {
                 "winvm".to_string(),
                 crate::config::RemoteHostConfig::default(),
             );
-            state.sidebar_visible = true;
-            state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+            // Seeded here rather than by the sweep below, which no longer runs to do it.
+            state.hosts.seed(&state.config.remote, &[], &[], &[]);
         }
-        // Seed the host registry (offline) the way opening the tab does.
+        // Disarm the sweep before touching this host's probe. Once it is anything but `Idle`,
+        // `update::hosts::sync` starts a real ssh metadata monitor for it, and whatever that finds
+        // is written over the state this test sets: on NetBSD it came back with "Could not resolve
+        // hostname winvm" and on a box with no `ssh` with "ssh was not found on PATH", either way
+        // replacing the `Reached` the assertion below is about. What is under test is that one ✕
+        // arms and a second confirms, not that a host answers.
+        open_sessions_tab_unswept(&mut backend, 9);
         backend
             .dispatch(crate::Msg::SidebarPointerMoved(0))
             .expect("run the post-update chokepoint over the open tab");

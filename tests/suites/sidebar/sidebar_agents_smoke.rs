@@ -184,7 +184,15 @@ fn agents_tab_renders_project_groups() {
             // The detail line spends its width on what the agent is doing and how long it has been
             // at it, not on repeating a status the glyph column already carries.
             assert!(sidebar.iter().any(|line| line.contains("needs approval")));
-            assert!(sidebar.iter().any(|line| line.contains("0s")));
+            // Dated `now` at pane construction, so a slow runner can tick past 0s before paint.
+            // The check is that a duration is on the detail line, not that this suite finished
+            // within one second.
+            assert!(sidebar.iter().any(|line| {
+                line.split_whitespace().any(|token| {
+                    let digits = token.strip_suffix('s').unwrap_or("");
+                    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+                })
+            }));
             assert!(
                 !sidebar
                     .iter()

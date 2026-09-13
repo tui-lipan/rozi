@@ -6,6 +6,7 @@ use super::HostRegistry;
 ///
 /// These fields are one subsystem: host registry rows, SSH monitors, probe generations, and the
 /// last-seen session cache. Overlay pickers and attachment lifecycle still live on [`super::State`].
+#[derive(Default)]
 pub struct RemoteRuntimeState {
     /// Global remote-discovery generation. Unlike picker-local state, this survives closing and
     /// reopening the picker so a late result can never match a newer request by accident.
@@ -35,21 +36,6 @@ pub struct RemoteRuntimeState {
     /// workplaces it had, rather than reading as empty. Convenience only — never authoritative, and
     /// it holds no credentials.
     pub session_cache: crate::session::HostSessionCache,
-}
-
-impl Default for RemoteRuntimeState {
-    fn default() -> Self {
-        Self {
-            probe_epoch: 0,
-            hosts: HostRegistry::default(),
-            monitors: Vec::new(),
-            monitor_generation: 0,
-            agents: HashMap::new(),
-            live_sessions: Vec::new(),
-            added_hosts: Vec::new(),
-            session_cache: crate::session::HostSessionCache::new(),
-        }
-    }
 }
 
 impl RemoteRuntimeState {

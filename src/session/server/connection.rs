@@ -92,7 +92,12 @@ impl SessionServer {
             }
             Frame::Control(message) => {
                 let is_attach = matches!(message, ClientMessage::Attach { .. });
-                let is_query = matches!(message, ClientMessage::Query { .. });
+                // Both answer one question and hang up: neither ever becomes a client, so both
+                // skip the attach requirement below and close once the reply has flushed.
+                let is_query = matches!(
+                    message,
+                    ClientMessage::Query { .. } | ClientMessage::SessionControl { .. }
+                );
                 if !is_attach && !is_query && !self.client_attached(id) {
                     self.enqueue(
                         id,
@@ -189,6 +194,29 @@ impl SessionServer {
                 min_protocol_version,
                 capabilities,
             ),
+            ClientMessage::SessionControl {
+                capabilities,
+                session,
+                protocol_version,
+                min_protocol_version,
+                request,
+            } => {
+                // Spawn policy describes the *next* pane, so a request that opens one re-reads it
+                // rather than using whatever config this server started with - which for a session
+                // nobody has attached to in a week is config from a week ago. Only spawns pay the
+                // read; a polling `list-panes` must not stat the config file every few seconds.
+                // See [`SessionServer::reload_spawn_policy`].
+                if matches!(request.command, control::ControlCommand::NewPane { .. }) {
+                    self.reload_spawn_policy();
+                }
+                self.handle_session_control(
+                    session,
+                    protocol_version,
+                    min_protocol_version,
+                    capabilities,
+                    request,
+                )
+            }
             ClientMessage::SetPaneLogging {
                 pane_id,
                 local,

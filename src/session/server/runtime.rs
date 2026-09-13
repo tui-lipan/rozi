@@ -78,8 +78,29 @@ impl SessionServer {
         if self.client_read_only(client_id) {
             return Err(("read-only", "read-only client".to_string()));
         }
+        self.apply_pane_status(
+            local.then_some(client_id),
+            pane_id,
+            generation,
+            status,
+            reason,
+        )
+    }
 
-        let owner = local.then_some(client_id);
+    /// Record a pane's reported status, with no claim about who asked.
+    ///
+    /// Split out of [`Self::set_pane_status`] so the headless control path
+    /// ([`SessionServer::handle_session_control`](super::headless)) can report the same status
+    /// without inventing a client to authorize. Everything after the caller check is identical, and
+    /// sanitization lives here so neither entry point can skip it.
+    pub(super) fn apply_pane_status(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        status: Option<String>,
+        reason: Option<String>,
+    ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
         };
@@ -197,6 +218,48 @@ impl SessionServer {
     }
 
     /// Re-read agent definitions from this server's config and re-detect every pane against them.
+    /// Re-read the launch policy a headless spawn obeys: `[[rules]]`, and the resolved
+    /// interactive-shell and command-runner argv.
+    ///
+    /// Most of [`ServerSettings`](super::ServerSettings) is deliberately a startup snapshot - a
+    /// log directory or a heartbeat timeout that changed under a running server would describe
+    /// panes it already opened. Spawn policy is not like that: it describes the *next* pane, and
+    /// a client applies the edited rules to its own spawns the moment config reloads. A server
+    /// still placing panes by a rule the user deleted days ago would put the two endpoints back
+    /// out of step, which is exactly what `pane::spawn_policy` exists to prevent.
+    ///
+    /// Read at the point of use rather than on a reload message, because the session this matters
+    /// most for has no client to send one: a detached server nobody has attached to in a week
+    /// would otherwise never hear that config changed.
+    pub(super) fn reload_spawn_policy(&mut self) {
+        let loaded = crate::config::load_config();
+        for warning in loaded.warnings {
+            eprintln!("rozi: {warning}");
+        }
+        let (shell, command_shell) = crate::platform::command::resolve_launch_argv(
+            loaded.config.shell.as_deref(),
+            loaded.config.command_shell.as_deref(),
+            &crate::platform::command::ShellEnv::from_process(),
+        );
+        self.apply_spawn_policy(loaded.config.rules, shell, command_shell);
+    }
+
+    /// Adopt resolved spawn policy.
+    ///
+    /// Split from the config read for the same reason
+    /// [`Self::apply_agent_definitions`] is: reading config under test would write into the
+    /// process-wide scratch root every other test shares.
+    pub(super) fn apply_spawn_policy(
+        &mut self,
+        rules: Vec<crate::config::RuleConfig>,
+        shell: Vec<String>,
+        command_shell: Vec<String>,
+    ) {
+        self.settings.rules = rules;
+        self.settings.shell = shell;
+        self.settings.command_shell = command_shell;
+    }
+
     pub(super) fn reload_agent_definitions(&mut self) {
         let loaded = crate::config::load_config();
         for warning in loaded.warnings {

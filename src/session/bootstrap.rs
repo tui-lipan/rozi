@@ -509,10 +509,16 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 allow_takeover,
                 created_from_profile,
             },
-            ServerMessage::SessionInfo { .. } => Msg::SessionError {
-                epoch,
-                message: String::new(),
-            },
+            // Neither reaches an attached client: a probe and a headless control request each
+            // answer their own short-lived connection. Arriving here means the server answered
+            // something this client never asked, which is a broken attach rather than a message
+            // to act on.
+            ServerMessage::SessionInfo { .. } | ServerMessage::SessionControlResult { .. } => {
+                Msg::SessionError {
+                    epoch,
+                    message: String::new(),
+                }
+            }
             ServerMessage::SessionOriginSet {
                 created_from_profile,
             } => Msg::SessionOriginSet {

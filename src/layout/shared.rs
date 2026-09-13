@@ -341,8 +341,6 @@ fn shared_workspace_from_state(
     canvas_cols: u16,
     canvas_rows: u16,
 ) -> SharedWorkspace {
-    let cols = f32::from(canvas_cols.max(1));
-    let rows = f32::from(canvas_rows.max(1));
     // The effective tree prunes to live tiled panes and appends any stragglers, so it matches the
     // layout engine's live pane set.
     let tree = crate::layout::effective_tile_tree(workspace, None)
@@ -371,12 +369,9 @@ fn shared_workspace_from_state(
                 keep_open: pane.identity.keep_open,
                 floating: pane.floating,
                 fullscreen: pane.fullscreen,
-                rect: pane.floating.then(|| FracRect {
-                    x: pane.floating_rect.x / cols,
-                    y: pane.floating_rect.y / rows,
-                    w: pane.floating_rect.w / cols,
-                    h: pane.floating_rect.h / rows,
-                }),
+                rect: pane
+                    .floating
+                    .then(|| float_rect_to_frac(pane.floating_rect, canvas_cols, canvas_rows)),
                 scrollable_width: crate::layout::tiling::sanitize_scrollable_width(
                     pane.scrollable_width,
                 ),
@@ -392,6 +387,22 @@ pub(crate) fn dwindle_from_shared(
     known: &std::collections::HashSet<PaneId>,
 ) -> Option<DwindleTree> {
     to_dwindle(tree, &|pane| known.contains(pane).then_some(*pane), true)
+}
+
+/// Express a canvas-cell rect as the canvas fractions a [`SharedPane`] stores.
+///
+/// The inverse of [`frac_rect_to_float`]. Both directions are needed by more than one caller now:
+/// a client converts its own float on the way onto the wire, and the session server converts the
+/// rect a `[[rules]]` float resolves to when it places a headless pane.
+pub(crate) fn float_rect_to_frac(rect: FloatRect, canvas_cols: u16, canvas_rows: u16) -> FracRect {
+    let cols = f32::from(canvas_cols.max(1));
+    let rows = f32::from(canvas_rows.max(1));
+    FracRect {
+        x: rect.x / cols,
+        y: rect.y / rows,
+        w: rect.w / cols,
+        h: rect.h / rows,
+    }
 }
 
 pub(crate) fn frac_rect_to_float(rect: FracRect, canvas_cols: u16, canvas_rows: u16) -> FloatRect {

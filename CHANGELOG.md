@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A detached session can be driven from a script. `rozi --session <NAME>` in front of a pane
+  command sends it to that session server instead of to a running UI, so `dev` can be listed,
+  captured, typed into, and grown a pane with nothing attached — from a shell script, a cron job,
+  or an SSH login that never starts a terminal. `list-panes`, `capture-pane`, `send-text`,
+  `send-keys`, `split`, `status`, and `metrics` are answered by the server itself, out of the
+  screens and runtime state it already owns; the reply is the same `{ok, data, error}` document
+  and the same table a UI returns. The connection is never registered as a client, so a script
+  cannot make an idle session look occupied, and a pane it opens is placed in the shared layout
+  before anyone attaches. The commands that only mean something on a screen — `focus`, workspace
+  switching, `run-action`, `notify`, `pick`, `publish`, `subscribe` — are refused by name with the
+  reason, rather than silently accepted. `--session` is local: to drive a session on another
+  machine, run the same command over `ssh`, where it is local again.
+- A session endpoint gains a script no authority an attached client would not have. Opening a pane
+  commits a layout revision, so it is refused while a client holds layout control, exactly as the
+  protocol already refuses a non-controller's spawn; typing respects the session's input lock; and
+  a request carrying extension provenance is refused outright, because the generation on it is a
+  fencing token a UI mints and only a UI can check. `[[rules]]` apply to a headless `split` the way
+  they apply to a pane a person opens — float, fullscreen, and workspace — with an explicit
+  `--workspace` still winning over the rule.
+- `status` takes `--target <PANE_ID>`, on either side of its value. It was the one pane command
+  that could only address the pane it ran inside, which a script driving a session it is not
+  running in has no way to be.
+
+### Fixed
+
+- A script's own `ROZI_PANE` can no longer address a pane in a different session. The CLI stamps
+  it on every request, and `--session` names a different pane namespace, so a job inside pane 3 of
+  `work` running `rozi --session dev send-text …` would have typed into `dev`'s pane 3 — and the
+  inherited id looked enough like an explicit `--target` that the "name a pane or get an error"
+  check never ran. A session endpoint now ignores it entirely; a pane addressing its own session
+  passes `--target "$ROZI_PANE"`.
+- A headless `split` reads `[[rules]]` and the configured shell when it spawns, not when the
+  server started. A rule edited today applies to a session server that has been running since last
+  week, which is what makes "the same spawn policy" true of the inputs and not just the code path.
+
+### Changed
+
+- Session protocol 6. The wire carries one new request and one new reply for the above; as ever,
+  client and server must be the same build, so restart a session server after upgrading.
+- `metrics` counts attached clients rather than open sockets. A discovery probe and a headless
+  control request each open one and hang up without attaching; the old count included them, so a
+  detached session asked for its own metrics reported at least one client — the request asking.
+- Launch policy that both endpoints have to agree on now lives in one place
+  (`pane/spawn_policy.rs`): what a `command`/`argv` pair means, how `[[rules]]` combine with an
+  explicit workspace and focus, and what environment a new pane starts with. `capture-pane`'s text
+  is likewise one implementation over the terminal, rather than one per endpoint.
+
 ## 0.0.18 - 2026-09-10
 
 ### Changed

@@ -158,6 +158,67 @@ restart = "on-failure"
 Unlike a hook, a subscriber can keep state and coalesce related events. Event fields are under
 `event.data`. See [Hooks](hooks.md#events-and-fields) for the event list.
 
+## Run a job in a detached session and collect its output
+
+No UI is involved. This works from cron, from CI, or over `ssh`, as long as a session named `dev`
+is running on the machine the script runs on.
+
+```sh
+#!/bin/sh
+set -eu
+session=dev
+
+# Fail early and clearly rather than in the middle of the job.
+rozi --session "$session" list-panes >/dev/null
+
+pane=$(rozi --session "$session" split --workspace 9 --title nightly 'cargo test' |
+    jq -r '.data.id')
+
+# The pane's process exiting is the job finishing; `list-panes` reports it as `exited (<CODE>)`.
+while status=$(rozi --session "$session" list-panes --format json |
+    jq -r --argjson p "$pane" '.data[] | select(.id == $p) | .status'); do
+    case "$status" in
+        exited*) break ;;
+        "") echo "pane $pane disappeared" >&2; exit 1 ;;
+    esac
+    sleep 5
+done
+
+rozi --session "$session" capture-pane --target "$pane" --scrollback full --format text
+case "$status" in
+    "exited (0)") exit 0 ;;
+    *) exit 1 ;;
+esac
+```
+
+The pane stays in workspace 9 with its scrollback intact, so the failure is still there to look at
+when someone attaches. Use `--workspace` for exactly that reason: a pane spawned into the workspace
+someone is working in re-tiles their layout.
+
+`split` is refused while a client holds layout control of the session, so a job like this belongs
+on a session nobody is sitting in — which is the case it is for. The `list-panes` check at the top
+is what turns "someone is attached" into one clear failure instead of a surprise halfway through.
+
+To do the same on another machine, run the same script over `ssh` — `--session` is local only, and
+`ssh workbox rozi --session dev …` makes it local again.
+
+## Report a script's progress into a session
+
+A long job can report its own status onto the pane it runs in, which is what the sidebar's Activity
+list and the pane border read. A session endpoint always wants the pane named, because a pane id
+means nothing without the session it belongs to — a job inside the session it is reporting on
+passes its own `ROZI_PANE`:
+
+```sh
+ROZI=${ROZI_BIN:-rozi}
+pane=${ROZI_PANE:?run this inside a rozi pane, or pass a pane id}
+"$ROZI" --session dev status working --target "$pane" --reason "building"
+trap '"$ROZI" --session dev status --clear --target "$pane"' EXIT
+```
+
+Only pass `$ROZI_PANE` to the session that pane is actually in. It is a bare number: `--session`
+somewhere else would be naming a different pane that happens to share the id.
+
 ## Publish a build row
 
 `rozi publish` reads complete JSON row snapshots. This publisher reports whether Cargo is running:

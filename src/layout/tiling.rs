@@ -2133,6 +2133,43 @@ mod tests {
         );
     }
 
+    /// A pane the workspace holds but the tiling tree does not mention is still placed.
+    ///
+    /// This is what lets the session server append a headless `split` to the shared layout's pane
+    /// list and leave the workspace's tree alone (see `session/server/headless.rs`): a client
+    /// reconciling that document rebuilds the tree from `SharedWorkspace::tree`, which knows
+    /// nothing about the new pane, and this is the step that puts the pane on screen anyway —
+    /// without disturbing the split ratio someone deliberately dragged.
+    #[test]
+    fn a_workspace_pane_missing_from_the_tree_is_appended_rather_than_dropped() {
+        use crate::state::Pane;
+
+        let mut workspace = Workspace::new(0);
+        for id in [1, 2, 3] {
+            workspace
+                .panes
+                .push(Pane::new(id, 100, FloatRect::default()));
+        }
+        // The document's tree carries only the two panes that existed when it was written.
+        workspace.tile_tree = build_dwindle_tree(&[1, 2], SplitAxis::Horizontal, &[0.8]);
+
+        let tree = effective_tile_tree(&workspace, None).expect("a populated workspace has a tree");
+        for id in [1, 2, 3] {
+            assert!(tree_contains(&tree, id), "pane {id} was dropped");
+        }
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        workspace.tile_tree = Some(tree);
+        let columns = dwindle_columns(&workspace, rect);
+        assert_eq!(columns.len(), 3, "every pane gets a slot: {columns:?}");
+        // The deliberate 80/20 boundary the first split carried is still where it was.
+        assert_close(columns[0].2, 79.0);
+    }
+
     #[test]
     fn edge_resize_targets_grabbed_left_boundary_not_deeper_right_boundary() {
         let mut workspace = Workspace::new(0);

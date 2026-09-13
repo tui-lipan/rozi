@@ -1,12 +1,46 @@
 # Control CLI
 
-The `rozi` CLI can inspect and control a running UI without mounting another interface. Use it for
-shell scripts, hooks, services, and extensions. See [Scripting](scripting.md) for a short start and
+The `rozi` CLI can inspect and control a running UI without mounting another interface, and can
+inspect and drive a named session that has no UI at all. Use it for shell scripts, hooks, services,
+and extensions. See [Scripting](scripting.md) for a short start and
 [Control protocol](control-protocol.md) for raw transport and NDJSON.
+
+## Two endpoints
+
+A control command talks to one of two things:
+
+| Endpoint | Selected by | Serves |
+| --- | --- | --- |
+| A running UI | `--socket`, `ROZI_SOCKET`, or discovery | Every command. |
+| A named session server | `--session <NAME>` | The commands a server can answer without a screen. |
+
+`--session` needs nothing to be running but the session itself. A detached `dev` can be listed,
+captured, typed into, and grown a pane from a shell script or an SSH login that never starts a
+terminal UI.
+
+```sh
+rozi --session dev list-panes
+rozi --session dev capture-pane --target 3
+rozi --session dev send-keys --target 3 'cargo test' Enter
+rozi --session dev split --workspace 9 --argv cargo watch -x test
+```
+
+The two endpoints return the same `{ok, data, error}` document and the same tables, so a script
+reads one format either way.
+
+A session endpoint serves what a server can decide on its own. It does not gain a script any
+authority an attached client would not have: opening a pane still needs the layout-control lease to
+be free, typing still respects the session's input lock, and a request carrying extension
+provenance is refused because a server cannot check whether that extension is still active (see
+[Extensions and `--session`](#extensions-and-session)).
+
+`--session` and `--socket` name different endpoints and cannot be combined. A bare session name is
+a launch target, not a control target: `rozi dev` starts a UI, so `rozi dev list-panes` is refused
+and points at `--session dev` instead.
 
 ## Endpoint discovery
 
-Control commands choose an endpoint in this order:
+Without `--session`, control commands choose a UI endpoint in this order:
 
 1. `--socket PATH`
 2. `ROZI_SOCKET`
@@ -25,33 +59,42 @@ On Windows, pass the discovery-entry path to the CLI. Do not read the entry and 
 pipe name.
 
 Every local pane receives `ROZI=1`, `ROZI_PANE`, and, when control is available, `ROZI_SOCKET` and
-`ROZI_BIN`. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`.
+`ROZI_BIN`. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and neither
+does a pane opened by `rozi --session <NAME> split`: there is no UI for those to name. Such a pane
+still reaches its own session with `rozi --session <NAME>`.
 
 ## Commands
 
 Put `--socket PATH` before the command when selecting an endpoint explicitly.
 
-| Command | Purpose |
-| --- | --- |
-| `list-panes [--format text\|json]` | List panes visible to this UI attachment. |
-| `metrics [--format text\|json]` | Read bounded client and cached server resource counters. |
-| `focus <PANE_ID>` | Focus a pane. |
-| `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. |
-| `send-keys [--target <PANE_ID>] [-l\|--literal] [--] <KEY\|TEXT>...` | Send named keys and text. |
-| `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Spawn a pane. |
-| `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. |
-| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--format text\|json]` | Print pane text. |
-| `switch-workspace <1-9>` | Switch the active workspace. |
-| `move-to-workspace <1-9>` | Move the focused pane. |
-| `status <VALUE> [--reason TEXT]` | Report status for the source or focused pane. |
-| `status --clear` | Clear reported status. |
-| `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Show a toast. |
-| `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. |
-| `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. |
-| `publish` | Publish Activity rows over stdin and receive activations on stdout. |
+`--session` column: whether the command also works against a session server with no UI attached.
 
-Control commands reject launch-only options such as `--remote`, `--config`, `--read-only`,
-`--profile`, `--pick`, and a session target. The endpoint always belongs to a local UI process.
+| Command | Purpose | `--session` |
+| --- | --- | --- |
+| `list-panes [--format text\|json]` | List panes visible to this endpoint. | yes |
+| `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
+| `focus <PANE_ID>` | Focus a pane. | no |
+| `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. | yes |
+| `send-keys [--target <PANE_ID>] [-l\|--literal] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
+| `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Spawn a pane. | yes |
+| `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
+| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--format text\|json]` | Print pane text. | yes |
+| `switch-workspace <1-9>` | Switch the active workspace. | no |
+| `move-to-workspace <1-9>` | Move the focused pane. | no |
+| `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
+| `status --clear [--target <PANE_ID>]` | Clear reported status. | yes |
+| `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Show a toast. | no |
+| `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
+| `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
+| `publish` | Publish Activity rows over stdin and receive activations on stdout. | no |
+
+Control commands reject launch-only options: `--remote`, `--config`, `--read-only`, `--profile`,
+and `--pick`. `--session <NAME>` is the one target they accept, and only a local one — reaching a
+session on another machine still means running `rozi` there, over `ssh`.
+
+A `no` command refused against a session says what it needed a UI for. Focus, the active workspace,
+toasts, pickers, and actions are client-local by design: a session server has no screen to move
+focus on and no overlay to draw.
 
 ## Output
 
@@ -61,14 +104,34 @@ when redirected. Use `--format text` or `--format json` to choose explicitly.
 Other successful one-shot commands print a short acknowledgement on a terminal. Redirected output
 keeps the JSON response. Errors go to stderr in human mode.
 
-`list-panes` describes only the UI endpoint that answered. It includes the current attachment and
-client-local scratch panes, not every named session. Use `rozi sessions list` to discover session
-servers.
+`list-panes` describes only the endpoint that answered. From a UI it includes the current
+attachment and client-local scratch panes, not every named session; from `--session` it includes
+every pane in that session, including panes whose process has exited, which report
+`exited (<CODE>)` instead of `ready`. Use `rozi sessions list` to discover session servers.
 
 ## Target selection
 
-Commands that accept `--target` use it first. Otherwise the CLI sends `ROZI_PANE` as
-`source_pane`. If neither is available, Rozi uses the focused pane.
+Commands that accept `--target` use it first.
+
+Against a **UI endpoint**, the CLI otherwise sends `ROZI_PANE` as `source_pane`, and Rozi falls
+back to the focused pane.
+
+Against a **session endpoint**, `ROZI_PANE` is not sent and not honoured. A pane id says nothing
+about which session it belongs to, and `--session` names a different one than the caller is
+sitting in: a script inside pane 3 of `work` running `rozi --session dev send-text …` would
+otherwise type into `dev`'s pane 3, a pane it never looked at. So a session endpoint takes
+`--target` or resolves a session with exactly one pane, and otherwise fails with the ids to choose
+from:
+
+```text
+session `dev` has 3 panes and no focused pane; pass --target (ids: 1, 2, 5)
+```
+
+A pane addressing its own session names itself explicitly:
+
+```sh
+rozi --session dev status working --target "$ROZI_PANE"
+```
 
 Target a pane explicitly when a script drives a pane it created:
 
@@ -93,6 +156,33 @@ Options:
 - `--focus`
 - `--keep-open`
 - `--argv PROGRAM [ARG...]`
+
+Against `--session`, `split` commits the layout revision itself, so a client attaching later finds
+the pane already placed. `[[rules]]` apply exactly as they do to a pane a person opens: a rule may
+float it, make it fullscreen, and choose its workspace, and an explicit `--workspace` still wins
+over the rule. Without either, the pane lands in workspace 1. The workspace's tiling arrangement is
+left alone: the new pane is tiled beside the others when a client draws it, and a deliberate split
+ratio survives.
+
+Three refusals are specific to a session endpoint:
+
+- **A client holds layout control.** Opening a shared pane means committing a layout revision over
+  whatever that client is arranging, which is the controller's call — the session protocol already
+  refuses the same thing from a non-controller client. Detach it, or ask it to open the pane.
+  Reading and typing never needed the lease and keep working.
+- **`--focus`** — there is no focus to move.
+- **The session has panes but no layout document**, which happens only if nothing ever attached to
+  place them. Committing one would claim the other panes do not exist, so the spawn is refused
+  instead.
+
+A headless pane's environment is `ROZI` and `ROZI_PANE` only. `ROZI_SOCKET` and `ROZI_BIN` name a
+UI process and there is not one, and the desktop variables a client forwards (`DISPLAY`,
+`WAYLAND_DISPLAY`, and whatever `[environment] forward` adds) are deliberately not taken from the
+one-shot CLI process either: that process is gone seconds later, and the pane is not.
+
+`[[rules]]` and the configured shell are read from the server's config when the spawn happens, not
+when the server started, so an edited rule applies to the next headless `split` without restarting
+a session that has been running for days.
 
 A positional `COMMAND` is interpreted by the configured `command_shell`. `--argv` launches a
 program directly and consumes the remaining arguments, so all pane options must come first.
@@ -134,8 +224,9 @@ Destructive actions honor `[confirm]`.
 
 `status` accepts short free-form values. `working`, `blocked`, `done`, and `idle` have built-in
 presentation. Values are limited to 64 characters and reasons to 256 after display-text
-sanitization. The update is queued to the session server, so a successful reply does not guarantee
-that every client has rendered it.
+sanitization. `--target` may be written on either side of the value, and is the only way to name a
+pane from a script that is not running inside one. The update is queued to the session server, so a
+successful reply does not guarantee that every client has rendered it.
 
 Use `notify` for failures and successful results that are otherwise off screen:
 
@@ -204,6 +295,51 @@ screen to several activities.
 See [Published activity protocol](control-protocol.md#published-activity-stream) and
 [Sidebar](sidebar.md).
 
+## Driving a detached session
+
+`--session <NAME>` reaches the session server directly. Nothing has to be attached, and nothing
+becomes attached: the request is answered and the connection closes, so the session's client count
+and layout control are untouched and a script cannot make an empty session look occupied.
+
+```sh
+#!/bin/sh
+# Start a build in a session nobody is looking at, then read the result back.
+pane=$(rozi --session dev split 'cargo test' | jq -r '.data.id')
+until rozi --session dev list-panes --format json |
+  jq -e --argjson p "$pane" '.data[] | select(.id == $p and (.status | startswith("exited")))' \
+  >/dev/null; do
+  sleep 2
+done
+rozi --session dev capture-pane --target "$pane" --scrollback full --format text
+```
+
+The session must already exist. Start one with `rozi sessions new dev`, or leave a detached
+`rozi dev` running.
+
+There is no event stream against a session endpoint. `subscribe` reports UI events, which a server
+does not raise; poll `list-panes` for pane lifecycle, reported status, and detected agent state
+instead — all three are server-owned and current in every reply.
+
+## Extensions and `--session`
+
+The CLI stamps every request with the calling extension's id and generation when it finds
+`ROZI_EXTENSION` in the environment. That generation is a fencing token a running rozi mints on
+each config reload, so a disabled or reloaded extension's leftover processes stop being obeyed.
+
+A session server cannot check it — the token is minted per UI process and the server never sees it
+— so it refuses such requests rather than honouring a fence nobody checked:
+
+```text
+a session server cannot check whether extension `git-tools` is still active, and will not act on
+its behalf; reach a running rozi instead, or clear ROZI_EXTENSION when the caller is not the
+extension
+```
+
+An extension that wants to drive a session should go through a running rozi, which does check. A
+person typing in a pane that an extension happened to open inherits `ROZI_EXTENSION` from it and
+hits the same refusal; `env -u ROZI_EXTENSION rozi --session …` says the request is theirs, not the
+extension's.
+
 ## Session lifecycle
 
 These commands use session endpoints rather than a UI control endpoint:
@@ -223,6 +359,13 @@ Remote forms are limited to session lifecycle:
 ```sh
 rozi sessions list --remote workbox
 rozi sessions kill dev --remote workbox
+```
+
+`--session` control commands are local only. To drive a session on another machine, run the same
+command over `ssh`, where it is local again:
+
+```sh
+ssh workbox rozi --session dev capture-pane --target 3
 ```
 
 See [Sessions](sessions.md) and [Remote sessions](remote.md).

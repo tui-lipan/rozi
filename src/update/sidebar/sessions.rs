@@ -66,7 +66,7 @@ pub(crate) fn refresh_sessions(ctx: &mut Context<AppRoot>, epoch: u64) -> Update
     // Host workers own remote I/O independently of sidebar visibility.
     let probe_targets = Vec::new();
     let mut attached = attached;
-    attached.extend(ctx.state.host_live_sessions.clone());
+    attached.extend(ctx.state.remote.live_sessions.clone());
     Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
         let (rows, host_status) = crate::ops::session::discover_sidebar_sessions(
             current_name.as_deref(),
@@ -100,7 +100,7 @@ pub(crate) fn sessions_discovered(
             .retain(|row| row.remote_target.is_none());
         for row in crate::ops::session::attached_session_rows(&ctx.state)
             .into_iter()
-            .chain(ctx.state.host_live_sessions.clone())
+            .chain(ctx.state.remote.live_sessions.clone())
         {
             crate::ops::session::discovery::merge_current_session_row(
                 &mut ctx.state.sidebar.sessions,
@@ -109,8 +109,8 @@ pub(crate) fn sessions_discovered(
         }
         crate::ops::session::discovery::push_cached_known_remote_rows(
             &mut ctx.state.sidebar.sessions,
-            &ctx.state.hosts,
-            &ctx.state.host_session_cache,
+            &ctx.state.remote.hosts,
+            &ctx.state.remote.session_cache,
             &[],
         );
         crate::ops::session::discovery::sort_session_rows(&mut ctx.state.sidebar.sessions);
@@ -129,21 +129,23 @@ pub(crate) fn sessions_discovered(
             // Only persist a real change, and never write an empty list for a host that never had
             // one cached — there is nothing to remember, and it keeps the sweep from creating a
             // file on the first probe of a session-less host.
-            let known =
-                crate::session::host_cache_contains_target(&ctx.state.host_session_cache, &target);
+            let known = crate::session::host_cache_contains_target(
+                &ctx.state.remote.session_cache,
+                &target,
+            );
             if (!sessions.is_empty() || known)
-                && crate::session::host_sessions_for(&ctx.state.host_session_cache, &target)
+                && crate::session::host_sessions_for(&ctx.state.remote.session_cache, &target)
                     != Some(sessions.as_slice())
             {
                 crate::session::record_host_sessions(&target, sessions.clone());
                 crate::session::set_cached_host_sessions(
-                    &mut ctx.state.host_session_cache,
+                    &mut ctx.state.remote.session_cache,
                     &target,
                     sessions,
                 );
             }
         }
-        if let Some(entry) = ctx.state.hosts.get_mut(&target) {
+        if let Some(entry) = ctx.state.remote.hosts.get_mut(&target) {
             entry.probe = match status {
                 Some(error) => crate::state::HostProbe::Failed(error),
                 None => crate::state::HostProbe::Reached,
@@ -172,7 +174,7 @@ pub(crate) fn connect_host(
     ctx: &mut Context<AppRoot>,
     target: crate::session::remote::RemoteTarget,
 ) -> Update {
-    let Some(entry) = ctx.state.hosts.get_mut(&target) else {
+    let Some(entry) = ctx.state.remote.hosts.get_mut(&target) else {
         return Update::none();
     };
     if matches!(entry.probe, crate::state::HostProbe::InFlight) {
@@ -180,7 +182,8 @@ pub(crate) fn connect_host(
     }
     entry.probe = crate::state::HostProbe::InFlight;
     ctx.state
-        .host_monitors
+        .remote
+        .monitors
         .retain(|monitor| monitor.target != target);
     ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
     Update::full()

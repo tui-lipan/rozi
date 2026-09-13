@@ -153,6 +153,7 @@ pub(crate) fn host_connection_status(
         .map(|attachment| attachment.connection)
         .collect();
     state
+        .remote
         .hosts
         .status_for(target, connections.iter(), has_sessions)
 }
@@ -296,7 +297,7 @@ pub(crate) fn host_agent_label(
     {
         return None;
     }
-    let agents = state.host_agents.get(target)?;
+    let agents = state.remote.agents.get(target)?;
     let mine = agents.iter().filter(|agent| agent.session == entry.name);
     // Severity order, the same rule pane chrome uses over a set of published rows: one blocked
     // agent outranks any number of working ones, and any working one outranks the finished. Idle
@@ -423,7 +424,7 @@ mod tests {
         // Nothing known about the host at all: no token, not an empty one.
         assert_eq!(host_agent_label(&state, &entry), None);
 
-        state.host_agents.insert(
+        state.remote.agents.insert(
             target.clone(),
             vec![
                 summary("dev", 1, "Codex", "working"),
@@ -439,7 +440,7 @@ mod tests {
         );
 
         // Several in the winning bucket: a count, since no single label describes them.
-        state.host_agents.insert(
+        state.remote.agents.insert(
             target.clone(),
             vec![
                 summary("dev", 1, "Codex", "blocked"),
@@ -452,7 +453,7 @@ mod tests {
         );
 
         // A custom status is an active run, by the same rule the pane chrome uses.
-        state.host_agents.insert(
+        state.remote.agents.insert(
             target.clone(),
             vec![summary("dev", 1, "Codex", "running tests")],
         );
@@ -463,7 +464,8 @@ mod tests {
 
         // Quiet agents say nothing at all.
         state
-            .host_agents
+            .remote
+            .agents
             .insert(target.clone(), vec![summary("dev", 1, "Codex", "idle")]);
         assert_eq!(host_agent_label(&state, &entry), None);
     }
@@ -476,7 +478,8 @@ mod tests {
         let mut state =
             crate::state::State::new(crate::config::Config::default(), Theme::default());
         state
-            .host_agents
+            .remote
+            .agents
             .insert(target.clone(), vec![summary("dev", 1, "Codex", "blocked")]);
         let entry = discovered("dev", &target);
         assert_eq!(

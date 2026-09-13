@@ -14,7 +14,7 @@ lib.rs -> app/: AppRoot
   |-- state/ + msg.rs
   |-- update/::handle_msg -> update/ and ops/
   |-- input/routing.rs -> actions.rs or pane input
-  |-- view/ -> Canvas, panes, workbar, overlays
+  |-- view/ -> Canvas, workbar, workspace, overlays
   |
   +--> session/client <-> session/server <-> server-owned PTYs
 ```
@@ -65,18 +65,20 @@ claiming a new domain, so say why in the change that introduces it.
 1. Keys arrive through `Component::on_key` or focused terminal callbacks.
 2. `input/routing.rs` runs an app `Action` or forwards input to the session server.
 3. `actions.rs` dispatches app operations. User-command execution lives in `ops/user_command.rs`.
+   Persisted appearance/workbar/animation preferences live in `ops/preferences.rs`.
 4. `update/mod.rs` routes messages and performs post-update synchronization.
 5. `view/` renders the canvas and overlays.
 
 Start with these paths rather than a static module inventory:
 
 - Runtime wiring: `app/` (`AppRoot`, `startup.rs`, `entry.rs`), `msg.rs`, `update/`, `state/`
-- Input: `input/`, `actions.rs`, `commands.rs`
+- Input: `input/`, `actions.rs`, `commands/` (`catalog.rs` + `registry.rs`)
 - Panes: `pane/` (widget, `lifecycle/`, `pty_events/`, `launch.rs`, `rules.rs`)
 - Layout: `layout/` (`tiling.rs`, `geometry.rs`, `anim.rs`, `shared.rs`), `ops/resize_move/`
 - Sessions: `session/`, `ops/session/`, `layout/shared.rs`
-- Rendering: `view/` (`animation.rs` for keyed chrome/transitions; overlays are real modules)
+- Rendering: `view/` (`animation.rs` for keyed chrome/transitions; `workspace.rs` for tiled/float layers; overlays are real modules)
 - Focus ops: `ops/focus/` (spatial algorithm, `requests.rs`, `workspace.rs`)
+- Remote runtime: `state::RemoteRuntimeState` (`state.remote`)
 - Platform boundary: `src/platform/mod.rs`
 
 Read `docs/sessions.md`, `docs/terminal.md`, and `docs/layouts-and-panes.md` for product behavior.

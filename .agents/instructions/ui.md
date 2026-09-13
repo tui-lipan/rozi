@@ -33,7 +33,7 @@ For a new picker:
 2. Add select and activate messages in `msg.rs`, routed through `update/mod.rs`.
 3. Handle activation in `update/overlays.rs`. Disabled rows do nothing. Settings overlays reopen,
    restore their highlight, and reclaim focus after changes.
-4. Add the opening `Action` to both `input.rs` and `commands.rs`.
+4. Add the opening `Action` to both `input.rs` and `commands/catalog.rs`.
 5. Use `ops/overlay_return.rs` only when the picker can open from another overlay.
 
 Right-align row status with `ItemDescription`. Follow nearby overlays rather than exporting tiny

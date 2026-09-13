@@ -87,7 +87,7 @@ pub(crate) fn local_picker_rows(ctx: &Context<AppRoot>) -> Vec<DiscoveredSession
     let mut rows =
         crate::session::discovery::discover_selectable_sessions(current_name).unwrap_or_default();
     push_attached_session_rows(ctx, &mut rows);
-    for row in &ctx.state.host_live_sessions {
+    for row in &ctx.state.remote.live_sessions {
         merge_current_session_row(&mut rows, row.clone());
     }
     rows
@@ -98,8 +98,8 @@ pub(crate) fn immediate_picker_rows(ctx: &mut Context<AppRoot>) -> Vec<Discovere
     let mut rows = local_picker_rows(ctx);
     push_cached_known_remote_rows(
         &mut rows,
-        &ctx.state.hosts,
-        &ctx.state.host_session_cache,
+        &ctx.state.remote.hosts,
+        &ctx.state.remote.session_cache,
         &[],
     );
     sort_session_rows(&mut rows);
@@ -126,14 +126,14 @@ pub(crate) fn apply_discovered_sessions(
     for target in &successful_targets {
         let sessions = cached_sessions_for_target(&rows, target);
         let known =
-            crate::session::host_cache_contains_target(&ctx.state.host_session_cache, target);
+            crate::session::host_cache_contains_target(&ctx.state.remote.session_cache, target);
         if (!sessions.is_empty() || known)
-            && crate::session::host_sessions_for(&ctx.state.host_session_cache, target)
+            && crate::session::host_sessions_for(&ctx.state.remote.session_cache, target)
                 != Some(sessions.as_slice())
         {
             crate::session::record_host_sessions(target, sessions.clone());
             crate::session::set_cached_host_sessions(
-                &mut ctx.state.host_session_cache,
+                &mut ctx.state.remote.session_cache,
                 target,
                 sessions,
             );
@@ -143,15 +143,15 @@ pub(crate) fn apply_discovered_sessions(
     // merges by identity, so whichever row lands first is the one that survives. Cached rows are
     // marked "last seen" now, and a session on screen must never wear that.
     push_attached_session_rows(ctx, &mut rows);
-    for row in &ctx.state.host_live_sessions {
+    for row in &ctx.state.remote.live_sessions {
         merge_current_session_row(&mut rows, row.clone());
     }
     // A failed (or not-yet-run) host probe keeps its last successful snapshot visible. Successful
     // hosts use only the fresh rows above, including an empty result which clears stale sessions.
     push_cached_known_remote_rows(
         &mut rows,
-        &ctx.state.hosts,
-        &ctx.state.host_session_cache,
+        &ctx.state.remote.hosts,
+        &ctx.state.remote.session_cache,
         &successful_targets,
     );
     sort_session_rows(&mut rows);
@@ -437,9 +437,9 @@ pub(crate) fn held_host_targets(
 /// [`crate::state::HostRegistry::seed`]).
 pub(crate) fn seed_host_registry(ctx: &mut Context<AppRoot>) {
     // Disk first, then anything added this run that did not reach it. The roster the user can see
-    // must not depend on a write having succeeded — see [`crate::state::State::added_hosts`].
+    // must not depend on a write having succeeded — see [`crate::state::RemoteRuntimeState::added_hosts`].
     let mut saved = crate::session::read_saved_hosts();
-    for target in &ctx.state.added_hosts {
+    for target in &ctx.state.remote.added_hosts {
         if !saved.contains(target) {
             saved.push(target.clone());
         }
@@ -448,12 +448,13 @@ pub(crate) fn seed_host_registry(ctx: &mut Context<AppRoot>) {
     let held = held_host_targets(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
     ctx.state
+        .remote
         .hosts
         .seed(&remote_config, &saved, &recents, &held);
     // Load the persisted last-seen sessions once the known hosts exist, so an offline host can
     // still list its workplaces. Empty on first run or any read error.
-    if ctx.state.host_session_cache.is_empty() {
-        ctx.state.host_session_cache = crate::session::read_host_session_cache();
+    if ctx.state.remote.session_cache.is_empty() {
+        ctx.state.remote.session_cache = crate::session::read_host_session_cache();
     }
 }
 

@@ -68,7 +68,8 @@ pub(crate) fn activate(ctx: &mut Context<AppRoot>, location: AgentLocation) -> U
         } => {
             let Some(entry) = ctx
                 .state
-                .host_live_sessions
+                .remote
+                .live_sessions
                 .iter()
                 .find(|entry| {
                     entry.name == session && entry.remote_target.as_ref() == Some(&target)
@@ -229,7 +230,7 @@ mod tests {
     fn the_overlay_lists_an_agent_on_another_machine() {
         on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
-            backend.state_mut().host_agents.insert(
+            backend.state_mut().remote.agents.insert(
                 RemoteTarget::Alias("workbox".into()),
                 vec![crate::session::protocol::AgentSummary {
                     session: "backend".into(),

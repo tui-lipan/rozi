@@ -3,8 +3,10 @@
 ## Actions and commands
 
 `input.rs` is the source of truth for `Action`, `Action::id()`, and `BINDABLE_ACTIONS`.
-`commands.rs` owns `BUILTIN_COMMANDS`, including labels, descriptions, groups, and default keys.
-Help and command palettes render from that registry. Adding an action normally requires both files.
+`commands/catalog.rs` owns `BUILTIN_COMMANDS`, including labels, descriptions, groups, and default keys.
+`commands/registry.rs` registers those commands, resolves bindings, and computes availability.
+Help and command palettes render from that registry. Adding an action normally requires `input.rs`
+and `commands/catalog.rs`.
 
 `[keys]` may rebind built-in actions or define `run` and `send` commands. Keep parsing in
 `config/input.rs` and routing through the existing action/command paths.

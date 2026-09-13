@@ -904,16 +904,18 @@ pub(crate) fn disconnect_host(
     ctx: &mut Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> Update {
-    ctx.state.host_agents.remove(target);
+    ctx.state.remote.agents.remove(target);
     ctx.state
-        .host_monitors
+        .remote
+        .monitors
         .retain(|monitor| &monitor.target != target);
     ctx.state
-        .host_live_sessions
+        .remote
+        .live_sessions
         .retain(|row| row.remote_target.as_ref() != Some(target));
     // Back to `Idle`, which is what stops the sweep probing it — done here rather than at each call
     // site so disconnecting from the picker stops the ssh traffic the same way the sidebar does.
-    if let Some(entry) = ctx.state.hosts.get_mut(target) {
+    if let Some(entry) = ctx.state.remote.hosts.get_mut(target) {
         entry.probe = crate::state::HostProbe::Idle;
     }
     // The launcher's scope is a place to work, and this host is no longer one.

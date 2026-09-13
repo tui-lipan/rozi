@@ -16,6 +16,7 @@ mod layout;
 mod mode;
 mod pane;
 mod pickers;
+mod remote;
 mod search;
 mod services;
 mod session;
@@ -33,6 +34,7 @@ pub use layout::*;
 pub use mode::*;
 pub use pane::*;
 pub use pickers::*;
+pub use remote::*;
 pub use search::*;
 pub use services::*;
 pub use session::*;
@@ -215,9 +217,8 @@ pub struct State {
     pub agent_picker: Option<AgentPickerState>,
     /// The pane the Agents view aimed at, waiting for the session that owns it to arrive.
     pub pending_agent_jump: Option<PendingAgentJump>,
-    /// Global remote-discovery generation. Unlike picker-local state, this survives closing and
-    /// reopening the picker so a late result can never match a newer request by accident.
-    pub remote_probe_epoch: u64,
+    /// Live remote-host monitors, caches, and discovery. Overlay pickers stay on this struct.
+    pub remote: RemoteRuntimeState,
     pub collaboration: Option<CollaborationState>,
     /// Raised when an attach lands on a session another client is actively controlling, so
     /// following is something the user chooses rather than something that happens to them.
@@ -329,31 +330,6 @@ pub struct State {
     /// queued input. Matches [`crate::state::Attachment::pending_replay_inputs`] for the shared
     /// namespace, which it always flushes behind so a restored pane runs its own command first.
     pub pending_control_input: HashMap<(bool, PaneId, u64), Vec<u8>>,
-    /// Known remote hosts for the unified Sessions view: configured aliases, recent ad-hoc targets,
-    /// and hosts a live attachment targets. Seeded when the Sessions view opens; carries the
-    /// per-host expand/collapse and error state that must survive the recurring session sweep.
-    pub hosts: HostRegistry,
-    pub(crate) host_monitors: Vec<crate::session::remote::monitor::Monitor>,
-    pub(crate) host_monitor_generation: u64,
-    /// The last agent snapshot each connected host's monitor reported, keyed the way every other
-    /// runtime map on a host is. Absent for a host that is disconnected, unreachable, or forgotten.
-    pub(crate) host_agents:
-        HashMap<crate::session::remote::RemoteTarget, Vec<crate::session::protocol::AgentSummary>>,
-    pub(crate) host_live_sessions: Vec<crate::session::discovery::DiscoveredSession>,
-    /// Hosts added or edited in **Remote hosts** during this run, merged into the saved roster
-    /// whenever the registry is reseeded.
-    ///
-    /// The roster is normally read back from disk, which makes every row depend on a write having
-    /// succeeded — and a write into a state directory that is not private to its owner does not.
-    /// Holding them here too means a host the user just added is listed for the rest of the
-    /// session whatever the filesystem did, so a failed connection leaves a row to retry rather
-    /// than a toast about a host that is no longer anywhere.
-    pub added_hosts: Vec<crate::session::remote::RemoteTarget>,
-    /// Last-seen sessions per remote host, loaded from disk when the Sessions view is seeded and
-    /// refreshed on each successful probe. Lets an offline or unreachable host still list the
-    /// workplaces it had, rather than reading as empty. Convenience only — never authoritative, and
-    /// it holds no credentials.
-    pub host_session_cache: crate::session::HostSessionCache,
     /// A destructive action armed by its first press; the second press only fires while the arm
     /// time is within [`crate::ops::confirm::CONFIRM_WINDOW`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
@@ -502,7 +478,7 @@ impl State {
             remote_picker: None,
             agent_picker: None,
             pending_agent_jump: None,
-            remote_probe_epoch: 0,
+            remote: RemoteRuntimeState::default(),
             collaboration: None,
             follow_prompt: None,
             askpass: None,
@@ -540,13 +516,6 @@ impl State {
             pending_control_reply: None,
             pending_spawn_replies: HashMap::new(),
             pending_control_input: HashMap::new(),
-            hosts: HostRegistry::default(),
-            host_monitors: Vec::new(),
-            host_monitor_generation: 0,
-            host_agents: HashMap::new(),
-            host_live_sessions: Vec::new(),
-            added_hosts: Vec::new(),
-            host_session_cache: crate::session::HostSessionCache::new(),
             pending_destructive: None,
             confirm_epoch: 0,
             next_parked_seq: 0,
@@ -719,8 +688,7 @@ impl State {
     }
 
     pub(crate) fn mint_remote_probe_epoch(&mut self) -> u64 {
-        self.remote_probe_epoch = self.remote_probe_epoch.wrapping_add(1);
-        self.remote_probe_epoch
+        self.remote.mint_probe_epoch()
     }
 
     /// Parked sessions worth returning to, most recently used first.

@@ -12,12 +12,13 @@ pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
     let held = crate::ops::session::discovery::held_host_targets(&ctx.state);
     if held
         .iter()
-        .any(|(target, _)| ctx.state.hosts.get(target).is_none())
+        .any(|(target, _)| ctx.state.remote.hosts.get(target).is_none())
     {
         crate::ops::session::seed_host_registry(ctx);
     }
     let mut targets: Vec<_> = ctx
         .state
+        .remote
         .hosts
         .iter()
         .filter(|host| {
@@ -50,19 +51,21 @@ pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
         }
     }
     ctx.state
-        .host_monitors
+        .remote
+        .monitors
         .retain(|monitor| targets.contains(&monitor.target));
     for target in targets {
         if ctx
             .state
-            .host_monitors
+            .remote
+            .monitors
             .iter()
             .any(|monitor| monitor.target == target)
         {
             continue;
         }
-        ctx.state.host_monitor_generation = ctx.state.host_monitor_generation.wrapping_add(1);
-        let generation = ctx.state.host_monitor_generation;
+        ctx.state.remote.monitor_generation = ctx.state.remote.monitor_generation.wrapping_add(1);
+        let generation = ctx.state.remote.monitor_generation;
         let destination = target.clone();
         let link = link.clone();
         let monitor = crate::session::remote::monitor::start(
@@ -82,7 +85,7 @@ pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
                 });
             },
         );
-        ctx.state.host_monitors.push(monitor);
+        ctx.state.remote.monitors.push(monitor);
     }
 }
 
@@ -95,31 +98,33 @@ pub(crate) fn apply(
 ) -> Update {
     if !ctx
         .state
-        .host_monitors
+        .remote
+        .monitors
         .iter()
         .any(|monitor| monitor.target == target && monitor.generation == generation)
     {
         return Update::none();
     }
     ctx.state
-        .host_live_sessions
+        .remote
+        .live_sessions
         .retain(|row| row.remote_target.as_ref() != Some(&target));
     match rows {
         Ok(rows) => {
             apply_agents(ctx, &target, agents);
             let cached = crate::ops::session::discovery::cached_sessions_for_target(&rows, &target);
-            if crate::session::host_sessions_for(&ctx.state.host_session_cache, &target)
+            if crate::session::host_sessions_for(&ctx.state.remote.session_cache, &target)
                 != Some(cached.as_slice())
             {
                 crate::session::record_host_sessions(&target, cached.clone());
                 crate::session::set_cached_host_sessions(
-                    &mut ctx.state.host_session_cache,
+                    &mut ctx.state.remote.session_cache,
                     &target,
                     cached,
                 );
             }
-            ctx.state.host_live_sessions.extend(rows);
-            if let Some(host) = ctx.state.hosts.get_mut(&target) {
+            ctx.state.remote.live_sessions.extend(rows);
+            if let Some(host) = ctx.state.remote.hosts.get_mut(&target) {
                 host.probe = crate::state::HostProbe::Reached;
             }
         }
@@ -127,8 +132,8 @@ pub(crate) fn apply(
             // The snapshot that would have refreshed these never arrived, and a remembered agent
             // state is worse than none: the sidebar's cached rows already say "last seen", and a
             // `blocked` token beside one would claim a live prompt on a machine nothing can reach.
-            ctx.state.host_agents.remove(&target);
-            if let Some(host) = ctx.state.hosts.get_mut(&target) {
+            ctx.state.remote.agents.remove(&target);
+            if let Some(host) = ctx.state.remote.hosts.get_mut(&target) {
                 host.probe = crate::state::HostProbe::Failed(error);
             }
         }
@@ -139,7 +144,7 @@ pub(crate) fn apply(
         .retain(|row| row.remote_target.as_ref() != Some(&target));
     for row in crate::ops::session::attached_session_rows(&ctx.state)
         .into_iter()
-        .chain(ctx.state.host_live_sessions.clone())
+        .chain(ctx.state.remote.live_sessions.clone())
     {
         crate::ops::session::discovery::merge_current_session_row(
             &mut ctx.state.sidebar.sessions,
@@ -148,8 +153,8 @@ pub(crate) fn apply(
     }
     crate::ops::session::discovery::push_cached_known_remote_rows(
         &mut ctx.state.sidebar.sessions,
-        &ctx.state.hosts,
-        &ctx.state.host_session_cache,
+        &ctx.state.remote.hosts,
+        &ctx.state.remote.session_cache,
         &[],
     );
     crate::ops::session::discovery::sort_session_rows(&mut ctx.state.sidebar.sessions);
@@ -181,7 +186,11 @@ fn apply_agents(
     target: &RemoteTarget,
     agents: Vec<crate::session::protocol::AgentSummary>,
 ) {
-    let previous = ctx.state.host_agents.insert(target.clone(), agents.clone());
+    let previous = ctx
+        .state
+        .remote
+        .agents
+        .insert(target.clone(), agents.clone());
     let Some(previous) = previous else {
         return;
     };
@@ -243,15 +252,17 @@ mod tests {
                     let state = backend.state_mut();
                     state.command_link = None;
                     state.sidebar_visible = false;
-                    state.hosts.seed(
+                    state.remote.hosts.seed(
                         &state.config.remote,
                         std::slice::from_ref(&target),
                         &[],
                         &[],
                     );
-                    state.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::Reached;
+                    state.remote.hosts.get_mut(&target).unwrap().probe =
+                        crate::state::HostProbe::Reached;
                     state
-                        .host_monitors
+                        .remote
+                        .monitors
                         .push(Monitor::dormant(target.clone(), 7));
                 }
                 let row = DiscoveredSession {
@@ -274,7 +285,7 @@ mod tests {
                         rows: Ok(vec![row.clone()]),
                     })
                     .unwrap();
-                assert_eq!(backend.state().host_live_sessions, vec![row.clone()]);
+                assert_eq!(backend.state().remote.live_sessions, vec![row.clone()]);
                 assert!(!backend.state().sidebar_visible);
                 backend
                     .dispatch(Msg::HostMetadata {
@@ -284,14 +295,19 @@ mod tests {
                         rows: Err("offline".into()),
                     })
                     .unwrap();
-                assert!(backend.state().host_live_sessions.is_empty());
+                assert!(backend.state().remote.live_sessions.is_empty());
                 assert!(backend.state().sidebar.sessions.iter().any(|row| matches!(
                     row.status,
                     crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 2 }
                 )));
-                backend.state_mut().host_monitors.clear();
-                backend.state_mut().hosts.get_mut(&target).unwrap().probe =
-                    crate::state::HostProbe::Idle;
+                backend.state_mut().remote.monitors.clear();
+                backend
+                    .state_mut()
+                    .remote
+                    .hosts
+                    .get_mut(&target)
+                    .unwrap()
+                    .probe = crate::state::HostProbe::Idle;
                 backend
                     .dispatch(Msg::HostMetadata {
                         agents: Vec::new(),
@@ -300,9 +316,9 @@ mod tests {
                         rows: Ok(vec![row]),
                     })
                     .unwrap();
-                assert!(backend.state().host_live_sessions.is_empty());
+                assert!(backend.state().remote.live_sessions.is_empty());
                 assert_eq!(
-                    backend.state().hosts.get(&target).unwrap().probe,
+                    backend.state().remote.hosts.get(&target).unwrap().probe,
                     crate::state::HostProbe::Idle
                 );
             })
@@ -337,15 +353,17 @@ mod tests {
                 {
                     let state = backend.state_mut();
                     state.command_link = None;
-                    state.hosts.seed(
+                    state.remote.hosts.seed(
                         &state.config.remote,
                         std::slice::from_ref(&target),
                         &[],
                         &[],
                     );
-                    state.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::Reached;
+                    state.remote.hosts.get_mut(&target).unwrap().probe =
+                        crate::state::HostProbe::Reached;
                     state
-                        .host_monitors
+                        .remote
+                        .monitors
                         .push(Monitor::dormant(target.clone(), 3));
                 }
                 let metadata = |agents: Vec<crate::session::protocol::AgentSummary>,
@@ -362,7 +380,7 @@ mod tests {
                     .dispatch(metadata(vec![summary("dev", "working")], Ok(Vec::new())))
                     .unwrap();
                 assert_eq!(
-                    backend.state().host_agents[&target],
+                    backend.state().remote.agents[&target],
                     vec![summary("dev", "working")]
                 );
 
@@ -371,14 +389,14 @@ mod tests {
                     .dispatch(metadata(vec![summary("dev", "blocked")], Ok(Vec::new())))
                     .unwrap();
                 assert_eq!(
-                    backend.state().host_agents[&target],
+                    backend.state().remote.agents[&target],
                     vec![summary("dev", "blocked")]
                 );
 
                 backend
                     .dispatch(metadata(Vec::new(), Err("offline".into())))
                     .unwrap();
-                assert!(!backend.state().host_agents.contains_key(&target));
+                assert!(!backend.state().remote.agents.contains_key(&target));
             })
             .unwrap()
             .join()

@@ -28,7 +28,7 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         // Says which machines were asked, not merely that the answer was empty: nothing running on
         // a client connected to nowhere is not news, and nothing running across four connected
         // hosts is.
-        match ctx.state.host_agents.len() {
+        match ctx.state.remote.agents.len() {
             0 => "No agents running here".to_string(),
             1 => "No agents running here or on the connected host".to_string(),
             count => format!("No agents running here or on {count} connected hosts"),

@@ -102,14 +102,14 @@ fn an_attached_remote_session_outranks_its_own_cached_row() {
                 state.current_mut().remote_host = Some("winvm".to_string());
                 state.current_mut().remote_target = Some(target.clone());
                 state.current_mut().session_attached = true;
-                state.hosts.seed(
+                state.remote.hosts.seed(
                     &crate::config::RemoteConfig::default(),
                     std::slice::from_ref(&target),
                     &[],
                     &[],
                 );
                 crate::session::set_cached_host_sessions(
-                    &mut state.host_session_cache,
+                    &mut state.remote.session_cache,
                     &target,
                     vec![crate::session::CachedHostSession {
                         name: "dev".to_string(),
@@ -825,7 +825,7 @@ fn killing_the_last_attached_session_stays_sessionless_without_auto_attach() {
                 state.current_mut().session_client = Some(client);
                 state.current_mut().pending_session_attach = None;
                 state.background.clear();
-                state.host_session_cache.clear();
+                state.remote.session_cache.clear();
                 state.show_session_picker = false;
                 state.session_picker = None;
             }

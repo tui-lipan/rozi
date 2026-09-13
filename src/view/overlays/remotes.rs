@@ -13,7 +13,7 @@ fn remote_host_description(
     ctx: &Context<AppRoot>,
     entry: &crate::state::HostEntry,
 ) -> ItemDescription {
-    let cached = crate::session::host_sessions_for(&ctx.state.host_session_cache, &entry.target)
+    let cached = crate::session::host_sessions_for(&ctx.state.remote.session_cache, &entry.target)
         .map(|sessions| sessions.len())
         .unwrap_or_default();
     let status = remote_host_status(ctx, &entry.target);
@@ -52,6 +52,7 @@ fn remote_host_label(
 ) -> String {
     let duplicate_label = ctx
         .state
+        .remote
         .hosts
         .iter()
         .filter(|candidate| candidate.alias == alias)
@@ -85,6 +86,7 @@ fn remote_hosts_overlay(
         .is_some_and(|target| crate::ops::session::remotes::host_can_edit(&ctx.state, target));
     let entries = ctx
         .state
+        .remote
         .hosts
         .iter()
         .map(|entry| {
@@ -114,7 +116,7 @@ fn remote_hosts_overlay(
     // of the two the highlighted row will get.
     let selected_reached = selected_target.as_ref().is_some_and(|target| {
         matches!(
-            ctx.state.hosts.get(target).map(|entry| &entry.probe),
+            ctx.state.remote.hosts.get(target).map(|entry| &entry.probe),
             Some(crate::state::HostProbe::Reached)
         )
     });
@@ -162,6 +164,7 @@ fn remote_hosts_overlay(
             crate::state::HostStatus,
         )> = ctx
             .state
+            .remote
             .hosts
             .iter()
             .map(|entry| (entry.target.clone(), remote_host_status(ctx, &entry.target)))
@@ -204,7 +207,7 @@ fn remote_selected_host<'a>(
 ) -> Option<&'a crate::state::HostEntry> {
     let selected = picker.selected_host.as_ref()?;
     let query = picker.host_input.text().trim().to_ascii_lowercase();
-    ctx.state.hosts.get(selected).filter(|entry| {
+    ctx.state.remote.hosts.get(selected).filter(|entry| {
         query.is_empty()
             || entry.alias.to_ascii_lowercase().contains(&query)
             || entry.target.to_spec().to_ascii_lowercase().contains(&query)

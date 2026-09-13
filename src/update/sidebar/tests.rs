@@ -850,7 +850,7 @@ fn host_connect_and_two_click_disconnect() {
                 crate::config::RemoteHostConfig::default(),
             );
             // Seeded here rather than by the sweep below, which no longer runs to do it.
-            state.hosts.seed(&state.config.remote, &[], &[], &[]);
+            state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
         }
         // Disarm the sweep before touching this host's probe. Once it is anything but `Idle`,
         // `update::hosts::sync` starts a real ssh metadata monitor for it, and whatever that finds
@@ -863,7 +863,7 @@ fn host_connect_and_two_click_disconnect() {
             .dispatch(crate::Msg::SidebarPointerMoved(0))
             .expect("run the post-update chokepoint over the open tab");
         assert!(
-            backend.state().hosts.get(&target).is_some(),
+            backend.state().remote.hosts.get(&target).is_some(),
             "the configured host is seeded into the registry"
         );
 
@@ -876,15 +876,20 @@ fn host_connect_and_two_click_disconnect() {
             .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
             .expect("connect through host row");
         assert_eq!(
-            backend.state().hosts.get(&target).unwrap().probe,
+            backend.state().remote.hosts.get(&target).unwrap().probe,
             crate::state::HostProbe::InFlight,
             "connecting marks the host in flight"
         );
 
         // Now online, the row is one line and carries no activation at all: disconnecting is its
         // ✕, which takes the same two clicks every other closable row does.
-        backend.state_mut().hosts.get_mut(&target).unwrap().probe =
-            crate::state::HostProbe::Reached;
+        backend
+            .state_mut()
+            .remote
+            .hosts
+            .get_mut(&target)
+            .unwrap()
+            .probe = crate::state::HostProbe::Reached;
         backend.state_mut().sidebar.sessions.clear();
         backend
             .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
@@ -897,19 +902,24 @@ fn host_connect_and_two_click_disconnect() {
             "the first ✕ arms the confirmation"
         );
         assert_eq!(
-            backend.state().hosts.get(&target).unwrap().probe,
+            backend.state().remote.hosts.get(&target).unwrap().probe,
             crate::state::HostProbe::Reached,
             "and changes nothing yet"
         );
 
-        backend.state_mut().hosts.get_mut(&target).unwrap().probe =
-            crate::state::HostProbe::Reached;
+        backend
+            .state_mut()
+            .remote
+            .hosts
+            .get_mut(&target)
+            .unwrap()
+            .probe = crate::state::HostProbe::Reached;
         backend.state_mut().sidebar.sessions.clear();
         backend
             .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
             .expect("confirm disconnect");
         assert_eq!(
-            backend.state().hosts.get(&target).unwrap().probe,
+            backend.state().remote.hosts.get(&target).unwrap().probe,
             crate::state::HostProbe::Idle,
             "confirming disconnect returns the host to offline"
         );
@@ -1230,7 +1240,7 @@ fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
             state.runtime_epoch = state.mint_attachment_id();
 
             // Online, and armed, so the next ✕ on the host row commits the disconnect.
-            state.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::Reached;
+            state.remote.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::Reached;
             state.sidebar.pending_row_close = Some(crate::state::SidebarClose::Host {
                 target: target.clone(),
             });
@@ -1361,7 +1371,7 @@ fn a_connected_host_is_still_swept_after_a_probe_fails() {
             })
             .expect("failed probe");
         assert!(matches!(
-            backend.state().hosts.get(&target).unwrap().probe,
+            backend.state().remote.hosts.get(&target).unwrap().probe,
             crate::state::HostProbe::Failed(_)
         ));
 
@@ -1372,7 +1382,13 @@ fn a_connected_host_is_still_swept_after_a_probe_fails() {
         );
 
         // Disconnecting is what takes it out.
-        backend.state_mut().hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::Idle;
+        backend
+            .state_mut()
+            .remote
+            .hosts
+            .get_mut(&target)
+            .unwrap()
+            .probe = crate::state::HostProbe::Idle;
         assert!(!probe_targets_for_test(backend.state()).contains(&target));
     });
 }
@@ -1382,6 +1398,7 @@ fn probe_targets_for_test(
     state: &crate::state::State,
 ) -> Vec<crate::session::remote::RemoteTarget> {
     state
+        .remote
         .hosts
         .iter()
         .filter(|host| {
@@ -1426,7 +1443,14 @@ fn host_probe_errors_are_recorded_then_cleared() {
             })
             .expect("failed probe");
         assert_eq!(
-            backend.state().hosts.get(&target).unwrap().probe.error(),
+            backend
+                .state()
+                .remote
+                .hosts
+                .get(&target)
+                .unwrap()
+                .probe
+                .error(),
             Some("no route to host")
         );
 
@@ -1438,7 +1462,7 @@ fn host_probe_errors_are_recorded_then_cleared() {
             })
             .expect("recovered probe");
         assert_eq!(
-            backend.state().hosts.get(&target).unwrap().probe,
+            backend.state().remote.hosts.get(&target).unwrap().probe,
             crate::state::HostProbe::Reached
         );
     });

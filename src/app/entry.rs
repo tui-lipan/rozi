@@ -274,7 +274,7 @@ pub fn run() -> Result<()> {
         .frame_rate(plan.config.frame_rate)
         .mouse(true)
         // Leader chords (`ctrl-a c`) and WM-modifier chords (`alt-c`) are executable command
-        // shortcuts (see `commands.rs`), not a framework keymap file - resolve them ahead of
+        // shortcuts (see `commands/`), not a framework keymap file - resolve them ahead of
         // focused widgets/terminal passthrough so they win regardless of what has focus.
         .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
         .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)

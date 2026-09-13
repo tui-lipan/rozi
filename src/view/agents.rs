@@ -99,7 +99,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
             });
         }
     }
-    for (target, agents) in &state.host_agents {
+    for (target, agents) in &state.remote.agents {
         let host = target.display_label();
         for agent in agents {
             // The session on screen is already listed from its live panes, which are fresher than a
@@ -172,7 +172,8 @@ mod tests {
         );
         for (alias, agents) in hosts {
             state
-                .host_agents
+                .remote
+                .agents
                 .insert(RemoteTarget::Alias((*alias).into()), agents.clone());
         }
         state

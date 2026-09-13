@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::Child;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -15,7 +16,7 @@ use rozi::session::protocol::{
 };
 use rozi::session::server::{ServerSettings, SessionServer, bind_session_socket, session_endpoint};
 
-/// Deadline for every wait in this harness.
+/// Default deadline for every wait in this harness.
 ///
 /// This is a safety net against a hang, not an assertion about speed: a wait returns the moment its
 /// condition holds, so a generous value costs nothing on a passing run and only changes how long a
@@ -23,7 +24,29 @@ use rozi::session::server::{ServerSettings, SessionServer, bind_session_socket, 
 /// intermittently on CI - a shared runner with a few vCPUs, executing test binaries in parallel,
 /// while each of these spawns a real session server or subprocess - and the test that lost the race
 /// moved from run to run.
-pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_IO_TIMEOUT_SECS: u64 = 30;
+
+/// The deadline in force, which `ROZI_TEST_IO_TIMEOUT_SECS` may raise.
+///
+/// Thirty seconds is ample on a runner and marginal in an emulated one: the NetBSD job builds and
+/// runs inside qemu, where `change_scan_reports_repository_state_from_the_server_host` spent the
+/// whole budget waiting to be granted control and failed on the deadline rather than on anything it
+/// asserts. Raising the constant for everyone would slow down how fast a genuine hang is reported
+/// on the three platforms that do not need it, so the slow machine says so instead.
+///
+/// Read once, and only read: a test must never `set_var` this, and the NetBSD job passes it in the
+/// environment the way an isolated child process is given one.
+pub(crate) fn io_timeout() -> Duration {
+    static TIMEOUT: OnceLock<Duration> = OnceLock::new();
+    *TIMEOUT.get_or_init(|| {
+        let secs = std::env::var("ROZI_TEST_IO_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .filter(|secs| *secs > 0)
+            .unwrap_or(DEFAULT_IO_TIMEOUT_SECS);
+        Duration::from_secs(secs.max(DEFAULT_IO_TIMEOUT_SECS))
+    })
+}
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -64,7 +87,7 @@ impl ServerGuard {
     }
 
     pub(crate) fn wait_for_exit(&mut self) {
-        let deadline = Instant::now() + IO_TIMEOUT;
+        let deadline = Instant::now() + io_timeout();
         loop {
             if self
                 .child_mut()
@@ -103,10 +126,10 @@ pub(crate) struct TestConnection {
 impl TestConnection {
     fn new(stream: IpcConnection) -> Self {
         stream
-            .set_read_timeout(Some(IO_TIMEOUT))
+            .set_read_timeout(Some(io_timeout()))
             .expect("set client read timeout");
         stream
-            .set_write_timeout(Some(IO_TIMEOUT))
+            .set_write_timeout(Some(io_timeout()))
             .expect("set client write timeout");
         Self {
             stream,
@@ -164,7 +187,7 @@ impl TestConnection {
                 Err(_) => break,
             }
         }
-        let _ = self.stream.set_read_timeout(Some(IO_TIMEOUT));
+        let _ = self.stream.set_read_timeout(Some(io_timeout()));
     }
 }
 
@@ -187,7 +210,7 @@ impl ListenerGuard {
         let Some(thread) = self.thread.take() else {
             return;
         };
-        let deadline = Instant::now() + IO_TIMEOUT;
+        let deadline = Instant::now() + io_timeout();
         // Held, not dropped, once the shutdown is sent. Attaching seeds this client with the whole
         // session state; if it stops reading, that backlog passes `max_backlog` and the server
         // drops it as a slow consumer - throwing away the `Shutdown` sitting unread in the other
@@ -230,7 +253,7 @@ impl ListenerGuard {
             shutdown_client.expect("could not acquire control to stop test server");
         // Bound the join too. Every other wait here has a deadline, and a listener that misses the
         // shutdown would otherwise park the whole test binary indefinitely instead of failing.
-        let join_deadline = Instant::now() + IO_TIMEOUT;
+        let join_deadline = Instant::now() + io_timeout();
         while !thread.is_finished() {
             assert!(
                 Instant::now() < join_deadline,
@@ -292,7 +315,7 @@ pub(crate) fn read_until(
 ) {
     let started = Instant::now();
     let mut frames = 0_usize;
-    if let Err(failure) = read_until_deadline(client, started + IO_TIMEOUT, |frame| {
+    if let Err(failure) = read_until_deadline(client, started + io_timeout(), |frame| {
         frames += 1;
         done(frame)
     }) {
@@ -374,7 +397,7 @@ pub(crate) fn attach_client(
 }
 
 pub(crate) fn connect_when_ready(endpoint: &IpcEndpoint, child: &mut Child) -> TestConnection {
-    let deadline = Instant::now() + IO_TIMEOUT;
+    let deadline = Instant::now() + io_timeout();
     loop {
         if let Ok(stream) = IpcConnection::connect(endpoint) {
             return TestConnection::new(stream);

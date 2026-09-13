@@ -140,8 +140,14 @@ jobs:
             /usr/sbin/pkg_add -u git-base || /usr/sbin/pkg_add -u git
             /usr/pkg/bin/python3 --version
             /usr/pkg/bin/git --version
+          # The harness's own waits are a safety net against a hang, not a speed assertion, and
+          # thirty seconds of it is ample on a runner and marginal inside qemu: one session test
+          # spent the whole budget waiting to be granted control and failed on the deadline rather
+          # than on anything it asserts. The slow machine raises it rather than every platform
+          # paying for this one.
           run: |
             export PATH=/usr/pkg/bin:$PATH
+            export ROZI_TEST_IO_TIMEOUT_SECS=120
             cd $GITHUB_WORKSPACE
             cargo --version
             cargo build --locked

@@ -270,7 +270,7 @@ fn host_backend(probe: HostProbe) -> TestBackend<AppRoot> {
     // Without this the sweep discovers whatever sessions other test binaries left in the real
     // runtime directory, which shifts every row under the pointer mid-test.
     rozi::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(AppRoot::default());
+    let mut backend = settled_unswept_backend();
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -295,6 +295,37 @@ fn host_backend(probe: HostProbe) -> TestBackend<AppRoot> {
         .get_mut(&RemoteTarget::Alias("workbox".into()))
         .expect("workbox")
         .probe = probe;
+    backend
+}
+
+/// A mounted backend with its refresh loop disarmed, for a test that states a host's condition
+/// rather than observing one.
+///
+/// Every probe these tests inject - `Reached` and `Failed` alike - puts the host in the set
+/// `update::hosts::sync` watches, so an armed command link starts a *real* ssh metadata monitor
+/// for it. That monitor reports its own outcome, `update::hosts::apply` writes it over the
+/// injected one, and the row ends up showing the reason the machine found instead of the reason
+/// the test set. Whichever lands last wins, so the same assertion passes or fails by how quickly
+/// the machine can fail: a host with no `ssh` answers instantly with "ssh not installed here", and
+/// a resolver that knows `workbox` is bogus answers nearly as fast with "Unknown host name".
+///
+/// The order matters, the same way it does for `open_sessions_tab_unswept` in the sidebar unit
+/// tests. The mount is what delivers the link, so it has to arrive before it can be dropped:
+/// disarming first and settling after just hands the link straight back. The sidebar must also
+/// still be closed while it settles, because `command_link_ready` kicks an immediate sweep when it
+/// finds the tab already open.
+fn settled_unswept_backend() -> TestBackend<AppRoot> {
+    let mut backend = TestBackend::new(AppRoot::default());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while backend.state().command_link.is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the mount never delivered the command link"
+        );
+        backend.pump().expect("settle the mount");
+        std::thread::yield_now();
+    }
+    backend.state_mut().command_link = None;
     backend
 }
 

@@ -9,8 +9,14 @@ proc_start() { sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'; }
 declare -A OWNED_START=()
 
 own() { # pid
-  local pid=$1 exe
-  exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || { echo "own: $pid has no exe" >&2; return 1; }
+  local pid=$1 exe attempt
+  # `$!` names the forked shell until it execs, so give the exec a moment before judging the binary.
+  # Refusing too early made a caller exit without cleanup and leave its processes running.
+  for attempt in $(seq 50); do
+    exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || { echo "own: $pid has no exe" >&2; return 1; }
+    case $exe in "$EXP_DIR"/rozi-*|/usr/bin/script) break ;; esac
+    sleep 0.02
+  done
   case $exe in
     "$EXP_DIR"/rozi-*|/usr/bin/script) ;;
     *) echo "own: refusing $pid ($exe)" >&2; return 1 ;;

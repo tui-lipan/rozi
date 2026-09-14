@@ -1,162 +1,151 @@
 ---
 name: rozi
-description: "Control rozi, a modern tiling terminal multiplexer for coding agents. Use only when the user explicitly asks to control rozi panes or sessions, or asks to use rozi. Pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
+description: "Inspect and control Rozi terminal panes and sessions. Use only when the user explicitly asks to use Rozi. UI pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
 ---
 
 # Rozi
 
-Rozi runs real terminal panes in a tiling UI and can keep named session servers alive across
-clients. Use this skill only for an explicit rozi request.
+Rozi is a terminal multiplexer with a CLI for controlling a running UI or a detached named session.
+Use this skill only when the user explicitly asks to use Rozi or control a Rozi pane or session.
 
-Before any pane-control command, verify that this agent is running in a rozi-managed pane with a
-local UI endpoint:
+## Choose the endpoint
+
+- A **UI endpoint** controls the session shown by a running Rozi, including focus and overlays.
+  Commands use `--socket PATH`, then `ROZI_SOCKET`, then the only live local UI endpoint.
+- A **session endpoint** controls an existing local named session without opening or attaching a UI.
+  Select it with `--session <NAME>`.
+
+Before using a UI endpoint, confirm this agent is inside one of its local panes:
 
 ```bash
 test "${ROZI:-}" = 1 && test -n "${ROZI_SOCKET:-}"
 ```
 
-If the check fails, say that pane control is unavailable and stop. Do not inspect or control an
-arbitrary focused UI from outside a managed pane.
+If that fails, UI pane control is unavailable. Never control an arbitrary focused UI from outside
+one of its panes. This check is not required when the user explicitly names a detached session.
 
-## Learn the current CLI
-
-The installed binary is the authority for syntax. Start with:
+The installed binary defines current syntax. Check it when unsure:
 
 ```bash
 rozi --help
 ```
 
-Do not run bare `rozi` for discovery: it launches or attaches the TUI.
+Do not run bare `rozi` for discovery. It launches or attaches the TUI. Likewise, `rozi dev` launches
+a UI; `rozi --session dev <COMMAND>` controls the `dev` session server.
 
-## Endpoint and caller context
+## Inspect, then act
 
-The control endpoint is private and belongs to the **local rozi UI process**. Control endpoint
-selection is `--socket PATH`, then `ROZI_SOCKET`, then the only live local endpoint found in the
-runtime directory. `ROZI_SOCKET` is the endpoint path, not a named-session server endpoint.
-
-Use the injected endpoint explicitly when needed:
+Always read live pane ids. Never infer an id from pane order, a title, or an example.
 
 ```bash
-rozi --socket "$ROZI_SOCKET" list-panes --format json
-```
-
-Every pane receives `ROZI_PANE=<numeric live pane id>`. The CLI copies that value into
-`source_pane` when a command supports source targeting. An omitted target normally means the source
-pane, otherwise the UI-focused pane. `focus` requires a numeric id and `capture-pane` accepts
-`--target`; the CLI forms of `send-text`, `send-keys`, `split`, and `status` act on the injected
-source pane and do not accept a pane-id argument.
-
-`--remote` is **not** a control-socket option. When the UI is attached with `--remote`, its
-`ROZI_SOCKET` is still the local UI endpoint and controls the session shown by that UI. Do not
-try to point `--socket` at an SSH transport or remote server endpoint. Remote session discovery and
-server shutdown use the separate helpers below: `sessions list --remote` and
-`sessions kill --remote`.
-Processes inside a remote pane intentionally do not receive that local `ROZI_SOCKET`, so the
-initial pane-control check fails there rather than exposing the local UI endpoint remotely.
-
-## Inspect and control panes
-
-Use `--format json` for report commands that an agent consumes. An interactive terminal otherwise
-gets tables or pane text, while redirected stdout selects JSON automatically. Server-side failures
-are JSON errors in JSON mode; local discovery/connect failures are plain stderr. Pane ids are
-numeric. Read live ids from `list-panes` JSON and reuse those ids; do not predict ids from pane order
-or examples.
-
-```bash
+# Session shown by this UI
 rozi list-panes --format json
-rozi focus <PANE_ID>
-rozi send-text 'cargo test
-'
-rozi send-keys C-c
-rozi send-keys 'echo hi' Enter
-rozi send-keys -l C-c
-rozi send-keys -- -n hello
-rozi split [COMMAND]
-rozi split [COMMAND] --focus  # also move focus to the new pane
-rozi capture-pane --format json
 rozi capture-pane --target <PANE_ID> --format json
-rozi capture-pane --scrollback 200 --format json
-rozi capture-pane --scrollback full --format json
-rozi capture-pane --last-output --format json
-rozi status <VALUE> [--reason <TEXT>]
-rozi status --clear
-rozi notify <MESSAGE> [--title <TEXT>] [--level info|error]
-rozi pick [--title <TEXT>] [--placeholder <TEXT>]
-rozi publish
+
+# Detached named session
+rozi --session dev list-panes --format json
+rozi --session dev capture-pane --target <PANE_ID> --format json
 ```
 
-`send-keys` accepts tmux-style names such as `C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,
-`BSpace`, arrows, `Home`/`End`, `PgUp`/`PgDn`, and `F1`..`F12`, mixed with literal text. `-l` or
-`--literal` makes every argument literal. `--` ends option parsing.
-
-`capture-pane` defaults to the visible grid. `--scrollback N` captures trailing history,
-`--scrollback full` captures all retained history, and `--last-output` captures the last shell
-integration command output. `status` reports a short pane status; `status --clear` removes it.
-`notify` raises a toast, for a result the user cannot otherwise see - a command that finished with
-no pane to print in. Do not use it to announce something already visible on screen.
-`pick` streams candidate rows from stdin into a modal search palette and prints the selected item id to stdout upon user choice (or exits 1 if cancelled).
-`publish` is for a program running several agents or activities in one pane: it bridges stdin/stdout to
-rozi, publishing one JSON row list per line and reading back `{"activate":"<id>"}` when a user
-clicks a row. It runs until closed, and closing withdraws the pane's rows. See
-`docs/control.md`.
-
-The CLI command is `split`; the control-protocol wire verb it sends is `new-pane`. `split` waits
-for the pane's PTY and replies with a numeric `id`, `accepted:true`, and
-`pty_ready`. `pty_ready:true` means input sent to that id will reach the shell. A slow spawn (a
-`--remote` session, say) can still answer `pty_ready:true` late or fall back to `pty_ready:false`
-after about five seconds; a `pty_ready:false` pane is starting, not broken. A spawn that fails
-answers with a JSON error instead.
-
-`split` does **not** move focus. The user keeps typing wherever they were, and the new
-pane is reachable by id. Pass `--focus` only when the user asked to be taken to the new pane. A
-matched `[[rules]]` entry still decides workspace, float, and fullscreen placement.
-
-`send-text`/`send-keys` aimed at a pane whose PTY is still starting are queued as type-ahead and
-written once the shell is up, the same as typing into a freshly split pane. Input to a pane that has
-exited or failed to spawn still fails with `PTY is not running`.
-
-Other current control commands are `metrics`, `run-action <ACTION_ID>`, `switch-workspace <1-9>`,
-and `move-to-workspace <1-9>`. `run-action` uses stable keybinding/command-palette action ids; use
-only an id listed by `rozi --help` or the command palette, never a guessed id.
-
-## Controller, read-only, and input-lock limits
-
-- A layout controller is required for `split`, layout-mutating `run-action` calls, and
-  moving a pane to another workspace. A writable follower receives `not controller` until it takes
-  control; do not repeatedly retry it.
-- Read-only clients cannot type, set pane status, or mutate shared layout.
-- Input lock blocks typing from writable followers; the controller can still input.
-- `focus`, `capture-pane`, and other local view operations do not grant layout control. Avoid
-  changing focus unless the user asks for it.
-
-## Named sessions
-
-Session lifecycle commands are separate from the local UI control endpoint:
+Inspect a pane before sending input unless the user gave an exact live id and exact input. Target
+other panes explicitly so focus never decides where input goes.
 
 ```bash
-rozi sessions list
+rozi send-text --target <PANE_ID> 'literal text'
+rozi send-keys --target <PANE_ID> Enter
+rozi send-keys --target <PANE_ID> C-c
+rozi send-keys --target <PANE_ID> 'echo hi' Enter
+rozi status working --reason 'running tests'
+rozi status --clear
+rozi --session dev send-keys --target <PANE_ID> 'cargo test' Enter
+rozi --session dev status --target <PANE_ID> working --reason 'running tests'
+rozi --session dev status --clear --target <PANE_ID>
+```
+
+`send-text` sends its argument exactly and does not press Enter. `send-keys` accepts text and
+tmux-style names such as `Enter`, `Escape`, `C-c`, arrows, `Tab`, and `F1` through `F12`. Add
+`--literal` when a key-like argument such as `C-c` must be typed literally.
+
+Use `--format json` for agent-readable output. `list-panes`, `capture-pane`, and `metrics` support
+it. Capture options include `--scrollback 200`, `--scrollback full`, and `--last-output`.
+
+Re-read pane ids before acting after a delay or any layout or session change.
+
+## Target rules
+
+On a UI endpoint, omitted targets use this pane's numeric `ROZI_PANE`, then the focused pane. Use
+`--target` for another pane.
+
+A session endpoint ignores `ROZI_PANE` because `--session` selects a different pane namespace. It
+accepts `--target`, or falls back only when that session has exactly one pane. Agents should always
+pass `--target` after reading that session's ids. `--socket` and `--session` cannot be combined.
+
+## Split and UI-only commands
+
+```bash
+rozi split [COMMAND]
+rozi split --workspace 9 --argv cargo test -- --nocapture
+rozi --session dev split --workspace 9 --argv cargo test -- --nocapture
+```
+
+By default, `split` does **not** move focus. Its JSON response contains the new pane id;
+`pty_ready:true` means its shell can receive input.
+
+If `pty_ready:false`, the pane exists and is still starting. **Do not split again.** Send input to
+its id; Rozi queues it as type-ahead.
+
+A detached split applies current `[[rules]]`, but it is refused while an attached client holds
+layout control. `--focus` has no meaning without a UI.
+
+Other UI-only tools:
+
+```bash
+rozi focus <PANE_ID>                         # only when the user asks
+rozi run-action <ACTION_ID>                  # never guess an id
+rozi notify 'tests failed' --title Build --level error
+branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) || exit 0
+rozi subscribe pane-exited pane-status-changed
+```
+
+Use `notify` only for results the user cannot already see. Plain `pick` prints the chosen input line;
+cancellation exits 1. `subscribe` streams `{event,data}` JSON rows. `publish` is a long-lived
+bidirectional stream: write complete `{"rows":[...]}` snapshots and read `{"activate":"<id>"}`;
+closing it withdraws the rows. `switch-workspace` and `move-to-workspace` also require a UI.
+
+A detached endpoint supports `list-panes`, `metrics`, `send-text`, `send-keys`, `capture-pane`,
+`split`, and `status`. Input still obeys the session's input lock.
+
+## Detached-session limits
+
+`--session` control is local. To control another host, run Rozi there:
+
+```bash
+ssh workbox rozi --session dev capture-pane --target <PANE_ID>
+```
+
+A pane created through detached `split` receives `ROZI` and `ROZI_PANE`, but no `ROZI_SOCKET` or
+`ROZI_BIN` because no UI exists. Requests carrying `ROZI_EXTENSION` are refused because a session
+server cannot validate the extension generation. Clear it only when the caller is a person who
+inherited the variable, not the extension itself.
+
+## Session lifecycle
+
+```bash
 rozi sessions list --format json
 rozi sessions attach <NAME>
-rozi sessions attach <NAME> --read-only
-rozi sessions new <NAME>
-rozi sessions new <NAME> --profile <PROFILE>
+rozi sessions new <NAME> [--profile <PROFILE>]
 rozi sessions kill <NAME>
 rozi sessions list --remote <HOST>
 rozi sessions kill <NAME> --remote <HOST>
 ```
 
-`sessions attach` is attach-only; `sessions new` explicitly creates a named session.
-`sessions kill <NAME>` is the sole canonical server-stop spelling. It destroys that one per-user
-named session server and its PTYs for every attached client. It is not a generic process killer;
-never use it for an arbitrary process, pane, or session that the user did not explicitly ask to
-destroy. Remote lifecycle helpers run the same command over SSH and never use a local
-forced-termination fallback against the SSH transport.
+`sessions kill` destroys the named server and all its PTYs for every client. Never use it as a
+generic process killer.
 
-## Safety rules
+## Safety
 
-- Mutate or kill only panes and sessions that the user explicitly requested or this agent created.
-- Prefer `ROZI_PANE` or ids read from fresh JSON; never infer a live id from a row position.
-- Avoid stealing focus with `focus`, `--focus`, or a layout command when the task does not require
-  it.
-- Read `pty_ready` from the split response instead of assuming either answer.
-- Never treat `sessions kill` as a generic process killer.
+- Mutate or kill only panes and sessions the user explicitly requested or this agent created.
+- A read-only client cannot type, set status, or change layout. Do not retry those failures.
+- Layout changes through a UI require controller status. Treat `not controller` as final until
+  control changes hands.
+- Input lock can block writable followers and detached control. Do not bypass it or repeatedly retry.

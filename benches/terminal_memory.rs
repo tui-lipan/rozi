@@ -183,6 +183,54 @@ fn replay_export_probe(rows: u16, cols: u16, history: usize) {
     }
 }
 
+fn history_lifecycle_probe() {
+    let fill = b"short log record\r\n".repeat(5_100);
+    let burst = b"short log record\r\n".repeat(10_000);
+    let ((screen, stages), _) = measure(|| {
+        let mut screen = TerminalScreen::new(64, 253, 5_000);
+        screen.process_bytes(&fill);
+        // Settle the recycling path as well as filling the history.
+        screen.process_bytes(&burst);
+        let mut stages = [("", 0, 0, 0, 0); 3];
+        for (index, name) in ["sustained_10000", "resize_80", "resize_320"]
+            .into_iter()
+            .enumerate()
+        {
+            let before = LIVE.load(Ordering::Relaxed);
+            let allocs = ALLOCS.load(Ordering::Relaxed);
+            PEAK.store(before, Ordering::Relaxed);
+            match index {
+                0 => screen.process_bytes(&burst),
+                1 => screen.resize(64, 80),
+                _ => screen.resize(64, 320),
+            }
+            stages[index] = (
+                name,
+                before,
+                LIVE.load(Ordering::Relaxed),
+                PEAK.load(Ordering::Relaxed),
+                ALLOCS.load(Ordering::Relaxed) - allocs,
+            );
+        }
+        (screen, stages)
+    });
+    std::hint::black_box(&screen);
+    drop(screen);
+    println!("\nhistory lifecycle: requested heap bytes, one direct terminal, history=5000");
+    println!("stage before_live after_live peak_live allocations");
+    for (name, before, after, peak, allocs) in stages {
+        println!("{name} {before} {after} {peak} {allocs}");
+    }
+
+    let (screen, counts) = measure(|| replay_screen(64, 253, 5_000));
+    std::hint::black_box(&screen);
+    drop(screen);
+    println!(
+        "dense per-cell-color history retained bytes: {}",
+        counts.live
+    );
+}
+
 fn main() {
     println!(
         "{:>10}  {:>9}  {:>7}  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}",
@@ -202,4 +250,5 @@ fn main() {
         }
     }
     replay_export_probe(64, 253, 5_000);
+    history_lifecycle_probe();
 }

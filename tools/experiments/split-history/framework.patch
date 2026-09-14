@@ -1,0 +1,122 @@
+--- a/src/widgets/terminal/screen.rs
++++ b/src/widgets/terminal/screen.rs
+@@ -1342,7 +1342,7 @@
+                 continue;
+             }
+             for col in 0..self.cols {
+-                let cell = &grid[line][Column(col as usize)];
++                let cell = grid.read_row(line).cell(Column(col as usize));
+                 if cell.c != PLACEHOLDER {
+                     continue;
+                 }
+@@ -1437,12 +1437,12 @@
+         let last_column = grid.last_column();
+         for line in grid.topmost_line().0..=grid.bottommost_line().0 {
+             let line = Line(line);
+-            if grid[line][last_column].flags.contains(CellFlags::WRAPLINE) {
++            if grid.read_row(line).cell(last_column).flags.contains(CellFlags::WRAPLINE) {
+                 return true;
+             }
+             // Anything past the new width has to go somewhere once the grid narrows.
+             for column in usize::from(new_cols)..=last_column.0 {
+-                let cell = &grid[line][Column(column)];
++                let cell = grid.read_row(line).cell(Column(column));
+                 if cell.c != ' ' || cell.bg != TermColor::Named(NamedColor::Background) {
+                     return true;
+                 }
+@@ -2225,21 +2225,17 @@
+
+         for line in top.0..=bottom.0 {
+             let line = Line(line);
+-            let wrapline = grid[line][grid.last_column()]
++            let wrapline = grid.read_row(line).cell(grid.last_column())
+                 .flags
+                 .contains(CellFlags::WRAPLINE);
+             let end_col = if wrapline {
+                 grid.columns()
+             } else {
+-                (0..grid.columns())
+-                    .rfind(|col| {
+-                        let cell = &grid[line][Column(*col)];
+-                        !cell.is_empty() || cell.hyperlink().is_some()
+-                    })
++                grid.read_row(line)
++                    .last_matching(|cell| !cell.is_empty() || cell.hyperlink().is_some())
+                     .map_or(0, |col| col + 1)
+             };
+-            for col in 0..end_col {
+-                let cell = &grid[line][Column(col)];
++            for cell in grid.read_row(line).iter().take(end_col) {
+                 if cell
+                     .flags
+                     .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -2752,21 +2748,20 @@
+             let line = Line(row - offset);
+             line >= grid.topmost_line()
+                 && line <= grid.bottommost_line()
+-                && grid[line][last_column].flags.contains(CellFlags::WRAPLINE)
++                && grid.read_row(line).cell(last_column).flags.contains(CellFlags::WRAPLINE)
+         })
+         .collect()
+ }
+
+ fn display_line_width(grid: &alacritty_terminal::grid::Grid<TermCell>, line: Line) -> usize {
+-    let wrapline = grid[line][grid.last_column()]
++    let wrapline = grid.read_row(line).cell(grid.last_column())
+         .flags
+         .contains(CellFlags::WRAPLINE);
+     if wrapline {
+         return grid.columns();
+     }
+-    (0..grid.columns())
+-        .rfind(|col| {
+-            let cell = &grid[line][Column(*col)];
++    grid.read_row(line)
++        .last_matching(|cell| {
+             !cell
+                 .flags
+                 .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -2790,8 +2785,7 @@
+
+     let mut result = String::new();
+     let mut display_col = 0usize;
+-    for col in 0..grid.columns() {
+-        let cell = &grid[line][Column(col)];
++    for cell in grid.read_row(line).iter() {
+         if cell
+             .flags
+             .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -2835,18 +2829,17 @@
+     line: Line,
+     out: &mut String,
+ ) {
+-    let wrapline = grid[line][grid.last_column()]
++    let wrapline = grid.read_row(line).cell(grid.last_column())
+         .flags
+         .contains(CellFlags::WRAPLINE);
+     let end_col = if wrapline {
+         grid.columns()
+     } else {
+-        (0..grid.columns())
+-            .rfind(|col| !grid[line][Column(*col)].is_empty())
++        grid.read_row(line)
++            .last_matching(|cell| !cell.is_empty())
+             .map_or(0, |col| col + 1)
+     };
+-    for col in 0..end_col {
+-        let cell = &grid[line][Column(col)];
++    for cell in grid.read_row(line).iter().take(end_col) {
+         if cell
+             .flags
+             .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+--- a/src/widgets/terminal/scrollback_ledger.rs
++++ b/src/widgets/terminal/scrollback_ledger.rs
+@@ -437,7 +437,7 @@
+             .map(|row| {
+                 (0..grid.columns())
+                     .map(|col| {
+-                        let cell: &Cell = &grid[Line(row as i32)][Column(col)];
++                        let cell: &Cell = grid.read_row(Line(row as i32)).cell(Column(col));
+                         cell.c
+                     })
+                     .collect()

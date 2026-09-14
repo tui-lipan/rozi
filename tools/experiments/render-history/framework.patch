@@ -1,0 +1,574 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -876,3 +876,6 @@
+ panic = "abort"
+ inherits = "release"
+ strip = "symbols"
++
++[patch.crates-io]
++alacritty_terminal = { path = "../engine" }
+--- a/src/widgets/terminal/screen.rs
++++ b/src/widgets/terminal/screen.rs
+@@ -4,11 +4,12 @@
+ use std::io::{self, Write};
+ use std::ops::ControlFlow;
+ use std::rc::Rc;
+-use std::sync::Arc;
++use std::sync::{Arc, OnceLock};
+
+ use super::damage::{DamageAccumulator, TerminalDamage};
+ use alacritty_terminal::event::{Event as TermEvent, EventListener, WindowSize};
+-use alacritty_terminal::grid::{Dimensions, GridCell, Scroll};
++use alacritty_terminal::grid::history::RowParts;
++use alacritty_terminal::grid::{Dimensions, Grid, GridCell, Scroll};
+ use alacritty_terminal::index::{Column, Line};
+ use alacritty_terminal::term::cell::{
+     Cell as TermCell, Flags as CellFlags, Hyperlink as TermHyperlink,
+@@ -1342,7 +1343,11 @@
+                 continue;
+             }
+             for col in 0..self.cols {
+-                let cell = &grid[line][Column(col as usize)];
++                let cell = if line.0 >= 0 {
++                    &grid[line][Column(col as usize)]
++                } else {
++                    grid.read_row(line).cell(Column(col as usize))
++                };
+                 if cell.c != PLACEHOLDER {
+                     continue;
+                 }
+@@ -1437,12 +1442,17 @@
+         let last_column = grid.last_column();
+         for line in grid.topmost_line().0..=grid.bottommost_line().0 {
+             let line = Line(line);
+-            if grid[line][last_column].flags.contains(CellFlags::WRAPLINE) {
++            if grid
++                .read_row(line)
++                .cell(last_column)
++                .flags
++                .contains(CellFlags::WRAPLINE)
++            {
+                 return true;
+             }
+             // Anything past the new width has to go somewhere once the grid narrows.
+             for column in usize::from(new_cols)..=last_column.0 {
+-                let cell = &grid[line][Column(column)];
++                let cell = grid.read_row(line).cell(Column(column));
+                 if cell.c != ' ' || cell.bg != TermColor::Named(NamedColor::Background) {
+                     return true;
+                 }
+@@ -1800,13 +1810,23 @@
+             let cursor_shape = caret_shape_from_term(cursor_style.shape);
+             let cursor_blinking = cursor_style.blinking;
+
+-            let (mut visible, hyperlinks) = renderable_content_lines(
+-                display_iter,
+-                display_offset,
+-                self.rows,
+-                self.cols,
+-                self.palette,
+-            );
++            let (mut visible, hyperlinks) = if experiment_render_mode() == RenderMode::Bulk {
++                renderable_content_lines_from_rows(
++                    self.term.grid(),
++                    display_offset,
++                    self.rows,
++                    self.cols,
++                    self.palette,
++                )
++            } else {
++                renderable_content_lines(
++                    display_iter,
++                    display_offset,
++                    self.rows,
++                    self.cols,
++                    self.palette,
++                )
++            };
+             if visible.is_empty() {
+                 visible.push(vec![Span::new("")]);
+             }
+@@ -2225,21 +2245,19 @@
+
+         for line in top.0..=bottom.0 {
+             let line = Line(line);
+-            let wrapline = grid[line][grid.last_column()]
++            let wrapline = grid
++                .read_row(line)
++                .cell(grid.last_column())
+                 .flags
+                 .contains(CellFlags::WRAPLINE);
+             let end_col = if wrapline {
+                 grid.columns()
+             } else {
+-                (0..grid.columns())
+-                    .rfind(|col| {
+-                        let cell = &grid[line][Column(*col)];
+-                        !cell.is_empty() || cell.hyperlink().is_some()
+-                    })
++                grid.read_row(line)
++                    .last_matching(|cell| !cell.is_empty() || cell.hyperlink().is_some())
+                     .map_or(0, |col| col + 1)
+             };
+-            for col in 0..end_col {
+-                let cell = &grid[line][Column(col)];
++            for cell in grid.read_row(line).iter().take(end_col) {
+                 if cell
+                     .flags
+                     .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -2622,91 +2640,242 @@
+     }
+ }
+
+-fn renderable_content_lines(
+-    display_iter: alacritty_terminal::grid::GridIterator<'_, TermCell>,
+-    display_offset: usize,
+-    rows: u16,
+-    cols: u16,
+-    palette: TerminalColorPalette,
+-) -> (Vec<Vec<Span>>, Vec<TerminalHyperlink>) {
+-    let mut lines: Vec<Vec<Span>> = vec![Vec::new(); rows as usize];
+-    let mut hyperlinks: Vec<TerminalHyperlink> = Vec::new();
+-    let mut current_row: Option<usize> = None;
+-    let mut run_style: Option<Style> = None;
+-    let mut run_text = String::new();
+-
+-    let flush_run = |row: usize,
+-                     run_style: &mut Option<Style>,
+-                     run_text: &mut String,
+-                     lines: &mut Vec<Vec<Span>>| {
+-        if run_text.is_empty() {
+-            *run_style = None;
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum RenderMode {
++    Legacy,
++    DenseIter,
++    Bulk,
++}
++
++fn experiment_render_mode() -> RenderMode {
++    static MODE: OnceLock<RenderMode> = OnceLock::new();
++    *MODE.get_or_init(
++        || match std::env::var("ROZI_EXPERIMENT_RENDER").ok().as_deref() {
++            Some("legacy") => RenderMode::Legacy,
++            Some("dense") => RenderMode::DenseIter,
++            _ => RenderMode::Bulk,
++        },
++    )
++}
++
++struct SnapshotRuns {
++    lines: Vec<Vec<Span>>,
++    hyperlinks: Vec<TerminalHyperlink>,
++    current_row: Option<usize>,
++    run_style: Option<Style>,
++    run_text: String,
++}
++
++impl SnapshotRuns {
++    fn new(rows: usize) -> Self {
++        Self {
++            lines: vec![Vec::new(); rows],
++            hyperlinks: Vec::new(),
++            current_row: None,
++            run_style: None,
++            run_text: String::new(),
++        }
++    }
++
++    fn set_row(&mut self, row: usize) {
++        if self.current_row == Some(row) {
+             return;
+         }
+-        if let Some(style) = run_style.take() {
+-            lines[row].push(Span::new(std::mem::take(run_text)).style(style));
++        self.flush();
++        self.current_row = Some(row);
++    }
++
++    fn flush(&mut self) {
++        let Some(row) = self.current_row else {
++            self.run_style = None;
++            self.run_text.clear();
++            return;
++        };
++        if self.run_text.is_empty() {
++            self.run_style = None;
++            return;
++        }
++        if let Some(style) = self.run_style.take() {
++            self.lines[row].push(Span::new(std::mem::take(&mut self.run_text)).style(style));
+         } else {
+-            lines[row].push(Span::new(std::mem::take(run_text)));
++            self.lines[row].push(Span::new(std::mem::take(&mut self.run_text)));
+         }
+-    };
++    }
+
+-    for indexed in display_iter {
+-        let Some(point) = term::point_to_viewport(display_offset, indexed.point) else {
+-            continue;
++    fn record_hyperlink(&mut self, cell: &TermCell, row: usize, start_col: usize, count: usize) {
++        let Some(link) = cell.hyperlink() else {
++            return;
+         };
+-        if point.line >= rows as usize || point.column.0 >= cols as usize {
+-            continue;
++        let end_col = start_col + count;
++        if let Some(previous) = self.hyperlinks.last_mut()
++            && previous.row == row
++            && previous.end_col == start_col
++            && previous.uri.as_ref() == link.uri()
++        {
++            previous.end_col = end_col;
++        } else {
++            self.hyperlinks
++                .push(TerminalHyperlink::new(link.uri(), row, start_col..end_col));
+         }
++    }
+
+-        let row = point.line;
+-        if current_row != Some(row) {
+-            if let Some(prev_row) = current_row {
+-                flush_run(prev_row, &mut run_style, &mut run_text, &mut lines);
+-            }
+-            current_row = Some(row);
++    fn append_styled_text(
++        &mut self,
++        cell: &TermCell,
++        palette: &TerminalColorPalette,
++        count: usize,
++    ) {
++        if count == 0 {
++            return;
+         }
++        let style = style_from_term_cell(cell, palette);
++        if self.run_style != Some(style) {
++            self.flush();
++            self.run_style = Some(style);
++        }
++        push_cell_text_repeated(&mut self.run_text, cell, count);
++    }
+
+-        let cell = indexed.cell;
+-        if let Some(link) = cell.hyperlink() {
+-            let col = point.column.0;
+-            if let Some(previous) = hyperlinks.last_mut()
+-                && previous.row == row
+-                && previous.end_col == col
+-                && previous.uri.as_ref() == link.uri()
+-            {
+-                previous.end_col = col + 1;
+-            } else {
+-                hyperlinks.push(TerminalHyperlink::new(link.uri(), row, col..col + 1));
+-            }
++    fn append_cell(
++        &mut self,
++        cell: &TermCell,
++        row: usize,
++        col: usize,
++        palette: &TerminalColorPalette,
++    ) {
++        self.set_row(row);
++        self.record_hyperlink(cell, row, col, 1);
++        if cell
++            .flags
++            .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
++        {
++            return;
+         }
++        self.append_styled_text(cell, palette, 1);
++    }
++
++    fn append_repeated(
++        &mut self,
++        cell: &TermCell,
++        row: usize,
++        start_col: usize,
++        count: usize,
++        palette: &TerminalColorPalette,
++    ) {
++        self.set_row(row);
++        self.record_hyperlink(cell, row, start_col, count);
+         if cell
+             .flags
+             .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+         {
+-            continue;
++            return;
+         }
++        self.append_styled_text(cell, palette, count);
++    }
+
+-        let style = style_from_term_cell(cell, &palette);
+-        if run_style != Some(style) {
+-            if let Some(prev_row) = current_row {
+-                flush_run(prev_row, &mut run_style, &mut run_text, &mut lines);
++    fn finish(mut self) -> (Vec<Vec<Span>>, Vec<TerminalHyperlink>) {
++        self.flush();
++        for line in &mut self.lines {
++            if line.is_empty() {
++                line.push(Span::new(""));
+             }
+-            run_style = Some(style);
+         }
+-        push_cell_text_str(&mut run_text, cell);
++        (self.lines, self.hyperlinks)
++    }
++}
++
++fn renderable_content_lines(
++    display_iter: alacritty_terminal::grid::GridIterator<'_, TermCell>,
++    display_offset: usize,
++    rows: u16,
++    cols: u16,
++    palette: TerminalColorPalette,
++) -> (Vec<Vec<Span>>, Vec<TerminalHyperlink>) {
++    let mut runs = SnapshotRuns::new(usize::from(rows));
++    for indexed in display_iter {
++        let Some(point) = term::point_to_viewport(display_offset, indexed.point) else {
++            continue;
++        };
++        if point.line >= usize::from(rows) || point.column.0 >= usize::from(cols) {
++            continue;
++        }
++        runs.append_cell(indexed.cell, point.line, point.column.0, &palette);
+     }
++    runs.finish()
++}
+
+-    if let Some(row) = current_row {
+-        flush_run(row, &mut run_style, &mut run_text, &mut lines);
++fn renderable_content_lines_from_rows(
++    grid: &Grid<TermCell>,
++    display_offset: usize,
++    rows: u16,
++    cols: u16,
++    palette: TerminalColorPalette,
++) -> (Vec<Vec<Span>>, Vec<TerminalHyperlink>) {
++    let mut runs = SnapshotRuns::new(usize::from(rows));
++    let max_cols = usize::from(cols);
++    for row in 0..usize::from(rows) {
++        let Ok(offset) = i32::try_from(display_offset) else {
++            continue;
++        };
++        let Ok(row_i) = i32::try_from(row) else {
++            continue;
++        };
++        let line = Line(row_i - offset);
++        if line < grid.topmost_line() || line > grid.bottommost_line() {
++            continue;
++        }
++        append_row_parts(
++            grid.display_row(row).parts(),
++            row,
++            max_cols,
++            &palette,
++            &mut runs,
++        );
+     }
++    runs.finish()
++}
+
+-    for line in &mut lines {
+-        if line.is_empty() {
+-            line.push(Span::new(""));
++fn append_row_parts(
++    parts: RowParts<'_, TermCell>,
++    row: usize,
++    max_cols: usize,
++    palette: &TerminalColorPalette,
++    runs: &mut SnapshotRuns,
++) {
++    match parts {
++        RowParts::Dense(cells) => {
++            for (col, cell) in cells.iter().take(max_cols).enumerate() {
++                runs.append_cell(cell, row, col, palette);
++            }
++        }
++        RowParts::Compact {
++            prefix,
++            tail,
++            tail_count,
++        } => {
++            let prefix_len = prefix.len().min(max_cols);
++            for (col, cell) in prefix.iter().take(prefix_len).enumerate() {
++                runs.append_cell(cell, row, col, palette);
++            }
++            let tail_count = tail_count.min(max_cols.saturating_sub(prefix_len));
++            if tail_count > 0 {
++                runs.append_repeated(tail, row, prefix_len, tail_count, palette);
++            }
+         }
+     }
++}
+
+-    (lines, hyperlinks)
++fn wrapline_flag(grid: &Grid<TermCell>, line: Line) -> bool {
++    if line.0 >= 0 {
++        grid[line][grid.last_column()]
++            .flags
++            .contains(CellFlags::WRAPLINE)
++    } else {
++        grid.read_row(line)
++            .cell(grid.last_column())
++            .flags
++            .contains(CellFlags::WRAPLINE)
++    }
+ }
+
+ fn push_cell_text_str(out: &mut String, cell: &TermCell) {
+@@ -2731,6 +2900,29 @@
+     }
+ }
+
++fn push_cell_text_repeated(out: &mut String, cell: &TermCell, count: usize) {
++    if count == 0 {
++        return;
++    }
++    if count == 1 || cell.zerowidth().is_some_and(|chars| !chars.is_empty()) {
++        for _ in 0..count {
++            push_cell_text_str(out, cell);
++        }
++        return;
++    }
++    #[cfg(feature = "terminal-images")]
++    if cell.c == PLACEHOLDER {
++        out.extend(std::iter::repeat_n(' ', count));
++        return;
++    }
++    let ch = if cell.flags.contains(CellFlags::HIDDEN) {
++        ' '
++    } else {
++        cell.c
++    };
++    out.extend(std::iter::repeat_n(ch, count));
++}
++
+ /// Soft-wrap flags for the `rows` visible viewport rows at `display_offset`, one per row.
+ ///
+ /// The terminal records a wrap on the last cell of the row that overflowed, so the flag reads
+@@ -2740,7 +2932,6 @@
+     display_offset: usize,
+     rows: u16,
+ ) -> Vec<bool> {
+-    let last_column = grid.last_column();
+     (0..usize::from(rows))
+         .map(|row| {
+             let Ok(offset) = i32::try_from(display_offset) else {
+@@ -2752,21 +2943,22 @@
+             let line = Line(row - offset);
+             line >= grid.topmost_line()
+                 && line <= grid.bottommost_line()
+-                && grid[line][last_column].flags.contains(CellFlags::WRAPLINE)
++                && wrapline_flag(grid, line)
+         })
+         .collect()
+ }
+
+ fn display_line_width(grid: &alacritty_terminal::grid::Grid<TermCell>, line: Line) -> usize {
+-    let wrapline = grid[line][grid.last_column()]
++    let wrapline = grid
++        .read_row(line)
++        .cell(grid.last_column())
+         .flags
+         .contains(CellFlags::WRAPLINE);
+     if wrapline {
+         return grid.columns();
+     }
+-    (0..grid.columns())
+-        .rfind(|col| {
+-            let cell = &grid[line][Column(*col)];
++    grid.read_row(line)
++        .last_matching(|cell| {
+             !cell
+                 .flags
+                 .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -2790,8 +2982,7 @@
+
+     let mut result = String::new();
+     let mut display_col = 0usize;
+-    for col in 0..grid.columns() {
+-        let cell = &grid[line][Column(col)];
++    for cell in grid.read_row(line).iter() {
+         if cell
+             .flags
+             .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -2835,18 +3026,19 @@
+     line: Line,
+     out: &mut String,
+ ) {
+-    let wrapline = grid[line][grid.last_column()]
++    let wrapline = grid
++        .read_row(line)
++        .cell(grid.last_column())
+         .flags
+         .contains(CellFlags::WRAPLINE);
+     let end_col = if wrapline {
+         grid.columns()
+     } else {
+-        (0..grid.columns())
+-            .rfind(|col| !grid[line][Column(*col)].is_empty())
++        grid.read_row(line)
++            .last_matching(|cell| !cell.is_empty())
+             .map_or(0, |col| col + 1)
+     };
+-    for col in 0..end_col {
+-        let cell = &grid[line][Column(col)];
++    for cell in grid.read_row(line).iter().take(end_col) {
+         if cell
+             .flags
+             .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -4592,4 +4784,41 @@
+         assert_eq!(screen.total_scrollback_rows(), 3);
+         assert_eq!(screen.total_text_lines(), 5);
+     }
++
++    #[test]
++    fn bulk_row_snapshot_matches_display_iter_at_live_and_scrolled_offsets() {
++        let mut screen = TerminalScreen::new(8, 20, 40);
++        screen.process_bytes(
++            b"plain line\r\n\
++              \x1b]8;;https://example.com\x1b\\link text\x1b]8;;\x1b\\\r\n\
++              \x1b[31mred\x1b[0m tail\r\n\
++              \xe6\x9d\xb1\xe4\xba\xac e\xcc\x81 \xf0\x9f\xa6\x80\r\n\
++              wrapped-abcdefghijklmnopqrstuvwxyz\r\n",
++        );
++        for i in 0..50 {
++            screen.process_bytes(format!("row {i}\r\n").as_bytes());
++        }
++        let rows = screen.rows;
++        let cols = screen.cols;
++        let palette = screen.palette();
++        let history = screen.total_scrollback_rows();
++        for offset in [0, 4, 8, 32, history] {
++            screen.set_scrollback(offset);
++            let via_iter = {
++                let grid = screen.term.grid();
++                renderable_content_lines(
++                    grid.display_iter(),
++                    grid.display_offset(),
++                    rows,
++                    cols,
++                    palette,
++                )
++            };
++            let via_bulk = {
++                let grid = screen.term.grid();
++                renderable_content_lines_from_rows(grid, grid.display_offset(), rows, cols, palette)
++            };
++            assert_eq!(via_iter, via_bulk, "offset {offset}");
++        }
++    }
+ }
+--- a/src/widgets/terminal/scrollback_ledger.rs
++++ b/src/widgets/terminal/scrollback_ledger.rs
+@@ -437,7 +437,7 @@
+             .map(|row| {
+                 (0..grid.columns())
+                     .map(|col| {
+-                        let cell: &Cell = &grid[Line(row as i32)][Column(col)];
++                        let cell: &Cell = grid.read_row(Line(row as i32)).cell(Column(col));
+                         cell.c
+                     })
+                     .collect()

@@ -1,0 +1,16 @@
+--- a/src/widgets/terminal/screen.rs
++++ b/src/widgets/terminal/screen.rs
+@@ -1764,11 +1764,11 @@
+         let columns = grid.columns();
+         let start_column = mark.column.min(columns);
+         let background = grid.cursor.template.bg;
+-        for cell in &mut grid[Line(line)][Column(start_column)..Column(columns)] {
++        for cell in &mut grid[Line(line)].as_mut_slice()[start_column..columns] {
+             *cell = background.into();
+         }
+         for row in line + 1..screen_lines {
+-            for cell in &mut grid[Line(row)][Column(0)..Column(columns)] {
++            for cell in &mut grid[Line(row)].as_mut_slice()[0..columns] {
+                 *cell = background.into();
+             }
+         }

@@ -1,0 +1,196 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -868,6 +868,8 @@
+
+ [profile.release]
+ debug = 0
++lto = "thin"
++codegen-units = 1
+
+ [profile.release-size]
+ opt-level = "z"
+@@ -876,3 +878,9 @@
+ panic = "abort"
+ inherits = "release"
+ strip = "symbols"
++
++[[bench]]
++name = "policy_ingest"
++path = "benches/policy_ingest.rs"
++harness = false
++required-features = ["terminal"]
+--- /dev/null
++++ b/benches/policy_ingest.rs
+@@ -0,0 +1,36 @@
++use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
++use std::hint::black_box;
++use tui_lipan::prelude::TerminalScreen;
++fn settled(c: &mut Criterion) {
++    let mut group = c.benchmark_group("sustained_and_drain");
++    for cols in [80, 253] {
++        for kind in ["plain", "unicode", "dense"] {
++            let line = match kind {
++                "unicode" => "東京 e\u{301} 🦀 log record\r\n".to_owned(),
++                "dense" => {
++                    let mut s: String = (0..cols)
++                        .map(|i| char::from(b'a' + (i % 26) as u8))
++                        .collect();
++                    s.push_str("\r\n");
++                    s
++                }
++                _ => "short log record\r\n".to_owned(),
++            };
++            let input = line.repeat(100000);
++            group.throughput(Throughput::Bytes(input.len() as u64));
++            group.bench_function(BenchmarkId::new(kind, cols), |b| {
++                let mut screen = TerminalScreen::new(64, cols, 5000);
++                screen.process_bytes(line.repeat(5100).as_bytes());
++                screen.finish_history_compaction();
++                b.iter(|| {
++                    screen.process_bytes(black_box(input.as_bytes()));
++                    screen.finish_history_compaction();
++                });
++                assert_eq!(screen.total_scrollback_rows(), 5000);
++            });
++        }
++    }
++    group.finish();
++}
++criterion_group!(benches, settled);
++criterion_main!(benches);
+--- a/src/widgets/terminal/screen.rs
++++ b/src/widgets/terminal/screen.rs
+@@ -1094,8 +1094,12 @@
+         screen
+     }
+
++    /// Experiment-only settlement of every pending history row.
++    pub fn finish_history_compaction(&mut self) {
++        self.term.grid_mut().finish_history_compaction();
++    }
++
+     /// Feed terminal bytes.
+-    ///
+     pub fn process_bytes(&mut self, bytes: &[u8]) {
+         let xtversion_boundaries = self.xtversion_boundaries(bytes);
+         let evicted = if self.xtversion_enabled && !xtversion_boundaries.is_empty() {
+@@ -1342,7 +1346,7 @@
+                 continue;
+             }
+             for col in 0..self.cols {
+-                let cell = &grid[line][Column(col as usize)];
++                let cell = grid.read_row(line).cell(Column(col as usize));
+                 if cell.c != PLACEHOLDER {
+                     continue;
+                 }
+@@ -1437,12 +1441,12 @@
+         let last_column = grid.last_column();
+         for line in grid.topmost_line().0..=grid.bottommost_line().0 {
+             let line = Line(line);
+-            if grid[line][last_column].flags.contains(CellFlags::WRAPLINE) {
++            if grid.read_row(line).cell(last_column).flags.contains(CellFlags::WRAPLINE) {
+                 return true;
+             }
+             // Anything past the new width has to go somewhere once the grid narrows.
+             for column in usize::from(new_cols)..=last_column.0 {
+-                let cell = &grid[line][Column(column)];
++                let cell = grid.read_row(line).cell(Column(column));
+                 if cell.c != ' ' || cell.bg != TermColor::Named(NamedColor::Background) {
+                     return true;
+                 }
+@@ -2225,21 +2229,17 @@
+
+         for line in top.0..=bottom.0 {
+             let line = Line(line);
+-            let wrapline = grid[line][grid.last_column()]
++            let wrapline = grid.read_row(line).cell(grid.last_column())
+                 .flags
+                 .contains(CellFlags::WRAPLINE);
+             let end_col = if wrapline {
+                 grid.columns()
+             } else {
+-                (0..grid.columns())
+-                    .rfind(|col| {
+-                        let cell = &grid[line][Column(*col)];
+-                        !cell.is_empty() || cell.hyperlink().is_some()
+-                    })
++                grid.read_row(line)
++                    .last_matching(|cell| !cell.is_empty() || cell.hyperlink().is_some())
+                     .map_or(0, |col| col + 1)
+             };
+-            for col in 0..end_col {
+-                let cell = &grid[line][Column(col)];
++            for cell in grid.read_row(line).iter().take(end_col) {
+                 if cell
+                     .flags
+                     .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -2752,21 +2752,20 @@
+             let line = Line(row - offset);
+             line >= grid.topmost_line()
+                 && line <= grid.bottommost_line()
+-                && grid[line][last_column].flags.contains(CellFlags::WRAPLINE)
++                && grid.read_row(line).cell(last_column).flags.contains(CellFlags::WRAPLINE)
+         })
+         .collect()
+ }
+
+ fn display_line_width(grid: &alacritty_terminal::grid::Grid<TermCell>, line: Line) -> usize {
+-    let wrapline = grid[line][grid.last_column()]
++    let wrapline = grid.read_row(line).cell(grid.last_column())
+         .flags
+         .contains(CellFlags::WRAPLINE);
+     if wrapline {
+         return grid.columns();
+     }
+-    (0..grid.columns())
+-        .rfind(|col| {
+-            let cell = &grid[line][Column(*col)];
++    grid.read_row(line)
++        .last_matching(|cell| {
+             !cell
+                 .flags
+                 .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -2790,8 +2789,7 @@
+
+     let mut result = String::new();
+     let mut display_col = 0usize;
+-    for col in 0..grid.columns() {
+-        let cell = &grid[line][Column(col)];
++    for cell in grid.read_row(line).iter() {
+         if cell
+             .flags
+             .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+@@ -2835,18 +2833,17 @@
+     line: Line,
+     out: &mut String,
+ ) {
+-    let wrapline = grid[line][grid.last_column()]
++    let wrapline = grid.read_row(line).cell(grid.last_column())
+         .flags
+         .contains(CellFlags::WRAPLINE);
+     let end_col = if wrapline {
+         grid.columns()
+     } else {
+-        (0..grid.columns())
+-            .rfind(|col| !grid[line][Column(*col)].is_empty())
++        grid.read_row(line)
++            .last_matching(|cell| !cell.is_empty())
+             .map_or(0, |col| col + 1)
+     };
+-    for col in 0..end_col {
+-        let cell = &grid[line][Column(col)];
++    for cell in grid.read_row(line).iter().take(end_col) {
+         if cell
+             .flags
+             .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+--- a/src/widgets/terminal/scrollback_ledger.rs
++++ b/src/widgets/terminal/scrollback_ledger.rs
+@@ -437,7 +437,7 @@
+             .map(|row| {
+                 (0..grid.columns())
+                     .map(|col| {
+-                        let cell: &Cell = &grid[Line(row as i32)][Column(col)];
++                        let cell: &Cell = grid.read_row(Line(row as i32)).cell(Column(col));
+                         cell.c
+                     })
+                     .collect()

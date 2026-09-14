@@ -1,0 +1,596 @@
+diff -Naur '--exclude=target' '--exclude=.git' a/benches/span_assembly.rs b/benches/span_assembly.rs
+--- a/benches/span_assembly.rs	1970-01-01 01:00:00.000000000 +0100
++++ b/benches/span_assembly.rs	2026-09-14 14:11:38.555050391 +0200
+@@ -0,0 +1,108 @@
++use std::hint::black_box;
++
++use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
++use tui_lipan::prelude::TerminalScreen;
++use tui_lipan::snapshot_stages;
++
++const HISTORY: usize = 5_000;
++
++fn corpus(kind: &str, cols: u16, lines: usize) -> Vec<u8> {
++    let line = match kind {
++        "unicode" => "東京 e\u{301} 🦀 log record\r\n".to_owned(),
++        "dense" => {
++            let mut text: String = (0..cols)
++                .map(|col| char::from(b'a' + (col % 26) as u8))
++                .collect();
++            text.push_str("\r\n");
++            text
++        }
++        _ => "short log record\r\n".to_owned(),
++    };
++    line.repeat(lines).into_bytes()
++}
++
++fn populated(kind: &str) -> TerminalScreen {
++    let cols = 253;
++    let rows = 64;
++    let mut screen = TerminalScreen::new(rows, cols, HISTORY);
++    screen.process_bytes(&corpus(kind, cols, HISTORY + usize::from(rows) + 1));
++    screen
++}
++
++fn stages(c: &mut Criterion) {
++    let mut group = c.benchmark_group("span_assembly");
++    for kind in ["plain", "unicode", "dense"] {
++        group.bench_function(BenchmarkId::new("walk_cells", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::walk_cells(&screen)));
++        });
++        group.bench_function(BenchmarkId::new("walk_viewport", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::walk_viewport(&screen)));
++        });
++        group.bench_function(BenchmarkId::new("walk_dense_rows", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::walk_dense_rows(&screen)));
++        });
++        group.bench_function(BenchmarkId::new("map_styles", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::map_styles(&screen)));
++        });
++        group.bench_function(BenchmarkId::new("detect_runs", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::detect_runs(&screen)));
++        });
++        group.bench_function(BenchmarkId::new("detect_runs_cell", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::detect_runs_cell(&screen)));
++        });
++        group.bench_function(BenchmarkId::new("accumulate_text", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::accumulate_text(&screen)));
++        });
++        group.bench_function(BenchmarkId::new("build_lines", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| {
++                let (lines, links) = snapshot_stages::content_lines(&screen);
++                black_box((snapshot_stages::span_count(&lines), links.len()))
++            });
++        });
++        group.bench_function(BenchmarkId::new("join_text", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::join_snapshot_text(&screen).len()));
++        });
++        group.bench_function(BenchmarkId::new("wrap_flags", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::wrap_flags(&screen)));
++        });
++        group.bench_function(BenchmarkId::new("snapshot", kind), |b| {
++            let mut screen = populated(kind);
++            b.iter(|| black_box(snapshot_stages::rebuild_snapshot(&mut screen)));
++        });
++        group.bench_function(BenchmarkId::new("lines_dense_rows", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| {
++                let (lines, links) = snapshot_stages::content_lines_dense_rows(&screen);
++                black_box((snapshot_stages::span_count(&lines), links.len()))
++            });
++        });
++        group.bench_function(BenchmarkId::new("lines_attr_keyed", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| {
++                let (lines, links) = snapshot_stages::content_lines_attr_keyed(&screen);
++                black_box((snapshot_stages::span_count(&lines), links.len()))
++            });
++        });
++        group.bench_function(BenchmarkId::new("lines_dense_attr", kind), |b| {
++            let screen = populated(kind);
++            b.iter(|| {
++                let (lines, links) = snapshot_stages::content_lines_dense_attr(&screen);
++                black_box((snapshot_stages::span_count(&lines), links.len()))
++            });
++        });
++    }
++    group.finish();
++}
++
++criterion_group!(benches, stages);
++criterion_main!(benches);
+diff -Naur '--exclude=target' '--exclude=.git' a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml	2006-07-24 03:21:28.000000000 +0200
++++ b/Cargo.toml	2026-09-14 14:07:09.311939979 +0200
+@@ -876,3 +876,8 @@
+ panic = "abort"
+ inherits = "release"
+ strip = "symbols"
++
++[[bench]]
++name = "span_assembly"
++harness = false
++required-features = ["terminal"]
+diff -Naur '--exclude=target' '--exclude=.git' a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/lib.rs	2026-09-14 14:10:28.086714102 +0200
+@@ -294,6 +294,9 @@
+ #[cfg(all(feature = "terminal", unix))]
+ pub use crate::widgets::TerminalPtyHandoff;
+ #[cfg(feature = "terminal")]
++#[doc(hidden)]
++pub use crate::widgets::snapshot_stages;
++#[cfg(feature = "terminal")]
+ pub use crate::widgets::{
+     CopyModeAction, CopyModeGrid, KittyKeyboardFlags, MouseEncoding, MouseMode, MouseModeState,
+     TerminalCellSize, TerminalColorPalette, TerminalCopyMode, TerminalDecoration, TerminalKeyModes,
+diff -Naur '--exclude=target' '--exclude=.git' a/src/widgets/mod.rs b/src/widgets/mod.rs
+--- a/src/widgets/mod.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/widgets/mod.rs	2026-09-14 14:08:51.455880355 +0200
+@@ -291,6 +291,8 @@
+ #[cfg(all(feature = "terminal", unix))]
+ pub use terminal::TerminalPtyHandoff;
+ #[cfg(feature = "terminal")]
++pub use terminal::snapshot_stages;
++#[cfg(feature = "terminal")]
+ pub use terminal::{
+     CopyModeAction, CopyModeGrid, KittyKeyboardFlags, MouseEncoding, MouseMode, MouseModeState,
+     MouseReportGeometry, ScrollbackLineage, SemanticMark, SemanticMarkKind, Terminal,
+diff -Naur '--exclude=target' '--exclude=.git' a/src/widgets/terminal/mod.rs b/src/widgets/terminal/mod.rs
+--- a/src/widgets/terminal/mod.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/widgets/terminal/mod.rs	2026-09-14 14:07:07.877912721 +0200
+@@ -44,7 +44,7 @@
+ pub use pty::TerminalPtyHandoff;
+ pub use pty::{TerminalPty, TerminalPtyConfig, TerminalPtyError, TerminalPtyEvent};
+ pub use screen::{
+-    SemanticMark, SemanticMarkKind, TerminalCellSize, TerminalClipboardEvent,
++    snapshot_stages, SemanticMark, SemanticMarkKind, TerminalCellSize, TerminalClipboardEvent,
+     TerminalClipboardTarget, TerminalColorPalette, TerminalDecoration, TerminalHyperlink,
+     TerminalRenderSnapshot, TerminalScreen, TerminalScreenHandle, TerminalViewport,
+ };
+diff -Naur '--exclude=target' '--exclude=.git' a/src/widgets/terminal/screen.rs b/src/widgets/terminal/screen.rs
+--- a/src/widgets/terminal/screen.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/widgets/terminal/screen.rs	2026-09-14 14:07:06.803892306 +0200
+@@ -42,6 +42,9 @@
+ use crate::style::{CaretShape, Color as UiColor, HostTerminalColors, Span, Style, Theme};
+ use crate::utils::{GridPos, GridSelection, SelectionEnd};
+
++#[path = "snapshot_stages.rs"]
++pub mod snapshot_stages;
++
+ /// Kind of semantic mark anchored to an absolute text line.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum SemanticMarkKind {
+diff -Naur '--exclude=target' '--exclude=.git' a/src/widgets/terminal/snapshot_stages.rs b/src/widgets/terminal/snapshot_stages.rs
+--- a/src/widgets/terminal/snapshot_stages.rs	1970-01-01 01:00:00.000000000 +0100
++++ b/src/widgets/terminal/snapshot_stages.rs	2026-09-14 14:17:35.154803479 +0200
+@@ -0,0 +1,418 @@
++//! Experiment-only stage functions for attributing dense `render_snapshot` time.
++//!
++//! This module is not a supported tui-lipan API.
++
++#![allow(dead_code, missing_docs)]
++
++use alacritty_terminal::index::{Column, Line};
++use alacritty_terminal::term::cell::{Cell as TermCell, Flags as CellFlags};
++use alacritty_terminal::term;
++use alacritty_terminal::vte::ansi::Color as TermColor;
++
++use super::*;
++use crate::style::Style;
++
++const STYLE_FLAGS: CellFlags = CellFlags::from_bits_truncate(
++    CellFlags::BOLD.bits()
++        | CellFlags::DIM.bits()
++        | CellFlags::ITALIC.bits()
++        | CellFlags::ALL_UNDERLINES.bits()
++        | CellFlags::INVERSE.bits()
++        | CellFlags::STRIKEOUT.bits(),
++);
++
++#[derive(Clone, Copy)]
++enum StyleMode {
++    EveryCell,
++    AttrKey,
++}
++
++pub fn walk_cells(screen: &TerminalScreen) -> usize {
++    let content = screen.term.renderable_content();
++    let mut acc = 0usize;
++    for indexed in content.display_iter {
++        acc = acc.wrapping_add(indexed.cell.c as u32 as usize);
++    }
++    acc
++}
++
++pub fn walk_viewport(screen: &TerminalScreen) -> usize {
++    let mut acc = 0usize;
++    for_visible(screen, |_row, _col, cell| {
++        acc = acc.wrapping_add(cell.c as u32 as usize);
++    });
++    acc
++}
++
++pub fn walk_dense_rows(screen: &TerminalScreen) -> usize {
++    let mut acc = 0usize;
++    for_dense_rows(screen, |_row, _col, cell| {
++        acc = acc.wrapping_add(cell.c as u32 as usize);
++    });
++    acc
++}
++
++pub fn map_styles(screen: &TerminalScreen) -> usize {
++    let palette = screen.palette;
++    let mut acc = 0usize;
++    for_visible(screen, |_row, _col, cell| {
++        let style = style_from_term_cell(cell, &palette);
++        acc = acc.wrapping_add(style_checksum(style));
++    });
++    acc
++}
++
++pub fn detect_runs(screen: &TerminalScreen) -> usize {
++    let palette = screen.palette;
++    let mut prev: Option<Style> = None;
++    let mut runs = 0usize;
++    for_visible(screen, |row, col, cell| {
++        let _ = (row, col);
++        let style = style_from_term_cell(cell, &palette);
++        if prev != Some(style) {
++            runs += 1;
++            prev = Some(style);
++        }
++    });
++    runs
++}
++
++pub fn detect_runs_cell(screen: &TerminalScreen) -> usize {
++    let mut prev: Option<(TermColor, TermColor, CellFlags)> = None;
++    let mut runs = 0usize;
++    for_visible(screen, |_row, _col, cell| {
++        let key = style_key(cell);
++        if prev != Some(key) {
++            runs += 1;
++            prev = Some(key);
++        }
++    });
++    runs
++}
++
++pub fn accumulate_text(screen: &TerminalScreen) -> usize {
++    let mut text = String::new();
++    for_visible(screen, |_row, _col, cell| {
++        if cell
++            .flags
++            .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
++        {
++            return;
++        }
++        push_cell_text_str(&mut text, cell);
++    });
++    text.len()
++}
++
++pub fn content_lines(screen: &TerminalScreen) -> (Vec<Vec<Span>>, Vec<TerminalHyperlink>) {
++    let content = screen.term.renderable_content();
++    renderable_content_lines(
++        content.display_iter,
++        content.display_offset,
++        screen.rows,
++        screen.cols,
++        screen.palette,
++    )
++}
++
++pub fn content_lines_dense_rows(
++    screen: &TerminalScreen,
++) -> (Vec<Vec<Span>>, Vec<TerminalHyperlink>) {
++    assemble(screen, Access::DenseRows, StyleMode::EveryCell)
++}
++
++pub fn content_lines_attr_keyed(
++    screen: &TerminalScreen,
++) -> (Vec<Vec<Span>>, Vec<TerminalHyperlink>) {
++    assemble(screen, Access::Iterator, StyleMode::AttrKey)
++}
++
++pub fn content_lines_dense_attr(
++    screen: &TerminalScreen,
++) -> (Vec<Vec<Span>>, Vec<TerminalHyperlink>) {
++    assemble(screen, Access::DenseRows, StyleMode::AttrKey)
++}
++
++pub fn join_snapshot_text(screen: &TerminalScreen) -> String {
++    let (mut visible, _) = content_lines(screen);
++    if visible.is_empty() {
++        visible.push(vec![Span::new("")]);
++    }
++    join_visible(&visible)
++}
++
++pub fn wrap_flags(screen: &TerminalScreen) -> usize {
++    let offset = screen.term.grid().display_offset();
++    visible_wrapped_rows(screen.term.grid(), offset, screen.rows)
++        .iter()
++        .filter(|wrapped| **wrapped)
++        .count()
++}
++
++pub fn rebuild_snapshot(screen: &mut TerminalScreen) -> usize {
++    screen.dirty = true;
++    let snapshot = screen.render_snapshot();
++    snapshot.text.len().wrapping_add(snapshot.color_lines.len())
++}
++
++pub fn span_count(lines: &[Vec<Span>]) -> usize {
++    lines.iter().map(Vec::len).sum()
++}
++
++fn style_key(cell: &TermCell) -> (TermColor, TermColor, CellFlags) {
++    (cell.fg, cell.bg, cell.flags.intersection(STYLE_FLAGS))
++}
++
++fn style_checksum(style: Style) -> usize {
++    let mut acc = usize::from(style.bold.unwrap_or(false));
++    acc = acc.wrapping_add(usize::from(style.dim.unwrap_or(false)));
++    acc = acc.wrapping_add(usize::from(style.italic.unwrap_or(false)));
++    acc = acc.wrapping_add(usize::from(style.underline.unwrap_or(false)));
++    acc = acc.wrapping_add(usize::from(style.reverse.unwrap_or(false)));
++    acc = acc.wrapping_add(usize::from(style.strikethrough.unwrap_or(false)));
++    acc = acc.wrapping_add(usize::from(style.fg.is_some()));
++    acc = acc.wrapping_add(usize::from(style.bg.is_some()));
++    acc
++}
++
++fn for_visible(screen: &TerminalScreen, mut visit: impl FnMut(usize, usize, &TermCell)) {
++    let content = screen.term.renderable_content();
++    let display_offset = content.display_offset;
++    let rows = usize::from(screen.rows);
++    let cols = usize::from(screen.cols);
++    for indexed in content.display_iter {
++        let Some(point) = term::point_to_viewport(display_offset, indexed.point) else {
++            continue;
++        };
++        if point.line >= rows || point.column.0 >= cols {
++            continue;
++        }
++        visit(point.line, point.column.0, indexed.cell);
++    }
++}
++
++fn for_dense_rows(screen: &TerminalScreen, mut visit: impl FnMut(usize, usize, &TermCell)) {
++    let grid = screen.term.grid();
++    let offset = grid.display_offset();
++    let rows = usize::from(screen.rows);
++    let cols = usize::from(screen.cols);
++    let Ok(offset) = i32::try_from(offset) else {
++        return;
++    };
++    for row in 0..rows {
++        let Ok(row_i32) = i32::try_from(row) else {
++            continue;
++        };
++        let line = Line(row_i32 - offset);
++        if line < grid.topmost_line() || line > grid.bottommost_line() {
++            continue;
++        }
++        let grid_row = &grid[line];
++        for col in 0..cols {
++            visit(row, col, &grid_row[Column(col)]);
++        }
++    }
++}
++
++#[derive(Clone, Copy)]
++enum Access {
++    Iterator,
++    DenseRows,
++}
++
++fn assemble(
++    screen: &TerminalScreen,
++    access: Access,
++    style_mode: StyleMode,
++) -> (Vec<Vec<Span>>, Vec<TerminalHyperlink>) {
++    let rows = usize::from(screen.rows);
++    let palette = screen.palette;
++    let mut lines: Vec<Vec<Span>> = vec![Vec::new(); rows];
++    let mut hyperlinks: Vec<TerminalHyperlink> = Vec::new();
++    let mut current_row: Option<usize> = None;
++    let mut run_style: Option<Style> = None;
++    let mut run_key: Option<(TermColor, TermColor, CellFlags)> = None;
++    let mut run_text = String::new();
++
++    let flush_run = |row: usize,
++                     run_style: &mut Option<Style>,
++                     run_key: &mut Option<(TermColor, TermColor, CellFlags)>,
++                     run_text: &mut String,
++                     lines: &mut Vec<Vec<Span>>| {
++        if run_text.is_empty() {
++            *run_style = None;
++            *run_key = None;
++            return;
++        }
++        if let Some(style) = run_style.take() {
++            lines[row].push(Span::new(std::mem::take(run_text)).style(style));
++        } else {
++            lines[row].push(Span::new(std::mem::take(run_text)));
++        }
++        *run_key = None;
++    };
++
++    let mut visit = |row: usize, col: usize, cell: &TermCell| {
++        if current_row != Some(row) {
++            if let Some(prev_row) = current_row {
++                flush_run(
++                    prev_row,
++                    &mut run_style,
++                    &mut run_key,
++                    &mut run_text,
++                    &mut lines,
++                );
++            }
++            current_row = Some(row);
++        }
++
++        if let Some(link) = cell.hyperlink() {
++            if let Some(previous) = hyperlinks.last_mut()
++                && previous.row == row
++                && previous.end_col == col
++                && previous.uri.as_ref() == link.uri()
++            {
++                previous.end_col = col + 1;
++            } else {
++                hyperlinks.push(TerminalHyperlink::new(link.uri(), row, col..col + 1));
++            }
++        }
++        if cell
++            .flags
++            .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
++        {
++            return;
++        }
++
++        match style_mode {
++            StyleMode::EveryCell => {
++                let style = style_from_term_cell(cell, &palette);
++                if run_style != Some(style) {
++                    if let Some(prev_row) = current_row {
++                        flush_run(
++                            prev_row,
++                            &mut run_style,
++                            &mut run_key,
++                            &mut run_text,
++                            &mut lines,
++                        );
++                    }
++                    run_style = Some(style);
++                }
++            }
++            StyleMode::AttrKey => {
++                let key = style_key(cell);
++                if run_key != Some(key) {
++                    if let Some(prev_row) = current_row {
++                        flush_run(
++                            prev_row,
++                            &mut run_style,
++                            &mut run_key,
++                            &mut run_text,
++                            &mut lines,
++                        );
++                    }
++                    run_key = Some(key);
++                    run_style = Some(style_from_term_cell(cell, &palette));
++                }
++            }
++        }
++        push_cell_text_str(&mut run_text, cell);
++    };
++
++    match access {
++        Access::Iterator => for_visible(screen, &mut visit),
++        Access::DenseRows => for_dense_rows(screen, &mut visit),
++    }
++
++    if let Some(row) = current_row {
++        flush_run(row, &mut run_style, &mut run_key, &mut run_text, &mut lines);
++    }
++
++    for line in &mut lines {
++        if line.is_empty() {
++            line.push(Span::new(""));
++        }
++    }
++
++    (lines, hyperlinks)
++}
++
++fn join_visible(visible: &[Vec<Span>]) -> String {
++    let mut text = String::new();
++    for (idx, line) in visible.iter().enumerate() {
++        if idx > 0 {
++            text.push('\n');
++        }
++        for span in line {
++            text.push_str(span.content.as_ref());
++        }
++    }
++    text
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn corpus(kind: &str, cols: u16, lines: usize) -> Vec<u8> {
++        let line = match kind {
++            "unicode" => "東京 e\u{301} 🦀 log record\r\n".to_owned(),
++            "dense" => {
++                let mut text: String = (0..cols)
++                    .map(|col| char::from(b'a' + (col % 26) as u8))
++                    .collect();
++                text.push_str("\r\n");
++                text
++            }
++            _ => "short log record\r\n".to_owned(),
++        };
++        line.repeat(lines).into_bytes()
++    }
++
++    fn populated(kind: &str) -> TerminalScreen {
++        let cols = 253;
++        let rows = 64;
++        let mut screen = TerminalScreen::new(rows, cols, 0);
++        screen.process_bytes(&corpus(kind, cols, usize::from(rows) + 1));
++        screen
++    }
++
++    #[test]
++    fn join_text_matches_render_snapshot() {
++        for kind in ["plain", "unicode", "dense"] {
++            let mut screen = populated(kind);
++            let expected = screen.render_snapshot();
++            let joined = join_snapshot_text(&screen);
++            assert_eq!(joined, expected.text.as_ref(), "{kind} text");
++            let (lines, links) = content_lines(&screen);
++            assert_eq!(lines, expected.color_lines.as_ref(), "{kind} spans");
++            assert_eq!(links, expected.hyperlinks.as_ref(), "{kind} links");
++        }
++    }
++
++    #[test]
++    fn row_and_attr_paths_match_display_iter_snapshot() {
++        for kind in ["plain", "unicode", "dense"] {
++            let screen = populated(kind);
++            let expected = content_lines(&screen);
++            for (name, actual) in [
++                ("dense_rows", content_lines_dense_rows(&screen)),
++                ("attr_keyed", content_lines_attr_keyed(&screen)),
++                ("dense_attr", content_lines_dense_attr(&screen)),
++            ] {
++                assert_eq!(actual.0, expected.0, "{kind} {name} spans");
++                assert_eq!(actual.1, expected.1, "{kind} {name} links");
++            }
++        }
++    }
++
++    #[test]
++    fn dense_row_walk_visits_the_viewport() {
++        let screen = populated("plain");
++        let iterator = walk_viewport(&screen);
++        let rows = walk_dense_rows(&screen);
++        assert_eq!(iterator, rows);
++        assert_eq!(walk_cells(&screen), iterator);
++    }
++}

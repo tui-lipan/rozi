@@ -26,6 +26,7 @@ Run one target:
 
 ```bash
 cargo bench --bench terminal_ingest
+cargo bench --bench terminal_history
 cargo bench --bench snapshot_rebuild
 cargo bench --bench protocol_framing
 cargo bench --bench session_pipeline
@@ -63,13 +64,24 @@ Criterion writes generated measurements and reports below `target/criterion/`. D
 | Target | Definition |
 | --- | --- |
 | `terminal_ingest` | Measures `TerminalScreen::process_bytes` throughput for generated plain lines, SGR-heavy output, scroll regions and cursor movement, wide Unicode, and long sparse-escape lines at fixed viewport sizes. |
+| `terminal_history` | Starts with 5,000 populated history rows and ingests repeated 10,000/100,000-line bursts into the same terminal. Separately measures snapshot construction at the live view, a mixed scroll offset, and deep scrollback, plus history text scanning, selection export, streaming replay, and height/narrow/wide resize. |
 | `snapshot_rebuild` | Measures `render_snapshot()` by viewport, server-output processing by message size, and the difference between rebuilding after every message and once per output burst. |
 | `protocol_framing` | Measures pane-output frame encode/decode round trips and serde for generated large control frames. |
 | `session_pipeline` | Measures in-memory frame encode, decode, client terminal processing, and snapshot rebuilding. Unix also includes a socket-pair case. |
 | `app_render` | Measures whole-application view expansion and layout by pane count, with empty and populated terminals. It also measures fixed sidebar states, repository-size fixtures, per-message update overhead, and real inbound-mailbox draining for round-robin multi-pane output after pane-aware coalescing. The drain cases exercise small-frame overhead and the soft byte budget. `inbound_fairness/hot_plus_quiet` times draining one 64 KiB hot aggregation plus a quiet pane's frame, the quiet pane's extra wait from non-adjacent coalescing. It does not measure backend drawing or terminal buffer diffing. |
 | `scrollback_search` | Measures complete searches across fixed pane and history counts, scanner slices, and full production mapping for one cooperative slice. Cases cover sparse, dense, and absent matches. |
 | `server_fairness` | Measures key acknowledgement through a real server-owned PTY under paced continuous ingress, idle-settled key latency, durable resurrection snapshot attempts, and a one-shot bounded saturation probe. |
-| `terminal_memory` | Counts retained allocations for a populated production client pane at adjacent scrollback capacities. It compares the production constructor lifecycle with an unprimed `TerminalScreen`; this is allocation evidence, not a timing benchmark. |
+| `terminal_memory` | Counts retained allocations for a populated production client pane at adjacent scrollback capacities. Compares production and direct constructors, collected and spooled replay, sustained-ingest allocation calls, resize peaks, and dense styled history. This is requested-heap evidence, not process RSS or a timing benchmark. |
+
+The sustained history cases exclude initial filling and terminal destruction from timing. Boundary
+resize cases exclude fixture construction and destruction too. Text scanning uses the framework's
+line iterator with an absent literal query. Snapshot cases render a fresh populated 253×64
+viewport with 5,000 history rows: `render_active` at offset 0, `render_mix` at offset 32, and
+`render_deep` at offset 5,000. Scroll positioning, fixture setup, and snapshot destruction stay
+outside those timers. They do not measure backend drawing or cached unchanged snapshots. Use
+`scrollback_search` for Rozi's complete search path.
+The lifecycle memory probe keeps allocation tracking active across construction and all stages,
+so freeing pre-existing terminal buffers does not produce an invalid negative live-byte count.
 
 The saturation probe is not a Criterion latency statistic. It checks the configured PTY ingress
 high-water behavior under unpaced producers and reports whether the bounded downstream policy

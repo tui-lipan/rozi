@@ -1,0 +1,4668 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -120,3 +120,23 @@
+     "Win32_System_Threading",
+     "Win32_System_WindowsProgramming",
+ ]
++
++[dev-dependencies.dense]
++package = "alacritty_terminal"
++version = "=0.26.0"
++
++[[test]]
++name = "compact_differential"
++path = "tests/compact_differential.rs"
++
++[dev-dependencies.criterion]
++version = "0.8.2"
++
++[[bench]]
++name = "history_boundary"
++path = "benches/history_boundary.rs"
++harness = false
++
++[profile.release]
++lto = "thin"
++codegen-units = 1
+--- /dev/null
++++ b/benches/history_boundary.rs
+@@ -0,0 +1,101 @@
++use alacritty_terminal::grid::history::{HistoryRow, RowPool};
++use alacritty_terminal::grid::{DenseRow, Grid};
++use alacritty_terminal::index::{Column, Line};
++use alacritty_terminal::term::cell::Cell;
++use alacritty_terminal::vte::ansi::Color;
++use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
++use std::hint::black_box;
++
++fn row() -> DenseRow<Cell> {
++    let mut row = DenseRow::<Cell>::new(253);
++    for (i, c) in "short log record".chars().enumerate() {
++        row[Column(i)].c = c;
++    }
++    row
++}
++fn pool() -> RowPool<Cell> {
++    let mut pool = RowPool::default();
++    pool.set_width(253);
++    pool
++}
++fn grid() -> Grid<Cell> {
++    let mut grid = Grid::new(64, 253, 5_000);
++    for _ in 0..5_064 {
++        grid[Line(0)] = row();
++        grid.scroll_up::<Color>(&(Line(0)..Line(64)), 1);
++    }
++    grid
++}
++fn dense_grid() -> dense::grid::Grid<dense::term::cell::Cell> {
++    let mut grid = dense::grid::Grid::<dense::term::cell::Cell>::new(64, 253, 5_000);
++    for _ in 0..5_064 {
++        for (i, c) in "short log record".chars().enumerate() {
++            grid[dense::index::Line(0)][dense::index::Column(i)].c = c;
++        }
++        grid.scroll_up::<Color>(&(dense::index::Line(0)..dense::index::Line(64)), 1);
++    }
++    grid
++}
++fn boundaries(c: &mut Criterion) {
++    let mut group = c.benchmark_group("history_representation");
++    group.bench_function("dense_to_compact", |b| {
++        b.iter_batched(
++            || (row(), pool()),
++            |(row, mut pool)| black_box((HistoryRow::from_dense(row, &mut pool), pool)),
++            BatchSize::PerIteration,
++        )
++    });
++    group.bench_function("dense_to_compact_pooled", |b| {
++        b.iter_batched(
++            || {
++                let mut pool = pool();
++                let history = HistoryRow::from_dense(row(), &mut pool);
++                let dense = history.into_dense(&mut pool);
++                (dense, pool)
++            },
++            |(row, mut pool)| black_box((HistoryRow::from_dense(row, &mut pool), pool)),
++            BatchSize::PerIteration,
++        )
++    });
++    group.bench_function("compact_to_dense_pooled", |b| {
++        b.iter_batched(
++            || {
++                let mut pool = pool();
++                (HistoryRow::from_dense(row(), &mut pool), pool)
++            },
++            |(row, mut pool)| black_box((row.into_dense(&mut pool), pool)),
++            BatchSize::PerIteration,
++        )
++    });
++    group.bench_function("compact_eviction", |b| {
++        b.iter_batched_ref(
++            || {
++                let mut pool = pool();
++                (Some(HistoryRow::from_dense(row(), &mut pool)), pool)
++            },
++            |(row, pool)| row.take().unwrap().recycle(pool),
++            BatchSize::PerIteration,
++        )
++    });
++    let split = grid();
++    let dense = dense_grid();
++    for reflow in [false, true] {
++        group.bench_function(BenchmarkId::new("split_resize_253_to_80", reflow), |b| {
++            b.iter_batched_ref(
++                || split.clone(),
++                |grid| grid.resize::<Color>(reflow, 64, 80),
++                BatchSize::PerIteration,
++            );
++        });
++        group.bench_function(BenchmarkId::new("dense_resize_253_to_80", reflow), |b| {
++            b.iter_batched_ref(
++                || dense.clone(),
++                |grid| grid.resize::<Color>(reflow, 64, 80),
++                BatchSize::PerIteration,
++            );
++        });
++    }
++    group.finish();
++}
++criterion_group!(benches, boundaries);
++criterion_main!(benches);
+--- /dev/null
++++ b/src/grid/history.rs
+@@ -0,0 +1,402 @@
++//! Explicit cold history storage. Dense viewport cells never dispatch on this representation.
++
++use super::{DenseRow, GridCell};
++use crate::index::Column;
++
++const POOL_ROWS: usize = 4;
++
++#[derive(Clone, Debug)]
++pub struct CompactRow<T> {
++    prefix: Vec<T>,
++    tail: T,
++    columns: usize,
++    occ: usize,
++}
++
++#[derive(Clone, Debug)]
++pub enum HistoryRow<T> {
++    Dense(DenseRow<T>),
++    Compact(CompactRow<T>),
++}
++
++/// A bounded pool shared by scrolling, eviction, and reflow.
++#[derive(Clone, Debug)]
++pub struct RowPool<T> {
++    width: usize,
++    dense: Vec<DenseRow<T>>,
++    prefixes: Vec<Vec<T>>,
++}
++impl<T> Default for RowPool<T> {
++    fn default() -> Self {
++        Self {
++            width: 0,
++            dense: Vec::new(),
++            prefixes: Vec::new(),
++        }
++    }
++}
++impl<T> RowPool<T> {
++    pub fn set_width(&mut self, width: usize) {
++        if self.width == width {
++            return;
++        }
++        self.width = width;
++        self.dense.clear();
++        self.prefixes.clear();
++    }
++    fn recycle_dense(&mut self, row: DenseRow<T>) {
++        if row.len() == self.width && self.dense.len() < POOL_ROWS {
++            self.dense.push(row);
++        }
++    }
++    fn recycle_prefix(&mut self, mut cells: Vec<T>) {
++        cells.clear();
++        if cells.capacity() <= self.width && self.prefixes.len() < POOL_ROWS {
++            self.prefixes.push(cells);
++        }
++    }
++    pub fn take_dense(&mut self, columns: usize) -> DenseRow<T>
++    where
++        T: Default,
++    {
++        if columns == self.width {
++            if let Some(row) = self.dense.pop() {
++                return row;
++            }
++        }
++        DenseRow::new(columns)
++    }
++    pub fn retained_cells(&self) -> usize {
++        self.dense.iter().map(|r| r.inner.capacity()).sum::<usize>()
++            + self.prefixes.iter().map(Vec::capacity).sum::<usize>()
++    }
++}
++impl<T> HistoryRow<T> {
++    pub fn view(&self) -> RowView<'_, T> {
++        match self {
++            Self::Dense(row) => RowView::Dense(row),
++            Self::Compact(row) => RowView::Compact(row),
++        }
++    }
++    pub fn recycle(self, pool: &mut RowPool<T>) {
++        match self {
++            Self::Dense(row) => pool.recycle_dense(row),
++            Self::Compact(row) => pool.recycle_prefix(row.prefix),
++        }
++    }
++    pub fn retained_cells(&self) -> usize {
++        match self {
++            Self::Dense(row) => row.inner.capacity(),
++            Self::Compact(row) => row.prefix.capacity() + 1,
++        }
++    }
++}
++impl<T: Default + Clone + PartialEq> HistoryRow<T> {
++    pub fn from_dense(mut row: DenseRow<T>, pool: &mut RowPool<T>) -> Self {
++        let columns = row.len();
++        let Some(tail) = row.inner.last() else {
++            return Self::Dense(row);
++        };
++        let modified = row.occ.min(columns);
++        let prefix_len = row.inner[..modified]
++            .iter()
++            .rposition(|c| c != tail)
++            .map_or(0, |i| i + 1);
++        if prefix_len + 1 > columns / 2 {
++            return Self::Dense(row);
++        }
++        let tail = tail.clone();
++        let occ = row.occ;
++        let mut prefix = pool.prefixes.pop().unwrap_or_default();
++        prefix.reserve(prefix_len);
++        prefix.resize_with(prefix_len, T::default);
++        row.inner[..prefix_len].swap_with_slice(&mut prefix);
++        pool.recycle_dense(row);
++        Self::Compact(CompactRow {
++            prefix,
++            tail,
++            columns,
++            occ,
++        })
++    }
++    /// A default tail can change width without cell conversion or reflow.
++    pub fn resize_default_tail(&mut self, columns: usize) -> bool {
++        let Self::Compact(row) = self else {
++            return false;
++        };
++        if row.prefix.len() > columns || row.tail != T::default() {
++            return false;
++        }
++        row.columns = columns;
++        row.occ = row.occ.min(columns);
++        true
++    }
++
++    pub fn into_dense(self, pool: &mut RowPool<T>) -> DenseRow<T> {
++        let Self::Compact(mut compact) = self else {
++            let Self::Dense(row) = self else {
++                unreachable!()
++            };
++            return row;
++        };
++        let mut row = pool.take_dense(compact.columns);
++        let prefix_len = compact.prefix.len();
++        for (cell, value) in row.inner.iter_mut().zip(compact.prefix.drain(..)) {
++            *cell = value;
++        }
++        for cell in &mut row.inner[prefix_len..] {
++            *cell = compact.tail.clone();
++        }
++        row.occ = compact.occ;
++        pool.recycle_prefix(compact.prefix);
++        row
++    }
++    pub fn materialize(&mut self, pool: &mut RowPool<T>) -> &mut DenseRow<T> {
++        if matches!(self, Self::Compact(_)) {
++            let old = std::mem::replace(self, Self::Dense(DenseRow::default()));
++            *self = Self::Dense(old.into_dense(pool));
++        }
++        match self {
++            Self::Dense(row) => row,
++            Self::Compact(_) => unreachable!(),
++        }
++    }
++}
++
++/// Read-only access is explicit. It cannot be turned into a mutable slice.
++pub enum RowView<'a, T> {
++    Dense(&'a DenseRow<T>),
++    Compact(&'a CompactRow<T>),
++}
++impl<T> Copy for RowView<'_, T> {}
++impl<T> Clone for RowView<'_, T> {
++    fn clone(&self) -> Self {
++        *self
++    }
++}
++impl<'a, T> RowView<'a, T> {
++    pub fn len(self) -> usize {
++        match self {
++            Self::Dense(row) => row.len(),
++            Self::Compact(row) => row.columns,
++        }
++    }
++    pub fn is_empty(self) -> bool {
++        self.len() == 0
++    }
++    pub fn is_clear(self) -> bool
++    where
++        T: GridCell,
++    {
++        self.iter().all(GridCell::is_empty)
++    }
++    pub fn cell(self, column: Column) -> &'a T {
++        match self {
++            Self::Dense(row) => &row[column],
++            Self::Compact(row) => {
++                assert!(column.0 < row.columns);
++                row.prefix.get(column.0).unwrap_or(&row.tail)
++            }
++        }
++    }
++    pub fn iter(self) -> RowCells<'a, T> {
++        match self {
++            Self::Dense(row) => RowCells {
++                prefix: row.inner.iter(),
++                tail: None,
++                remaining: 0,
++            },
++            Self::Compact(row) => RowCells {
++                prefix: row.prefix.iter(),
++                tail: Some(&row.tail),
++                remaining: row.columns - row.prefix.len(),
++            },
++        }
++    }
++    /// Locate the last matching cell without walking a repeated tail.
++    pub fn last_matching(self, mut predicate: impl FnMut(&T) -> bool) -> Option<usize> {
++        match self {
++            Self::Dense(row) => row.inner.iter().rposition(predicate),
++            Self::Compact(row) => {
++                if row.columns > row.prefix.len() && predicate(&row.tail) {
++                    return Some(row.columns - 1);
++                }
++                row.prefix.iter().rposition(predicate)
++            }
++        }
++    }
++    pub(super) fn occ(self) -> usize {
++        match self {
++            Self::Dense(row) => row.occ,
++            Self::Compact(row) => row.occ,
++        }
++    }
++}
++pub struct RowCells<'a, T> {
++    prefix: std::slice::Iter<'a, T>,
++    tail: Option<&'a T>,
++    remaining: usize,
++}
++impl<'a, T> Iterator for RowCells<'a, T> {
++    type Item = &'a T;
++    fn next(&mut self) -> Option<Self::Item> {
++        if let Some(cell) = self.prefix.next() {
++            return Some(cell);
++        }
++        if self.remaining == 0 {
++            return None;
++        }
++        self.remaining -= 1;
++        self.tail
++    }
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        let len = self.prefix.len() + self.remaining;
++        (len, Some(len))
++    }
++}
++impl<T> DoubleEndedIterator for RowCells<'_, T> {
++    fn next_back(&mut self) -> Option<Self::Item> {
++        if self.remaining == 0 {
++            return self.prefix.next_back();
++        }
++        self.remaining -= 1;
++        self.tail
++    }
++}
++impl<T> ExactSizeIterator for RowCells<'_, T> {}
++impl<T> std::iter::FusedIterator for RowCells<'_, T> {}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::term::cell::{Cell, Flags, Hyperlink};
++    use crate::vte::ansi::{Color, NamedColor};
++
++    fn row() -> DenseRow<Cell> {
++        let mut row = DenseRow::new(253);
++        row[Column(0)] = Cell {
++            c: '界',
++            flags: Flags::WIDE_CHAR,
++            ..Cell::default()
++        };
++        row[Column(0)].push_zerowidth('\u{301}');
++        row[Column(1)].flags = Flags::WIDE_CHAR_SPACER;
++        row
++    }
++    #[test]
++    fn roundtrip_preserves_cells_with_bounded_reuse() {
++        let mut pool = RowPool::default();
++        pool.set_width(253);
++        let original = row();
++        let mut row = original.clone();
++        let pointer = row.inner.as_ptr();
++        for _ in 0..100 {
++            let history = HistoryRow::from_dense(row, &mut pool);
++            assert!(matches!(history, HistoryRow::Compact(_)));
++            assert!(history.retained_cells() < 10);
++            assert!(history.view().iter().eq((&original).into_iter()));
++            row = history.into_dense(&mut pool);
++            assert_eq!(row.inner.as_ptr(), pointer);
++            assert_eq!(row, original);
++        }
++        assert_eq!(pool.prefixes.len(), 1);
++    }
++    #[test]
++    fn exact_colored_hyperlinked_tail_and_tail_mutation() {
++        let mut pool = RowPool::default();
++        pool.set_width(253);
++        let mut row = row();
++        let link = Hyperlink::new(Some("id"), "https://example.org".into());
++        for cell in &mut row[Column(2)..] {
++            cell.bg = Color::Named(NamedColor::Red);
++            cell.set_hyperlink(Some(link.clone()));
++        }
++        let original = row.clone();
++        let mut history = HistoryRow::from_dense(row, &mut pool);
++        assert!(matches!(history, HistoryRow::Compact(_)));
++        assert!(history.view().iter().eq((&original).into_iter()));
++        history.materialize(&mut pool)[Column(2)].c = 'X';
++        assert_eq!(history.view().cell(Column(3)), &original[Column(3)]);
++        assert_eq!(history.view().cell(Column(252)), &original[Column(252)]);
++    }
++    #[test]
++    fn dense_fallback_keeps_allocation() {
++        let mut row = row();
++        row[Column(252)].flags = Flags::WRAPLINE;
++        let pointer = row.inner.as_ptr();
++        let mut pool = RowPool::default();
++        pool.set_width(253);
++        let history = HistoryRow::from_dense(row, &mut pool);
++        assert!(matches!(history, HistoryRow::Dense(_)));
++        assert_eq!(history.into_dense(&mut pool).inner.as_ptr(), pointer);
++    }
++    #[test]
++    fn pools_are_bounded_and_discard_old_widths() {
++        let mut pool = RowPool::default();
++        pool.set_width(253);
++        let history: Vec<_> = (0..32)
++            .map(|_| HistoryRow::from_dense(row(), &mut pool))
++            .collect();
++        for row in history {
++            row.recycle(&mut pool);
++        }
++        assert_eq!(pool.dense.len(), POOL_ROWS);
++        assert_eq!(pool.prefixes.len(), POOL_ROWS);
++        assert!(pool.retained_cells() <= POOL_ROWS * 253 * 2);
++        pool.set_width(80);
++        assert_eq!(pool.retained_cells(), 0);
++        assert_eq!(pool.take_dense(80).len(), 80);
++    }
++}
++
++#[cfg(test)]
++mod iteration_tests {
++    use super::*;
++    use crate::term::cell::Cell;
++    use crate::vte::ansi::{Color, NamedColor};
++
++    #[test]
++    fn mixed_iteration_and_last_matching_preserve_dense_semantics() {
++        let mut pool = RowPool::default();
++        pool.set_width(80);
++        let mut dense = DenseRow::<Cell>::new(80);
++        dense[Column(0)].c = 'a';
++        dense[Column(1)].c = 'b';
++        let expected: Vec<_> = dense.inner.clone();
++        let history = HistoryRow::from_dense(dense, &mut pool);
++        let view = history.view();
++        assert_eq!(view.last_matching(|cell| cell.c == 'b'), Some(1));
++        assert_eq!(view.last_matching(|cell| cell.c == ' '), Some(79));
++        assert_eq!(view.last_matching(|cell| cell.c == 'x'), None);
++        let mut cells = view.iter();
++        for index in 0..40 {
++            assert_eq!(cells.len(), 80 - index * 2);
++            assert_eq!(cells.next(), Some(&expected[index]));
++            assert_eq!(cells.next_back(), Some(&expected[79 - index]));
++        }
++        assert_eq!(cells.next(), None);
++        assert_eq!(cells.next_back(), None);
++        assert_eq!(cells.len(), 0);
++    }
++
++    #[test]
++    fn direct_resize_requires_default_tail_and_preserves_prefix() {
++        let mut pool = RowPool::default();
++        pool.set_width(80);
++        let mut dense = DenseRow::<Cell>::new(80);
++        dense[Column(4)].c = 'x';
++        let mut history = HistoryRow::from_dense(dense, &mut pool);
++        assert!(!history.resize_default_tail(4));
++        assert!(history.resize_default_tail(5));
++        assert_eq!(history.view().cell(Column(4)).c, 'x');
++        assert!(history.resize_default_tail(120));
++        assert_eq!(history.view().cell(Column(119)), &Cell::default());
++        let mut dense = DenseRow::<Cell>::new(80);
++        for cell in &mut dense[Column(0)..] {
++            cell.bg = Color::Named(NamedColor::Red);
++        }
++        let mut history = HistoryRow::from_dense(dense, &mut pool);
++        assert!(!history.resize_default_tail(120));
++        assert_eq!(history.view().len(), 80);
++    }
++}
+--- /dev/null
++++ b/src/grid/history_grid.rs
+@@ -0,0 +1,85 @@
++use super::*;
++
++impl<T> Grid<T> {
++    /// Explicit read access across viewport and retained history.
++    pub fn read_row(&self, line: Line) -> RowView<'_, T> {
++        if line.0 >= 0 {
++            return RowView::Dense(&self.raw[line]);
++        }
++        let index = self
++            .history
++            .len()
++            .checked_sub(line.0.unsigned_abs() as usize)
++            .expect("history row");
++        self.history[index].view()
++    }
++    pub fn read_cell(&self, point: Point) -> &T {
++        self.read_row(point.line).cell(point.column)
++    }
++
++    pub(super) fn evict_history(&mut self, count: usize) {
++        for _ in 0..count {
++            if let Some(row) = self.history.pop_front() {
++                row.recycle(&mut self.row_pool);
++            }
++        }
++    }
++    pub fn retained_history_cells(&self) -> usize {
++        self.history
++            .iter()
++            .map(HistoryRow::retained_cells)
++            .sum::<usize>()
++            + self.row_pool.retained_cells()
++    }
++}
++impl<T: Default + Clone + PartialEq> Grid<T> {
++    /// Unusual historical mutation has an explicit materialization boundary.
++    pub fn history_row_mut(&mut self, line: Line) -> &mut DenseRow<T> {
++        if line.0 >= 0 {
++            return &mut self.raw[line];
++        }
++        let index = self
++            .history
++            .len()
++            .checked_sub(line.0.unsigned_abs() as usize)
++            .expect("history row");
++        self.history[index].materialize(&mut self.row_pool)
++    }
++    pub(super) fn archive_viewport_row(&mut self, line: Line) {
++        self.row_pool.set_width(self.columns);
++        if self.history.len() == self.max_scroll_limit {
++            self.evict_history(1);
++        }
++        let row = std::mem::take(&mut self.raw[line]);
++        self.history
++            .push_back(HistoryRow::from_dense(row, &mut self.row_pool));
++        self.raw[line] = self.row_pool.take_dense(self.columns);
++    }
++    /// Move row ownership into the reflow pass without expanding compact history.
++    pub(super) fn take_reflow_rows(&mut self) -> Vec<HistoryRow<T>> {
++        let mut rows: Vec<_> = self
++            .raw
++            .take_all()
++            .into_iter()
++            .map(HistoryRow::Dense)
++            .collect();
++        rows.extend(self.history.drain(..).rev());
++        rows
++    }
++    pub(super) fn replace_reflow_rows(&mut self, rows: Vec<HistoryRow<T>>) {
++        let mut rows = rows.into_iter();
++        let viewport = rows
++            .by_ref()
++            .take(self.lines)
++            .map(|r| r.into_dense(&mut self.row_pool))
++            .collect();
++        self.raw.replace_viewport(viewport);
++        self.history = rows
++            .map(|r| match r {
++                HistoryRow::Dense(row) => HistoryRow::from_dense(row, &mut self.row_pool),
++                compact => compact,
++            })
++            .collect();
++        self.history.make_contiguous().reverse();
++    }
++}
+--- a/src/grid/mod.rs
++++ b/src/grid/mod.rs
+@@ -1,25 +1,28 @@
+ //! A specialized 2D grid implementation optimized for use in a terminal.
+
+ use std::cmp::{max, min};
++use std::collections::VecDeque;
+ use std::ops::{Bound, Deref, Index, IndexMut, Range, RangeBounds};
+-
+-#[cfg(feature = "serde")]
+-use serde::{Deserialize, Serialize};
+
+ use crate::index::{Column, Line, Point};
+ use crate::term::cell::{Flags, ResetDiscriminant};
+ use crate::vte::ansi::{CharsetIndex, StandardCharset};
+
++pub mod history;
++mod history_grid;
+ pub mod resize;
++#[cfg(feature = "serde")]
++mod serde_grid;
++use history::{HistoryRow, RowPool, RowView};
+ mod row;
+ mod storage;
+ #[cfg(test)]
+ mod tests;
+
+-pub use self::row::Row;
++pub use self::row::DenseRow;
+ use self::storage::Storage;
+
+-pub trait GridCell: Sized {
++pub trait GridCell: Sized + Clone {
+     /// Check if the cell contains any content.
+     fn is_empty(&self) -> bool;
+
+@@ -106,19 +109,18 @@
+ ///                        columns
+ /// ```
+ #[derive(Clone, Debug)]
+-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+ pub struct Grid<T> {
+     /// Current cursor for writing data.
+-    #[cfg_attr(feature = "serde", serde(skip))]
+     pub cursor: Cursor<T>,
+
+     /// Last saved cursor.
+-    #[cfg_attr(feature = "serde", serde(skip))]
+     pub saved_cursor: Cursor<T>,
+
+     /// Lines in the grid. Each row holds a list of cells corresponding to the
+     /// columns in that row.
+     raw: Storage<T>,
++    history: VecDeque<HistoryRow<T>>,
++    row_pool: RowPool<T>,
+
+     /// Number of columns.
+     columns: usize,
+@@ -141,6 +143,8 @@
+     pub fn new(lines: usize, columns: usize, max_scroll_limit: usize) -> Grid<T> {
+         Grid {
+             raw: Storage::with_capacity(lines, columns),
++            history: VecDeque::new(),
++            row_pool: RowPool::default(),
+             max_scroll_limit,
+             display_offset: 0,
+             saved_cursor: Cursor::default(),
+@@ -154,7 +158,7 @@
+     pub fn update_history(&mut self, history_size: usize) {
+         let current_history_size = self.history_size();
+         if current_history_size > history_size {
+-            self.raw.shrink_lines(current_history_size - history_size);
++            self.evict_history(current_history_size - history_size);
+         }
+         self.display_offset = min(self.display_offset, history_size);
+         self.max_scroll_limit = history_size;
+@@ -162,29 +166,15 @@
+
+     pub fn scroll_display(&mut self, scroll: Scroll) {
+         self.display_offset = match scroll {
+-            Scroll::Delta(count) => {
+-                min(max((self.display_offset as i32) + count, 0) as usize, self.history_size())
+-            },
++            Scroll::Delta(count) => min(
++                max((self.display_offset as i32) + count, 0) as usize,
++                self.history_size(),
++            ),
+             Scroll::PageUp => min(self.display_offset + self.lines, self.history_size()),
+             Scroll::PageDown => self.display_offset.saturating_sub(self.lines),
+             Scroll::Top => self.history_size(),
+             Scroll::Bottom => 0,
+         };
+-    }
+-
+-    fn increase_scroll_limit(&mut self, count: usize) {
+-        let count = min(count, self.max_scroll_limit - self.history_size());
+-        if count != 0 {
+-            self.raw.initialize(count, self.columns);
+-        }
+-    }
+-
+-    fn decrease_scroll_limit(&mut self, count: usize) {
+-        let count = min(count, self.history_size());
+-        if count != 0 {
+-            self.raw.shrink_lines(min(count, self.history_size()));
+-            self.display_offset = min(self.display_offset, self.history_size());
+-        }
+     }
+
+     #[inline]
+@@ -270,9 +260,6 @@
+
+         // Only rotate the entire history if the active region starts at the top.
+         if region.start == 0 {
+-            // Create scrollback for the new lines.
+-            self.increase_scroll_limit(positions);
+-
+             // Swap the lines fixed at the top to their target positions after rotation.
+             //
+             // Since we've made sure that the rotation will never rotate away the entire region, we
+@@ -300,8 +287,11 @@
+             }
+         }
+
+-        // Ensure all new lines are fully cleared.
++        // Only completed rows crossing the top boundary enter history.
+         for i in (region.end.0 - positions as i32..region.end.0).map(Line::from) {
++            if region.start == 0 && self.max_scroll_limit != 0 {
++                self.archive_viewport_row(i);
++            }
+             self.raw[i].reset(&self.cursor.template);
+         }
+     }
+@@ -382,7 +372,7 @@
+     #[inline]
+     pub fn clear_history(&mut self) {
+         // Explicitly purge all lines from history.
+-        self.raw.shrink_lines(self.history_size());
++        self.evict_history(self.history.len());
+
+         // Reset display offset.
+         self.display_offset = 0;
+@@ -398,7 +388,10 @@
+         self.truncate();
+
+         // Initialize everything with empty new lines.
+-        self.raw.initialize(self.max_scroll_limit - self.history_size(), self.columns);
++        while self.history.len() < self.max_scroll_limit {
++            self.history
++                .push_front(HistoryRow::Dense(DenseRow::new(self.columns)));
++        }
+     }
+
+     /// This is used only for truncating before saving ref-tests.
+@@ -411,7 +404,11 @@
+     #[inline]
+     pub fn iter_from(&self, point: Point) -> GridIterator<'_, T> {
+         let end = Point::new(self.bottommost_line(), self.last_column());
+-        GridIterator { grid: self, point, end }
++        GridIterator {
++            grid: self,
++            point,
++            end,
++        }
+     }
+
+     /// Iterate over all visible cells.
+@@ -425,7 +422,11 @@
+         let end_line = min(start.line + self.screen_lines(), self.bottommost_line());
+         let end = Point::new(end_line, last_column);
+
+-        GridIterator { grid: self, point: start, end }
++        GridIterator {
++            grid: self,
++            point: start,
++            end,
++        }
+     }
+
+     #[inline]
+@@ -444,6 +445,12 @@
+     fn eq(&self, other: &Self) -> bool {
+         // Compare struct fields and check result of grid comparison.
+         self.raw.eq(&other.raw)
++            && self.history.len() == other.history.len()
++            && self
++                .history
++                .iter()
++                .zip(&other.history)
++                .all(|(a, b)| a.view().iter().eq(b.view().iter()))
+             && self.columns.eq(&other.columns)
+             && self.lines.eq(&other.lines)
+             && self.display_offset.eq(&other.display_offset)
+@@ -451,17 +458,19 @@
+ }
+
+ impl<T> Index<Line> for Grid<T> {
+-    type Output = Row<T>;
+-
+-    #[inline]
+-    fn index(&self, index: Line) -> &Row<T> {
++    type Output = DenseRow<T>;
++
++    #[inline]
++    fn index(&self, index: Line) -> &DenseRow<T> {
++        assert!(index.0 >= 0, "use read_row for history");
+         &self.raw[index]
+     }
+ }
+
+ impl<T> IndexMut<Line> for Grid<T> {
+     #[inline]
+-    fn index_mut(&mut self, index: Line) -> &mut Row<T> {
++    fn index_mut(&mut self, index: Line) -> &mut DenseRow<T> {
++        assert!(index.0 >= 0, "use history_row_mut for history");
+         &mut self.raw[index]
+     }
+ }
+@@ -521,7 +530,7 @@
+ impl<G> Dimensions for Grid<G> {
+     #[inline]
+     fn total_lines(&self) -> usize {
+-        self.raw.len()
++        self.raw.len() + self.history.len()
+     }
+
+     #[inline]
+@@ -585,7 +594,7 @@
+
+     /// Cell at the current iterator position.
+     pub fn cell(&self) -> &'a T {
+-        &self.grid[self.point]
++        self.grid.read_cell(self.point)
+     }
+ }
+
+@@ -602,11 +611,14 @@
+             Point { column, .. } if column >= self.grid.last_column() => {
+                 self.point.column = Column(0);
+                 self.point.line += 1;
+-            },
++            }
+             _ => self.point.column += Column(1),
+         }
+
+-        Some(Indexed { cell: &self.grid[self.point], point: self.point })
++        Some(Indexed {
++            cell: self.grid.read_cell(self.point),
++            point: self.point,
++        })
+     }
+
+     fn size_hint(&self) -> (usize, Option<usize>) {
+@@ -644,13 +656,18 @@
+         }
+
+         match self.point {
+-            Point { column: Column(0), .. } => {
++            Point {
++                column: Column(0), ..
++            } => {
+                 self.point.column = last_column;
+                 self.point.line -= 1;
+-            },
++            }
+             _ => self.point.column -= Column(1),
+         }
+
+-        Some(Indexed { cell: &self.grid[self.point], point: self.point })
+-    }
+-}
++        Some(Indexed {
++            cell: self.grid.read_cell(self.point),
++            point: self.point,
++        })
++    }
++}
+--- a/src/grid/resize.rs
++++ b/src/grid/resize.rs
+@@ -6,7 +6,8 @@
+ use crate::index::{Boundary, Column, Line};
+ use crate::term::cell::{Flags, ResetDiscriminant};
+
+-use crate::grid::row::Row;
++use crate::grid::history::HistoryRow;
++use crate::grid::row::DenseRow;
+ use crate::grid::{Dimensions, Grid, GridCell};
+
+ impl<T: GridCell + Default + PartialEq> Grid<T> {
+@@ -25,6 +26,7 @@
+             Ordering::Equal => (),
+         }
+
++        self.row_pool.set_width(columns);
+         match self.columns.cmp(&columns) {
+             Ordering::Less => self.grow_columns(reflow, columns),
+             Ordering::Greater => self.shrink_columns(reflow, columns),
+@@ -45,27 +47,28 @@
+         T: ResetDiscriminant<D>,
+         D: PartialEq,
+     {
+-        let lines_added = target - self.lines;
+-
+-        // Need to resize before updating buffer.
+-        self.raw.grow_visible_lines(target);
++        let added = target - self.lines;
++        let from_history = min(added, self.history.len());
++        let mut rows = self.raw.take_all();
++        for _ in 0..from_history {
++            let row = self
++                .history
++                .pop_back()
++                .unwrap()
++                .into_dense(&mut self.row_pool);
++            rows.push(row);
++        }
++        let blanks = added - from_history;
++        if blanks != 0 {
++            let mut bottom: Vec<_> = (0..blanks).map(|_| DenseRow::new(self.columns)).collect();
++            bottom.append(&mut rows);
++            rows = bottom;
++        }
+         self.lines = target;
+-
+-        let history_size = self.history_size();
+-        let from_history = min(history_size, lines_added);
+-
+-        // Move existing lines up for every line that couldn't be pulled from history.
+-        if from_history != lines_added {
+-            let delta = lines_added - from_history;
+-            self.scroll_up(&(Line(0)..Line(target as i32)), delta);
+-        }
+-
+-        // Move cursor down for every line pulled from history.
++        self.raw.replace_viewport(rows);
+         self.saved_cursor.point.line += from_history;
+         self.cursor.point.line += from_history;
+-
+-        self.display_offset = self.display_offset.saturating_sub(lines_added);
+-        self.decrease_scroll_limit(lines_added);
++        self.display_offset = self.display_offset.saturating_sub(added);
+     }
+
+     /// Remove lines from the visible area.
+@@ -89,25 +92,29 @@
+             self.cursor.point.line = min(self.cursor.point.line, Line(target as i32 - 1));
+         }
+
+-        // Clamp saved cursor, since only primary cursor is scrolled into viewport.
++        // Drop rows below the resized viewport; any scrolled rows were archived above.
+         self.saved_cursor.point.line = min(self.saved_cursor.point.line, Line(target as i32 - 1));
+-
+-        self.raw.rotate((self.lines - target) as isize);
+-        self.raw.shrink_visible_lines(target);
++        let mut rows = self.raw.take_all();
++        rows.drain(..self.lines - target);
+         self.lines = target;
++        self.raw.replace_viewport(rows);
+     }
+
+     /// Grow number of columns in each row, reflowing if necessary.
+     fn grow_columns(&mut self, reflow: bool, columns: usize) {
+         // Check if a row needs to be wrapped.
+-        let should_reflow = |row: &Row<T>| -> bool {
++        let should_reflow = |row: &HistoryRow<T>| -> bool {
++            let row = row.view();
+             let len = Column(row.len());
+-            reflow && len.0 > 0 && len < columns && row[len - 1].flags().contains(Flags::WRAPLINE)
++            reflow
++                && len.0 > 0
++                && len < columns
++                && row.cell(len - 1).flags().contains(Flags::WRAPLINE)
+         };
+
+         self.columns = columns;
+
+-        let mut reversed: Vec<Row<T>> = Vec::with_capacity(self.raw.len());
++        let mut reversed: Vec<HistoryRow<T>> = Vec::with_capacity(self.total_lines());
+         let mut cursor_line_delta = 0;
+
+         // Remove the linewrap special case, by moving the cursor outside of the grid.
+@@ -116,16 +123,24 @@
+             self.cursor.point.column += 1;
+         }
+
+-        let mut rows = self.raw.take_all();
++        let mut rows = self.take_reflow_rows();
+
+         for (i, mut row) in rows.drain(..).enumerate().rev() {
++            let previous_wraps = reversed.last().is_some_and(&should_reflow);
++            if !previous_wraps && row.resize_default_tail(columns) {
++                reversed.push(row);
++                continue;
++            }
++            let mut row = row.into_dense(&mut self.row_pool);
+             // Check if reflowing should be performed.
+             let last_row = match reversed.last_mut() {
+-                Some(last_row) if should_reflow(last_row) => last_row,
++                Some(last_row) if should_reflow(last_row) => {
++                    last_row.materialize(&mut self.row_pool)
++                }
+                 _ => {
+-                    reversed.push(row);
++                    reversed.push(HistoryRow::from_dense(row, &mut self.row_pool));
+                     continue;
+-                },
++                }
+             };
+
+             // Remove wrap flag before appending additional cells.
+@@ -136,7 +151,9 @@
+             // Remove leading spacers when reflowing wide char to the previous line.
+             let mut last_len = last_row.len();
+             if last_len >= 1
+-                && last_row[Column(last_len - 1)].flags().contains(Flags::LEADING_WIDE_CHAR_SPACER)
++                && last_row[Column(last_len - 1)]
++                    .flags()
++                    .contains(Flags::LEADING_WIDE_CHAR_SPACER)
+             {
+                 last_row.shrink(last_len - 1);
+                 last_len -= 1;
+@@ -206,14 +223,14 @@
+                 cell.flags_mut().insert(Flags::WRAPLINE);
+             }
+
+-            reversed.push(row);
++            reversed.push(HistoryRow::from_dense(row, &mut self.row_pool));
+         }
+
+         // Make sure we have at least the viewport filled.
+         if reversed.len() < self.lines {
+             let delta = (self.lines - reversed.len()) as i32;
+             self.cursor.point.line = max(self.cursor.point.line - delta, Line(0));
+-            reversed.resize_with(self.lines, || Row::new(columns));
++            reversed.resize_with(self.lines, || HistoryRow::Dense(DenseRow::new(columns)));
+         }
+
+         // Pull content down to put cursor in correct position, or move cursor up if there's no
+@@ -229,13 +246,18 @@
+         // Reverse iterator and fill all rows that are still too short.
+         let mut new_raw = Vec::with_capacity(reversed.len());
+         for mut row in reversed.drain(..).rev() {
++            if row.view().len() == columns || row.resize_default_tail(columns) {
++                new_raw.push(row);
++                continue;
++            }
++            let mut row = row.into_dense(&mut self.row_pool);
+             if row.len() < columns {
+                 row.grow(columns);
+             }
+-            new_raw.push(row);
+-        }
+-
+-        self.raw.replace_inner(new_raw);
++            new_raw.push(HistoryRow::from_dense(row, &mut self.row_pool));
++        }
++
++        self.replace_reflow_rows(new_raw);
+
+         // Clamp display offset in case lines above it got merged.
+         self.display_offset = min(self.display_offset, self.history_size());
+@@ -251,11 +273,16 @@
+             self.cursor.point.column += 1;
+         }
+
+-        let mut new_raw = Vec::with_capacity(self.raw.len());
++        let mut new_raw = Vec::with_capacity(self.total_lines());
+         let mut buffered: Option<Vec<T>> = None;
+
+-        let mut rows = self.raw.take_all();
++        let mut rows = self.take_reflow_rows();
+         for (i, mut row) in rows.drain(..).enumerate().rev() {
++            if buffered.is_none() && row.resize_default_tail(columns) {
++                new_raw.push(row);
++                continue;
++            }
++            let mut row = row.into_dense(&mut self.row_pool);
+             // Append lines left over from the previous row.
+             if let Some(buffered) = buffered.take() {
+                 // Add a column for every cell added before the cursor, if it goes beyond the new
+@@ -280,10 +307,10 @@
+                             Vec::new()
+                         } else {
+                             // Since it fits, just push the existing line without any reflow.
+-                            new_raw.push(row);
++                            new_raw.push(HistoryRow::from_dense(row, &mut self.row_pool));
+                             break;
+                         }
+-                    },
++                    }
+                 };
+
+                 // Insert spacer if a wide char would be wrapped into the last column.
+@@ -299,10 +326,14 @@
+
+                 // Remove wide char spacer before shrinking.
+                 let len = wrapped.len();
+-                if len > 0 && wrapped[len - 1].flags().contains(Flags::LEADING_WIDE_CHAR_SPACER) {
++                if len > 0
++                    && wrapped[len - 1]
++                        .flags()
++                        .contains(Flags::LEADING_WIDE_CHAR_SPACER)
++                {
+                     if len == 1 {
+                         row[Column(columns - 1)].flags_mut().insert(Flags::WRAPLINE);
+-                        new_raw.push(row);
++                        new_raw.push(HistoryRow::from_dense(row, &mut self.row_pool));
+                         break;
+                     } else {
+                         // Remove the leading spacer from the end of the wrapped row.
+@@ -311,10 +342,13 @@
+                     }
+                 }
+
+-                new_raw.push(row);
++                new_raw.push(HistoryRow::from_dense(row, &mut self.row_pool));
+
+                 // Set line as wrapped if cells got removed.
+-                if let Some(cell) = new_raw.last_mut().and_then(|r| r.last_mut()) {
++                if let Some(cell) = new_raw
++                    .last_mut()
++                    .and_then(|r| r.materialize(&mut self.row_pool).last_mut())
++                {
+                     cell.flags_mut().insert(Flags::WRAPLINE);
+                 }
+
+@@ -353,7 +387,7 @@
+                     if occ < columns {
+                         wrapped.resize_with(columns, T::default);
+                     }
+-                    row = Row::from_vec(wrapped, occ);
++                    row = DenseRow::from_vec(wrapped, occ);
+
+                     if i < self.display_offset {
+                         // Since we added a new line, rotate up the viewport.
+@@ -364,9 +398,9 @@
+         }
+
+         // Reverse iterator and use it as the new grid storage.
+-        let mut reversed: Vec<Row<T>> = new_raw.drain(..).rev().collect();
++        let mut reversed: Vec<HistoryRow<T>> = new_raw.drain(..).rev().collect();
+         reversed.truncate(self.max_scroll_limit + self.lines);
+-        self.raw.replace_inner(reversed);
++        self.replace_reflow_rows(reversed);
+
+         // Clamp display offset in case some lines went off.
+         self.display_offset = min(self.display_offset, self.history_size());
+@@ -375,7 +409,9 @@
+         if !reflow {
+             self.cursor.point.column = min(self.cursor.point.column, Column(columns - 1));
+         } else if self.cursor.point.column == columns
+-            && !self[self.cursor.point.line][Column(columns - 1)].flags().contains(Flags::WRAPLINE)
++            && !self[self.cursor.point.line][Column(columns - 1)]
++                .flags()
++                .contains(Flags::WRAPLINE)
+         {
+             self.cursor.input_needs_wrap = true;
+             self.cursor.point.column -= 1;
+--- a/src/grid/row.rs
++++ b/src/grid/row.rs
+@@ -1,4 +1,4 @@
+-//! Defines the Row type which makes up lines in the grid.
++//! Defines the DenseRow type which makes up lines in the grid.
+
+ use std::cmp::{max, min};
+ use std::ops::{Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo, RangeToInclusive};
+@@ -14,8 +14,8 @@
+ /// A row in the grid.
+ #[derive(Default, Clone, Debug)]
+ #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+-pub struct Row<T> {
+-    inner: Vec<T>,
++pub struct DenseRow<T> {
++    pub(super) inner: Vec<T>,
+
+     /// Maximum number of occupied entries.
+     ///
+@@ -24,17 +24,17 @@
+     pub(crate) occ: usize,
+ }
+
+-impl<T: PartialEq> PartialEq for Row<T> {
++impl<T: PartialEq> PartialEq for DenseRow<T> {
+     fn eq(&self, other: &Self) -> bool {
+         self.inner == other.inner
+     }
+ }
+
+-impl<T: Default> Row<T> {
++impl<T: Default> DenseRow<T> {
+     /// Create a new terminal row.
+     ///
+     /// Ideally the `template` should be `Copy` in all performance sensitive scenarios.
+-    pub fn new(columns: usize) -> Row<T> {
++    pub fn new(columns: usize) -> DenseRow<T> {
+         debug_assert!(columns >= 1);
+
+         let mut inner: Vec<T> = Vec::with_capacity(columns);
+@@ -52,7 +52,7 @@
+             inner.set_len(columns);
+         }
+
+-        Row { inner, occ: 0 }
++        DenseRow { inner, occ: 0 }
+     }
+
+     /// Increase the number of columns in the row.
+@@ -78,12 +78,19 @@
+
+         // Split off cells for a new row.
+         let mut new_row = self.inner.split_off(columns);
+-        let index = new_row.iter().rposition(|c| !c.is_empty()).map_or(0, |i| i + 1);
++        let index = new_row
++            .iter()
++            .rposition(|c| !c.is_empty())
++            .map_or(0, |i| i + 1);
+         new_row.truncate(index);
+
+         self.occ = min(self.occ, columns);
+
+-        if new_row.is_empty() { None } else { Some(new_row) }
++        if new_row.is_empty() {
++            None
++        } else {
++            Some(new_row)
++        }
+     }
+
+     /// Reset all cells in the row to the `template` cell.
+@@ -111,10 +118,10 @@
+ }
+
+ #[allow(clippy::len_without_is_empty)]
+-impl<T> Row<T> {
+-    #[inline]
+-    pub fn from_vec(vec: Vec<T>, occ: usize) -> Row<T> {
+-        Row { inner: vec, occ }
++impl<T> DenseRow<T> {
++    #[inline]
++    pub fn from_vec(vec: Vec<T>, occ: usize) -> DenseRow<T> {
++        DenseRow { inner: vec, occ }
+     }
+
+     #[inline]
+@@ -169,7 +176,7 @@
+     }
+ }
+
+-impl<'a, T> IntoIterator for &'a Row<T> {
++impl<'a, T> IntoIterator for &'a DenseRow<T> {
+     type IntoIter = slice::Iter<'a, T>;
+     type Item = &'a T;
+
+@@ -179,7 +186,7 @@
+     }
+ }
+
+-impl<'a, T> IntoIterator for &'a mut Row<T> {
++impl<'a, T> IntoIterator for &'a mut DenseRow<T> {
+     type IntoIter = slice::IterMut<'a, T>;
+     type Item = &'a mut T;
+
+@@ -190,7 +197,7 @@
+     }
+ }
+
+-impl<T> Index<Column> for Row<T> {
++impl<T> Index<Column> for DenseRow<T> {
+     type Output = T;
+
+     #[inline]
+@@ -199,7 +206,7 @@
+     }
+ }
+
+-impl<T> IndexMut<Column> for Row<T> {
++impl<T> IndexMut<Column> for DenseRow<T> {
+     #[inline]
+     fn index_mut(&mut self, index: Column) -> &mut T {
+         self.occ = max(self.occ, *index + 1);
+@@ -207,7 +214,7 @@
+     }
+ }
+
+-impl<T> Index<Range<Column>> for Row<T> {
++impl<T> Index<Range<Column>> for DenseRow<T> {
+     type Output = [T];
+
+     #[inline]
+@@ -216,7 +223,7 @@
+     }
+ }
+
+-impl<T> IndexMut<Range<Column>> for Row<T> {
++impl<T> IndexMut<Range<Column>> for DenseRow<T> {
+     #[inline]
+     fn index_mut(&mut self, index: Range<Column>) -> &mut [T] {
+         self.occ = max(self.occ, *index.end);
+@@ -224,7 +231,7 @@
+     }
+ }
+
+-impl<T> Index<RangeTo<Column>> for Row<T> {
++impl<T> Index<RangeTo<Column>> for DenseRow<T> {
+     type Output = [T];
+
+     #[inline]
+@@ -233,7 +240,7 @@
+     }
+ }
+
+-impl<T> IndexMut<RangeTo<Column>> for Row<T> {
++impl<T> IndexMut<RangeTo<Column>> for DenseRow<T> {
+     #[inline]
+     fn index_mut(&mut self, index: RangeTo<Column>) -> &mut [T] {
+         self.occ = max(self.occ, *index.end);
+@@ -241,7 +248,7 @@
+     }
+ }
+
+-impl<T> Index<RangeFrom<Column>> for Row<T> {
++impl<T> Index<RangeFrom<Column>> for DenseRow<T> {
+     type Output = [T];
+
+     #[inline]
+@@ -250,7 +257,7 @@
+     }
+ }
+
+-impl<T> IndexMut<RangeFrom<Column>> for Row<T> {
++impl<T> IndexMut<RangeFrom<Column>> for DenseRow<T> {
+     #[inline]
+     fn index_mut(&mut self, index: RangeFrom<Column>) -> &mut [T] {
+         self.occ = self.len();
+@@ -258,7 +265,7 @@
+     }
+ }
+
+-impl<T> Index<RangeFull> for Row<T> {
++impl<T> Index<RangeFull> for DenseRow<T> {
+     type Output = [T];
+
+     #[inline]
+@@ -267,7 +274,7 @@
+     }
+ }
+
+-impl<T> IndexMut<RangeFull> for Row<T> {
++impl<T> IndexMut<RangeFull> for DenseRow<T> {
+     #[inline]
+     fn index_mut(&mut self, _: RangeFull) -> &mut [T] {
+         self.occ = self.len();
+@@ -275,7 +282,7 @@
+     }
+ }
+
+-impl<T> Index<RangeToInclusive<Column>> for Row<T> {
++impl<T> Index<RangeToInclusive<Column>> for DenseRow<T> {
+     type Output = [T];
+
+     #[inline]
+@@ -284,7 +291,7 @@
+     }
+ }
+
+-impl<T> IndexMut<RangeToInclusive<Column>> for Row<T> {
++impl<T> IndexMut<RangeToInclusive<Column>> for DenseRow<T> {
+     #[inline]
+     fn index_mut(&mut self, index: RangeToInclusive<Column>) -> &mut [T] {
+         self.occ = max(self.occ, *index.end + 1);
+--- /dev/null
++++ b/src/grid/serde_grid.rs
+@@ -0,0 +1,93 @@
++//! Preserve upstream grid fixtures without serializing storage caches or expanding history.
++use super::*;
++use serde::ser::{SerializeSeq, SerializeStruct};
++use serde::{Deserialize, Deserializer, Serialize, Serializer};
++
++impl<T: Serialize> Serialize for RowView<'_, T> {
++    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++        struct Cells<'a, T>(RowView<'a, T>);
++        impl<T: Serialize> Serialize for Cells<'_, T> {
++            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++                let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
++                for cell in self.0.iter() {
++                    seq.serialize_element(cell)?;
++                }
++                seq.end()
++            }
++        }
++        let mut row = serializer.serialize_struct("DenseRow", 2)?;
++        row.serialize_field("inner", &Cells(*self))?;
++        row.serialize_field("occ", &self.occ())?;
++        row.end()
++    }
++}
++impl<T: Serialize> Serialize for Grid<T> {
++    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++        struct Rows<'a, T>(&'a Grid<T>);
++        impl<T: Serialize> Serialize for Rows<'_, T> {
++            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++                let grid = self.0;
++                let mut seq = serializer.serialize_seq(Some(grid.total_lines()))?;
++                for line in (-(grid.history.len() as i32)..grid.lines as i32).rev() {
++                    seq.serialize_element(&grid.read_row(Line(line)))?;
++                }
++                seq.end()
++            }
++        }
++        struct Raw<'a, T>(&'a Grid<T>);
++        impl<T: Serialize> Serialize for Raw<'_, T> {
++            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++                let mut raw = serializer.serialize_struct("Storage", 4)?;
++                raw.serialize_field("inner", &Rows(self.0))?;
++                raw.serialize_field("zero", &0usize)?;
++                raw.serialize_field("visible_lines", &self.0.lines)?;
++                raw.serialize_field("len", &self.0.total_lines())?;
++                raw.end()
++            }
++        }
++        let mut grid = serializer.serialize_struct("Grid", 5)?;
++        grid.serialize_field("raw", &Raw(self))?;
++        grid.serialize_field("columns", &self.columns)?;
++        grid.serialize_field("lines", &self.lines)?;
++        grid.serialize_field("display_offset", &self.display_offset)?;
++        grid.serialize_field("max_scroll_limit", &self.max_scroll_limit)?;
++        grid.end()
++    }
++}
++impl<'de, T: Deserialize<'de> + Default + Clone + PartialEq> Deserialize<'de> for Grid<T> {
++    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
++        #[derive(Deserialize)]
++        struct Wire<T> {
++            raw: Storage<T>,
++            columns: usize,
++            lines: usize,
++            display_offset: usize,
++            max_scroll_limit: usize,
++        }
++        let wire = Wire::deserialize(deserializer)?;
++        let mut grid = Grid {
++            raw: wire.raw,
++            columns: wire.columns,
++            lines: wire.lines,
++            display_offset: wire.display_offset,
++            max_scroll_limit: wire.max_scroll_limit,
++            history: VecDeque::new(),
++            row_pool: RowPool::default(),
++            cursor: Cursor::default(),
++            saved_cursor: Cursor::default(),
++        };
++        // Older reference files encode an off-by-one storage viewport count. Their
++        // canonical bottom-first rows are authoritative, as in upstream's equality check.
++        grid.raw.visible_lines = grid.lines;
++        grid.row_pool.set_width(grid.columns);
++        let history = grid.raw.len().saturating_sub(grid.lines);
++        for line in -(history as i32)..0 {
++            let row = std::mem::take(&mut grid.raw[Line(line)]);
++            grid.history
++                .push_back(HistoryRow::from_dense(row, &mut grid.row_pool));
++        }
++        grid.raw.shrink_lines(history);
++        grid.raw.truncate();
++        Ok(grid)
++    }
++}
+--- a/src/grid/storage.rs
++++ b/src/grid/storage.rs
+@@ -1,3 +1,4 @@
++#[cfg(test)]
+ use std::cmp::max;
+ use std::mem;
+ use std::mem::MaybeUninit;
+@@ -6,7 +7,7 @@
+ #[cfg(feature = "serde")]
+ use serde::{Deserialize, Serialize};
+
+-use super::Row;
++use super::DenseRow;
+ use crate::index::Line;
+
+ /// Maximum number of buffered lines outside of the grid for performance optimization.
+@@ -31,7 +32,7 @@
+ #[derive(Clone, Debug)]
+ #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+ pub struct Storage<T> {
+-    inner: Vec<Row<T>>,
++    inner: Vec<DenseRow<T>>,
+
+     /// Starting point for the storage of rows.
+     ///
+@@ -41,7 +42,7 @@
+     zero: usize,
+
+     /// Number of visible lines.
+-    visible_lines: usize,
++    pub(super) visible_lines: usize,
+
+     /// Total number of lines currently active in the terminal (scrollback + visible)
+     ///
+@@ -70,13 +71,19 @@
+     {
+         // Initialize visible lines; the scrollback buffer is initialized dynamically.
+         let mut inner = Vec::with_capacity(visible_lines);
+-        inner.resize_with(visible_lines, || Row::new(columns));
+-
+-        Storage { inner, zero: 0, visible_lines, len: visible_lines }
++        inner.resize_with(visible_lines, || DenseRow::new(columns));
++
++        Storage {
++            inner,
++            zero: 0,
++            visible_lines,
++            len: visible_lines,
++        }
+     }
+
+     /// Increase the number of lines in the buffer.
+     #[inline]
++    #[cfg(test)]
+     pub fn grow_visible_lines(&mut self, next: usize)
+     where
+         T: Default,
+@@ -93,6 +100,7 @@
+
+     /// Decrease the number of lines in the buffer.
+     #[inline]
++    #[cfg(test)]
+     pub fn shrink_visible_lines(&mut self, next: usize) {
+         // Shrink the size without removing any lines.
+         let shrinkage = self.visible_lines - next;
+@@ -123,6 +131,7 @@
+
+     /// Dynamically grow the storage buffer at runtime.
+     #[inline]
++    #[cfg(test)]
+     pub fn initialize(&mut self, additional_rows: usize, columns: usize)
+     where
+         T: Default,
+@@ -131,7 +140,8 @@
+             self.rezero();
+
+             let realloc_size = self.inner.len() + max(additional_rows, MAX_CACHE_SIZE);
+-            self.inner.resize_with(realloc_size, || Row::new(columns));
++            self.inner
++                .resize_with(realloc_size, || DenseRow::new(columns));
+         }
+
+         self.len += additional_rows;
+@@ -142,16 +152,16 @@
+         self.len
+     }
+
+-    /// Swap implementation for Row<T>.
+-    ///
+-    /// Exploits the known size of Row<T> to produce a slightly more efficient
++    /// Swap implementation for DenseRow<T>.
++    ///
++    /// Exploits the known size of DenseRow<T> to produce a slightly more efficient
+     /// swap than going through slice::swap.
+     ///
+     /// The default implementation from swap generates 8 movups and 4 movaps
+     /// instructions. This implementation achieves the swap in only 8 movups
+     /// instructions.
+     pub fn swap(&mut self, a: Line, b: Line) {
+-        debug_assert_eq!(mem::size_of::<Row<T>>(), mem::size_of::<usize>() * 4);
++        debug_assert_eq!(mem::size_of::<DenseRow<T>>(), mem::size_of::<usize>() * 4);
+
+         let a = self.compute_index(a);
+         let b = self.compute_index(b);
+@@ -196,15 +206,20 @@
+
+     /// Update the raw storage buffer.
+     #[inline]
+-    pub fn replace_inner(&mut self, vec: Vec<Row<T>>) {
++    pub fn replace_inner(&mut self, vec: Vec<DenseRow<T>>) {
+         self.len = vec.len();
+         self.inner = vec;
+         self.zero = 0;
+     }
+
++    pub(super) fn replace_viewport(&mut self, rows: Vec<DenseRow<T>>) {
++        self.visible_lines = rows.len();
++        self.replace_inner(rows);
++    }
++
+     /// Remove all rows from storage.
+     #[inline]
+-    pub fn take_all(&mut self) -> Vec<Row<T>> {
++    pub fn take_all(&mut self) -> Vec<DenseRow<T>> {
+         self.truncate();
+
+         let mut buffer = Vec::new();
+@@ -230,7 +245,11 @@
+         //
+         // Requires `zeroed` to be smaller than `self.inner.len() * 2`,
+         // but both `self.zero` and `requested` are always smaller than `self.inner.len()`.
+-        if zeroed >= self.inner.len() { zeroed - self.inner.len() } else { zeroed }
++        if zeroed >= self.inner.len() {
++            zeroed - self.inner.len()
++        } else {
++            zeroed
++        }
+     }
+
+     /// Rotate the ringbuffer to reset `self.zero` back to index `0`.
+@@ -246,7 +265,7 @@
+ }
+
+ impl<T> Index<Line> for Storage<T> {
+-    type Output = Row<T>;
++    type Output = DenseRow<T>;
+
+     #[inline]
+     fn index(&self, index: Line) -> &Self::Output {
+@@ -266,7 +285,7 @@
+ #[cfg(test)]
+ mod tests {
+     use crate::grid::GridCell;
+-    use crate::grid::row::Row;
++    use crate::grid::row::DenseRow;
+     use crate::grid::storage::{MAX_CACHE_SIZE, Storage};
+     use crate::index::{Column, Line};
+     use crate::term::cell::Flags;
+@@ -366,7 +385,9 @@
+             visible_lines: 4,
+             len: 4,
+         };
+-        expected.inner.append(&mut vec![filled_row('\0'); MAX_CACHE_SIZE]);
++        expected
++            .inner
++            .append(&mut vec![filled_row('\0'); MAX_CACHE_SIZE]);
+
+         assert_eq!(storage.visible_lines, expected.visible_lines);
+         assert_eq!(storage.inner, expected.inner);
+@@ -407,7 +428,9 @@
+             visible_lines: 4,
+             len: 4,
+         };
+-        expected.inner.append(&mut vec![filled_row('\0'); MAX_CACHE_SIZE]);
++        expected
++            .inner
++            .append(&mut vec![filled_row('\0'); MAX_CACHE_SIZE]);
+
+         assert_eq!(storage.visible_lines, expected.visible_lines);
+         assert_eq!(storage.inner, expected.inner);
+@@ -740,7 +763,12 @@
+         ];
+         let expected_init_size = std::cmp::max(init_size, MAX_CACHE_SIZE);
+         expected_inner.append(&mut vec![filled_row('\0'); expected_init_size]);
+-        let expected_storage = Storage { inner: expected_inner, zero: 0, visible_lines: 0, len: 9 };
++        let expected_storage = Storage {
++            inner: expected_inner,
++            zero: 0,
++            visible_lines: 0,
++            len: 9,
++        };
+
+         assert_eq!(storage.len, expected_storage.len);
+         assert_eq!(storage.zero, expected_storage.zero);
+@@ -761,8 +789,8 @@
+         assert!(storage.zero < storage.inner.len());
+     }
+
+-    fn filled_row(content: char) -> Row<char> {
+-        let mut row = Row::new(1);
++    fn filled_row(content: char) -> DenseRow<char> {
++        let mut row = DenseRow::new(1);
+         row[Column(0)] = content;
+         row
+     }
+--- a/src/grid/tests.rs
++++ b/src/grid/tests.rs
+@@ -89,7 +89,7 @@
+ #[test]
+ fn scroll_down_with_history() {
+     let mut grid = Grid::<usize>::new(10, 1, 1);
+-    grid.increase_scroll_limit(1);
++    grid.history.push_back(HistoryRow::Dense(DenseRow::new(1)));
+     for i in 0..10 {
+         grid[Line(i as i32)][Column(0)] = i;
+     }
+@@ -156,7 +156,10 @@
+     assert_eq!(&4, iter.cell());
+
+     // Test that iter ends at end of grid.
+-    let mut final_iter = grid.iter_from(Point { line: Line(4), column: Column(4) });
++    let mut final_iter = grid.iter_from(Point {
++        line: Line(4),
++        column: Column(4),
++    });
+     assert_eq!(None, final_iter.next());
+     assert_indexed(23, final_iter.prev());
+ }
+@@ -174,13 +177,13 @@
+
+     assert_eq!(grid.total_lines(), 3);
+
+-    assert_eq!(grid[Line(-2)].len(), 2);
+-    assert_eq!(grid[Line(-2)][Column(0)], cell('1'));
+-    assert_eq!(grid[Line(-2)][Column(1)], wrap_cell('2'));
+-
+-    assert_eq!(grid[Line(-1)].len(), 2);
+-    assert_eq!(grid[Line(-1)][Column(0)], cell('3'));
+-    assert_eq!(grid[Line(-1)][Column(1)], wrap_cell('4'));
++    assert_eq!(grid.read_row(Line(-2)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(0)), cell('1'));
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(1)), wrap_cell('2'));
++
++    assert_eq!(grid.read_row(Line(-1)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(0)), cell('3'));
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(1)), wrap_cell('4'));
+
+     assert_eq!(grid[Line(0)].len(), 2);
+     assert_eq!(grid[Line(0)][Column(0)], cell('5'));
+@@ -201,13 +204,13 @@
+
+     assert_eq!(grid.total_lines(), 3);
+
+-    assert_eq!(grid[Line(-2)].len(), 2);
+-    assert_eq!(grid[Line(-2)][Column(0)], cell('1'));
+-    assert_eq!(grid[Line(-2)][Column(1)], wrap_cell('2'));
+-
+-    assert_eq!(grid[Line(-1)].len(), 2);
+-    assert_eq!(grid[Line(-1)][Column(0)], cell('3'));
+-    assert_eq!(grid[Line(-1)][Column(1)], wrap_cell('4'));
++    assert_eq!(grid.read_row(Line(-2)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(0)), cell('1'));
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(1)), wrap_cell('2'));
++
++    assert_eq!(grid.read_row(Line(-1)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(0)), cell('3'));
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(1)), wrap_cell('4'));
+
+     assert_eq!(grid[Line(0)].len(), 2);
+     assert_eq!(grid[Line(0)][Column(0)], cell('5'));
+@@ -227,9 +230,9 @@
+
+     assert_eq!(grid.total_lines(), 2);
+
+-    assert_eq!(grid[Line(-1)].len(), 2);
+-    assert_eq!(grid[Line(-1)][Column(0)], cell('1'));
+-    assert_eq!(grid[Line(-1)][Column(1)], wrap_cell(' '));
++    assert_eq!(grid.read_row(Line(-1)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(0)), cell('1'));
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(1)), wrap_cell(' '));
+
+     assert_eq!(grid[Line(0)].len(), 2);
+     assert_eq!(grid[Line(0)][Column(0)], cell('3'));
+@@ -239,14 +242,14 @@
+
+     assert_eq!(grid.total_lines(), 4);
+
+-    assert_eq!(grid[Line(-3)].len(), 1);
+-    assert_eq!(grid[Line(-3)][Column(0)], wrap_cell('1'));
+-
+-    assert_eq!(grid[Line(-2)].len(), 1);
+-    assert_eq!(grid[Line(-2)][Column(0)], wrap_cell(' '));
+-
+-    assert_eq!(grid[Line(-1)].len(), 1);
+-    assert_eq!(grid[Line(-1)][Column(0)], wrap_cell('3'));
++    assert_eq!(grid.read_row(Line(-3)).len(), 1);
++    assert_eq!(*grid.read_row(Line(-3)).cell(Column(0)), wrap_cell('1'));
++
++    assert_eq!(grid.read_row(Line(-2)).len(), 1);
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(0)), wrap_cell(' '));
++
++    assert_eq!(grid.read_row(Line(-1)).len(), 1);
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(0)), wrap_cell('3'));
+
+     assert_eq!(grid[Line(0)].len(), 1);
+     assert_eq!(grid[Line(0)][Column(0)], cell('4'));
+--- a/src/term/cell.rs
++++ b/src/term/cell.rs
+@@ -68,7 +68,10 @@
+
+ impl From<Hyperlink> for VteHyperlink {
+     fn from(val: Hyperlink) -> Self {
+-        VteHyperlink { id: Some(val.id().to_owned()), uri: val.uri().to_owned() }
++        VteHyperlink {
++            id: Some(val.id().to_owned()),
++            uri: val.uri().to_owned(),
++        }
+     }
+ }
+
+@@ -87,10 +90,12 @@
+         let id = match id {
+             Some(id) => id.to_string(),
+             None => {
+-                let mut id = HYPERLINK_ID_SUFFIX.fetch_add(1, Ordering::Relaxed).to_string();
++                let mut id = HYPERLINK_ID_SUFFIX
++                    .fetch_add(1, Ordering::Relaxed)
++                    .to_string();
+                 id.push_str("_alacritty");
+                 id
+-            },
++            }
+         };
+
+         Self { id, uri }
+@@ -250,14 +255,20 @@
+
+     #[inline]
+     fn reset(&mut self, template: &Self) {
+-        *self = Cell { bg: template.bg, ..Cell::default() };
++        *self = Cell {
++            bg: template.bg,
++            ..Cell::default()
++        };
+     }
+ }
+
+ impl From<Color> for Cell {
+     #[inline]
+     fn from(color: Color) -> Self {
+-        Self { bg: color, ..Cell::default() }
++        Self {
++            bg: color,
++            ..Cell::default()
++        }
+     }
+ }
+
+@@ -267,7 +278,7 @@
+     fn line_length(&self) -> Column;
+ }
+
+-impl LineLength for grid::Row<Cell> {
++impl LineLength for grid::DenseRow<Cell> {
+     fn line_length(&self) -> Column {
+         let mut length = Column(0);
+
+@@ -288,13 +299,38 @@
+     }
+ }
+
++impl LineLength for grid::history::RowView<'_, Cell> {
++    fn line_length(&self) -> Column {
++        let mut length = Column(0);
++
++        if self
++            .cell(Column(self.len() - 1))
++            .flags
++            .contains(Flags::WRAPLINE)
++        {
++            return Column(self.len());
++        }
++
++        for (index, cell) in self.iter().rev().enumerate() {
++            if cell.c != ' '
++                || cell.extra.as_ref().map(|extra| extra.zerowidth.is_empty()) == Some(false)
++            {
++                length = Column(self.len() - index);
++                break;
++            }
++        }
++
++        length
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+
+     use std::mem;
+
+-    use crate::grid::Row;
++    use crate::grid::DenseRow;
+     use crate::index::Column;
+
+     #[test]
+@@ -308,7 +344,7 @@
+
+     #[test]
+     fn line_length_works() {
+-        let mut row = Row::<Cell>::new(10);
++        let mut row = DenseRow::<Cell>::new(10);
+         row[Column(5)].c = 'a';
+
+         assert_eq!(row.line_length(), Column(6));
+@@ -316,7 +352,7 @@
+
+     #[test]
+     fn line_length_works_with_wrapline() {
+-        let mut row = Row::<Cell>::new(10);
++        let mut row = DenseRow::<Cell>::new(10);
+         row[Column(9)].flags.insert(super::Flags::WRAPLINE);
+
+         assert_eq!(row.line_length(), Column(10));
+--- a/src/term/mod.rs
++++ b/src/term/mod.rs
+@@ -123,7 +123,9 @@
+ #[inline]
+ pub fn point_to_viewport(display_offset: usize, point: Point) -> Option<Point<usize>> {
+     let viewport_line = point.line.0 + display_offset as i32;
+-    usize::try_from(viewport_line).ok().map(|line| Point::new(line, point.column))
++    usize::try_from(viewport_line)
++        .ok()
++        .map(|line| Point::new(line, point.column))
+ }
+
+ /// Convert a viewport relative point to a terminal point.
+@@ -153,7 +155,11 @@
+
+     #[inline]
+     pub fn undamaged(line: usize, num_cols: usize) -> Self {
+-        Self { line, left: num_cols, right: 0 }
++        Self {
++            line,
++            left: num_cols,
++            right: 0,
++        }
+     }
+
+     #[inline]
+@@ -195,7 +201,10 @@
+         let num_lines = line_damage.len();
+         // Filter out invisible damage.
+         let line_damage = &line_damage[..num_lines.saturating_sub(display_offset)];
+-        Self { display_offset, line_damage: line_damage.iter() }
++        Self {
++            display_offset,
++            line_damage: line_damage.iter(),
++        }
+     }
+ }
+
+@@ -227,10 +236,15 @@
+
+ impl TermDamageState {
+     fn new(num_cols: usize, num_lines: usize) -> Self {
+-        let lines =
+-            (0..num_lines).map(|line| LineDamageBounds::undamaged(line, num_cols)).collect();
+-
+-        Self { full: true, lines, last_cursor: Default::default() }
++        let lines = (0..num_lines)
++            .map(|line| LineDamageBounds::undamaged(line, num_cols))
++            .collect();
++
++        Self {
++            full: true,
++            lines,
++            last_cursor: Default::default(),
++        }
+     }
+
+     #[inline]
+@@ -368,7 +382,11 @@
+
+ /// OSC 52 behavior.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "lowercase"))]
++#[cfg_attr(
++    feature = "serde",
++    derive(Serialize, Deserialize),
++    serde(rename_all = "lowercase")
++)]
+ pub enum Osc52 {
+     /// The handling of the escape sequence is disabled.
+     Disabled,
+@@ -510,7 +528,8 @@
+         self.event_proxy.send_event(title_event);
+
+         if self.mode.contains(TermMode::ALT_SCREEN) {
+-            self.inactive_grid.update_history(self.config.scrolling_history);
++            self.inactive_grid
++                .update_history(self.config.scrolling_history);
+         } else {
+             self.grid.update_history(self.config.scrolling_history);
+         }
+@@ -533,7 +552,10 @@
+         let mut res = String::new();
+
+         match self.selection.as_ref() {
+-            Some(Selection { ty: SelectionType::Block, .. }) => {
++            Some(Selection {
++                ty: SelectionType::Block,
++                ..
++            }) => {
+                 for line in (start.line.0..end.line.0).map(Line::from) {
+                     res += self
+                         .line_to_string(line, start.column..end.column, start.column.0 != 0)
+@@ -541,14 +563,19 @@
+                     res += "\n";
+                 }
+
+-                res += self.line_to_string(end.line, start.column..end.column, true).trim_end();
+-            },
+-            Some(Selection { ty: SelectionType::Lines, .. }) => {
++                res += self
++                    .line_to_string(end.line, start.column..end.column, true)
++                    .trim_end();
++            }
++            Some(Selection {
++                ty: SelectionType::Lines,
++                ..
++            }) => {
+                 res = self.bounds_to_string(start, end) + "\n";
+-            },
++            }
+             _ => {
+                 res = self.bounds_to_string(start, end);
+-            },
++            }
+         }
+
+         Some(res)
+@@ -559,8 +586,16 @@
+         let mut res = String::new();
+
+         for line in (start.line.0..=end.line.0).map(Line::from) {
+-            let start_col = if line == start.line { start.column } else { Column(0) };
+-            let end_col = if line == end.line { end.column } else { self.last_column() };
++            let start_col = if line == start.line {
++                start.column
++            } else {
++                Column(0)
++            };
++            let end_col = if line == end.line {
++                end.column
++            } else {
++                self.last_column()
++            };
+
+             res += &self.line_to_string(line, start_col..end_col, line == end.line);
+         }
+@@ -577,17 +612,21 @@
+     ) -> String {
+         let mut text = String::new();
+
+-        let grid_line = &self.grid[line];
++        let grid_line = self.grid.read_row(line);
+         let line_length = cmp::min(grid_line.line_length(), cols.end + 1);
+
+         // Include wide char when trailing spacer is selected.
+-        if grid_line[cols.start].flags.contains(Flags::WIDE_CHAR_SPACER) {
++        if grid_line
++            .cell(cols.start)
++            .flags
++            .contains(Flags::WIDE_CHAR_SPACER)
++        {
+             cols.start -= 1;
+         }
+
+         let mut tab_mode = false;
+         for column in (cols.start.0..line_length.0).map(Column::from) {
+-            let cell = &grid_line[column];
++            let cell = grid_line.cell(column);
+
+             // Skip over cells until next tab-stop once a tab was found.
+             if tab_mode {
+@@ -602,7 +641,10 @@
+                 tab_mode = true;
+             }
+
+-            if !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
++            if !cell
++                .flags
++                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
++            {
+                 // Push cells primary character.
+                 text.push(cell.c);
+
+@@ -615,7 +657,10 @@
+
+         if cols.end >= self.columns() - 1
+             && (line_length.0 == 0
+-                || !self.grid[line][line_length - 1].flags.contains(Flags::WRAPLINE))
++                || !grid_line
++                    .cell(line_length - 1)
++                    .flags
++                    .contains(Flags::WRAPLINE))
+         {
+             text.push('\n');
+         }
+@@ -623,10 +668,13 @@
+         // If wide char is not part of the selection, but leading spacer is, include it.
+         if line_length == self.columns()
+             && line_length.0 >= 2
+-            && grid_line[line_length - 1].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
++            && grid_line
++                .cell(line_length - 1)
++                .flags
++                .contains(Flags::LEADING_WIDE_CHAR_SPACER)
+             && include_wrapped_wide
+         {
+-            text.push(self.grid[line - 1i32][Column(0)].c);
++            text.push(self.grid.read_row(line - 1i32).cell(Column(0)).c);
+         }
+
+         text
+@@ -723,9 +771,16 @@
+             self.inactive_grid.reset_region(..);
+         }
+
+-        mem::swap(&mut self.keyboard_mode_stack, &mut self.inactive_keyboard_mode_stack);
+-        let keyboard_mode =
+-            self.keyboard_mode_stack.last().copied().unwrap_or(KeyboardModes::NO_MODE).into();
++        mem::swap(
++            &mut self.keyboard_mode_stack,
++            &mut self.inactive_keyboard_mode_stack,
++        );
++        let keyboard_mode = self
++            .keyboard_mode_stack
++            .last()
++            .copied()
++            .unwrap_or(KeyboardModes::NO_MODE)
++            .into();
+         self.set_keyboard_mode(keyboard_mode, KeyboardModesApplyBehavior::Replace);
+
+         mem::swap(&mut self.grid, &mut self.inactive_grid);
+@@ -742,14 +797,19 @@
+     fn scroll_down_relative(&mut self, origin: Line, mut lines: usize) {
+         trace!("Scrolling down relative: origin={origin}, lines={lines}");
+
+-        lines = cmp::min(lines, (self.scroll_region.end - self.scroll_region.start).0 as usize);
++        lines = cmp::min(
++            lines,
++            (self.scroll_region.end - self.scroll_region.start).0 as usize,
++        );
+         lines = cmp::min(lines, (self.scroll_region.end - origin).0 as usize);
+
+         let region = origin..self.scroll_region.end;
+
+         // Scroll selection.
+-        self.selection =
+-            self.selection.take().and_then(|s| s.rotate(self, &region, -(lines as i32)));
++        self.selection = self
++            .selection
++            .take()
++            .and_then(|s| s.rotate(self, &region, -(lines as i32)));
+
+         // Scroll vi mode cursor.
+         let line = &mut self.vi_mode_cursor.point.line;
+@@ -770,18 +830,28 @@
+     fn scroll_up_relative(&mut self, origin: Line, mut lines: usize) {
+         trace!("Scrolling up relative: origin={origin}, lines={lines}");
+
+-        lines = cmp::min(lines, (self.scroll_region.end - self.scroll_region.start).0 as usize);
++        lines = cmp::min(
++            lines,
++            (self.scroll_region.end - self.scroll_region.start).0 as usize,
++        );
+
+         let region = origin..self.scroll_region.end;
+
+         // Scroll selection.
+-        self.selection = self.selection.take().and_then(|s| s.rotate(self, &region, lines as i32));
++        self.selection = self
++            .selection
++            .take()
++            .and_then(|s| s.rotate(self, &region, lines as i32));
+
+         self.grid.scroll_up(&region, lines);
+
+         // Scroll vi mode cursor.
+         let viewport_top = Line(-(self.grid.display_offset() as i32));
+-        let top = if region.start == 0 { viewport_top } else { region.start };
++        let top = if region.start == 0 {
++            viewport_top
++        } else {
++            region.start
++        };
+         let line = &mut self.vi_mode_cursor.point.line;
+         if (top <= *line) && region.end > *line {
+             *line = cmp::max(*line - lines, top);
+@@ -899,26 +969,31 @@
+
+     /// Jump to the end of a wide cell.
+     pub fn expand_wide(&self, mut point: Point, direction: Direction) -> Point {
+-        let flags = self.grid[point.line][point.column].flags;
++        let flags = self.grid.read_cell(point).flags;
+
+         match direction {
+             Direction::Right if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) => {
+                 point.column = Column(1);
+                 point.line += 1;
+-            },
++            }
+             Direction::Right if flags.contains(Flags::WIDE_CHAR) => {
+                 point.column = cmp::min(point.column + 1, self.last_column());
+-            },
++            }
+             Direction::Left if flags.intersects(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER) => {
+                 if flags.contains(Flags::WIDE_CHAR_SPACER) {
+                     point.column -= 1;
+                 }
+
+                 let prev = point.sub(self, Boundary::Grid, 1);
+-                if self.grid[prev].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
++                if self
++                    .grid
++                    .read_cell(prev)
++                    .flags
++                    .contains(Flags::LEADING_WIDE_CHAR_SPACER)
++                {
+                     point = prev;
+                 }
+-            },
++            }
+             _ => (),
+         }
+
+@@ -940,7 +1015,9 @@
+     /// While vi mode is active, this will automatically return the vi mode cursor style.
+     #[inline]
+     pub fn cursor_style(&self) -> CursorStyle {
+-        let cursor_style = self.cursor_style.unwrap_or(self.config.default_cursor_style);
++        let cursor_style = self
++            .cursor_style
++            .unwrap_or(self.config.default_cursor_style);
+
+         if self.mode.contains(TermMode::VI) {
+             self.config.vi_mode_cursor_style.unwrap_or(cursor_style)
+@@ -991,12 +1068,17 @@
+         let mut cursor_cell = self.grid.cursor_cell();
+
+         // Clear all related cells when overwriting a fullwidth cell.
+-        if cursor_cell.flags.intersects(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER) {
++        if cursor_cell
++            .flags
++            .intersects(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER)
++        {
+             // Remove wide char and spacer.
+             let wide = cursor_cell.flags.contains(Flags::WIDE_CHAR);
+             let point = self.grid.cursor.point;
+             if wide && point.column < self.last_column() {
+-                self.grid[point.line][point.column + 1].flags.remove(Flags::WIDE_CHAR_SPACER);
++                self.grid[point.line][point.column + 1]
++                    .flags
++                    .remove(Flags::WIDE_CHAR_SPACER);
+             } else if point.column > 0 {
+                 self.grid[point.line][point.column - 1].clear_wide();
+             }
+@@ -1004,7 +1086,9 @@
+             // Remove leading spacers.
+             if point.column <= 1 && point.line != self.topmost_line() {
+                 let column = self.last_column();
+-                self.grid[point.line - 1i32][column].flags.remove(Flags::LEADING_WIDE_CHAR_SPACER);
++                self.grid.history_row_mut(point.line - 1i32)[column]
++                    .flags
++                    .remove(Flags::LEADING_WIDE_CHAR_SPACER);
+             }
+
+             cursor_cell = self.grid.cursor_cell();
+@@ -1020,8 +1104,10 @@
+     #[inline]
+     fn damage_cursor(&mut self) {
+         // The normal cursor coordinates are always in viewport.
+-        let point =
+-            Point::new(self.grid.cursor.point.line.0 as usize, self.grid.cursor.point.column);
++        let point = Point::new(
++            self.grid.cursor.point.line.0 as usize,
++            self.grid.cursor.point.column,
++        );
+         self.damage.damage_point(point);
+     }
+
+@@ -1076,7 +1162,10 @@
+
+             // Put zerowidth characters over first fullwidth character cell.
+             let line = self.grid.cursor.point.line;
+-            if self.grid[line][column].flags.contains(Flags::WIDE_CHAR_SPACER) {
++            if self.grid[line][column]
++                .flags
++                .contains(Flags::WIDE_CHAR_SPACER)
++            {
+                 column.0 = column.saturating_sub(1);
+             }
+
+@@ -1107,9 +1196,17 @@
+             if self.grid.cursor.point.column + 1 >= columns {
+                 if self.mode.contains(TermMode::LINE_WRAP) {
+                     // Insert placeholder before wide char if glyph does not fit in this row.
+-                    self.grid.cursor.template.flags.insert(Flags::LEADING_WIDE_CHAR_SPACER);
++                    self.grid
++                        .cursor
++                        .template
++                        .flags
++                        .insert(Flags::LEADING_WIDE_CHAR_SPACER);
+                     self.write_at_cursor(' ');
+-                    self.grid.cursor.template.flags.remove(Flags::LEADING_WIDE_CHAR_SPACER);
++                    self.grid
++                        .cursor
++                        .template
++                        .flags
++                        .remove(Flags::LEADING_WIDE_CHAR_SPACER);
+                     self.wrapline();
+                 } else {
+                     // Prevent out of bounds crash when linewrapping is disabled.
+@@ -1125,9 +1222,17 @@
+
+             // Write spacer to cell following the wide glyph.
+             self.grid.cursor.point.column += 1;
+-            self.grid.cursor.template.flags.insert(Flags::WIDE_CHAR_SPACER);
++            self.grid
++                .cursor
++                .template
++                .flags
++                .insert(Flags::WIDE_CHAR_SPACER);
+             self.write_at_cursor(' ');
+-            self.grid.cursor.template.flags.remove(Flags::WIDE_CHAR_SPACER);
++            self.grid
++                .cursor
++                .template
++                .flags
++                .remove(Flags::WIDE_CHAR_SPACER);
+         }
+
+         if self.grid.cursor.point.column + 1 < columns {
+@@ -1196,7 +1301,8 @@
+         let num_cells = self.columns() - destination;
+
+         let line = cursor.point.line;
+-        self.damage.damage_line(line.0 as usize, 0, self.columns() - 1);
++        self.damage
++            .damage_line(line.0 as usize, 0, self.columns() - 1);
+
+         let row = &mut self.grid[line][..];
+
+@@ -1235,7 +1341,8 @@
+         let last_column = cmp::min(self.grid.cursor.point.column + cols, self.last_column());
+
+         let cursor_line = self.grid.cursor.point.line.0 as usize;
+-        self.damage.damage_line(cursor_line, self.grid.cursor.point.column.0, last_column.0);
++        self.damage
++            .damage_line(cursor_line, self.grid.cursor.point.column.0, last_column.0);
+
+         self.grid.cursor.point.column = last_column;
+         self.grid.cursor.input_needs_wrap = false;
+@@ -1247,7 +1354,8 @@
+         let column = self.grid.cursor.point.column.saturating_sub(cols);
+
+         let cursor_line = self.grid.cursor.point.line.0 as usize;
+-        self.damage.damage_line(cursor_line, column, self.grid.cursor.point.column.0);
++        self.damage
++            .damage_line(cursor_line, column, self.grid.cursor.point.column.0);
+
+         self.grid.cursor.point.column = Column(column);
+         self.grid.cursor.input_needs_wrap = false;
+@@ -1260,13 +1368,13 @@
+                 trace!("Reporting primary device attributes");
+                 let text = String::from("\x1b[?6c");
+                 self.event_proxy.send_event(Event::PtyWrite(text));
+-            },
++            }
+             Some('>') => {
+                 trace!("Reporting secondary device attributes");
+                 let version = version_number(env!("CARGO_PKG_VERSION"));
+                 let text = format!("\x1b[>0;{version};1c");
+                 self.event_proxy.send_event(Event::PtyWrite(text));
+-            },
++            }
+             _ => debug!("Unsupported device attributes intermediate"),
+         }
+     }
+@@ -1278,8 +1386,11 @@
+         }
+
+         trace!("Reporting active keyboard mode");
+-        let current_mode =
+-            self.keyboard_mode_stack.last().unwrap_or(&KeyboardModes::NO_MODE).bits();
++        let current_mode = self
++            .keyboard_mode_stack
++            .last()
++            .unwrap_or(&KeyboardModes::NO_MODE)
++            .bits();
+         let text = format!("\x1b[?{current_mode}u");
+         self.event_proxy.send_event(Event::PtyWrite(text));
+     }
+@@ -1311,11 +1422,18 @@
+         }
+
+         trace!("Attempting to pop {to_pop} keyboard modes from the stack");
+-        let new_len = self.keyboard_mode_stack.len().saturating_sub(to_pop as usize);
++        let new_len = self
++            .keyboard_mode_stack
++            .len()
++            .saturating_sub(to_pop as usize);
+         self.keyboard_mode_stack.truncate(new_len);
+
+         // Reload active mode.
+-        let mode = self.keyboard_mode_stack.last().copied().unwrap_or(KeyboardModes::NO_MODE);
++        let mode = self
++            .keyboard_mode_stack
++            .last()
++            .copied()
++            .unwrap_or(KeyboardModes::NO_MODE);
+         self.set_keyboard_mode(mode.into(), KeyboardModesApplyBehavior::Replace);
+     }
+
+@@ -1335,12 +1453,12 @@
+             5 => {
+                 let text = String::from("\x1b[0n");
+                 self.event_proxy.send_event(Event::PtyWrite(text));
+-            },
++            }
+             6 => {
+                 let pos = self.grid.cursor.point;
+                 let text = format!("\x1b[{};{}R", pos.line + 1, pos.column + 1);
+                 self.event_proxy.send_event(Event::PtyWrite(text));
+-            },
++            }
+             _ => debug!("unknown device status query: {arg}"),
+         };
+     }
+@@ -1413,7 +1531,8 @@
+         trace!("Carriage return");
+         let new_col = 0;
+         let line = self.grid.cursor.point.line.0 as usize;
+-        self.damage.damage_line(line, new_col, self.grid.cursor.point.column.0);
++        self.damage
++            .damage_line(line, new_col, self.grid.cursor.point.column.0);
+         self.grid.cursor.point.column = Column(new_col);
+         self.grid.cursor.input_needs_wrap = false;
+     }
+@@ -1519,7 +1638,10 @@
+     fn erase_chars(&mut self, count: usize) {
+         let cursor = &self.grid.cursor;
+
+-        trace!("Erasing chars: count={}, col={}", count, cursor.point.column);
++        trace!(
++            "Erasing chars: count={}, col={}",
++            count, cursor.point.column
++        );
+
+         let start = cursor.point.column;
+         let end = cmp::min(start + count, Column(self.columns()));
+@@ -1548,7 +1670,8 @@
+         let num_cells = columns - end;
+
+         let line = cursor.point.line;
+-        self.damage.damage_line(line.0 as usize, 0, self.columns() - 1);
++        self.damage
++            .damage_line(line.0 as usize, 0, self.columns() - 1);
+         let row = &mut self.grid[line][..];
+
+         for offset in 0..num_cells {
+@@ -1585,7 +1708,8 @@
+         }
+
+         let line = self.grid.cursor.point.line.0 as usize;
+-        self.damage.damage_line(line, self.grid.cursor.point.column.0, old_col);
++        self.damage
++            .damage_line(line, self.grid.cursor.point.column.0, old_col);
+     }
+
+     #[inline]
+@@ -1612,7 +1736,8 @@
+         }
+
+         let line = self.grid.cursor.point.line.0 as usize;
+-        self.damage.damage_line(line, old_col, self.grid.cursor.point.column.0);
++        self.damage
++            .damage_line(line, old_col, self.grid.cursor.point.column.0);
+     }
+
+     #[inline]
+@@ -1646,7 +1771,8 @@
+             ansi::LineClearMode::All => (Column(0), Column(self.columns())),
+         };
+
+-        self.damage.damage_line(point.line.0 as usize, left.0, right.0 - 1);
++        self.damage
++            .damage_line(point.line.0 as usize, left.0, right.0 - 1);
+
+         let row = &mut self.grid[point.line];
+         for cell in &mut row[left..right] {
+@@ -1716,7 +1842,8 @@
+
+         if let Ok(bytes) = Base64.decode(base64) {
+             if let Ok(text) = String::from_utf8(bytes) {
+-                self.event_proxy.send_event(Event::ClipboardStore(clipboard_type, text));
++                self.event_proxy
++                    .send_event(Event::ClipboardStore(clipboard_type, text));
+             }
+         }
+     }
+@@ -1771,7 +1898,7 @@
+
+                 let range = Line(0)..=cursor.line;
+                 self.selection = self.selection.take().filter(|s| !s.intersects_range(range));
+-            },
++            }
+             ansi::ClearMode::Below => {
+                 let cursor = self.grid.cursor.point;
+                 for cell in &mut self.grid[cursor.line][cursor.column..] {
+@@ -1784,7 +1911,7 @@
+
+                 let range = cursor.line..Line(screen_lines as i32);
+                 self.selection = self.selection.take().filter(|s| !s.intersects_range(range));
+-            },
++            }
+             ansi::ClearMode::All => {
+                 if self.mode.contains(TermMode::ALT_SCREEN) {
+                     self.grid.reset_region(..);
+@@ -1801,15 +1928,21 @@
+                 }
+
+                 self.selection = None;
+-            },
++            }
+             ansi::ClearMode::Saved if self.history_size() > 0 => {
+                 self.grid.clear_history();
+
+-                self.vi_mode_cursor.point.line =
+-                    self.vi_mode_cursor.point.line.grid_clamp(self, Boundary::Cursor);
+-
+-                self.selection = self.selection.take().filter(|s| !s.intersects_range(..Line(0)));
+-            },
++                self.vi_mode_cursor.point.line = self
++                    .vi_mode_cursor
++                    .point
++                    .line
++                    .grid_clamp(self, Boundary::Cursor);
++
++                self.selection = self
++                    .selection
++                    .take()
++                    .filter(|s| !s.intersects_range(..Line(0)));
++            }
+             // We have no history to clear.
+             ansi::ClearMode::Saved => (),
+         }
+@@ -1823,10 +1956,10 @@
+         match mode {
+             ansi::TabulationClearMode::Current => {
+                 self.tabs[self.grid.cursor.point.column] = false;
+-            },
++            }
+             ansi::TabulationClearMode::All => {
+                 self.tabs.clear_all();
+-            },
++            }
+         }
+     }
+
+@@ -1873,7 +2006,10 @@
+     #[inline]
+     fn set_hyperlink(&mut self, hyperlink: Option<Hyperlink>) {
+         trace!("Setting hyperlink: {hyperlink:?}");
+-        self.grid.cursor.template.set_hyperlink(hyperlink.map(|e| e.into()));
++        self.grid
++            .cursor
++            .template
++            .set_hyperlink(hyperlink.map(|e| e.into()));
+     }
+
+     /// Set a terminal attribute.
+@@ -1890,7 +2026,7 @@
+                 cursor.template.bg = Color::Named(NamedColor::Background);
+                 cursor.template.flags = Flags::empty();
+                 cursor.template.set_underline_color(None);
+-            },
++            }
+             Attr::Reverse => cursor.template.flags.insert(Flags::INVERSE),
+             Attr::CancelReverse => cursor.template.flags.remove(Flags::INVERSE),
+             Attr::Bold => cursor.template.flags.insert(Flags::BOLD),
+@@ -1902,23 +2038,23 @@
+             Attr::Underline => {
+                 cursor.template.flags.remove(Flags::ALL_UNDERLINES);
+                 cursor.template.flags.insert(Flags::UNDERLINE);
+-            },
++            }
+             Attr::DoubleUnderline => {
+                 cursor.template.flags.remove(Flags::ALL_UNDERLINES);
+                 cursor.template.flags.insert(Flags::DOUBLE_UNDERLINE);
+-            },
++            }
+             Attr::Undercurl => {
+                 cursor.template.flags.remove(Flags::ALL_UNDERLINES);
+                 cursor.template.flags.insert(Flags::UNDERCURL);
+-            },
++            }
+             Attr::DottedUnderline => {
+                 cursor.template.flags.remove(Flags::ALL_UNDERLINES);
+                 cursor.template.flags.insert(Flags::DOTTED_UNDERLINE);
+-            },
++            }
+             Attr::DashedUnderline => {
+                 cursor.template.flags.remove(Flags::ALL_UNDERLINES);
+                 cursor.template.flags.insert(Flags::DASHED_UNDERLINE);
+-            },
++            }
+             Attr::CancelUnderline => cursor.template.flags.remove(Flags::ALL_UNDERLINES),
+             Attr::Hidden => cursor.template.flags.insert(Flags::HIDDEN),
+             Attr::CancelHidden => cursor.template.flags.remove(Flags::HIDDEN),
+@@ -1926,7 +2062,7 @@
+             Attr::CancelStrike => cursor.template.flags.remove(Flags::STRIKEOUT),
+             _ => {
+                 debug!("Term got unhandled attr: {attr:?}");
+-            },
++            }
+         }
+     }
+
+@@ -1937,7 +2073,7 @@
+             PrivateMode::Unknown(mode) => {
+                 debug!("Ignoring unknown mode {mode} in set_private_mode");
+                 return;
+-            },
++            }
+         };
+
+         trace!("Setting private mode: {mode:?}");
+@@ -1947,7 +2083,7 @@
+                 if !self.mode.contains(TermMode::ALT_SCREEN) {
+                     self.swap_alt();
+                 }
+-            },
++            }
+             NamedPrivateMode::ShowCursor => self.mode.insert(TermMode::SHOW_CURSOR),
+             NamedPrivateMode::CursorKeys => self.mode.insert(TermMode::APP_CURSOR),
+             // Mouse protocols are mutually exclusive.
+@@ -1955,40 +2091,42 @@
+                 self.mode.remove(TermMode::MOUSE_MODE);
+                 self.mode.insert(TermMode::MOUSE_REPORT_CLICK);
+                 self.event_proxy.send_event(Event::MouseCursorDirty);
+-            },
++            }
+             NamedPrivateMode::ReportCellMouseMotion => {
+                 self.mode.remove(TermMode::MOUSE_MODE);
+                 self.mode.insert(TermMode::MOUSE_DRAG);
+                 self.event_proxy.send_event(Event::MouseCursorDirty);
+-            },
++            }
+             NamedPrivateMode::ReportAllMouseMotion => {
+                 self.mode.remove(TermMode::MOUSE_MODE);
+                 self.mode.insert(TermMode::MOUSE_MOTION);
+                 self.event_proxy.send_event(Event::MouseCursorDirty);
+-            },
++            }
+             NamedPrivateMode::ReportFocusInOut => self.mode.insert(TermMode::FOCUS_IN_OUT),
+             NamedPrivateMode::BracketedPaste => self.mode.insert(TermMode::BRACKETED_PASTE),
+             // Mouse encodings are mutually exclusive.
+             NamedPrivateMode::SgrMouse => {
+                 self.mode.remove(TermMode::UTF8_MOUSE);
+                 self.mode.insert(TermMode::SGR_MOUSE);
+-            },
++            }
+             NamedPrivateMode::Utf8Mouse => {
+                 self.mode.remove(TermMode::SGR_MOUSE);
+                 self.mode.insert(TermMode::UTF8_MOUSE);
+-            },
++            }
+             NamedPrivateMode::AlternateScroll => self.mode.insert(TermMode::ALTERNATE_SCROLL),
+             NamedPrivateMode::LineWrap => self.mode.insert(TermMode::LINE_WRAP),
+             NamedPrivateMode::Origin => {
+                 self.mode.insert(TermMode::ORIGIN);
+                 self.goto(0, 0);
+-            },
++            }
+             NamedPrivateMode::ColumnMode => self.deccolm(),
+             NamedPrivateMode::BlinkingCursor => {
+-                let style = self.cursor_style.get_or_insert(self.config.default_cursor_style);
++                let style = self
++                    .cursor_style
++                    .get_or_insert(self.config.default_cursor_style);
+                 style.blinking = true;
+                 self.event_proxy.send_event(Event::CursorBlinkingChange);
+-            },
++            }
+             NamedPrivateMode::SyncUpdate => (),
+         }
+     }
+@@ -2000,7 +2138,7 @@
+             PrivateMode::Unknown(mode) => {
+                 debug!("Ignoring unknown mode {mode} in unset_private_mode");
+                 return;
+-            },
++            }
+         };
+
+         trace!("Unsetting private mode: {mode:?}");
+@@ -2010,21 +2148,21 @@
+                 if self.mode.contains(TermMode::ALT_SCREEN) {
+                     self.swap_alt();
+                 }
+-            },
++            }
+             NamedPrivateMode::ShowCursor => self.mode.remove(TermMode::SHOW_CURSOR),
+             NamedPrivateMode::CursorKeys => self.mode.remove(TermMode::APP_CURSOR),
+             NamedPrivateMode::ReportMouseClicks => {
+                 self.mode.remove(TermMode::MOUSE_REPORT_CLICK);
+                 self.event_proxy.send_event(Event::MouseCursorDirty);
+-            },
++            }
+             NamedPrivateMode::ReportCellMouseMotion => {
+                 self.mode.remove(TermMode::MOUSE_DRAG);
+                 self.event_proxy.send_event(Event::MouseCursorDirty);
+-            },
++            }
+             NamedPrivateMode::ReportAllMouseMotion => {
+                 self.mode.remove(TermMode::MOUSE_MOTION);
+                 self.event_proxy.send_event(Event::MouseCursorDirty);
+-            },
++            }
+             NamedPrivateMode::ReportFocusInOut => self.mode.remove(TermMode::FOCUS_IN_OUT),
+             NamedPrivateMode::BracketedPaste => self.mode.remove(TermMode::BRACKETED_PASTE),
+             NamedPrivateMode::SgrMouse => self.mode.remove(TermMode::SGR_MOUSE),
+@@ -2034,10 +2172,12 @@
+             NamedPrivateMode::Origin => self.mode.remove(TermMode::ORIGIN),
+             NamedPrivateMode::ColumnMode => self.deccolm(),
+             NamedPrivateMode::BlinkingCursor => {
+-                let style = self.cursor_style.get_or_insert(self.config.default_cursor_style);
++                let style = self
++                    .cursor_style
++                    .get_or_insert(self.config.default_cursor_style);
+                 style.blinking = false;
+                 self.event_proxy.send_event(Event::CursorBlinkingChange);
+-            },
++            }
+             NamedPrivateMode::SyncUpdate => (),
+         }
+     }
+@@ -2051,36 +2191,38 @@
+                 NamedPrivateMode::Origin => self.mode.contains(TermMode::ORIGIN).into(),
+                 NamedPrivateMode::LineWrap => self.mode.contains(TermMode::LINE_WRAP).into(),
+                 NamedPrivateMode::BlinkingCursor => {
+-                    let style = self.cursor_style.get_or_insert(self.config.default_cursor_style);
++                    let style = self
++                        .cursor_style
++                        .get_or_insert(self.config.default_cursor_style);
+                     style.blinking.into()
+-                },
++                }
+                 NamedPrivateMode::ShowCursor => self.mode.contains(TermMode::SHOW_CURSOR).into(),
+                 NamedPrivateMode::ReportMouseClicks => {
+                     self.mode.contains(TermMode::MOUSE_REPORT_CLICK).into()
+-                },
++                }
+                 NamedPrivateMode::ReportCellMouseMotion => {
+                     self.mode.contains(TermMode::MOUSE_DRAG).into()
+-                },
++                }
+                 NamedPrivateMode::ReportAllMouseMotion => {
+                     self.mode.contains(TermMode::MOUSE_MOTION).into()
+-                },
++                }
+                 NamedPrivateMode::ReportFocusInOut => {
+                     self.mode.contains(TermMode::FOCUS_IN_OUT).into()
+-                },
++                }
+                 NamedPrivateMode::Utf8Mouse => self.mode.contains(TermMode::UTF8_MOUSE).into(),
+                 NamedPrivateMode::SgrMouse => self.mode.contains(TermMode::SGR_MOUSE).into(),
+                 NamedPrivateMode::AlternateScroll => {
+                     self.mode.contains(TermMode::ALTERNATE_SCROLL).into()
+-                },
++                }
+                 NamedPrivateMode::UrgencyHints => {
+                     self.mode.contains(TermMode::URGENCY_HINTS).into()
+-                },
++                }
+                 NamedPrivateMode::SwapScreenAndSetRestoreCursor => {
+                     self.mode.contains(TermMode::ALT_SCREEN).into()
+-                },
++                }
+                 NamedPrivateMode::BracketedPaste => {
+                     self.mode.contains(TermMode::BRACKETED_PASTE).into()
+-                },
++                }
+                 NamedPrivateMode::SyncUpdate => ModeState::Reset,
+                 NamedPrivateMode::ColumnMode => ModeState::NotSupported,
+             },
+@@ -2101,7 +2243,7 @@
+             ansi::Mode::Unknown(mode) => {
+                 debug!("Ignoring unknown mode {mode} in set_mode");
+                 return;
+-            },
++            }
+         };
+
+         trace!("Setting public mode: {mode:?}");
+@@ -2118,7 +2260,7 @@
+             ansi::Mode::Unknown(mode) => {
+                 debug!("Ignoring unknown mode {mode} in unset_mode");
+                 return;
+-            },
++            }
+         };
+
+         trace!("Setting public mode: {mode:?}");
+@@ -2126,7 +2268,7 @@
+             NamedMode::Insert => {
+                 self.mode.remove(TermMode::INSERT);
+                 self.mark_fully_damaged();
+-            },
++            }
+             NamedMode::LineFeedNewLine => self.mode.remove(TermMode::LINE_FEED_NEW_LINE),
+         }
+     }
+@@ -2139,7 +2281,7 @@
+                 NamedMode::Insert => self.mode.contains(TermMode::INSERT).into(),
+                 NamedMode::LineFeedNewLine => {
+                     self.mode.contains(TermMode::LINE_FEED_NEW_LINE).into()
+-                },
++                }
+             },
+             ansi::Mode::Unknown(_) => ModeState::NotSupported,
+         };
+@@ -2213,7 +2355,9 @@
+     fn set_cursor_shape(&mut self, shape: CursorShape) {
+         trace!("Setting cursor shape {shape:?}");
+
+-        let style = self.cursor_style.get_or_insert(self.config.default_cursor_style);
++        let style = self
++            .cursor_style
++            .get_or_insert(self.config.default_cursor_style);
+         style.shape = shape;
+     }
+
+@@ -2257,11 +2401,12 @@
+
+     #[inline]
+     fn text_area_size_pixels(&mut self) {
+-        self.event_proxy.send_event(Event::TextAreaSizeRequest(Arc::new(move |window_size| {
+-            let height = window_size.num_lines * window_size.cell_height;
+-            let width = window_size.num_cols * window_size.cell_width;
+-            format!("\x1b[4;{height};{width}t")
+-        })));
++        self.event_proxy
++            .send_event(Event::TextAreaSizeRequest(Arc::new(move |window_size| {
++                let height = window_size.num_lines * window_size.cell_height;
++                let width = window_size.num_cols * window_size.cell_width;
++                format!("\x1b[4;{height};{width}t")
++            })));
+     }
+
+     #[inline]
+@@ -2323,7 +2468,9 @@
+ impl TabStops {
+     #[inline]
+     fn new(columns: usize) -> TabStops {
+-        TabStops { tabs: (0..columns).map(|i| i % INITIAL_TABSTOPS == 0).collect() }
++        TabStops {
++            tabs: (0..columns).map(|i| i % INITIAL_TABSTOPS == 0).collect(),
++        }
+     }
+
+     /// Remove all tabstops.
+@@ -2371,8 +2518,17 @@
+     fn new<T>(term: &Term<T>) -> Self {
+         // Cursor position.
+         let vi_mode = term.mode().contains(TermMode::VI);
+-        let mut point = if vi_mode { term.vi_mode_cursor.point } else { term.grid.cursor.point };
+-        if term.grid[point].flags.contains(Flags::WIDE_CHAR_SPACER) {
++        let mut point = if vi_mode {
++            term.vi_mode_cursor.point
++        } else {
++            term.grid.cursor.point
++        };
++        if term
++            .grid
++            .read_cell(point)
++            .flags
++            .contains(Flags::WIDE_CHAR_SPACER)
++        {
+             point.column -= 1;
+         }
+
+@@ -2429,7 +2585,10 @@
+
+     impl TermSize {
+         pub fn new(columns: usize, screen_lines: usize) -> Self {
+-            Self { columns, screen_lines }
++            Self {
++                columns,
++                screen_lines,
++            }
+         }
+     }
+
+@@ -2470,7 +2629,12 @@
+         let lines: Vec<&str> = content.split('\n').collect();
+         let num_cols = lines
+             .iter()
+-            .map(|line| line.chars().filter(|c| *c != '\r').map(|c| c.width().unwrap()).sum())
++            .map(|line| {
++                line.chars()
++                    .filter(|c| *c != '\r')
++                    .map(|c| c.width().unwrap())
++                    .sum()
++            })
+             .max()
+             .unwrap_or(0);
+
+@@ -2482,18 +2646,24 @@
+         for (line, text) in lines.iter().enumerate() {
+             let line = Line(line as i32);
+             if !text.ends_with('\r') && line + 1 != lines.len() {
+-                term.grid[line][Column(num_cols - 1)].flags.insert(Flags::WRAPLINE);
++                term.grid.history_row_mut(line)[Column(num_cols - 1)]
++                    .flags
++                    .insert(Flags::WRAPLINE);
+             }
+
+             let mut index = 0;
+             for c in text.chars().take_while(|c| *c != '\r') {
+-                term.grid[line][Column(index)].c = c;
++                term.grid.history_row_mut(line)[Column(index)].c = c;
+
+                 // Handle fullwidth characters.
+                 let width = c.width().unwrap();
+                 if width == 2 {
+-                    term.grid[line][Column(index)].flags.insert(Flags::WIDE_CHAR);
+-                    term.grid[line][Column(index + 1)].flags.insert(Flags::WIDE_CHAR_SPACER);
++                    term.grid.history_row_mut(line)[Column(index)]
++                        .flags
++                        .insert(Flags::WIDE_CHAR);
++                    term.grid.history_row_mut(line)[Column(index + 1)]
++                        .flags
++                        .insert(Flags::WIDE_CHAR_SPACER);
+                 }
+
+                 index += width;
+@@ -2600,24 +2770,48 @@
+         // Multiple lines contain an empty line.
+         term.selection = Some(Selection::new(
+             SelectionType::Simple,
+-            Point { line: Line(0), column: Column(0) },
++            Point {
++                line: Line(0),
++                column: Column(0),
++            },
+             Side::Left,
+         ));
+         if let Some(s) = term.selection.as_mut() {
+-            s.update(Point { line: Line(2), column: Column(4) }, Side::Right);
+-        }
+-        assert_eq!(term.selection_to_string(), Some(String::from("\"aaa\"\n\n aaa ")));
++            s.update(
++                Point {
++                    line: Line(2),
++                    column: Column(4),
++                },
++                Side::Right,
++            );
++        }
++        assert_eq!(
++            term.selection_to_string(),
++            Some(String::from("\"aaa\"\n\n aaa "))
++        );
+
+         // A wrapline.
+         term.selection = Some(Selection::new(
+             SelectionType::Simple,
+-            Point { line: Line(2), column: Column(0) },
++            Point {
++                line: Line(2),
++                column: Column(0),
++            },
+             Side::Left,
+         ));
+         if let Some(s) = term.selection.as_mut() {
+-            s.update(Point { line: Line(3), column: Column(4) }, Side::Right);
+-        }
+-        assert_eq!(term.selection_to_string(), Some(String::from(" aaa  aaa\"")));
++            s.update(
++                Point {
++                    line: Line(3),
++                    column: Column(4),
++                },
++                Side::Right,
++            );
++        }
++        assert_eq!(
++            term.selection_to_string(),
++            Some(String::from(" aaa  aaa\""))
++        );
+     }
+
+     #[test]
+@@ -2643,7 +2837,10 @@
+         {
+             term.selection = Some(Selection::new(
+                 SelectionType::Semantic,
+-                Point { line: Line(0), column: Column(1) },
++                Point {
++                    line: Line(0),
++                    column: Column(1),
++                },
+                 Side::Left,
+             ));
+             assert_eq!(term.selection_to_string(), Some(String::from("aa")));
+@@ -2652,7 +2849,10 @@
+         {
+             term.selection = Some(Selection::new(
+                 SelectionType::Semantic,
+-                Point { line: Line(0), column: Column(4) },
++                Point {
++                    line: Line(0),
++                    column: Column(4),
++                },
+                 Side::Left,
+             ));
+             assert_eq!(term.selection_to_string(), Some(String::from("aaa")));
+@@ -2661,7 +2861,10 @@
+         {
+             term.selection = Some(Selection::new(
+                 SelectionType::Semantic,
+-                Point { line: Line(1), column: Column(1) },
++                Point {
++                    line: Line(1),
++                    column: Column(1),
++                },
+                 Side::Left,
+             ));
+             assert_eq!(term.selection_to_string(), Some(String::from("aaa")));
+@@ -2683,7 +2886,10 @@
+
+         term.selection = Some(Selection::new(
+             SelectionType::Lines,
+-            Point { line: Line(0), column: Column(3) },
++            Point {
++                line: Line(0),
++                column: Column(3),
++            },
+             Side::Left,
+         ));
+         assert_eq!(term.selection_to_string(), Some(String::from("\"aa\"a\n")));
+@@ -2709,27 +2915,54 @@
+
+         term.selection = Some(Selection::new(
+             SelectionType::Block,
+-            Point { line: Line(0), column: Column(3) },
++            Point {
++                line: Line(0),
++                column: Column(3),
++            },
+             Side::Left,
+         ));
+
+         // The same column.
+         if let Some(s) = term.selection.as_mut() {
+-            s.update(Point { line: Line(3), column: Column(3) }, Side::Right);
++            s.update(
++                Point {
++                    line: Line(3),
++                    column: Column(3),
++                },
++                Side::Right,
++            );
+         }
+         assert_eq!(term.selection_to_string(), Some(String::from("\na\na\na")));
+
+         // The first column.
+         if let Some(s) = term.selection.as_mut() {
+-            s.update(Point { line: Line(3), column: Column(0) }, Side::Left);
+-        }
+-        assert_eq!(term.selection_to_string(), Some(String::from("\n\"aa\n\"a\n\"aa")));
++            s.update(
++                Point {
++                    line: Line(3),
++                    column: Column(0),
++                },
++                Side::Left,
++            );
++        }
++        assert_eq!(
++            term.selection_to_string(),
++            Some(String::from("\n\"aa\n\"a\n\"aa"))
++        );
+
+         // The last column.
+         if let Some(s) = term.selection.as_mut() {
+-            s.update(Point { line: Line(3), column: Column(4) }, Side::Right);
+-        }
+-        assert_eq!(term.selection_to_string(), Some(String::from("\na\"\na\"\na")));
++            s.update(
++                Point {
++                    line: Line(3),
++                    column: Column(4),
++                },
++                Side::Right,
++            );
++        }
++        assert_eq!(
++            term.selection_to_string(),
++            Some(String::from("\na\"\na\"\na"))
++        );
+     }
+
+     /// Check that the grid can be serialized back and forth losslessly.
+@@ -2751,7 +2984,10 @@
+         let size = TermSize::new(7, 17);
+         let mut term = Term::new(Config::default(), &size, VoidListener);
+         let cursor = Point::new(Line(0), Column(0));
+-        term.configure_charset(CharsetIndex::G0, StandardCharset::SpecialCharacterAndLineDrawing);
++        term.configure_charset(
++            CharsetIndex::G0,
++            StandardCharset::SpecialCharacterAndLineDrawing,
++        );
+         term.input('a');
+
+         assert_eq!(term.grid()[cursor].c, '▒');
+@@ -3007,7 +3243,14 @@
+             TermDamage::Full => panic!("Expected partial damage, however got Full"),
+             TermDamage::Partial(damaged_lines) => damaged_lines,
+         };
+-        assert_eq!(damaged_lines.next(), Some(LineDamageBounds { line: 0, left, right }));
++        assert_eq!(
++            damaged_lines.next(),
++            Some(LineDamageBounds {
++                line: 0,
++                left,
++                right
++            })
++        );
+         assert_eq!(damaged_lines.next(), None);
+         term.reset_damage();
+
+@@ -3050,11 +3293,19 @@
+         };
+         assert_eq!(
+             damaged_lines.next(),
+-            Some(LineDamageBounds { line: display_offset, left: 0, right: 0 })
++            Some(LineDamageBounds {
++                line: display_offset,
++                left: 0,
++                right: 0
++            })
+         );
+         assert_eq!(
+             damaged_lines.next(),
+-            Some(LineDamageBounds { line: display_offset + 1, left: 0, right: 0 })
++            Some(LineDamageBounds {
++                line: display_offset + 1,
++                left: 0,
++                right: 0
++            })
+         );
+         assert_eq!(damaged_lines.next(), None);
+     }
+@@ -3073,88 +3324,263 @@
+         // following tests we will be accessing `term.damage.lines` directly to avoid adding extra
+         // damage information (like cursor and Vi cursor), which we're not testing.
+
+-        assert_eq!(term.damage.lines[0], LineDamageBounds { line: 0, left: 0, right: 0 });
+-        assert_eq!(term.damage.lines[1], LineDamageBounds { line: 1, left: 1, right: 1 });
++        assert_eq!(
++            term.damage.lines[0],
++            LineDamageBounds {
++                line: 0,
++                left: 0,
++                right: 0
++            }
++        );
++        assert_eq!(
++            term.damage.lines[1],
++            LineDamageBounds {
++                line: 1,
++                left: 1,
++                right: 1
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.move_forward(3);
+-        assert_eq!(term.damage.lines[1], LineDamageBounds { line: 1, left: 1, right: 4 });
++        assert_eq!(
++            term.damage.lines[1],
++            LineDamageBounds {
++                line: 1,
++                left: 1,
++                right: 4
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.move_backward(8);
+-        assert_eq!(term.damage.lines[1], LineDamageBounds { line: 1, left: 0, right: 4 });
++        assert_eq!(
++            term.damage.lines[1],
++            LineDamageBounds {
++                line: 1,
++                left: 0,
++                right: 4
++            }
++        );
+         term.goto(5, 5);
+         term.damage.reset(num_cols);
+
+         term.backspace();
+         term.backspace();
+-        assert_eq!(term.damage.lines[5], LineDamageBounds { line: 5, left: 3, right: 5 });
++        assert_eq!(
++            term.damage.lines[5],
++            LineDamageBounds {
++                line: 5,
++                left: 3,
++                right: 5
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.move_up(1);
+-        assert_eq!(term.damage.lines[5], LineDamageBounds { line: 5, left: 3, right: 3 });
+-        assert_eq!(term.damage.lines[4], LineDamageBounds { line: 4, left: 3, right: 3 });
++        assert_eq!(
++            term.damage.lines[5],
++            LineDamageBounds {
++                line: 5,
++                left: 3,
++                right: 3
++            }
++        );
++        assert_eq!(
++            term.damage.lines[4],
++            LineDamageBounds {
++                line: 4,
++                left: 3,
++                right: 3
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.move_down(1);
+         term.move_down(1);
+-        assert_eq!(term.damage.lines[4], LineDamageBounds { line: 4, left: 3, right: 3 });
+-        assert_eq!(term.damage.lines[5], LineDamageBounds { line: 5, left: 3, right: 3 });
+-        assert_eq!(term.damage.lines[6], LineDamageBounds { line: 6, left: 3, right: 3 });
++        assert_eq!(
++            term.damage.lines[4],
++            LineDamageBounds {
++                line: 4,
++                left: 3,
++                right: 3
++            }
++        );
++        assert_eq!(
++            term.damage.lines[5],
++            LineDamageBounds {
++                line: 5,
++                left: 3,
++                right: 3
++            }
++        );
++        assert_eq!(
++            term.damage.lines[6],
++            LineDamageBounds {
++                line: 6,
++                left: 3,
++                right: 3
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.wrapline();
+-        assert_eq!(term.damage.lines[6], LineDamageBounds { line: 6, left: 3, right: 3 });
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 0, right: 0 });
++        assert_eq!(
++            term.damage.lines[6],
++            LineDamageBounds {
++                line: 6,
++                left: 3,
++                right: 3
++            }
++        );
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 0,
++                right: 0
++            }
++        );
+         term.move_forward(3);
+         term.move_up(1);
+         term.damage.reset(num_cols);
+
+         term.linefeed();
+-        assert_eq!(term.damage.lines[6], LineDamageBounds { line: 6, left: 3, right: 3 });
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 3, right: 3 });
++        assert_eq!(
++            term.damage.lines[6],
++            LineDamageBounds {
++                line: 6,
++                left: 3,
++                right: 3
++            }
++        );
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 3,
++                right: 3
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.carriage_return();
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 0, right: 3 });
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 0,
++                right: 3
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.erase_chars(5);
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 0, right: 5 });
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 0,
++                right: 5
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.delete_chars(3);
+         let right = term.columns() - 1;
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 0, right });
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 0,
++                right
++            }
++        );
+         term.move_forward(term.columns());
+         term.damage.reset(num_cols);
+
+         term.move_backward_tabs(1);
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 8, right });
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 8,
++                right
++            }
++        );
+         term.save_cursor_position();
+         term.goto(1, 1);
+         term.damage.reset(num_cols);
+
+         term.restore_cursor_position();
+-        assert_eq!(term.damage.lines[1], LineDamageBounds { line: 1, left: 1, right: 1 });
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 8, right: 8 });
++        assert_eq!(
++            term.damage.lines[1],
++            LineDamageBounds {
++                line: 1,
++                left: 1,
++                right: 1
++            }
++        );
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 8,
++                right: 8
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.clear_line(ansi::LineClearMode::All);
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 0, right });
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 0,
++                right
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.clear_line(ansi::LineClearMode::Left);
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 0, right: 8 });
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 0,
++                right: 8
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.clear_line(ansi::LineClearMode::Right);
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 8, right });
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 8,
++                right
++            }
++        );
+         term.damage.reset(num_cols);
+
+         term.reverse_index();
+-        assert_eq!(term.damage.lines[7], LineDamageBounds { line: 7, left: 8, right: 8 });
+-        assert_eq!(term.damage.lines[6], LineDamageBounds { line: 6, left: 8, right: 8 });
++        assert_eq!(
++            term.damage.lines[7],
++            LineDamageBounds {
++                line: 7,
++                left: 8,
++                right: 8
++            }
++        );
++        assert_eq!(
++            term.damage.lines[6],
++            LineDamageBounds {
++                line: 6,
++                left: 8,
++                right: 8
++            }
++        );
+     }
+
+     #[test]
+--- a/src/term/search.rs
++++ b/src/term/search.rs
+@@ -38,8 +38,9 @@
+         // https://github.com/rust-lang/regex/blob/061ee815ef2c44101dba7b0b124600fcb03c1912/regex-automata/src/meta/wrappers.rs#L581-L599
+         let has_uppercase = search.chars().any(|c| c.is_uppercase());
+         let syntax_config = SyntaxConfig::new().case_insensitive(!has_uppercase);
+-        let config =
+-            Config::new().minimum_cache_clear_count(Some(3)).minimum_bytes_per_state(Some(10));
++        let config = Config::new()
++            .minimum_cache_clear_count(Some(3))
++            .minimum_bytes_per_state(Some(10));
+         let max_size = config.get_cache_capacity();
+         let thompson_config = ThompsonConfig::new().nfa_size_limit(Some(max_size));
+
+@@ -71,10 +72,21 @@
+             Direction::Right,
+             has_empty,
+         )?;
+-        let right_rdfa =
+-            LazyDfa::new(search, config, syntax_config, thompson_config, Direction::Left, true)?;
+-
+-        Ok(RegexSearch { left_fdfa, left_rdfa, right_fdfa, right_rdfa })
++        let right_rdfa = LazyDfa::new(
++            search,
++            config,
++            syntax_config,
++            thompson_config,
++            Direction::Left,
++            true,
++        )?;
++
++        Ok(RegexSearch {
++            left_fdfa,
++            left_rdfa,
++            right_fdfa,
++            right_rdfa,
++        })
+     }
+ }
+
+@@ -107,12 +119,20 @@
+         };
+
+         // Create the DFA.
+-        let dfa =
+-            Builder::new().configure(config).syntax(syntax).thompson(thompson).build(search)?;
++        let dfa = Builder::new()
++            .configure(config)
++            .syntax(syntax)
++            .thompson(thompson)
++            .build(search)?;
+
+         let cache = dfa.create_cache();
+
+-        Ok(Self { direction, cache, dfa, match_all })
++        Ok(Self {
++            direction,
++            cache,
++            dfa,
++            match_all,
++        })
+     }
+ }
+
+@@ -152,7 +172,7 @@
+             Some(max_lines) => {
+                 let line = (start.line + max_lines).grid_clamp(self, Boundary::None);
+                 Point::new(line, self.last_column())
+-            },
++            }
+             _ => end.sub(self, Boundary::None, 1),
+         };
+
+@@ -191,7 +211,7 @@
+             Some(max_lines) => {
+                 let line = (start.line - max_lines).grid_clamp(self, Boundary::None);
+                 Point::new(line, Column(0))
+-            },
++            }
+             _ => end.add(self, Boundary::None, 1),
+         };
+
+@@ -264,7 +284,7 @@
+                 warn!("Regex exceeded complexity limit");
+                 debug!("    {err}");
+                 None
+-            },
++            }
+         }
+     }
+
+@@ -288,9 +308,16 @@
+         };
+
+         // Get start state for the DFA.
+-        let regex_anchored = if regex.match_all { Anchored::Yes } else { Anchored::No };
++        let regex_anchored = if regex.match_all {
++            Anchored::Yes
++        } else {
++            Anchored::No
++        };
+         let input = Input::new(&[]).anchored(regex_anchored);
+-        let mut state = regex.dfa.start_state_forward(&mut regex.cache, &input).unwrap();
++        let mut state = regex
++            .dfa
++            .start_state_forward(&mut regex.cache, &input)
++            .unwrap();
+
+         let mut iter = self.grid.iter_from(start);
+         let mut regex_match = None;
+@@ -393,7 +420,7 @@
+                     let start = Point::new(line, last_column - point.column);
+                     iter = self.grid.iter_from(start);
+                     iter.cell()
+-                },
++                }
+             };
+
+             // Check for completion before potentially skipping over fullwidth characters.
+@@ -421,7 +448,7 @@
+                     // Stop if we found a non-empty match before the linebreak.
+                     Some(_) if (!state.is_dead() || consumed_bytes > 1) && consumed_bytes != 0 => {
+                         break;
+-                    },
++                    }
+                     _ => reset_state!(),
+                 }
+             }
+@@ -447,30 +474,35 @@
+                     && iter.point().column < self.last_column() =>
+             {
+                 iter.next();
+-            },
++            }
+             Direction::Right if cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) => {
+                 if let Some(Indexed { cell: new_cell, .. }) = iter.next() {
+                     *cell = new_cell;
+                 }
+                 iter.next();
+-            },
++            }
+             Direction::Left if cell.flags.contains(Flags::WIDE_CHAR_SPACER) => {
+                 if let Some(Indexed { cell: new_cell, .. }) = iter.prev() {
+                     *cell = new_cell;
+                 }
+
+                 let prev = iter.point().sub(self, Boundary::Grid, 1);
+-                if self.grid[prev].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
++                if self
++                    .grid
++                    .read_cell(prev)
++                    .flags
++                    .contains(Flags::LEADING_WIDE_CHAR_SPACER)
++                {
+                     iter.prev();
+                 }
+-            },
++            }
+             _ => (),
+         }
+     }
+
+     /// Find next matching bracket.
+     pub fn bracket_search(&self, point: Point) -> Option<Point> {
+-        let start_char = self.grid[point].c;
++        let start_char = self.grid.read_cell(point).c;
+
+         // Find the matching bracket we're looking for
+         let (forward, end_char) = BRACKET_PAIRS.iter().find_map(|(open, close)| {
+@@ -523,7 +555,7 @@
+                     .iter_from(point)
+                     .find(|cell| !cell.flags.intersects(wide_spacer))
+                     .map_or(point, |cell| cell.point)
+-            },
++            }
+             Err(point) => point,
+         }
+     }
+@@ -532,7 +564,11 @@
+     #[must_use]
+     pub fn semantic_search_right(&self, point: Point) -> Point {
+         match self.inline_search_right(point, self.semantic_escape_chars()) {
+-            Ok(point) => self.grid.iter_from(point).prev().map_or(point, |cell| cell.point),
++            Ok(point) => self
++                .grid
++                .iter_from(point)
++                .prev()
++                .map_or(point, |cell| cell.point),
+             Err(point) => point,
+         }
+     }
+@@ -570,7 +606,9 @@
+         let last_column = self.columns() - 1;
+
+         // Immediately stop if start point in on line break.
+-        if point.column == last_column && !self.grid[point].flags.contains(Flags::WRAPLINE) {
++        if point.column == last_column
++            && !self.grid.read_cell(point).flags.contains(Flags::WRAPLINE)
++        {
+             return Err(point);
+         }
+
+@@ -592,7 +630,12 @@
+     /// Find the beginning of the current line across linewraps.
+     pub fn line_search_left(&self, mut point: Point) -> Point {
+         while point.line > self.topmost_line()
+-            && self.grid[point.line - 1i32][self.last_column()].flags.contains(Flags::WRAPLINE)
++            && self
++                .grid
++                .read_row(point.line - 1i32)
++                .cell(self.last_column())
++                .flags
++                .contains(Flags::WRAPLINE)
+         {
+             point.line -= 1;
+         }
+@@ -605,7 +648,12 @@
+     /// Find the end of the current line across linewraps.
+     pub fn line_search_right(&self, mut point: Point) -> Point {
+         while point.line + 1 < self.screen_lines()
+-            && self.grid[point.line][self.last_column()].flags.contains(Flags::WRAPLINE)
++            && self
++                .grid
++                .read_row(point.line)
++                .cell(self.last_column())
++                .flags
++                .contains(Flags::WRAPLINE)
+         {
+             point.line += 1;
+         }
+@@ -634,7 +682,14 @@
+         term: &'a Term<T>,
+         regex: &'a mut RegexSearch,
+     ) -> Self {
+-        Self { point: start, done: false, end, direction, term, regex }
++        Self {
++            point: start,
++            done: false,
++            end,
++            direction,
++            term,
++            regex,
++        }
+     }
+
+     /// Skip one cell, advancing the origin point to the next one.
+@@ -650,8 +705,12 @@
+     /// Get the next match in the specified direction.
+     fn next_match(&mut self) -> Option<Match> {
+         match self.direction {
+-            Direction::Right => self.term.regex_search_right(self.regex, self.point, self.end),
+-            Direction::Left => self.term.regex_search_left(self.regex, self.point, self.end),
++            Direction::Right => self
++                .term
++                .regex_search_right(self.regex, self.point, self.end),
++            Direction::Left => self
++                .term
++                .regex_search_left(self.regex, self.point, self.end),
+         }
+     }
+ }
+@@ -709,7 +768,10 @@
+         let end = Point::new(Line(4), Column(2));
+         let match_start = Point::new(Line(1), Column(0));
+         let match_end = Point::new(Line(2), Column(2));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -729,7 +791,10 @@
+         let end = Point::new(Line(1), Column(0));
+         let match_start = Point::new(Line(1), Column(0));
+         let match_end = Point::new(Line(2), Column(2));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -744,13 +809,19 @@
+         let mut regex = RegexSearch::new("Ala.*critty").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(25));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=end)
++        );
+
+         // Greedy stopped at dead state.
+         let mut regex = RegexSearch::new("Ala[^y]*critty").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(15));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=end)
++        );
+     }
+
+     #[test]
+@@ -797,7 +868,10 @@
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(0), Column(0));
+         let match_end = Point::new(Line(0), Column(9));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -813,7 +887,10 @@
+         let start = Point::new(Line(0), Column(2));
+         let end = Point::new(Line(1), Column(9));
+         let match_start = Point::new(Line(1), Column(0));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=end)
++        );
+     }
+
+     #[test]
+@@ -824,7 +901,10 @@
+         let mut regex = RegexSearch::new("alacrit").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(6));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=end)
++        );
+     }
+
+     #[test]
+@@ -837,7 +917,10 @@
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(0), Column(0));
+         let match_end = Point::new(Line(0), Column(2));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -847,12 +930,18 @@
+         let mut regex = RegexSearch::new("te.*ing").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(11));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=end)
++        );
+
+         let mut regex = RegexSearch::new("te.*ing").unwrap();
+         let start = Point::new(Line(0), Column(11));
+         let end = Point::new(Line(0), Column(0));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(end..=start));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(end..=start)
++        );
+     }
+
+     #[test]
+@@ -863,7 +952,10 @@
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(8));
+         let match_end = Point::new(Line(0), Column(7));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -873,12 +965,18 @@
+         let mut regex = RegexSearch::new("[^ ]*").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(5));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=end)
++        );
+
+         let mut regex = RegexSearch::new("[^ ]*").unwrap();
+         let start = Point::new(Line(0), Column(5));
+         let end = Point::new(Line(0), Column(0));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(end..=start));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(end..=start)
++        );
+     }
+
+     #[test]
+@@ -888,12 +986,18 @@
+         let mut regex = RegexSearch::new("🦇").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(1));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=end)
++        );
+
+         let mut regex = RegexSearch::new("🦇").unwrap();
+         let start = Point::new(Line(0), Column(1));
+         let end = Point::new(Line(0), Column(0));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(end..=start));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(end..=start)
++        );
+     }
+
+     #[test]
+@@ -913,7 +1017,10 @@
+
+         // Ensure match is captured when only partially inside range.
+         let mut regex = RegexSearch::new("jarr🦇").unwrap();
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -928,13 +1035,19 @@
+         let start = Point::new(Line(0), Column(2));
+         let end = Point::new(Line(1), Column(2));
+         let match_start = Point::new(Line(1), Column(0));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=end)
++        );
+
+         let mut regex = RegexSearch::new("xxx").unwrap();
+         let start = Point::new(Line(1), Column(0));
+         let end = Point::new(Line(0), Column(0));
+         let match_end = Point::new(Line(0), Column(2));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(end..=match_end));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(end..=match_end)
++        );
+     }
+
+     #[test]
+@@ -950,14 +1063,20 @@
+         let end = Point::new(Line(1), Column(3));
+         let match_start = Point::new(Line(0), Column(0));
+         let match_end = Point::new(Line(0), Column(2));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+
+         let mut regex = RegexSearch::new("x🦇").unwrap();
+         let start = Point::new(Line(1), Column(2));
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(1), Column(1));
+         let match_end = Point::new(Line(1), Column(3));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -973,14 +1092,20 @@
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(3));
+         let match_start = Point::new(Line(0), Column(0));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=end)
++        );
+
+         let mut regex = RegexSearch::new(PATTERN).unwrap();
+         let start = Point::new(Line(0), Column(4));
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(1), Column(0));
+         let match_end = Point::new(Line(1), Column(3));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -994,7 +1119,10 @@
+         let end = Point::new(Line(0), Column(4));
+         let match_start = Point::new(Line(0), Column(1));
+         let match_end = Point::new(Line(0), Column(3));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -1020,7 +1148,10 @@
+         let end = Point::new(Line(1), Column(2));
+         let match_start = Point::new(Line(1), Column(0));
+         let match_end = Point::new(Line(1), Column(2));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -1030,35 +1161,49 @@
+             xxx \n\
+             🦇xx\
+         ");
+-        term.grid[Line(0)][Column(3)].flags.insert(Flags::LEADING_WIDE_CHAR_SPACER);
++        term.grid[Line(0)][Column(3)]
++            .flags
++            .insert(Flags::LEADING_WIDE_CHAR_SPACER);
+
+         let mut regex = RegexSearch::new("🦇x").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(1), Column(3));
+         let match_start = Point::new(Line(0), Column(3));
+         let match_end = Point::new(Line(1), Column(2));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+
+         let mut regex = RegexSearch::new("🦇x").unwrap();
+         let start = Point::new(Line(1), Column(3));
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(0), Column(3));
+         let match_end = Point::new(Line(1), Column(2));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+
+         let mut regex = RegexSearch::new("x🦇").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(1), Column(3));
+         let match_start = Point::new(Line(0), Column(2));
+         let match_end = Point::new(Line(1), Column(1));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+
+         let mut regex = RegexSearch::new("x🦇").unwrap();
+         let start = Point::new(Line(1), Column(3));
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(0), Column(2));
+         let match_end = Point::new(Line(1), Column(1));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -1092,7 +1237,10 @@
+         let end = Point::new(Line(0), Column(2));
+         let match_start = Point::new(Line(0), Column(0));
+         let match_end = Point::new(Line(0), Column(2));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+
+         // Top to bottom.
+         let mut regex = RegexSearch::new("def").unwrap();
+@@ -1100,7 +1248,10 @@
+         let end = Point::new(Line(1), Column(0));
+         let match_start = Point::new(Line(1), Column(0));
+         let match_end = Point::new(Line(1), Column(2));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -1127,7 +1278,10 @@
+         let mut regex = RegexSearch::new("/github.com|https://github.com").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(17));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=end)
++        );
+     }
+
+     #[test]
+@@ -1139,7 +1293,10 @@
+         let mut regex = RegexSearch::new(";*|rust").unwrap();
+         let start = Point::new(Line(0), Column(0));
+         let end = Point::new(Line(0), Column(3));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(start..=end)
++        );
+     }
+
+     #[test]
+@@ -1176,7 +1333,10 @@
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(0), Column(20));
+         let match_end = Point::new(Line(1), Column(2));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+     }
+
+     #[test]
+@@ -1200,14 +1360,20 @@
+         let end = Point::new(Line(1), Column(2));
+         let match_start = Point::new(Line(0), Column(1));
+         let match_end = Point::new(Line(1), Column(1));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+
+         let mut regex = RegexSearch::new("🦇🦇").unwrap();
+         let start = Point::new(Line(1), Column(2));
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(1), Column(1));
+         let match_end = Point::new(Line(0), Column(1));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_end..=match_start));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_end..=match_start)
++        );
+     }
+
+     #[test]
+@@ -1219,14 +1385,20 @@
+         let end = Point::new(Line(1), Column(2));
+         let match_start = Point::new(Line(0), Column(1));
+         let match_end = Point::new(Line(1), Column(0));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+
+         let mut regex = RegexSearch::new("🦇x").unwrap();
+         let start = Point::new(Line(1), Column(2));
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(1), Column(0));
+         let match_end = Point::new(Line(0), Column(1));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_end..=match_start));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_end..=match_start)
++        );
+     }
+
+     #[test]
+@@ -1239,13 +1411,19 @@
+         let end = Point::new(Line(1), Column(2));
+         let match_start = Point::new(Line(0), Column(2));
+         let match_end = Point::new(Line(1), Column(0));
+-        assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
++        assert_eq!(
++            term.regex_search_right(&mut regex, start, end),
++            Some(match_start..=match_end)
++        );
+
+         let mut regex = RegexSearch::new("🦇x").unwrap();
+         let start = Point::new(Line(1), Column(2));
+         let end = Point::new(Line(0), Column(0));
+         let match_start = Point::new(Line(1), Column(0));
+         let match_end = Point::new(Line(0), Column(2));
+-        assert_eq!(term.regex_search_left(&mut regex, start, end), Some(match_end..=match_start));
++        assert_eq!(
++            term.regex_search_left(&mut regex, start, end),
++            Some(match_end..=match_start)
++        );
+     }
+ }
+--- a/src/vi_mode.rs
++++ b/src/vi_mode.rs
+@@ -11,7 +11,11 @@
+
+ /// Possible vi mode motion movements.
+ #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "lowercase"))]
++#[cfg_attr(
++    feature = "serde",
++    derive(Serialize, Deserialize),
++    serde(rename_all = "lowercase")
++)]
+ pub enum ViMotion {
+     /// Move up.
+     Up,
+@@ -77,12 +81,12 @@
+                 if self.point.line > term.topmost_line() {
+                     self.point.line -= 1;
+                 }
+-            },
++            }
+             ViMotion::Down => {
+                 if self.point.line + 1 < term.screen_lines() as i32 {
+                     self.point.line += 1;
+                 }
+-            },
++            }
+             ViMotion::Left => {
+                 self.point = term.expand_wide(self.point, Direction::Left);
+                 let wrap_point = Point::new(self.point.line - 1, term.last_column());
+@@ -94,7 +98,7 @@
+                 } else {
+                     self.point.column = Column(self.point.column.saturating_sub(1));
+                 }
+-            },
++            }
+             ViMotion::Right => {
+                 self.point = term.expand_wide(self.point, Direction::Right);
+                 if is_wrap(term, self.point) {
+@@ -102,7 +106,7 @@
+                 } else {
+                     self.point.column = min(self.point.column + 1, term.last_column());
+                 }
+-            },
++            }
+             ViMotion::First => {
+                 self.point = term.expand_wide(self.point, Direction::Left);
+                 while self.point.column == 0
+@@ -112,50 +116,56 @@
+                     self.point.line -= 1;
+                 }
+                 self.point.column = Column(0);
+-            },
++            }
+             ViMotion::Last => self.point = last(term, self.point),
+             ViMotion::FirstOccupied => self.point = first_occupied(term, self.point),
+             ViMotion::High => {
+                 let line = Line(-(term.grid().display_offset() as i32));
+-                let col = first_occupied_in_line(term, line).unwrap_or_default().column;
++                let col = first_occupied_in_line(term, line)
++                    .unwrap_or_default()
++                    .column;
+                 self.point = Point::new(line, col);
+-            },
++            }
+             ViMotion::Middle => {
+                 let display_offset = term.grid().display_offset() as i32;
+                 let line = Line(-display_offset + term.screen_lines() as i32 / 2 - 1);
+-                let col = first_occupied_in_line(term, line).unwrap_or_default().column;
++                let col = first_occupied_in_line(term, line)
++                    .unwrap_or_default()
++                    .column;
+                 self.point = Point::new(line, col);
+-            },
++            }
+             ViMotion::Low => {
+                 let display_offset = term.grid().display_offset() as i32;
+                 let line = Line(-display_offset + term.screen_lines() as i32 - 1);
+-                let col = first_occupied_in_line(term, line).unwrap_or_default().column;
++                let col = first_occupied_in_line(term, line)
++                    .unwrap_or_default()
++                    .column;
+                 self.point = Point::new(line, col);
+-            },
++            }
+             ViMotion::SemanticLeft => {
+                 self.point = semantic(term, self.point, Direction::Left, Side::Left);
+-            },
++            }
+             ViMotion::SemanticRight => {
+                 self.point = semantic(term, self.point, Direction::Right, Side::Left);
+-            },
++            }
+             ViMotion::SemanticLeftEnd => {
+                 self.point = semantic(term, self.point, Direction::Left, Side::Right);
+-            },
++            }
+             ViMotion::SemanticRightEnd => {
+                 self.point = semantic(term, self.point, Direction::Right, Side::Right);
+-            },
++            }
+             ViMotion::WordLeft => {
+                 self.point = word(term, self.point, Direction::Left, Side::Left);
+-            },
++            }
+             ViMotion::WordRight => {
+                 self.point = word(term, self.point, Direction::Right, Side::Left);
+-            },
++            }
+             ViMotion::WordLeftEnd => {
+                 self.point = word(term, self.point, Direction::Left, Side::Right);
+-            },
++            }
+             ViMotion::WordRightEnd => {
+                 self.point = word(term, self.point, Direction::Right, Side::Right);
+-            },
++            }
+             ViMotion::Bracket => self.point = term.bracket_search(self.point).unwrap_or(self.point),
+             ViMotion::ParagraphUp => {
+                 // Skip empty lines until we find the next paragraph,
+@@ -163,21 +173,21 @@
+                 let topmost_line = term.topmost_line();
+                 self.point.line = (*topmost_line..*self.point.line)
+                     .rev()
+-                    .skip_while(|line| term.grid()[Line(*line)].is_clear())
+-                    .find(|line| term.grid()[Line(*line)].is_clear())
++                    .skip_while(|line| term.grid().read_row(Line(*line)).is_clear())
++                    .find(|line| term.grid().read_row(Line(*line)).is_clear())
+                     .map_or(topmost_line, Line);
+                 self.point.column = Column(0);
+-            },
++            }
+             ViMotion::ParagraphDown => {
+                 // Skip empty lines until we find the next paragraph,
+                 // then skip over the paragraph until we reach the next empty line.
+                 let bottommost_line = term.bottommost_line();
+                 self.point.line = (*self.point.line..*bottommost_line)
+-                    .skip_while(|line| term.grid()[Line(*line)].is_clear())
+-                    .find(|line| term.grid()[Line(*line)].is_clear())
++                    .skip_while(|line| term.grid().read_row(Line(*line)).is_clear())
++                    .find(|line| term.grid().read_row(Line(*line)).is_clear())
+                     .map_or(bottommost_line, Line);
+                 self.point.column = Column(0);
+-            },
++            }
+         }
+
+         term.scroll_to_point(self.point);
+@@ -192,7 +202,9 @@
+         let line = (self.point.line - lines).grid_clamp(term, Boundary::Grid);
+
+         // Find the first occupied cell after scrolling has been performed.
+-        let column = first_occupied_in_line(term, line).unwrap_or_default().column;
++        let column = first_occupied_in_line(term, line)
++            .unwrap_or_default()
++            .column;
+
+         // Move cursor.
+         self.point = Point::new(line, column);
+@@ -280,9 +292,11 @@
+     // Expand semantically based on movement direction.
+     let expand_semantic = |point: Point| {
+         // Do not expand when currently on a semantic escape char.
+-        let cell = &term.grid()[point];
++        let cell = term.grid().read_cell(point);
+         if term.semantic_escape_chars().contains(cell.c)
+-            && !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
++            && !cell
++                .flags
++                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+         {
+             point
+         } else if direction == Direction::Left {
+@@ -391,14 +405,16 @@
+
+ /// Check if cell at point contains whitespace.
+ fn is_space<T>(term: &Term<T>, point: Point) -> bool {
+-    let cell = &term.grid()[point.line][point.column];
+-    !cell.flags().intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
++    let cell = term.grid().read_cell(point);
++    !cell
++        .flags()
++        .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+         && (cell.c == ' ' || cell.c == '\t')
+ }
+
+ /// Check if the cell at a point contains the WRAPLINE flag.
+ fn is_wrap<T>(term: &Term<T>, point: Point) -> bool {
+-    term.grid()[point].flags.contains(Flags::WRAPLINE)
++    term.grid().read_cell(point).flags.contains(Flags::WRAPLINE)
+ }
+
+ /// Check if point is at screen boundary.
+@@ -448,9 +464,13 @@
+         let mut term = term();
+         term.grid_mut()[Line(0)][Column(0)].c = 'a';
+         term.grid_mut()[Line(0)][Column(1)].c = '汉';
+-        term.grid_mut()[Line(0)][Column(1)].flags.insert(Flags::WIDE_CHAR);
++        term.grid_mut()[Line(0)][Column(1)]
++            .flags
++            .insert(Flags::WIDE_CHAR);
+         term.grid_mut()[Line(0)][Column(2)].c = ' ';
+-        term.grid_mut()[Line(0)][Column(2)].flags.insert(Flags::WIDE_CHAR_SPACER);
++        term.grid_mut()[Line(0)][Column(2)]
++            .flags
++            .insert(Flags::WIDE_CHAR_SPACER);
+         term.grid_mut()[Line(0)][Column(3)].c = 'a';
+
+         let mut cursor = ViModeCursor::new(Point::new(Line(0), Column(1)));
+@@ -482,8 +502,12 @@
+         term.grid_mut()[Line(0)][Column(1)].c = 'x';
+         term.grid_mut()[Line(0)][Column(2)].c = ' ';
+         term.grid_mut()[Line(0)][Column(3)].c = 'y';
+-        term.grid_mut()[Line(0)][Column(19)].flags.insert(Flags::WRAPLINE);
+-        term.grid_mut()[Line(1)][Column(19)].flags.insert(Flags::WRAPLINE);
++        term.grid_mut()[Line(0)][Column(19)]
++            .flags
++            .insert(Flags::WRAPLINE);
++        term.grid_mut()[Line(1)][Column(19)]
++            .flags
++            .insert(Flags::WRAPLINE);
+         term.grid_mut()[Line(2)][Column(0)].c = 'z';
+         term.grid_mut()[Line(2)][Column(1)].c = ' ';
+
+@@ -693,9 +717,13 @@
+         term.grid_mut()[Line(0)][Column(0)].c = 'a';
+         term.grid_mut()[Line(0)][Column(1)].c = ' ';
+         term.grid_mut()[Line(0)][Column(2)].c = '汉';
+-        term.grid_mut()[Line(0)][Column(2)].flags.insert(Flags::WIDE_CHAR);
++        term.grid_mut()[Line(0)][Column(2)]
++            .flags
++            .insert(Flags::WIDE_CHAR);
+         term.grid_mut()[Line(0)][Column(3)].c = ' ';
+-        term.grid_mut()[Line(0)][Column(3)].flags.insert(Flags::WIDE_CHAR_SPACER);
++        term.grid_mut()[Line(0)][Column(3)]
++            .flags
++            .insert(Flags::WIDE_CHAR_SPACER);
+         term.grid_mut()[Line(0)][Column(4)].c = ' ';
+         term.grid_mut()[Line(0)][Column(5)].c = 'a';
+
+@@ -769,9 +797,13 @@
+         term.grid_mut()[Line(0)][Column(0)].c = 'a';
+         term.grid_mut()[Line(0)][Column(1)].c = ' ';
+         term.grid_mut()[Line(0)][Column(2)].c = '汉';
+-        term.grid_mut()[Line(0)][Column(2)].flags.insert(Flags::WIDE_CHAR);
++        term.grid_mut()[Line(0)][Column(2)]
++            .flags
++            .insert(Flags::WIDE_CHAR);
+         term.grid_mut()[Line(0)][Column(3)].c = ' ';
+-        term.grid_mut()[Line(0)][Column(3)].flags.insert(Flags::WIDE_CHAR_SPACER);
++        term.grid_mut()[Line(0)][Column(3)]
++            .flags
++            .insert(Flags::WIDE_CHAR_SPACER);
+         term.grid_mut()[Line(0)][Column(4)].c = ' ';
+         term.grid_mut()[Line(0)][Column(5)].c = 'a';
+
+@@ -860,9 +892,13 @@
+         term.grid_mut()[Line(0)][Column(0)].c = 'x';
+         term.grid_mut()[Line(0)][Column(1)].c = 'x';
+         term.grid_mut()[Line(0)][Column(2)].c = '－';
+-        term.grid_mut()[Line(0)][Column(2)].flags.insert(Flags::WIDE_CHAR);
++        term.grid_mut()[Line(0)][Column(2)]
++            .flags
++            .insert(Flags::WIDE_CHAR);
+         term.grid_mut()[Line(0)][Column(3)].c = ' ';
+-        term.grid_mut()[Line(0)][Column(3)].flags.insert(Flags::WIDE_CHAR_SPACER);
++        term.grid_mut()[Line(0)][Column(3)]
++            .flags
++            .insert(Flags::WIDE_CHAR_SPACER);
+         term.grid_mut()[Line(0)][Column(4)].c = 'x';
+         term.grid_mut()[Line(0)][Column(5)].c = 'x';
+
+--- /dev/null
++++ b/tests/compact_differential.rs
+@@ -0,0 +1,164 @@
++//! Compare compact storage against the unchanged registry engine after mixed input and resize.
++use alacritty_terminal as compact;
++use compact::grid::Dimensions;
++use dense::grid::Dimensions as _;
++
++#[derive(Clone, Copy)]
++struct Listener;
++impl compact::event::EventListener for Listener {
++    fn send_event(&self, _: compact::event::Event) {}
++}
++impl dense::event::EventListener for Listener {
++    fn send_event(&self, _: dense::event::Event) {}
++}
++
++#[derive(Clone, Copy)]
++struct Size {
++    rows: usize,
++    cols: usize,
++}
++impl compact::grid::Dimensions for Size {
++    fn total_lines(&self) -> usize {
++        self.rows
++    }
++    fn screen_lines(&self) -> usize {
++        self.rows
++    }
++    fn columns(&self) -> usize {
++        self.cols
++    }
++}
++impl dense::grid::Dimensions for Size {
++    fn total_lines(&self) -> usize {
++        self.rows
++    }
++    fn screen_lines(&self) -> usize {
++        self.rows
++    }
++    fn columns(&self) -> usize {
++        self.cols
++    }
++}
++
++fn compare(
++    actual: &compact::term::Term<Listener>,
++    expected: &dense::term::Term<Listener>,
++    step: usize,
++) {
++    let a = actual.grid();
++    let e = expected.grid();
++    assert_eq!(
++        (a.total_lines(), a.columns(), a.display_offset()),
++        (e.total_lines(), e.columns(), e.display_offset()),
++        "step {step}"
++    );
++    assert_eq!(
++        (
++            a.cursor.point.line.0,
++            a.cursor.point.column.0,
++            a.cursor.input_needs_wrap
++        ),
++        (
++            e.cursor.point.line.0,
++            e.cursor.point.column.0,
++            e.cursor.input_needs_wrap
++        ),
++        "cursor at step {step}"
++    );
++    for y in -(a.history_size() as i32)..a.screen_lines() as i32 {
++        for x in 0..a.columns() {
++            let c = a
++                .read_row(compact::index::Line(y))
++                .cell(compact::index::Column(x));
++            let d = &e[dense::index::Line(y)][dense::index::Column(x)];
++            assert_eq!(
++                (
++                    c.c,
++                    c.fg,
++                    c.bg,
++                    c.flags.bits(),
++                    c.zerowidth(),
++                    c.underline_color()
++                ),
++                (
++                    d.c,
++                    d.fg,
++                    d.bg,
++                    d.flags.bits(),
++                    d.zerowidth(),
++                    d.underline_color()
++                ),
++                "cell {y},{x} at step {step}"
++            );
++            let c_link = c.hyperlink();
++            let d_link = d.hyperlink();
++            assert_eq!(
++                c_link.as_ref().map(|h| (h.id(), h.uri())),
++                d_link.as_ref().map(|h| (h.id(), h.uri()))
++            );
++        }
++    }
++}
++
++#[test]
++fn mixed_output_resize_matches_dense_engine() {
++    let size = Size { rows: 9, cols: 32 };
++    let mut actual = compact::term::Term::new(
++        compact::term::Config {
++            scrolling_history: 64,
++            ..Default::default()
++        },
++        &size,
++        Listener,
++    );
++    let mut expected = dense::term::Term::new(
++        dense::term::Config {
++            scrolling_history: 64,
++            ..Default::default()
++        },
++        &size,
++        Listener,
++    );
++    let mut a_parser = compact::vte::ansi::Processor::<compact::vte::ansi::StdSyncHandler>::new();
++    let mut e_parser = dense::vte::ansi::Processor::<dense::vte::ansi::StdSyncHandler>::new();
++    let inputs = [
++        "short log\r\n",
++        "\x1b[31mred\x1b[0m\r\n",
++        "界e\u{301}\r\n",
++        "\x1b[44m\x1b[K\x1b[0m\r\n",
++        "\x1b]8;id=x;https://example.org\x1b\\link\x1b]8;;\x1b\\\r\n",
++        "long line of text which wraps across multiple rows in the viewport\r\n",
++        "\x1b[2;6r\x1b[6;1Hregion\n\n\x1b[r",
++        "\x1b[2J\x1b[H",
++        "\x1b[?1049hALT\x1b[?1049l",
++        "\x1b[2S",
++        "\x1b[1T",
++        "\r\x1b[3@insert\x1b[2P",
++        "\x1b[4;1H\x1b[2L\x1b[M",
++    ];
++    let mut seed = 7_u64;
++    for step in 0..400 {
++        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
++        let input = if step < 80 {
++            inputs[step % 6]
++        } else {
++            inputs[(seed >> 32) as usize % inputs.len()]
++        };
++        a_parser.advance(&mut actual, input.as_bytes());
++        e_parser.advance(&mut expected, input.as_bytes());
++        if step % 13 == 0 {
++            let size = Size {
++                rows: 4 + (seed as usize % 9),
++                cols: 7 + ((seed >> 32) as usize % 40),
++            };
++            actual.resize(size);
++            expected.resize(size);
++        }
++        if step % 37 == 0 {
++            let limit = (seed >> 32) as usize % 65;
++            actual.grid_mut().update_history(limit);
++            expected.grid_mut().update_history(limit);
++        }
++        compare(&actual, &expected, step);
++    }
++}
+--- a/tests/ref.rs
++++ b/tests/ref.rs
+@@ -8,7 +8,7 @@
+
+ use alacritty_terminal::event::{Event, EventListener};
+ use alacritty_terminal::grid::{Dimensions, Grid};
+-use alacritty_terminal::index::{Column, Line};
++use alacritty_terminal::index::Line;
+ use alacritty_terminal::term::cell::Cell;
+ use alacritty_terminal::term::test::TermSize;
+ use alacritty_terminal::term::{Config, Term};
+@@ -80,7 +80,10 @@
+     P: AsRef<Path>,
+ {
+     let mut res = Vec::new();
+-    File::open(path.as_ref()).unwrap().read_to_end(&mut res).unwrap();
++    File::open(path.as_ref())
++        .unwrap()
++        .read_to_end(&mut res)
++        .unwrap();
+
+     res
+ }
+@@ -107,8 +110,10 @@
+     let grid: Grid<Cell> = json::from_str(&serialized_grid).unwrap();
+     let ref_config: RefConfig = json::from_str(&serialized_cfg).unwrap();
+
+-    let options =
+-        Config { scrolling_history: ref_config.history_size as usize, ..Default::default() };
++    let options = Config {
++        scrolling_history: ref_config.history_size as usize,
++        ..Default::default()
++    };
+
+     let mut terminal = Term::new(options, &size, Mock);
+     let mut parser: ansi::Processor = ansi::Processor::new();
+@@ -121,12 +126,22 @@
+     term_grid.truncate();
+
+     if grid != term_grid {
+-        for i in 0..grid.total_lines() {
+-            for j in 0..grid.columns() {
+-                let cell = &term_grid[Line(i as i32)][Column(j)];
+-                let original_cell = &grid[Line(i as i32)][Column(j)];
+-                if original_cell != cell {
+-                    println!("[{i}][{j}] {original_cell:?} => {cell:?}",);
++        println!(
++            "expected dims {}x{} history {}, actual history {}",
++            grid.columns(),
++            grid.screen_lines(),
++            grid.history_size(),
++            term_grid.history_size()
++        );
++        let mut mismatches = 0;
++        for line in grid.topmost_line().0..=grid.bottommost_line().0 {
++            let a: String = grid.read_row(Line(line)).iter().map(|c| c.c).collect();
++            let b: String = term_grid.read_row(Line(line)).iter().map(|c| c.c).collect();
++            if a != b {
++                println!("line {line}: expected {a:?}, actual {b:?}");
++                mismatches += 1;
++                if mismatches == 4 {
++                    break;
+                 }
+             }
+         }

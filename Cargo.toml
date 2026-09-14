@@ -108,6 +108,10 @@ name = "terminal_ingest"
 harness = false
 
 [[bench]]
+name = "terminal_history"
+harness = false
+
+[[bench]]
 name = "snapshot_rebuild"
 harness = false
 

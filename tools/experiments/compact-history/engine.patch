@@ -1,0 +1,1003 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -120,3 +120,11 @@
+     "Win32_System_Threading",
+     "Win32_System_WindowsProgramming",
+ ]
++
++[dev-dependencies.dense]
++package = "alacritty_terminal"
++version = "=0.26.0"
++
++[[test]]
++name = "compact_differential"
++path = "tests/compact_differential.rs"
+--- a/src/grid/row.rs
++++ b/src/grid/row.rs
+@@ -1,8 +1,8 @@
+-//! Defines the Row type which makes up lines in the grid.
++//! Dense mutable rows with lossless repeated-tail storage for history.
+
+ use std::cmp::{max, min};
+-use std::ops::{Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo, RangeToInclusive};
+-use std::{ptr, slice};
++use std::ops::{Index, IndexMut, Range};
++use std::slice;
+
+ #[cfg(feature = "serde")]
+ use serde::{Deserialize, Serialize};
+@@ -11,283 +11,383 @@
+ use crate::index::Column;
+ use crate::term::cell::ResetDiscriminant;
+
+-/// A row in the grid.
++/// A logical row. The last stored cell repeats through `columns` when compact.
+ #[derive(Default, Clone, Debug)]
+-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+ pub struct Row<T> {
+     inner: Vec<T>,
+-
+-    /// Maximum number of occupied entries.
+-    ///
+-    /// This is the upper bound on the number of elements in the row, which have been modified
+-    /// since the last reset. All cells after this point are guaranteed to be equal.
++    columns: usize,
+     pub(crate) occ: usize,
+ }
+
+ impl<T: PartialEq> PartialEq for Row<T> {
+     fn eq(&self, other: &Self) -> bool {
+-        self.inner == other.inner
++        self.len() == other.len() && self.iter().eq(other.iter())
++    }
++}
++
++// Preserve the upstream serialized representation; storage is an implementation detail.
++#[cfg(feature = "serde")]
++impl<T: Serialize> Serialize for Row<T> {
++    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++        use serde::ser::{SerializeSeq, SerializeStruct};
++        struct Cells<'a, T>(&'a Row<T>);
++        impl<T: Serialize> Serialize for Cells<'_, T> {
++            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++                let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
++                for cell in self.0 {
++                    seq.serialize_element(cell)?;
++                }
++                seq.end()
++            }
++        }
++        let mut row = serializer.serialize_struct("Row", 2)?;
++        row.serialize_field("inner", &Cells(self))?;
++        row.serialize_field("occ", &self.occ)?;
++        row.end()
++    }
++}
++
++#[cfg(feature = "serde")]
++impl<'de, T: Deserialize<'de>> Deserialize<'de> for Row<T> {
++    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
++        #[derive(Deserialize)]
++        struct Dense<T> {
++            inner: Vec<T>,
++            occ: usize,
++        }
++        let dense = Dense::deserialize(deserializer)?;
++        Ok(Self::from_vec(dense.inner, dense.occ))
+     }
+ }
+
+ impl<T: Default> Row<T> {
+-    /// Create a new terminal row.
+-    ///
+-    /// Ideally the `template` should be `Copy` in all performance sensitive scenarios.
+-    pub fn new(columns: usize) -> Row<T> {
++    pub fn new(columns: usize) -> Self {
+         debug_assert!(columns >= 1);
+-
+-        let mut inner: Vec<T> = Vec::with_capacity(columns);
+-
+-        // This is a slightly optimized version of `std::vec::Vec::resize`.
+-        unsafe {
+-            let mut ptr = inner.as_mut_ptr();
+-
+-            for _ in 1..columns {
+-                ptr::write(ptr, T::default());
+-                ptr = ptr.offset(1);
+-            }
+-            ptr::write(ptr, T::default());
+-
+-            inner.set_len(columns);
+-        }
+-
+-        Row { inner, occ: 0 }
+-    }
+-
+-    /// Increase the number of columns in the row.
+-    #[inline]
+-    pub fn grow(&mut self, columns: usize) {
+-        if self.inner.len() >= columns {
++        Self {
++            inner: std::iter::repeat_with(T::default).take(columns).collect(),
++            columns,
++            occ: 0,
++        }
++    }
++}
++
++#[allow(clippy::len_without_is_empty)]
++impl<T> Row<T> {
++    pub fn from_vec(inner: Vec<T>, occ: usize) -> Self {
++        Self {
++            columns: inner.len(),
++            inner,
++            occ,
++        }
++    }
++
++    #[inline]
++    pub fn len(&self) -> usize {
++        self.columns
++    }
++
++    #[inline]
++    pub fn last(&self) -> Option<&T> {
++        self.inner.last()
++    }
++
++    #[inline]
++    pub fn iter(&self) -> RowIter<'_, T> {
++        RowIter {
++            row: self,
++            range: 0..self.columns,
++        }
++    }
++
++    pub fn is_clear(&self) -> bool
++    where
++        T: GridCell,
++    {
++        self.inner.iter().all(GridCell::is_empty)
++    }
++}
++
++impl<T: Clone> Row<T> {
++    /// Expand only a row which is about to be mutated.
++    #[inline]
++    fn materialize(&mut self) {
++        if self.inner.len() < self.columns {
++            let tail = self.inner.last().unwrap().clone();
++            self.inner.resize(self.columns, tail);
++        }
++    }
++
++    /// Mutable slice access is explicit since immutable history need not be contiguous.
++    #[inline]
++    pub fn as_mut_slice(&mut self) -> &mut [T] {
++        self.materialize();
++        self.occ = self.columns;
++        &mut self.inner
++    }
++
++    #[inline]
++    pub fn last_mut(&mut self) -> Option<&mut T> {
++        self.materialize();
++        self.occ = self.columns;
++        self.inner.last_mut()
++    }
++
++    pub fn grow(&mut self, columns: usize)
++    where
++        T: Default + PartialEq,
++    {
++        if self.columns >= columns {
+             return;
+         }
+-
++        if self.inner.len() < self.columns && self.inner.last() == Some(&T::default()) {
++            self.columns = columns;
++            return;
++        }
++        self.materialize();
+         self.inner.resize_with(columns, T::default);
+-    }
+-
+-    /// Reduce the number of columns in the row.
+-    ///
+-    /// This will return all non-empty cells that were removed.
++        self.columns = columns;
++    }
++
+     pub fn shrink(&mut self, columns: usize) -> Option<Vec<T>>
+     where
+         T: GridCell,
+     {
+-        if self.inner.len() <= columns {
++        if self.columns <= columns {
+             return None;
+         }
+-
+-        // Split off cells for a new row.
++        if columns >= self.inner.len() && self.inner.last().is_some_and(GridCell::is_empty) {
++            self.columns = columns;
++            self.occ = min(self.occ, columns);
++            return None;
++        }
++        self.materialize();
+         let mut new_row = self.inner.split_off(columns);
+-        let index = new_row.iter().rposition(|c| !c.is_empty()).map_or(0, |i| i + 1);
++        let index = new_row
++            .iter()
++            .rposition(|c| !c.is_empty())
++            .map_or(0, |i| i + 1);
+         new_row.truncate(index);
+-
++        self.columns = columns;
+         self.occ = min(self.occ, columns);
+-
+-        if new_row.is_empty() { None } else { Some(new_row) }
+-    }
+-
+-    /// Reset all cells in the row to the `template` cell.
+-    #[inline]
++        if new_row.is_empty() {
++            None
++        } else {
++            Some(new_row)
++        }
++    }
++
+     pub fn reset<D>(&mut self, template: &T)
+     where
+         T: ResetDiscriminant<D> + GridCell,
+         D: PartialEq,
+     {
++        self.materialize();
+         debug_assert!(!self.inner.is_empty());
+-
+-        // Mark all cells as dirty if template cell changed.
+-        let len = self.inner.len();
+-        if self.inner[len - 1].discriminant() != template.discriminant() {
+-            self.occ = len;
+-        }
+-
+-        // Reset every dirty cell in the row.
+-        for item in &mut self.inner[0..self.occ] {
++        if self.inner[self.columns - 1].discriminant() != template.discriminant() {
++            self.occ = self.columns;
++        }
++        for item in &mut self.inner[..self.occ] {
+             item.reset(template);
+         }
+-
+         self.occ = 0;
+     }
+-}
+-
+-#[allow(clippy::len_without_is_empty)]
+-impl<T> Row<T> {
+-    #[inline]
+-    pub fn from_vec(vec: Vec<T>, occ: usize) -> Row<T> {
+-        Row { inner: vec, occ }
+-    }
+-
+-    #[inline]
+-    pub fn len(&self) -> usize {
+-        self.inner.len()
+-    }
+-
+-    #[inline]
+-    pub fn last(&self) -> Option<&T> {
+-        self.inner.last()
+-    }
+-
+-    #[inline]
+-    pub fn last_mut(&mut self) -> Option<&mut T> {
+-        self.occ = self.inner.len();
+-        self.inner.last_mut()
+-    }
+-
+-    #[inline]
++
+     pub fn append(&mut self, vec: &mut Vec<T>)
+     where
+         T: GridCell,
+     {
++        self.materialize();
+         self.occ += vec.len();
+         self.inner.append(vec);
+-    }
+-
+-    #[inline]
++        self.columns = self.inner.len();
++    }
++
+     pub fn append_front(&mut self, mut vec: Vec<T>) {
++        self.materialize();
+         self.occ += vec.len();
+-
+         vec.append(&mut self.inner);
+         self.inner = vec;
+-    }
+-
+-    /// Check if all cells in the row are empty.
+-    #[inline]
+-    pub fn is_clear(&self) -> bool
+-    where
+-        T: GridCell,
+-    {
+-        self.inner.iter().all(GridCell::is_empty)
+-    }
+-
+-    #[inline]
++        self.columns = self.inner.len();
++    }
++
+     pub fn front_split_off(&mut self, at: usize) -> Vec<T> {
++        self.materialize();
+         self.occ = self.occ.saturating_sub(at);
+-
+         let mut split = self.inner.split_off(at);
+         std::mem::swap(&mut split, &mut self.inner);
++        self.columns = self.inner.len();
+         split
+     }
+ }
+
++impl<T: PartialEq> Row<T> {
++    pub fn into_compact(mut self) -> Self {
++        self.compact();
++        self
++    }
++
++    /// Compact only when at least half the cell allocation can be released.
++    pub fn compact(&mut self) {
++        let Some(tail) = self.inner.last() else {
++            return;
++        };
++        // `occ` bounds all modified cells; the remaining tail is already known equal.
++        let modified = min(self.occ, self.inner.len());
++        let prefix = self.inner[..modified]
++            .iter()
++            .rposition(|cell| cell != tail)
++            .map_or(0, |i| i + 1);
++        let stored = prefix + 1;
++        if stored > self.columns / 2 {
++            return;
++        }
++        self.inner.truncate(stored);
++        self.inner.shrink_to_fit();
++    }
++}
++
++pub struct RowIter<'a, T> {
++    row: &'a Row<T>,
++    range: Range<usize>,
++}
++impl<'a, T> Iterator for RowIter<'a, T> {
++    type Item = &'a T;
++    #[inline]
++    fn next(&mut self) -> Option<Self::Item> {
++        self.range.next().map(|i| &self.row[Column(i)])
++    }
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        self.range.size_hint()
++    }
++}
++impl<T> DoubleEndedIterator for RowIter<'_, T> {
++    fn next_back(&mut self) -> Option<Self::Item> {
++        self.range.next_back().map(|i| &self.row[Column(i)])
++    }
++}
++impl<T> ExactSizeIterator for RowIter<'_, T> {}
++impl<T> std::iter::FusedIterator for RowIter<'_, T> {}
++
+ impl<'a, T> IntoIterator for &'a Row<T> {
+-    type IntoIter = slice::Iter<'a, T>;
++    type IntoIter = RowIter<'a, T>;
+     type Item = &'a T;
+-
+-    #[inline]
+-    fn into_iter(self) -> slice::Iter<'a, T> {
+-        self.inner.iter()
+-    }
+-}
+-
+-impl<'a, T> IntoIterator for &'a mut Row<T> {
++    fn into_iter(self) -> Self::IntoIter {
++        self.iter()
++    }
++}
++impl<'a, T: Clone> IntoIterator for &'a mut Row<T> {
+     type IntoIter = slice::IterMut<'a, T>;
+     type Item = &'a mut T;
+-
+-    #[inline]
+-    fn into_iter(self) -> slice::IterMut<'a, T> {
+-        self.occ = self.len();
+-        self.inner.iter_mut()
+-    }
+-}
+-
++    fn into_iter(self) -> Self::IntoIter {
++        self.as_mut_slice().iter_mut()
++    }
++}
+ impl<T> Index<Column> for Row<T> {
+     type Output = T;
+-
+     #[inline]
+     fn index(&self, index: Column) -> &T {
+-        &self.inner[index.0]
+-    }
+-}
+-
+-impl<T> IndexMut<Column> for Row<T> {
++        if let Some(cell) = self.inner.get(index.0) {
++            return cell;
++        }
++        assert!(index.0 < self.columns);
++        self.inner.last().unwrap()
++    }
++}
++impl<T: Clone> IndexMut<Column> for Row<T> {
+     #[inline]
+     fn index_mut(&mut self, index: Column) -> &mut T {
+-        self.occ = max(self.occ, *index + 1);
++        if index.0 >= self.inner.len().saturating_sub(1) {
++            self.materialize();
++        }
++        self.occ = max(self.occ, index.0 + 1);
+         &mut self.inner[index.0]
+     }
+ }
+
+-impl<T> Index<Range<Column>> for Row<T> {
+-    type Output = [T];
+-
+-    #[inline]
+-    fn index(&self, index: Range<Column>) -> &[T] {
+-        &self.inner[(index.start.0)..(index.end.0)]
+-    }
+-}
+-
+-impl<T> IndexMut<Range<Column>> for Row<T> {
+-    #[inline]
+-    fn index_mut(&mut self, index: Range<Column>) -> &mut [T] {
+-        self.occ = max(self.occ, *index.end);
+-        &mut self.inner[(index.start.0)..(index.end.0)]
+-    }
+-}
+-
+-impl<T> Index<RangeTo<Column>> for Row<T> {
+-    type Output = [T];
+-
+-    #[inline]
+-    fn index(&self, index: RangeTo<Column>) -> &[T] {
+-        &self.inner[..(index.end.0)]
+-    }
+-}
+-
+-impl<T> IndexMut<RangeTo<Column>> for Row<T> {
+-    #[inline]
+-    fn index_mut(&mut self, index: RangeTo<Column>) -> &mut [T] {
+-        self.occ = max(self.occ, *index.end);
+-        &mut self.inner[..(index.end.0)]
+-    }
+-}
+-
+-impl<T> Index<RangeFrom<Column>> for Row<T> {
+-    type Output = [T];
+-
+-    #[inline]
+-    fn index(&self, index: RangeFrom<Column>) -> &[T] {
+-        &self.inner[(index.start.0)..]
+-    }
+-}
+-
+-impl<T> IndexMut<RangeFrom<Column>> for Row<T> {
+-    #[inline]
+-    fn index_mut(&mut self, index: RangeFrom<Column>) -> &mut [T] {
+-        self.occ = self.len();
+-        &mut self.inner[(index.start.0)..]
+-    }
+-}
+-
+-impl<T> Index<RangeFull> for Row<T> {
+-    type Output = [T];
+-
+-    #[inline]
+-    fn index(&self, _: RangeFull) -> &[T] {
+-        &self.inner[..]
+-    }
+-}
+-
+-impl<T> IndexMut<RangeFull> for Row<T> {
+-    #[inline]
+-    fn index_mut(&mut self, _: RangeFull) -> &mut [T] {
+-        self.occ = self.len();
+-        &mut self.inner[..]
+-    }
+-}
+-
+-impl<T> Index<RangeToInclusive<Column>> for Row<T> {
+-    type Output = [T];
+-
+-    #[inline]
+-    fn index(&self, index: RangeToInclusive<Column>) -> &[T] {
+-        &self.inner[..=(index.end.0)]
+-    }
+-}
+-
+-impl<T> IndexMut<RangeToInclusive<Column>> for Row<T> {
+-    #[inline]
+-    fn index_mut(&mut self, index: RangeToInclusive<Column>) -> &mut [T] {
+-        self.occ = max(self.occ, *index.end + 1);
+-        &mut self.inner[..=(index.end.0)]
+-    }
+-}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::term::cell::{Cell, Flags, Hyperlink};
++    use crate::vte::ansi::{Color, NamedColor};
++
++    fn sample() -> Row<Cell> {
++        let mut row: Row<Cell> = Row::new(253);
++        row[Column(0)].c = '界';
++        row[Column(0)].flags = Flags::WIDE_CHAR;
++        row[Column(0)].push_zerowidth('\u{301}');
++        row[Column(1)].flags = Flags::WIDE_CHAR_SPACER;
++        row
++    }
++
++    #[test]
++    fn compact_preserves_every_cell_and_reverse_iteration() {
++        let mut row = sample();
++        let dense = row.clone();
++        row.compact();
++        assert!(row.inner.capacity() < 10);
++        assert_eq!(row, dense);
++        assert!(row.iter().rev().eq(dense.iter().rev()));
++        assert_eq!(row.iter().len(), 253);
++        assert_eq!(row[Column(252)], dense[Column(252)]);
++        assert_eq!(row.last(), dense.last());
++    }
++
++    #[test]
++    fn compact_preserves_styled_linked_blank_tail() {
++        let mut row = sample();
++        for cell in row.as_mut_slice().iter_mut().skip(2) {
++            cell.bg = Color::Named(NamedColor::Red);
++            cell.set_hyperlink(Some(Hyperlink::new(
++                Some("id"),
++                "https://example.org".into(),
++            )));
++        }
++        let dense = row.clone();
++        row.compact();
++        assert!(row.inner.capacity() < 10);
++        assert_eq!(row, dense);
++        row[Column(200)].c = 'X';
++        assert_eq!(row[Column(199)], dense[Column(199)]);
++        assert_eq!(row[Column(201)], dense[Column(201)]);
++    }
++
++    #[test]
++    fn compact_falls_back_for_distinct_last_cell() {
++        let mut row = sample();
++        row[Column(252)].flags = Flags::WRAPLINE;
++        row.compact();
++        assert_eq!(row.inner.len(), 253);
++        assert!(row[Column(252)].flags.contains(Flags::WRAPLINE));
++    }
++
++    #[test]
++    fn compact_matches_dense_mutations() {
++        let mut row = sample();
++        let mut dense = row.clone();
++        row.compact();
++        assert_eq!(row.shrink(80), dense.shrink(80));
++        assert_eq!(row, dense);
++        row.compact();
++        row.grow(320);
++        dense.grow(320);
++        assert_eq!(row, dense);
++        row.compact();
++        assert_eq!(row.front_split_off(70), dense.front_split_off(70));
++        assert_eq!(row, dense);
++        row.compact();
++        row.reset(&Cell::default());
++        dense.reset(&Cell::default());
++        assert_eq!(row, dense);
++    }
++
++    #[test]
++    #[cfg(feature = "serde")]
++    fn compact_serde_keeps_dense_wire_format() {
++        let mut row = sample();
++        let dense = serde_json::to_string(&row).unwrap();
++        row.compact();
++        assert_eq!(serde_json::to_string(&row).unwrap(), dense);
++        let decoded: Row<Cell> = serde_json::from_str(&dense).unwrap();
++        assert_eq!(decoded, row);
++    }
++}
+--- a/src/grid/mod.rs
++++ b/src/grid/mod.rs
+@@ -19,7 +19,7 @@
+ pub use self::row::Row;
+ use self::storage::Storage;
+
+-pub trait GridCell: Sized {
++pub trait GridCell: Sized + Clone {
+     /// Check if the cell contains any content.
+     fn is_empty(&self) -> bool;
+
+@@ -300,6 +300,13 @@
+             }
+         }
+
++        // Compact rows which have just entered history, before clearing recycled rows.
++        if region.start == 0 {
++            for line in 1..=min(positions, self.history_size()) {
++                self.raw[Line(-(line as i32))].compact();
++            }
++        }
++
+         // Ensure all new lines are fully cleared.
+         for i in (region.end.0 - positions as i32..region.end.0).map(Line::from) {
+             self.raw[i].reset(&self.cursor.template);
+@@ -434,7 +441,7 @@
+     }
+
+     #[inline]
+-    pub fn cursor_cell(&mut self) -> &mut T {
++    pub fn cursor_cell(&mut self) -> &mut T where T: Clone {
+         let point = self.cursor.point;
+         &mut self[point.line][point.column]
+     }
+@@ -475,7 +482,7 @@
+     }
+ }
+
+-impl<T> IndexMut<Point> for Grid<T> {
++impl<T: Clone> IndexMut<Point> for Grid<T> {
+     #[inline]
+     fn index_mut(&mut self, point: Point) -> &mut T {
+         &mut self[point.line][point.column]
+--- a/src/grid/storage.rs
++++ b/src/grid/storage.rs
+@@ -1,6 +1,5 @@
+ use std::cmp::max;
+ use std::mem;
+-use std::mem::MaybeUninit;
+ use std::ops::{Index, IndexMut};
+
+ #[cfg(feature = "serde")]
+@@ -142,37 +141,11 @@
+         self.len
+     }
+
+-    /// Swap implementation for Row<T>.
+-    ///
+-    /// Exploits the known size of Row<T> to produce a slightly more efficient
+-    /// swap than going through slice::swap.
+-    ///
+-    /// The default implementation from swap generates 8 movups and 4 movaps
+-    /// instructions. This implementation achieves the swap in only 8 movups
+-    /// instructions.
++    /// Swap complete rows without assuming their memory layout.
+     pub fn swap(&mut self, a: Line, b: Line) {
+-        debug_assert_eq!(mem::size_of::<Row<T>>(), mem::size_of::<usize>() * 4);
+-
+         let a = self.compute_index(a);
+         let b = self.compute_index(b);
+-
+-        unsafe {
+-            // Cast to a qword array to opt out of copy restrictions and avoid
+-            // drop hazards. Byte array is no good here since for whatever
+-            // reason LLVM won't optimized it.
+-            let a_ptr = self.inner.as_mut_ptr().add(a) as *mut MaybeUninit<usize>;
+-            let b_ptr = self.inner.as_mut_ptr().add(b) as *mut MaybeUninit<usize>;
+-
+-            // Copy 1 qword at a time.
+-            //
+-            // The optimizer unrolls this loop and vectorizes it.
+-            let mut tmp: MaybeUninit<usize>;
+-            for i in 0..4 {
+-                tmp = *a_ptr.offset(i);
+-                *a_ptr.offset(i) = *b_ptr.offset(i);
+-                *b_ptr.offset(i) = tmp;
+-            }
+-        }
++        self.inner.swap(a, b);
+     }
+
+     /// Rotate the grid, moving all lines up/down in history.
+--- a/src/grid/resize.rs
++++ b/src/grid/resize.rs
+@@ -29,6 +29,11 @@
+             Ordering::Less => self.grow_columns(reflow, columns),
+             Ordering::Greater => self.shrink_columns(reflow, columns),
+             Ordering::Equal => (),
++        }
++
++        // Height-only resizing can also move dense rows into history.
++        for line in 1..=self.history_size() {
++            self.raw[Line(-(line as i32))].compact();
+         }
+
+         // Restore template cell.
+@@ -232,7 +237,7 @@
+             if row.len() < columns {
+                 row.grow(columns);
+             }
+-            new_raw.push(row);
++            new_raw.push(row.into_compact());
+         }
+
+         self.raw.replace_inner(new_raw);
+@@ -280,7 +285,7 @@
+                             Vec::new()
+                         } else {
+                             // Since it fits, just push the existing line without any reflow.
+-                            new_raw.push(row);
++                            new_raw.push(row.into_compact());
+                             break;
+                         }
+                     },
+@@ -302,7 +307,7 @@
+                 if len > 0 && wrapped[len - 1].flags().contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+                     if len == 1 {
+                         row[Column(columns - 1)].flags_mut().insert(Flags::WRAPLINE);
+-                        new_raw.push(row);
++                        new_raw.push(row.into_compact());
+                         break;
+                     } else {
+                         // Remove the leading spacer from the end of the wrapped row.
+@@ -311,7 +316,7 @@
+                     }
+                 }
+
+-                new_raw.push(row);
++                new_raw.push(row.into_compact());
+
+                 // Set line as wrapped if cells got removed.
+                 if let Some(cell) = new_raw.last_mut().and_then(|r| r.last_mut()) {
+--- a/src/term/cell.rs
++++ b/src/term/cell.rs
+@@ -275,7 +275,7 @@
+             return Column(self.len());
+         }
+
+-        for (index, cell) in self[..].iter().rev().enumerate() {
++        for (index, cell) in self.iter().rev().enumerate() {
+             if cell.c != ' '
+                 || cell.extra.as_ref().map(|extra| extra.zerowidth.is_empty()) == Some(false)
+             {
+--- a/src/term/mod.rs
++++ b/src/term/mod.rs
+@@ -1094,7 +1094,7 @@
+         if self.mode.contains(TermMode::INSERT) && self.grid.cursor.point.column + width < columns {
+             let line = self.grid.cursor.point.line;
+             let col = self.grid.cursor.point.column;
+-            let row = &mut self.grid[line][..];
++            let row = &mut self.grid[line].as_mut_slice();
+
+             for col in (col.0..(columns - width)).rev() {
+                 row.swap(col + width, col);
+@@ -1198,7 +1198,7 @@
+         let line = cursor.point.line;
+         self.damage.damage_line(line.0 as usize, 0, self.columns() - 1);
+
+-        let row = &mut self.grid[line][..];
++        let row = &mut self.grid[line].as_mut_slice();
+
+         for offset in (0..num_cells).rev() {
+             row.swap(destination + offset, source.0 + offset);
+@@ -1529,7 +1529,7 @@
+         let line = cursor.point.line;
+         self.damage.damage_line(line.0 as usize, start.0, end.0);
+         let row = &mut self.grid[line];
+-        for cell in &mut row[start..end] {
++        for cell in &mut row.as_mut_slice()[start.0..end.0] {
+             *cell = bg.into();
+         }
+     }
+@@ -1549,7 +1549,7 @@
+
+         let line = cursor.point.line;
+         self.damage.damage_line(line.0 as usize, 0, self.columns() - 1);
+-        let row = &mut self.grid[line][..];
++        let row = &mut self.grid[line].as_mut_slice();
+
+         for offset in 0..num_cells {
+             row.swap(start + offset, end + offset);
+@@ -1649,7 +1649,7 @@
+         self.damage.damage_line(point.line.0 as usize, left.0, right.0 - 1);
+
+         let row = &mut self.grid[point.line];
+-        for cell in &mut row[left..right] {
++        for cell in &mut row.as_mut_slice()[left.0..right.0] {
+             *cell = bg.into();
+         }
+
+@@ -1765,7 +1765,7 @@
+
+                 // Clear up to the current column in the current line.
+                 let end = cmp::min(cursor.column + 1, Column(self.columns()));
+-                for cell in &mut self.grid[cursor.line][..end] {
++                for cell in &mut self.grid[cursor.line].as_mut_slice()[..end.0] {
+                     *cell = bg.into();
+                 }
+
+@@ -1774,7 +1774,7 @@
+             },
+             ansi::ClearMode::Below => {
+                 let cursor = self.grid.cursor.point;
+-                for cell in &mut self.grid[cursor.line][cursor.column..] {
++                for cell in &mut self.grid[cursor.line].as_mut_slice()[cursor.column.0..] {
+                     *cell = bg.into();
+                 }
+
+--- /dev/null
++++ b/tests/compact_differential.rs
+@@ -0,0 +1,157 @@
++//! Compare compact storage against the unchanged registry engine after mixed input and resize.
++use alacritty_terminal as compact;
++use compact::grid::Dimensions;
++use dense::grid::Dimensions as _;
++
++#[derive(Clone, Copy)]
++struct Listener;
++impl compact::event::EventListener for Listener {
++    fn send_event(&self, _: compact::event::Event) {}
++}
++impl dense::event::EventListener for Listener {
++    fn send_event(&self, _: dense::event::Event) {}
++}
++
++#[derive(Clone, Copy)]
++struct Size {
++    rows: usize,
++    cols: usize,
++}
++impl compact::grid::Dimensions for Size {
++    fn total_lines(&self) -> usize {
++        self.rows
++    }
++    fn screen_lines(&self) -> usize {
++        self.rows
++    }
++    fn columns(&self) -> usize {
++        self.cols
++    }
++}
++impl dense::grid::Dimensions for Size {
++    fn total_lines(&self) -> usize {
++        self.rows
++    }
++    fn screen_lines(&self) -> usize {
++        self.rows
++    }
++    fn columns(&self) -> usize {
++        self.cols
++    }
++}
++
++fn compare(
++    actual: &compact::term::Term<Listener>,
++    expected: &dense::term::Term<Listener>,
++    step: usize,
++) {
++    let a = actual.grid();
++    let e = expected.grid();
++    assert_eq!(
++        (a.total_lines(), a.columns(), a.display_offset()),
++        (e.total_lines(), e.columns(), e.display_offset()),
++        "step {step}"
++    );
++    assert_eq!(
++        (
++            a.cursor.point.line.0,
++            a.cursor.point.column.0,
++            a.cursor.input_needs_wrap
++        ),
++        (
++            e.cursor.point.line.0,
++            e.cursor.point.column.0,
++            e.cursor.input_needs_wrap
++        ),
++        "cursor at step {step}"
++    );
++    for y in -(a.history_size() as i32)..a.screen_lines() as i32 {
++        for x in 0..a.columns() {
++            let c = &a[compact::index::Line(y)][compact::index::Column(x)];
++            let d = &e[dense::index::Line(y)][dense::index::Column(x)];
++            assert_eq!(
++                (
++                    c.c,
++                    c.fg,
++                    c.bg,
++                    c.flags.bits(),
++                    c.zerowidth(),
++                    c.underline_color()
++                ),
++                (
++                    d.c,
++                    d.fg,
++                    d.bg,
++                    d.flags.bits(),
++                    d.zerowidth(),
++                    d.underline_color()
++                ),
++                "cell {y},{x} at step {step}"
++            );
++            let c_link = c.hyperlink();
++            let d_link = d.hyperlink();
++            assert_eq!(
++                c_link.as_ref().map(|h| (h.id(), h.uri())),
++                d_link.as_ref().map(|h| (h.id(), h.uri()))
++            );
++        }
++    }
++}
++
++#[test]
++fn mixed_output_resize_matches_dense_engine() {
++    let size = Size { rows: 9, cols: 32 };
++    let mut actual = compact::term::Term::new(
++        compact::term::Config {
++            scrolling_history: 64,
++            ..Default::default()
++        },
++        &size,
++        Listener,
++    );
++    let mut expected = dense::term::Term::new(
++        dense::term::Config {
++            scrolling_history: 64,
++            ..Default::default()
++        },
++        &size,
++        Listener,
++    );
++    let mut a_parser = compact::vte::ansi::Processor::<compact::vte::ansi::StdSyncHandler>::new();
++    let mut e_parser = dense::vte::ansi::Processor::<dense::vte::ansi::StdSyncHandler>::new();
++    let inputs = [
++        "short log\r\n",
++        "\x1b[31mred\x1b[0m\r\n",
++        "界e\u{301}\r\n",
++        "\x1b[44m\x1b[K\x1b[0m\r\n",
++        "\x1b]8;id=x;https://example.org\x1b\\link\x1b]8;;\x1b\\\r\n",
++        "long line of text which wraps across multiple rows in the viewport\r\n",
++        "\x1b[2;6r\x1b[6;1Hregion\n\n\x1b[r",
++        "\x1b[2J\x1b[H",
++        "\x1b[?1049hALT\x1b[?1049l",
++        "\x1b[2S",
++        "\x1b[1T",
++        "\r\x1b[3@insert\x1b[2P",
++        "\x1b[4;1H\x1b[2L\x1b[M",
++    ];
++    let mut seed = 7_u64;
++    for step in 0..400 {
++        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
++        let input = if step < 80 {
++            inputs[step % 6]
++        } else {
++            inputs[(seed >> 32) as usize % inputs.len()]
++        };
++        a_parser.advance(&mut actual, input.as_bytes());
++        e_parser.advance(&mut expected, input.as_bytes());
++        if step % 13 == 0 {
++            let size = Size {
++                rows: 4 + (seed as usize % 9),
++                cols: 7 + ((seed >> 32) as usize % 40),
++            };
++            actual.resize(size);
++            expected.resize(size);
++        }
++        compare(&actual, &expected, step);
++    }
++}

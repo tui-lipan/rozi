@@ -47,6 +47,8 @@ exclude = [
 # with it, which is what put the caret at the end of its row for the length of a focus transition.
 # 0.7.4 lets attach seeding stream terminal replays into bounded cache storage. It also keeps
 # provided file-tree paths in the remote host's path flavor for cross-platform remote sessions.
+# 0.9.2 reads Unix terminal input only through Termina, so a client whose terminal hangs up while it
+# exits (window closed, `ssh` dropped) no longer spins a core forever or aborts with a core dump.
 # 0.9.1 builds terminal snapshot spans from attribute runs instead of a `Style` per cell, and stops
 # putting the shared-memory graphics query to hosts that print it (such as terminals over `ssh`).
 # 0.9.0 adds validated custom cubic Bézier easing used by named pane animation recipes. 0.8.0 added
@@ -55,7 +57,7 @@ exclude = [
 # per-session clock so waiting cannot advance the app, and a versioned Unix control protocol
 # (`TUI_LIPAN_AUTOMATION_HEADLESS=1`). It is a breaking release: `TestBackend` is now controlled, so
 # a test that used to observe work settle on its own must `advance(...)` for it.
-tui-lipan = { version = "0.9.1", features = [
+tui-lipan = { version = "0.9.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

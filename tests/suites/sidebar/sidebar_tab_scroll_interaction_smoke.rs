@@ -231,8 +231,9 @@ fn app_sidebar_tabs_keep_native_selection_hover_click_and_wheel_behavior() {
 
             let theme = backend.state().theme.clone();
             let initial = backend.capture_frame();
+            let strip = theme.surface.element.elevate_by(0.05);
             assert_eq!(initial.cell(2, 0).bg, theme.border_active);
-            assert_eq!(initial.cell(9, 0).bg, theme.surface.element);
+            assert_eq!(initial.cell(9, 0).bg, strip);
 
             backend
                 .send_mouse(mouse(9, MouseKind::Moved, KeyMods::NONE))
@@ -240,7 +241,7 @@ fn app_sidebar_tabs_keep_native_selection_hover_click_and_wheel_behavior() {
             assert!(backend.hovered().is_some());
             assert_eq!(
                 backend.capture_frame().cell(9, 0).bg,
-                theme.surface.element.elevate_by(0.08)
+                strip.elevate_by(0.08)
             );
 
             click_label(&mut backend, "Build");

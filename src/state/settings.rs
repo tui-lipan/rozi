@@ -19,6 +19,7 @@ pub enum SettingsAction {
     ToggleWorkbar,
     ToggleWorkbarPosition,
     ToggleWorkbarGap,
+    ToggleWorkbarBackground,
     CycleWorkbarStyle,
     CycleWorkbarBadgeStyle,
     CycleWorkbarTabStyle,
@@ -31,6 +32,7 @@ pub enum SettingsAction {
     CyclePaneAnimation,
     ToggleSidebarBackgroundFollowsTerminal,
     ToggleSidebarGap,
+    ToggleSidebarBackground,
     ToggleBellUrgency,
     CycleAlertBorder,
     CycleWorkbarAlert,
@@ -78,6 +80,7 @@ impl SettingsAction {
             Self::ToggleWorkbar,
             Self::ToggleWorkbarPosition,
             Self::ToggleWorkbarGap,
+            Self::ToggleWorkbarBackground,
             Self::CycleWorkbarStyle,
             Self::CycleWorkbarBadgeStyle,
             Self::CycleWorkbarTabStyle,
@@ -92,6 +95,7 @@ impl SettingsAction {
             // Sidebar
             Self::ToggleSidebarBackgroundFollowsTerminal,
             Self::ToggleSidebarGap,
+            Self::ToggleSidebarBackground,
             // Alerts
             Self::ToggleBellUrgency,
             Self::CycleAlertBorder,
@@ -149,6 +153,7 @@ impl SettingsAction {
             Self::CyclePaneAnimation if !config.animations.enabled => Some("Needs animations"),
             Self::ToggleWorkbarPosition
             | Self::ToggleWorkbarGap
+            | Self::ToggleWorkbarBackground
             | Self::CycleWorkbarStyle
             | Self::CycleWorkbarBadgeStyle
             | Self::CycleWorkbarTabStyle
@@ -274,6 +279,16 @@ mod tests {
         );
         assert_eq!(
             SettingsAction::CycleAlertBorder.disabled_reason(&config),
+            None
+        );
+        config.pane.show_workbar = false;
+        assert_eq!(
+            SettingsAction::ToggleWorkbarBackground.disabled_reason(&config),
+            Some("Needs workbar")
+        );
+        config.pane.show_workbar = true;
+        assert_eq!(
+            SettingsAction::ToggleWorkbarBackground.disabled_reason(&config),
             None
         );
     }

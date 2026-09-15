@@ -63,10 +63,10 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .and_then(|id| tabs.iter().position(|tab| tab.id() == *id))
         .unwrap_or(0);
     let bar_id = panel_bar_id(panel);
-    let fill = fill(ctx);
+    let strip = strip_fill(ctx);
     let hover_style = Style::new()
         .fg(ctx.state.theme.surface.menu)
-        .bg(fill.elevate_by(0.08));
+        .bg(strip.elevate_by(0.08));
     let tab_bar = DraggableTabBar::new()
         .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
         .active(active)
@@ -85,7 +85,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         // tab label carries, so the hint starts in the same column a tab would.
         .empty_text(" Drag tabs here")
         .empty_text_style(super::fg_only(&ctx.state.theme.muted))
-        .style(Style::new().fg(ctx.state.theme.surface.menu).bg(fill))
+        .style(Style::new().fg(ctx.state.theme.surface.menu).bg(strip))
         .active_style(
             Style::new()
                 .fg(ctx.state.theme.surface.backdrop)
@@ -97,7 +97,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .overflow_hover_style(
             Style::new()
                 .fg(ctx.state.theme.border_active)
-                .bg(fill.elevate_by(0.08)),
+                .bg(strip.elevate_by(0.08)),
         )
         .on_change(
             ctx.link()
@@ -477,6 +477,19 @@ pub(super) fn fill(ctx: &Context<AppRoot>) -> Color {
     )
 }
 
+fn strip_fill(ctx: &Context<AppRoot>) -> Color {
+    let host = fill(ctx);
+    if ctx.state.config.sidebar.background {
+        super::strip_background(
+            &ctx.state.theme,
+            ctx.state.config.sidebar.background_follows_terminal,
+            host,
+        )
+    } else {
+        host
+    }
+}
+
 /// Where an empty tab's message sits. One cell in, so a sentence never starts hard against the
 /// panel edge — shared with the file tree, whose own placeholder is rendered by the widget.
 pub(super) const PLACEHOLDER_PADDING: (u16, u16, u16, u16) = (0, 0, 0, 1);
@@ -519,5 +532,17 @@ mod tests {
         let theme = Theme::default();
         assert_eq!(fill_color(&theme, false), theme.surface.element);
         assert_eq!(fill_color(&theme, true), theme.surface.backdrop);
+        assert_eq!(
+            crate::view::strip_background(&theme, false, theme.surface.element),
+            theme.surface.element.elevate_by(crate::view::STRIP_LIFT)
+        );
+        assert_ne!(
+            crate::view::strip_background(&theme, false, theme.surface.element),
+            theme.surface.element
+        );
+        assert_eq!(
+            crate::view::strip_background(&theme, true, theme.surface.backdrop),
+            theme.surface.element
+        );
     }
 }

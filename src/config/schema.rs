@@ -539,6 +539,9 @@ pub struct PaneConfig {
     pub show_workbar: bool,
     /// Whether there is a 1-line gap between the workbar and the panes area.
     pub workbar_gap: bool,
+    /// Paints the workbar as a distinct strip: `surface.panel` on a solid canvas, `surface.element`
+    /// when the canvas follows the terminal. Off, the bar matches the canvas.
+    pub workbar_background: bool,
     /// Whether the workbar is drawn on the last row (below the panes) instead of the first row.
     pub workbar_at_bottom: bool,
     /// Whether tiled/floating panes render their selected titlebar layout.
@@ -605,6 +608,7 @@ impl Default for PaneConfig {
             focus_on_hover: true,
             show_workbar: true,
             workbar_gap: true,
+            workbar_background: true,
             workbar_at_bottom: false,
             show_titles: true,
             titlebar: PaneTitlebarMode::Bar,
@@ -1506,6 +1510,9 @@ pub struct SidebarConfig {
     pub background_follows_terminal: bool,
     /// Keeps one row between each panel's tab bar and its list.
     pub gap: bool,
+    /// Paints the tab strip as a distinct bar: an elevated body fill on a solid sidebar,
+    /// `surface.element` when the sidebar follows the terminal. Off, the strip matches the body.
+    pub background: bool,
 }
 
 impl Default for SidebarConfig {
@@ -1542,6 +1549,7 @@ impl Default for SidebarConfig {
             split_ratio: 0.4,
             background_follows_terminal: false,
             gap: true,
+            background: true,
         }
     }
 }

@@ -575,6 +575,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::ToggleWorkbarBackground,
+        label: "Workbar background",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleWorkbarPosition,
         label: "Workbar position",
         category: "Settings",
@@ -608,6 +615,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::ToggleSidebarGap,
         label: "Sidebar gap",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::ToggleSidebarBackground,
+        label: "Sidebar background",
         category: "Settings",
         default_keys: &[],
         palette: false,

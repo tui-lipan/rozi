@@ -90,6 +90,9 @@
 #highlight_focused_titlebar = true
 #show_workbar = true
 #workbar_gap = true
+# Paint the workbar as a distinct strip: panel on a solid canvas, element when
+# the canvas follows the terminal. Off, the bar matches the canvas.
+#workbar_background = true
 #workbar_at_bottom = false
 #show_titles = true
 # Title layout: "bar" is a separate full-width row, "border" embeds the title in the top
@@ -321,6 +324,10 @@
 #background_follows_terminal = false
 # One blank row between each panel's tab bar and its list.
 #gap = true
+# Paint the tab strip as a distinct bar: elevated sidebar fill when
+# follow-terminal is off, element when the sidebar follows the terminal. Off,
+# the strip matches the sidebar body.
+#background = true
 
 [workbar]
 # Segment kinds: title, workspaces, location, session, clock, layout, activity,

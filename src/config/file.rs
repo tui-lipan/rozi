@@ -203,6 +203,7 @@ pub(super) struct SidebarFileConfig {
     pub(super) split_ratio: Option<f32>,
     pub(super) background_follows_terminal: Option<bool>,
     pub(super) gap: Option<bool>,
+    pub(super) background: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,6 +397,7 @@ pub(super) struct PaneFileConfig {
     focus_on_hover: Option<bool>,
     show_workbar: Option<bool>,
     workbar_gap: Option<bool>,
+    workbar_background: Option<bool>,
     workbar_at_bottom: Option<bool>,
     show_titles: Option<bool>,
     border_mode: Option<String>,
@@ -819,6 +821,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(workbar_gap) = parsed.pane.workbar_gap {
         config.pane.workbar_gap = workbar_gap;
+    }
+    if let Some(workbar_background) = parsed.pane.workbar_background {
+        config.pane.workbar_background = workbar_background;
     }
     if let Some(workbar_at_bottom) = parsed.pane.workbar_at_bottom {
         config.pane.workbar_at_bottom = workbar_at_bottom;
@@ -1489,6 +1494,7 @@ mod file_tests {
             focus_on_hover = false
             show_workbar = false
             workbar_gap = false
+            workbar_background = false
             workbar_at_bottom = true
             show_titles = false
             border_mode = "dividers"
@@ -1510,6 +1516,7 @@ mod file_tests {
         assert_eq!(parsed.pane.focus_on_hover, Some(false));
         assert_eq!(parsed.pane.show_workbar, Some(false));
         assert_eq!(parsed.pane.workbar_gap, Some(false));
+        assert_eq!(parsed.pane.workbar_background, Some(false));
         assert_eq!(parsed.pane.workbar_at_bottom, Some(true));
         assert_eq!(parsed.pane.show_titles, Some(false));
         assert_eq!(parsed.pane.border_mode.as_deref(), Some("dividers"));

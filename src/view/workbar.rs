@@ -12,7 +12,7 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let workbar_cfg = &state.config.workbar;
 
-    let panel_bg = theme.surface.panel;
+    let panel_bg = workbar_fill(ctx);
     let mut row = HStack::new()
         .gap(1)
         .width(Length::Flex(1))
@@ -116,6 +116,19 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
         left_cap_color.unwrap_or(panel_bg),
         right_cap_color,
     )
+}
+
+fn workbar_fill(ctx: &Context<AppRoot>) -> Color {
+    let theme = &ctx.state.theme;
+    if ctx.state.config.pane.workbar_background {
+        if ctx.state.config.pane.background_follows_terminal {
+            theme.surface.element
+        } else {
+            theme.surface.panel
+        }
+    } else {
+        theme.surface.backdrop
+    }
 }
 
 fn collaboration_status(
@@ -287,7 +300,7 @@ fn trailing_cluster(
 /// items that actually rendered, so it need not re-check visibility.
 fn segment_edge_color(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Color {
     match item.segment {
-        WorkbarSegment::Workspaces => ctx.state.theme.surface.panel,
+        WorkbarSegment::Workspaces => workbar_fill(ctx),
         _ => item_colors(ctx, item).0,
     }
 }
@@ -600,7 +613,7 @@ fn left_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<El
         &label,
         fg,
         bg,
-        ctx.state.theme.surface.panel,
+        workbar_fill(ctx),
         ctx.state
             .config
             .effective_cap_style(ctx.state.config.pane.workbar_badge_style),
@@ -760,7 +773,7 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .height(Length::Px(1))
         .divider(' ')
         .caps(tab_caps)
-        .style(Style::new().fg(theme.surface.menu).bg(theme.surface.panel))
+        .style(Style::new().fg(theme.surface.menu).bg(workbar_fill(ctx)))
         .active_style(
             Style::new()
                 .fg(theme.surface.backdrop)

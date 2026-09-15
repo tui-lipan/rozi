@@ -77,6 +77,11 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                 ),
                 ("Gap", enabled_status(pane.workbar_gap), ToggleWorkbarGap),
                 (
+                    "Background",
+                    enabled_status(pane.workbar_background),
+                    ToggleWorkbarBackground,
+                ),
+                (
                     "Style",
                     cap_style_label(pane.workbar_style).to_string(),
                     CycleWorkbarStyle,
@@ -145,6 +150,11 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     "Gap",
                     enabled_status(ctx.state.config.sidebar.gap),
                     ToggleSidebarGap,
+                ),
+                (
+                    "Background",
+                    enabled_status(ctx.state.config.sidebar.background),
+                    ToggleSidebarBackground,
                 ),
             ],
         ),

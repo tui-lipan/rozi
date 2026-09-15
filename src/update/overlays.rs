@@ -241,8 +241,14 @@ fn settings_activate_dir(
         ToggleWorkbarGap => {
             execute_action(ctx, Action::ToggleWorkbarGap);
         }
+        ToggleWorkbarBackground => {
+            execute_action(ctx, Action::ToggleWorkbarBackground);
+        }
         ToggleSidebarGap => {
             execute_action(ctx, Action::ToggleSidebarGap);
+        }
+        ToggleSidebarBackground => {
+            execute_action(ctx, Action::ToggleSidebarBackground);
         }
         ToggleSidebarBackgroundFollowsTerminal => {
             execute_action(ctx, Action::ToggleSidebarBackgroundFollowsTerminal);

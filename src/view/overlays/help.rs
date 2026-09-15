@@ -539,6 +539,8 @@ mod palette_alias_tests {
             "focused titlebar",
             "nerd icons",
             "sidebar gap",
+            "sidebar background",
+            "workbar background",
         ] {
             assert!(
                 aliases.iter().any(|alias| alias.as_ref() == term),

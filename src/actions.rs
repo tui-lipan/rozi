@@ -437,11 +437,13 @@ fn execute_action_inner(
         Action::CycleTitlebar => crate::ops::preferences::cycle_titlebar(ctx),
         Action::ToggleWorkbar => crate::ops::preferences::toggle_workbar(ctx),
         Action::ToggleWorkbarGap => crate::ops::preferences::toggle_workbar_gap(ctx),
+        Action::ToggleWorkbarBackground => crate::ops::preferences::toggle_workbar_background(ctx),
         Action::ToggleWorkbarPosition => crate::ops::preferences::toggle_workbar_position(ctx),
         Action::ToggleWorkbarPowerline => crate::ops::preferences::toggle_workbar_powerline(ctx),
         Action::ToggleSidebar => crate::update::sidebar::toggle_visible(ctx),
         Action::ToggleSidebarSplit => crate::update::sidebar::toggle_split(ctx),
         Action::ToggleSidebarGap => crate::ops::preferences::toggle_sidebar_gap(ctx),
+        Action::ToggleSidebarBackground => crate::ops::preferences::toggle_sidebar_background(ctx),
         Action::ToggleSidebarBackgroundFollowsTerminal => {
             crate::ops::preferences::toggle_sidebar_background_follows_terminal(ctx)
         }

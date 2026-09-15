@@ -47,10 +47,18 @@ fn group_rows<'a>(frame: &'a str, group: &str, next_group: &str) -> &'a str {
     &frame[start..end]
 }
 
+fn setting_label_matches(line: &str, label: &str) -> bool {
+    let Some(pos) = line.find(label) else {
+        return false;
+    };
+    let after = &line[pos + label.len()..];
+    after.is_empty() || after.starts_with("  ")
+}
+
 fn setting_row<'a>(frame: &'a str, label: &str) -> &'a str {
     frame
         .lines()
-        .find(|line| line.contains(label))
+        .find(|line| setting_label_matches(line, label))
         .unwrap_or_else(|| panic!("rendered Settings row `{label}`:\n{frame}"))
 }
 
@@ -172,6 +180,7 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                     "Show workbar",
                     "Position",
                     "Gap",
+                    "Background",
                     "Style",
                     "Badge style",
                     "Tab style",
@@ -193,7 +202,7 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
             ),
             (
                 "Sidebar",
-                &["Background follows terminal", "Gap"][..],
+                &["Background follows terminal", "Gap", "Background"][..],
                 "Alerts",
             ),
             (
@@ -246,7 +255,9 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
             let rows_in_group = group_rows(&frame, group, next_group);
             for label in rows {
                 assert!(
-                    rows_in_group.contains(label),
+                    rows_in_group
+                        .lines()
+                        .any(|line| setting_label_matches(line, label)),
                     "{group} is missing {label}:\n{frame}"
                 );
             }
@@ -299,7 +310,7 @@ fn settings_reports_startup_and_session_values() {
     });
 }
 
-/// Sidebar chrome lives in its own group, so a shared label with General cannot hide a miswire.
+/// Sidebar background lives in its own group, so a shared label with Workbar cannot hide a miswire.
 #[test]
 fn settings_reports_sidebar_values() {
     on_large_stack(|| {
@@ -308,6 +319,7 @@ fn settings_reports_sidebar_values() {
             let state = backend.state_mut();
             state.config.sidebar.background_follows_terminal = true;
             state.config.sidebar.gap = false;
+            state.config.sidebar.background = false;
         }
         let frame = rendered_rows(&mut backend);
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
@@ -318,6 +330,10 @@ fn settings_reports_sidebar_values() {
         assert!(
             setting_row(sidebar, "Gap").contains("Disabled"),
             "sidebar gap row is misbound:\n{frame}"
+        );
+        assert!(
+            setting_row(sidebar, "Background").contains("Disabled"),
+            "sidebar background row is misbound:\n{frame}"
         );
     });
 }

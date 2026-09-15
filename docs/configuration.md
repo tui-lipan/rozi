@@ -159,6 +159,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | `highlight_focused_titlebar` | bool | `true` | Uses focused titlebar styling. |
 | `show_workbar` | bool | `true` | Shows the workbar. |
 | `workbar_gap` | bool | `true` | Keeps one row between the workbar and panes. |
+| `workbar_background` | bool | `true` | Paints the workbar as a distinct strip: `panel` on a solid canvas, `element` when the canvas follows the terminal. Off, the bar matches the canvas. |
 | `workbar_at_bottom` | bool | `false` | Places the workbar below panes. |
 | `show_titles` | bool | `true` | Shows pane titles without changing `titlebar`. |
 | `titlebar` | string | `"bar"` | `"bar"`, `"border"`, `"integrated"`, or `"inset"`. |
@@ -422,6 +423,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `split_ratio` | float | `0.4` | Finite value clamped to `0.15..=0.85`. |
 | `background_follows_terminal` | bool | `false` | Paints the sidebar with the canvas backdrop instead of the elevated panel fill. |
 | `gap` | bool | `true` | Keeps one row between each panel's tab bar and its list. |
+| `background` | bool | `true` | Paints the tab strip as a distinct bar: an elevated sidebar fill when follow-terminal is off, `element` when the sidebar follows the terminal. Off, the strip matches the body. |
 
 A table in `tabs` can configure `files` or `git`, or define a custom launcher or command tab.
 

@@ -132,7 +132,10 @@ pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "terminal background",
             "sidebar",
             "sidebar gap",
+            "sidebar chrome",
             "sidebar background",
+            "workbar chrome",
+            "workbar background",
             "notifications",
             "sound",
             "sounds",
@@ -211,6 +214,9 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         ]),
         ToggleWorkbar => alias_list(&["show workbar", "toggle workbar"]),
         ToggleWorkbarGap => alias_list(&["workbar gap", "workbar spacing", "workbar separator"]),
+        ToggleWorkbarBackground => {
+            alias_list(&["workbar background", "workbar strip", "workbar chrome"])
+        }
         ToggleWorkbarPosition => alias_list(&[
             "workbar position",
             "workbar placement",
@@ -261,15 +267,22 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "match terminal",
         ]),
         ToggleSidebarBackgroundFollowsTerminal => alias_list(&[
-            "sidebar background",
             "sidebar terminal background",
             "match terminal sidebar",
+            "sidebar follows terminal",
         ]),
         ToggleSidebarGap => alias_list(&[
             "sidebar gap",
             "sidebar spacing",
             "tab bar gap",
             "sidebar tab gap",
+        ]),
+        ToggleSidebarBackground => alias_list(&[
+            "sidebar background",
+            "tab bar background",
+            "sidebar strip",
+            "sidebar tab strip",
+            "sidebar chrome",
         ]),
         CycleBorderStyle => alias_list(&[
             "border style",

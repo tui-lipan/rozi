@@ -49,6 +49,7 @@ split = true
 split_ratio = 0.5
 background_follows_terminal = false
 gap = true
+background = true
 ```
 
 `tabs` declares available tab definitions. `panels` assigns those stable tab ids to the top and
@@ -58,8 +59,10 @@ first are ignored.
 Set `split = false` to display one panel while retaining the two saved groups. Set `position` to
 `"right"` to move the sidebar. `background_follows_terminal` paints the sidebar with the canvas
 backdrop instead of the elevated panel fill. `gap` keeps one blank row between each tab bar and
-its list. See [Configuration](configuration.md#sidebar) for defaults, size limits, tree options,
-and custom tab syntax. A complete example is in
+its list. `background` paints the tab strip as a distinct bar (an elevated sidebar fill when
+follow-terminal is off, `element` when it follows the terminal); off, the strip matches the body. See
+[Configuration](configuration.md#sidebar) for defaults, size limits, tree options, and custom tab
+syntax. A complete example is in
 [`examples/sidebar.toml`](../examples/sidebar.toml).
 
 ## Activity

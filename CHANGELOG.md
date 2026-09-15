@@ -45,6 +45,11 @@
 - Settings gains a Sidebar group. **Background follows terminal** paints the column with the canvas
   backdrop instead of the elevated panel fill, and **Gap** keeps or drops the blank row between each
   tab bar and its list. Both write `[sidebar]`.
+- Sidebar and workbar **Background** paint the tab strip and workbar as a distinct bar. Off, each
+  recedes into its body. On a solid surface the sidebar strip is an elevated body fill (so it still
+  reads when `panel` and `element` share a color) and the workbar uses `surface.panel`; when that
+  surface follows the terminal both use `surface.element`. The rows write `[sidebar] background` and
+  `[pane] workbar_background`.
 - Session protocol 6. The wire carries one new request and one new reply for the above; as ever,
   client and server must be the same build, so restart a session server after upgrading.
 - `metrics` counts attached clients rather than open sockets. A discovery probe and a headless

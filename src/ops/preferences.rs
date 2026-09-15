@@ -96,9 +96,19 @@ pub(crate) fn toggle_workbar_gap(ctx: &mut Context<AppRoot>) -> Update {
     toggle_pane_flag!(ctx, workbar_gap)
 }
 
+pub(crate) fn toggle_workbar_background(ctx: &mut Context<AppRoot>) -> Update {
+    toggle_pane_flag!(ctx, workbar_background)
+}
+
 pub(crate) fn toggle_sidebar_gap(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.config.sidebar.gap = !ctx.state.config.sidebar.gap;
     persist_sidebar_toggle(ctx, "gap", ctx.state.config.sidebar.gap);
+    Update::full()
+}
+
+pub(crate) fn toggle_sidebar_background(ctx: &mut Context<AppRoot>) -> Update {
+    ctx.state.config.sidebar.background = !ctx.state.config.sidebar.background;
+    persist_sidebar_toggle(ctx, "background", ctx.state.config.sidebar.background);
     Update::full()
 }
 

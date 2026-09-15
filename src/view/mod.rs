@@ -61,6 +61,16 @@ pub(crate) fn hover_lift() -> ColorTransform {
     ColorTransform::Elevate(HOVER_LIFT)
 }
 
+pub(crate) const STRIP_LIFT: f32 = 0.05;
+
+pub(crate) fn strip_background(theme: &Theme, follow_terminal: bool, host: Color) -> Color {
+    if follow_terminal {
+        theme.surface.element
+    } else {
+        host.elevate_by(STRIP_LIFT)
+    }
+}
+
 pub fn render(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let viewport = ctx.viewport();

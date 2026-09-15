@@ -513,6 +513,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleWorkbarGap => {
             enable_disable_label("workbar gap", state.config.pane.workbar_gap)
         }
+        Action::ToggleWorkbarBackground => {
+            enable_disable_label("workbar background", state.config.pane.workbar_background)
+        }
         Action::ToggleWorkbarPosition => {
             let edge = if state.config.pane.workbar_at_bottom {
                 "top"
@@ -531,6 +534,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             enable_disable_label("sidebar split", state.config.sidebar.split)
         }
         Action::ToggleSidebarGap => enable_disable_label("sidebar gap", state.config.sidebar.gap),
+        Action::ToggleSidebarBackground => {
+            enable_disable_label("sidebar background", state.config.sidebar.background)
+        }
         Action::ToggleSidebarBackgroundFollowsTerminal => enable_disable_label(
             "sidebar background follows terminal",
             state.config.sidebar.background_follows_terminal,

@@ -394,6 +394,20 @@ pub(crate) fn backdrop_dim(progress: f32) -> f32 {
     1.0 - 0.5 * progress.clamp(0.0, 1.0)
 }
 
+/// Merged frames fuse any box-drawing already in a cell. Fill the dropdown first so scratch
+/// tiles can still join each other without growing junctions into the workspace underneath.
+fn wipe_merged_dropdown_underlay(ctx: &Context<AppRoot>, canvas: Canvas, placed: Rect) -> Canvas {
+    if !ctx.state.config.pane.border_mode.merges_frames() {
+        return canvas;
+    }
+    canvas.child_at(
+        placed,
+        Canvas::new()
+            .passthrough(true)
+            .style(Style::new().bg(ctx.state.theme.surface.backdrop)),
+    )
+}
+
 /// The placement (in canvas coordinates) and element for the scratchpad, rendered above the
 /// workspace layer. `progress` drives the slide; the pane stays mounted while it animates
 /// back down on hide, and is dropped once fully retracted.
@@ -419,7 +433,7 @@ pub(crate) fn scratch_panes(
     let scratch_moved = ctx.state.last_scratch_rect.replace(Some(placed)) != Some(placed);
     view::render_workspace_panes(
         ctx,
-        canvas,
+        wipe_merged_dropdown_underlay(ctx, canvas, placed),
         &view::WorkspaceLayer {
             workspace: &ctx.state.scratch,
             bounds: deploying,

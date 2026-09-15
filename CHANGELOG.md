@@ -35,6 +35,8 @@
 
 ### Fixed
 
+- Merged pane borders no longer grow junctions between the scratchpad and the workspace tiles
+  underneath it. Split scratch panes still fuse with each other.
 - A script's own `ROZI_PANE` can no longer address a pane in a different session. The CLI stamps
   it on every request, and `--session` names a different pane namespace, so a job inside pane 3 of
   `work` running `rozi --session dev send-text …` would have typed into `dev`'s pane 3 — and the

@@ -20,5 +20,7 @@ mod pane_reveal_smoke;
 mod pane_slide_smoke;
 #[path = "suites/pane/pane_titlebar_modes_smoke.rs"]
 mod pane_titlebar_modes_smoke;
+#[path = "suites/pane/scratchpad_border_merge_smoke.rs"]
+mod scratchpad_border_merge_smoke;
 #[path = "suites/pane/scratchpad_slide_smoke.rs"]
 mod scratchpad_slide_smoke;

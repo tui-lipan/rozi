@@ -1021,10 +1021,12 @@ pub(crate) fn pane_element(
 
     // Border fusing is buffer-level: any two box-drawing glyphs sharing a cell merge unless the
     // later frame draws in Replace mode, so only panes in the settled merged layer may merge
-    // (the caller decides - floating, fullscreen, scratch, mid-drag, and mid-animation panes must
-    // occlude whatever is beneath them, not grow junctions into it). Fuzzy rather than Exact:
-    // rounded corners have no arc junction glyphs, so Exact refuses to fuse them, while Fuzzy
-    // merges exactly when possible and falls back to plain junctions for arcs.
+    // (the caller decides - floating, fullscreen, mid-drag, and mid-animation panes must
+    // occlude whatever is beneath them, not grow junctions into it). The scratchpad is its own
+    // merged layer: `scratch_panes` wipes the dropdown rect first, then its settled tiles Fuzzy-
+    // merge with each other. Fuzzy rather than Exact: rounded corners have no arc junction
+    // glyphs, so Exact refuses to fuse them, while Fuzzy merges exactly when possible and falls
+    // back to plain junctions for arcs.
     let mut body = Frame::new()
         .border(show_border)
         .border_style(border_style)

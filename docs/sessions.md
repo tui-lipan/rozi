@@ -87,7 +87,7 @@ reported the last time it answered:
 
 ```text
 REMOTE · workbox · disconnected
-dev@workbox                               3 panes · last seen
+dev                                       3 panes · last seen
 ```
 
 `Enter` still works on those rows: it connects the host and attaches, which is the point of keeping

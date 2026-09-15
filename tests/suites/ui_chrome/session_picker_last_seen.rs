@@ -83,12 +83,80 @@ fn a_remembered_session_says_so_instead_of_reading_as_live() {
 
         let rendered = screen(&mut backend);
         assert!(
-            rendered.contains("test@winvm"),
-            "the session is listed:\n{rendered}"
+            rendered.contains("test") && !rendered.contains("test@winvm"),
+            "the session is listed by name; its group header already names the host:\n{rendered}"
         );
         assert!(
             rendered.contains("last seen"),
             "a remembered row is dated, not presented as live:\n{rendered}"
+        );
+    });
+}
+
+/// Rows no longer spell out their host, so a query for the host has to match it through the hidden
+/// alias and keep the header that names it above the surviving rows.
+#[test]
+fn a_host_query_keeps_its_rows_under_their_header() {
+    on_a_big_stack(|| {
+        let target = RemoteTarget::Alias("winvm".to_string());
+        let mut backend = picker_showing(vec![last_seen("test", 1, &target)]);
+        screen(&mut backend);
+        for ch in "winvm".chars() {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char(ch),
+                    mods: KeyMods::NONE,
+                })
+                .expect("type the host into the query");
+        }
+
+        let rendered = screen(&mut backend);
+        assert_eq!(
+            backend
+                .state()
+                .session_picker
+                .as_ref()
+                .map(|picker| picker.input.text().to_string())
+                .as_deref(),
+            Some("winvm"),
+            "the query reached the picker"
+        );
+        assert!(
+            rendered.contains("REMOTE") && rendered.contains("last seen"),
+            "the host's header and its row survive the query:\n{rendered}"
+        );
+    });
+}
+
+/// Once one row carries a connection marker, the rows this client holds nothing on get a muted dot
+/// in that column instead of a blank.
+#[test]
+fn unheld_rows_get_a_dot_beside_a_marked_row() {
+    on_a_big_stack(|| {
+        let target = RemoteTarget::Alias("winvm".to_string());
+        let local = DiscoveredSession {
+            name: "dev".to_string(),
+            ephemeral: false,
+            host: None,
+            remote_target: None,
+            status: DiscoveredSessionStatus::Running {
+                panes: 1,
+                has_layout: true,
+                clients: 1,
+                created_from_profile: None,
+            },
+        };
+        let mut backend = picker_showing(vec![local, last_seen("test", 1, &target)]);
+        backend.state_mut().current_mut().session_name = Some("dev".to_string());
+
+        let rendered = screen(&mut backend);
+        assert!(
+            rendered.contains("● dev"),
+            "the session on screen is marked:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("· test"),
+            "the unheld row gets a dot, not a blank:\n{rendered}"
         );
     });
 }

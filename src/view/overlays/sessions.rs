@@ -582,21 +582,28 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         }
         // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
         // stay reattachable - activation is by row index, not this label).
-        let mut label = if entry.ephemeral {
-            "ephemeral".to_string()
+        let label = if entry.ephemeral {
+            "ephemeral"
         } else {
-            entry.name.clone()
+            entry.name.as_str()
         };
+        // The group header already names the host, so the row shows the bare session name. The
+        // raw name and `name@host` stay matchable as hidden aliases, which is what lets a query
+        // for the host keep its rows.
+        let mut aliases = Vec::new();
+        if entry.ephemeral {
+            aliases.push(entry.name.clone());
+        }
         if let Some(host) = entry.host.as_deref() {
-            label.push('@');
-            label.push_str(host);
+            aliases.push(format!("{}@{host}", entry.name));
         }
         let we_hold = !matches!(statuses[index], SessionConnectionStatus::Discovered);
         let agents = crate::view::session_status::host_agent_label(&ctx.state, entry);
-        entries.push(
-            SearchEntry::item(label, index)
+        entries.push(SearchEntry::Item(
+            SearchItem::new(label, index)
+                .aliases(aliases)
                 .description(session_description(entry, we_hold, agents)),
-        );
+        ));
     }
     // Say what is (not) there, nothing more: the footer already advertises `new ctrl+n`, and
     // repeating it in the body says the same thing twice in a longer sentence.
@@ -638,6 +645,9 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         64,
     )
     .entries(entries)
+    // Rows no longer repeat their host, so filtering must keep the group headers that name it;
+    // otherwise `dev` on two hosts would read as the same session twice.
+    .preserve_groups(true)
     .actions(session_picker_actions(ctx))
     .armed_row(pending_kill.or(pending_restart))
     .placeholder("Search sessions...")

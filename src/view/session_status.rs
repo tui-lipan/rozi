@@ -237,9 +237,11 @@ pub(crate) fn session_status_gutter(
         SessionConnectionStatus::Reconnecting => {
             Some(picker_circle_spinner_gutter(styles.reconnecting))
         }
-        SessionConnectionStatus::Offline => Some(picker_marker_gutter(" ×", styles.offline)),
+        SessionConnectionStatus::Offline => Some(picker_marker_gutter("×", styles.offline)),
+        // Once any row carries a marker, an unheld row gets a muted dot instead of a blank, so the
+        // column reads as a status column rather than ragged indentation.
         SessionConnectionStatus::Discovered if reserve_discovered => {
-            Some(ListItemGutter::text("  "))
+            Some(picker_marker_gutter("·", styles.label))
         }
         SessionConnectionStatus::Discovered => None,
     }

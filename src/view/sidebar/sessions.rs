@@ -242,12 +242,14 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
             .iter()
             .filter(|e| e.remote_target.as_ref() == Some(&host.target))
             .collect();
-        // These rows are live discovery output, so their existence really is evidence the host
-        // answered — unlike the picker's, which are remembered.
+        // Only a live row is evidence the host answered. The list also carries the host's cached
+        // last-seen rows, and a memory must not talk an idle host into "reached".
         let status = crate::view::session_status::host_connection_status(
             &ctx.state,
             &host.target,
-            !sessions.is_empty(),
+            sessions
+                .iter()
+                .any(|entry| !crate::ops::session::session_row_is_last_seen(entry)),
         );
         rows.push(header_row(
             ctx,

@@ -927,6 +927,52 @@ fn host_connect_and_two_click_disconnect() {
     });
 }
 
+/// A host nothing has probed still has its cached last-seen rows in the sidebar list. Those are a
+/// memory, not an answer: the header must stay offline and connectable, as the picker shows it,
+/// rather than read as "Reached" with the disconnect ✕.
+#[test]
+fn cached_rows_do_not_mark_an_idle_host_reached() {
+    on_test_thread(|| {
+        let mut backend = settled_backend();
+        let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
+        {
+            let state = backend.state_mut();
+            state.config.remote.hosts.insert(
+                "winvm".to_string(),
+                crate::config::RemoteHostConfig::default(),
+            );
+            state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
+        }
+        open_sessions_tab_unswept(&mut backend, 9);
+        {
+            let state = backend.state_mut();
+            state.sidebar.sessions.clear();
+            state
+                .sidebar
+                .sessions
+                .push(crate::session::discovery::DiscoveredSession {
+                    name: "work".to_string(),
+                    status: crate::session::discovery::DiscoveredSessionStatus::LastSeen {
+                        panes: 2,
+                    },
+                    ephemeral: false,
+                    host: Some("winvm".to_string()),
+                    remote_target: Some(target.clone()),
+                });
+        }
+        //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 spacer · 4 WINVM
+        let items = backend
+            .state()
+            .sidebar_item_projections(&SidebarTab::Sessions);
+        assert_eq!(
+            items[4].target,
+            crate::state::RowTarget::HostConnect(target.clone()),
+            "the offline host row connects"
+        );
+        assert!(items[4].close.is_none(), "and offers no disconnect ✕");
+    });
+}
+
 /// The ✕ on a pane row takes two clicks: the first arms a confirmation, the second kills the
 /// pane. Clicking the row body in between abandons the arming rather than carrying it, so a
 /// confirmation can never be committed by a gesture that meant something else.

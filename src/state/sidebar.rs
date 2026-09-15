@@ -229,10 +229,14 @@ impl State {
                         .filter(|a| a.remote_target.as_ref() == Some(&host.target))
                         .map(|a| a.connection)
                         .collect();
-                    let status =
-                        self.remote
-                            .hosts
-                            .status_for(&host.target, conns.iter(), !live.is_empty());
+                    // Must match the view: cached last-seen rows are not evidence the host answered.
+                    let has_live = live
+                        .iter()
+                        .any(|entry| !crate::ops::session::session_row_is_last_seen(entry));
+                    let status = self
+                        .remote
+                        .hosts
+                        .status_for(&host.target, conns.iter(), has_live);
                     // A connected host offers no activation: disconnecting is the hover ✕, the same
                     // affordance (and the same confirmation) every other closable row uses.
                     let (header_target, header_close) = match status {

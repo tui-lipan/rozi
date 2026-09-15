@@ -134,7 +134,7 @@ pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "sidebar gap",
             "sidebar chrome",
             "sidebar background",
-            "workbar chrome",
+            "sidebar tab",
             "workbar background",
             "notifications",
             "sound",
@@ -283,6 +283,12 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "sidebar strip",
             "sidebar tab strip",
             "sidebar chrome",
+        ]),
+        CycleSidebarTabStyle => alias_list(&[
+            "sidebar tab style",
+            "sidebar tabs",
+            "sidebar tab caps",
+            "sidebar rounded tabs",
         ]),
         CycleBorderStyle => alias_list(&[
             "border style",

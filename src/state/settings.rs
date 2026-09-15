@@ -33,6 +33,7 @@ pub enum SettingsAction {
     ToggleSidebarBackgroundFollowsTerminal,
     ToggleSidebarGap,
     ToggleSidebarBackground,
+    CycleSidebarTabStyle,
     ToggleBellUrgency,
     CycleAlertBorder,
     CycleWorkbarAlert,
@@ -96,6 +97,7 @@ impl SettingsAction {
             Self::ToggleSidebarBackgroundFollowsTerminal,
             Self::ToggleSidebarGap,
             Self::ToggleSidebarBackground,
+            Self::CycleSidebarTabStyle,
             // Alerts
             Self::ToggleBellUrgency,
             Self::CycleAlertBorder,

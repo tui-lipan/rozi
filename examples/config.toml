@@ -328,6 +328,8 @@
 # follow-terminal is off, element when the sidebar follows the terminal. Off,
 # the strip matches the sidebar body.
 #background = true
+# Tab end caps: "padded", "round", or "arrow". Round and arrow need nerd icons.
+#tab_style = "padded"
 
 [workbar]
 # Segment kinds: title, workspaces, location, session, clock, layout, activity,

@@ -78,3 +78,20 @@ fn sidebar_gap_inserts_one_row_between_the_tab_bar_and_its_list() {
         );
     });
 }
+
+#[test]
+fn round_tab_style_caps_the_active_sidebar_tab() {
+    on_large_stack(|| {
+        let mut backend = sidebar_backend();
+        backend.state_mut().config.sidebar.tab_style = tui_lipan::prelude::CapStyle::Round;
+        let lines = sidebar_columns(&mut backend);
+        let tab = lines
+            .iter()
+            .find(|line| line.contains("Panes"))
+            .unwrap_or_else(|| panic!("tab bar shows Panes:\n{lines:#?}"));
+        assert!(
+            tab.contains('\u{e0b6}') && tab.contains('\u{e0b4}'),
+            "round tabs wrap the active label in end caps:\n{tab}"
+        );
+    });
+}

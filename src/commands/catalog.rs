@@ -634,6 +634,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::CycleSidebarTabStyle,
+        label: "Sidebar tab style",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::FocusSidebar,
         label: "Focus sidebar",
         category: "Sidebar",

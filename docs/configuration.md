@@ -424,6 +424,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `background_follows_terminal` | bool | `false` | Paints the sidebar with the canvas backdrop instead of the elevated panel fill. |
 | `gap` | bool | `true` | Keeps one row between each panel's tab bar and its list. |
 | `background` | bool | `true` | Paints the tab strip as a distinct bar: an elevated sidebar fill when follow-terminal is off, `element` when the sidebar follows the terminal. Off, the strip matches the body. |
+| `tab_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Round and arrow need nerd icons. |
 
 A table in `tabs` can configure `files` or `git`, or define a custom launcher or command tab.
 

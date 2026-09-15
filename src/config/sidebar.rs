@@ -119,6 +119,17 @@ pub(super) fn apply_sidebar_config(
     if let Some(background) = raw.background {
         sidebar.background = background;
     }
+    if let Some(tab_style) = raw.tab_style.as_deref() {
+        match crate::state::parse_cap_style(tab_style) {
+            Some(tui_lipan::prelude::CapStyle::Half) => warnings.push(format!(
+                "Ignored sidebar.tab_style \"{tab_style}\" (half block is not available for tab bars)"
+            )),
+            Some(style) => sidebar.tab_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown sidebar.tab_style \"{tab_style}\" (expected one of: padded, round, arrow)"
+            )),
+        }
+    }
     let custom_tabs = raw.tabs.is_some();
     if let Some(tabs) = raw.tabs {
         sidebar.tabs = build_tabs(tabs, warnings);
@@ -513,6 +524,7 @@ mod tests {
         assert!(!config.background_follows_terminal);
         assert!(config.gap);
         assert!(config.background);
+        assert_eq!(config.tab_style, tui_lipan::prelude::CapStyle::Padded);
         assert_eq!(
             config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>(),
             vec![
@@ -538,13 +550,27 @@ mod tests {
 
     #[test]
     fn appearance_flags_apply_without_replacing_the_tab_catalog() {
-        let (config, warnings) =
-            parse("background_follows_terminal = true\ngap = false\nbackground = false\n");
+        let (config, warnings) = parse(
+            "background_follows_terminal = true\ngap = false\nbackground = false\ntab_style = \"round\"\n",
+        );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(config.background_follows_terminal);
         assert!(!config.gap);
         assert!(!config.background);
+        assert_eq!(config.tab_style, tui_lipan::prelude::CapStyle::Round);
         assert_eq!(config.panels, SidebarConfig::default().panels);
+    }
+
+    #[test]
+    fn half_tab_style_is_ignored_with_a_warning() {
+        let (config, warnings) = parse("tab_style = \"half\"\n");
+        assert_eq!(config.tab_style, tui_lipan::prelude::CapStyle::Padded);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("half block")),
+            "{warnings:?}"
+        );
     }
 
     #[test]

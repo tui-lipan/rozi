@@ -253,6 +253,14 @@ fn settings_activate_dir(
         ToggleSidebarBackgroundFollowsTerminal => {
             execute_action(ctx, Action::ToggleSidebarBackgroundFollowsTerminal);
         }
+        CycleSidebarTabStyle if reverse => {
+            let value = crate::state::prev_badge_cap_style(ctx.state.config.sidebar.tab_style);
+            ctx.state.config.sidebar.tab_style = value;
+            persist_sidebar_string_or_toast(ctx, "tab_style", crate::state::cap_style_id(value));
+        }
+        CycleSidebarTabStyle => {
+            execute_action(ctx, Action::CycleSidebarTabStyle);
+        }
         CycleWorkbarStyle if reverse => {
             let value = crate::state::prev_cap_style(ctx.state.config.pane.workbar_style);
             ctx.state.config.pane.workbar_style = value;
@@ -541,6 +549,17 @@ fn preference_error(ctx: &mut Context<AppRoot>, err: String) {
 
 fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
+        crate::pane::pty_events::notify_on(
+            ctx,
+            crate::state::ToastChannel::PreferenceSave,
+            Some("Preference not saved".to_string()),
+            err,
+        );
+    }
+}
+
+fn persist_sidebar_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
+    if let Err(err) = crate::config::persist_sidebar_string(key, value) {
         crate::pane::pty_events::notify_on(
             ctx,
             crate::state::ToastChannel::PreferenceSave,

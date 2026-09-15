@@ -204,6 +204,7 @@ pub(super) struct SidebarFileConfig {
     pub(super) background_follows_terminal: Option<bool>,
     pub(super) gap: Option<bool>,
     pub(super) background: Option<bool>,
+    pub(super) tab_style: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

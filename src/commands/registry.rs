@@ -541,6 +541,12 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             "sidebar background follows terminal",
             state.config.sidebar.background_follows_terminal,
         ),
+        Action::CycleSidebarTabStyle => {
+            format!(
+                "Sidebar tab style: {}",
+                cap_style_label(state.config.sidebar.tab_style)
+            )
+        }
         Action::ToggleAnimations => {
             enable_disable_label("animations", state.config.animations.enabled)
         }

@@ -67,6 +67,11 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
     let hover_style = Style::new()
         .fg(ctx.state.theme.surface.menu)
         .bg(strip.elevate_by(0.08));
+    let tab_caps = ctx
+        .state
+        .config
+        .effective_cap_style(ctx.state.config.sidebar.tab_style)
+        .chars();
     let tab_bar = DraggableTabBar::new()
         .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
         .active(active)
@@ -75,6 +80,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .reorder_mode(DragReorderMode::Live)
         .border(false)
         .divider(' ')
+        .caps(tab_caps)
         .show_close_buttons(false)
         .show_overflow_controls(true)
         .overflow_left_label(|_| std::sync::Arc::from("❮ "))

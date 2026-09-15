@@ -156,6 +156,11 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     enabled_status(ctx.state.config.sidebar.background),
                     ToggleSidebarBackground,
                 ),
+                (
+                    "Tab style",
+                    cap_style_label(ctx.state.config.sidebar.tab_style).to_string(),
+                    CycleSidebarTabStyle,
+                ),
             ],
         ),
         settings_group(

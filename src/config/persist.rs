@@ -283,6 +283,10 @@ pub fn persist_sidebar_flag(key: &str, value: bool) -> std::result::Result<PathB
     persist_bool("sidebar", key, value)
 }
 
+pub fn persist_sidebar_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    persist_sidebar_value(key, &format!("\"{value}\""))
+}
+
 pub fn persist_sidebar_panels(
     panels: &[Vec<super::schema::SidebarTabId>],
 ) -> std::result::Result<PathBuf, String> {

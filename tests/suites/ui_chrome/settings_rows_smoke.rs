@@ -202,7 +202,12 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
             ),
             (
                 "Sidebar",
-                &["Background follows terminal", "Gap", "Background"][..],
+                &[
+                    "Background follows terminal",
+                    "Gap",
+                    "Background",
+                    "Tab style",
+                ][..],
                 "Alerts",
             ),
             (
@@ -320,6 +325,7 @@ fn settings_reports_sidebar_values() {
             state.config.sidebar.background_follows_terminal = true;
             state.config.sidebar.gap = false;
             state.config.sidebar.background = false;
+            state.config.sidebar.tab_style = tui_lipan::prelude::CapStyle::Round;
         }
         let frame = rendered_rows(&mut backend);
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
@@ -334,6 +340,10 @@ fn settings_reports_sidebar_values() {
         assert!(
             setting_row(sidebar, "Background").contains("Disabled"),
             "sidebar background row is misbound:\n{frame}"
+        );
+        assert!(
+            setting_row(sidebar, "Tab style").contains("Round"),
+            "sidebar tab style row is misbound:\n{frame}"
         );
     });
 }

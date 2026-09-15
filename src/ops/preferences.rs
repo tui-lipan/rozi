@@ -25,6 +25,17 @@ fn persist_sidebar_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) {
     }
 }
 
+fn persist_sidebar_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
+    if let Err(err) = crate::config::persist_sidebar_string(key, value) {
+        crate::pane::pty_events::notify_on(
+            ctx,
+            ToastChannel::PreferenceSave,
+            Some("Preference not saved".to_string()),
+            err,
+        );
+    }
+}
+
 macro_rules! toggle_pane_flag {
     ($ctx:ident, $field:ident) => {{
         $ctx.state.config.pane.$field = !$ctx.state.config.pane.$field;
@@ -120,6 +131,13 @@ pub(crate) fn toggle_sidebar_background_follows_terminal(ctx: &mut Context<AppRo
         "background_follows_terminal",
         ctx.state.config.sidebar.background_follows_terminal,
     );
+    Update::full()
+}
+
+pub(crate) fn cycle_sidebar_tab_style(ctx: &mut Context<AppRoot>) -> Update {
+    let next = next_badge_cap_style(ctx.state.config.sidebar.tab_style);
+    ctx.state.config.sidebar.tab_style = next;
+    persist_sidebar_string_or_toast(ctx, "tab_style", cap_style_id(next));
     Update::full()
 }
 

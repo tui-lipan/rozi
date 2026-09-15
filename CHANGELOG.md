@@ -50,6 +50,8 @@
   reads when `panel` and `element` share a color) and the workbar uses `surface.panel`; when that
   surface follows the terminal both use `surface.element`. The rows write `[sidebar] background` and
   `[pane] workbar_background`.
+- Sidebar **Tab style** applies the same `padded` / `round` / `arrow` end caps as workbar tabs.
+  The row writes `[sidebar] tab_style`. Needs tui-lipan 0.9.3.
 - Session protocol 6. The wire carries one new request and one new reply for the above; as ever,
   client and server must be the same build, so restart a session server after upgrading.
 - `metrics` counts attached clients rather than open sockets. A discovery probe and a headless

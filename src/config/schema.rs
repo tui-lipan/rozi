@@ -578,7 +578,7 @@ pub struct PaneConfig {
     /// over its left neighbor's color) instead of standing apart with a gap. Independent of
     /// `workbar_badge_style`, which only controls the pill shape.
     pub workbar_powerline: bool,
-    /// End-cap style for workspace and sidebar tabs.
+    /// End-cap style for workspace tabs.
     pub workbar_tab_style: CapStyle,
     /// End-cap style for the workbar itself: the whole panel bar reads as a pill/point over the
     /// backdrop rather than a flush edge-to-edge bar.
@@ -1513,6 +1513,8 @@ pub struct SidebarConfig {
     /// Paints the tab strip as a distinct bar: an elevated body fill on a solid sidebar,
     /// `surface.element` when the sidebar follows the terminal. Off, the strip matches the body.
     pub background: bool,
+    /// End-cap style for sidebar tabs. Half-block is not available on tab bars.
+    pub tab_style: CapStyle,
 }
 
 impl Default for SidebarConfig {
@@ -1550,6 +1552,7 @@ impl Default for SidebarConfig {
             background_follows_terminal: false,
             gap: true,
             background: true,
+            tab_style: CapStyle::Padded,
         }
     }
 }

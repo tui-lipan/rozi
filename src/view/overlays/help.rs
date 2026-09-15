@@ -540,6 +540,7 @@ mod palette_alias_tests {
             "nerd icons",
             "sidebar gap",
             "sidebar background",
+            "sidebar tab",
             "workbar background",
         ] {
             assert!(

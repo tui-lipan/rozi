@@ -41,6 +41,7 @@
 
 ### Changed
 
+- Settings no longer lists Extensions. Open the manager from the command palette.
 - Session protocol 6. The wire carries one new request and one new reply for the above; as ever,
   client and server must be the same build, so restart a session server after upgrading.
 - `metrics` counts attached clients rather than open sockets. A discovery probe and a headless

@@ -152,7 +152,6 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                 "General",
                 &[
                     "Theme",
-                    "Extensions",
                     "Terminal padding",
                     "Animations",
                     "Nerd icons",
@@ -247,6 +246,10 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                 );
             }
         }
+        assert!(
+            !frame.contains("Extensions"),
+            "Extensions belongs in the command palette, not Settings:\n{frame}"
+        );
     });
 }
 

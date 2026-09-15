@@ -10,14 +10,6 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
             vec![
                 ("Theme", current_theme_label(ctx), Theme),
                 (
-                    "Extensions",
-                    extension_summary(
-                        ctx.state.config.active_extensions.len(),
-                        ctx.state.config.extension_problems,
-                    ),
-                    Extensions,
-                ),
-                (
                     "Terminal padding",
                     padding_summary(pane.padding),
                     EditPadding,
@@ -559,13 +551,6 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
 
 fn enabled_status(enabled: bool) -> String {
     if enabled { "Enabled" } else { "Disabled" }.to_string()
-}
-
-fn extension_summary(active: usize, problems: usize) -> String {
-    format!(
-        "{active} active · {problems} problem{}",
-        if problems == 1 { "" } else { "s" }
-    )
 }
 
 fn current_theme_label(ctx: &Context<AppRoot>) -> String {

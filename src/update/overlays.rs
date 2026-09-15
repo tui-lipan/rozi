@@ -207,10 +207,6 @@ fn settings_activate_dir(
         Theme => {
             execute_action(ctx, Action::OpenThemePicker);
         }
-        Extensions => {
-            ctx.state.overlay_return = Some(crate::state::OverlayOrigin::Settings);
-            crate::ops::extensions_manager::open(ctx);
-        }
         EditPadding => {
             ctx.state.pane_padding_editor = Some(crate::state::PanePaddingEditorState::new(
                 ctx.state.config.pane.padding,
@@ -514,7 +510,7 @@ fn settings_activate_dir(
             preference_error(ctx, err);
         }
     }
-    if !matches!(action, Theme | Extensions | EditPadding) {
+    if !matches!(action, Theme | EditPadding) {
         ctx.state.show_settings = true;
         ctx.state.settings_selected = Some(action);
         ctx.request_focus(crate::view::settings_palette_key());

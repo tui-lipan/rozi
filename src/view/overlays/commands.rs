@@ -81,6 +81,7 @@ pub(super) fn command_entries_with_groups<T>(
 
 pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
     match id {
+        "extensions" => alias_list(&["plugins", "addons", "extension manager"]),
         "settings" => alias_list(&[
             "settings",
             "preferences",
@@ -188,7 +189,6 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
 
     let mut aliases = match action {
         Theme => alias_list(&["themes", "color scheme", "colour scheme"]),
-        Extensions => alias_list(&["plugins", "addons", "extension manager"]),
         EditPadding => alias_list(&["pane padding", "terminal insets", "pane margins"]),
         ToggleTitles => alias_list(&["title bar", "show titles", "toggle titlebar"]),
         CycleTitleStyle => alias_list(&[

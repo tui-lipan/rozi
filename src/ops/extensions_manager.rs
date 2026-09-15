@@ -27,12 +27,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
     ctx.state.show_settings = false;
-    if !matches!(
-        ctx.state.overlay_return,
-        Some(crate::state::OverlayOrigin::Settings)
-    ) {
-        ctx.state.settings_selected = None;
-    }
+    ctx.state.settings_selected = None;
     ctx.state.pane_padding_editor = None;
     ctx.state.extensions = Some(ExtensionsState {
         entries: scan.entries,

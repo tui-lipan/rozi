@@ -492,6 +492,17 @@ mod palette_alias_tests {
         }
     }
 
+    #[test]
+    fn extensions_command_keeps_plugin_aliases() {
+        let aliases = command_palette_aliases("extensions");
+        for term in ["plugins", "addons", "extension manager"] {
+            assert!(
+                aliases.iter().any(|alias| alias.as_ref() == term),
+                "the Extensions command is unreachable by `{term}`"
+            );
+        }
+    }
+
     /// Every row must also be reachable from the Commands palette, where `Settings` is the only
     /// entry standing in for all of them - typing what you want to change has to find the door.
     #[test]

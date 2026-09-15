@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# Short log lines that scroll into history: the case compact scrollback converts.
+i=0
+while [ $i -lt 2000 ]; do
+    printf "2026-09-15 01:40:%02d INFO request %05d ok\n" $((i % 60)) $i
+    i=$((i + 1))
+done

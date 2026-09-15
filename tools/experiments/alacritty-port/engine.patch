@@ -1,0 +1,2617 @@
+diff --git a/alacritty/src/display/hint.rs b/alacritty/src/display/hint.rs
+index 7083dce3..754c354f 100644
+--- a/alacritty/src/display/hint.rs
++++ b/alacritty/src/display/hint.rs
+@@ -162,7 +162,7 @@ impl HintState {
+             }
+
+             // Hyperlinks take precedence over regex matches.
+-            let hyperlink = term.grid()[*bounds.start()].hyperlink();
++            let hyperlink = term.grid().read_cell(*bounds.start()).hyperlink();
+             Some(HintMatch { bounds, hyperlink, hint })
+         } else {
+             // Store character to preserve the selection.
+@@ -426,7 +426,7 @@ pub fn highlighted_at<T>(
+ ///
+ /// This will only return contiguous cells, even if another hyperlink with the same ID exists.
+ fn hyperlink_at<T>(term: &Term<T>, point: Point) -> Option<(Hyperlink, Match)> {
+-    let hyperlink = term.grid()[point].hyperlink()?;
++    let hyperlink = term.grid().read_cell(point).hyperlink()?;
+
+     let grid = term.grid();
+
+diff --git a/alacritty/src/event.rs b/alacritty/src/event.rs
+index 46ecdadd..4f365029 100644
+--- a/alacritty/src/event.rs
++++ b/alacritty/src/event.rs
+@@ -1316,7 +1316,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
+
+         // Get point at which skipping over semantic characters has led us back to the
+         // original character.
+-        let start_cell = &grid[point];
++        let start_cell = grid.read_cell(point);
+         let search_end = if start_cell.flags.intersects(Flags::LEADING_WIDE_CHAR_SPACER) {
+             point.add(terminal, Boundary::None, 2)
+         } else if start_cell.flags.intersects(Flags::WIDE_CHAR) {
+@@ -1328,11 +1328,11 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
+         // Keep moving until we're not on top of a semantic escape character.
+         let semantic_chars = terminal.semantic_escape_chars();
+         loop {
+-            let cell = &grid[end];
++            let cell = grid.read_cell(end);
+
+             // Get cell's character, taking wide characters into account.
+             let c = if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+-                grid[end.sub(terminal, Boundary::None, 1)].c
++                grid.read_cell(end.sub(terminal, Boundary::None, 1)).c
+             } else {
+                 cell.c
+             };
+diff --git a/alacritty/src/input/mod.rs b/alacritty/src/input/mod.rs
+index 79873545..67fe7831 100644
+--- a/alacritty/src/input/mod.rs
++++ b/alacritty/src/input/mod.rs
+@@ -1096,7 +1096,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
+     fn cursor_state(&mut self) -> CursorIcon {
+         let display_offset = self.ctx.terminal().grid().display_offset();
+         let point = self.ctx.mouse().point(&self.ctx.size_info(), display_offset);
+-        let hyperlink = self.ctx.terminal().grid()[point].hyperlink();
++        let hyperlink = self.ctx.terminal().grid().read_cell(point).hyperlink();
+
+         // Function to check if mouse is on top of a hint.
+         let hint_highlighted = |hint: &HintMatch| hint.should_highlight(point, hyperlink.as_ref());
+diff --git a/alacritty/src/window_context.rs b/alacritty/src/window_context.rs
+index 9de66791..710d0e1d 100644
+--- a/alacritty/src/window_context.rs
++++ b/alacritty/src/window_context.rs
+@@ -190,7 +190,12 @@ impl WindowContext {
+         // This object contains all of the state about what's being displayed. It's
+         // wrapped in a clonable mutex since both the I/O loop and display need to
+         // access it.
+-        let terminal = Term::new(config.term_options(), &display.size_info, event_proxy.clone());
++        let mut terminal =
++            Term::new(config.term_options(), &display.size_info, event_proxy.clone());
++        // Measurement switch while the proposal is discussed; not meant to ship as an env var.
++        if std::env::var_os("ALACRITTY_COMPACT_SCROLLBACK").is_some() {
++            terminal.grid_mut().set_compact_history(true);
++        }
+         let terminal = Arc::new(FairMutex::new(terminal));
+
+         // Create the PTY.
+diff --git a/alacritty_terminal/Cargo.toml b/alacritty_terminal/Cargo.toml
+index f099d8cb..0b8e0f44 100644
+--- a/alacritty_terminal/Cargo.toml
++++ b/alacritty_terminal/Cargo.toml
+@@ -47,3 +47,22 @@ windows-sys = { version = "0.59.0", features = [
+
+ [dev-dependencies]
+ serde_json = "1.0.0"
++criterion = "0.8.2"
++dense = { package = "alacritty_terminal", version = "=0.26.0" }
++
++[[test]]
++name = "compact_differential"
++path = "tests/compact_differential.rs"
++
++[[bench]]
++name = "history_boundary"
++path = "benches/history_boundary.rs"
++harness = false
++
++[[bench]]
++name = "scrollback"
++path = "benches/scrollback.rs"
++harness = false
++
++[lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = ["cfg(upstream_baseline)"] }
+diff --git a/alacritty_terminal/benches/history_boundary.rs b/alacritty_terminal/benches/history_boundary.rs
+new file mode 100644
+index 00000000..189fa999
+--- /dev/null
++++ b/alacritty_terminal/benches/history_boundary.rs
+@@ -0,0 +1,202 @@
++use alacritty_terminal::grid::history::{HistoryRow, RowPool};
++use alacritty_terminal::grid::{Dimensions, Grid, Row, Scroll};
++use alacritty_terminal::index::{Column, Line};
++use alacritty_terminal::term::cell::Cell;
++use alacritty_terminal::vte::ansi::Color;
++use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
++use std::hint::black_box;
++
++fn row() -> Row<Cell> {
++    let mut row = Row::<Cell>::new(253);
++    for (i, c) in "short log record".chars().enumerate() {
++        row[Column(i)].c = c;
++    }
++    row
++}
++fn pool() -> RowPool<Cell> {
++    let mut pool = RowPool::default();
++    pool.set_width(253);
++    pool.set_compact(true);
++    pool
++}
++fn grid() -> Grid<Cell> {
++    let mut grid = Grid::new(64, 253, 5_000);
++    grid.set_compact_history(true);
++    for _ in 0..5_064 {
++        grid[Line(0)] = row();
++        grid.scroll_up::<Color>(&(Line(0)..Line(64)), 1);
++    }
++    grid
++}
++fn dense_grid() -> dense::grid::Grid<dense::term::cell::Cell> {
++    let mut grid = dense::grid::Grid::<dense::term::cell::Cell>::new(64, 253, 5_000);
++    for _ in 0..5_064 {
++        for (i, c) in "short log record".chars().enumerate() {
++            grid[dense::index::Line(0)][dense::index::Column(i)].c = c;
++        }
++        grid.scroll_up::<Color>(&(dense::index::Line(0)..dense::index::Line(64)), 1);
++    }
++    grid
++}
++fn boundaries(c: &mut Criterion) {
++    let mut group = c.benchmark_group("history_representation");
++    group.bench_function("dense_to_compact", |b| {
++        b.iter_batched(
++            || (row(), pool()),
++            |(row, mut pool)| black_box((HistoryRow::from_dense(row, &mut pool), pool)),
++            BatchSize::PerIteration,
++        )
++    });
++    group.bench_function("dense_to_compact_pooled", |b| {
++        b.iter_batched(
++            || {
++                let mut pool = pool();
++                let history = HistoryRow::from_dense(row(), &mut pool);
++                let dense = history.into_dense(&mut pool);
++                (dense, pool)
++            },
++            |(row, mut pool)| black_box((HistoryRow::from_dense(row, &mut pool), pool)),
++            BatchSize::PerIteration,
++        )
++    });
++    group.bench_function("compact_to_dense_pooled", |b| {
++        b.iter_batched(
++            || {
++                let mut pool = pool();
++                (HistoryRow::from_dense(row(), &mut pool), pool)
++            },
++            |(row, mut pool)| black_box((row.into_dense(&mut pool), pool)),
++            BatchSize::PerIteration,
++        )
++    });
++    group.bench_function("compact_eviction", |b| {
++        b.iter_batched_ref(
++            || {
++                let mut pool = pool();
++                (Some(HistoryRow::from_dense(row(), &mut pool)), pool)
++            },
++            |(row, pool)| row.take().unwrap().recycle(pool),
++            BatchSize::PerIteration,
++        )
++    });
++    let split = grid();
++    let dense = dense_grid();
++    for reflow in [false, true] {
++        group.bench_function(BenchmarkId::new("split_resize_253_to_80", reflow), |b| {
++            b.iter_batched_ref(
++                || split.clone(),
++                |grid| grid.resize::<Color>(reflow, 64, 80),
++                BatchSize::PerIteration,
++            );
++        });
++        group.bench_function(BenchmarkId::new("dense_resize_253_to_80", reflow), |b| {
++            b.iter_batched_ref(
++                || dense.clone(),
++                |grid| grid.resize::<Color>(reflow, 64, 80),
++                BatchSize::PerIteration,
++            );
++        });
++    }
++    group.finish();
++}
++
++fn render_access(c: &mut Criterion) {
++    let mut group = c.benchmark_group("history_render_access");
++    let compact = {
++        let mut pool = pool();
++        HistoryRow::from_dense(row(), &mut pool)
++    };
++    group.bench_function("dense_slice_clone", |b| {
++        let dense = row();
++        b.iter_batched_ref(
++            || vec![Cell::default(); 253],
++            |dest| dest.clone_from_slice(dense.cells()),
++            BatchSize::PerIteration,
++        );
++    });
++    group.bench_function("compact_cell_index", |b| {
++        let view = compact.view();
++        b.iter_batched_ref(
++            || vec![Cell::default(); 253],
++            |dest| {
++                for (index, slot) in dest.iter_mut().enumerate() {
++                    *slot = view.cell(Column(index)).clone();
++                }
++            },
++            BatchSize::PerIteration,
++        );
++    });
++    group.bench_function("compact_copy_into", |b| {
++        let view = compact.view();
++        b.iter_batched_ref(
++            || vec![Cell::default(); 253],
++            |dest| view.copy_into(dest),
++            BatchSize::PerIteration,
++        );
++    });
++    let mut live = grid();
++    live.scroll_display(Scroll::Bottom);
++    group.bench_function("display_iter_live", |b| {
++        b.iter(|| {
++            let mut n = 0usize;
++            for indexed in live.display_iter() {
++                n = n.wrapping_add(indexed.cell.c as usize);
++            }
++            black_box(n)
++        });
++    });
++    let mut deep = grid();
++    deep.scroll_display(Scroll::Top);
++    group.bench_function("display_iter_deep", |b| {
++        b.iter(|| {
++            let mut n = 0usize;
++            for indexed in deep.display_iter() {
++                n = n.wrapping_add(indexed.cell.c as usize);
++            }
++            black_box(n)
++        });
++    });
++    group.bench_function("display_row_parts_live", |b| {
++        b.iter(|| {
++            let mut n = 0usize;
++            for row in 0..live.screen_lines() {
++                match live.display_row(row).parts() {
++                    alacritty_terminal::grid::history::RowParts::Dense(cells) => {
++                        n = n.wrapping_add(cells.len());
++                    },
++                    alacritty_terminal::grid::history::RowParts::Compact {
++                        prefix,
++                        tail_count,
++                        ..
++                    } => {
++                        n = n.wrapping_add(prefix.len() + tail_count);
++                    },
++                }
++            }
++            black_box(n)
++        });
++    });
++    group.bench_function("display_row_parts_deep", |b| {
++        b.iter(|| {
++            let mut n = 0usize;
++            for row in 0..deep.screen_lines() {
++                match deep.display_row(row).parts() {
++                    alacritty_terminal::grid::history::RowParts::Dense(cells) => {
++                        n = n.wrapping_add(cells.len());
++                    },
++                    alacritty_terminal::grid::history::RowParts::Compact {
++                        prefix,
++                        tail_count,
++                        ..
++                    } => {
++                        n = n.wrapping_add(prefix.len() + tail_count);
++                    },
++                }
++            }
++            black_box(n)
++        });
++    });
++    group.finish();
++}
++criterion_group!(benches, boundaries, render_access);
++criterion_main!(benches);
+diff --git a/alacritty_terminal/benches/scrollback.rs b/alacritty_terminal/benches/scrollback.rs
+new file mode 100644
+index 00000000..c79e10c5
+--- /dev/null
++++ b/alacritty_terminal/benches/scrollback.rs
+@@ -0,0 +1,189 @@
++//! Throughput and read cost of a terminal with filled scrollback, through the public API only, so
++//! the same file measures `master` and this branch.
++
++use std::hint::black_box;
++
++use alacritty_terminal::event::{Event, EventListener};
++use alacritty_terminal::grid::{Dimensions, Scroll};
++use alacritty_terminal::term::test::TermSize;
++use alacritty_terminal::term::{Config, Term};
++use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
++use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
++
++#[derive(Clone, Copy)]
++struct Listener;
++
++impl EventListener for Listener {
++    fn send_event(&self, _: Event) {}
++}
++
++const COLUMNS: usize = 253;
++const LINES: usize = 64;
++const HISTORY: usize = 10_000;
++
++fn short_lines(count: usize) -> Vec<u8> {
++    let mut out = Vec::new();
++    for i in 0..count {
++        out.extend_from_slice(format!("short log record {i:08}\r\n").as_bytes());
++    }
++    out
++}
++
++fn full_lines(count: usize) -> Vec<u8> {
++    let mut out = Vec::new();
++    for i in 0..count {
++        let line: String =
++            (0..COLUMNS).map(|c| char::from(b'!' + ((i * 7 + c * 13) % 90) as u8)).collect();
++        out.extend_from_slice(line.as_bytes());
++    }
++    out
++}
++
++/// Full-width rows of one repeated character, like vtebench's `scrolling_fullscreen`: each row
++/// compacts to a single cell, but only after comparing every cell with the last.
++fn uniform_lines(count: usize) -> Vec<u8> {
++    let mut out = Vec::new();
++    for i in 0..count {
++        out.extend(std::iter::repeat_n(b'A' + (i % 26) as u8, COLUMNS));
++        // Without a line break the row would wrap, and a wrapped row's flagged last cell differs
++        // from the rest, so it would never compact.
++        out.extend_from_slice(b"\r\n");
++    }
++    out
++}
++
++/// A terminal whose scrollback is already full of `fill`, so every measured line evicts one.
++fn filled(fill: &[u8], compact: bool) -> (Term<Listener>, Processor<StdSyncHandler>) {
++    let size = TermSize::new(COLUMNS, LINES);
++    let config = Config { scrolling_history: HISTORY, ..Default::default() };
++    let mut term = Term::new(config, &size, Listener);
++    set_compact(&mut term, compact);
++    let mut parser = Processor::<StdSyncHandler>::new();
++    parser.advance(&mut term, fill);
++    (term, parser)
++}
++
++#[cfg(not(upstream_baseline))]
++fn set_compact(term: &mut Term<Listener>, compact: bool) {
++    term.grid_mut().set_compact_history(compact);
++}
++
++#[cfg(upstream_baseline)]
++fn set_compact(_: &mut Term<Listener>, compact: bool) {
++    assert!(!compact);
++}
++
++fn modes() -> &'static [(&'static str, bool)] {
++    if cfg!(upstream_baseline) {
++        &[("upstream", false)]
++    } else {
++        &[("dense", false), ("compact", true)]
++    }
++}
++
++fn ingest(c: &mut Criterion) {
++    let fill_short = short_lines(HISTORY + LINES);
++    let fill_full = full_lines(HISTORY + LINES);
++    let fill_uniform = uniform_lines(HISTORY + LINES);
++    let cases = [
++        ("short", short_lines(100_000)),
++        ("full", full_lines(100_000)),
++        ("uniform", uniform_lines(100_000)),
++    ];
++    let mut group = c.benchmark_group("ingest_100k");
++    group.sample_size(20);
++    for (name, input) in &cases {
++        let fill = match *name {
++            "short" => &fill_short,
++            "full" => &fill_full,
++            _ => &fill_uniform,
++        };
++        for &(mode, compact) in modes() {
++            group.bench_function(format!("{name}/{mode}"), |b| {
++                b.iter_batched_ref(
++                    || filled(fill, compact),
++                    |(term, parser)| parser.advance(term, black_box(input)),
++                    BatchSize::LargeInput,
++                )
++            });
++        }
++    }
++    group.finish();
++}
++
++fn read_scrollback(c: &mut Criterion) {
++    let fill = short_lines(HISTORY + LINES);
++    let mut group = c.benchmark_group("display_iter");
++    group.sample_size(30);
++    for &(mode, compact) in modes() {
++        for (name, scroll) in [("live", None), ("top", Some(Scroll::Top))] {
++            let (mut term, _) = filled(&fill, compact);
++            if let Some(scroll) = scroll {
++                term.scroll_display(scroll);
++            }
++            group.bench_function(format!("{name}/{mode}"), |b| {
++                b.iter(|| {
++                    let mut count = 0usize;
++                    for cell in term.grid().display_iter() {
++                        count += usize::from(cell.c != ' ');
++                    }
++                    black_box(count)
++                })
++            });
++        }
++    }
++    group.finish();
++}
++
++fn search_history(c: &mut Criterion) {
++    let fill = short_lines(HISTORY + LINES);
++    let mut group = c.benchmark_group("iterate_history");
++    group.sample_size(20);
++    for &(mode, compact) in modes() {
++        let (term, _) = filled(&fill, compact);
++        group.bench_function(mode, |b| {
++            b.iter(|| {
++                let grid = term.grid();
++                let start = alacritty_terminal::index::Point::new(
++                    grid.topmost_line(),
++                    alacritty_terminal::index::Column(0),
++                );
++                black_box(grid.iter_from(start).filter(|cell| cell.c == 'x').count())
++            })
++        });
++    }
++    group.finish();
++}
++
++/// vtebench's `dense_cells`: every cell of the alternate screen rewritten with its own SGR.
++fn dense_cells(c: &mut Criterion) {
++    let mut payload = b"\x1b[?1049h".to_vec();
++    for (offset, ch) in (b'A'..=b'Z').enumerate() {
++        payload.extend_from_slice(b"\x1b[H");
++        for line in 1..=LINES {
++            for column in 1..=COLUMNS {
++                let index = line + column + offset;
++                let fg = index % 156 + 100;
++                let bg = 255 - index % 156 + 100;
++                payload.extend_from_slice(
++                    format!("\x1b[38;5;{fg};48;5;{bg};1;3;4m{}", ch as char).as_bytes(),
++                );
++            }
++        }
++    }
++    let mut group = c.benchmark_group("alt_screen");
++    group.sample_size(20);
++    for &(mode, compact) in modes() {
++        group.bench_function(format!("dense_cells/{mode}"), |b| {
++            b.iter_batched_ref(
++                || filled(&[], compact),
++                |(term, parser)| parser.advance(term, black_box(&payload)),
++                BatchSize::LargeInput,
++            )
++        });
++    }
++    group.finish();
++}
++
++criterion_group!(benches, ingest, read_scrollback, search_history, dense_cells);
++criterion_main!(benches);
+diff --git a/alacritty_terminal/src/grid/history.rs b/alacritty_terminal/src/grid/history.rs
+new file mode 100644
+index 00000000..f19e4566
+--- /dev/null
++++ b/alacritty_terminal/src/grid/history.rs
+@@ -0,0 +1,530 @@
++//! Explicit cold history storage. Dense viewport cells never dispatch on this representation.
++
++use super::{GridCell, Row};
++use crate::index::Column;
++
++const POOL_ROWS: usize = 4;
++
++/// A row stored as the cells up to its last distinct one, followed by the repeated tail cell.
++///
++/// Prefix and tail share one allocation, and the counts are `u32`, so the row is no larger than a
++/// dense [`Row`].
++#[derive(Clone, Debug)]
++pub struct CompactRow<T> {
++    /// The prefix, then the tail as the last element. Never empty.
++    cells: Vec<T>,
++    columns: u32,
++    occ: u32,
++}
++
++impl<T> CompactRow<T> {
++    fn prefix(&self) -> &[T] {
++        &self.cells[..self.cells.len() - 1]
++    }
++
++    fn tail(&self) -> &T {
++        self.cells.last().expect("a compact row stores its tail")
++    }
++
++    fn columns(&self) -> usize {
++        self.columns as usize
++    }
++
++    fn occ(&self) -> usize {
++        self.occ as usize
++    }
++}
++
++#[derive(Clone, Debug)]
++pub enum HistoryRow<T> {
++    Dense(Row<T>),
++    Compact(CompactRow<T>),
++}
++
++/// A bounded pool shared by scrolling, eviction, and reflow.
++#[derive(Clone, Debug)]
++pub struct RowPool<T> {
++    width: usize,
++    dense: Vec<Row<T>>,
++    prefixes: Vec<Vec<T>>,
++    /// Whether rows entering history may be stored compactly.
++    compact: bool,
++}
++impl<T> Default for RowPool<T> {
++    fn default() -> Self {
++        Self { width: 0, dense: Vec::new(), prefixes: Vec::new(), compact: false }
++    }
++}
++impl<T> RowPool<T> {
++    pub fn set_compact(&mut self, compact: bool) {
++        self.compact = compact;
++    }
++
++    pub fn is_compact(&self) -> bool {
++        self.compact
++    }
++
++    pub fn set_width(&mut self, width: usize) {
++        if self.width == width {
++            return;
++        }
++        self.width = width;
++        self.dense.clear();
++        self.prefixes.clear();
++    }
++
++    fn recycle_dense(&mut self, row: Row<T>) {
++        if row.len() == self.width && self.dense.len() < POOL_ROWS {
++            self.dense.push(row);
++        }
++    }
++
++    fn recycle_prefix(&mut self, mut cells: Vec<T>) {
++        cells.clear();
++        if cells.capacity() <= self.width && self.prefixes.len() < POOL_ROWS {
++            self.prefixes.push(cells);
++        }
++    }
++
++    pub fn take_dense(&mut self, columns: usize) -> Row<T>
++    where
++        T: Default,
++    {
++        if columns == self.width {
++            if let Some(row) = self.dense.pop() {
++                return row;
++            }
++        }
++        Row::new(columns)
++    }
++
++    pub fn retained_cells(&self) -> usize {
++        self.dense.iter().map(|r| r.inner.capacity()).sum::<usize>()
++            + self.prefixes.iter().map(Vec::capacity).sum::<usize>()
++    }
++}
++impl<T> HistoryRow<T> {
++    pub fn view(&self) -> RowView<'_, T> {
++        match self {
++            Self::Dense(row) => RowView::Dense(row),
++            Self::Compact(row) => RowView::Compact(row),
++        }
++    }
++
++    pub fn recycle(self, pool: &mut RowPool<T>) {
++        match self {
++            Self::Dense(row) => pool.recycle_dense(row),
++            Self::Compact(row) => pool.recycle_prefix(row.cells),
++        }
++    }
++
++    pub fn retained_cells(&self) -> usize {
++        match self {
++            Self::Dense(row) => row.inner.capacity(),
++            Self::Compact(row) => row.cells.capacity(),
++        }
++    }
++}
++impl<T: GridCell + Default + PartialEq> HistoryRow<T> {
++    pub fn from_dense(mut row: Row<T>, pool: &mut RowPool<T>) -> Self {
++        if !pool.compact {
++            return Self::Dense(row);
++        }
++        let columns = row.len();
++        let (Some(tail), Ok(columns_u32), Ok(occ)) =
++            (row.inner.last(), u32::try_from(columns), u32::try_from(row.occ))
++        else {
++            return Self::Dense(row);
++        };
++        let modified = row.occ.min(columns);
++        // Short output leaves blank cells nobody wrote past `occ`, so its scan stays short. A row
++        // written all the way across could only compact by comparing every cell with the last
++        // one. That is worth it for a blank tail, such as a line erased with a background color,
++        // but a row of one repeated glyph rarely repays the scan.
++        if modified == columns && !tail.is_blank() {
++            return Self::Dense(row);
++        }
++        let prefix_len = row.inner[..modified].iter().rposition(|c| c != tail).map_or(0, |i| i + 1);
++        if prefix_len + 1 > columns / 2 {
++            return Self::Dense(row);
++        }
++        let tail = tail.clone();
++        let mut cells = pool.prefixes.pop().unwrap_or_default();
++        cells.reserve(prefix_len + 1);
++        cells.resize_with(prefix_len, T::default);
++        row.inner[..prefix_len].swap_with_slice(&mut cells);
++        cells.push(tail);
++        pool.recycle_dense(row);
++        Self::Compact(CompactRow { cells, columns: columns_u32, occ })
++    }
++
++    /// A default tail can change width without cell conversion or reflow.
++    pub fn resize_default_tail(&mut self, columns: usize) -> bool {
++        let Self::Compact(row) = self else {
++            return false;
++        };
++        let Ok(columns_u32) = u32::try_from(columns) else {
++            return false;
++        };
++        if row.prefix().len() > columns || *row.tail() != T::default() {
++            return false;
++        }
++        row.columns = columns_u32;
++        row.occ = row.occ.min(columns_u32);
++        true
++    }
++
++    pub fn into_dense(self, pool: &mut RowPool<T>) -> Row<T> {
++        let Self::Compact(mut compact) = self else {
++            let Self::Dense(row) = self else { unreachable!() };
++            return row;
++        };
++        let mut row = pool.take_dense(compact.columns());
++        let tail = compact.cells.pop().expect("a compact row stores its tail");
++        let prefix_len = compact.cells.len();
++        for (cell, value) in row.inner.iter_mut().zip(compact.cells.drain(..)) {
++            *cell = value;
++        }
++        for cell in &mut row.inner[prefix_len..] {
++            *cell = tail.clone();
++        }
++        row.occ = compact.occ();
++        pool.recycle_prefix(compact.cells);
++        row
++    }
++
++    pub fn materialize(&mut self, pool: &mut RowPool<T>) -> &mut Row<T> {
++        if matches!(self, Self::Compact(_)) {
++            let old = std::mem::replace(self, Self::Dense(Row::default()));
++            *self = Self::Dense(old.into_dense(pool));
++        }
++        match self {
++            Self::Dense(row) => row,
++            Self::Compact(_) => unreachable!(),
++        }
++    }
++}
++
++/// Read-only access is explicit. It cannot be turned into a mutable slice.
++pub enum RowView<'a, T> {
++    Dense(&'a Row<T>),
++    Compact(&'a CompactRow<T>),
++}
++
++/// Compact history is a stored prefix plus a repeated tail, not `width` cells.
++pub enum RowParts<'a, T> {
++    Dense(&'a [T]),
++    Compact { prefix: &'a [T], tail: &'a T, tail_count: usize },
++}
++impl<T> Copy for RowView<'_, T> {}
++impl<T> Clone for RowView<'_, T> {
++    fn clone(&self) -> Self {
++        *self
++    }
++}
++impl<'a, T> RowView<'a, T> {
++    pub fn len(self) -> usize {
++        match self {
++            Self::Dense(row) => row.len(),
++            Self::Compact(row) => row.columns(),
++        }
++    }
++
++    pub fn is_empty(self) -> bool {
++        self.len() == 0
++    }
++
++    pub fn is_clear(self) -> bool
++    where
++        T: GridCell,
++    {
++        self.iter().all(GridCell::is_empty)
++    }
++
++    pub fn cell(self, column: Column) -> &'a T {
++        match self {
++            Self::Dense(row) => &row[column],
++            Self::Compact(row) => {
++                assert!(column.0 < row.columns());
++                row.prefix().get(column.0).unwrap_or(row.tail())
++            },
++        }
++    }
++
++    pub fn iter(self) -> RowCells<'a, T> {
++        match self {
++            Self::Dense(row) => RowCells { prefix: row.inner.iter(), tail: None, remaining: 0 },
++            Self::Compact(row) => RowCells {
++                prefix: row.prefix().iter(),
++                tail: Some(row.tail()),
++                remaining: row.columns() - row.prefix().len(),
++            },
++        }
++    }
++
++    /// Locate the last matching cell without walking a repeated tail.
++    pub fn parts(self) -> RowParts<'a, T> {
++        match self {
++            Self::Dense(row) => RowParts::Dense(row.cells()),
++            Self::Compact(row) => RowParts::Compact {
++                prefix: row.prefix(),
++                tail: row.tail(),
++                tail_count: row.columns() - row.prefix().len(),
++            },
++        }
++    }
++
++    pub fn copy_into(self, dest: &mut [T])
++    where
++        T: Clone,
++    {
++        assert_eq!(dest.len(), self.len());
++        match self.parts() {
++            RowParts::Dense(cells) => dest.clone_from_slice(cells),
++            RowParts::Compact { prefix, tail, tail_count } => {
++                dest[..prefix.len()].clone_from_slice(prefix);
++                dest[prefix.len()..].fill(tail.clone());
++                debug_assert_eq!(dest.len() - prefix.len(), tail_count);
++            },
++        }
++    }
++
++    /// Locate the last matching cell without walking a repeated tail.
++    pub fn last_matching(self, mut predicate: impl FnMut(&T) -> bool) -> Option<usize> {
++        match self {
++            Self::Dense(row) => row.inner.iter().rposition(predicate),
++            Self::Compact(row) => {
++                if row.columns() > row.prefix().len() && predicate(row.tail()) {
++                    return Some(row.columns() - 1);
++                }
++                row.prefix().iter().rposition(predicate)
++            },
++        }
++    }
++
++    pub(super) fn occ(self) -> usize {
++        match self {
++            Self::Dense(row) => row.occ,
++            Self::Compact(row) => row.occ(),
++        }
++    }
++}
++pub struct RowCells<'a, T> {
++    prefix: std::slice::Iter<'a, T>,
++    tail: Option<&'a T>,
++    remaining: usize,
++}
++impl<'a, T> Iterator for RowCells<'a, T> {
++    type Item = &'a T;
++
++    fn next(&mut self) -> Option<Self::Item> {
++        if let Some(cell) = self.prefix.next() {
++            return Some(cell);
++        }
++        if self.remaining == 0 {
++            return None;
++        }
++        self.remaining -= 1;
++        self.tail
++    }
++
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        let len = self.prefix.len() + self.remaining;
++        (len, Some(len))
++    }
++}
++impl<T> DoubleEndedIterator for RowCells<'_, T> {
++    fn next_back(&mut self) -> Option<Self::Item> {
++        if self.remaining == 0 {
++            return self.prefix.next_back();
++        }
++        self.remaining -= 1;
++        self.tail
++    }
++}
++impl<T> ExactSizeIterator for RowCells<'_, T> {}
++impl<T> std::iter::FusedIterator for RowCells<'_, T> {}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::term::cell::{Cell, Flags, Hyperlink};
++    use crate::vte::ansi::{Color, NamedColor};
++
++    pub(super) fn compact_pool() -> RowPool<Cell> {
++        let mut pool = RowPool::default();
++        pool.set_compact(true);
++        pool
++    }
++
++    #[test]
++    fn rows_stay_dense_unless_compaction_is_enabled() {
++        let mut pool = RowPool::default();
++        pool.set_width(253);
++        let history = HistoryRow::from_dense(row(), &mut pool);
++        assert!(matches!(history, HistoryRow::Dense(_)));
++    }
++
++    #[test]
++    fn a_full_row_of_one_glyph_stays_dense() {
++        let mut pool = compact_pool();
++        pool.set_width(253);
++        let mut row = Row::<Cell>::new(253);
++        for cell in &mut row[..] {
++            cell.c = '=';
++        }
++        assert!(matches!(HistoryRow::from_dense(row, &mut pool), HistoryRow::Dense(_)));
++    }
++
++    #[test]
++    #[cfg(target_pointer_width = "64")]
++    fn a_history_row_is_one_word_larger_than_a_dense_row() {
++        assert_eq!(std::mem::size_of::<CompactRow<Cell>>(), std::mem::size_of::<Row<Cell>>());
++        assert_eq!(std::mem::size_of::<HistoryRow<Cell>>(), std::mem::size_of::<Row<Cell>>() + 8);
++    }
++
++    fn row() -> Row<Cell> {
++        let mut row = Row::new(253);
++        row[Column(0)] = Cell { c: '界', flags: Flags::WIDE_CHAR, ..Cell::default() };
++        row[Column(0)].push_zerowidth('\u{301}');
++        row[Column(1)].flags = Flags::WIDE_CHAR_SPACER;
++        row
++    }
++    #[test]
++    fn roundtrip_preserves_cells_with_bounded_reuse() {
++        let mut pool = compact_pool();
++        pool.set_width(253);
++        let original = row();
++        let mut row = original.clone();
++        let pointer = row.inner.as_ptr();
++        for _ in 0..100 {
++            let history = HistoryRow::from_dense(row, &mut pool);
++            assert!(matches!(history, HistoryRow::Compact(_)));
++            assert!(history.retained_cells() < 10);
++            assert!(history.view().iter().eq((&original).into_iter()));
++            row = history.into_dense(&mut pool);
++            assert_eq!(row.inner.as_ptr(), pointer);
++            assert_eq!(row, original);
++        }
++        assert_eq!(pool.prefixes.len(), 1);
++    }
++    #[test]
++    fn exact_colored_hyperlinked_tail_and_tail_mutation() {
++        let mut pool = compact_pool();
++        pool.set_width(253);
++        let mut row = row();
++        let link = Hyperlink::new(Some("id"), "https://example.org".into());
++        for cell in &mut row[Column(2)..] {
++            cell.bg = Color::Named(NamedColor::Red);
++            cell.set_hyperlink(Some(link.clone()));
++        }
++        let original = row.clone();
++        let mut history = HistoryRow::from_dense(row, &mut pool);
++        assert!(matches!(history, HistoryRow::Compact(_)));
++        assert!(history.view().iter().eq((&original).into_iter()));
++        history.materialize(&mut pool)[Column(2)].c = 'X';
++        assert_eq!(history.view().cell(Column(3)), &original[Column(3)]);
++        assert_eq!(history.view().cell(Column(252)), &original[Column(252)]);
++    }
++    #[test]
++    fn dense_fallback_keeps_allocation() {
++        let mut row = row();
++        row[Column(252)].flags = Flags::WRAPLINE;
++        let pointer = row.inner.as_ptr();
++        let mut pool = compact_pool();
++        pool.set_width(253);
++        let history = HistoryRow::from_dense(row, &mut pool);
++        assert!(matches!(history, HistoryRow::Dense(_)));
++        assert_eq!(history.into_dense(&mut pool).inner.as_ptr(), pointer);
++    }
++    #[test]
++    fn pools_are_bounded_and_discard_old_widths() {
++        let mut pool = compact_pool();
++        pool.set_width(253);
++        let history: Vec<_> = (0..32).map(|_| HistoryRow::from_dense(row(), &mut pool)).collect();
++        for row in history {
++            row.recycle(&mut pool);
++        }
++        assert_eq!(pool.dense.len(), POOL_ROWS);
++        assert_eq!(pool.prefixes.len(), POOL_ROWS);
++        assert!(pool.retained_cells() <= POOL_ROWS * 253 * 2);
++        pool.set_width(80);
++        assert_eq!(pool.retained_cells(), 0);
++        assert_eq!(pool.take_dense(80).len(), 80);
++    }
++}
++
++#[cfg(test)]
++mod iteration_tests {
++    use super::tests::compact_pool;
++    use super::*;
++    use crate::term::cell::Cell;
++    use crate::vte::ansi::{Color, NamedColor};
++
++    #[test]
++    fn mixed_iteration_and_last_matching_preserve_dense_semantics() {
++        let mut pool = compact_pool();
++        pool.set_width(80);
++        let mut dense = Row::<Cell>::new(80);
++        dense[Column(0)].c = 'a';
++        dense[Column(1)].c = 'b';
++        let expected: Vec<_> = dense.inner.clone();
++        let history = HistoryRow::from_dense(dense, &mut pool);
++        let view = history.view();
++        assert_eq!(view.last_matching(|cell| cell.c == 'b'), Some(1));
++        assert_eq!(view.last_matching(|cell| cell.c == ' '), Some(79));
++        assert_eq!(view.last_matching(|cell| cell.c == 'x'), None);
++        let mut cells = view.iter();
++        for index in 0..40 {
++            assert_eq!(cells.len(), 80 - index * 2);
++            assert_eq!(cells.next(), Some(&expected[index]));
++            assert_eq!(cells.next_back(), Some(&expected[79 - index]));
++        }
++        assert_eq!(cells.next(), None);
++        assert_eq!(cells.next_back(), None);
++        assert_eq!(cells.len(), 0);
++    }
++
++    #[test]
++    fn direct_resize_requires_default_tail_and_preserves_prefix() {
++        let mut pool = compact_pool();
++        pool.set_width(80);
++        let mut dense = Row::<Cell>::new(80);
++        dense[Column(4)].c = 'x';
++        let mut history = HistoryRow::from_dense(dense, &mut pool);
++        assert!(!history.resize_default_tail(4));
++        assert!(history.resize_default_tail(5));
++        assert_eq!(history.view().cell(Column(4)).c, 'x');
++        assert!(history.resize_default_tail(120));
++        assert_eq!(history.view().cell(Column(119)), &Cell::default());
++        let mut dense = Row::<Cell>::new(80);
++        for cell in &mut dense[Column(0)..] {
++            cell.bg = Color::Named(NamedColor::Red);
++        }
++        let mut history = HistoryRow::from_dense(dense, &mut pool);
++        assert!(!history.resize_default_tail(120));
++        assert_eq!(history.view().len(), 80);
++    }
++
++    #[test]
++    fn copy_into_preserves_prefix_and_repeated_tail() {
++        let mut pool = compact_pool();
++        pool.set_width(80);
++        let mut dense = Row::<Cell>::new(80);
++        dense[Column(0)].c = 'a';
++        dense[Column(1)].c = 'b';
++        let expected = dense.inner.clone();
++        let history = HistoryRow::from_dense(dense, &mut pool);
++        assert!(matches!(history, HistoryRow::Compact(_)));
++        match history.view().parts() {
++            RowParts::Compact { prefix, tail_count, .. } => {
++                assert_eq!(prefix.len(), 2);
++                assert_eq!(tail_count, 78);
++            },
++            RowParts::Dense(_) => panic!("expected compact parts"),
++        }
++        let mut dest = vec![Cell::default(); 80];
++        history.view().copy_into(&mut dest);
++        assert_eq!(dest, expected);
++    }
++}
+diff --git a/alacritty_terminal/src/grid/history_grid.rs b/alacritty_terminal/src/grid/history_grid.rs
+new file mode 100644
+index 00000000..a0e94062
+--- /dev/null
++++ b/alacritty_terminal/src/grid/history_grid.rs
+@@ -0,0 +1,126 @@
++use super::*;
++
++impl<T> Grid<T> {
++    /// Read any row, in the viewport or in history, whichever way it is stored.
++    pub fn read_row(&self, line: Line) -> RowView<'_, T> {
++        if line.0 >= 0 {
++            return RowView::Dense(&self.raw[line]);
++        }
++        self.history_row(line).view()
++    }
++
++    /// Whether rows scrolling into history may be stored compactly.
++    pub fn compact_history(&self) -> bool {
++        self.row_pool.is_compact()
++    }
++
++    fn history_index(&self, line: Line) -> usize {
++        debug_assert!(line.0 < 0);
++        self.history
++            .len()
++            .checked_sub(line.0.unsigned_abs() as usize)
++            .unwrap_or_else(|| panic!("history line {} is out of range", line.0))
++    }
++
++    pub(super) fn history_row(&self, line: Line) -> &HistoryRow<T> {
++        &self.history[self.history_index(line)]
++    }
++
++    pub(super) fn history_row_entry(&mut self, line: Line) -> &mut HistoryRow<T> {
++        let index = self.history_index(line);
++        &mut self.history[index]
++    }
++
++    pub fn read_cell(&self, point: Point) -> &T {
++        self.read_row(point.line).cell(point.column)
++    }
++
++    pub fn display_row(&self, viewport_row: usize) -> RowView<'_, T> {
++        let line = Line(viewport_row as i32 - self.display_offset as i32);
++        self.read_row(line)
++    }
++
++    pub(super) fn evict_history(&mut self, count: usize) {
++        for _ in 0..count {
++            if let Some(row) = self.history.pop_front() {
++                row.recycle(&mut self.row_pool);
++            }
++        }
++    }
++
++    pub fn retained_history_cells(&self) -> usize {
++        self.history.iter().map(HistoryRow::retained_cells).sum::<usize>()
++            + self.row_pool.retained_cells()
++    }
++}
++impl<T: GridCell + Default + PartialEq> Grid<T> {
++    /// Store rows that scroll into history compactly: the cells up to the last one that differs
++    /// from the final cell, plus that cell as a repeated tail.
++    ///
++    /// Off by default, and while it is off every history row stays a dense [`Row`]. Once it is
++    /// on, `grid[line]` with a negative `line` panics on a compact row: read history with
++    /// [`Grid::read_row`], and mutate it with [`Grid::history_row_mut`]. Turning it off expands
++    /// every compact row again.
++    pub fn set_compact_history(&mut self, enabled: bool) {
++        self.row_pool.set_compact(enabled);
++        if !enabled {
++            for row in &mut self.history {
++                row.materialize(&mut self.row_pool);
++            }
++        }
++    }
++
++    /// Mutable access to any row, expanding a compact history row first.
++    pub fn history_row_mut(&mut self, line: Line) -> &mut Row<T> {
++        if line.0 >= 0 {
++            return &mut self.raw[line];
++        }
++        let index = self.history_index(line);
++        self.history[index].materialize(&mut self.row_pool)
++    }
++
++    pub(super) fn archive_viewport_row(&mut self, line: Line) {
++        // Without compaction a full history hands its oldest row straight back to the viewport,
++        // so scrolling costs two row moves and no pool traffic.
++        if !self.row_pool.is_compact() && self.history.len() == self.max_scroll_limit {
++            if let Some(HistoryRow::Dense(mut oldest)) = self.history.pop_front() {
++                if oldest.len() == self.columns {
++                    std::mem::swap(&mut self.raw[line], &mut oldest);
++                    self.history.push_back(HistoryRow::Dense(oldest));
++                    return;
++                }
++                let row = std::mem::replace(&mut self.raw[line], Row::new(self.columns));
++                self.history.push_back(HistoryRow::Dense(row));
++                return;
++            }
++        }
++        self.row_pool.set_width(self.columns);
++        if self.history.len() == self.max_scroll_limit {
++            self.evict_history(1);
++        }
++        let row = std::mem::take(&mut self.raw[line]);
++        self.history.push_back(HistoryRow::from_dense(row, &mut self.row_pool));
++        self.raw[line] = self.row_pool.take_dense(self.columns);
++    }
++
++    /// Move row ownership into the reflow pass without expanding compact history.
++    pub(super) fn take_reflow_rows(&mut self) -> Vec<HistoryRow<T>> {
++        let mut rows: Vec<_> = self.raw.take_all().into_iter().map(HistoryRow::Dense).collect();
++        rows.extend(self.history.drain(..).rev());
++        rows
++    }
++
++    pub(super) fn replace_reflow_rows(&mut self, rows: Vec<HistoryRow<T>>) {
++        let mut rows = rows.into_iter();
++        let viewport =
++            rows.by_ref().take(self.lines).map(|r| r.into_dense(&mut self.row_pool)).collect();
++        self.raw.replace_viewport(viewport);
++        self.history = rows
++            .map(|r| match r {
++                HistoryRow::Dense(row) => HistoryRow::from_dense(row, &mut self.row_pool),
++                compact => compact,
++            })
++            .collect();
++        self.history.make_contiguous().reverse();
++    }
++}
+diff --git a/alacritty_terminal/src/grid/mod.rs b/alacritty_terminal/src/grid/mod.rs
+index 4e394d9d..b462c638 100644
+--- a/alacritty_terminal/src/grid/mod.rs
++++ b/alacritty_terminal/src/grid/mod.rs
+@@ -1,16 +1,19 @@
+ //! A specialized 2D grid implementation optimized for use in a terminal.
+
+ use std::cmp::{max, min};
++use std::collections::VecDeque;
+ use std::ops::{Bound, Deref, Index, IndexMut, Range, RangeBounds};
+
+-#[cfg(feature = "serde")]
+-use serde::{Deserialize, Serialize};
+-
+ use crate::index::{Column, Line, Point};
+ use crate::term::cell::{Flags, ResetDiscriminant};
+ use crate::vte::ansi::{CharsetIndex, StandardCharset};
+
++pub mod history;
++mod history_grid;
+ pub mod resize;
++#[cfg(feature = "serde")]
++mod serde_grid;
++use history::{HistoryRow, RowParts, RowPool, RowView};
+ mod row;
+ mod storage;
+ #[cfg(test)]
+@@ -19,10 +22,18 @@ mod tests;
+ pub use self::row::Row;
+ use self::storage::Storage;
+
+-pub trait GridCell: Sized {
++pub trait GridCell: Sized + Clone {
+     /// Check if the cell contains any content.
+     fn is_empty(&self) -> bool;
+
++    /// Check if the cell shows no glyph, whatever its colors and attributes.
++    ///
++    /// Compact scrollback only tries to fold rows whose last cell is blank this way. Defaults to
++    /// [`GridCell::is_empty`].
++    fn is_blank(&self) -> bool {
++        self.is_empty()
++    }
++
+     /// Perform an opinionated cell reset based on a template cell.
+     fn reset(&mut self, template: &Self);
+
+@@ -106,19 +117,18 @@ pub enum Scroll {
+ ///                        columns
+ /// ```
+ #[derive(Clone, Debug)]
+-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+ pub struct Grid<T> {
+     /// Current cursor for writing data.
+-    #[cfg_attr(feature = "serde", serde(skip))]
+     pub cursor: Cursor<T>,
+
+     /// Last saved cursor.
+-    #[cfg_attr(feature = "serde", serde(skip))]
+     pub saved_cursor: Cursor<T>,
+
+     /// Lines in the grid. Each row holds a list of cells corresponding to the
+     /// columns in that row.
+     raw: Storage<T>,
++    history: VecDeque<HistoryRow<T>>,
++    row_pool: RowPool<T>,
+
+     /// Number of columns.
+     columns: usize,
+@@ -141,6 +151,8 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+     pub fn new(lines: usize, columns: usize, max_scroll_limit: usize) -> Grid<T> {
+         Grid {
+             raw: Storage::with_capacity(lines, columns),
++            history: VecDeque::new(),
++            row_pool: RowPool::default(),
+             max_scroll_limit,
+             display_offset: 0,
+             saved_cursor: Cursor::default(),
+@@ -154,7 +166,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+     pub fn update_history(&mut self, history_size: usize) {
+         let current_history_size = self.history_size();
+         if current_history_size > history_size {
+-            self.raw.shrink_lines(current_history_size - history_size);
++            self.evict_history(current_history_size - history_size);
+         }
+         self.display_offset = min(self.display_offset, history_size);
+         self.max_scroll_limit = history_size;
+@@ -172,21 +184,6 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+         };
+     }
+
+-    fn increase_scroll_limit(&mut self, count: usize) {
+-        let count = min(count, self.max_scroll_limit - self.history_size());
+-        if count != 0 {
+-            self.raw.initialize(count, self.columns);
+-        }
+-    }
+-
+-    fn decrease_scroll_limit(&mut self, count: usize) {
+-        let count = min(count, self.history_size());
+-        if count != 0 {
+-            self.raw.shrink_lines(min(count, self.history_size()));
+-            self.display_offset = min(self.display_offset, self.history_size());
+-        }
+-    }
+-
+     #[inline]
+     pub fn scroll_down<D>(&mut self, region: &Range<Line>, positions: usize)
+     where
+@@ -270,9 +267,6 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+
+         // Only rotate the entire history if the active region starts at the top.
+         if region.start == 0 {
+-            // Create scrollback for the new lines.
+-            self.increase_scroll_limit(positions);
+-
+             // Swap the lines fixed at the top to their target positions after rotation.
+             //
+             // Since we've made sure that the rotation will never rotate away the entire region, we
+@@ -300,8 +294,11 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+             }
+         }
+
+-        // Ensure all new lines are fully cleared.
++        // Only completed rows crossing the top boundary enter history.
+         for i in (region.end.0 - positions as i32..region.end.0).map(Line::from) {
++            if region.start == 0 && self.max_scroll_limit != 0 {
++                self.archive_viewport_row(i);
++            }
+             self.raw[i].reset(&self.cursor.template);
+         }
+     }
+@@ -382,7 +379,7 @@ impl<T> Grid<T> {
+     #[inline]
+     pub fn clear_history(&mut self) {
+         // Explicitly purge all lines from history.
+-        self.raw.shrink_lines(self.history_size());
++        self.evict_history(self.history.len());
+
+         // Reset display offset.
+         self.display_offset = 0;
+@@ -398,7 +395,9 @@ impl<T> Grid<T> {
+         self.truncate();
+
+         // Initialize everything with empty new lines.
+-        self.raw.initialize(self.max_scroll_limit - self.history_size(), self.columns);
++        while self.history.len() < self.max_scroll_limit {
++            self.history.push_front(HistoryRow::Dense(Row::new(self.columns)));
++        }
+     }
+
+     /// This is used only for truncating before saving ref-tests.
+@@ -411,13 +410,10 @@ impl<T> Grid<T> {
+     #[inline]
+     pub fn iter_from(&self, point: Point) -> GridIterator<'_, T> {
+         let end = Point::new(self.bottommost_line(), self.last_column());
+-        GridIterator { grid: self, point, end }
++        GridIterator::new(self, point, end)
+     }
+
+     /// Iterate over all visible cells.
+-    ///
+-    /// This is slightly more optimized than calling `Grid::iter_from` in combination with
+-    /// `Iterator::take_while`.
+     #[inline]
+     pub fn display_iter(&self) -> GridIterator<'_, T> {
+         let last_column = self.last_column();
+@@ -425,7 +421,7 @@ impl<T> Grid<T> {
+         let end_line = min(start.line + self.screen_lines(), self.bottommost_line());
+         let end = Point::new(end_line, last_column);
+
+-        GridIterator { grid: self, point: start, end }
++        GridIterator::new(self, start, end)
+     }
+
+     #[inline]
+@@ -435,8 +431,9 @@ impl<T> Grid<T> {
+
+     #[inline]
+     pub fn cursor_cell(&mut self) -> &mut T {
++        // The cursor never leaves the viewport, so this skips the history check in `IndexMut`.
+         let point = self.cursor.point;
+-        &mut self[point.line][point.column]
++        &mut self.raw[point.line][point.column]
+     }
+ }
+
+@@ -444,6 +441,12 @@ impl<T: PartialEq> PartialEq for Grid<T> {
+     fn eq(&self, other: &Self) -> bool {
+         // Compare struct fields and check result of grid comparison.
+         self.raw.eq(&other.raw)
++            && self.history.len() == other.history.len()
++            && self
++                .history
++                .iter()
++                .zip(&other.history)
++                .all(|(a, b)| a.view().iter().eq(b.view().iter()))
+             && self.columns.eq(&other.columns)
+             && self.lines.eq(&other.lines)
+             && self.display_offset.eq(&other.display_offset)
+@@ -453,16 +456,51 @@ impl<T: PartialEq> PartialEq for Grid<T> {
+ impl<T> Index<Line> for Grid<T> {
+     type Output = Row<T>;
+
++    /// # Panics
++    ///
++    /// Panics if `index` names a history row stored compactly, which can only happen after
++    /// [`Grid::set_compact_history`] enabled compaction. Read those rows with [`Grid::read_row`].
+     #[inline]
+     fn index(&self, index: Line) -> &Row<T> {
+-        &self.raw[index]
++        if index.0 >= 0 { &self.raw[index] } else { self.dense_history_row(index) }
+     }
+ }
+
+ impl<T> IndexMut<Line> for Grid<T> {
++    /// # Panics
++    ///
++    /// Panics if `index` names a history row stored compactly, which can only happen after
++    /// [`Grid::set_compact_history`] enabled compaction. Mutate those rows through
++    /// [`Grid::history_row_mut`], which expands the row first.
+     #[inline]
+     fn index_mut(&mut self, index: Line) -> &mut Row<T> {
+-        &mut self.raw[index]
++        if index.0 >= 0 { &mut self.raw[index] } else { self.dense_history_row_mut(index) }
++    }
++}
++
++impl<T> Grid<T> {
++    /// Out of line so that viewport indexing, which runs for every printed character, stays small.
++    #[cold]
++    #[inline(never)]
++    fn dense_history_row(&self, line: Line) -> &Row<T> {
++        match self.history_row(line) {
++            HistoryRow::Dense(row) => row,
++            HistoryRow::Compact(_) => {
++                panic!("history line {} is stored compactly; read it with `Grid::read_row`", line.0)
++            },
++        }
++    }
++
++    #[cold]
++    #[inline(never)]
++    fn dense_history_row_mut(&mut self, line: Line) -> &mut Row<T> {
++        match self.history_row_entry(line) {
++            HistoryRow::Dense(row) => row,
++            HistoryRow::Compact(_) => panic!(
++                "history line {} is stored compactly; mutate it with `Grid::history_row_mut`",
++                line.0
++            ),
++        }
+     }
+ }
+
+@@ -521,7 +559,7 @@ pub trait Dimensions {
+ impl<G> Dimensions for Grid<G> {
+     #[inline]
+     fn total_lines(&self) -> usize {
+-        self.raw.len()
++        self.raw.len() + self.history.len()
+     }
+
+     #[inline]
+@@ -575,9 +613,34 @@ pub struct GridIterator<'a, T> {
+
+     /// Last cell included in the iterator.
+     end: Point,
++
++    /// The line whose cells `row` holds.
++    row_line: Line,
++
++    /// Cells of `row_line`, resolved once per line rather than once per cell.
++    row: CachedRow<'a, T>,
+ }
+
++/// A row's cells as the iterator reads them, whichever way the row is stored.
++enum CachedRow<'a, T> {
++    Dense(&'a [T]),
++    Compact { prefix: &'a [T], tail: &'a T },
++}
++
++impl<T> Clone for CachedRow<'_, T> {
++    fn clone(&self) -> Self {
++        *self
++    }
++}
++
++impl<T> Copy for CachedRow<'_, T> {}
++
+ impl<'a, T> GridIterator<'a, T> {
++    fn new(grid: &'a Grid<T>, point: Point, end: Point) -> Self {
++        // No line is `i32::MIN`, so the first cell read resolves its row.
++        Self { grid, point, end, row_line: Line(i32::MIN), row: CachedRow::Dense(&[]) }
++    }
++
+     /// Current iterator position.
+     pub fn point(&self) -> Point {
+         self.point
+@@ -585,7 +648,30 @@ impl<'a, T> GridIterator<'a, T> {
+
+     /// Cell at the current iterator position.
+     pub fn cell(&self) -> &'a T {
+-        &self.grid[self.point]
++        self.grid.read_cell(self.point)
++    }
++
++    #[inline(always)]
++    fn current_cell(&mut self) -> &'a T {
++        if self.row_line != self.point.line {
++            self.resolve_row();
++        }
++        let column = self.point.column.0;
++        match self.row {
++            CachedRow::Dense(cells) => &cells[column],
++            CachedRow::Compact { prefix, tail } => prefix.get(column).unwrap_or(tail),
++        }
++    }
++
++    /// Kept out of line so the per-cell path above stays small enough to inline.
++    #[cold]
++    #[inline(never)]
++    fn resolve_row(&mut self) {
++        self.row = match self.grid.read_row(self.point.line).parts() {
++            RowParts::Dense(cells) => CachedRow::Dense(cells),
++            RowParts::Compact { prefix, tail, .. } => CachedRow::Compact { prefix, tail },
++        };
++        self.row_line = self.point.line;
+     }
+ }
+
+@@ -606,7 +692,7 @@ impl<'a, T> Iterator for GridIterator<'a, T> {
+             _ => self.point.column += Column(1),
+         }
+
+-        Some(Indexed { cell: &self.grid[self.point], point: self.point })
++        Some(Indexed { cell: self.current_cell(), point: self.point })
+     }
+
+     fn size_hint(&self) -> (usize, Option<usize>) {
+@@ -651,6 +737,6 @@ impl<T> BidirectionalIterator for GridIterator<'_, T> {
+             _ => self.point.column -= Column(1),
+         }
+
+-        Some(Indexed { cell: &self.grid[self.point], point: self.point })
++        Some(Indexed { cell: self.current_cell(), point: self.point })
+     }
+ }
+diff --git a/alacritty_terminal/src/grid/resize.rs b/alacritty_terminal/src/grid/resize.rs
+index 37f93691..a1c89d39 100644
+--- a/alacritty_terminal/src/grid/resize.rs
++++ b/alacritty_terminal/src/grid/resize.rs
+@@ -6,6 +6,7 @@ use std::mem;
+ use crate::index::{Boundary, Column, Line};
+ use crate::term::cell::{Flags, ResetDiscriminant};
+
++use crate::grid::history::HistoryRow;
+ use crate::grid::row::Row;
+ use crate::grid::{Dimensions, Grid, GridCell};
+
+@@ -25,6 +26,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+             Ordering::Equal => (),
+         }
+
++        self.row_pool.set_width(columns);
+         match self.columns.cmp(&columns) {
+             Ordering::Less => self.grow_columns(reflow, columns),
+             Ordering::Greater => self.shrink_columns(reflow, columns),
+@@ -45,27 +47,24 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+         T: ResetDiscriminant<D>,
+         D: PartialEq,
+     {
+-        let lines_added = target - self.lines;
+-
+-        // Need to resize before updating buffer.
+-        self.raw.grow_visible_lines(target);
+-        self.lines = target;
+-
+-        let history_size = self.history_size();
+-        let from_history = min(history_size, lines_added);
+-
+-        // Move existing lines up for every line that couldn't be pulled from history.
+-        if from_history != lines_added {
+-            let delta = lines_added - from_history;
+-            self.scroll_up(&(Line(0)..Line(target as i32)), delta);
++        let added = target - self.lines;
++        let from_history = min(added, self.history.len());
++        let mut rows = self.raw.take_all();
++        for _ in 0..from_history {
++            let row = self.history.pop_back().unwrap().into_dense(&mut self.row_pool);
++            rows.push(row);
+         }
+-
+-        // Move cursor down for every line pulled from history.
++        let blanks = added - from_history;
++        if blanks != 0 {
++            let mut bottom: Vec<_> = (0..blanks).map(|_| Row::new(self.columns)).collect();
++            bottom.append(&mut rows);
++            rows = bottom;
++        }
++        self.lines = target;
++        self.raw.replace_viewport(rows);
+         self.saved_cursor.point.line += from_history;
+         self.cursor.point.line += from_history;
+-
+-        self.display_offset = self.display_offset.saturating_sub(lines_added);
+-        self.decrease_scroll_limit(lines_added);
++        self.display_offset = self.display_offset.saturating_sub(added);
+     }
+
+     /// Remove lines from the visible area.
+@@ -89,25 +88,29 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+             self.cursor.point.line = min(self.cursor.point.line, Line(target as i32 - 1));
+         }
+
+-        // Clamp saved cursor, since only primary cursor is scrolled into viewport.
++        // Drop rows below the resized viewport; any scrolled rows were archived above.
+         self.saved_cursor.point.line = min(self.saved_cursor.point.line, Line(target as i32 - 1));
+-
+-        self.raw.rotate((self.lines - target) as isize);
+-        self.raw.shrink_visible_lines(target);
++        let mut rows = self.raw.take_all();
++        rows.drain(..self.lines - target);
+         self.lines = target;
++        self.raw.replace_viewport(rows);
+     }
+
+     /// Grow number of columns in each row, reflowing if necessary.
+     fn grow_columns(&mut self, reflow: bool, columns: usize) {
+         // Check if a row needs to be wrapped.
+-        let should_reflow = |row: &Row<T>| -> bool {
++        let should_reflow = |row: &HistoryRow<T>| -> bool {
++            let row = row.view();
+             let len = Column(row.len());
+-            reflow && len.0 > 0 && len < columns && row[len - 1].flags().contains(Flags::WRAPLINE)
++            reflow
++                && len.0 > 0
++                && len < columns
++                && row.cell(len - 1).flags().contains(Flags::WRAPLINE)
+         };
+
+         self.columns = columns;
+
+-        let mut reversed: Vec<Row<T>> = Vec::with_capacity(self.raw.len());
++        let mut reversed: Vec<HistoryRow<T>> = Vec::with_capacity(self.total_lines());
+         let mut cursor_line_delta = 0;
+
+         // Remove the linewrap special case, by moving the cursor outside of the grid.
+@@ -116,14 +119,22 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+             self.cursor.point.column += 1;
+         }
+
+-        let mut rows = self.raw.take_all();
++        let mut rows = self.take_reflow_rows();
+
+         for (i, mut row) in rows.drain(..).enumerate().rev() {
++            let previous_wraps = reversed.last().is_some_and(&should_reflow);
++            if !previous_wraps && row.resize_default_tail(columns) {
++                reversed.push(row);
++                continue;
++            }
++            let mut row = row.into_dense(&mut self.row_pool);
+             // Check if reflowing should be performed.
+             let last_row = match reversed.last_mut() {
+-                Some(last_row) if should_reflow(last_row) => last_row,
++                Some(last_row) if should_reflow(last_row) => {
++                    last_row.materialize(&mut self.row_pool)
++                },
+                 _ => {
+-                    reversed.push(row);
++                    reversed.push(HistoryRow::from_dense(row, &mut self.row_pool));
+                     continue;
+                 },
+             };
+@@ -206,14 +217,14 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+                 cell.flags_mut().insert(Flags::WRAPLINE);
+             }
+
+-            reversed.push(row);
++            reversed.push(HistoryRow::from_dense(row, &mut self.row_pool));
+         }
+
+         // Make sure we have at least the viewport filled.
+         if reversed.len() < self.lines {
+             let delta = (self.lines - reversed.len()) as i32;
+             self.cursor.point.line = max(self.cursor.point.line - delta, Line(0));
+-            reversed.resize_with(self.lines, || Row::new(columns));
++            reversed.resize_with(self.lines, || HistoryRow::Dense(Row::new(columns)));
+         }
+
+         // Pull content down to put cursor in correct position, or move cursor up if there's no
+@@ -229,13 +240,18 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+         // Reverse iterator and fill all rows that are still too short.
+         let mut new_raw = Vec::with_capacity(reversed.len());
+         for mut row in reversed.drain(..).rev() {
++            if row.view().len() == columns || row.resize_default_tail(columns) {
++                new_raw.push(row);
++                continue;
++            }
++            let mut row = row.into_dense(&mut self.row_pool);
+             if row.len() < columns {
+                 row.grow(columns);
+             }
+-            new_raw.push(row);
++            new_raw.push(HistoryRow::from_dense(row, &mut self.row_pool));
+         }
+
+-        self.raw.replace_inner(new_raw);
++        self.replace_reflow_rows(new_raw);
+
+         // Clamp display offset in case lines above it got merged.
+         self.display_offset = min(self.display_offset, self.history_size());
+@@ -251,11 +267,16 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+             self.cursor.point.column += 1;
+         }
+
+-        let mut new_raw = Vec::with_capacity(self.raw.len());
++        let mut new_raw = Vec::with_capacity(self.total_lines());
+         let mut buffered: Option<Vec<T>> = None;
+
+-        let mut rows = self.raw.take_all();
++        let mut rows = self.take_reflow_rows();
+         for (i, mut row) in rows.drain(..).enumerate().rev() {
++            if buffered.is_none() && row.resize_default_tail(columns) {
++                new_raw.push(row);
++                continue;
++            }
++            let mut row = row.into_dense(&mut self.row_pool);
+             // Append lines left over from the previous row.
+             if let Some(buffered) = buffered.take() {
+                 // Add a column for every cell added before the cursor, if it goes beyond the new
+@@ -280,7 +301,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+                             Vec::new()
+                         } else {
+                             // Since it fits, just push the existing line without any reflow.
+-                            new_raw.push(row);
++                            new_raw.push(HistoryRow::from_dense(row, &mut self.row_pool));
+                             break;
+                         }
+                     },
+@@ -302,7 +323,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+                 if len > 0 && wrapped[len - 1].flags().contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+                     if len == 1 {
+                         row[Column(columns - 1)].flags_mut().insert(Flags::WRAPLINE);
+-                        new_raw.push(row);
++                        new_raw.push(HistoryRow::from_dense(row, &mut self.row_pool));
+                         break;
+                     } else {
+                         // Remove the leading spacer from the end of the wrapped row.
+@@ -311,10 +332,12 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+                     }
+                 }
+
+-                new_raw.push(row);
++                new_raw.push(HistoryRow::from_dense(row, &mut self.row_pool));
+
+                 // Set line as wrapped if cells got removed.
+-                if let Some(cell) = new_raw.last_mut().and_then(|r| r.last_mut()) {
++                if let Some(cell) =
++                    new_raw.last_mut().and_then(|r| r.materialize(&mut self.row_pool).last_mut())
++                {
+                     cell.flags_mut().insert(Flags::WRAPLINE);
+                 }
+
+@@ -364,9 +387,9 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+         }
+
+         // Reverse iterator and use it as the new grid storage.
+-        let mut reversed: Vec<Row<T>> = new_raw.drain(..).rev().collect();
++        let mut reversed: Vec<HistoryRow<T>> = new_raw.drain(..).rev().collect();
+         reversed.truncate(self.max_scroll_limit + self.lines);
+-        self.raw.replace_inner(reversed);
++        self.replace_reflow_rows(reversed);
+
+         // Clamp display offset in case some lines went off.
+         self.display_offset = min(self.display_offset, self.history_size());
+diff --git a/alacritty_terminal/src/grid/row.rs b/alacritty_terminal/src/grid/row.rs
+index 575be17e..adbb450d 100644
+--- a/alacritty_terminal/src/grid/row.rs
++++ b/alacritty_terminal/src/grid/row.rs
+@@ -15,7 +15,7 @@ use crate::term::cell::ResetDiscriminant;
+ #[derive(Default, Clone, Debug)]
+ #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+ pub struct Row<T> {
+-    inner: Vec<T>,
++    pub(super) inner: Vec<T>,
+
+     /// Maximum number of occupied entries.
+     ///
+@@ -104,6 +104,11 @@ impl<T> Row<T> {
+         self.inner.len()
+     }
+
++    #[inline]
++    pub fn cells(&self) -> &[T] {
++        &self.inner
++    }
++
+     #[inline]
+     pub fn last(&self) -> Option<&T> {
+         self.inner.last()
+diff --git a/alacritty_terminal/src/grid/serde_grid.rs b/alacritty_terminal/src/grid/serde_grid.rs
+new file mode 100644
+index 00000000..7678d7ee
+--- /dev/null
++++ b/alacritty_terminal/src/grid/serde_grid.rs
+@@ -0,0 +1,93 @@
++//! Preserve upstream grid fixtures without serializing storage caches or expanding history.
++use super::*;
++use serde::ser::{SerializeSeq, SerializeStruct};
++use serde::{Deserialize, Deserializer, Serialize, Serializer};
++
++impl<T: Serialize> Serialize for RowView<'_, T> {
++    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++        struct Cells<'a, T>(RowView<'a, T>);
++        impl<T: Serialize> Serialize for Cells<'_, T> {
++            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++                let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
++                for cell in self.0.iter() {
++                    seq.serialize_element(cell)?;
++                }
++                seq.end()
++            }
++        }
++        let mut row = serializer.serialize_struct("Row", 2)?;
++        row.serialize_field("inner", &Cells(*self))?;
++        row.serialize_field("occ", &self.occ())?;
++        row.end()
++    }
++}
++impl<T: Serialize> Serialize for Grid<T> {
++    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++        struct Rows<'a, T>(&'a Grid<T>);
++        impl<T: Serialize> Serialize for Rows<'_, T> {
++            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++                let grid = self.0;
++                let mut seq = serializer.serialize_seq(Some(grid.total_lines()))?;
++                for line in (-(grid.history.len() as i32)..grid.lines as i32).rev() {
++                    seq.serialize_element(&grid.read_row(Line(line)))?;
++                }
++                seq.end()
++            }
++        }
++        struct Raw<'a, T>(&'a Grid<T>);
++        impl<T: Serialize> Serialize for Raw<'_, T> {
++            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++                let mut raw = serializer.serialize_struct("Storage", 4)?;
++                raw.serialize_field("inner", &Rows(self.0))?;
++                raw.serialize_field("zero", &0usize)?;
++                raw.serialize_field("visible_lines", &self.0.lines)?;
++                raw.serialize_field("len", &self.0.total_lines())?;
++                raw.end()
++            }
++        }
++        let mut grid = serializer.serialize_struct("Grid", 5)?;
++        grid.serialize_field("raw", &Raw(self))?;
++        grid.serialize_field("columns", &self.columns)?;
++        grid.serialize_field("lines", &self.lines)?;
++        grid.serialize_field("display_offset", &self.display_offset)?;
++        grid.serialize_field("max_scroll_limit", &self.max_scroll_limit)?;
++        grid.end()
++    }
++}
++impl<'de, T: Deserialize<'de> + Default + Clone + PartialEq> Deserialize<'de> for Grid<T> {
++    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
++        #[derive(Deserialize)]
++        struct Wire<T> {
++            raw: Storage<T>,
++            columns: usize,
++            lines: usize,
++            display_offset: usize,
++            max_scroll_limit: usize,
++        }
++        let wire = Wire::deserialize(deserializer)?;
++        let mut grid = Grid {
++            raw: wire.raw,
++            columns: wire.columns,
++            lines: wire.lines,
++            display_offset: wire.display_offset,
++            max_scroll_limit: wire.max_scroll_limit,
++            history: VecDeque::new(),
++            row_pool: RowPool::default(),
++            cursor: Cursor::default(),
++            saved_cursor: Cursor::default(),
++        };
++        // Older reference files encode an off-by-one storage viewport count. Their
++        // canonical bottom-first rows are authoritative, as in upstream's equality check.
++        grid.raw.visible_lines = grid.lines;
++        grid.row_pool.set_width(grid.columns);
++        let history = grid.raw.len().saturating_sub(grid.lines);
++        for line in -(history as i32)..0 {
++            let row = std::mem::take(&mut grid.raw[Line(line)]);
++            // A deserialized grid starts with compaction off, so history stays dense.
++            grid.history.push_back(HistoryRow::Dense(row));
++        }
++        grid.raw.shrink_lines(history);
++        grid.raw.truncate();
++        Ok(grid)
++    }
++}
+diff --git a/alacritty_terminal/src/grid/storage.rs b/alacritty_terminal/src/grid/storage.rs
+index 6d7984d4..bdb9a3c5 100644
+--- a/alacritty_terminal/src/grid/storage.rs
++++ b/alacritty_terminal/src/grid/storage.rs
+@@ -1,3 +1,4 @@
++#[cfg(test)]
+ use std::cmp::max;
+ use std::mem;
+ use std::mem::MaybeUninit;
+@@ -41,7 +42,7 @@ pub struct Storage<T> {
+     zero: usize,
+
+     /// Number of visible lines.
+-    visible_lines: usize,
++    pub(super) visible_lines: usize,
+
+     /// Total number of lines currently active in the terminal (scrollback + visible)
+     ///
+@@ -77,6 +78,7 @@ impl<T> Storage<T> {
+
+     /// Increase the number of lines in the buffer.
+     #[inline]
++    #[cfg(test)]
+     pub fn grow_visible_lines(&mut self, next: usize)
+     where
+         T: Default,
+@@ -93,6 +95,7 @@ impl<T> Storage<T> {
+
+     /// Decrease the number of lines in the buffer.
+     #[inline]
++    #[cfg(test)]
+     pub fn shrink_visible_lines(&mut self, next: usize) {
+         // Shrink the size without removing any lines.
+         let shrinkage = self.visible_lines - next;
+@@ -123,6 +126,7 @@ impl<T> Storage<T> {
+
+     /// Dynamically grow the storage buffer at runtime.
+     #[inline]
++    #[cfg(test)]
+     pub fn initialize(&mut self, additional_rows: usize, columns: usize)
+     where
+         T: Default,
+@@ -202,6 +206,11 @@ impl<T> Storage<T> {
+         self.zero = 0;
+     }
+
++    pub(super) fn replace_viewport(&mut self, rows: Vec<Row<T>>) {
++        self.visible_lines = rows.len();
++        self.replace_inner(rows);
++    }
++
+     /// Remove all rows from storage.
+     #[inline]
+     pub fn take_all(&mut self) -> Vec<Row<T>> {
+diff --git a/alacritty_terminal/src/grid/tests.rs b/alacritty_terminal/src/grid/tests.rs
+index f052c75a..fab3db6c 100644
+--- a/alacritty_terminal/src/grid/tests.rs
++++ b/alacritty_terminal/src/grid/tests.rs
+@@ -89,7 +89,7 @@ fn scroll_down() {
+ #[test]
+ fn scroll_down_with_history() {
+     let mut grid = Grid::<usize>::new(10, 1, 1);
+-    grid.increase_scroll_limit(1);
++    grid.history.push_back(HistoryRow::Dense(Row::new(1)));
+     for i in 0..10 {
+         grid[Line(i as i32)][Column(0)] = i;
+     }
+@@ -174,13 +174,13 @@ fn shrink_reflow() {
+
+     assert_eq!(grid.total_lines(), 3);
+
+-    assert_eq!(grid[Line(-2)].len(), 2);
+-    assert_eq!(grid[Line(-2)][Column(0)], cell('1'));
+-    assert_eq!(grid[Line(-2)][Column(1)], wrap_cell('2'));
++    assert_eq!(grid.read_row(Line(-2)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(0)), cell('1'));
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(1)), wrap_cell('2'));
+
+-    assert_eq!(grid[Line(-1)].len(), 2);
+-    assert_eq!(grid[Line(-1)][Column(0)], cell('3'));
+-    assert_eq!(grid[Line(-1)][Column(1)], wrap_cell('4'));
++    assert_eq!(grid.read_row(Line(-1)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(0)), cell('3'));
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(1)), wrap_cell('4'));
+
+     assert_eq!(grid[Line(0)].len(), 2);
+     assert_eq!(grid[Line(0)][Column(0)], cell('5'));
+@@ -201,13 +201,13 @@ fn shrink_reflow_twice() {
+
+     assert_eq!(grid.total_lines(), 3);
+
+-    assert_eq!(grid[Line(-2)].len(), 2);
+-    assert_eq!(grid[Line(-2)][Column(0)], cell('1'));
+-    assert_eq!(grid[Line(-2)][Column(1)], wrap_cell('2'));
++    assert_eq!(grid.read_row(Line(-2)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(0)), cell('1'));
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(1)), wrap_cell('2'));
+
+-    assert_eq!(grid[Line(-1)].len(), 2);
+-    assert_eq!(grid[Line(-1)][Column(0)], cell('3'));
+-    assert_eq!(grid[Line(-1)][Column(1)], wrap_cell('4'));
++    assert_eq!(grid.read_row(Line(-1)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(0)), cell('3'));
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(1)), wrap_cell('4'));
+
+     assert_eq!(grid[Line(0)].len(), 2);
+     assert_eq!(grid[Line(0)][Column(0)], cell('5'));
+@@ -227,9 +227,9 @@ fn shrink_reflow_empty_cell_inside_line() {
+
+     assert_eq!(grid.total_lines(), 2);
+
+-    assert_eq!(grid[Line(-1)].len(), 2);
+-    assert_eq!(grid[Line(-1)][Column(0)], cell('1'));
+-    assert_eq!(grid[Line(-1)][Column(1)], wrap_cell(' '));
++    assert_eq!(grid.read_row(Line(-1)).len(), 2);
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(0)), cell('1'));
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(1)), wrap_cell(' '));
+
+     assert_eq!(grid[Line(0)].len(), 2);
+     assert_eq!(grid[Line(0)][Column(0)], cell('3'));
+@@ -239,14 +239,14 @@ fn shrink_reflow_empty_cell_inside_line() {
+
+     assert_eq!(grid.total_lines(), 4);
+
+-    assert_eq!(grid[Line(-3)].len(), 1);
+-    assert_eq!(grid[Line(-3)][Column(0)], wrap_cell('1'));
++    assert_eq!(grid.read_row(Line(-3)).len(), 1);
++    assert_eq!(*grid.read_row(Line(-3)).cell(Column(0)), wrap_cell('1'));
+
+-    assert_eq!(grid[Line(-2)].len(), 1);
+-    assert_eq!(grid[Line(-2)][Column(0)], wrap_cell(' '));
++    assert_eq!(grid.read_row(Line(-2)).len(), 1);
++    assert_eq!(*grid.read_row(Line(-2)).cell(Column(0)), wrap_cell(' '));
+
+-    assert_eq!(grid[Line(-1)].len(), 1);
+-    assert_eq!(grid[Line(-1)][Column(0)], wrap_cell('3'));
++    assert_eq!(grid.read_row(Line(-1)).len(), 1);
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(0)), wrap_cell('3'));
+
+     assert_eq!(grid[Line(0)].len(), 1);
+     assert_eq!(grid[Line(0)][Column(0)], cell('4'));
+@@ -367,6 +367,103 @@ fn accurate_size_hint() {
+     size_hint_matches_count(grid.display_iter());
+ }
+
++#[test]
++fn display_iter_live_rows_match_dense_index() {
++    let mut grid = Grid::<Cell>::new(2, 3, 4);
++    grid[Line(0)][Column(0)] = cell('a');
++    grid[Line(1)][Column(0)] = cell('b');
++    grid.scroll_up::<crate::vte::ansi::Color>(&(Line(0)..Line(2)), 1);
++
++    let live: Vec<_> = grid
++        .display_iter()
++        .map(|indexed| (indexed.point.line.0, indexed.point.column.0, indexed.cell.c))
++        .collect();
++    let mut expected = Vec::new();
++    for line in 0..2 {
++        for col in 0..3 {
++            expected.push((line, col, grid[Line(line)][Column(col)].c));
++        }
++    }
++    assert_eq!(live, expected);
++
++    grid.scroll_display(Scroll::Delta(1));
++    let scrolled: Vec<_> = grid.display_iter().map(|indexed| indexed.cell.c).collect();
++    let mut mixed = Vec::new();
++    for row in 0..2 {
++        let view = grid.display_row(row);
++        for col in 0..3 {
++            mixed.push(view.cell(Column(col)).c);
++        }
++    }
++    assert_eq!(scrolled, mixed);
++}
++
++/// Write `text` at the start of the only visible line, then scroll it into history.
++fn push_history_line(grid: &mut Grid<Cell>, text: &str) {
++    for (column, c) in text.chars().enumerate() {
++        grid[Line(0)][Column(column)] = cell(c);
++    }
++    grid.scroll_up::<crate::vte::ansi::Color>(&(Line(0)..Line(1)), 1);
++}
++
++#[test]
++fn history_rows_index_as_dense_rows_without_compaction() {
++    let mut grid = Grid::<Cell>::new(1, 16, 4);
++    push_history_line(&mut grid, "ab");
++
++    assert!(!grid.compact_history());
++    assert_eq!(grid[Line(-1)][Column(1)], cell('b'));
++    grid[Line(-1)][Column(2)] = cell('c');
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(2)), cell('c'));
++}
++
++#[test]
++fn compact_history_rows_read_through_read_row() {
++    let mut grid = Grid::<Cell>::new(1, 16, 4);
++    grid.set_compact_history(true);
++    push_history_line(&mut grid, "ab");
++
++    assert!(matches!(grid.read_row(Line(-1)), RowView::Compact(_)));
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(1)), cell('b'));
++    assert_eq!(*grid.read_row(Line(-1)).cell(Column(15)), Cell::default());
++}
++
++#[test]
++#[should_panic(expected = "stored compactly")]
++fn indexing_a_compact_history_row_panics() {
++    let mut grid = Grid::<Cell>::new(1, 16, 4);
++    grid.set_compact_history(true);
++    push_history_line(&mut grid, "ab");
++
++    let _ = &grid[Line(-1)];
++}
++
++#[test]
++fn history_row_mut_expands_a_compact_row() {
++    let mut grid = Grid::<Cell>::new(1, 16, 4);
++    grid.set_compact_history(true);
++    push_history_line(&mut grid, "ab");
++
++    grid.history_row_mut(Line(-1))[Column(3)] = cell('d');
++    assert!(matches!(grid.read_row(Line(-1)), RowView::Dense(_)));
++    assert_eq!(grid[Line(-1)][Column(0)], cell('a'));
++    assert_eq!(grid[Line(-1)][Column(3)], cell('d'));
++}
++
++#[test]
++fn disabling_compaction_expands_existing_history() {
++    let mut grid = Grid::<Cell>::new(1, 16, 4);
++    grid.set_compact_history(true);
++    push_history_line(&mut grid, "ab");
++    push_history_line(&mut grid, "cd");
++
++    grid.set_compact_history(false);
++    assert!(matches!(grid.read_row(Line(-1)), RowView::Dense(_)));
++    assert!(matches!(grid.read_row(Line(-2)), RowView::Dense(_)));
++    assert_eq!(grid[Line(-2)][Column(0)], cell('a'));
++    assert_eq!(grid[Line(-1)][Column(1)], cell('d'));
++}
++
+ fn size_hint_matches_count<T>(iter: impl Iterator<Item = T>) {
+     let iterator = iter.into_iter();
+     let (lower, upper) = iterator.size_hint();
+diff --git a/alacritty_terminal/src/term/cell.rs b/alacritty_terminal/src/term/cell.rs
+index 02737685..ca9db73e 100644
+--- a/alacritty_terminal/src/term/cell.rs
++++ b/alacritty_terminal/src/term/cell.rs
+@@ -245,6 +245,12 @@ impl GridCell for Cell {
+             && self.extra.as_ref().map(|extra| extra.zerowidth.is_empty()) != Some(false)
+     }
+
++    #[inline]
++    fn is_blank(&self) -> bool {
++        (self.c == ' ' || self.c == '\t')
++            && self.extra.as_ref().map(|extra| extra.zerowidth.is_empty()) != Some(false)
++    }
++
+     #[inline]
+     fn flags(&self) -> &Flags {
+         &self.flags
+@@ -295,6 +301,27 @@ impl LineLength for grid::Row<Cell> {
+     }
+ }
+
++impl LineLength for grid::history::RowView<'_, Cell> {
++    fn line_length(&self) -> Column {
++        let mut length = Column(0);
++
++        if self.cell(Column(self.len() - 1)).flags.contains(Flags::WRAPLINE) {
++            return Column(self.len());
++        }
++
++        for (index, cell) in self.iter().rev().enumerate() {
++            if cell.c != ' '
++                || cell.extra.as_ref().map(|extra| extra.zerowidth.is_empty()) == Some(false)
++            {
++                length = Column(self.len() - index);
++                break;
++            }
++        }
++
++        length
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/alacritty_terminal/src/term/mod.rs b/alacritty_terminal/src/term/mod.rs
+index 8eb67975..beb9b785 100644
+--- a/alacritty_terminal/src/term/mod.rs
++++ b/alacritty_terminal/src/term/mod.rs
+@@ -577,17 +577,17 @@ impl<T> Term<T> {
+     ) -> String {
+         let mut text = String::new();
+
+-        let grid_line = &self.grid[line];
++        let grid_line = self.grid.read_row(line);
+         let line_length = cmp::min(grid_line.line_length(), cols.end + 1);
+
+         // Include wide char when trailing spacer is selected.
+-        if grid_line[cols.start].flags.contains(Flags::WIDE_CHAR_SPACER) {
++        if grid_line.cell(cols.start).flags.contains(Flags::WIDE_CHAR_SPACER) {
+             cols.start -= 1;
+         }
+
+         let mut tab_mode = false;
+         for column in (cols.start.0..line_length.0).map(Column::from) {
+-            let cell = &grid_line[column];
++            let cell = grid_line.cell(column);
+
+             // Skip over cells until next tab-stop once a tab was found.
+             if tab_mode {
+@@ -615,7 +615,7 @@ impl<T> Term<T> {
+
+         if cols.end >= self.columns() - 1
+             && (line_length.0 == 0
+-                || !self.grid[line][line_length - 1].flags.contains(Flags::WRAPLINE))
++                || !grid_line.cell(line_length - 1).flags.contains(Flags::WRAPLINE))
+         {
+             text.push('\n');
+         }
+@@ -623,10 +623,10 @@ impl<T> Term<T> {
+         // If wide char is not part of the selection, but leading spacer is, include it.
+         if line_length == self.columns()
+             && line_length.0 >= 2
+-            && grid_line[line_length - 1].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
++            && grid_line.cell(line_length - 1).flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+             && include_wrapped_wide
+         {
+-            text.push(self.grid[line - 1i32][Column(0)].c);
++            text.push(self.grid.read_row(line - 1i32).cell(Column(0)).c);
+         }
+
+         text
+@@ -899,7 +899,7 @@ impl<T> Term<T> {
+
+     /// Jump to the end of a wide cell.
+     pub fn expand_wide(&self, mut point: Point, direction: Direction) -> Point {
+-        let flags = self.grid[point.line][point.column].flags;
++        let flags = self.grid.read_cell(point).flags;
+
+         match direction {
+             Direction::Right if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) => {
+@@ -915,7 +915,7 @@ impl<T> Term<T> {
+                 }
+
+                 let prev = point.sub(self, Boundary::Grid, 1);
+-                if self.grid[prev].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
++                if self.grid.read_cell(prev).flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+                     point = prev;
+                 }
+             },
+@@ -1004,7 +1004,9 @@ impl<T> Term<T> {
+             // Remove leading spacers.
+             if point.column <= 1 && point.line != self.topmost_line() {
+                 let column = self.last_column();
+-                self.grid[point.line - 1i32][column].flags.remove(Flags::LEADING_WIDE_CHAR_SPACER);
++                self.grid.history_row_mut(point.line - 1i32)[column]
++                    .flags
++                    .remove(Flags::LEADING_WIDE_CHAR_SPACER);
+             }
+
+             cursor_cell = self.grid.cursor_cell();
+@@ -2372,7 +2374,7 @@ impl RenderableCursor {
+         // Cursor position.
+         let vi_mode = term.mode().contains(TermMode::VI);
+         let mut point = if vi_mode { term.vi_mode_cursor.point } else { term.grid.cursor.point };
+-        if term.grid[point].flags.contains(Flags::WIDE_CHAR_SPACER) {
++        if term.grid.read_cell(point).flags.contains(Flags::WIDE_CHAR_SPACER) {
+             point.column -= 1;
+         }
+
+@@ -2482,18 +2484,20 @@ pub mod test {
+         for (line, text) in lines.iter().enumerate() {
+             let line = Line(line as i32);
+             if !text.ends_with('\r') && line + 1 != lines.len() {
+-                term.grid[line][Column(num_cols - 1)].flags.insert(Flags::WRAPLINE);
++                term.grid.history_row_mut(line)[Column(num_cols - 1)].flags.insert(Flags::WRAPLINE);
+             }
+
+             let mut index = 0;
+             for c in text.chars().take_while(|c| *c != '\r') {
+-                term.grid[line][Column(index)].c = c;
++                term.grid.history_row_mut(line)[Column(index)].c = c;
+
+                 // Handle fullwidth characters.
+                 let width = c.width().unwrap();
+                 if width == 2 {
+-                    term.grid[line][Column(index)].flags.insert(Flags::WIDE_CHAR);
+-                    term.grid[line][Column(index + 1)].flags.insert(Flags::WIDE_CHAR_SPACER);
++                    term.grid.history_row_mut(line)[Column(index)].flags.insert(Flags::WIDE_CHAR);
++                    term.grid.history_row_mut(line)[Column(index + 1)]
++                        .flags
++                        .insert(Flags::WIDE_CHAR_SPACER);
+                 }
+
+                 index += width;
+diff --git a/alacritty_terminal/src/term/search.rs b/alacritty_terminal/src/term/search.rs
+index 1bdc659c..e5664318 100644
+--- a/alacritty_terminal/src/term/search.rs
++++ b/alacritty_terminal/src/term/search.rs
+@@ -460,7 +460,7 @@ impl<T> Term<T> {
+                 }
+
+                 let prev = iter.point().sub(self, Boundary::Grid, 1);
+-                if self.grid[prev].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
++                if self.grid.read_cell(prev).flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+                     iter.prev();
+                 }
+             },
+@@ -470,7 +470,7 @@ impl<T> Term<T> {
+
+     /// Find next matching bracket.
+     pub fn bracket_search(&self, point: Point) -> Option<Point> {
+-        let start_char = self.grid[point].c;
++        let start_char = self.grid.read_cell(point).c;
+
+         // Find the matching bracket we're looking for
+         let (forward, end_char) = BRACKET_PAIRS.iter().find_map(|(open, close)| {
+@@ -570,7 +570,9 @@ impl<T> Term<T> {
+         let last_column = self.columns() - 1;
+
+         // Immediately stop if start point in on line break.
+-        if point.column == last_column && !self.grid[point].flags.contains(Flags::WRAPLINE) {
++        if point.column == last_column
++            && !self.grid.read_cell(point).flags.contains(Flags::WRAPLINE)
++        {
+             return Err(point);
+         }
+
+@@ -592,7 +594,12 @@ impl<T> Term<T> {
+     /// Find the beginning of the current line across linewraps.
+     pub fn line_search_left(&self, mut point: Point) -> Point {
+         while point.line > self.topmost_line()
+-            && self.grid[point.line - 1i32][self.last_column()].flags.contains(Flags::WRAPLINE)
++            && self
++                .grid
++                .read_row(point.line - 1i32)
++                .cell(self.last_column())
++                .flags
++                .contains(Flags::WRAPLINE)
+         {
+             point.line -= 1;
+         }
+@@ -605,7 +612,12 @@ impl<T> Term<T> {
+     /// Find the end of the current line across linewraps.
+     pub fn line_search_right(&self, mut point: Point) -> Point {
+         while point.line + 1 < self.screen_lines()
+-            && self.grid[point.line][self.last_column()].flags.contains(Flags::WRAPLINE)
++            && self
++                .grid
++                .read_row(point.line)
++                .cell(self.last_column())
++                .flags
++                .contains(Flags::WRAPLINE)
+         {
+             point.line += 1;
+         }
+diff --git a/alacritty_terminal/src/vi_mode.rs b/alacritty_terminal/src/vi_mode.rs
+index 765cca6c..d243585b 100644
+--- a/alacritty_terminal/src/vi_mode.rs
++++ b/alacritty_terminal/src/vi_mode.rs
+@@ -163,8 +163,8 @@ impl ViModeCursor {
+                 let topmost_line = term.topmost_line();
+                 self.point.line = (*topmost_line..=*self.point.line)
+                     .rev()
+-                    .skip_while(|line| term.grid()[Line(*line)].is_clear())
+-                    .find(|line| term.grid()[Line(*line)].is_clear())
++                    .skip_while(|line| term.grid().read_row(Line(*line)).is_clear())
++                    .find(|line| term.grid().read_row(Line(*line)).is_clear())
+                     .map_or(topmost_line, Line);
+                 self.point.column = Column(0);
+             },
+@@ -173,8 +173,8 @@ impl ViModeCursor {
+                 // then skip over the paragraph until we reach the next empty line.
+                 let bottommost_line = term.bottommost_line();
+                 self.point.line = (*self.point.line..*bottommost_line)
+-                    .skip_while(|line| term.grid()[Line(*line)].is_clear())
+-                    .find(|line| term.grid()[Line(*line)].is_clear())
++                    .skip_while(|line| term.grid().read_row(Line(*line)).is_clear())
++                    .find(|line| term.grid().read_row(Line(*line)).is_clear())
+                     .map_or(bottommost_line, Line);
+                 self.point.column = Column(0);
+             },
+@@ -280,7 +280,7 @@ fn semantic<T: EventListener>(
+     // Expand semantically based on movement direction.
+     let expand_semantic = |point: Point| {
+         // Do not expand when currently on a semantic escape char.
+-        let cell = &term.grid()[point];
++        let cell = term.grid().read_cell(point);
+         if term.semantic_escape_chars().contains(cell.c)
+             && !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+         {
+@@ -391,14 +391,14 @@ fn advance<T>(term: &Term<T>, point: Point, direction: Direction) -> Point {
+
+ /// Check if cell at point contains whitespace.
+ fn is_space<T>(term: &Term<T>, point: Point) -> bool {
+-    let cell = &term.grid()[point.line][point.column];
++    let cell = term.grid().read_cell(point);
+     !cell.flags().intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+         && (cell.c == ' ' || cell.c == '\t')
+ }
+
+ /// Check if the cell at a point contains the WRAPLINE flag.
+ fn is_wrap<T>(term: &Term<T>, point: Point) -> bool {
+-    term.grid()[point].flags.contains(Flags::WRAPLINE)
++    term.grid().read_cell(point).flags.contains(Flags::WRAPLINE)
+ }
+
+ /// Check if point is at screen boundary.
+diff --git a/alacritty_terminal/tests/compact_differential.rs b/alacritty_terminal/tests/compact_differential.rs
+new file mode 100644
+index 00000000..5d3015c8
+--- /dev/null
++++ b/alacritty_terminal/tests/compact_differential.rs
+@@ -0,0 +1,179 @@
++//! Compare compact storage against the unchanged registry engine after mixed input and resize.
++use alacritty_terminal as compact;
++use compact::grid::Dimensions;
++use dense::grid::Dimensions as _;
++
++#[derive(Clone, Copy)]
++struct Listener;
++impl compact::event::EventListener for Listener {
++    fn send_event(&self, _: compact::event::Event) {}
++}
++impl dense::event::EventListener for Listener {
++    fn send_event(&self, _: dense::event::Event) {}
++}
++
++#[derive(Clone, Copy)]
++struct Size {
++    rows: usize,
++    cols: usize,
++}
++impl compact::grid::Dimensions for Size {
++    fn total_lines(&self) -> usize {
++        self.rows
++    }
++
++    fn screen_lines(&self) -> usize {
++        self.rows
++    }
++
++    fn columns(&self) -> usize {
++        self.cols
++    }
++}
++impl dense::grid::Dimensions for Size {
++    fn total_lines(&self) -> usize {
++        self.rows
++    }
++
++    fn screen_lines(&self) -> usize {
++        self.rows
++    }
++
++    fn columns(&self) -> usize {
++        self.cols
++    }
++}
++
++fn compare(
++    actual: &compact::term::Term<Listener>,
++    expected: &dense::term::Term<Listener>,
++    step: usize,
++) {
++    let a = actual.grid();
++    let e = expected.grid();
++    assert_eq!(
++        (a.total_lines(), a.columns(), a.display_offset()),
++        (e.total_lines(), e.columns(), e.display_offset()),
++        "step {step}"
++    );
++    assert_eq!(
++        (a.cursor.point.line.0, a.cursor.point.column.0, a.cursor.input_needs_wrap),
++        (e.cursor.point.line.0, e.cursor.point.column.0, e.cursor.input_needs_wrap),
++        "cursor at step {step}"
++    );
++    for y in -(a.history_size() as i32)..a.screen_lines() as i32 {
++        for x in 0..a.columns() {
++            let c = a.read_row(compact::index::Line(y)).cell(compact::index::Column(x));
++            let d = &e[dense::index::Line(y)][dense::index::Column(x)];
++            assert_eq!(
++                (c.c, c.fg, c.bg, c.flags.bits(), c.zerowidth(), c.underline_color()),
++                (d.c, d.fg, d.bg, d.flags.bits(), d.zerowidth(), d.underline_color()),
++                "cell {y},{x} at step {step}"
++            );
++            let c_link = c.hyperlink();
++            let d_link = d.hyperlink();
++            assert_eq!(
++                c_link.as_ref().map(|h| (h.id(), h.uri())),
++                d_link.as_ref().map(|h| (h.id(), h.uri()))
++            );
++        }
++    }
++}
++
++#[derive(Clone, Copy)]
++enum Compaction {
++    Off,
++    On,
++    /// Toggled during the run, which expands compact history and starts compacting again.
++    Toggled,
++}
++
++#[test]
++fn mixed_output_resize_matches_dense_engine_without_compaction() {
++    run(Compaction::Off);
++}
++
++#[test]
++fn mixed_output_resize_matches_dense_engine_with_compaction() {
++    run(Compaction::On);
++}
++
++#[test]
++fn mixed_output_resize_matches_dense_engine_when_compaction_is_toggled() {
++    run(Compaction::Toggled);
++}
++
++fn run(compaction: Compaction) {
++    let size = Size { rows: 9, cols: 32 };
++    let mut actual = compact::term::Term::new(
++        compact::term::Config { scrolling_history: 64, ..Default::default() },
++        &size,
++        Listener,
++    );
++    let mut expected = dense::term::Term::new(
++        dense::term::Config { scrolling_history: 64, ..Default::default() },
++        &size,
++        Listener,
++    );
++    if !matches!(compaction, Compaction::Off) {
++        actual.grid_mut().set_compact_history(true);
++    }
++    let mut a_parser = compact::vte::ansi::Processor::<compact::vte::ansi::StdSyncHandler>::new();
++    let mut e_parser = dense::vte::ansi::Processor::<dense::vte::ansi::StdSyncHandler>::new();
++    let inputs = [
++        "short log\r\n",
++        "\x1b[31mred\x1b[0m\r\n",
++        "界e\u{301}\r\n",
++        "\x1b[44m\x1b[K\x1b[0m\r\n",
++        "\x1b]8;id=x;https://example.org\x1b\\link\x1b]8;;\x1b\\\r\n",
++        "long line of text which wraps across multiple rows in the viewport\r\n",
++        "\x1b[2;6r\x1b[6;1Hregion\n\n\x1b[r",
++        "\x1b[2J\x1b[H",
++        "\x1b[?1049hALT\x1b[?1049l",
++        "\x1b[2S",
++        "\x1b[1T",
++        "\r\x1b[3@insert\x1b[2P",
++        "\x1b[4;1H\x1b[2L\x1b[M",
++    ];
++    let mut seed = 7_u64;
++    let mut compact_rows_seen = 0;
++    for step in 0..400 {
++        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
++        let input =
++            if step < 80 { inputs[step % 6] } else { inputs[(seed >> 32) as usize % inputs.len()] };
++        a_parser.advance(&mut actual, input.as_bytes());
++        e_parser.advance(&mut expected, input.as_bytes());
++        if step % 13 == 0 {
++            let size =
++                Size { rows: 4 + (seed as usize % 9), cols: 7 + ((seed >> 32) as usize % 40) };
++            actual.resize(size);
++            expected.resize(size);
++        }
++        if step % 37 == 0 {
++            let limit = (seed >> 32) as usize % 65;
++            actual.grid_mut().update_history(limit);
++            expected.grid_mut().update_history(limit);
++        }
++        if matches!(compaction, Compaction::Toggled) && step % 53 == 0 {
++            let grid = actual.grid_mut();
++            let enabled = grid.compact_history();
++            grid.set_compact_history(!enabled);
++        }
++        compare(&actual, &expected, step);
++        let grid = actual.grid();
++        compact_rows_seen += (1..=grid.history_size() as i32)
++            .filter(|n| {
++                matches!(
++                    grid.read_row(compact::index::Line(-n)),
++                    compact::grid::history::RowView::Compact(_)
++                )
++            })
++            .count();
++    }
++
++    // Otherwise the comparison above would pass without ever reading a compact row.
++    match compaction {
++        Compaction::Off => assert_eq!(compact_rows_seen, 0),
++        Compaction::On | Compaction::Toggled => assert!(compact_rows_seen > 0),
++    }
++}
+diff --git a/alacritty_terminal/tests/ref.rs b/alacritty_terminal/tests/ref.rs
+index 8a75f925..87915c9c 100644
+--- a/alacritty_terminal/tests/ref.rs
++++ b/alacritty_terminal/tests/ref.rs
+@@ -8,7 +8,7 @@ use std::path::Path;
+
+ use alacritty_terminal::event::{Event, EventListener};
+ use alacritty_terminal::grid::{Dimensions, Grid};
+-use alacritty_terminal::index::{Column, Line};
++use alacritty_terminal::index::Line;
+ use alacritty_terminal::term::cell::Cell;
+ use alacritty_terminal::term::test::TermSize;
+ use alacritty_terminal::term::{Config, Term};
+@@ -121,12 +121,22 @@ fn ref_test(dir: &Path) {
+     term_grid.truncate();
+
+     if grid != term_grid {
+-        for i in 0..grid.total_lines() {
+-            for j in 0..grid.columns() {
+-                let cell = &term_grid[Line(i as i32)][Column(j)];
+-                let original_cell = &grid[Line(i as i32)][Column(j)];
+-                if original_cell != cell {
+-                    println!("[{i}][{j}] {original_cell:?} => {cell:?}",);
++        println!(
++            "expected dims {}x{} history {}, actual history {}",
++            grid.columns(),
++            grid.screen_lines(),
++            grid.history_size(),
++            term_grid.history_size()
++        );
++        let mut mismatches = 0;
++        for line in grid.topmost_line().0..=grid.bottommost_line().0 {
++            let a: String = grid.read_row(Line(line)).iter().map(|c| c.c).collect();
++            let b: String = term_grid.read_row(Line(line)).iter().map(|c| c.c).collect();
++            if a != b {
++                println!("line {line}: expected {a:?}, actual {b:?}");
++                mismatches += 1;
++                if mismatches == 4 {
++                    break;
+                 }
+             }
+         }

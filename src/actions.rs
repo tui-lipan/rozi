@@ -483,6 +483,12 @@ fn execute_action_inner(
             crate::ops::preferences::toggle_background_follows_terminal(ctx)
         }
         Action::CycleBorderStyle => crate::ops::preferences::cycle_border_style(ctx),
+        Action::CycleFloatBorderStyle => crate::ops::preferences::cycle_float_border_style(ctx),
+        Action::CycleScratchBorderStyle => crate::ops::preferences::cycle_scratch_border_style(ctx),
+        Action::CycleFullscreenBorderStyle => {
+            crate::ops::preferences::cycle_fullscreen_border_style(ctx)
+        }
+        Action::CyclePickerBorderStyle => crate::ops::preferences::cycle_picker_border_style(ctx),
         Action::CycleTitleStyle => crate::ops::preferences::cycle_title_style(ctx),
         Action::CycleWorkbarBadgeStyle => crate::ops::preferences::cycle_workbar_badge_style(ctx),
         Action::CycleWorkbarTabStyle => crate::ops::preferences::cycle_workbar_tab_style(ctx),

@@ -554,17 +554,27 @@ pub struct PaneConfig {
     pub alert_border: AlertMode,
     /// Per-state theme roles for pane-alert borders. `None` disables that state.
     pub alert_colors: PaneAlertColors,
-    /// Keep double frames around floating panes, popups, and the scratchpad when the selected
+    /// Keep frames around floating panes, popups, and the scratchpad when the selected
     /// border mode otherwise disables per-pane frames. On by default: a floating pane, popup, or
     /// scratchpad is a layer above the tiles, and in `none`/`dividers` its frame is the only thing
-    /// that says where it ends. Config-file only.
+    /// that says where it ends. Config-file only. Glyphs come from `float_border_style` or
+    /// `scratch_border_style`.
     pub keep_special_borders: bool,
     /// Whether `surface.backdrop` (canvas gaps, unfocused pane frames) always tracks the host
     /// terminal's own background instead of the active theme's authored value. Overrides any
     /// theme, including a custom file that already sets a concrete `backdrop`.
     pub background_follows_terminal: bool,
-    /// App-wide border glyphs for tiled panes.
+    /// Border glyphs for tiled panes.
     pub border_style: PaneBorderStyle,
+    /// Border glyphs for floating panes and popups. Defaults to double so a layer above the tiles
+    /// stays visually distinct from tiled frames.
+    pub float_border_style: PaneBorderStyle,
+    /// Border glyphs for scratchpad panes. A config that omits this key inherits `float_border_style`.
+    pub scratch_border_style: PaneBorderStyle,
+    /// Border glyphs for fullscreen panes. A config that omits this key inherits `border_style`.
+    pub fullscreen_border_style: PaneBorderStyle,
+    /// Border glyphs for command palettes, Settings, Help, Search, and the other pickers.
+    pub picker_border_style: PaneBorderStyle,
     /// Blank cells inserted between a pane's border and its terminal grid, as
     /// `(top, right, bottom, left)`. Purely cosmetic: each cell of padding costs a column/row of
     /// usable terminal space, so this stays off by default. Painted with the pane's frame
@@ -618,6 +628,10 @@ impl Default for PaneConfig {
             keep_special_borders: true,
             background_follows_terminal: false,
             border_style: PaneBorderStyle::Rounded,
+            float_border_style: PaneBorderStyle::Double,
+            scratch_border_style: PaneBorderStyle::Double,
+            fullscreen_border_style: PaneBorderStyle::Rounded,
+            picker_border_style: PaneBorderStyle::Rounded,
             padding: (0, 0, 0, 0),
             title_style: CapStyle::Padded,
             workbar_badge_style: CapStyle::Padded,
@@ -2098,6 +2112,23 @@ mod tests {
         assert_eq!(PaneConfig::default().resize_debounce_ms, 16);
         assert!(PaneConfig::default().show_titles);
         assert_eq!(PaneConfig::default().border_mode, PaneBorderMode::Separate);
+        assert_eq!(PaneConfig::default().border_style, PaneBorderStyle::Rounded);
+        assert_eq!(
+            PaneConfig::default().float_border_style,
+            PaneBorderStyle::Double
+        );
+        assert_eq!(
+            PaneConfig::default().scratch_border_style,
+            PaneBorderStyle::Double
+        );
+        assert_eq!(
+            PaneConfig::default().fullscreen_border_style,
+            PaneBorderStyle::Rounded
+        );
+        assert_eq!(
+            PaneConfig::default().picker_border_style,
+            PaneBorderStyle::Rounded
+        );
         assert!(PaneConfig::default().keep_special_borders);
         assert!(PaneConfig::default().highlight_focused_titlebar);
     }

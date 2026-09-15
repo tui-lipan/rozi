@@ -39,6 +39,11 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     enabled_status(pane.background_follows_terminal),
                     ToggleBackgroundFollowsTerminal,
                 ),
+                (
+                    "Picker border",
+                    pane.picker_border_style.label().to_string(),
+                    CyclePickerBorderStyle,
+                ),
             ],
         ),
         settings_group(
@@ -130,6 +135,21 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     "Border style",
                     pane.border_style.label().to_string(),
                     CycleBorderStyle,
+                ),
+                (
+                    "Floating border",
+                    pane.float_border_style.label().to_string(),
+                    CycleFloatBorderStyle,
+                ),
+                (
+                    "Scratchpad border",
+                    pane.scratch_border_style.label().to_string(),
+                    CycleScratchBorderStyle,
+                ),
+                (
+                    "Fullscreen border",
+                    pane.fullscreen_border_style.label().to_string(),
+                    CycleFullscreenBorderStyle,
                 ),
                 (
                     "Open/close animation",
@@ -375,7 +395,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
     let panel: Element = Frame::new()
         .header_left("Settings")
         .header_style(ctx.state.theme.accent.bold())
-        .border_style(BorderStyle::Rounded)
+        .border_style(overlay_border_style(ctx))
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))
         .height(Length::Auto)

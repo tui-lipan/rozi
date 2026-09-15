@@ -104,8 +104,18 @@
 # none = no frames, dividers = lines along internal splits only.
 #border_mode = "separate"
 #alert_border = "pulse"
-# Frame glyphs for separate/merged: rounded, plain, double, thick.
+# Frame glyphs for tiled panes: rounded, plain, double, thick, or a dashed style
+# (light-double-dashed, heavy-double-dashed, light-triple-dashed, heavy-triple-dashed,
+# light-quadruple-dashed, heavy-quadruple-dashed).
 #border_style = "rounded"
+# Floating and popup frames. Defaults to double so they stay distinct from tiles.
+#float_border_style = "double"
+# Scratchpad frames. Omit to follow float_border_style.
+#scratch_border_style = "double"
+# Fullscreen frames. Omit to follow border_style.
+#fullscreen_border_style = "rounded"
+# Command palette, Settings, Help, Search, and the other pickers.
+#picker_border_style = "rounded"
 # Keep frames around floating panes, popups, and the scratchpad even in none/dividers,
 # where nothing else marks the edge of a pane floating above the tiles.
 #keep_special_borders = true

@@ -629,6 +629,30 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::CycleBorderStyle => {
             format!("Border style: {}", state.config.pane.border_style.label())
         }
+        Action::CycleFloatBorderStyle => {
+            format!(
+                "Floating border style: {}",
+                state.config.pane.float_border_style.label()
+            )
+        }
+        Action::CycleScratchBorderStyle => {
+            format!(
+                "Scratchpad border style: {}",
+                state.config.pane.scratch_border_style.label()
+            )
+        }
+        Action::CycleFullscreenBorderStyle => {
+            format!(
+                "Fullscreen border style: {}",
+                state.config.pane.fullscreen_border_style.label()
+            )
+        }
+        Action::CyclePickerBorderStyle => {
+            format!(
+                "Picker border style: {}",
+                state.config.pane.picker_border_style.label()
+            )
+        }
         Action::CycleTitlebar => {
             format!("Titlebar layout: {}", state.config.pane.titlebar.label())
         }
@@ -1111,6 +1135,10 @@ mod tests {
         assert!(!is_palette_eligible("toggle-highlight-focused-border"));
         assert!(!is_palette_eligible("cycle-border-mode"));
         assert!(!is_palette_eligible("cycle-border-style"));
+        assert!(!is_palette_eligible("cycle-float-border-style"));
+        assert!(!is_palette_eligible("cycle-scratch-border-style"));
+        assert!(!is_palette_eligible("cycle-fullscreen-border-style"));
+        assert!(!is_palette_eligible("cycle-picker-border-style"));
     }
 
     #[test]

@@ -348,12 +348,34 @@ fn settings_activate_dir(
             execute_action(ctx, Action::CycleBorderMode);
         }
         CycleBorderStyle if reverse => {
-            let value = ctx.state.config.pane.border_style.prev();
-            ctx.state.config.pane.border_style = value;
-            persist_pane_string_or_toast(ctx, "border_style", value.id());
+            crate::ops::preferences::reverse_border_style(ctx);
         }
         CycleBorderStyle => {
             execute_action(ctx, Action::CycleBorderStyle);
+        }
+        CycleFloatBorderStyle if reverse => {
+            crate::ops::preferences::reverse_float_border_style(ctx);
+        }
+        CycleFloatBorderStyle => {
+            execute_action(ctx, Action::CycleFloatBorderStyle);
+        }
+        CycleScratchBorderStyle if reverse => {
+            crate::ops::preferences::reverse_scratch_border_style(ctx);
+        }
+        CycleScratchBorderStyle => {
+            execute_action(ctx, Action::CycleScratchBorderStyle);
+        }
+        CycleFullscreenBorderStyle if reverse => {
+            crate::ops::preferences::reverse_fullscreen_border_style(ctx);
+        }
+        CycleFullscreenBorderStyle => {
+            execute_action(ctx, Action::CycleFullscreenBorderStyle);
+        }
+        CyclePickerBorderStyle if reverse => {
+            crate::ops::preferences::reverse_picker_border_style(ctx);
+        }
+        CyclePickerBorderStyle => {
+            execute_action(ctx, Action::CyclePickerBorderStyle);
         }
         ToggleBellUrgency => {
             ctx.state.config.notifications.bell = !ctx.state.config.notifications.bell;

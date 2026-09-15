@@ -165,7 +165,11 @@ See [Layouts and panes](layouts-and-panes.md).
 | `titlebar` | string | `"bar"` | `"bar"`, `"border"`, `"integrated"`, or `"inset"`. |
 | `border_mode` | string | `"separate"` | `"separate"`, `"merged"`, `"none"`, or `"dividers"`. |
 | `alert_border` | string | `"pulse"` | `"off"`, `"static"`, or `"pulse"`. |
-| `border_style` | string | `"rounded"` | `"rounded"`, `"plain"`, `"double"`, or `"thick"`. Applies to framed modes. |
+| `border_style` | string | `"rounded"` | Tiled pane frame glyphs: `"rounded"`, `"plain"`, `"double"`, `"thick"`, `"light-double-dashed"`, `"heavy-double-dashed"`, `"light-triple-dashed"`, `"heavy-triple-dashed"`, `"light-quadruple-dashed"`, `"heavy-quadruple-dashed"`. Applies to framed modes. |
+| `float_border_style` | string | `"double"` | Same tokens as `border_style`. Floating panes and popups. |
+| `scratch_border_style` | string | `float_border_style` | Same tokens as `border_style`. Scratchpad panes. Omitted, it follows `float_border_style`. |
+| `fullscreen_border_style` | string | `border_style` | Same tokens as `border_style`. Omitted, it follows `border_style`. |
+| `picker_border_style` | string | `"rounded"` | Same tokens as `border_style`. Command palette, Settings, Help, Search, and the other pickers. |
 | `keep_special_borders` | bool | `true` | Keeps frames on floating panes, popups, and scratchpads in borderless modes. |
 | `padding` | integer or integer array | `0` | One value, `[vertical, horizontal]`, or `[top, right, bottom, left]`. Each side is clamped to `0..=8`. |
 | `title_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, or `"arrow"`. |

@@ -142,6 +142,14 @@ Submitting an empty pane name clears the custom title. `[pane] titlebar` selects
 With `[pane] hold_on_exit = true`, an exited pane stays in its layout slot. Run **Respawn exited
 pane** from the command palette to restart its saved launch command and working directory.
 
+## Borders
+
+`[pane] border_mode` chooses separate frames, merged frames, none, or split dividers. Frame glyphs
+are five settings: tiled panes use `border_style`; floating panes and popups use
+`float_border_style`; scratchpad panes use `scratch_border_style`; fullscreen panes use
+`fullscreen_border_style`; pickers use `picker_border_style`. See
+[Configuration](configuration.md#pane).
+
 ## Workspaces
 
 Rozi has nine workspaces.

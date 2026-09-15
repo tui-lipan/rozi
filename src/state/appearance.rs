@@ -78,14 +78,20 @@ impl PaneTitlebarMode {
     }
 }
 
-/// The border glyphs tiled panes draw. A single app-wide setting (`Action::CycleBorderStyle`),
-/// not per-pane. Floating panes keep their own `Double` border so they stay visually distinct.
+/// Frame glyphs for pane and picker chrome. Tiled, floating, scratchpad, fullscreen, and picker
+/// borders each store their own value; cycling one does not move the others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaneBorderStyle {
     Rounded,
     Plain,
     Double,
     Thick,
+    LightDoubleDashed,
+    HeavyDoubleDashed,
+    LightTripleDashed,
+    HeavyTripleDashed,
+    LightQuadrupleDashed,
+    HeavyQuadrupleDashed,
 }
 
 /// Structural presentation of pane borders. Glyph shape remains independently controlled by
@@ -303,9 +309,20 @@ impl PaneBorderMode {
 }
 
 impl PaneBorderStyle {
-    /// Cycle order for `Action::CycleBorderStyle`.
+    /// Cycle order for the border-style settings rows.
     pub fn all() -> &'static [PaneBorderStyle] {
-        &[Self::Rounded, Self::Plain, Self::Double, Self::Thick]
+        &[
+            Self::Rounded,
+            Self::Plain,
+            Self::Double,
+            Self::Thick,
+            Self::LightDoubleDashed,
+            Self::HeavyDoubleDashed,
+            Self::LightTripleDashed,
+            Self::HeavyTripleDashed,
+            Self::LightQuadrupleDashed,
+            Self::HeavyQuadrupleDashed,
+        ]
     }
 
     /// Config token and persisted value.
@@ -315,6 +332,12 @@ impl PaneBorderStyle {
             Self::Plain => "plain",
             Self::Double => "double",
             Self::Thick => "thick",
+            Self::LightDoubleDashed => "light-double-dashed",
+            Self::HeavyDoubleDashed => "heavy-double-dashed",
+            Self::LightTripleDashed => "light-triple-dashed",
+            Self::HeavyTripleDashed => "heavy-triple-dashed",
+            Self::LightQuadrupleDashed => "light-quadruple-dashed",
+            Self::HeavyQuadrupleDashed => "heavy-quadruple-dashed",
         }
     }
 
@@ -324,20 +347,43 @@ impl PaneBorderStyle {
             Self::Plain => "Plain",
             Self::Double => "Double",
             Self::Thick => "Thick",
+            Self::LightDoubleDashed => "Light dashed",
+            Self::HeavyDoubleDashed => "Heavy dashed",
+            Self::LightTripleDashed => "Light triple dashed",
+            Self::HeavyTripleDashed => "Heavy triple dashed",
+            Self::LightQuadrupleDashed => "Light quadruple dashed",
+            Self::HeavyQuadrupleDashed => "Heavy quadruple dashed",
         }
     }
 
+    pub fn expected_ids() -> String {
+        Self::all()
+            .iter()
+            .map(|style| style.id())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     pub fn parse(value: &str) -> Option<Self> {
-        match value
-            .trim()
-            .to_ascii_lowercase()
-            .replace(['_', ' '], "-")
-            .as_str()
+        let normalized = value.trim().to_ascii_lowercase().replace(['_', ' '], "-");
+        if let Some(style) = Self::all()
+            .iter()
+            .copied()
+            .find(|style| style.id() == normalized)
         {
-            "rounded" | "round" => Some(Self::Rounded),
-            "plain" | "single" | "square" => Some(Self::Plain),
-            "double" => Some(Self::Double),
-            "thick" | "heavy" | "bold" => Some(Self::Thick),
+            return Some(style);
+        }
+        match normalized.as_str() {
+            "round" => Some(Self::Rounded),
+            "single" | "square" => Some(Self::Plain),
+            "heavy" | "bold" => Some(Self::Thick),
+            "dashed" | "light-dashed" | "double-dashed" => Some(Self::LightDoubleDashed),
+            "heavy-dashed" => Some(Self::HeavyDoubleDashed),
+            "triple-dashed" => Some(Self::LightTripleDashed),
+            "quadruple-dashed" | "quad-dashed" | "light-quad-dashed" => {
+                Some(Self::LightQuadrupleDashed)
+            }
+            "heavy-quad-dashed" => Some(Self::HeavyQuadrupleDashed),
             _ => None,
         }
     }
@@ -356,6 +402,12 @@ impl PaneBorderStyle {
             Self::Plain => BorderStyle::Plain,
             Self::Double => BorderStyle::Double,
             Self::Thick => BorderStyle::Thick,
+            Self::LightDoubleDashed => BorderStyle::LightDoubleDashed,
+            Self::HeavyDoubleDashed => BorderStyle::HeavyDoubleDashed,
+            Self::LightTripleDashed => BorderStyle::LightTripleDashed,
+            Self::HeavyTripleDashed => BorderStyle::HeavyTripleDashed,
+            Self::LightQuadrupleDashed => BorderStyle::LightQuadrupleDashed,
+            Self::HeavyQuadrupleDashed => BorderStyle::HeavyQuadrupleDashed,
         }
     }
 }
@@ -715,6 +767,38 @@ pub struct ThemePickerPreview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn border_styles_parse_and_cycle_every_tui_lipan_style() {
+        for style in PaneBorderStyle::all() {
+            assert_eq!(PaneBorderStyle::parse(style.id()), Some(*style));
+            assert_eq!(style.prev().next(), *style);
+        }
+        assert_eq!(
+            PaneBorderStyle::parse("round"),
+            Some(PaneBorderStyle::Rounded)
+        );
+        assert_eq!(
+            PaneBorderStyle::parse("dashed"),
+            Some(PaneBorderStyle::LightDoubleDashed)
+        );
+        assert_eq!(
+            PaneBorderStyle::parse("heavy"),
+            Some(PaneBorderStyle::Thick)
+        );
+        assert_eq!(
+            PaneBorderStyle::Thick.next(),
+            PaneBorderStyle::LightDoubleDashed
+        );
+        assert_eq!(
+            PaneBorderStyle::HeavyQuadrupleDashed.next(),
+            PaneBorderStyle::Rounded
+        );
+        assert_eq!(
+            PaneBorderStyle::LightDoubleDashed.to_border_style(),
+            BorderStyle::LightDoubleDashed
+        );
+    }
 
     #[test]
     fn border_modes_parse_and_cycle() {

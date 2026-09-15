@@ -1,7 +1,10 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::state::{ToastChannel, cap_style_id, next_badge_cap_style, next_cap_style};
+use crate::config::PaneConfig;
+use crate::state::{
+    PaneBorderStyle, ToastChannel, cap_style_id, next_badge_cap_style, next_cap_style,
+};
 
 fn persist_pane_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_pane_flag(key, value) {
@@ -213,9 +216,101 @@ pub(crate) fn toggle_background_follows_terminal(ctx: &mut Context<AppRoot>) -> 
 }
 
 pub(crate) fn cycle_border_style(ctx: &mut Context<AppRoot>) -> Update {
-    let next = ctx.state.config.pane.border_style.next();
-    ctx.state.config.pane.border_style = next;
-    persist_pane_string_or_toast(ctx, "border_style", next.id());
+    step_pane_border_style(ctx, |pane| &mut pane.border_style, "border_style", false)
+}
+
+pub(crate) fn reverse_border_style(ctx: &mut Context<AppRoot>) -> Update {
+    step_pane_border_style(ctx, |pane| &mut pane.border_style, "border_style", true)
+}
+
+pub(crate) fn cycle_float_border_style(ctx: &mut Context<AppRoot>) -> Update {
+    step_pane_border_style(
+        ctx,
+        |pane| &mut pane.float_border_style,
+        "float_border_style",
+        false,
+    )
+}
+
+pub(crate) fn reverse_float_border_style(ctx: &mut Context<AppRoot>) -> Update {
+    step_pane_border_style(
+        ctx,
+        |pane| &mut pane.float_border_style,
+        "float_border_style",
+        true,
+    )
+}
+
+pub(crate) fn cycle_scratch_border_style(ctx: &mut Context<AppRoot>) -> Update {
+    step_pane_border_style(
+        ctx,
+        |pane| &mut pane.scratch_border_style,
+        "scratch_border_style",
+        false,
+    )
+}
+
+pub(crate) fn reverse_scratch_border_style(ctx: &mut Context<AppRoot>) -> Update {
+    step_pane_border_style(
+        ctx,
+        |pane| &mut pane.scratch_border_style,
+        "scratch_border_style",
+        true,
+    )
+}
+
+pub(crate) fn cycle_fullscreen_border_style(ctx: &mut Context<AppRoot>) -> Update {
+    step_pane_border_style(
+        ctx,
+        |pane| &mut pane.fullscreen_border_style,
+        "fullscreen_border_style",
+        false,
+    )
+}
+
+pub(crate) fn reverse_fullscreen_border_style(ctx: &mut Context<AppRoot>) -> Update {
+    step_pane_border_style(
+        ctx,
+        |pane| &mut pane.fullscreen_border_style,
+        "fullscreen_border_style",
+        true,
+    )
+}
+
+pub(crate) fn cycle_picker_border_style(ctx: &mut Context<AppRoot>) -> Update {
+    step_pane_border_style(
+        ctx,
+        |pane| &mut pane.picker_border_style,
+        "picker_border_style",
+        false,
+    )
+}
+
+pub(crate) fn reverse_picker_border_style(ctx: &mut Context<AppRoot>) -> Update {
+    step_pane_border_style(
+        ctx,
+        |pane| &mut pane.picker_border_style,
+        "picker_border_style",
+        true,
+    )
+}
+
+fn step_pane_border_style(
+    ctx: &mut Context<AppRoot>,
+    select: fn(&mut PaneConfig) -> &mut PaneBorderStyle,
+    key: &str,
+    reverse: bool,
+) -> Update {
+    let next = {
+        let current = *select(&mut ctx.state.config.pane);
+        if reverse {
+            current.prev()
+        } else {
+            current.next()
+        }
+    };
+    *select(&mut ctx.state.config.pane) = next;
+    persist_pane_string_or_toast(ctx, key, next.id());
     Update::full()
 }
 

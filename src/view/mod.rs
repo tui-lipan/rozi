@@ -698,15 +698,19 @@ fn search_palette_item_match_style(theme: &Theme) -> Style {
     Style::new().fg(theme.status.info).bold()
 }
 
-/// Shared modal chrome for every overlay: a rounded border, an accent title, and the
+/// Shared modal chrome for every overlay: a configured picker border, an accent title, and the
 /// surface-element background fill so overlays read as solid panels over the workspace.
+pub(crate) fn overlay_border_style(ctx: &Context<AppRoot>) -> BorderStyle {
+    ctx.state.config.pane.picker_border_style.to_border_style()
+}
+
 pub(crate) fn styled_modal(ctx: &Context<AppRoot>, title: &str, width: u16) -> Modal {
     let theme = &ctx.state.theme;
     Modal::new()
         .title(title.to_string())
         .title_style(theme.accent.bold())
         .width(Length::Px(width))
-        .border_style(BorderStyle::Rounded)
+        .border_style(overlay_border_style(ctx))
         .frame_style(Style::new().bg(theme.surface.element))
 }
 

@@ -97,6 +97,10 @@ pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "border",
             "borders",
             "border merge",
+            "floating border",
+            "scratchpad border",
+            "fullscreen border",
+            "picker border",
             "titlebar",
             "titlebars",
             "titlebar style",
@@ -292,9 +296,34 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         ]),
         CycleBorderStyle => alias_list(&[
             "border style",
+            "tiled border",
+            "pane border style",
             "rounded borders",
             "square borders",
+            "dashed borders",
             "border glyphs",
+        ]),
+        CycleFloatBorderStyle => alias_list(&[
+            "floating border",
+            "float border",
+            "popup border",
+            "special pane border",
+        ]),
+        CycleScratchBorderStyle => {
+            alias_list(&["scratchpad border", "scratch border", "dropdown border"])
+        }
+        CycleFullscreenBorderStyle => alias_list(&[
+            "fullscreen border",
+            "full screen border",
+            "maximized border",
+            "maximised border",
+        ]),
+        CyclePickerBorderStyle => alias_list(&[
+            "picker border",
+            "palette border",
+            "modal border",
+            "overlay border",
+            "settings border",
         ]),
         CycleWhichKey => alias_list(&[
             "which key",

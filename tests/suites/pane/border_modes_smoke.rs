@@ -2,7 +2,9 @@
 
 use rozi::AppRoot;
 use rozi::layout::tiling::build_dwindle_tree;
-use rozi::state::{MoveSession, Pane, PaneBorderMode, PaneTitlebarMode, SplitAxis};
+use rozi::state::{
+    MoveSession, Pane, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, SplitAxis,
+};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 
@@ -323,5 +325,63 @@ fn special_pane_frames_are_on_by_default_and_config_only() {
                 "{mode:?} opt-out should drop the floating frame"
             );
         }
+    });
+}
+
+#[test]
+fn pane_border_style_follows_tiled_float_and_fullscreen() {
+    on_large_stack(|| {
+        let mut backend = backend(PaneBorderMode::Separate, 1);
+        {
+            let state = backend.state_mut();
+            state.config.pane.border_style = PaneBorderStyle::Rounded;
+            state.config.pane.float_border_style = PaneBorderStyle::Thick;
+            state.config.pane.fullscreen_border_style = PaneBorderStyle::Double;
+        }
+
+        backend.render();
+        assert!(
+            backend
+                .capture_frame()
+                .cells
+                .iter()
+                .any(|cell| matches!(cell.symbol.as_str(), "╭" | "╮" | "╰" | "╯")),
+            "tiled panes use border_style"
+        );
+
+        {
+            let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+            pane.floating = true;
+            pane.floating_rect = FloatRect {
+                x: 2.0,
+                y: 1.0,
+                w: 20.0,
+                h: 7.0,
+            };
+        }
+        backend.render();
+        assert!(
+            backend
+                .capture_frame()
+                .cells
+                .iter()
+                .any(|cell| matches!(cell.symbol.as_str(), "┏" | "┓" | "┗" | "┛")),
+            "floating panes use float_border_style"
+        );
+
+        {
+            let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+            pane.floating = false;
+            pane.fullscreen = true;
+        }
+        backend.render();
+        assert!(
+            backend
+                .capture_frame()
+                .cells
+                .iter()
+                .any(|cell| matches!(cell.symbol.as_str(), "╔" | "╗" | "╚" | "╝")),
+            "fullscreen panes use fullscreen_border_style"
+        );
     });
 }

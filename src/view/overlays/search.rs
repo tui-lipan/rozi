@@ -13,7 +13,7 @@ pub(crate) fn search_overlay(ctx: &Context<AppRoot>) -> Element {
         .header_left("Search scrollback")
         .header_right(search.status.clone())
         .header_style(ctx.state.theme.accent.bold())
-        .border_style(BorderStyle::Rounded)
+        .border_style(overlay_border_style(ctx))
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))
         .height(Length::Auto)

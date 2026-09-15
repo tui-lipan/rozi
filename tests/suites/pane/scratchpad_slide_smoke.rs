@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use rozi::AppRoot;
 use rozi::layout::anim::GeometryAnimation;
-use rozi::state::{Pane, PaneBorderMode};
+use rozi::state::{Pane, PaneBorderMode, PaneBorderStyle};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
 
@@ -244,6 +244,37 @@ fn the_last_row_lands_with_the_rest_of_the_deploy() {
             settled,
             "the dropdown stopped a row short and crawled the rest:\n{}",
             backend.capture_frame().to_fixed_grid_lines().join("\n")
+        );
+    });
+}
+
+#[test]
+fn scratchpad_border_style_is_independent_of_floating() {
+    on_large_stack(|| {
+        let mut backend = backend();
+        {
+            let pane = &mut backend.state_mut().config.pane;
+            pane.border_style = PaneBorderStyle::Rounded;
+            pane.float_border_style = PaneBorderStyle::Rounded;
+            pane.scratch_border_style = PaneBorderStyle::Thick;
+        }
+        set_visible(&mut backend, true);
+        backend.advance(Duration::from_millis(4_000));
+        let frame = backend.capture_frame();
+        let lines = frame.to_fixed_grid_lines().join("\n");
+        assert!(
+            frame
+                .cells
+                .iter()
+                .any(|cell| matches!(cell.symbol.as_str(), "┏" | "┓" | "┗" | "┛")),
+            "scratchpad should use scratch_border_style:\n{lines}"
+        );
+        assert!(
+            frame
+                .cells
+                .iter()
+                .all(|cell| !matches!(cell.symbol.as_str(), "╔" | "╗" | "╚" | "╝")),
+            "scratchpad should not keep the floating double frame:\n{lines}"
         );
     });
 }

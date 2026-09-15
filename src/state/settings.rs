@@ -29,6 +29,10 @@ pub enum SettingsAction {
     ToggleHighlightFocusedTitlebar,
     CycleBorderMode,
     CycleBorderStyle,
+    CycleFloatBorderStyle,
+    CycleScratchBorderStyle,
+    CycleFullscreenBorderStyle,
+    CyclePickerBorderStyle,
     CyclePaneAnimation,
     ToggleSidebarBackgroundFollowsTerminal,
     ToggleSidebarGap,
@@ -73,6 +77,7 @@ impl SettingsAction {
             Self::CycleWhichKey,
             Self::ToggleFocusOnHover,
             Self::ToggleBackgroundFollowsTerminal,
+            Self::CyclePickerBorderStyle,
             // Titlebar
             Self::ToggleTitles,
             Self::CycleTitlebar,
@@ -92,6 +97,9 @@ impl SettingsAction {
             Self::ToggleHighlightFocusedTitlebar,
             Self::CycleBorderMode,
             Self::CycleBorderStyle,
+            Self::CycleFloatBorderStyle,
+            Self::CycleScratchBorderStyle,
+            Self::CycleFullscreenBorderStyle,
             Self::CyclePaneAnimation,
             // Sidebar
             Self::ToggleSidebarBackgroundFollowsTerminal,
@@ -149,7 +157,14 @@ impl SettingsAction {
             {
                 Some("Needs pane borders")
             }
-            Self::CycleBorderStyle if !pane.border_mode.draws_frames() => {
+            Self::CycleBorderStyle | Self::CycleFullscreenBorderStyle
+                if !pane.border_mode.draws_frames() =>
+            {
+                Some("Unsupported in this mode")
+            }
+            Self::CycleFloatBorderStyle | Self::CycleScratchBorderStyle
+                if !pane.border_mode.draws_frames() && !pane.keep_special_borders =>
+            {
                 Some("Unsupported in this mode")
             }
             Self::CyclePaneAnimation if !config.animations.enabled => Some("Needs animations"),
@@ -264,7 +279,29 @@ mod tests {
                 SettingsAction::CycleBorderStyle.disabled_reason(&config),
                 Some("Unsupported in this mode")
             );
+            assert_eq!(
+                SettingsAction::CycleFullscreenBorderStyle.disabled_reason(&config),
+                Some("Unsupported in this mode")
+            );
+            assert_eq!(
+                SettingsAction::CycleFloatBorderStyle.disabled_reason(&config),
+                None
+            );
+            assert_eq!(
+                SettingsAction::CycleScratchBorderStyle.disabled_reason(&config),
+                None
+            );
         }
+        config.pane.keep_special_borders = false;
+        assert_eq!(
+            SettingsAction::CycleFloatBorderStyle.disabled_reason(&config),
+            Some("Unsupported in this mode")
+        );
+        assert_eq!(
+            SettingsAction::CycleScratchBorderStyle.disabled_reason(&config),
+            Some("Unsupported in this mode")
+        );
+        config.pane.keep_special_borders = true;
         config.pane.border_mode = PaneBorderMode::None;
         assert_eq!(
             SettingsAction::ToggleHighlightFocusedBorder.disabled_reason(&config),

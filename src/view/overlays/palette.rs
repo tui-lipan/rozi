@@ -454,7 +454,7 @@ pub(super) fn wrap_palette(
         .header_left(title.into_owned())
         .header_right(header_right.into_owned())
         .header_style(ctx.state.theme.accent.bold())
-        .border_style(BorderStyle::Rounded)
+        .border_style(overlay_border_style(ctx))
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))
         .height(Length::Auto)

@@ -4,6 +4,12 @@
 
 ### Added
 
+- Pane frames can use every tui-lipan border style, including the dashed ones. Settings now
+  cycles tiled, floating, scratchpad, and fullscreen borders separately (`[pane] border_style`,
+  `float_border_style`, `scratch_border_style`, `fullscreen_border_style`), and one **Picker
+  border** row styles the command palette, Settings, Help, Search, and the other pickers
+  (`picker_border_style`). Floating and the scratchpad still default to double; fullscreen follows
+  tiled unless you set it.
 - A detached session can be driven from a script. `rozi --session <NAME>` in front of a pane
   command sends it to that session server instead of to a running UI, so `dev` can be listed,
   captured, typed into, and grown a pane with nothing attached — from a shell script, a cron job,

@@ -166,6 +166,7 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                     "Which-key",
                     "Focus on hover",
                     "Background follows terminal",
+                    "Picker border",
                 ][..],
                 "Titlebar",
             ),
@@ -196,6 +197,9 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                     "Focused titlebar",
                     "Border mode",
                     "Border style",
+                    "Floating border",
+                    "Scratchpad border",
+                    "Fullscreen border",
                     "Open/close animation",
                 ][..],
                 "Sidebar",
@@ -369,6 +373,29 @@ fn settings_filtered_duplicate_labels_keep_their_group_headers() {
                 .count(),
             3,
             "expected one Blocked row in each alert channel:\n{frame}"
+        );
+    });
+}
+
+#[test]
+fn picker_border_style_changes_settings_frame_glyphs() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 40);
+        let rounded = rendered_rows(&mut backend);
+        assert!(
+            rounded.lines().any(|line| line.contains("╭Settings")),
+            "default picker frame is rounded:\n{rounded}"
+        );
+
+        backend.state_mut().config.pane.picker_border_style = rozi::state::PaneBorderStyle::Plain;
+        let plain = rendered_rows(&mut backend);
+        assert!(
+            plain.lines().any(|line| line.contains("┌Settings")),
+            "plain picker frame should use square corners:\n{plain}"
+        );
+        assert!(
+            !plain.contains("╭Settings"),
+            "rounded corners should be gone:\n{plain}"
         );
     });
 }

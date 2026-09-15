@@ -407,6 +407,10 @@ pub(super) struct PaneFileConfig {
     keep_special_borders: Option<bool>,
     background_follows_terminal: Option<bool>,
     border_style: Option<String>,
+    float_border_style: Option<String>,
+    scratch_border_style: Option<String>,
+    fullscreen_border_style: Option<String>,
+    picker_border_style: Option<String>,
     padding: Option<PaddingSpec>,
     titlebar: Option<String>,
     title_style: Option<String>,
@@ -859,14 +863,44 @@ fn load_config_from_text_with_extensions(
     if let Some(background_follows_terminal) = parsed.pane.background_follows_terminal {
         config.pane.background_follows_terminal = background_follows_terminal;
     }
-    if let Some(border_style) = parsed.pane.border_style.as_deref() {
-        match PaneBorderStyle::parse(border_style) {
-            Some(style) => config.pane.border_style = style,
-            None => warnings.push(format!(
-                "Ignored unknown pane.border_style \"{border_style}\" (expected one of: rounded, plain, double, thick)"
-            )),
-        }
+    apply_pane_border_style(
+        &mut config.pane.border_style,
+        parsed.pane.border_style.as_deref(),
+        "border_style",
+        &mut warnings,
+    );
+    apply_pane_border_style(
+        &mut config.pane.float_border_style,
+        parsed.pane.float_border_style.as_deref(),
+        "float_border_style",
+        &mut warnings,
+    );
+    if parsed.pane.scratch_border_style.is_none() {
+        config.pane.scratch_border_style = config.pane.float_border_style;
+    } else {
+        apply_pane_border_style(
+            &mut config.pane.scratch_border_style,
+            parsed.pane.scratch_border_style.as_deref(),
+            "scratch_border_style",
+            &mut warnings,
+        );
     }
+    if parsed.pane.fullscreen_border_style.is_none() {
+        config.pane.fullscreen_border_style = config.pane.border_style;
+    } else {
+        apply_pane_border_style(
+            &mut config.pane.fullscreen_border_style,
+            parsed.pane.fullscreen_border_style.as_deref(),
+            "fullscreen_border_style",
+            &mut warnings,
+        );
+    }
+    apply_pane_border_style(
+        &mut config.pane.picker_border_style,
+        parsed.pane.picker_border_style.as_deref(),
+        "picker_border_style",
+        &mut warnings,
+    );
     if let Some(padding) = parsed.pane.padding.clone()
         && let Some(resolved) = resolve_pane_padding(padding, &mut warnings)
     {
@@ -1237,6 +1271,24 @@ fn clamp_update_interval(value: u32, warnings: &mut Vec<String>) -> u32 {
     clamped
 }
 
+fn apply_pane_border_style(
+    field: &mut PaneBorderStyle,
+    value: Option<&str>,
+    key: &str,
+    warnings: &mut Vec<String>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    match PaneBorderStyle::parse(value) {
+        Some(style) => *field = style,
+        None => warnings.push(format!(
+            "Ignored unknown pane.{key} \"{value}\" (expected one of: {})",
+            PaneBorderStyle::expected_ids()
+        )),
+    }
+}
+
 pub(super) fn non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -1528,6 +1580,83 @@ mod file_tests {
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
         assert_eq!(parsed.pane.workbar_tab_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_style.as_deref(), Some("half"));
+    }
+
+    #[test]
+    fn pane_border_styles_load_and_fullscreen_inherits_tiling_when_omitted() {
+        let loaded = load_config_from_text(
+            r#"
+            [pane]
+            border_style = "thick"
+            float_border_style = "plain"
+            picker_border_style = "light-double-dashed"
+            "#,
+            Path::new("config.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.config.pane.border_style, PaneBorderStyle::Thick);
+        assert_eq!(
+            loaded.config.pane.float_border_style,
+            PaneBorderStyle::Plain
+        );
+        assert_eq!(
+            loaded.config.pane.scratch_border_style,
+            PaneBorderStyle::Plain
+        );
+        assert_eq!(
+            loaded.config.pane.fullscreen_border_style,
+            PaneBorderStyle::Thick
+        );
+        assert_eq!(
+            loaded.config.pane.picker_border_style,
+            PaneBorderStyle::LightDoubleDashed
+        );
+
+        let loaded = load_config_from_text(
+            r#"
+            [pane]
+            border_style = "thick"
+            fullscreen_border_style = "rounded"
+            "#,
+            Path::new("config.toml"),
+        );
+        assert_eq!(
+            loaded.config.pane.fullscreen_border_style,
+            PaneBorderStyle::Rounded
+        );
+
+        let loaded = load_config_from_text(
+            r#"
+            [pane]
+            float_border_style = "thick"
+            scratch_border_style = "rounded"
+            "#,
+            Path::new("config.toml"),
+        );
+        assert_eq!(
+            loaded.config.pane.float_border_style,
+            PaneBorderStyle::Thick
+        );
+        assert_eq!(
+            loaded.config.pane.scratch_border_style,
+            PaneBorderStyle::Rounded
+        );
+
+        let loaded = load_config_from_text(
+            "[pane]\nborder_style = \"zigzag\"\n",
+            Path::new("config.toml"),
+        );
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(
+            loaded.warnings[0].contains("pane.border_style"),
+            "{:?}",
+            loaded.warnings
+        );
+        assert!(
+            loaded.warnings[0].contains("light-quadruple-dashed"),
+            "{:?}",
+            loaded.warnings
+        );
     }
 
     #[test]

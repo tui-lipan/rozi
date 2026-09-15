@@ -376,12 +376,12 @@ pub(crate) fn render_workspace_panes(
             title_on_divider,
             title_on_seam,
         };
-        let kind = if pane.fullscreen {
+        let kind = if layer.scratch {
+            PaneKind::Scratch
+        } else if pane.fullscreen {
             PaneKind::Fullscreen
         } else if pane.floating {
             PaneKind::Floating
-        } else if layer.scratch {
-            PaneKind::Scratch
         } else {
             PaneKind::Tiled
         };

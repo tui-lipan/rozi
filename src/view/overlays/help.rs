@@ -367,7 +367,7 @@ pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
                 .header_style(theme.accent.bold())
                 .header_content(header)
                 .border(true)
-                .border_style(BorderStyle::Rounded)
+                .border_style(overlay_border_style(ctx))
                 .style(Style::new().bg(theme.surface.element))
                 .padding((0, 1, 1, 1))
                 .height(Length::Auto)
@@ -538,6 +538,10 @@ mod palette_alias_tests {
             "titlebar style",
             "focused titlebar",
             "nerd icons",
+            "floating border",
+            "scratchpad border",
+            "fullscreen border",
+            "picker border",
             "sidebar gap",
             "sidebar background",
             "sidebar tab",

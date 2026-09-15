@@ -103,10 +103,18 @@ pub(crate) fn pane_frame_chrome(
     let border_mode = ctx.state.config.pane.border_mode;
     let show_border = border_mode.draws_frames()
         || (kind.is_special() && ctx.state.config.pane.keep_special_borders);
-    let border_style = if kind.is_special() {
-        BorderStyle::Double
-    } else {
-        ctx.state.config.pane.border_style.to_border_style()
+    let border_style = match kind {
+        PaneKind::Fullscreen => ctx
+            .state
+            .config
+            .pane
+            .fullscreen_border_style
+            .to_border_style(),
+        PaneKind::Scratch => ctx.state.config.pane.scratch_border_style.to_border_style(),
+        PaneKind::Floating | PaneKind::Popup => {
+            ctx.state.config.pane.float_border_style.to_border_style()
+        }
+        PaneKind::Tiled => ctx.state.config.pane.border_style.to_border_style(),
     };
     let alert = border_mode
         .draws_frames()

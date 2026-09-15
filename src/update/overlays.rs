@@ -241,6 +241,12 @@ fn settings_activate_dir(
         ToggleWorkbarGap => {
             execute_action(ctx, Action::ToggleWorkbarGap);
         }
+        ToggleSidebarGap => {
+            execute_action(ctx, Action::ToggleSidebarGap);
+        }
+        ToggleSidebarBackgroundFollowsTerminal => {
+            execute_action(ctx, Action::ToggleSidebarBackgroundFollowsTerminal);
+        }
         CycleWorkbarStyle if reverse => {
             let value = crate::state::prev_cap_style(ctx.state.config.pane.workbar_style);
             ctx.state.config.pane.workbar_style = value;

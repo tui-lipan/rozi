@@ -134,6 +134,21 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
             ],
         ),
         settings_group(
+            "Sidebar",
+            vec![
+                (
+                    "Background follows terminal",
+                    enabled_status(ctx.state.config.sidebar.background_follows_terminal),
+                    ToggleSidebarBackgroundFollowsTerminal,
+                ),
+                (
+                    "Gap",
+                    enabled_status(ctx.state.config.sidebar.gap),
+                    ToggleSidebarGap,
+                ),
+            ],
+        ),
+        settings_group(
             "Alerts",
             vec![
                 (

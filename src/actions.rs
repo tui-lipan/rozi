@@ -441,6 +441,10 @@ fn execute_action_inner(
         Action::ToggleWorkbarPowerline => crate::ops::preferences::toggle_workbar_powerline(ctx),
         Action::ToggleSidebar => crate::update::sidebar::toggle_visible(ctx),
         Action::ToggleSidebarSplit => crate::update::sidebar::toggle_split(ctx),
+        Action::ToggleSidebarGap => crate::ops::preferences::toggle_sidebar_gap(ctx),
+        Action::ToggleSidebarBackgroundFollowsTerminal => {
+            crate::ops::preferences::toggle_sidebar_background_follows_terminal(ctx)
+        }
         Action::FocusSidebar => crate::update::sidebar::focus_body(ctx),
         Action::SidebarNextTab => {
             if ctx.state.sidebar_visible {

@@ -1,5 +1,7 @@
 #[path = "suites/sidebar/sidebar_agents_smoke.rs"]
 mod sidebar_agents_smoke;
+#[path = "suites/sidebar/sidebar_appearance_smoke.rs"]
+mod sidebar_appearance_smoke;
 #[path = "suites/sidebar/sidebar_close_smoke.rs"]
 mod sidebar_close_smoke;
 #[path = "suites/sidebar/sidebar_dialog_dim_smoke.rs"]

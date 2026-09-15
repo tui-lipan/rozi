@@ -130,6 +130,9 @@ pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "which key delay",
             "background follows terminal",
             "terminal background",
+            "sidebar",
+            "sidebar gap",
+            "sidebar background",
             "notifications",
             "sound",
             "sounds",
@@ -256,6 +259,17 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "background follows terminal",
             "terminal background",
             "match terminal",
+        ]),
+        ToggleSidebarBackgroundFollowsTerminal => alias_list(&[
+            "sidebar background",
+            "sidebar terminal background",
+            "match terminal sidebar",
+        ]),
+        ToggleSidebarGap => alias_list(&[
+            "sidebar gap",
+            "sidebar spacing",
+            "tab bar gap",
+            "sidebar tab gap",
         ]),
         CycleBorderStyle => alias_list(&[
             "border style",

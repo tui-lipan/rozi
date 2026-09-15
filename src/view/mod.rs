@@ -450,10 +450,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         let content_width = viewport.w.saturating_sub(sidebar_width);
         // The splitter paints its own handle column outside both children, so it has to be dimmed
         // by hand to keep the seam from staying lit between two dimmed panes.
-        let divider_bg = theme
-            .surface
-            .element
-            .blend_toward(theme.surface.backdrop, 1.0 - sidebar_dim);
+        let divider_bg =
+            sidebar::fill_color(theme, ctx.state.config.sidebar.background_follows_terminal)
+                .blend_toward(theme.surface.backdrop, 1.0 - sidebar_dim);
         let divider_style = Style::new().fg(divider_bg.elevate_by(0.15)).bg(divider_bg);
         // The same window `set_width` clamps to, handed to the splitter so the drag stops there
         // too. Without it the handle follows the pointer past the widest sidebar rozi will draw,

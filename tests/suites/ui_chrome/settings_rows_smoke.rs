@@ -137,7 +137,7 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 #[test]
 fn settings_renders_the_accepted_groups_and_row_labels() {
     on_large_stack(|| {
-        let mut backend = settings_backend(100, 110);
+        let mut backend = settings_backend(100, 120);
         let frame = rendered_rows(&mut backend);
         // Counted from the action list rather than hardcoded, so a row added to one and not the
         // other fails here instead of drifting until someone notices a setting nobody can search.
@@ -189,6 +189,11 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                     "Border style",
                     "Open/close animation",
                 ][..],
+                "Sidebar",
+            ),
+            (
+                "Sidebar",
+                &["Background follows terminal", "Gap"][..],
                 "Alerts",
             ),
             (
@@ -271,7 +276,7 @@ fn settings_does_not_advertise_left_right_stepping() {
 #[test]
 fn settings_reports_startup_and_session_values() {
     on_large_stack(|| {
-        let mut backend = settings_backend(100, 110);
+        let mut backend = settings_backend(100, 120);
         {
             let state = backend.state_mut();
             state.config.session.startup = rozi::config::SessionStartup::Last;
@@ -290,6 +295,29 @@ fn settings_reports_startup_and_session_values() {
         assert!(
             setting_row(&frame, "Resurrect named sessions").contains("Enabled"),
             "resurrect row is misbound:\n{frame}"
+        );
+    });
+}
+
+/// Sidebar chrome lives in its own group, so a shared label with General cannot hide a miswire.
+#[test]
+fn settings_reports_sidebar_values() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 120);
+        {
+            let state = backend.state_mut();
+            state.config.sidebar.background_follows_terminal = true;
+            state.config.sidebar.gap = false;
+        }
+        let frame = rendered_rows(&mut backend);
+        let sidebar = group_rows(&frame, "Sidebar", "Alerts");
+        assert!(
+            setting_row(sidebar, "Background follows terminal").contains("Enabled"),
+            "sidebar backdrop row is misbound:\n{frame}"
+        );
+        assert!(
+            setting_row(sidebar, "Gap").contains("Disabled"),
+            "sidebar gap row is misbound:\n{frame}"
         );
     });
 }

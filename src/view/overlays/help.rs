@@ -512,6 +512,7 @@ mod palette_alias_tests {
             "theme",
             "titlebar",
             "workbar",
+            "sidebar",
             "which key",
             "alerts",
             "notifications",
@@ -537,6 +538,7 @@ mod palette_alias_tests {
             "titlebar style",
             "focused titlebar",
             "nerd icons",
+            "sidebar gap",
         ] {
             assert!(
                 aliases.iter().any(|alias| alias.as_ref() == term),

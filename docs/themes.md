@@ -68,6 +68,14 @@ background_follows_terminal = true
 This keeps the chosen theme but replaces its backdrop with the host terminal's reported background.
 Rozi queries the color at startup. Restart after changing the host terminal theme.
 
+The sidebar has the same switch of its own. Off, it keeps the elevated panel fill; on, it uses that
+canvas backdrop:
+
+```toml
+[sidebar]
+background_follows_terminal = true
+```
+
 ## Create a custom theme
 
 Place a TOML file in `~/.config/rozi/themes/`. The filename is the theme id:

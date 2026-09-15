@@ -29,6 +29,8 @@ pub enum SettingsAction {
     CycleBorderMode,
     CycleBorderStyle,
     CyclePaneAnimation,
+    ToggleSidebarBackgroundFollowsTerminal,
+    ToggleSidebarGap,
     ToggleBellUrgency,
     CycleAlertBorder,
     CycleWorkbarAlert,
@@ -87,6 +89,9 @@ impl SettingsAction {
             Self::CycleBorderMode,
             Self::CycleBorderStyle,
             Self::CyclePaneAnimation,
+            // Sidebar
+            Self::ToggleSidebarBackgroundFollowsTerminal,
+            Self::ToggleSidebarGap,
             // Alerts
             Self::ToggleBellUrgency,
             Self::CycleAlertBorder,

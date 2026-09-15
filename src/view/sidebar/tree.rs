@@ -16,6 +16,7 @@ pub(super) fn tree_tab(
     config: &SidebarTreeConfig,
 ) -> Element {
     let theme = &ctx.state.theme;
+    let fill = super::fill(ctx);
     let Some(root) = root_for(ctx, config.root) else {
         return super::placeholder(ctx, empty_reason(ctx, config.root));
     };
@@ -27,7 +28,7 @@ pub(super) fn tree_tab(
     let explorer_focus_key = format!("{}-explorer", tree_key(panel, view, &root));
 
     // The same lift the composed row lists use, so the cursor means one thing across every tab.
-    let selection = super::row_highlight(theme);
+    let selection = super::row_highlight(fill);
 
     let mut tree = FileTree::new(root.clone())
         .show_hidden(config.show_hidden)
@@ -51,7 +52,7 @@ pub(super) fn tree_tab(
         .max_entries_per_dir(config.max_entries)
         .indent_style(IndentStyle::Short)
         .indent_width(1)
-        .indent_guide_style(Style::new().fg(theme.surface.element.elevate_by(0.15)))
+        .indent_guide_style(Style::new().fg(fill.elevate_by(0.15)))
         .change_view(if changed_only {
             FileTreeChangeView::ChangedOnly
         } else {
@@ -102,7 +103,7 @@ pub(super) fn tree_tab(
         // The tree's rows are flush with the panel, but this is a message, not a row: it lines up
         // with every other tab's empty state instead — the same inset `placeholder` uses.
         .empty_text_padding(super::PLACEHOLDER_PADDING)
-        .item_hover_style(super::row_highlight(theme))
+        .item_hover_style(super::row_highlight(fill))
         .selection_style(selection)
         // With the keyboard elsewhere the cursor leaves no mark: a click here is a one-shot action,
         // not a "this row is now current" state, and a highlight parked on the last-clicked file

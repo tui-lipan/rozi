@@ -110,6 +110,12 @@ pub(super) fn apply_sidebar_config(
             )),
         }
     }
+    if let Some(background_follows_terminal) = raw.background_follows_terminal {
+        sidebar.background_follows_terminal = background_follows_terminal;
+    }
+    if let Some(gap) = raw.gap {
+        sidebar.gap = gap;
+    }
     let custom_tabs = raw.tabs.is_some();
     if let Some(tabs) = raw.tabs {
         sidebar.tabs = build_tabs(tabs, warnings);
@@ -501,6 +507,8 @@ mod tests {
         assert_eq!(config.position, SidebarPosition::Left);
         assert!(config.split);
         assert_eq!(config.split_ratio, 0.4);
+        assert!(!config.background_follows_terminal);
+        assert!(config.gap);
         assert_eq!(
             config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>(),
             vec![
@@ -522,6 +530,15 @@ mod tests {
                 vec![SidebarTabId::new("files"), SidebarTabId::new("git")],
             ]
         );
+    }
+
+    #[test]
+    fn appearance_flags_apply_without_replacing_the_tab_catalog() {
+        let (config, warnings) = parse("background_follows_terminal = true\ngap = false\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(config.background_follows_terminal);
+        assert!(!config.gap);
+        assert_eq!(config.panels, SidebarConfig::default().panels);
     }
 
     #[test]

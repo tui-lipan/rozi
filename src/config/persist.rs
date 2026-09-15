@@ -279,6 +279,10 @@ pub fn persist_sidebar_split(split: bool) -> std::result::Result<PathBuf, String
     persist_sidebar_value("split", if split { "true" } else { "false" })
 }
 
+pub fn persist_sidebar_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    persist_bool("sidebar", key, value)
+}
+
 pub fn persist_sidebar_panels(
     panels: &[Vec<super::schema::SidebarTabId>],
 ) -> std::result::Result<PathBuf, String> {

@@ -17,10 +17,9 @@ use crate::{AppRoot, Msg};
 /// frame of the slide instead.
 pub(super) fn sidebar(ctx: &Context<AppRoot>, width: u16) -> Element {
     let theme = &ctx.state.theme;
+    let fill = fill_color(theme, ctx.state.config.sidebar.background_follows_terminal);
     let panels: Element = if ctx.state.sidebar.panels.len() > 1 {
-        let divider_style = Style::new()
-            .fg(theme.surface.element.elevate_by(0.15))
-            .bg(theme.surface.element);
+        let divider_style = Style::new().fg(fill.elevate_by(0.15)).bg(fill);
         Splitter::horizontal()
             .split_id("rozi-sidebar-panels")
             .weights(vec![
@@ -35,12 +34,7 @@ pub(super) fn sidebar(ctx: &Context<AppRoot>, width: u16) -> Element {
             .handle_symbol('─')
             .handle_style(divider_style)
             .handle_hover_style(divider_style)
-            .handle_active_style(
-                Style::new()
-                    .fg(theme.border_active)
-                    .bg(theme.surface.element)
-                    .bold(),
-            )
+            .handle_active_style(Style::new().fg(theme.border_active).bg(fill).bold())
             .on_resize(ctx.link().callback(Msg::SidebarPanelsResized))
             .child(panel(ctx, 0))
             .child(panel(ctx, 1))
@@ -52,12 +46,7 @@ pub(super) fn sidebar(ctx: &Context<AppRoot>, width: u16) -> Element {
     Frame::new()
         .border(false)
         .padding(0)
-        .style(
-            ctx.state
-                .theme
-                .primary
-                .patch(Style::new().bg(ctx.state.theme.surface.element)),
-        )
+        .style(ctx.state.theme.primary.patch(Style::new().bg(fill)))
         .width(Length::Px(width))
         .height(Length::Flex(1))
         .child(panels)
@@ -74,12 +63,10 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .and_then(|id| tabs.iter().position(|tab| tab.id() == *id))
         .unwrap_or(0);
     let bar_id = panel_bar_id(panel);
-    let hover_style = Style::new().fg(ctx.state.theme.surface.menu).bg(ctx
-        .state
-        .theme
-        .surface
-        .element
-        .elevate_by(0.08));
+    let fill = fill(ctx);
+    let hover_style = Style::new()
+        .fg(ctx.state.theme.surface.menu)
+        .bg(fill.elevate_by(0.08));
     let tab_bar = DraggableTabBar::new()
         .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
         .active(active)
@@ -98,11 +85,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         // tab label carries, so the hint starts in the same column a tab would.
         .empty_text(" Drag tabs here")
         .empty_text_style(super::fg_only(&ctx.state.theme.muted))
-        .style(
-            Style::new()
-                .fg(ctx.state.theme.surface.menu)
-                .bg(ctx.state.theme.surface.element),
-        )
+        .style(Style::new().fg(ctx.state.theme.surface.menu).bg(fill))
         .active_style(
             Style::new()
                 .fg(ctx.state.theme.surface.backdrop)
@@ -112,12 +95,9 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .tab_hover_style(hover_style)
         .overflow_style(Style::new().fg(ctx.state.theme.border_active))
         .overflow_hover_style(
-            Style::new().fg(ctx.state.theme.border_active).bg(ctx
-                .state
-                .theme
-                .surface
-                .element
-                .elevate_by(0.08)),
+            Style::new()
+                .fg(ctx.state.theme.border_active)
+                .bg(fill.elevate_by(0.08)),
         )
         .on_change(
             ctx.link()
@@ -141,18 +121,11 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
     };
 
     VStack::new()
-        .gap(0)
+        .gap(u16::from(ctx.state.config.sidebar.gap))
         .width(Length::Flex(1))
         .height(Length::Flex(1))
         .child(tab_bar)
-        .child(
-            VStack::new()
-                .gap(0)
-                .padding((1, 0, 0, 0))
-                .width(Length::Flex(1))
-                .height(Length::Flex(1))
-                .child(body),
-        )
+        .child(body)
         .into()
 }
 
@@ -485,8 +458,23 @@ pub(super) fn scrollbar_config() -> ScrollbarConfig {
 ///
 /// Pointer hover is a *transform* of the same size rather than this style, so hovering a row that
 /// is already active or already under the cursor still reads as a change.
-pub(super) fn row_highlight(theme: &Theme) -> Style {
-    Style::new().bg(theme.surface.element.elevate_by(super::HOVER_LIFT))
+pub(super) fn row_highlight(fill: Color) -> Style {
+    Style::new().bg(fill.elevate_by(super::HOVER_LIFT))
+}
+
+pub(crate) fn fill_color(theme: &Theme, follow_terminal: bool) -> Color {
+    if follow_terminal {
+        theme.surface.backdrop
+    } else {
+        theme.surface.element
+    }
+}
+
+pub(super) fn fill(ctx: &Context<AppRoot>) -> Color {
+    fill_color(
+        &ctx.state.theme,
+        ctx.state.config.sidebar.background_follows_terminal,
+    )
 }
 
 /// Where an empty tab's message sits. One cell in, so a sentence never starts hard against the
@@ -524,5 +512,12 @@ mod tests {
 
         // Out of range stays addressable rather than panicking or losing the number.
         assert_eq!(workspace_badge(&state, 99), "100");
+    }
+
+    #[test]
+    fn fill_tracks_the_follow_terminal_flag() {
+        let theme = Theme::default();
+        assert_eq!(fill_color(&theme, false), theme.surface.element);
+        assert_eq!(fill_color(&theme, true), theme.surface.backdrop);
     }
 }

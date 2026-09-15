@@ -606,6 +606,20 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::ToggleSidebarGap,
+        label: "Sidebar gap",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::ToggleSidebarBackgroundFollowsTerminal,
+        label: "Sidebar background follows terminal",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::FocusSidebar,
         label: "Focus sidebar",
         category: "Sidebar",

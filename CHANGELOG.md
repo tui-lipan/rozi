@@ -42,6 +42,9 @@
 ### Changed
 
 - Settings no longer lists Extensions. Open the manager from the command palette.
+- Settings gains a Sidebar group. **Background follows terminal** paints the column with the canvas
+  backdrop instead of the elevated panel fill, and **Gap** keeps or drops the blank row between each
+  tab bar and its list. Both write `[sidebar]`.
 - Session protocol 6. The wire carries one new request and one new reply for the above; as ever,
   client and server must be the same build, so restart a session server after upgrading.
 - `metrics` counts attached clients rather than open sockets. A discovery probe and a headless

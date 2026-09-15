@@ -530,6 +530,11 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleSidebarSplit => {
             enable_disable_label("sidebar split", state.config.sidebar.split)
         }
+        Action::ToggleSidebarGap => enable_disable_label("sidebar gap", state.config.sidebar.gap),
+        Action::ToggleSidebarBackgroundFollowsTerminal => enable_disable_label(
+            "sidebar background follows terminal",
+            state.config.sidebar.background_follows_terminal,
+        ),
         Action::ToggleAnimations => {
             enable_disable_label("animations", state.config.animations.enabled)
         }

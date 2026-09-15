@@ -317,6 +317,10 @@
 #split = true
 # Fraction of split-sidebar height given to the top panel, clamped to 0.15-0.85.
 #split_ratio = 0.4
+# Paint the sidebar with the canvas backdrop instead of the elevated panel fill.
+#background_follows_terminal = false
+# One blank row between each panel's tab bar and its list.
+#gap = true
 
 [workbar]
 # Segment kinds: title, workspaces, location, session, clock, layout, activity,

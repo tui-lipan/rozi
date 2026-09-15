@@ -1502,6 +1502,10 @@ pub struct SidebarConfig {
     pub split: bool,
     /// Fraction of the split sidebar height assigned to the top panel.
     pub split_ratio: f32,
+    /// Paints the sidebar with the canvas backdrop instead of the elevated panel fill.
+    pub background_follows_terminal: bool,
+    /// Keeps one row between each panel's tab bar and its list.
+    pub gap: bool,
 }
 
 impl Default for SidebarConfig {
@@ -1536,6 +1540,8 @@ impl Default for SidebarConfig {
             // The bottom panel starts larger: a repository has far more rows to show than a
             // session has agents and panes.
             split_ratio: 0.4,
+            background_follows_terminal: false,
+            gap: true,
         }
     }
 }

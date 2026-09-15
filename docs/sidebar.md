@@ -47,6 +47,8 @@ tabs = ["activity", "panes", "sessions", "files", "git"]
 panels = [["activity", "panes", "sessions"], ["files", "git"]]
 split = true
 split_ratio = 0.5
+background_follows_terminal = false
+gap = true
 ```
 
 `tabs` declares available tab definitions. `panels` assigns those stable tab ids to the top and
@@ -54,8 +56,10 @@ bottom panel. If `tabs` is set without `panels`, all tabs use one panel. Duplica
 first are ignored.
 
 Set `split = false` to display one panel while retaining the two saved groups. Set `position` to
-`"right"` to move the sidebar. See [Configuration](configuration.md#sidebar) for defaults, size
-limits, tree options, and custom tab syntax. A complete example is in
+`"right"` to move the sidebar. `background_follows_terminal` paints the sidebar with the canvas
+backdrop instead of the elevated panel fill. `gap` keeps one blank row between each tab bar and
+its list. See [Configuration](configuration.md#sidebar) for defaults, size limits, tree options,
+and custom tab syntax. A complete example is in
 [`examples/sidebar.toml`](../examples/sidebar.toml).
 
 ## Activity

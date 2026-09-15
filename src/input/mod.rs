@@ -87,6 +87,8 @@ pub enum Action {
     ToggleWorkbarPowerline,
     ToggleSidebar,
     ToggleSidebarSplit,
+    ToggleSidebarGap,
+    ToggleSidebarBackgroundFollowsTerminal,
     /// Move keyboard focus into the sidebar's row list. The sidebar is outside the Tab ring and
     /// click-to-focus, so this is the only way in.
     FocusSidebar,
@@ -201,6 +203,8 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::ToggleWorkbarPowerline,
     Action::ToggleSidebar,
     Action::ToggleSidebarSplit,
+    Action::ToggleSidebarGap,
+    Action::ToggleSidebarBackgroundFollowsTerminal,
     Action::FocusSidebar,
     Action::SidebarNextTab,
     Action::SidebarPrevTab,
@@ -312,6 +316,10 @@ impl Action {
             Action::ToggleWorkbarPowerline => "toggle-workbar-powerline",
             Action::ToggleSidebar => "toggle-sidebar",
             Action::ToggleSidebarSplit => "toggle-sidebar-split",
+            Action::ToggleSidebarGap => "toggle-sidebar-gap",
+            Action::ToggleSidebarBackgroundFollowsTerminal => {
+                "toggle-sidebar-background-follows-terminal"
+            }
             Action::FocusSidebar => "focus-sidebar",
             Action::SidebarNextTab => "sidebar-next-tab",
             Action::SidebarPrevTab => "sidebar-prev-tab",

@@ -16,7 +16,8 @@ use crate::layout::{
     workspace_target_rects_excluding,
 };
 use crate::ops::focus::{
-    active_pane_is_fullscreen, active_pane_mut, request_pane_focus, sync_scrollable_reveal,
+    active_pane_is_fullscreen, active_pane_mut, request_pane_focus, scrollable_scroll,
+    settle_scrollable_after_reorder, sync_scrollable_reveal,
 };
 use crate::state::{
     Direction, EVEN_SPLIT_RATIO, LayoutKind, MoveSwapHint, PaneId, State, TileGap, Workspace,
@@ -320,6 +321,7 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
     if active_pane_is_fullscreen(&ctx.state, focused) {
         return;
     }
+    let prior_scroll = scrollable_scroll(&ctx.state, None);
 
     let moved = {
         let workspace = ctx.state.active_workspace_mut();
@@ -365,7 +367,7 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
     };
     if moved {
         ctx.state.set_focused_pane(Some(focused));
-        sync_scrollable_reveal(&mut ctx.state, focused, false);
+        settle_scrollable_after_reorder(&mut ctx.state, focused, prior_scroll);
         ctx.state.animation = GeometryAnimation::AxisChange;
     }
 }
@@ -385,6 +387,7 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
     if active_pane_is_fullscreen(&ctx.state, focused) {
         return;
     }
+    let prior_scroll = scrollable_scroll(&ctx.state, None);
 
     let swapped = {
         let workspace = ctx.state.active_workspace_mut();
@@ -398,7 +401,7 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<AppRoot>, direction: D
     };
     if swapped {
         ctx.state.set_focused_pane(Some(focused));
-        sync_scrollable_reveal(&mut ctx.state, focused, false);
+        settle_scrollable_after_reorder(&mut ctx.state, focused, prior_scroll);
         ctx.state.animation = GeometryAnimation::AxisChange;
     }
 }

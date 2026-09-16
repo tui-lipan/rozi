@@ -723,7 +723,8 @@ pub fn allocate_scrollable(
 ///
 /// `visible` is the horizontal interval that is actually on screen (local tile bounds for a
 /// follower; normally equal to `layout`). `reveal_edge` left-aligns the anchor pane to
-/// `visible.x` or right-aligns it to `visible.right`, then clamps to the valid scroll range.
+/// `visible.x`, right-aligns it to `visible.right`, or holds it at a fixed offset from `visible.x`,
+/// then clamps to the valid scroll range.
 /// When the strip fits inside `visible`, scroll is stable (no anchor-dependent drift).
 ///
 /// Stored fractions are flex bases: one pane fills `layout.w`; two panes whose bases plus gap fit
@@ -770,6 +771,9 @@ pub fn allocate_scrollable_with_visible(
             ScrollableRevealEdge::Right => {
                 let focused_right = prefix[anchor_index] + widths[anchor_index];
                 layout.x + focused_right - vis_right
+            }
+            ScrollableRevealEdge::LeftOffset(cells) => {
+                layout.x + prefix[anchor_index] - vis_left - cells as f32
             }
         };
         desired.clamp(scroll_min.min(scroll_max), scroll_max.max(scroll_min))

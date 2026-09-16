@@ -49,6 +49,12 @@
 
 ### Changed
 
+- Scrollable layout no longer scrolls on hover. With focus on hover, pointing at a clipped column
+  focuses it in place; the next key or click scrolls it into view.
+- Moving, swapping, or dragging a Scrollable column keeps the strip still when the column lands in a
+  fully visible slot, so the column goes to its new place instead of the rest of the strip sliding
+  around it. A clipped landing scrolls only as far as needed. Lifting a column mid-drag no longer
+  scrolls the columns left behind.
 - Settings no longer lists Extensions. Open the manager from the command palette.
 - Settings gains a Sidebar group. **Background follows terminal** paints the column with the canvas
   backdrop instead of the elevated panel fill, and **Gap** keeps or drops the blank row between each

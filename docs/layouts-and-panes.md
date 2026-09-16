@@ -75,6 +75,13 @@ and resize mode have no effect.
 Scrollable keeps panes as full-height columns. One pane fills the viewport. With more panes, Rozi
 keeps a width for each column and scrolls the strip to reveal the focused pane.
 
+Focus on hover does not scroll. Pointing at a clipped column focuses it where it is, and the strip
+scrolls to reveal it when a key or click reaches that pane.
+
+Moving, swapping, or dragging a column keeps the strip still when the column lands fully visible,
+so only the columns that trade places move. When it lands in a clipped slot, the strip scrolls just
+far enough to show it. Lifting a column with a drag does not scroll the columns left behind.
+
 The default saved width is `0.45` of the tile viewport, clamped from `0.20` to `0.80`. Use `=` and
 `-`, horizontal resize-mode keys, or horizontal mouse resizing to change the focused column.
 

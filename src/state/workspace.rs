@@ -20,6 +20,10 @@ pub enum ScrollableRevealEdge {
     Left,
     /// Align the anchor pane's right edge with the visible right edge.
     Right,
+    /// Hold the anchor pane's left edge this many cells right of the visible left edge (negative
+    /// when it sits scrolled past it). Reordering panes records the strip's scroll this way so a
+    /// pane can land in a visible slot without the columns around it sliding.
+    LeftOffset(i32),
 }
 
 pub struct Workspace {

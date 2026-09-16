@@ -15,7 +15,10 @@ use crate::layout::{
     self, placement_for, target_tiled_pane_for_drop, workspace_target_rects,
     workspace_target_rects_excluding,
 };
-use crate::ops::focus::{active_pane_mut, focus_pane, request_pane_focus, sync_scrollable_reveal};
+use crate::ops::focus::{
+    active_pane_mut, focus_pane, focus_pane_in_place, pin_scrollable_scroll, request_pane_focus,
+    scrollable_scroll, settle_scrollable_after_reorder, sync_scrollable_reveal,
+};
 use crate::state::{
     self, Direction, EVEN_SPLIT_RATIO, LayoutKind, MoveSession, PaneId, ResizeCorner,
     ResizeSession, State, TileGap, Workspace,
@@ -165,6 +168,14 @@ pub(crate) fn begin_move(
             });
         }
     }
+    if session.is_some_and(|session| !session.was_floating) {
+        // Lifting a column shortens the Scrollable strip and takes the viewport anchor out of it.
+        // Pin the scroll it has now so the columns left behind stay under the pointer instead of
+        // jumping to wherever the anchor fallback lands.
+        if let Some(scroll) = scrollable_scroll(&ctx.state, None) {
+            pin_scrollable_scroll(&mut ctx.state, Some(id), scroll);
+        }
+    }
     ctx.state.moving_pane = session;
     ctx.state.animation = if session.is_some_and(|session| !session.was_floating) {
         GeometryAnimation::TileFloat
@@ -254,7 +265,8 @@ pub(crate) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -
 /// events arriving afterward become harmless because their session has already been cleared.
 pub(crate) fn finish_pointer_layout_interaction(ctx: &mut Context<AppRoot>) {
     if let Some(session) = ctx.state.moving_pane {
-        focus_pane(&mut ctx.state, session.id);
+        // In place: the drop settles the Scrollable viewport from the strip as it is drawn mid-drag.
+        focus_pane_in_place(&mut ctx.state, session.id);
         request_pane_focus(ctx, session.id);
         let x = session.pointer_x.clamp(0, i32::from(u16::MAX)) as u16;
         let y = session.pointer_y.clamp(0, i32::from(u16::MAX)) as u16;
@@ -542,6 +554,9 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
         state.terminal_content_left_offset(viewport),
         state.content_top_offset(),
     );
+    // The strip the pointer dropped onto is the one drawn with this pane lifted out; its scroll is
+    // what the landing is measured against.
+    let prior_scroll = scrollable_scroll(state, Some(id));
     let target = {
         let workspace = state.active_workspace_ref();
         let placements =
@@ -557,6 +572,8 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
     };
 
     let Some((target_id, target_rect)) = target else {
+        // No target: the pane returns to its own slot, under the same scroll.
+        settle_scrollable_after_reorder(state, id, prior_scroll);
         return;
     };
 
@@ -574,6 +591,7 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
         moving_first,
         EVEN_SPLIT_RATIO,
     );
+    settle_scrollable_after_reorder(state, id, prior_scroll);
 }
 
 #[cfg(test)]
@@ -794,6 +812,11 @@ mod tests {
     }
 
     fn scrollable_backend(focus: PaneId) -> TestBackend<AppRoot> {
+        scrollable_backend_with(4, crate::state::DEFAULT_SCROLLABLE_WIDTH, focus)
+    }
+
+    /// `count` Scrollable columns of `width` in a 100x30 viewport, with the strip revealing `focus`.
+    fn scrollable_backend_with(count: PaneId, width: f32, focus: PaneId) -> TestBackend<AppRoot> {
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
             x: 0,
@@ -812,8 +835,10 @@ mod tests {
             let workspace = state.active_workspace_mut();
             workspace.layout_kind = LayoutKind::Scrollable;
             workspace.panes.clear();
-            for id in 1..=4 {
-                workspace.panes.push(Pane::new(id, 100, bounds));
+            for id in 1..=count {
+                let mut pane = Pane::new(id, 100, bounds);
+                pane.scrollable_width = width;
+                workspace.panes.push(pane);
                 crate::layout::tiling::append_tiled_window(workspace, id);
             }
             workspace.focused_pane = Some(focus);
@@ -1189,6 +1214,201 @@ mod tests {
             assert!(
                 (placement_of(backend.state(), 1).x - before.x).abs() > 0.5,
                 "clicking an off-viewport pane must shift the strip"
+            );
+        });
+    }
+
+    /// The on-screen tile interval of the 100x30 test canvas.
+    fn visible_tile(state: &crate::state::State) -> FloatRect {
+        let bounds = state.canvas_bounds_from_terminal_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        workspace_tile_bounds(bounds, state.workspace_top_gap())
+    }
+
+    fn assert_fully_visible(state: &crate::state::State, id: PaneId) {
+        let visible = visible_tile(state);
+        let rect = placement_of(state, id);
+        assert!(
+            rect.x >= visible.x - 0.5 && rect.x + rect.w <= visible.x + visible.w + 0.5,
+            "pane {id} {rect:?} must be inside {visible:?}"
+        );
+    }
+
+    fn assert_same_x(actual: FloatRect, expected: FloatRect, what: &str) {
+        assert!(
+            (actual.x - expected.x).abs() < 0.5,
+            "{what}: {actual:?} moved from {expected:?}"
+        );
+    }
+
+    #[test]
+    fn scrollable_hover_focus_waits_for_a_key_or_click_before_scrolling() {
+        use tui_lipan::{KeyCode, KeyEvent, KeyMods};
+
+        in_test_stack(|| {
+            for reveal_by_click in [false, true] {
+                let mut backend = scrollable_backend(1);
+                assert!(backend.state().config.pane.focus_on_hover);
+                backend.state_mut().animation = GeometryAnimation::None;
+                let before = placement_of(backend.state(), 1);
+
+                backend.dispatch(Msg::HoverPane(4)).expect("hover clipped");
+                // The framework follows the app's focus request back; that echo is not intent.
+                backend
+                    .dispatch(Msg::FrameworkFocusEnteredPane(Some(4)))
+                    .expect("framework focus sync");
+                assert_eq!(backend.state().current().focused_pane, Some(4));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(1),
+                    "hovering a clipped column must leave the viewport anchor alone"
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::None);
+                assert_same_x(
+                    placement_of(backend.state(), 1),
+                    before,
+                    "hover must not scroll",
+                );
+
+                let message = if reveal_by_click {
+                    Msg::FocusPane(4)
+                } else {
+                    Msg::PaneKey(
+                        4,
+                        KeyEvent {
+                            code: KeyCode::Char('x'),
+                            mods: KeyMods::NONE,
+                        },
+                    )
+                };
+                backend.dispatch(message).expect("input reaches the pane");
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(4)
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+                assert_fully_visible(backend.state(), 4);
+            }
+        });
+    }
+
+    #[test]
+    fn scrollable_keyboard_move_into_a_visible_slot_keeps_the_strip_still() {
+        in_test_stack(|| {
+            for action in [crate::input::Action::Move, crate::input::Action::Swap] {
+                // 30%-wide columns: 1..=3 fit in the viewport, 4 hangs off the right edge.
+                let mut backend = scrollable_backend_with(4, 0.30, 1);
+                let first = placement_of(backend.state(), 1);
+                let second = placement_of(backend.state(), 2);
+
+                backend
+                    .dispatch(Msg::RunAction(action(Direction::Right)))
+                    .expect("move right");
+                backend.render();
+                assert_eq!(
+                    backend.state().active_workspace_ref().tiled_ids(),
+                    vec![2, 1, 3, 4]
+                );
+                assert_same_x(
+                    placement_of(backend.state(), 2),
+                    first,
+                    "the neighbor takes the moved pane's slot",
+                );
+                assert_same_x(
+                    placement_of(backend.state(), 1),
+                    second,
+                    "the moved pane lands in the neighbor's visible slot",
+                );
+
+                // Past the last fully visible column the strip scrolls just far enough.
+                for _ in 0..2 {
+                    backend
+                        .dispatch(Msg::RunAction(action(Direction::Right)))
+                        .expect("move right again");
+                    backend.render();
+                }
+                assert_eq!(
+                    backend.state().active_workspace_ref().tiled_ids(),
+                    vec![2, 3, 4, 1]
+                );
+                let visible = visible_tile(backend.state());
+                let moved = placement_of(backend.state(), 1);
+                assert!(
+                    (moved.x + moved.w - (visible.x + visible.w)).abs() < 0.5,
+                    "a pane moved into a clipped slot is revealed at the edge: {moved:?}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn scrollable_drag_keeps_the_strip_still_and_lands_where_dropped() {
+        in_test_stack(|| {
+            // Six 30%-wide columns, scrolled so column 4 meets the right edge.
+            let mut backend = scrollable_backend_with(6, 0.30, 1);
+            backend.dispatch(Msg::FocusPane(4)).expect("scroll to 4");
+            backend.render();
+            let first = placement_of(backend.state(), 1);
+            let dragged = placement_of(backend.state(), 2);
+            let content_top = backend.state().content_top_offset();
+            let rendered = FloatRect {
+                y: dragged.y + f32::from(content_top),
+                ..dragged
+            };
+
+            backend
+                .dispatch(Msg::BeginMove(2, rendered, 0, 0, 30, 10, true))
+                .expect("lift column 2");
+            backend.render();
+            let lifted = {
+                let state = backend.state();
+                let bounds = state.layout_bounds(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                workspace_target_rects_excluding(
+                    state.active_workspace_ref(),
+                    bounds,
+                    Some(2),
+                    state.layout_top_gap(),
+                    state.tile_gap(),
+                )
+            };
+            assert_same_x(
+                placement_for(&lifted, 1).expect("column 1"),
+                first,
+                "lifting a column must not scroll the columns left behind",
+            );
+
+            // Drop on the right half of column 4, which is fully visible.
+            let target = placement_for(&lifted, 4).expect("column 4");
+            let left = backend
+                .state()
+                .terminal_content_left_offset(backend.state().last_viewport.get().unwrap());
+            let x = left + (target.x + target.w * 0.9) as u16;
+            let y = content_top + (target.y + target.h * 0.5) as u16;
+            backend.dispatch(Msg::EndMove(2, x, y)).expect("drop");
+            backend.render();
+
+            assert_eq!(
+                backend.state().active_workspace_ref().tiled_ids(),
+                vec![1, 3, 4, 2, 5, 6]
+            );
+            assert_same_x(
+                placement_of(backend.state(), 1),
+                first,
+                "dropping into a visible slot must not scroll the strip",
+            );
+            assert_fully_visible(backend.state(), 2);
+            assert!(
+                placement_of(backend.state(), 2).x > target.x,
+                "the dropped column lands right of its target, where it was dropped"
             );
         });
     }

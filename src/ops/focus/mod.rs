@@ -6,7 +6,7 @@ use crate::layout::geometry::{closest_pane_to_rect, directional_score, workspace
 use crate::layout::tiling;
 use crate::layout::{
     placement_for, scrollable_viewport_anchor, workspace_target_rects,
-    workspace_target_rects_with_visible_bounds,
+    workspace_target_rects_excluding_with_visible,
 };
 use crate::state::{
     Direction, DirectionalFocusHint, LayoutKind, Pane, PaneId, ScrollableRevealEdge, State,
@@ -684,12 +684,25 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update
     if !focusable {
         return Update::none();
     }
-    focus_pane(&mut ctx.state, id);
+    // Passing over a clipped Scrollable column must not scroll the strip out from under the
+    // pointer. Focus moves now; the next key or click re-affirms it through `focus_pane`, which is
+    // what brings the column into view.
+    focus_pane_in_place(&mut ctx.state, id);
     request_pane_focus(ctx, id);
     Update::full()
 }
 
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
+    focus_pane_with_reveal(state, id, true);
+}
+
+/// Focus `id` without scrolling a Scrollable strip to reveal it. Everywhere else this is
+/// [`focus_pane`].
+pub(crate) fn focus_pane_in_place(state: &mut State, id: PaneId) {
+    focus_pane_with_reveal(state, id, false);
+}
+
+fn focus_pane_with_reveal(state: &mut State, id: PaneId, reveal: bool) {
     let previous = state.focused_pane();
     let scrollable = state.active_workspace_ref().layout_kind == LayoutKind::Scrollable;
     // Capture before mutation so same-workspace Scrollable focus-scroll can detect a real
@@ -703,7 +716,13 @@ pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
         .flatten();
     let prior_reveal_edge = scrollable.then(|| state.active_workspace_ref().scrollable_reveal_edge);
     let reveal_decision = scrollable
-        .then(|| classify_scrollable_reveal(state, id, prior_scrollable_anchor))
+        .then(|| {
+            if reveal {
+                classify_scrollable_reveal(state, id, prior_scrollable_anchor)
+            } else {
+                Some(ScrollableRevealDecision::Preserve)
+            }
+        })
         .flatten();
     // Only drop axis sticky when focus actually moves. Framework focus sync (and other
     // re-affirmations of the current pane) call this on every key and must not erase the hint
@@ -851,10 +870,39 @@ fn classify_scrollable_reveal(
     let order_edge =
         || scrollable_reveal_edge_from_order(&tiled, target, prior_anchor, current_edge);
 
-    let Some(viewport) = state.last_viewport.get() else {
+    let Some(geometry) = scrollable_geometry(state, None) else {
+        return Some(ScrollableRevealDecision::Align(order_edge()));
+    };
+    let Some(rect) = placement_for(&geometry.placements, target) else {
         return Some(ScrollableRevealDecision::Align(order_edge()));
     };
 
+    // Cell-safe epsilon: whole-cell placement rounding must not flip containment.
+    const EPS: f32 = 0.5;
+    let left_clipped = rect.x < geometry.visible_left - EPS;
+    let right_clipped = rect.x + rect.w > geometry.visible_right + EPS;
+    match (left_clipped, right_clipped) {
+        (false, false) => Some(ScrollableRevealDecision::Preserve),
+        (true, false) => Some(ScrollableRevealDecision::Align(ScrollableRevealEdge::Left)),
+        (false, true) => Some(ScrollableRevealDecision::Align(ScrollableRevealEdge::Right)),
+        (true, true) => Some(ScrollableRevealDecision::Align(order_edge())),
+    }
+}
+
+/// The active Scrollable workspace laid out the way `view::render` draws it, with the horizontal
+/// interval that is actually on screen.
+struct ScrollableGeometry {
+    placements: Vec<crate::layout::tiling::PanePlacement>,
+    /// Where the strip starts before it is scrolled: the canonical tile box's left edge.
+    strip_left: f32,
+    visible_left: f32,
+    visible_right: f32,
+}
+
+/// Measure the active workspace's Scrollable strip, with `exclude` lifted out of it as a drag does.
+/// `None` before the first render or when nothing of the strip is on screen.
+fn scrollable_geometry(state: &State, exclude: Option<PaneId>) -> Option<ScrollableGeometry> {
+    let viewport = state.last_viewport.get()?;
     // Same allocation path as `view::render`: canonical/letterbox layout + local visible clamp.
     // The scratchpad has no canonical/local split - it is never letterboxed to a controller - so
     // both are the dropdown's own box. Measuring it against the whole canvas instead would place
@@ -869,30 +917,101 @@ fn classify_scrollable_reveal(
         )
     };
     let top_gap = state.layout_top_gap();
-    let tile_gap = state.tile_gap();
-    let placements =
-        workspace_target_rects_with_visible_bounds(ws, letterbox, local, top_gap, tile_gap);
-    let Some(rect) = placement_for(&placements, target) else {
-        return Some(ScrollableRevealDecision::Align(order_edge()));
-    };
+    let placements = workspace_target_rects_excluding_with_visible(
+        state.active_workspace_ref(),
+        letterbox,
+        Some(local),
+        exclude,
+        top_gap,
+        state.tile_gap(),
+    );
 
     let tile_letterbox = workspace_tile_bounds(letterbox, top_gap);
     let tile_local = workspace_tile_bounds(local, top_gap);
     let visible_left = tile_letterbox.x.max(tile_local.x);
     let visible_right = (tile_letterbox.x + tile_letterbox.w).min(tile_local.x + tile_local.w);
-    if visible_right <= visible_left {
-        return Some(ScrollableRevealDecision::Align(order_edge()));
-    }
+    (visible_right > visible_left).then_some(ScrollableGeometry {
+        placements,
+        strip_left: tile_letterbox.x,
+        visible_left,
+        visible_right,
+    })
+}
 
-    // Cell-safe epsilon: whole-cell placement rounding must not flip containment.
-    const EPS: f32 = 0.5;
-    let left_clipped = rect.x < visible_left - EPS;
-    let right_clipped = rect.x + rect.w > visible_right + EPS;
-    match (left_clipped, right_clipped) {
-        (false, false) => Some(ScrollableRevealDecision::Preserve),
-        (true, false) => Some(ScrollableRevealDecision::Align(ScrollableRevealEdge::Left)),
-        (false, true) => Some(ScrollableRevealDecision::Align(ScrollableRevealEdge::Right)),
-        (true, true) => Some(ScrollableRevealDecision::Align(order_edge())),
+/// How far the active Scrollable strip is scrolled, in cells, as drawn with `exclude` lifted out.
+///
+/// Recorded before panes change order so [`settle_scrollable_after_reorder`] can hold the strip
+/// still. `None` outside Scrollable or before the first render.
+pub(crate) fn scrollable_scroll(state: &State, exclude: Option<PaneId>) -> Option<f32> {
+    let ws = state.active_workspace_ref();
+    if ws.layout_kind != LayoutKind::Scrollable {
+        return None;
+    }
+    let first = ws.tiled_ids().into_iter().find(|id| Some(*id) != exclude)?;
+    let geometry = scrollable_geometry(state, exclude)?;
+    let rect = placement_for(&geometry.placements, first)?;
+    // The first column starts the strip, so its offset from the unscrolled origin is the scroll.
+    Some(geometry.strip_left - rect.x)
+}
+
+/// Pin the active Scrollable strip at `scroll`, as laid out with `exclude` lifted out.
+///
+/// The first remaining column carries the pin: its left edge is the strip's origin in every order,
+/// so a pinned scroll survives any reorder of the columns after it.
+pub(crate) fn pin_scrollable_scroll(state: &mut State, exclude: Option<PaneId>, scroll: f32) {
+    let Some(first) = state
+        .active_workspace_ref()
+        .tiled_ids()
+        .into_iter()
+        .find(|id| Some(*id) != exclude)
+    else {
+        return;
+    };
+    let Some(geometry) = scrollable_geometry(state, exclude) else {
+        return;
+    };
+    let offset = geometry.strip_left - scroll - geometry.visible_left;
+    state.active_workspace_mut().set_scrollable_viewport(
+        Some(first),
+        ScrollableRevealEdge::LeftOffset(offset.round() as i32),
+    );
+}
+
+/// Settle the Scrollable viewport after `id` moved to a new place in the strip.
+///
+/// When `id` lands fully visible at `prior_scroll`, the strip stays exactly where it was and only
+/// the columns that traded places move. Otherwise it scrolls just far enough to reveal `id`, the
+/// same way focusing a clipped column does. Without a recorded scroll this is
+/// [`sync_scrollable_reveal`].
+pub(crate) fn settle_scrollable_after_reorder(
+    state: &mut State,
+    id: PaneId,
+    prior_scroll: Option<f32>,
+) {
+    let ws = state.active_workspace_ref();
+    if ws.layout_kind != LayoutKind::Scrollable || !ws.tiled_ids().contains(&id) {
+        return;
+    }
+    if let Some(scroll) = prior_scroll {
+        pin_scrollable_scroll(state, None, scroll);
+    }
+    sync_scrollable_reveal(state, id, false);
+    // Still pinned on the first column means `id` was visible where it landed. Hand the pin to `id`
+    // itself so later changes around it - a neighbor closing, a width resize - keep it in place.
+    let ws = state.active_workspace_ref();
+    if ws.scrollable_anchor != Some(id)
+        && matches!(
+            ws.scrollable_reveal_edge,
+            ScrollableRevealEdge::LeftOffset(_)
+        )
+        && let Some(geometry) = scrollable_geometry(state, None)
+        && let Some(rect) = placement_for(&geometry.placements, id)
+    {
+        let offset = rect.x - geometry.visible_left;
+        state.active_workspace_mut().set_scrollable_viewport(
+            Some(id),
+            ScrollableRevealEdge::LeftOffset(offset.round() as i32),
+        );
     }
 }
 
@@ -1067,6 +1186,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::layout::tiling::{append_tiled_window, collect_tree_leaves};
+    use crate::layout::workspace_target_rects_with_visible_bounds;
     use crate::state::{LayoutKind, Pane};
     use tui_lipan::prelude::Theme;
 

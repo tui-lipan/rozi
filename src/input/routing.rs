@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::input::Action;
-use crate::ops::focus::{focus_pane, request_current_pane_focus};
+use crate::ops::focus::{focus_pane, focus_pane_in_place, request_current_pane_focus};
 use crate::ops::resize_move::resize_focused_in_direction;
 use crate::state::{Direction, Mode, PaneId, State};
 
@@ -213,7 +213,14 @@ pub(crate) fn framework_focus_entered_pane(
     }
 
     if let Some(id) = pane {
-        focus_pane(&mut ctx.state, id);
+        // The framework catching up to a pane the app already focused is not new intent. Hover
+        // focus lands here too, and must leave a clipped Scrollable column where it is until a key
+        // or click reaches it.
+        if ctx.state.focused_pane() == Some(id) {
+            focus_pane_in_place(&mut ctx.state, id);
+        } else {
+            focus_pane(&mut ctx.state, id);
+        }
         Update::full()
     } else if sidebar_was_focused {
         Update::full()

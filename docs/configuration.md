@@ -152,7 +152,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `resize_debounce_ms` | integer | `16` | Minimum delay between PTY resize batches. `0` forwards each report. |
-| `focus_on_hover` | bool | `true` | Focuses a pane when the pointer enters it. |
+| `focus_on_hover` | bool | `true` | Focuses a pane when the pointer enters it. In a Scrollable layout, a clipped column scrolls into view on the next key or click rather than on hover. |
 | `hold_on_exit` | bool | `false` | Retains naturally exited shell panes. Command panes use their `keep_open` value. |
 | `highlight_focused_background` | bool | `false` | Uses the panel background for the focused pane. |
 | `highlight_focused_border` | bool | `true` | Uses the active border color for the focused pane. |

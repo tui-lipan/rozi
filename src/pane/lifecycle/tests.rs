@@ -605,7 +605,7 @@ fn disabled_close_animation_still_prunes_the_pane() {
 }
 
 #[test]
-fn workspace_switch_replaces_the_canvas_host_without_retaining_old_panes() {
+fn workspace_switch_releases_the_outgoing_canvas_after_the_slide() {
     in_stack(|| {
         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
         backend.set_viewport(tui_lipan::prelude::Rect {
@@ -630,6 +630,10 @@ fn workspace_switch_replaces_the_canvas_host_without_retaining_old_panes() {
                 crate::input::Action::SwitchWorkspace(1),
             ))
             .expect("switch workspace");
+        backend.advance(
+            backend.state().config.animations.workspace_duration
+                + std::time::Duration::from_millis(1),
+        );
         let snapshot = backend.capture_ui_snapshot();
         assert!(snapshot.widgets.iter().any(|widget| {
             widget

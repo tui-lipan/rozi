@@ -160,6 +160,9 @@
 #tile_float = true
 #axis_change = true
 #sidebar = true
+# Slide between workspaces; the workbar, sidebar, and overlays stay in place.
+#workspace = true
+#workspace_ms = 220
 #focus_chrome = true
 # Shape of the pane open/close animation. "scale" grows the pane from its own centre with a fade;
 # "slide" brings it in from the edge it was split off, clipped to its tile, and springs the tile that

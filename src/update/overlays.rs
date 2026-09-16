@@ -297,6 +297,13 @@ fn settings_activate_dir(
         ToggleWorkbarPowerline => {
             execute_action(ctx, Action::ToggleWorkbarPowerline);
         }
+        ToggleWorkspaceAnimation => {
+            let value = !ctx.state.config.animations.workspace;
+            ctx.state.config.animations.workspace = value;
+            if let Err(err) = crate::config::persist_animation_flag("workspace", value) {
+                preference_error(ctx, err);
+            }
+        }
         ToggleAnimations => {
             execute_action(ctx, Action::ToggleAnimations);
         }

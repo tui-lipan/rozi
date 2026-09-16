@@ -9,6 +9,7 @@ pub enum SettingsAction {
     Theme,
     EditPadding,
     ToggleAnimations,
+    ToggleWorkspaceAnimation,
     ToggleNerdIcons,
     CycleWhichKey,
     ToggleFocusOnHover,
@@ -73,6 +74,7 @@ impl SettingsAction {
             Self::Theme,
             Self::EditPadding,
             Self::ToggleAnimations,
+            Self::ToggleWorkspaceAnimation,
             Self::ToggleNerdIcons,
             Self::CycleWhichKey,
             Self::ToggleFocusOnHover,
@@ -167,7 +169,11 @@ impl SettingsAction {
             {
                 Some("Unsupported in this mode")
             }
-            Self::CyclePaneAnimation if !config.animations.enabled => Some("Needs animations"),
+            Self::CyclePaneAnimation | Self::ToggleWorkspaceAnimation
+                if !config.animations.enabled =>
+            {
+                Some("Needs animations")
+            }
             Self::ToggleWorkbarPosition
             | Self::ToggleWorkbarGap
             | Self::ToggleWorkbarBackground

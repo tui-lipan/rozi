@@ -899,6 +899,94 @@ fn rect_settled(animated: FloatRect, target: FloatRect) -> bool {
         && (animated.h - target.h).abs() < eps
 }
 
+/// Translate complete workspace canvases so pane sizes and internal seams stay fixed.
+pub(crate) fn workspace_pages(
+    ctx: &Context<AppRoot>,
+    canvas: Canvas,
+    viewport_changed: bool,
+) -> Element {
+    let viewport = ctx.viewport();
+    let content_viewport = ctx.state.content_viewport(viewport);
+    // Followers keep the controller's canonical canvas centered in their local viewport.
+    let bounds = super::follower_letterbox_bounds(&ctx.state, viewport);
+    let local_bounds = ctx.state.canvas_bounds_from_terminal_viewport(viewport);
+    let top_offset = ctx.state.content_top_offset();
+    let root_bounds = super::viewport_bounds(content_viewport);
+    let mut pages = canvas;
+    for (index, offset) in super::animation::workspace_offsets(ctx, viewport_changed) {
+        let workspace = &ctx.state.current().workspaces[index];
+        let mut page = Canvas::new()
+            .width(Length::Px(content_viewport.w))
+            .height(Length::Px(content_viewport.h));
+        if workspace.panes.iter().all(|pane| pane.closing) {
+            page = page.child_at(
+                canvas_rect_to_root(super::empty_workspace_rect(bounds), top_offset).to_rect(),
+                super::workspace_empty_panel(ctx),
+            );
+        }
+        page = render_workspace_panes(
+            ctx,
+            page,
+            &WorkspaceLayer {
+                workspace,
+                bounds,
+                visible_bounds: Some(local_bounds),
+                top_gap: ctx.state.workspace_top_gap(),
+                fullscreen_bounds: root_bounds,
+                float_origin: (bounds.x, bounds.y),
+                scratch: false,
+                viewport_changed,
+            },
+        );
+        let mut page = ZStack::new().passthrough(true).child(page);
+        if index != ctx.state.current().active_workspace || offset != 0.0 {
+            // Keep pointer gestures off moving geometry. Keyboard focus already belongs to the
+            // destination; terminal clicks and resize handles become available once it settles.
+            page = page.child(MouseRegion::new().capture_click(true).child(Spacer::new()));
+        }
+        let shift = (offset * f32::from(content_viewport.w)).round() as i32;
+        let left = shift.max(0) as u16;
+        let width = content_viewport
+            .w
+            .saturating_sub(shift.unsigned_abs() as u16);
+        let fullscreen = workspace
+            .panes
+            .iter()
+            .any(|pane| pane.fullscreen && !pane.closing);
+        let (top, height) = if fullscreen {
+            (0, content_viewport.h)
+        } else {
+            (top_offset, local_bounds.h as u16)
+        };
+        let page = PanView::new()
+            .offset(((-shift).max(0), i32::from(top)))
+            .clamp(false)
+            .drag_to_pan(false)
+            .wheel_to_pan(false)
+            .focusable(false)
+            .child(
+                page.min_width(Length::Px(content_viewport.w))
+                    .max_width(Length::Px(content_viewport.w))
+                    .min_height(Length::Px(content_viewport.h))
+                    .max_height(Length::Px(content_viewport.h)),
+            )
+            .key(format!(
+                "rozi-workspace-canvas-{}-{index}-{}",
+                ctx.state.runtime_epoch, ctx.state.pane_canvas_epoch
+            ));
+        pages = pages.child_at(
+            Rect {
+                x: left as i16,
+                y: top as i16,
+                w: width,
+                h: height,
+            },
+            page,
+        );
+    }
+    pages.into()
+}
+
 #[cfg(test)]
 mod divider_tests {
     use super::*;

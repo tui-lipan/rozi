@@ -71,6 +71,25 @@ pub(crate) fn strip_background(theme: &Theme, follow_terminal: bool, host: Color
     }
 }
 
+fn workspace_empty_panel(ctx: &Context<AppRoot>) -> Element {
+    let theme = &ctx.state.theme;
+    let connecting = matches!(
+        ctx.state.current().connection,
+        crate::state::ConnectionState::Connecting | crate::state::ConnectionState::Reconnecting
+    ) && ctx.state.current().pending_session_attach.is_some();
+    if connecting {
+        connecting_workspace_panel(
+            ctx.state.current().remote_host.as_deref(),
+            ctx.state.current().connection == crate::state::ConnectionState::Reconnecting,
+            theme,
+        )
+    } else if ctx.state.is_launcher() {
+        launcher_panel(ctx, theme)
+    } else {
+        empty_workspace_panel(&ctx.state.config.input, theme)
+    }
+}
+
 pub fn render(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let viewport = ctx.viewport();
@@ -85,20 +104,13 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     );
     ctx.state.sidebar_slide.set(sidebar_progress);
     let content_viewport = ctx.state.content_viewport(viewport);
+    let top_offset = ctx.state.content_top_offset();
     ctx.state.last_viewport.set(Some(viewport));
     let viewport_changed = ctx
         .state
         .last_content_viewport
         .replace(Some(content_viewport))
         .is_some_and(|previous| previous != content_viewport);
-    let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
-    // A follower renders the controller's canonical pane canvas centered in its own viewport
-    // (letterboxed); everyone else uses the full local canvas. Every downstream placement, float,
-    // and empty-state rect derives from `bounds`, so centering here centers the whole workspace.
-    let bounds = follower_letterbox_bounds(&ctx.state, viewport);
-    let local_bounds = ctx.state.canvas_bounds_from_terminal_viewport(viewport);
-    let top_offset = ctx.state.content_top_offset();
-    let root_bounds = viewport_bounds(content_viewport);
     // Sampled every frame (even while closed) so the slide transition is seeded at 0.0 and the
     // first open animates up from below.
     let scratch_progress = crate::scratchpad::scratch_progress(ctx);
@@ -143,30 +155,6 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         .style(Style::new().bg(theme.surface.backdrop))
         .height(Length::Flex(1));
 
-    if workspace.panes.iter().all(|pane| pane.closing) {
-        // Mid-attach with no panes yet: show a live "connecting" spinner rather than the idle
-        // "empty workspace" hint, which would read as "done, nothing here" during a connect.
-        let connecting = matches!(
-            ctx.state.current().connection,
-            crate::state::ConnectionState::Connecting | crate::state::ConnectionState::Reconnecting
-        ) && ctx.state.current().pending_session_attach.is_some();
-        let panel = if connecting {
-            connecting_workspace_panel(
-                ctx.state.current().remote_host.as_deref(),
-                ctx.state.current().connection == crate::state::ConnectionState::Reconnecting,
-                theme,
-            )
-        } else if ctx.state.is_launcher() {
-            launcher_panel(ctx, theme)
-        } else {
-            empty_workspace_panel(&ctx.state.config.input, theme)
-        };
-        canvas = canvas.child_at(
-            canvas_rect_to_root(empty_workspace_rect(bounds), top_offset).to_rect(),
-            panel,
-        );
-    }
-
     if ctx.state.config.pane.show_workbar {
         let workbar_rect = if ctx.state.config.pane.workbar_at_bottom {
             FloatRect {
@@ -186,37 +174,8 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         canvas = canvas.child_at(workbar_rect.to_rect(), workbar(ctx));
     }
 
-    canvas = render_workspace_panes(
-        ctx,
-        canvas,
-        &WorkspaceLayer {
-            workspace,
-            bounds,
-            // Scrollable needs the local canvas as the scroll clamp so follower letterbox overhang
-            // can still reveal clipped columns; other layouts ignore visible_bounds.
-            visible_bounds: Some(local_bounds),
-            top_gap: ctx.state.workspace_top_gap(),
-            fullscreen_bounds: root_bounds,
-            float_origin: (bounds.x, bounds.y),
-            scratch: false,
-            viewport_changed,
-        },
-    );
-
-    // The whole workspace layer (workbar, tiled/floating panes, fullscreen panes) dims as one
-    // unit while a focused layer (the scratchpad or a modal dialog) is up; opacity blends its
-    // text and borders toward the backdrop rather than hiding them. instant_transition: the
-    // dim is already smoothed by the underlying progress transitions, so this just applies it
-    // without re-easing.
-    // Keep the dimming wrapper mounted so the keyed workspace Canvas remains under the same
-    // parent while panes are removed and retained for their automatic exit animation.
-    let workspace_host_key = format!(
-        "rozi-workspace-canvas-{}-{}-{}",
-        ctx.state.runtime_epoch,
-        ctx.state.current().active_workspace,
-        ctx.state.pane_canvas_epoch
-    );
-    let workspace_layer: Element = Animated::new(canvas.key(workspace_host_key))
+    let pages = workspace::workspace_pages(ctx, canvas, viewport_changed);
+    let workspace_layer: Element = Animated::new(pages)
         .height(Length::Flex(1))
         .opacity(workspace_dim)
         .opacity_target(theme.surface.backdrop)

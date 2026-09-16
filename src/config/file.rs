@@ -540,6 +540,8 @@ pub(super) struct AnimationFileConfig {
     pub(super) tile_float: Option<bool>,
     pub(super) axis_change: Option<bool>,
     pub(super) sidebar: Option<bool>,
+    pub(super) workspace: Option<bool>,
+    pub(super) workspace_ms: Option<u64>,
     pub(super) focus_chrome: Option<bool>,
     pub(super) pane_style: Option<String>,
     pub(super) geometry_ms: Option<u64>,
@@ -1876,6 +1878,30 @@ mod file_tests {
         let loaded = load_config_from_text("frame_rate = 1000\n", path);
         assert_eq!(loaded.config.frame_rate, MAX_FRAME_RATE);
         assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+    }
+
+    #[test]
+    fn workspace_animation_config_preserves_independent_timing() {
+        let loaded = load_config_from_text(
+            "[animations]\nworkspace = false\nworkspace_ms = 350\ngeometry_ms = 90\n",
+            Path::new("test.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(!loaded.config.animations.workspace);
+        assert_eq!(
+            loaded.config.animations.workspace_duration,
+            std::time::Duration::from_millis(350)
+        );
+        assert_eq!(
+            loaded.config.animations.geometry_duration,
+            std::time::Duration::from_millis(90)
+        );
+        let defaults = load_config_from_text("", Path::new("test.toml"));
+        assert!(defaults.config.animations.workspace);
+        assert_eq!(
+            defaults.config.animations.workspace_duration,
+            std::time::Duration::from_millis(220)
+        );
     }
 
     /// The flat overrides, end to end through the loader. A curve is a builtin name or CSS control

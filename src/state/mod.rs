@@ -141,6 +141,8 @@ pub struct State {
     pub last_viewport: Cell<Option<Rect>>,
     /// Last app-content viewport, used to snap geometry when sidebar reservation changes.
     pub last_content_viewport: Cell<Option<Rect>>,
+    /// Last rendered attachment, active workspace, and outgoing workspace.
+    pub workspace_slide: Cell<Option<(u64, usize, usize)>>,
     /// Last box the scratchpad's panes tiled inside, in root coordinates. Compared each frame for
     /// the same reason as [`Self::last_content_viewport`]: the dropdown's box moves while it grows,
     /// and a pane transition chasing it would settle on its own curve instead. `None` while the
@@ -434,6 +436,7 @@ impl State {
             pane_canvas_epoch: 0,
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),
+            workspace_slide: Cell::new(None),
             last_scratch_rect: Cell::new(None),
             last_clock_text: RefCell::new(None),
             alert_pulse_phase: false,

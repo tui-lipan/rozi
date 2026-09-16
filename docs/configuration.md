@@ -205,6 +205,8 @@ Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `succes
 | `tile_float` | bool | `true` | Animates tile and float transitions. |
 | `axis_change` | bool | `true` | Animates split-axis changes. |
 | `sidebar` | bool | `true` | Animates sidebar movement. |
+| `workspace` | bool | `true` | Slides workspace content horizontally when switching. Also available as Workspace switching in Settings. |
+| `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds; `0` switches instantly. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `pane_style` | string | `"scale"` | `"scale"`, `"slide"`, `"portal"`, `"scan"`, or a recipe ID. Builtin values are case-insensitive. Unknown values fall back to Scale with a warning. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds. |

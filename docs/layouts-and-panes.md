@@ -162,6 +162,13 @@ Rozi has nine workspaces.
 | Move or swap the whole workspace | `Ctrl+Shift+1` through `Ctrl+Shift+9` |
 | Rename the workspace | `n` |
 
+Workspace content slides horizontally when you switch. Higher-numbered workspaces enter from the
+right and lower-numbered ones from the left. The workbar, sidebar, and overlays stay in place;
+terminal dimensions stay fixed during the slide. Jumping several workspaces shows only the source
+and destination. Settings → Workspace switching turns this off. In `[animations]`, set
+`workspace = false` to disable it or `workspace_ms` to change the duration from the default 220 ms.
+The master `enabled` switch also disables workspace motion.
+
 Bare `n` renames the workspace. `Shift+N` renames the focused pane.
 
 Each workspace keeps its layout, name, focused pane, and pane order. An empty workspace remains

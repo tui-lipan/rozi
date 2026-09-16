@@ -95,6 +95,7 @@ fn apply_animation_flags(target: &mut WindowAnimationConfig, raw: &AnimationFile
         (raw.tile_float, &mut target.tile_float),
         (raw.axis_change, &mut target.axis_change),
         (raw.sidebar, &mut target.sidebar),
+        (raw.workspace, &mut target.workspace),
         (raw.focus_chrome, &mut target.focus_chrome),
     ] {
         if let Some(value) = value {
@@ -104,6 +105,9 @@ fn apply_animation_flags(target: &mut WindowAnimationConfig, raw: &AnimationFile
 }
 
 fn apply_animation_misc(target: &mut WindowAnimationConfig, raw: &AnimationFileConfig) {
+    if let Some(value) = raw.workspace_ms {
+        target.workspace_duration = Duration::from_millis(value);
+    }
     if let Some(value) = raw.focus_chrome_ms {
         target.focus_chrome_duration = Duration::from_millis(value);
     }

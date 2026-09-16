@@ -235,6 +235,11 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         CycleWorkbarTabStyle => {
             alias_list(&["workbar tab style", "workspace tab style", "workbar tabs"])
         }
+        ToggleWorkspaceAnimation => alias_list(&[
+            "workspace animation",
+            "workspace switching",
+            "workspace slide",
+        ]),
         ToggleAnimations => alias_list(&["animation effects", "motion effects", "transitions"]),
         ToggleNerdIcons => {
             alias_list(&["nerd font", "nerd icons", "patched font", "powerline icons"])

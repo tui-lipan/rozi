@@ -399,3 +399,36 @@ fn picker_border_style_changes_settings_frame_glyphs() {
         );
     });
 }
+
+#[test]
+fn workspace_animation_setting_is_searchable_persisted_and_gated_by_master() {
+    on_large_stack(|| {
+        use rozi::state::SettingsAction::ToggleWorkspaceAnimation;
+        let mut backend = settings_backend(90, 30);
+        backend.state_mut().config.animations.enabled = true;
+        backend.state_mut().config.animations.workspace = true;
+        type_query(&mut backend, "workspace switching");
+        assert!(
+            setting_row(&rendered_rows(&mut backend), "Workspace switching").contains("Enabled")
+        );
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(ToggleWorkspaceAnimation))
+            .unwrap();
+        assert!(!backend.state().config.animations.workspace);
+        assert!(!rozi::config::load_config().config.animations.workspace);
+        assert!(backend.state().show_settings);
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(ToggleWorkspaceAnimation)
+        );
+        backend.state_mut().config.animations.enabled = false;
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(ToggleWorkspaceAnimation))
+            .unwrap();
+        assert!(!backend.state().config.animations.workspace);
+        assert_eq!(
+            ToggleWorkspaceAnimation.disabled_reason(&backend.state().config),
+            Some("Needs animations")
+        );
+    });
+}

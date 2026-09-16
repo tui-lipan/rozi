@@ -20,6 +20,11 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     ToggleAnimations,
                 ),
                 (
+                    "Workspace switching",
+                    enabled_status(ctx.state.config.animations.workspace),
+                    ToggleWorkspaceAnimation,
+                ),
+                (
                     "Nerd icons",
                     enabled_status(ctx.state.config.nerd_icons),
                     ToggleNerdIcons,

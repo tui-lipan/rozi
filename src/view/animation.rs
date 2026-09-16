@@ -232,3 +232,77 @@ pub(crate) fn chrome_paint_with_frame_rate(
         None => ctx.animated_color(key, target, config),
     }
 }
+
+/// Seed every workspace off-screen on its numbered side. Only the outgoing and active pages
+/// travel, so jumping from 1 to 9 does not sweep through the seven intermediate workspaces.
+pub(crate) fn workspace_offsets(ctx: &Context<AppRoot>, resized: bool) -> Vec<(usize, f32)> {
+    let active = ctx.state.current().active_workspace;
+    let epoch = ctx.state.runtime_epoch;
+    let previous = ctx.state.workspace_slide.get();
+    let outgoing = outgoing_workspace(previous, epoch, active);
+    ctx.state
+        .workspace_slide
+        .set(Some((epoch, active, outgoing)));
+    let same_attachment = previous.is_some_and(|(old_epoch, _, _)| old_epoch == epoch);
+    let enabled = workspace_motion_enabled(ctx.state.config.animations, resized, same_attachment);
+    let mut visible = Vec::with_capacity(2);
+    for index in 0..ctx.state.current().workspaces.len() {
+        let moving = index == active || index == outgoing;
+        let offset = workspace_offset(ctx, index, active, enabled && moving);
+        if index == active || (moving && offset.abs() < 1.0) {
+            visible.push((index, offset));
+        }
+    }
+    // Keep the destination above the outgoing page when a rapid switch reverses their motion.
+    visible.sort_by_key(|(index, _)| *index == active);
+    visible
+}
+
+fn workspace_motion_enabled(
+    animations: anim::WindowAnimationConfig,
+    resized: bool,
+    same_attachment: bool,
+) -> bool {
+    animations.enabled
+        && animations.workspace
+        && !animations.workspace_duration.is_zero()
+        && !resized
+        && same_attachment
+}
+
+fn outgoing_workspace(previous: Option<(u64, usize, usize)>, epoch: u64, active: usize) -> usize {
+    match previous {
+        Some((old_epoch, old_active, outgoing)) if old_epoch == epoch => {
+            if old_active == active {
+                outgoing
+            } else {
+                old_active
+            }
+        }
+        _ => active,
+    }
+}
+
+fn workspace_offset(ctx: &Context<AppRoot>, index: usize, active: usize, animate: bool) -> f32 {
+    let target = match index.cmp(&active) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    let config = if animate {
+        TransitionConfig {
+            duration: ctx.state.config.animations.workspace_duration,
+            easing: tui_lipan::animation::Easing::EaseOutQuad,
+        }
+    } else {
+        anim::instant_transition()
+    };
+    let key = format!("rozi-workspace-slide-{}-{index}", ctx.state.runtime_epoch);
+    if !animate {
+        // tui-lipan 0.9.3 only applies a new duration when the target changes and has no
+        // transition-reset API. Seed a distinct instant target, then the real target, so an
+        // in-flight slide also stops on resize, disable, or attachment replacement.
+        ctx.transition(key.clone(), target + 2.0, anim::instant_transition());
+    }
+    ctx.transition(key, target, config)
+}

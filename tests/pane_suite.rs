@@ -24,3 +24,5 @@ mod pane_titlebar_modes_smoke;
 mod scratchpad_border_merge_smoke;
 #[path = "suites/pane/scratchpad_slide_smoke.rs"]
 mod scratchpad_slide_smoke;
+#[path = "suites/pane/workspace_slide_smoke.rs"]
+mod workspace_slide_smoke;

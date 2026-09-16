@@ -319,6 +319,9 @@ pub struct ServerPane {
     /// The last `PATH` lookup for a foreground program name, and its answer. A miss stats every
     /// `PATH` entry, and the pane's foreground program rarely changes between polls.
     pub program_on_path: Option<(String, bool)>,
+    /// The last foreground `argv[0]` and executable checked for a wrapper's borrowed name, and
+    /// whether it was one. Resolving the name stats every `PATH` entry.
+    pub borrowed_program_name: Option<(String, std::path::PathBuf, bool)>,
     /// When this pane's project root and branch were last read from disk. A checkout changes the
     /// branch without the working directory moving, so unlike the rest of the runtime state this
     /// cannot be driven by a cwd change alone; see

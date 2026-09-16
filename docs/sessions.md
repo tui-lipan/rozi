@@ -346,6 +346,13 @@ running *in* it. An agent, an editor, a log tail, or a build started by typing a
 captured with its arguments, and restoring types it back into the new shell. When it exits you are
 left at that shell, exactly as you would be had you typed the command yourself.
 
+Some launchers are wrapper scripts that hand off to an interpreter under their own name, as Cursor's
+`agent` does with `node`. Rozi preserves arguments after the script in recognized Node invocations,
+including Cursor's `--use-system-ca` launcher and Node's `-r`/`--require` preload options. The script
+must be an absolute path to an existing file beside the executable or resolved launcher. Other
+interpreters, unsupported options, and unresolved script paths restore by name alone. Wrapper-added
+arguments after the script are also preserved; Rozi cannot distinguish them from arguments you typed.
+
 Only a command genuinely mid-flight is recorded. A pane sitting at a prompt has nothing running,
 so nothing is captured, and prompt machinery like directory-jump hooks is never mistaken for work.
 

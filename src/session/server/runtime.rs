@@ -837,11 +837,9 @@ fn normalized_program_name(program: &str) -> String {
 /// a name never carries them: `claude` and `claude --dangerously-skip-permissions` are the same
 /// executable and very different panes.
 ///
-/// Both are trusted only when the inspected process can be shown to *be* the program the pane
-/// reports running. Shell integration reports the command word the shell started while the
-/// inspector reports whatever holds the terminal now; where those cannot be reconciled - a shell
-/// function, a launcher that execs something unrelated - the arguments belong to neither and are
-/// dropped rather than guessed at.
+/// Shell integration reports the command word the shell started while the inspector reports
+/// whatever holds the terminal now. Arguments are retained for the program itself or a recognized
+/// interpreter invocation with a script boundary. Unrecognized launchers lose their arguments.
 fn foreground_launch(
     pane: &mut ServerPane,
     foreground_program: Option<&str>,
@@ -854,18 +852,65 @@ fn foreground_launch(
     let Some(position) = program_position(program, launch) else {
         return empty;
     };
+    let borrowed = position == 0 && runs_under_borrowed_name(pane, program, launch);
     // Past the program word, the executable behind the process is the interpreter rather than the
     // program - `/usr/bin/python3`, not the script the user ran - so the argument naming the
-    // program is the path worth keeping.
+    // program is the path worth keeping. A borrowed `argv[0]` is that same argument, moved to the
+    // front.
     let executable = match position {
-        0 => launch.executable.clone(),
+        0 if !borrowed => launch.executable.clone(),
         position => Some(std::path::PathBuf::from(&launch.argv[position])),
     };
     let executable = executable
         .filter(|path| path.is_absolute())
         .filter(|_| !program_is_on_path(&mut pane.program_on_path, program))
         .map(|path| path.to_string_lossy().into_owned());
-    (executable, replayable_arguments(&launch.argv[position..]))
+    // Recognized interpreter invocations expose a script boundary. Apply the ordinary replay
+    // validation to its argument tail too; unsupported wrappers restore by name alone.
+    let arguments = if borrowed {
+        launch
+            .executable
+            .as_deref()
+            .and_then(|exe| crate::platform::command::wrapper_script_position(exe, &launch.argv))
+            .map(|script| replayable_arguments(&launch.argv[script..]))
+            .unwrap_or_default()
+    } else {
+        replayable_arguments(&launch.argv[position..])
+    };
+    (executable, arguments)
+}
+
+/// Whether a process names the program only through an `argv[0]` it was handed, not by being it.
+///
+/// `exec -a "$0" node --use-system-ca index.js "$@"` - how Cursor's `agent` launcher, and plenty of
+/// shims like it, start their interpreter - leaves a process whose `argv[0]` is the wrapper while
+/// its executable is `node`. [`program_position`] rightly finds the program at the front, but the
+/// process is not that program. A link to the executable (`vi` running `vim`) is, and keeps its
+/// arguments; the file system tells the two apart. The answer is remembered like
+/// [`program_is_on_path`]'s, since resolving the name stats every `PATH` entry.
+fn runs_under_borrowed_name(
+    pane: &mut ServerPane,
+    program: &str,
+    launch: &ForegroundLaunch,
+) -> bool {
+    let (Some(executable), Some(name)) = (launch.executable.as_deref(), launch.argv.first()) else {
+        return false;
+    };
+    if same_program(program, executable) {
+        return false;
+    }
+    if let Some((_, _, borrowed)) =
+        pane.borrowed_program_name
+            .as_ref()
+            .filter(|(cached_name, cached_executable, _)| {
+                cached_name == name && cached_executable == executable
+            })
+    {
+        return *borrowed;
+    }
+    let borrowed = !crate::platform::command::program_launches(name, executable);
+    pane.borrowed_program_name = Some((name.clone(), executable.to_path_buf(), borrowed));
+    borrowed
 }
 
 /// Where in a process's `argv` the program the pane reports running appears, and therefore where
@@ -1327,6 +1372,7 @@ mod tests {
             runtime: PaneRuntimeState::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
+            borrowed_program_name: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
         }
@@ -1424,6 +1470,141 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// Cursor's `agent` launcher ends in `exec -a "$0" node --use-system-ca index.js "$@"`, so the
+    /// process calls itself `agent` while running `node`. Its `argv[1..]` is the interpreter's
+    /// command line, and restoring it once typed `agent --use-system-ca .../index.js` into a pane.
+    #[cfg(unix)]
+    #[test]
+    fn a_wrapper_that_execs_under_its_own_name_recovers_script_arguments() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("rozi-runtime-borrowed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let executable = |name: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        // Names no developer `PATH` resolves, so the absolute paths are kept either way.
+        let node = executable("node");
+        let wrapper = executable("rozi-test-agent");
+        let editor = executable("rozi-test-vim");
+        let link = dir.join("rozi-test-vi").to_string_lossy().into_owned();
+        std::os::unix::fs::symlink(&editor, &link).unwrap();
+        let launch = |exe: &str, words: &[&str]| ForegroundLaunch {
+            executable: Some(std::path::PathBuf::from(exe)),
+            argv: words.iter().map(|word| word.to_string()).collect(),
+        };
+        let mut pane = make_pane();
+
+        assert_eq!(
+            foreground_launch(
+                &mut pane,
+                Some("rozi-test-agent"),
+                Some(&launch(
+                    &node,
+                    &[&wrapper, "--use-system-ca", "/opt/agent/index.js"]
+                )),
+            ),
+            (Some(wrapper.clone()), Vec::new()),
+            "the wrapper is the program to replay; node's arguments are not its arguments"
+        );
+        let script = executable("index.js");
+        let preload = executable("preload.js");
+        let elsewhere = dir.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let unrelated = elsewhere.join("index.js");
+        std::fs::write(&unrelated, b"").unwrap();
+        for options in [
+            vec!["--use-system-ca"],
+            vec!["-r", preload.as_str()],
+            vec!["--require", preload.as_str(), "--use-system-ca"],
+            vec!["--require=some-module"],
+            vec!["--"],
+            vec![],
+        ] {
+            let mut words = vec![wrapper.as_str()];
+            words.extend(options);
+            words.extend([script.as_str(), "--resume", "session with spaces", ""]);
+            assert_eq!(
+                foreground_launch(
+                    &mut pane,
+                    Some("rozi-test-agent"),
+                    Some(&launch(&node, &words))
+                ),
+                (
+                    Some(wrapper.clone()),
+                    vec!["--resume".into(), "session with spaces".into(), "".into()]
+                ),
+                "only the script's arguments should be replayed: {words:?}"
+            );
+        }
+        for tail in [
+            vec!["--unknown", script.as_str(), "--resume"],
+            vec!["-e", script.as_str(), "--resume"],
+            vec!["-r", preload.as_str()],
+            vec!["--require"],
+            vec!["--"],
+            vec!["index.js", "--resume"],
+            vec![unrelated.to_str().unwrap(), "--resume"],
+            vec![dir.to_str().unwrap(), "--resume"],
+            vec![script.as_str(), "unsafe\nargument"],
+        ] {
+            let mut words = vec![wrapper.as_str()];
+            words.extend(tail);
+            assert_eq!(
+                foreground_launch(
+                    &mut pane,
+                    Some("rozi-test-agent"),
+                    Some(&launch(&node, &words))
+                ),
+                (Some(wrapper.clone()), Vec::new()),
+                "ambiguous or unsafe arguments must not be replayed: {words:?}"
+            );
+        }
+        let system_node = elsewhere.join("node");
+        std::fs::write(&system_node, b"").unwrap();
+        let wrapper_link = elsewhere.join("rozi-test-agent");
+        std::os::unix::fs::symlink(&wrapper, &wrapper_link).unwrap();
+        assert_eq!(
+            foreground_launch(
+                &mut pane,
+                Some("rozi-test-agent"),
+                Some(&launch(
+                    system_node.to_str().unwrap(),
+                    &[wrapper_link.to_str().unwrap(), &script, "--resume"]
+                )),
+            ),
+            (
+                Some(wrapper_link.to_string_lossy().into_owned()),
+                vec!["--resume".into()]
+            ),
+            "the script may live beside the resolved wrapper with Node installed elsewhere"
+        );
+        assert_eq!(
+            foreground_launch(
+                &mut pane,
+                Some("rozi-test-agent"),
+                Some(&launch(&editor, &[&wrapper, &script, "--resume"])),
+            ),
+            (Some(wrapper.clone()), Vec::new()),
+            "an unsupported executable must not be parsed as Node"
+        );
+        assert_eq!(
+            foreground_launch(
+                &mut pane,
+                Some("rozi-test-vi"),
+                Some(&launch(&editor, &[&link, "notes.md"])),
+            ),
+            (Some(editor.clone()), vec!["notes.md".to_string()]),
+            "a link runs the executable itself, so its arguments are real"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

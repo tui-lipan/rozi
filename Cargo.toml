@@ -57,7 +57,7 @@ exclude = [
 # per-session clock so waiting cannot advance the app, and a versioned Unix control protocol
 # (`TUI_LIPAN_AUTOMATION_HEADLESS=1`). It is a breaking release: `TestBackend` is now controlled, so
 # a test that used to observe work settle on its own must `advance(...)` for it.
-tui-lipan = { version = "0.9.3", features = [
+tui-lipan = { version = "0.10.1", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

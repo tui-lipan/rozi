@@ -494,6 +494,94 @@ pub fn program_exists(program: &str) -> bool {
     }
 }
 
+/// Whether starting `program` - a path, or a name looked up on `PATH` - runs the file at
+/// `executable` itself.
+///
+/// A symlink or hard link (`vi` to `vim`, a rustup proxy) does: the process is the program, so its
+/// arguments are the ones it was given. A wrapper script that `exec -a "$0"`s an interpreter does
+/// not, even though the process still carries the wrapper's name as `argv[0]`. Anything that cannot
+/// be resolved is not shown to be the same file.
+pub fn program_launches(program: &str, executable: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        let identity = |path: &std::path::Path| {
+            path.metadata()
+                .ok()
+                .filter(|metadata| metadata.is_file())
+                .map(|metadata| (metadata.dev(), metadata.ino()))
+        };
+        let Some(target) = identity(executable) else {
+            return false;
+        };
+        if program.contains('/') {
+            return identity(std::path::Path::new(program)) == Some(target);
+        }
+        std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join(program))
+                .find(|candidate| program_exists(&candidate.to_string_lossy()))
+                .is_some_and(|candidate| identity(&candidate) == Some(target))
+        })
+    }
+    #[cfg(windows)]
+    {
+        let canonical = |path: &std::path::Path| std::fs::canonicalize(path).ok();
+        lookup_program(program)
+            .and_then(|path| canonical(&path))
+            .is_some_and(|path| Some(path) == canonical(executable))
+    }
+}
+
+/// Locate the script boundary in a borrowed-name Node invocation. This deliberately accepts only
+/// a small option vocabulary: skipping arbitrary dash-prefixed words can mistake an option's
+/// value for the script. Unsupported interpreters and options retain the name-only fallback.
+pub(crate) fn wrapper_script_position(
+    executable: &std::path::Path,
+    argv: &[String],
+) -> Option<usize> {
+    if !matches!(
+        executable.file_name()?.to_str()?,
+        "node" | "nodejs" | "node.exe"
+    ) {
+        return None;
+    }
+    let position = node_script_position(argv)?;
+    let script = std::path::Path::new(argv.get(position)?);
+    if !script.is_absolute() || !script.is_file() {
+        return None;
+    }
+    let script = script.canonicalize().ok()?;
+    let beside_launcher = [Some(executable), argv.first().map(std::path::Path::new)]
+        .into_iter()
+        .flatten()
+        .filter_map(|path| path.canonicalize().ok())
+        .any(|path| path.parent() == script.parent());
+    beside_launcher.then_some(position)
+}
+
+fn node_script_position(argv: &[String]) -> Option<usize> {
+    let mut position = 1;
+    loop {
+        match argv.get(position)?.as_str() {
+            "--use-system-ca" => position += 1,
+            "-r" | "--require" => {
+                argv.get(position + 1)?;
+                position += 2;
+            }
+            option if option.starts_with("--require=") => position += 1,
+            "--" => {
+                position += 1;
+                break;
+            }
+            option if option.starts_with('-') => return None,
+            _ => break,
+        }
+    }
+    Some(position)
+}
+
 /// Resolve the interactive-shell launch policy. `configured` is the user's `shell` config value
 /// (already normalized to argv form by `config::file`); empty is treated as "not configured".
 pub fn resolve_interactive_shell(configured: Option<&[String]>, env: &ShellEnv) -> ShellCommand {
@@ -595,6 +683,42 @@ mod tests {
         assert!(!program_exists(&path.to_string_lossy()));
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
         assert!(program_exists(&path.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn program_launches_follows_links_but_not_wrappers() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("rozi-command-test-launches-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let executable = |name: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            path
+        };
+        let path_of = |name: &str| dir.join(name).to_string_lossy().into_owned();
+        let node = executable("node");
+        executable("agent");
+        std::os::unix::fs::symlink(&node, dir.join("nodejs")).unwrap();
+        std::fs::hard_link(&node, dir.join("node-hardlink")).unwrap();
+
+        assert!(program_launches(&path_of("node"), &node));
+        assert!(program_launches(&path_of("nodejs"), &node), "a symlink");
+        assert!(
+            program_launches(&path_of("node-hardlink"), &node),
+            "a hard link"
+        );
+        assert!(
+            !program_launches(&path_of("agent"), &node),
+            "a wrapper that execs the file under its own name is a different file"
+        );
+        assert!(!program_launches(&path_of("missing"), &node));
+        assert!(!program_launches(&path_of("node"), &dir.join("missing")));
         let _ = std::fs::remove_dir_all(dir);
     }
 

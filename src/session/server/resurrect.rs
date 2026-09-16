@@ -1521,6 +1521,7 @@ mod tests {
             runtime: protocol::PaneRuntimeState::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
+            borrowed_program_name: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
         }

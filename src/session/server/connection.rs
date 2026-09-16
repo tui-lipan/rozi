@@ -416,7 +416,8 @@ impl SessionServer {
                         // width reflow cannot discard the spare history-allocation slot.
                         let mut screen = crate::pane::new_terminal_screen(rows, cols, scrollback);
                         screen.set_cell_size(pane.cell);
-                        screen.set_image_storage_enabled(false);
+                        screen.set_image_storage_enabled(true);
+                        screen.set_image_budget(crate::pane::PANE_IMAGE_BUDGET_BYTES);
                         screen.set_image_media_policy(image_media_policy);
                         screen.set_palette(pane.palette.into());
                         pane.replace_empty_screen(screen);

@@ -138,9 +138,10 @@ impl SessionServer {
         let cell = request.cell.unwrap_or_default();
         let mut screen = crate::pane::new_terminal_screen(rows, cols, self.settings.scrollback);
         screen.set_cell_size(cell);
-        // Clients parse the same raw stream and own rendering. The server only needs terminal
-        // semantics, protocol replies, and image-implied cursor movement.
-        screen.set_image_storage_enabled(false);
+        // The server exports this screen to seed later attachments, so it retains the same bounded
+        // Kitty image state as a client parser even though it never renders those pixels itself.
+        screen.set_image_storage_enabled(true);
+        screen.set_image_budget(crate::pane::PANE_IMAGE_BUDGET_BYTES);
         screen.set_image_media_policy(self.image_media_policy());
         // Seed the palette before the PTY spawns so the child's startup OSC 4/10/11 color queries
         // are answered against the theme palette instead of the screen default.

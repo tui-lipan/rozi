@@ -133,11 +133,10 @@ by the host terminal, including Kitty, iTerm2, sixel, or text-cell fallback.
 
 Images follow terminal scrolling and alternate-screen lifetime. These limits apply:
 
-- Images drawn before the pane's replay snapshot during attach are not replayed.
 - Kitty protocol animation frames are not supported. Programs that redraw an image can still
   animate.
-- Each attached client keeps up to 32 MiB of decoded pixels per pane; old images are evicted when
-  needed. The server tracks image dimensions but does not keep another pixel copy.
+- The session server and each attached client keep up to 32 MiB of image data per pane; old images
+  are evicted when needed. Retained images and placements are included when a client attaches.
 - Remote panes cannot use a server-side file path as an image handoff to the local client, so they
   use inline image data.
 - Temporary-file and shared-memory handoff forms that can only be consumed once are refused in a
@@ -159,8 +158,9 @@ terminal output. Store and share them accordingly.
 
 - Named sessions retain live PTYs while their server runs.
 - Profiles restore layout and launch intent with fresh PTYs.
-- Resurrection restarts commands and replays saved text history.
+- Resurrection restarts commands and replays saved terminal history, including retained Kitty
+  images.
 - Scratch panes live on a private client-lifetime server and are not saved or shared.
-- Images drawn before attach are not reconstructed from text replay.
+- Retained Kitty images are restored when attaching to a live session.
 
 See [Profiles](profiles.md) and [Shared sessions](shared-sessions.md) for those workflows.

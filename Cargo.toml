@@ -57,7 +57,9 @@ exclude = [
 # per-session clock so waiting cannot advance the app, and a versioned Unix control protocol
 # (`TUI_LIPAN_AUTOMATION_HEADLESS=1`). It is a breaking release: `TestBackend` is now controlled, so
 # a test that used to observe work settle on its own must `advance(...)` for it.
-tui-lipan = { version = "0.10.1", features = [
+# 0.10.2 includes retained Kitty graphics and placements in terminal replay streams, which lets a
+# session server restore images when a client reattaches.
+tui-lipan = { version = "0.10.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

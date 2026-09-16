@@ -50,12 +50,12 @@ use tui_lipan::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// Decoded Kitty graphics retained by one pane in one client.
+/// Decoded Kitty graphics retained by one pane parser.
 ///
 /// `tui-lipan` defaults to 96 MiB per screen, which is appropriate for a standalone terminal but
-/// multiplies by both pane count and attached-client count in Rozi. Thirty-two MiB keeps several
-/// full-screen plots while bounding an eight-pane attachment to 256 MiB of decoded pixels.
-const CLIENT_IMAGE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+/// multiplies by pane count across the session server and attached clients in Rozi. Thirty-two MiB
+/// keeps several full-screen plots while bounding each parser independently.
+pub(crate) const PANE_IMAGE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
 
 /// Build a terminal grid without crossing Alacritty's next history allocation boundary.
 ///
@@ -274,7 +274,7 @@ impl TerminalPane {
         // many rows a picture takes.
         screen.set_cell_size(tui_lipan::host_cell_size());
         screen.set_image_media_policy(GraphicsMediaPolicy::SHARED);
-        screen.set_image_budget(CLIENT_IMAGE_BUDGET_BYTES);
+        screen.set_image_budget(PANE_IMAGE_BUDGET_BYTES);
         Self {
             pane_id: 0,
             generation: 0,
@@ -306,7 +306,7 @@ impl TerminalPane {
             runtime_sequence: 0,
             last_palette: None,
             media_policy: GraphicsMediaPolicy::SHARED,
-            image_budget_bytes: CLIENT_IMAGE_BUDGET_BYTES,
+            image_budget_bytes: PANE_IMAGE_BUDGET_BYTES,
             seen_bell_count: 0,
             scrollback_limit: scrollback,
             output_seen: false,
@@ -982,7 +982,7 @@ mod tests {
 
     #[test]
     fn client_image_budget_survives_server_backend_rebinds() {
-        assert_eq!(CLIENT_IMAGE_BUDGET_BYTES, 32 * 1024 * 1024);
+        assert_eq!(PANE_IMAGE_BUDGET_BYTES, 32 * 1024 * 1024);
         let mut pane = TerminalPane::new(100);
         pane.set_image_budget(4);
 

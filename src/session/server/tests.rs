@@ -407,6 +407,43 @@ fn pending_pane_output_is_represented_only_by_its_future_snapshot() {
 }
 
 #[test]
+fn attach_replay_restores_retained_kitty_images() {
+    let mut pane = test_pane(3);
+    pane.screen_mut()
+        .process_bytes(b"\x1b[2;4H\x1b_Ga=T,f=24,s=1,v=1,t=d,i=7,c=2,r=2,C=1,z=-9,q=2;gICA\x1b\\");
+    assert_eq!(pane.screen_mut().render_snapshot().images.len(), 1);
+
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(7, pane);
+    let (client_id, _stream) = attach_client(&mut server);
+    server.enqueue_attach_seeds(client_id);
+    for _ in 0..4 {
+        server.pump_attach_seeds();
+    }
+
+    let replay: Vec<u8> = decode_outbox_frames(server.client_mut(client_id).unwrap())
+        .into_iter()
+        .filter_map(|frame| match frame {
+            DecodedOutboxFrame::Pane {
+                pane_id: 7,
+                generation: 3,
+                bytes,
+            } => Some(bytes),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let mut restored = TerminalScreen::new(5, 20, 100);
+    restored.process_bytes(&replay);
+    let snapshot = restored.render_snapshot();
+    assert_eq!(snapshot.images.len(), 1);
+    assert_eq!(snapshot.images[0].image_id, 7);
+    assert_eq!((snapshot.images[0].row, snapshot.images[0].col), (1, 3));
+    assert_eq!((snapshot.images[0].rows, snapshot.images[0].cols), (2, 2));
+    assert_eq!(snapshot.images[0].z, -9);
+}
+
+#[test]
 fn output_after_snapshot_waits_behind_the_complete_replay() {
     let mut server = SessionServer::new_named("dev");
     let (client_id, _stream) = attach_client(&mut server);

@@ -39,6 +39,8 @@
   client leaves the session and opens the session picker or launcher, with a toast that says why.
   A reconnect also retries a server that is too busy to answer the handshake instead of giving up
   after one two-second attempt.
+- Kitty images retained by a live session are restored with their placements when a client
+  detaches and reattaches, including images in scrollback and on the alternate screen.
 - Merged pane borders no longer grow junctions between the scratchpad and the workspace tiles
   underneath it. Split scratch panes still fuse with each other.
 - A script's own `ROZI_PANE` can no longer address a pane in a different session. The CLI stamps

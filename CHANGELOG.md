@@ -35,6 +35,10 @@
 
 ### Fixed
 
+- A local session whose reconnect fails no longer leaves the client showing its dead panes. The
+  client leaves the session and opens the session picker or launcher, with a toast that says why.
+  A reconnect also retries a server that is too busy to answer the handshake instead of giving up
+  after one two-second attempt.
 - Merged pane borders no longer grow junctions between the scratchpad and the workspace tiles
   underneath it. Split scratch panes still fuse with each other.
 - A script's own `ROZI_PANE` can no longer address a pane in a different session. The CLI stamps

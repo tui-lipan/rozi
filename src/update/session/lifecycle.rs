@@ -93,6 +93,19 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
         crate::state::ConnectionState::Disconnected
     };
     ctx.state.commands_dirty = true;
+    if was_reconnect && !was_remote {
+        // A local server that cannot take this client back leaves nothing to show but dead panes.
+        // Leave the session visibly instead of rendering it as though still inside; a remote link
+        // stays offline in place because its host can come back and reconnect it.
+        let update = crate::ops::session::land_on_surviving_session(ctx);
+        crate::pane::pty_events::notify_on(
+            ctx,
+            crate::state::ToastChannel::SessionLifecycle,
+            Some("Reconnect failed".to_string()),
+            message,
+        );
+        return update;
+    }
     crate::pane::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::SessionLifecycle,

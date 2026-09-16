@@ -1603,6 +1603,57 @@ fn retained_remote_reconnect_failure_stays_offline_and_remote() {
         .expect("retained reconnect test completes");
 }
 
+/// A local reconnect that fails leaves the session instead of rendering its dead panes as though
+/// the client were still inside it.
+#[test]
+fn local_reconnect_failure_leaves_the_session() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("dev".to_string());
+                state.current_mut().mark_disconnected();
+                state.current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: 42,
+                        name: "dev".to_string(),
+                        client: None,
+                        autostart: false,
+                        read_only: false,
+                        reconnect: true,
+                        remote_host: None,
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+            }
+
+            backend
+                .dispatch(Msg::SessionAttachFailed {
+                    epoch: 42,
+                    message: "Session `dev` is busy or not accepting clients".to_string(),
+                })
+                .expect("dispatch local reconnect failure");
+
+            let current = backend.state().current();
+            assert!(current.pending_session_attach.is_none());
+            assert_eq!(current.session_name, None);
+            assert!(!current.session_attached);
+            assert!(
+                !backend
+                    .state()
+                    .background
+                    .values()
+                    .any(|attachment| { attachment.session_name.as_deref() == Some("dev") })
+            );
+        })
+        .expect("spawn local reconnect failure test")
+        .join()
+        .expect("local reconnect failure test completes");
+}
+
 /// A failed *remote* connect that had parked a live session restores that session rather than
 /// falling back to a fresh local ephemeral. The ephemeral fallback would re-attach to this
 /// process's own `eph-<pid>` server — still controlled by the parked client — and come back as a

@@ -55,6 +55,22 @@ pub(crate) fn attach_session_client(
     attach_session_client_with_profile(epoch, name, autostart, read_only, false, None, false, link);
 }
 
+/// How long a local reconnect keeps retrying a server that is alive but did not answer the
+/// handshake in time. Matches the server's heartbeat budget for a busy peer.
+const LOCAL_RECONNECT_BUSY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Re-drive an established local link that dropped. Unlike [`attach_session_client`], a busy
+/// server is retried until [`LOCAL_RECONNECT_BUSY_DEADLINE`] before the reconnect is abandoned.
+pub(crate) fn reconnect_session_client(
+    epoch: u64,
+    name: String,
+    autostart: bool,
+    read_only: bool,
+    link: CommandLink<Msg>,
+) {
+    attach_session_client_with_profile(epoch, name, autostart, read_only, false, None, true, link);
+}
+
 pub(crate) fn create_session_client(
     epoch: u64,
     name: String,
@@ -127,6 +143,7 @@ fn attach_session_client_with_profile(
     };
     let endpoint = crate::platform::ipc::IpcEndpoint::at_path(&path);
     let deadline = Instant::now() + Duration::from_secs(5);
+    let reconnect_deadline = Instant::now() + LOCAL_RECONNECT_BUSY_DEADLINE;
     let mut spawned = false;
     let mut server_child: Option<std::process::Child> = None;
     loop {
@@ -167,6 +184,12 @@ fn attach_session_client_with_profile(
                 return;
             }
             Err(err) => {
+                // A server stalled by a large output burst can miss one handshake window and answer
+                // the next; a reconnect rides that out instead of abandoning a live session.
+                if reconnect && is_busy_attach_error(&err) && Instant::now() < reconnect_deadline {
+                    std::thread::sleep(Duration::from_millis(250));
+                    continue;
+                }
                 if is_busy_attach_error(&err) {
                     link.send(Msg::SessionAttachFailed {
                         epoch,

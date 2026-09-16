@@ -213,7 +213,7 @@ pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {
     }
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
-            crate::session::bootstrap::attach_session_client(
+            crate::session::bootstrap::reconnect_session_client(
                 epoch, name, autostart, read_only, link,
             )
         });

@@ -37,6 +37,9 @@
 
 - Quitting or detaching no longer flashes the "Reconnecting" overlay. The server closing the
   connection in answer to the client leaving was read as a lost link and started a reconnect.
+- On macOS, rozi no longer leaves terminal color replies such as `^[]4;0;rgb:…` in the shell after
+  exit, picks up the terminal's colors at startup, and quits without a half-second stall. This
+  comes from tui-lipan 0.10.3.
 - A client that falls behind a pane's output is no longer disconnected. A program that floods
   output, such as an agent redrawing its whole history on every resize, used to overflow the
   client's 8 MiB buffer and drop the connection. The server now skips that pane's queued output

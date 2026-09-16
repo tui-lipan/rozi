@@ -35,6 +35,8 @@
 
 ### Fixed
 
+- Quitting or detaching no longer flashes the "Reconnecting" overlay. The server closing the
+  connection in answer to the client leaving was read as a lost link and started a reconnect.
 - A client that falls behind a pane's output is no longer disconnected. A program that floods
   output, such as an agent redrawing its whole history on every resize, used to overflow the
   client's 8 MiB buffer and drop the connection. The server now skips that pane's queued output

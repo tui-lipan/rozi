@@ -550,6 +550,34 @@ mod tests {
     }
 
     #[test]
+    fn server_hang_up_after_quit_does_not_reconnect() {
+        on_large_stack(|| {
+            let (mut backend, _outbound, _events) = named_attached_backend();
+            backend.state_mut().current_mut().pending_session_attach = None;
+            backend.render();
+            backend
+                .dispatch(Msg::RunAction(Action::Quit))
+                .expect("dispatch quit");
+
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(Msg::SessionDisconnected {
+                    epoch,
+                    name: "named".to_string(),
+                })
+                .expect("dispatch disconnect");
+
+            let current = backend.state().current();
+            assert!(current.pending_session_attach.is_none());
+            assert_ne!(
+                current.connection,
+                crate::state::ConnectionState::Reconnecting
+            );
+            assert_eq!(backend.state().runtime_epoch, epoch);
+        });
+    }
+
+    #[test]
     fn detach_prompts_to_name_a_retained_ephemeral_before_exiting() {
         on_large_stack(|| {
             let mut backend = confirming_backend();

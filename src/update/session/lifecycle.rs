@@ -40,13 +40,19 @@ pub(crate) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String)
         }
         return Update::none();
     }
-    // Only the current session's unexpected disconnect matters; an intentional detach or
-    // attach-elsewhere has already bumped the epoch, so its stale disconnect is filtered out above.
+    // Only the current session's unexpected disconnect matters; an attach-elsewhere has already
+    // bumped the epoch, so its stale disconnect is filtered out above.
     if ctx.state.current().session_name.as_deref() != Some(name.as_str()) {
         return Update::none();
     }
     if ctx.state.current().pending_session_attach.is_some() {
         return Update::full();
+    }
+    // Leaving, killing, or restarting marks the session detached before closing its client, and
+    // keeps the epoch. The server's hang-up that follows is the answer to that, not a lost link:
+    // reconnecting here would flash a reconnect overlay while the client quits.
+    if !ctx.state.current().session_attached {
+        return Update::none();
     }
     ctx.state.sidebar.invalidate_sessions();
     cancel_current_pointer_layout_sessions(&mut ctx.state);

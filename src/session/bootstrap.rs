@@ -630,6 +630,18 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 cols,
                 rows,
             },
+            ServerMessage::PaneReset {
+                pane_id,
+                generation,
+                cols,
+                rows,
+            } => Msg::SessionPaneReset {
+                epoch,
+                pane_id,
+                generation,
+                cols,
+                rows,
+            },
             ServerMessage::Exited {
                 pane_id,
                 local,

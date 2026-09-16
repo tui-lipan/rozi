@@ -72,6 +72,67 @@ fn settle_command_link(backend: &mut TestBackend<crate::AppRoot>) {
 }
 
 #[test]
+fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let epoch = backend.state().runtime_epoch;
+            let target = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("focused pane");
+            let generation = 7;
+            {
+                let pane =
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+                pane.pty_generation = generation;
+                pane.terminal.bind_session(target, generation);
+                pane.terminal.process_server_output(b"stale transcript");
+            }
+
+            for stale_generation in [generation + 1, generation] {
+                backend
+                    .dispatch(Msg::SessionPaneReset {
+                        epoch,
+                        pane_id: target,
+                        generation: stale_generation,
+                        cols: 41,
+                        rows: 13,
+                    })
+                    .expect("dispatch pane reset");
+                let pane =
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+                let reset = stale_generation == generation;
+                assert_eq!(
+                    pane.terminal
+                        .search_scrollback("stale transcript")
+                        .is_empty(),
+                    reset,
+                    "only the pane's own generation is reset"
+                );
+                assert_eq!((pane.terminal.cols, pane.terminal.rows) == (41, 13), reset);
+            }
+
+            backend
+                .dispatch(Msg::SessionOutput {
+                    epoch,
+                    pane_id: target,
+                    local: false,
+                    generation,
+                    bytes: b"replayed".to_vec(),
+                })
+                .expect("dispatch replay");
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+            assert!(!pane.terminal.search_scrollback("replayed").is_empty());
+        })
+        .expect("spawn pane reset test")
+        .join()
+        .expect("pane reset test completes");
+}
+
+#[test]
 fn background_output_arms_the_alert_pulse_without_the_global_sweep() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)

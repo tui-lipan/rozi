@@ -591,6 +591,13 @@ pub enum Msg {
         cols: u16,
         rows: u16,
     },
+    SessionPaneReset {
+        epoch: u64,
+        pane_id: PaneId,
+        generation: u64,
+        cols: u16,
+        rows: u16,
+    },
     SessionExited {
         epoch: u64,
         pane_id: PaneId,

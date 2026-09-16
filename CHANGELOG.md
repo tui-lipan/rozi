@@ -35,6 +35,13 @@
 
 ### Fixed
 
+- A client that falls behind a pane's output is no longer disconnected. A program that floods
+  output, such as an agent redrawing its whole history on every resize, used to overflow the
+  client's 8 MiB buffer and drop the connection. The server now skips that pane's queued output
+  for the lagging client and redraws the pane from its own screen once the client catches up.
+  Other panes and other clients keep their live output. `metrics` reports it under
+  `client_resync`. The session protocol is now version 7, so restart running session servers
+  after upgrading.
 - A local session whose reconnect fails no longer leaves the client showing its dead panes. The
   client leaves the session and opens the session picker or launcher, with a toast that says why.
   A reconnect also retries a server that is too busy to answer the handshake instead of giving up

@@ -157,5 +157,7 @@ sharing, since taking control changes the canonical terminal size and can reflow
 full-screen program.
 
 A client that stops responding is disconnected so it cannot keep layout control or block session
-traffic. Live named sessions continue while at least the server remains running. See
+traffic. A client that is responding but cannot keep up with a pane's output stays attached. Rozi
+skips the output it has fallen behind on and redraws that pane from the session's current screen
+once the client catches up. Other clients are not affected. Live named sessions continue while at least the server remains running. See
 [Sessions](sessions.md) for detach and resurrection, and [Remote sessions](remote.md) for SSH setup.

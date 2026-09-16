@@ -274,6 +274,11 @@ impl SharedSessionState {
         self.orphan_output.take_for_generation(pane_id, generation)
     }
 
+    /// Forget output buffered for a pane the server is about to replay from scratch.
+    pub fn discard_orphan_output(&mut self, pane_id: PaneId, generation: u64) {
+        self.orphan_output.take_for_generation(pane_id, generation);
+    }
+
     pub fn orphan_output_stats(&self) -> OrphanOutputStats {
         self.orphan_output.stats()
     }

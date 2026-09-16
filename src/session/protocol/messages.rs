@@ -400,6 +400,16 @@ pub enum ServerMessage {
         cols: u16,
         rows: u16,
     },
+    /// Discard this client's parsed screen for a shared pane and start a fresh one at the given
+    /// geometry. The pane's replay follows, so the client ends up where the server's screen was
+    /// when it exported. Sent before every replay: on attach, and when a client that fell behind
+    /// had the pane's live output shed.
+    PaneReset {
+        pane_id: PaneId,
+        generation: u64,
+        cols: u16,
+        rows: u16,
+    },
     Exited {
         pane_id: PaneId,
         local: bool,

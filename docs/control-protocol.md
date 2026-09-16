@@ -105,6 +105,14 @@ Server metrics include `attach_seed`. Its `queued_bytes`, `peak_queued_bytes`, a
 The object also reports active clients, panes remaining, lifetime replay bytes, completed and
 disconnected attach counts, last and maximum duration, and the last disconnect reason.
 
+Server metrics also include `client_resync`, for clients that fell too far behind a pane's output.
+Rozi drops that output for the client and replays the pane from the server's screen instead.
+`active_clients` counts clients replaying now. `started` and `completed` count resyncs. `exports`
+counts pane screens exported for them. `requeued_panes` counts panes a client fell behind again
+before their replay finished, during an attach or a resync. `shed_bytes` is the pane output dropped
+rather than delivered. `last_export_us` and `max_export_us` time one pane export for any replay,
+which the server loop, and so every client, waits on.
+
 ## One-shot requests
 
 ### Pane inspection

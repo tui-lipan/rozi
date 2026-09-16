@@ -378,6 +378,18 @@ impl TerminalPane {
     pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         self.bind_session(pane_id, generation);
         self.runtime_sequence = 0;
+        self.reset_screen();
+    }
+
+    /// Replace the parsed screen with a fresh one at the server's snapshot geometry, ahead of the
+    /// replay that restores it. The pane keeps its binding and runtime metadata.
+    pub fn reset_for_replay(&mut self, cols: u16, rows: u16) {
+        self.cols = cols.max(1);
+        self.rows = rows.max(1);
+        self.reset_screen();
+    }
+
+    fn reset_screen(&mut self) {
         let mut screen = self.screen.borrow_mut();
         *screen = new_terminal_screen(self.rows, self.cols, self.scrollback_limit);
         screen.set_cell_size(tui_lipan::host_cell_size());

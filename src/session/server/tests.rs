@@ -221,9 +221,10 @@ fn install_manual_replay(
     let mut seed = AttachSeedState::new(vec![key]);
     seed.pending.clear();
     seed.manifest.insert(key, PaneSeedState::Replaying);
+    seed.exported.insert(key);
     seed.replay = Some(PaneSeedReplay {
         key,
-        resize_frame: None,
+        reset_frame: None,
         spool: PaneReplayStorage::Memory(Cursor::new(bytes)),
         remaining,
     });
@@ -703,10 +704,27 @@ fn pending_resize_deltas_and_snapshot_geometry_precede_replay() {
             .iter()
             .map(|(_, cols, rows)| (*cols, *rows))
             .collect::<Vec<_>>(),
-        [(37, 11), (41, 12), (41, 12)],
-        "two live resizes followed by snapshot-point geometry"
+        [(37, 11), (41, 12)],
+        "the two live resizes"
     );
     assert!(resizes.iter().all(|(index, _, _)| *index < replay_index));
+    let reset_index = frames
+        .iter()
+        .position(|frame| {
+            matches!(
+                frame,
+                DecodedOutboxFrame::Control(message)
+                    if matches!(message.as_ref(), ServerMessage::PaneReset {
+                        pane_id: 5,
+                        generation: 2,
+                        cols: 41,
+                        rows: 12,
+                    })
+            )
+        })
+        .expect("reset at snapshot-point geometry");
+    assert!(resizes.iter().all(|(index, _, _)| *index < reset_index));
+    assert!(reset_index < replay_index);
 }
 
 #[test]
@@ -797,7 +815,7 @@ fn pane_closed_while_pending_is_not_exported_and_its_delta_survives() {
 }
 
 #[test]
-fn catch_up_overflow_disconnects_only_the_slow_attacher_with_a_reason() {
+fn catch_up_overflow_sheds_the_flooding_pane_and_requeues_its_replay() {
     let mut server = SessionServer::new_named("dev");
     server.max_backlog = 20 * 1024 * 1024;
     let (live_client, _live_stream) = attach_client(&mut server);
@@ -806,7 +824,7 @@ fn catch_up_overflow_disconnects_only_the_slow_attacher_with_a_reason() {
         pane_id: 3,
         generation: 5,
     };
-    install_manual_replay(&mut server, client_id, key, vec![b's']);
+    install_manual_replay(&mut server, client_id, key, vec![b's'; 64]);
     let chunk = vec![b'o'; 5 * 1024 * 1024];
 
     for _ in 0..2 {
@@ -818,6 +836,39 @@ fn catch_up_overflow_disconnects_only_the_slow_attacher_with_a_reason() {
         });
     }
 
+    assert!(server.client_attached(client_id));
+    assert!(server.client_attached(live_client));
+    let client = server.client_mut(client_id).unwrap();
+    let seed = client.seed.as_ref().unwrap();
+    assert!(seed.replay.is_none(), "the interrupted replay is abandoned");
+    assert_eq!(seed.manifest.get(&key), Some(&PaneSeedState::Pending));
+    assert_eq!(seed.pending.iter().copied().collect::<Vec<_>>(), [key]);
+    assert_eq!(seed.catch_up_bytes, 0);
+    assert!(client.shed_bytes > 2 * chunk.len() as u64);
+    assert_eq!(server.runtime_metrics().attach_seed.disconnected, 0);
+    assert_eq!(server.runtime_metrics().client_resync.requeued_panes, 1);
+}
+
+#[test]
+fn catch_up_overflow_with_no_pane_output_to_shed_disconnects_with_a_reason() {
+    let mut server = SessionServer::new_named("dev");
+    server.max_backlog = 20 * 1024 * 1024;
+    let (live_client, _live_stream) = attach_client(&mut server);
+    let (client_id, _stream) = attach_client(&mut server);
+    install_manual_replay(
+        &mut server,
+        client_id,
+        PaneSeedKey {
+            pane_id: 3,
+            generation: 5,
+        },
+        vec![b's'],
+    );
+
+    for _ in 0..2 {
+        server.push_to_attached(Arc::from(vec![b'c'; 5 * 1024 * 1024]));
+    }
+
     assert!(!server.client_attached(client_id));
     assert!(server.client_attached(live_client));
     let metrics = server.runtime_metrics().attach_seed;
@@ -826,6 +877,200 @@ fn catch_up_overflow_disconnects_only_the_slow_attacher_with_a_reason() {
         metrics.last_disconnect_reason.as_deref(),
         Some("attach-catch-up-overflow")
     );
+}
+
+fn broadcast_pane_output(
+    server: &mut SessionServer,
+    pane_id: PaneId,
+    generation: u64,
+    bytes: &[u8],
+) {
+    server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        pane_id,
+        local: false,
+        generation,
+        bytes: bytes.to_vec(),
+    });
+}
+
+fn outbox_pane_bytes(client: &ClientConn, pane: PaneId) -> Vec<u8> {
+    decode_outbox_frames(client)
+        .into_iter()
+        .filter_map(|frame| match frame {
+            DecodedOutboxFrame::Pane { pane_id, bytes, .. } if pane_id == pane => Some(bytes),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+#[test]
+fn a_client_behind_on_one_pane_sheds_it_and_is_resynced_from_the_server_screen() {
+    let mut server = SessionServer::new_named("dev");
+    server.max_backlog = 16 * 1024;
+    server.panes.insert(7, test_pane(3));
+    server.panes.insert(8, test_pane(1));
+    let (client_id, _stream) = attach_client(&mut server);
+    let client = server.client_mut(client_id).unwrap();
+    client.outbox.clear();
+    client.outbox_bytes = 0;
+
+    broadcast_pane_output(&mut server, 8, 1, b"quiet");
+    let flood = vec![b'f'; 4 * 1024];
+    for _ in 0..8 {
+        broadcast_pane_output(&mut server, 7, 3, &flood);
+    }
+    server
+        .panes
+        .get_mut(&7)
+        .unwrap()
+        .screen_mut()
+        .process_bytes(b"latest");
+
+    assert!(server.client_attached(client_id));
+    let client = server.client_mut(client_id).unwrap();
+    let key = PaneSeedKey {
+        pane_id: 7,
+        generation: 3,
+    };
+    assert_eq!(
+        client.resync_pending.iter().copied().collect::<Vec<_>>(),
+        [key]
+    );
+    assert_eq!(
+        outbox_pane_bytes(client, 8),
+        b"quiet",
+        "the quiet pane keeps its output"
+    );
+    let queued_flood = outbox_pane_bytes(client, 7).len();
+    assert!(queued_flood < 8 * flood.len());
+
+    broadcast_pane_output(&mut server, 7, 3, b"dropped");
+    let client = server.client_mut(client_id).unwrap();
+    assert_eq!(
+        outbox_pane_bytes(client, 7).len(),
+        queued_flood,
+        "shed output stays dropped"
+    );
+
+    // The client drains what it already has, which lets the resync start.
+    server.max_backlog = SEED_SEND_WINDOW * 2;
+    let client = server.client_mut(client_id).unwrap();
+    client.outbox.clear();
+    client.outbox_bytes = 0;
+    for _ in 0..4 {
+        server.pump_attach_seeds();
+    }
+
+    let client = server.client_mut(client_id).unwrap();
+    assert!(client.resync_pending.is_empty());
+    let frames = decode_outbox_frames(client);
+    let reset = frames
+        .iter()
+        .position(|frame| {
+            matches!(
+                frame,
+                DecodedOutboxFrame::Control(message)
+                    if matches!(message.as_ref(), ServerMessage::PaneReset {
+                        pane_id: 7,
+                        generation: 3,
+                        ..
+                    })
+            )
+        })
+        .expect("resync resets the pane before replaying it");
+    assert!(
+        !frames
+            .iter()
+            .any(|frame| matches!(frame, DecodedOutboxFrame::Pane { pane_id: 8, .. })),
+        "only the shed pane is replayed"
+    );
+    assert!(
+        frames[..reset]
+            .iter()
+            .all(|frame| !matches!(frame, DecodedOutboxFrame::Pane { pane_id: 7, .. }))
+    );
+    let mut restored = TerminalScreen::new(5, 20, 100);
+    restored.process_bytes(&outbox_pane_bytes(client, 7));
+    assert!(restored.snapshot().to_string().contains("latest"));
+
+    let metrics = server.runtime_metrics().client_resync;
+    assert_eq!(
+        (metrics.started, metrics.exports, metrics.requeued_panes),
+        (1, 1, 0)
+    );
+    assert!(metrics.shed_bytes > 0);
+}
+
+#[test]
+fn resync_waits_for_the_outbox_to_drain() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(7, test_pane(3));
+    let (client_id, _stream) = attach_client(&mut server);
+    let client = server.client_mut(client_id).unwrap();
+    client.resync_pending.insert(PaneSeedKey {
+        pane_id: 7,
+        generation: 3,
+    });
+    client.outbox_bytes = RESYNC_START_BACKLOG + 1;
+
+    server.pump_attach_seeds();
+    assert!(server.client_mut(client_id).unwrap().seed.is_none());
+
+    server.client_mut(client_id).unwrap().outbox_bytes = 0;
+    server.pump_attach_seeds();
+    let seed = server.client_mut(client_id).unwrap().seed.as_ref().unwrap();
+    assert_eq!(seed.kind, SeedKind::Resync);
+}
+
+#[test]
+fn a_pane_spawned_behind_a_replay_barrier_is_never_shed() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    install_manual_replay(
+        &mut server,
+        client_id,
+        PaneSeedKey {
+            pane_id: 3,
+            generation: 5,
+        },
+        vec![b's'],
+    );
+
+    for _ in 0..2 {
+        broadcast_pane_output(&mut server, 11, 1, &vec![b'n'; 5 * 1024 * 1024]);
+    }
+
+    // The client learns about pane 11 from control frames still behind the barrier, so a replay of
+    // it would arrive first. With nothing it may shed, the client is disconnected instead.
+    assert!(!server.client_attached(client_id));
+}
+
+#[test]
+fn a_resyncing_client_is_still_pinged_past_the_barrier() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(7, test_pane(3));
+    let (client_id, _stream) = attach_client(&mut server);
+    let key = PaneSeedKey {
+        pane_id: 7,
+        generation: 3,
+    };
+    let client = server.client_mut(client_id).unwrap();
+    client.outbox.clear();
+    client.outbox_bytes = 0;
+    client.seed = Some(AttachSeedState::resync(&[key], vec![key]));
+    client.last_ping = Instant::now() - HEARTBEAT_INTERVAL;
+
+    server.heartbeat();
+
+    let client = server.client_mut(client_id).unwrap();
+    assert!(
+        decode_outbox_frames(client).iter().any(|frame| matches!(
+            frame,
+            DecodedOutboxFrame::Control(message) if matches!(message.as_ref(), ServerMessage::Ping { .. })
+        ))
+    );
+    assert!(client.seed.as_ref().unwrap().catch_up.is_empty());
 }
 
 #[test]

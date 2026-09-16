@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, BufWriter, Cursor, Read, Seek, Write};
 use std::path::PathBuf;
@@ -91,6 +91,9 @@ const SEED_SEND_WINDOW: usize = 4 * 1024 * 1024;
 /// replayed. A client which cannot catch up inside this bound is disconnected without affecting
 /// other clients.
 const SEED_CATCH_UP_LIMIT: usize = 8 * 1024 * 1024;
+/// A client whose live pane output was shed starts replaying those panes once its outbox has
+/// drained to this. Starting sooner would queue replay behind the backlog that caused the shed.
+const RESYNC_START_BACKLOG: usize = SEED_SEND_WINDOW;
 /// Seed encoding work admitted during one server iteration. Socket writes happen separately, so a
 /// fast local reader cannot make one attach monopolize the session pump.
 const SEED_PUMP_BYTES_PER_TICK: usize = 1024 * 1024;
@@ -147,6 +150,7 @@ pub struct SessionServer {
     attach_seed_totals: AttachSeedTotals,
     /// Rotating starting point for bounded seed work, so concurrent attachers share the pump.
     attach_seed_cursor: usize,
+    resync_totals: ResyncTotals,
     resurrection_metrics: ResurrectionMetrics,
     shutdown: bool,
     forget_snapshot: bool,
@@ -408,7 +412,7 @@ pub struct AgentHold {
     pub observed_at: std::time::Instant,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct PaneSeedKey {
     pane_id: PaneId,
     generation: u64,
@@ -444,9 +448,34 @@ enum SeedDelta {
     PaneResize(PaneSeedKey),
 }
 
+impl SeedDelta {
+    fn pane(self) -> Option<PaneSeedKey> {
+        match self {
+            Self::Control => None,
+            Self::PaneOutput(key) | Self::PaneResize(key) => Some(key),
+        }
+    }
+
+    fn output_pane(self) -> Option<PaneSeedKey> {
+        match self {
+            Self::PaneOutput(key) => Some(key),
+            Self::Control | Self::PaneResize(_) => None,
+        }
+    }
+}
+
+/// Why a client is replaying panes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SeedKind {
+    /// Every pane, once, right after attach.
+    Attach,
+    /// Panes whose live output was shed because this client fell behind.
+    Resync,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttachSeedWork {
-    ReplayResize,
+    ReplayReset,
     FinishReplay,
     ReplayChunk,
     BeginPane(PaneSeedKey),
@@ -458,13 +487,24 @@ enum AttachSeedWork {
 struct OutboxFrame {
     bytes: Arc<[u8]>,
     class: OutboxClass,
+    /// The shared pane whose transcript this frame carries, if any. Only these frames may be shed
+    /// from a lagging client; a later replay of the pane stands in for them.
+    pane: Option<PaneSeedKey>,
+}
+
+/// A change retained behind replay, tagged with the pane it belongs to so shedding that pane can
+/// drop it. A resize is tagged too: delivered after a newer replay, it would restore stale geometry.
+struct CatchUpFrame {
+    bytes: Arc<[u8]>,
+    delta: SeedDelta,
 }
 
 struct PaneSeedReplay {
     key: PaneSeedKey,
-    /// Snapshot-point geometry must reach the client before replay. The attach manifest geometry
-    /// can be stale by the time a pending pane is exported.
-    resize_frame: Option<Arc<[u8]>>,
+    /// [`ServerMessage::PaneReset`] at snapshot-point geometry, which must reach the client before
+    /// replay. The attach manifest geometry can be stale by the time a pending pane is exported,
+    /// and a resynced pane holds a screen the replay would otherwise append to.
+    reset_frame: Option<Arc<[u8]>>,
     spool: PaneReplayStorage,
     remaining: u64,
 }
@@ -541,18 +581,21 @@ impl Write for ReplaySpoolWriter {
     }
 }
 
-/// Per-client attach barrier.
+/// Per-client replay barrier, for an attach or a resync.
 ///
 /// A `Pending` pane's output predates its baseline export and must not be forwarded separately.
 /// Once it becomes `Replaying`, subsequent output and every post-attach control frame enter
 /// `catch_up`, behind all baseline replay.
 struct AttachSeedState {
+    kind: SeedKind,
     manifest: HashMap<PaneSeedKey, PaneSeedState>,
     pending: VecDeque<PaneSeedKey>,
     replay: Option<PaneSeedReplay>,
-    catch_up: VecDeque<Arc<[u8]>>,
+    catch_up: VecDeque<CatchUpFrame>,
     catch_up_bytes: usize,
     baseline_queued: bool,
+    /// Panes whose screen this barrier has exported, so exporting one again is visible.
+    exported: HashSet<PaneSeedKey>,
     started: Instant,
     disconnect_reason: Option<&'static str>,
 }
@@ -566,15 +609,30 @@ impl AttachSeedState {
             .map(|pane| (pane, PaneSeedState::Pending))
             .collect();
         Self {
+            kind: SeedKind::Attach,
             manifest,
             pending: panes.into(),
             replay: None,
             catch_up: VecDeque::new(),
             catch_up_bytes: 0,
             baseline_queued: false,
+            exported: HashSet::new(),
             started: Instant::now(),
             disconnect_reason: None,
         }
+    }
+
+    /// Replay only `stale`. Every other live pane is already on the client, so its changes wait
+    /// behind the replay like an attach's catch-up but it is never exported.
+    fn resync(live: &[PaneSeedKey], stale: Vec<PaneSeedKey>) -> Self {
+        let mut seed = Self::new(stale);
+        seed.kind = SeedKind::Resync;
+        for key in live {
+            seed.manifest
+                .entry(*key)
+                .or_insert(PaneSeedState::CatchingUp);
+        }
+        seed
     }
 
     fn output_precedes_snapshot(&self, key: PaneSeedKey) -> bool {
@@ -599,6 +657,18 @@ struct AttachSeedTotals {
     peak_queued_bytes: usize,
     peak_catch_up_bytes: usize,
     last_disconnect_reason: Option<String>,
+}
+
+#[derive(Default)]
+struct ResyncTotals {
+    started: u64,
+    completed: u64,
+    exports: u64,
+    last_export_us: u64,
+    max_export_us: u64,
+    /// Counters of clients that have since left; live clients report their own.
+    departed_shed_bytes: u64,
+    departed_requeued_panes: u64,
 }
 
 /// One attached (or connecting) client. The stream is non-blocking; outbound frames are
@@ -639,6 +709,13 @@ struct ClientConn {
     parked: bool,
     /// When the controller was last notified of this client's request, for per-requester debounce.
     last_request_notify: Option<Instant>,
+    /// Shared panes whose output was shed while no replay barrier was up. They are replayed once
+    /// the outbox drains to [`RESYNC_START_BACKLOG`]; until then their output is dropped.
+    resync_pending: BTreeSet<PaneSeedKey>,
+    /// Encoded pane output this client never received because it was shed.
+    shed_bytes: u64,
+    /// Panes this client fell behind again while their replay was still queued or in flight.
+    requeued_panes: u64,
 }
 
 impl ClientConn {
@@ -667,14 +744,19 @@ impl ClientConn {
             requesting_control: false,
             parked: false,
             last_request_notify: None,
+            resync_pending: BTreeSet::new(),
+            shed_bytes: 0,
+            requeued_panes: 0,
         }
     }
 
-    fn try_push(&mut self, bytes: Arc<[u8]>, default_cap: usize) -> bool {
-        self.try_push_class(bytes, default_cap, OutboxClass::Normal)
-    }
-
-    fn try_push_class(&mut self, bytes: Arc<[u8]>, cap: usize, class: OutboxClass) -> bool {
+    fn try_push_class(
+        &mut self,
+        bytes: Arc<[u8]>,
+        cap: usize,
+        class: OutboxClass,
+        pane: Option<PaneSeedKey>,
+    ) -> bool {
         if self.outbox_bytes.saturating_add(bytes.len()) > cap {
             return false;
         }
@@ -684,62 +766,204 @@ impl ClientConn {
             OutboxClass::SeedReplay => self.seed_queued_bytes += bytes.len(),
             OutboxClass::SeedCatchUp => self.seed_catch_up_queued_bytes += bytes.len(),
         }
-        self.outbox.push_back(OutboxFrame { bytes, class });
+        self.outbox.push_back(OutboxFrame { bytes, class, pane });
         true
     }
 
     /// Route one post-attach frame against this client's baseline barrier.
+    ///
+    /// A client too far behind to take a pane's output has that pane shed rather than being
+    /// disconnected: its queued transcript is dropped and the pane is replayed from the server's
+    /// screen once the client catches up. Only control traffic with nothing left to shed overflows.
     fn push_delta(
         &mut self,
         bytes: Arc<[u8]>,
         delta: SeedDelta,
         default_cap: usize,
     ) -> ClientFrameResult {
-        let Some(seed) = self.seed.as_mut() else {
-            return if self.try_push(bytes, default_cap) {
-                ClientFrameResult::Queued
-            } else {
-                ClientFrameResult::Overflow
-            };
+        let Some(seed) = self.seed.as_ref().filter(|seed| !seed.baseline_queued) else {
+            return self.push_live(bytes, delta, default_cap);
         };
-        if seed.baseline_queued {
-            let accepted = self.try_push(bytes, default_cap);
-            if !accepted && let Some(seed) = self.seed.as_mut() {
-                seed.disconnect_reason = Some("attach-outbox-overflow");
-            }
-            return if accepted {
-                ClientFrameResult::Queued
-            } else {
-                ClientFrameResult::Overflow
-            };
-        }
         match delta {
             SeedDelta::PaneOutput(key) if seed.output_precedes_snapshot(key) => {
-                return ClientFrameResult::Ignored;
+                ClientFrameResult::Ignored
             }
             SeedDelta::PaneResize(key) if seed.output_precedes_snapshot(key) => {
-                let accepted = self.try_push(bytes, default_cap);
-                if !accepted && let Some(seed) = self.seed.as_mut() {
+                self.push_live(bytes, delta, default_cap)
+            }
+            SeedDelta::Control | SeedDelta::PaneOutput(_) | SeedDelta::PaneResize(_) => {
+                self.push_catch_up(bytes, delta)
+            }
+        }
+    }
+
+    /// Queue a frame straight onto the socket outbox, shedding the pane with the most queued output
+    /// until it fits.
+    fn push_live(&mut self, bytes: Arc<[u8]>, delta: SeedDelta, cap: usize) -> ClientFrameResult {
+        let pane = delta.output_pane();
+        if let Some(key) = pane
+            && self.resync_pending.contains(&key)
+        {
+            self.shed_bytes += bytes.len() as u64;
+            return ClientFrameResult::Ignored;
+        }
+        while self.outbox_bytes.saturating_add(bytes.len()) > cap {
+            let Some(victim) = self.largest_outbox_pane() else {
+                if let Some(key) = pane {
+                    self.resync_pending.insert(key);
+                    self.shed_bytes += bytes.len() as u64;
+                    return ClientFrameResult::Ignored;
+                }
+                if let Some(seed) = self.seed.as_mut() {
                     seed.disconnect_reason = Some("attach-outbox-overflow");
                 }
-                return if accepted {
-                    ClientFrameResult::Queued
-                } else {
-                    ClientFrameResult::Overflow
-                };
+                return ClientFrameResult::Overflow;
+            };
+            self.shed_pane(victim);
+            if pane == Some(victim) {
+                self.shed_bytes += bytes.len() as u64;
+                return ClientFrameResult::Ignored;
             }
-            SeedDelta::Control | SeedDelta::PaneOutput(_) | SeedDelta::PaneResize(_) => {}
         }
-        let retained_catch_up = seed
-            .catch_up_bytes
-            .saturating_add(self.seed_catch_up_queued_bytes);
-        if retained_catch_up.saturating_add(bytes.len()) > SEED_CATCH_UP_LIMIT {
-            seed.disconnect_reason = Some("attach-catch-up-overflow");
-            return ClientFrameResult::Overflow;
+        self.try_push_class(bytes, cap, OutboxClass::Normal, pane);
+        ClientFrameResult::Queued
+    }
+
+    /// Retain a change behind replay, shedding the pane holding the most catch-up until it fits.
+    fn push_catch_up(&mut self, bytes: Arc<[u8]>, delta: SeedDelta) -> ClientFrameResult {
+        loop {
+            let seed = self.seed.as_mut().expect("catch-up needs an active seed");
+            let retained = seed
+                .catch_up_bytes
+                .saturating_add(self.seed_catch_up_queued_bytes);
+            if retained.saturating_add(bytes.len()) <= SEED_CATCH_UP_LIMIT {
+                seed.catch_up_bytes += bytes.len();
+                seed.catch_up.push_back(CatchUpFrame { bytes, delta });
+                return ClientFrameResult::Buffered;
+            }
+            let victim = self
+                .largest_catch_up_pane()
+                .or_else(|| delta.pane().filter(|key| self.pane_is_sheddable(*key)));
+            let Some(victim) = victim else {
+                if let Some(seed) = self.seed.as_mut() {
+                    seed.disconnect_reason = Some("attach-catch-up-overflow");
+                }
+                return ClientFrameResult::Overflow;
+            };
+            self.shed_pane(victim);
+            if delta.pane() == Some(victim) {
+                // Output or geometry the pane's coming replay already reflects.
+                self.shed_bytes += bytes.len() as u64;
+                return ClientFrameResult::Ignored;
+            }
         }
-        seed.catch_up_bytes += bytes.len();
-        seed.catch_up.push_back(bytes);
-        ClientFrameResult::Buffered
+    }
+
+    /// While a replay barrier is up, only panes the barrier knows about can be shed: a pane spawned
+    /// after it went up is introduced to the client by control frames still waiting behind it,
+    /// so a replay of that pane would arrive before the pane does.
+    fn pane_is_sheddable(&self, key: PaneSeedKey) -> bool {
+        match self.seed.as_ref() {
+            Some(seed) if !seed.baseline_queued => seed.manifest.contains_key(&key),
+            _ => true,
+        }
+    }
+
+    /// Frames in the outbox a shed may drop. A frame the socket has partially written must finish.
+    fn sheddable_outbox(&self) -> impl Iterator<Item = &OutboxFrame> {
+        self.outbox.iter().skip(usize::from(self.front_offset > 0))
+    }
+
+    fn largest_outbox_pane(&self) -> Option<PaneSeedKey> {
+        let mut totals: HashMap<PaneSeedKey, usize> = HashMap::new();
+        for frame in self.sheddable_outbox() {
+            if let Some(key) = frame.pane {
+                *totals.entry(key).or_default() += frame.bytes.len();
+            }
+        }
+        self.largest_sheddable(totals)
+    }
+
+    fn largest_catch_up_pane(&self) -> Option<PaneSeedKey> {
+        let seed = self.seed.as_ref()?;
+        let mut totals: HashMap<PaneSeedKey, usize> = HashMap::new();
+        for frame in &seed.catch_up {
+            if let Some(key) = frame.delta.pane() {
+                *totals.entry(key).or_default() += frame.bytes.len();
+            }
+        }
+        for frame in self.sheddable_outbox() {
+            if frame.class == OutboxClass::SeedCatchUp
+                && let Some(key) = frame.pane
+            {
+                *totals.entry(key).or_default() += frame.bytes.len();
+            }
+        }
+        self.largest_sheddable(totals)
+    }
+
+    fn largest_sheddable(&self, totals: HashMap<PaneSeedKey, usize>) -> Option<PaneSeedKey> {
+        totals
+            .into_iter()
+            .filter(|(key, bytes)| *bytes > 0 && self.pane_is_sheddable(*key))
+            .max_by_key(|(key, bytes)| (*bytes, std::cmp::Reverse(*key)))
+            .map(|(key, _)| key)
+    }
+
+    /// Stop delivering a pane's transcript to this client and arrange for a replay in its place.
+    fn shed_pane(&mut self, key: PaneSeedKey) {
+        let freed = self.purge_outbox_pane(key);
+        self.shed_bytes += freed as u64;
+        let Some(seed) = self.seed.as_mut().filter(|seed| !seed.baseline_queued) else {
+            self.resync_pending.insert(key);
+            return;
+        };
+        if seed.replay.as_ref().is_some_and(|replay| replay.key == key) {
+            // The client has part of a replay that can no longer finish in order. The next export
+            // starts with a reset, so the partial replay is simply overwritten.
+            seed.replay = None;
+        }
+        let mut freed_catch_up = 0;
+        seed.catch_up.retain(|frame| {
+            let shed = frame.delta.pane() == Some(key);
+            if shed {
+                freed_catch_up += frame.bytes.len();
+            }
+            !shed
+        });
+        seed.catch_up_bytes -= freed_catch_up;
+        if seed.manifest.insert(key, PaneSeedState::Pending) != Some(PaneSeedState::Pending) {
+            seed.pending.push_back(key);
+        }
+        if seed.exported.remove(&key) {
+            self.requeued_panes += 1;
+        }
+        self.shed_bytes += freed_catch_up as u64;
+    }
+
+    /// Drop every queued, unwritten frame of `key`'s transcript. Returns the bytes freed.
+    fn purge_outbox_pane(&mut self, key: PaneSeedKey) -> usize {
+        let pinned_front = self.front_offset > 0;
+        let (mut freed, mut seed_freed, mut catch_up_freed) = (0, 0, 0);
+        let mut index = 0;
+        self.outbox.retain(|frame| {
+            let pinned = index == 0 && pinned_front;
+            index += 1;
+            if pinned || frame.pane != Some(key) {
+                return true;
+            }
+            freed += frame.bytes.len();
+            match frame.class {
+                OutboxClass::Normal => {}
+                OutboxClass::SeedReplay => seed_freed += frame.bytes.len(),
+                OutboxClass::SeedCatchUp => catch_up_freed += frame.bytes.len(),
+            }
+            false
+        });
+        self.outbox_bytes -= freed;
+        self.seed_queued_bytes -= seed_freed;
+        self.seed_catch_up_queued_bytes -= catch_up_freed;
+        freed
     }
 }
 
@@ -1094,6 +1318,7 @@ impl SessionServer {
             outbox_high_water_bytes: 0,
             attach_seed_totals: AttachSeedTotals::default(),
             attach_seed_cursor: 0,
+            resync_totals: ResyncTotals::default(),
             resurrection_metrics: ResurrectionMetrics::default(),
             shutdown: false,
             forget_snapshot: false,
@@ -1259,7 +1484,32 @@ impl SessionServer {
             .filter_map(|client| client.seed.as_ref())
             .map(AttachSeedState::panes_remaining)
             .sum::<usize>();
-        let active_seed_clients = attached().filter(|client| client.seed.is_some()).count();
+        let seeding = |kind| {
+            attached()
+                .filter(|client| client.seed.as_ref().is_some_and(|seed| seed.kind == kind))
+                .count() as u64
+        };
+        let active_seed_clients = seeding(SeedKind::Attach);
+        let client_resync = crate::runtime_metrics::ClientResyncMetrics {
+            active_clients: seeding(SeedKind::Resync),
+            started: self.resync_totals.started,
+            completed: self.resync_totals.completed,
+            exports: self.resync_totals.exports,
+            requeued_panes: self.resync_totals.departed_requeued_panes
+                + self
+                    .clients
+                    .iter()
+                    .map(|client| client.requeued_panes)
+                    .sum::<u64>(),
+            last_export_us: self.resync_totals.last_export_us,
+            max_export_us: self.resync_totals.max_export_us,
+            shed_bytes: self.resync_totals.departed_shed_bytes
+                + self
+                    .clients
+                    .iter()
+                    .map(|client| client.shed_bytes)
+                    .sum::<u64>(),
+        };
         ServerRuntimeMetrics {
             sampled_at_unix_ms: unix_time_millis(),
             pty_ingress: QueueMetrics {
@@ -1279,7 +1529,7 @@ impl SessionServer {
                 clients: attached().count() as u64,
             },
             attach_seed: crate::runtime_metrics::AttachSeedMetrics {
-                active_clients: active_seed_clients as u64,
+                active_clients: active_seed_clients,
                 queued_bytes: seed_queued as u64,
                 peak_queued_bytes: self.attach_seed_totals.peak_queued_bytes as u64,
                 send_window_bytes: SEED_SEND_WINDOW as u64,
@@ -1294,6 +1544,7 @@ impl SessionServer {
                 max_duration_us: self.attach_seed_totals.max_duration_us,
                 last_disconnect_reason: self.attach_seed_totals.last_disconnect_reason.clone(),
             },
+            client_resync,
             resurrection: self.resurrection_metrics,
         }
     }

@@ -242,6 +242,59 @@ pub(crate) fn resized(
     Update::none()
 }
 
+/// The server is about to replay a shared pane from its own screen: after an attach, or after this
+/// client fell far enough behind that its output was shed. Start the pane over so the replay lands
+/// on an empty parser.
+pub(crate) fn pane_reset(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    pane_id: PaneId,
+    generation: u64,
+    cols: u16,
+    rows: u16,
+) -> Update {
+    if epoch != ctx.state.runtime_epoch {
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
+            reset_attachment_pane(attachment, pane_id, generation, cols, rows);
+        }
+        return Update::none();
+    }
+    if !reset_attachment_pane(ctx.state.current_mut(), pane_id, generation, cols, rows) {
+        return Update::none();
+    }
+    if let Some(update) = crate::ops::search::restart_search_after_pane_output(ctx, pane_id) {
+        return update;
+    }
+    if ctx.state.pane_is_rendered(pane_id) {
+        Update::full()
+    } else {
+        Update::none()
+    }
+}
+
+fn reset_attachment_pane(
+    attachment: &mut crate::state::Attachment,
+    pane_id: PaneId,
+    generation: u64,
+    cols: u16,
+    rows: u16,
+) -> bool {
+    match attachment.find_pane_mut(pane_id) {
+        Some(pane) if pane.pty_generation == generation => {
+            pane.terminal.reset_for_replay(cols, rows);
+            true
+        }
+        Some(_) => false,
+        None => {
+            // Output buffered before the layout introduced this pane predates the replay.
+            if let Some(shared) = attachment.shared.as_mut() {
+                shared.discard_orphan_output(pane_id, generation);
+            }
+            false
+        }
+    }
+}
+
 pub(crate) fn exited(
     ctx: &mut Context<AppRoot>,
     epoch: u64,

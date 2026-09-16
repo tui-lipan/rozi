@@ -388,6 +388,8 @@ impl SessionServer {
             return;
         };
         let mut removed = self.clients.remove(index);
+        self.resync_totals.departed_shed_bytes += removed.shed_bytes;
+        self.resync_totals.departed_requeued_panes += removed.requeued_panes;
         if let Some(seed) = removed.seed.take() {
             self.finish_attach_seed(seed, true);
         }
@@ -461,6 +463,12 @@ impl SessionServer {
     }
 
     fn finish_attach_seed(&mut self, seed: AttachSeedState, disconnected: bool) {
+        if seed.kind == SeedKind::Resync {
+            if !disconnected {
+                self.resync_totals.completed += 1;
+            }
+            return;
+        }
         let duration = crate::runtime_metrics::duration_micros(seed.started.elapsed());
         self.attach_seed_totals.last_duration_us = duration;
         self.attach_seed_totals.max_duration_us =
@@ -481,13 +489,20 @@ impl SessionServer {
         let now = Instant::now();
         let mut timed_out: Vec<ClientId> = Vec::new();
         let mut pings: Vec<(ClientId, u64)> = Vec::new();
+        let mut resync_pings: Vec<(ClientId, u64)> = Vec::new();
         for client in &mut self.clients {
             if !client.attached {
                 continue;
             }
             // A ping queued behind a replay cannot be answered yet. Start the heartbeat clock once
-            // the baseline and its catch-up have reached the socket.
-            if client.seed.is_some() {
+            // the baseline and its catch-up have reached the socket. A resync is different: a pane
+            // that keeps flooding can hold one open indefinitely, so its pings skip the barrier
+            // and a client that stops answering is still found out.
+            let resyncing = client
+                .seed
+                .as_ref()
+                .is_some_and(|seed| seed.kind == SeedKind::Resync);
+            if client.seed.is_some() && !resyncing {
                 client.last_pong = now;
                 client.last_ping = now;
                 continue;
@@ -499,11 +514,25 @@ impl SessionServer {
             if now.duration_since(client.last_ping) >= HEARTBEAT_INTERVAL {
                 client.last_ping = now;
                 client.ping_seq += 1;
-                pings.push((client.id, client.ping_seq));
+                if resyncing {
+                    resync_pings.push((client.id, client.ping_seq));
+                } else {
+                    pings.push((client.id, client.ping_seq));
+                }
             }
         }
         for (id, seq) in pings {
             self.enqueue(id, Target::Sender, ServerMessage::Ping { seq });
+        }
+        let max_backlog = self.max_backlog;
+        for (id, seq) in resync_pings {
+            if let (Some(bytes), Some(client)) = (
+                encode_control(&ServerMessage::Ping { seq }),
+                self.client_mut(id),
+            ) {
+                // A ping that does not fit is simply not sent; the missing pong expires the client.
+                client.try_push_class(bytes, max_backlog, OutboxClass::Normal, None);
+            }
         }
         for id in timed_out {
             self.remove_client_with_reason(id, ControllerChangeReason::Expired);
@@ -759,6 +788,7 @@ impl SessionServer {
 
     /// Advance all active attach streams under one byte budget and one export budget.
     pub(super) fn pump_attach_seeds(&mut self) -> bool {
+        self.start_client_resyncs();
         let ids: Vec<_> = self
             .clients
             .iter()
@@ -791,6 +821,45 @@ impl SessionServer {
         activity
     }
 
+    /// Put a replay barrier up for every client whose shed panes can now be replayed.
+    fn start_client_resyncs(&mut self) {
+        if self
+            .clients
+            .iter()
+            .all(|client| client.resync_pending.is_empty())
+        {
+            return;
+        }
+        let live: Vec<_> = self
+            .panes
+            .iter()
+            .filter(|(_, pane)| pane.exited.is_none())
+            .map(|(pane_id, pane)| PaneSeedKey {
+                pane_id: *pane_id,
+                generation: pane.generation,
+            })
+            .collect();
+        for client in &mut self.clients {
+            if !client.attached
+                || client.seed.is_some()
+                || client.resync_pending.is_empty()
+                || client.outbox_bytes > RESYNC_START_BACKLOG
+            {
+                continue;
+            }
+            // A pane that exited or respawned since it was shed has nothing left to replay.
+            let stale: Vec<_> = std::mem::take(&mut client.resync_pending)
+                .into_iter()
+                .filter(|key| live.contains(key))
+                .collect();
+            if stale.is_empty() {
+                continue;
+            }
+            self.resync_totals.started += 1;
+            client.seed = Some(AttachSeedState::resync(&live, stale));
+        }
+    }
+
     fn pump_client_attach_seed(
         &mut self,
         id: ClientId,
@@ -800,7 +869,7 @@ impl SessionServer {
         let mut activity = false;
         loop {
             let progressed = match self.next_attach_seed_work(id) {
-                AttachSeedWork::ReplayResize => self.pump_replay_resize(id, remaining),
+                AttachSeedWork::ReplayReset => self.pump_replay_reset(id, remaining),
                 AttachSeedWork::FinishReplay => {
                     self.finish_pane_replay(id);
                     true
@@ -841,8 +910,8 @@ impl SessionServer {
             return AttachSeedWork::Done;
         }
         if let Some(replay) = seed.replay.as_ref() {
-            if replay.resize_frame.is_some() {
-                return AttachSeedWork::ReplayResize;
+            if replay.reset_frame.is_some() {
+                return AttachSeedWork::ReplayReset;
             }
             if replay.remaining == 0 {
                 return AttachSeedWork::FinishReplay;
@@ -859,11 +928,15 @@ impl SessionServer {
         }
     }
 
-    fn pump_replay_resize(&mut self, id: ClientId, remaining: &mut usize) -> bool {
-        let Some((frame, available)) = self.clients.iter().find_map(|client| {
+    fn seeding_client(&self, id: ClientId) -> Option<&ClientConn> {
+        self.clients.iter().find(|client| client.id == id)
+    }
+
+    fn pump_replay_reset(&mut self, id: ClientId, remaining: &mut usize) -> bool {
+        let Some((frame, available)) = self.seeding_client(id).and_then(|client| {
             let replay = client.seed.as_ref()?.replay.as_ref()?;
             Some((
-                Arc::clone(replay.resize_frame.as_ref()?),
+                Arc::clone(replay.reset_frame.as_ref()?),
                 SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes),
             ))
         }) else {
@@ -877,6 +950,7 @@ impl SessionServer {
             id,
             frame,
             OutboxClass::SeedReplay,
+            None,
             "attach-seed-outbox-overflow",
         ) {
             return true;
@@ -884,8 +958,8 @@ impl SessionServer {
         self.client_mut(id)
             .and_then(|client| client.seed.as_mut())
             .and_then(|seed| seed.replay.as_mut())
-            .expect("replay resize was present")
-            .resize_frame = None;
+            .expect("replay reset was present")
+            .reset_frame = None;
         *remaining -= frame_len;
         true
     }
@@ -901,7 +975,7 @@ impl SessionServer {
     }
 
     fn pump_replay_chunk(&mut self, id: ClientId, remaining: &mut usize) -> bool {
-        let Some((key, payload_len, available)) = self.clients.iter().find_map(|client| {
+        let Some((key, payload_len, available)) = self.seeding_client(id).and_then(|client| {
             let replay = client.seed.as_ref()?.replay.as_ref()?;
             let available = SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes);
             let payload_budget = available
@@ -946,6 +1020,7 @@ impl SessionServer {
             id,
             frame,
             OutboxClass::SeedReplay,
+            Some(key),
             "attach-seed-outbox-overflow",
         ) {
             return true;
@@ -965,6 +1040,7 @@ impl SessionServer {
             .expect("active seed")
             .pending
             .pop_front();
+        let export_started = Instant::now();
         let snapshot = self
             .panes
             .get_mut(&key.pane_id)
@@ -985,17 +1061,23 @@ impl SessionServer {
                 (replay.0, replay.1, cols, rows)
             });
         let replay_len = snapshot.as_ref().map_or(0, |(_, len, _, _)| *len);
+        if snapshot.is_some() {
+            let export_us = crate::runtime_metrics::duration_micros(export_started.elapsed());
+            self.resync_totals.last_export_us = export_us;
+            self.resync_totals.max_export_us = self.resync_totals.max_export_us.max(export_us);
+        }
         let seed = self
             .client_mut(id)
             .and_then(|client| client.seed.as_mut())
             .expect("active seed");
+        let resync_export = snapshot.is_some() && seed.kind == SeedKind::Resync;
         if let Some((spool, remaining, cols, rows)) = snapshot {
             seed.manifest.insert(key, PaneSeedState::Replaying);
+            seed.exported.insert(key);
             seed.replay = Some(PaneSeedReplay {
                 key,
-                resize_frame: encode_control(&ServerMessage::Resized {
+                reset_frame: encode_control(&ServerMessage::PaneReset {
                     pane_id: key.pane_id,
-                    local: false,
                     generation: key.generation,
                     cols,
                     rows,
@@ -1006,14 +1088,18 @@ impl SessionServer {
         } else {
             seed.manifest.insert(key, PaneSeedState::CatchingUp);
         }
+        if resync_export {
+            self.resync_totals.exports += 1;
+        }
         self.attach_seed_totals.replay_bytes += replay_len;
     }
 
     fn pump_seed_catch_up(&mut self, id: ClientId, remaining: &mut usize) -> bool {
-        let Some((frame, available)) = self.clients.iter().find_map(|client| {
-            let seed = client.seed.as_ref()?;
+        let Some((frame, delta, available)) = self.seeding_client(id).and_then(|client| {
+            let front = client.seed.as_ref()?.catch_up.front()?;
             Some((
-                Arc::clone(seed.catch_up.front()?),
+                Arc::clone(&front.bytes),
+                front.delta,
                 SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes),
             ))
         }) else {
@@ -1027,6 +1113,7 @@ impl SessionServer {
             id,
             frame,
             OutboxClass::SeedCatchUp,
+            delta.output_pane(),
             "attach-catch-up-outbox-overflow",
         ) {
             return true;
@@ -1046,13 +1133,14 @@ impl SessionServer {
         id: ClientId,
         frame: Arc<[u8]>,
         class: OutboxClass,
+        pane: Option<PaneSeedKey>,
         overflow_reason: &'static str,
     ) -> bool {
         let max_backlog = self.max_backlog;
         let Some(client) = self.client_mut(id) else {
             return false;
         };
-        if client.try_push_class(frame, max_backlog, class) {
+        if client.try_push_class(frame, max_backlog, class, pane) {
             return true;
         }
         if let Some(seed) = client.seed.as_mut() {

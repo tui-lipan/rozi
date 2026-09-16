@@ -576,6 +576,13 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             cols,
             rows,
         } => session::resized(ctx, epoch, pane_id, local, generation, cols, rows),
+        Msg::SessionPaneReset {
+            epoch,
+            pane_id,
+            generation,
+            cols,
+            rows,
+        } => session::pane_reset(ctx, epoch, pane_id, generation, cols, rows),
         Msg::SessionExited {
             epoch,
             pane_id,

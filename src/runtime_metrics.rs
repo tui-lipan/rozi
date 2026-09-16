@@ -60,6 +60,27 @@ pub struct AttachSeedMetrics {
     pub last_disconnect_reason: Option<String>,
 }
 
+/// Clients that fell too far behind to take a pane's output, had it shed, and caught up by replay.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientResyncMetrics {
+    pub active_clients: u64,
+    pub started: u64,
+    pub completed: u64,
+    /// Pane screens exported for resyncs. A pane that falls behind again mid-resync is exported
+    /// again, so this outgrowing `started` is what a flood that never lets a client catch up looks
+    /// like.
+    pub exports: u64,
+    /// Panes put back in a replay queue because the client fell behind them again before their
+    /// replay finished, during an attach or a resync.
+    pub requeued_panes: u64,
+    /// Encoded pane output dropped instead of delivered, across this server process's lifetime.
+    pub shed_bytes: u64,
+    /// Time the server loop spent exporting one pane screen for any replay. Every client waits on
+    /// this, which is what a slow client's resyncs can cost a healthy one.
+    pub last_export_us: u64,
+    pub max_export_us: u64,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrphanOutputMetrics {
     #[serde(flatten)]
@@ -97,6 +118,7 @@ pub struct ServerRuntimeMetrics {
     pub pty_ingress: QueueMetrics,
     pub client_outboxes: ServerOutboxMetrics,
     pub attach_seed: AttachSeedMetrics,
+    pub client_resync: ClientResyncMetrics,
     pub resurrection: ResurrectionMetrics,
 }
 
@@ -439,6 +461,16 @@ mod tests {
                         "last_duration_us": 0,
                         "max_duration_us": 0,
                         "last_disconnect_reason": null
+                    },
+                    "client_resync": {
+                        "active_clients": 0,
+                        "started": 0,
+                        "completed": 0,
+                        "exports": 0,
+                        "requeued_panes": 0,
+                        "shed_bytes": 0,
+                        "last_export_us": 0,
+                        "max_export_us": 0
                     },
                     "resurrection": {
                         "attempts": 0,

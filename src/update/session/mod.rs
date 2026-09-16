@@ -14,7 +14,9 @@ pub(crate) use lease::{
 pub(crate) use lifecycle::{
     attach_failed, attached, connected, disconnected, error, origin_set, renamed, transport_failed,
 };
-pub(crate) use pane_events::{exited, flush_pane_resizes, output, pane_logging_changed, resized};
+pub(crate) use pane_events::{
+    exited, flush_pane_resizes, output, pane_logging_changed, pane_reset, resized,
+};
 pub(crate) use status::pane_runtime_changed;
 
 #[cfg(test)]

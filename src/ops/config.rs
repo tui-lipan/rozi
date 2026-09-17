@@ -92,6 +92,10 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     reload(ctx, Some("Config reloaded"))
 }
 
+pub(crate) fn reload_config_quiet(ctx: &mut Context<AppRoot>) -> Update {
+    reload(ctx, None)
+}
+
 /// Rescans installed extension manifests and reconciles their runtime contributions.
 ///
 /// Extension discovery is part of config loading, so this necessarily re-reads `config.toml` too.

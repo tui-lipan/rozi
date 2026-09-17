@@ -1,6 +1,6 @@
 //! The Keybindings modal is sized by its list, not by the viewport. Filtering down to one row must
-//! shrink it, a list too long for the viewport must stop at the cap and scroll, the vertical arrows
-//! must be what scrolls it, and `Tab`/`Shift+Tab` and the horizontal arrows must walk the tabs.
+//! shrink it, a list too long for the viewport must stop at the cap and follow the selection, and
+//! the search field must keep focus while `Tab`/`Shift+Tab` and the horizontal arrows walk the tabs.
 
 use rozi::AppRoot;
 use tui_lipan::TestBackend;
@@ -12,13 +12,34 @@ fn help_backend(w: u16, h: u16) -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
-    backend.state_mut().show_help = true;
+    backend
+        .dispatch(rozi::Msg::RunAction(rozi::input::Action::ToggleHelp))
+        .expect("open keybindings");
     backend
 }
 
 fn frame(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
     backend.capture_frame().to_fixed_grid_lines().join("\n")
+}
+
+fn press(backend: &mut TestBackend<AppRoot>, code: KeyCode) {
+    backend
+        .send_key(KeyEvent {
+            code,
+            mods: KeyMods::NONE,
+        })
+        .expect("send key");
+    backend.render();
+}
+
+fn tab(backend: &TestBackend<AppRoot>) -> rozi::state::HelpTab {
+    backend
+        .state()
+        .keybindings
+        .as_ref()
+        .expect("keybindings overlay is open")
+        .tab
 }
 
 /// Rows the modal's own frame spans, found by the two border rows its rounded corners draw.
@@ -58,47 +79,50 @@ fn body() {
         "unfiltered modal is not at the 70% cap:\n{full}"
     );
 
-    // The arrows are what scrolls the capped list.
-    backend
-        .send_key(KeyEvent {
-            code: KeyCode::Down,
-            mods: KeyMods::NONE,
-        })
-        .expect("scroll the keybinding list down a row");
-    let scrolled = frame(&mut backend);
-    assert_ne!(full, scrolled, "Down does not scroll the list:\n{full}");
-    backend
-        .send_key(KeyEvent {
-            code: KeyCode::Up,
-            mods: KeyMods::NONE,
-        })
-        .expect("scroll the keybinding list back up");
-    assert_eq!(
-        full,
-        frame(&mut backend),
-        "Up does not scroll the list back"
+    // The arrows move the highlight, and the capped list scrolls to keep it visible.
+    let selected = |backend: &TestBackend<AppRoot>| {
+        backend
+            .state()
+            .keybindings
+            .as_ref()
+            .and_then(|keybindings| keybindings.selected.clone())
+    };
+    press(&mut backend, KeyCode::Down);
+    assert!(
+        selected(&backend).is_some_and(|id| id.contains("Mod")),
+        "Down does not move the selection"
     );
+    press(&mut backend, KeyCode::Up);
+    assert!(
+        selected(&backend).is_some_and(|id| id.contains("Prefix")),
+        "Up does not move it back"
+    );
+    press(&mut backend, KeyCode::End);
+    let bottom = frame(&mut backend);
+    assert!(
+        !bottom.contains("Prefix · then key"),
+        "End does not scroll the list to its last row:\n{bottom}"
+    );
+    press(&mut backend, KeyCode::Home);
+    assert_eq!(full, frame(&mut backend), "Home does not return to the top");
 
-    // Tab, Shift+Tab, the horizontal arrows, and their vim twins walk the tab strip, wrapping at
-    // both ends.
+    // Tab, Shift+Tab, and the horizontal arrows walk the tab strip, wrapping at both ends, and
+    // focus never leaves the search field.
     for (key, expected) in [
         (KeyCode::Tab, rozi::state::HelpTab::Modes),
-        (KeyCode::Char('l'), rozi::state::HelpTab::Unbound),
+        (KeyCode::Right, rozi::state::HelpTab::Unbound),
         (KeyCode::Tab, rozi::state::HelpTab::All),
         (KeyCode::Tab, rozi::state::HelpTab::Global),
-        (KeyCode::Char('h'), rozi::state::HelpTab::All),
+        (KeyCode::Left, rozi::state::HelpTab::All),
         (KeyCode::BackTab, rozi::state::HelpTab::Unbound),
-        (KeyCode::Right, rozi::state::HelpTab::All),
-        (KeyCode::Left, rozi::state::HelpTab::Unbound),
     ] {
-        backend
-            .send_key(KeyEvent {
-                code: key,
-                mods: KeyMods::NONE,
-            })
-            .expect("step the keybinding tab strip");
-        backend.render();
-        assert_eq!(backend.state().help_tab, expected, "after {key:?}");
+        press(&mut backend, key);
+        assert_eq!(tab(&backend), expected, "after {key:?}");
+        assert_eq!(
+            backend.focused_key().map(|key| key.as_ref()),
+            Some("rozi-help-filter"),
+            "after {key:?}"
+        );
     }
     let unbound = frame(&mut backend);
     assert!(
@@ -109,50 +133,56 @@ fn body() {
         .dispatch(rozi::Msg::HelpTabSelected(0))
         .expect("return to the Global tab");
 
-    // Filtering to a handful of rows shrinks the modal instead of leaving it open at the cap.
-    backend
-        .send_key(KeyEvent {
-            code: KeyCode::Char('/'),
-            mods: KeyMods::NONE,
-        })
-        .expect("focus the keybinding filter");
+    // Filtering to a handful of rows shrinks the modal instead of leaving it open at the cap, and
+    // letters that used to be commands are plain query text.
     for character in "scratch".chars() {
-        backend
-            .send_key(KeyEvent {
-                code: KeyCode::Char(character),
-                mods: KeyMods::NONE,
-            })
-            .expect("type a keybinding filter");
+        press(&mut backend, KeyCode::Char(character));
     }
-    // `h` and `l` step the tab strip only while the filter is not focused; inside it they are
-    // ordinary characters, or half the alphabet could not be searched for.
-    let tab_before_typing = backend.state().help_tab;
-    for character in "hl".chars() {
-        backend
-            .send_key(KeyEvent {
-                code: KeyCode::Char(character),
-                mods: KeyMods::NONE,
-            })
-            .expect("type into the focused filter");
-    }
-    assert_eq!(
-        backend.state().help_tab,
-        tab_before_typing,
-        "typing in the filter does not walk the tab strip"
-    );
-    for _ in 0..2 {
-        backend
-            .send_key(KeyEvent {
-                code: KeyCode::Backspace,
-                mods: KeyMods::NONE,
-            })
-            .expect("undo the typed characters");
-    }
-
+    assert_eq!(tab(&backend), rozi::state::HelpTab::Global);
     let filtered = frame(&mut backend);
     assert!(filtered.contains("Enable scratchpad"), "{filtered}");
     assert!(
         modal_rows(&filtered) < capped,
         "a filtered list leaves the modal at its cap:\n{filtered}"
     );
+}
+
+#[test]
+fn keybindings_footer_keeps_wrapped_hints_visible() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(wrapped_hints_body)
+        .expect("spawn wrapped hints smoke thread")
+        .join()
+        .expect("wrapped hints smoke completes");
+}
+
+fn wrapped_hints_body() {
+    let mut backend = help_backend(110, 50);
+    backend.state_mut().config.key_sources.insert(
+        "close".into(),
+        rozi::config::KeyOverrideSpec::replace(vec![]),
+    );
+    backend
+        .state_mut()
+        .config
+        .key_overrides
+        .insert("close".into(), vec![]);
+    for character in "close pane".chars() {
+        press(&mut backend, KeyCode::Char(character));
+    }
+    press(&mut backend, KeyCode::Down);
+    press(&mut backend, KeyCode::Up);
+    let footer = frame(&mut backend);
+    for hint in [
+        "change Enter",
+        "unbind Ctrl+U",
+        "reset Ctrl+D",
+        "reset all Ctrl+R",
+    ] {
+        assert!(
+            footer.contains(hint),
+            "wrapped footer misses `{hint}`:\n{footer}"
+        );
+    }
 }

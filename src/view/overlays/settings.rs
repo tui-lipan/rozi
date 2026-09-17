@@ -1,5 +1,7 @@
 use super::*;
 
+const SETTINGS_MAX_HEIGHT_PERCENT: u16 = 65;
+
 pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
     use SettingsAction::*;
 
@@ -404,7 +406,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))
         .height(Length::Auto)
-        .child(action_palette_frame(body))
+        .child(body)
         .into();
     let dim_progress = ctx.transition::<f32>(
         "rozi-settings-padding-dim",
@@ -428,8 +430,8 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
     Modal::new()
         .width(Length::Px(60))
         .height(Length::Auto)
-        .max_height(Length::Percent(65))
-        .reserve_height(Length::Percent(65))
+        .max_height(Length::Percent(SETTINGS_MAX_HEIGHT_PERCENT))
+        .reserve_height(Length::Percent(SETTINGS_MAX_HEIGHT_PERCENT))
         .border(false)
         .padding(0)
         .frame_style(Style::new().bg(ctx.state.theme.surface.element))
@@ -597,10 +599,10 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
                 "esc",
             )),
     );
-    action_palette_modal(ctx, "Terminal padding")
+    nested_action_palette_modal(ctx, "Terminal padding", SETTINGS_MAX_HEIGHT_PERCENT)
         .width(Length::Auto)
         .on_close(ctx.link().callback(|_| Msg::ClosePanePaddingEditor))
-        .child(action_palette_frame(body))
+        .child(body)
         .into()
 }
 

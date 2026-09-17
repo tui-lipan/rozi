@@ -247,7 +247,7 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
 
     action_palette_modal_with_width(ctx, &title, EXTENSION_DETAIL_WIDTH)
         .on_close(ctx.link().callback(|_| Msg::CloseExtensionDetail))
-        .child(action_palette_frame(content))
+        .child(content)
         .into()
 }
 

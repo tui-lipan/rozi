@@ -130,7 +130,7 @@ pub(crate) fn open_theme_picker(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .show_settings
         .then_some(crate::state::OverlayOrigin::Settings);
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.show_palette = false;
     ctx.state.show_settings = false;
     ctx.state.pane_padding_editor = None;

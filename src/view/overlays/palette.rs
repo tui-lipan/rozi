@@ -158,11 +158,7 @@ pub(crate) fn overlay_hints(theme: &Theme, actions: &[OverlayAction]) -> Element
     let mut any = false;
     for action in actions.iter().filter(|action| action.shows_hint()) {
         any = true;
-        row = row.child(hint_pill(
-            theme,
-            &action.label,
-            &crate::view::keys_display::format_binding(&action.key),
-        ));
+        row = row.child(hint_pill(theme, &action.label, &action.key.label()));
     }
     if any {
         row.into()
@@ -458,7 +454,7 @@ pub(super) fn wrap_palette(
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))
         .height(Length::Auto)
-        .child(action_palette_frame(body))
+        .child(body)
         .into();
     Modal::new()
         .width(Length::Px(width))

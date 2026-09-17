@@ -322,15 +322,13 @@ impl Component for AppRoot {
     }
 
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context<Self>) -> KeyUpdate {
-        if let Some(update) = Self::handle_help_overlay_key(ctx, key) {
-            return update;
-        }
         let (handled, mut update) = routing::handle_key_routing(ctx, key, None);
         if ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
             let command = update.command.take();
             update = Update::with_command(command);
         }
         commands::sync_if_needed(ctx);
+        crate::update::sync_modifier_key_reporting(ctx);
         // Key routing can mutate the layout without going through `handle_msg` (prefix-mode window
         // management), so schedule the same commit chokepoint here to publish those changes.
         crate::ops::session::schedule_layout_commit(ctx);
@@ -339,6 +337,17 @@ impl Component for AppRoot {
         } else {
             KeyUpdate::unhandled(update)
         }
+    }
+
+    fn on_modifiers_changed(&mut self, modifiers: KeyMods, ctx: &mut Context<Self>) -> Update {
+        let Some(keybindings) = ctx.state.keybindings.as_mut() else {
+            return Update::none();
+        };
+        if !keybindings.is_capturing() || keybindings.held_modifiers == modifiers {
+            return Update::none();
+        }
+        keybindings.held_modifiers = modifiers;
+        Update::full()
     }
 
     fn on_window_focus_changed(&mut self, focused: bool, ctx: &mut Context<Self>) -> Update {
@@ -356,65 +365,6 @@ impl Component for AppRoot {
             });
         }
         view::render(ctx)
-    }
-}
-
-impl AppRoot {
-    fn handle_help_overlay_key(ctx: &mut Context<Self>, key: KeyEvent) -> Option<KeyUpdate> {
-        if !ctx.state.show_help {
-            return None;
-        }
-        if ctx.has_focus_within_key(crate::view::help_filter_key())
-            && key.code == KeyCode::Enter
-            && !key.mods.ctrl
-            && !key.mods.alt
-            && !key.mods.super_key
-        {
-            ctx.request_focus(crate::view::help_scroll_key());
-            return Some(KeyUpdate::handled(Update::full()));
-        }
-        if key.is(KeyCode::Esc) {
-            ctx.link().send(Msg::HelpEscape);
-            return Some(KeyUpdate::handled(Update::full()));
-        }
-        if !ctx.has_focus_within_key(crate::view::help_filter_key())
-            && key.code == KeyCode::Char('/')
-            && key.mods == KeyMods::NONE
-        {
-            ctx.request_focus(crate::view::help_filter_key());
-            return Some(KeyUpdate::handled(Update::full()));
-        }
-        if let Some(steps) = Self::help_tab_step(ctx, key) {
-            let index = ctx.state.help_tab.stepped(steps).index();
-            ctx.link().send(Msg::HelpTabSelected(index));
-            return Some(KeyUpdate::handled(Update::full()));
-        }
-        None
-    }
-
-    /// How far a key moves the help tab strip, if it moves it at all.
-    ///
-    /// `Tab`/`Shift+Tab` cycle from anywhere in the overlay; the arrows and their vim twins only do
-    /// while the filter is unfocused, where they would otherwise be the caret's — and where `h` and
-    /// `l` would otherwise be typed into it.
-    fn help_tab_step(ctx: &Context<Self>, key: KeyEvent) -> Option<isize> {
-        if key.mods.ctrl || key.mods.alt || key.mods.super_key {
-            return None;
-        }
-        match key.code {
-            KeyCode::Tab if !key.mods.shift => Some(1),
-            KeyCode::BackTab | KeyCode::Tab => Some(-1),
-            KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l')
-                if !ctx.has_focus_within_key(crate::view::help_filter_key()) =>
-            {
-                Some(if matches!(key.code, KeyCode::Left | KeyCode::Char('h')) {
-                    -1
-                } else {
-                    1
-                })
-            }
-            _ => None,
-        }
     }
 }
 
@@ -512,11 +462,11 @@ mod tests {
 
                 let lines = backend.capture_frame().to_fixed_grid_lines();
                 assert!(lines.iter().any(|line| line.contains("attach Enter")));
-                assert!(lines.iter().any(|line| line.contains("launch as Ctrl+o")));
-                assert!(lines.iter().any(|line| line.contains("default Ctrl+f")));
-                assert!(lines.iter().any(|line| line.contains("replace Ctrl+r")));
+                assert!(lines.iter().any(|line| line.contains("launch as Ctrl+O")));
+                assert!(lines.iter().any(|line| line.contains("default Ctrl+F")));
+                assert!(lines.iter().any(|line| line.contains("replace Ctrl+R")));
                 assert!(lines.iter().any(|line| line.contains("• running")));
-                assert!(lines.iter().any(|line| line.contains("new Ctrl+n")));
+                assert!(lines.iter().any(|line| line.contains("new Ctrl+N")));
             })
             .expect("spawn test thread")
             .join()
@@ -547,7 +497,7 @@ mod tests {
                 backend.render();
 
                 let lines = backend.capture_frame().to_fixed_grid_lines();
-                assert!(lines.iter().any(|line| line.contains("launch as Ctrl+o")));
+                assert!(lines.iter().any(|line| line.contains("launch as Ctrl+O")));
                 assert!(
                     lines.iter().all(|line| !line.contains("replace")),
                     "replace is not offered until a session is attached\n{}",
@@ -673,31 +623,11 @@ mod tests {
                             && widget.title.as_deref() == Some("Commands")
                     })
                     .expect("commands modal frame");
-                let content_frame = snapshot
-                    .widgets
-                    .iter()
-                    .find(|widget| {
-                        widget.kind == UiWidgetKind::Frame
-                            && widget.title.is_none()
-                            && widget.rect.x >= modal.rect.x
-                            && widget.rect.y > modal.rect.y
-                            && widget.rect.w <= modal.rect.w
-                            && widget.rect.h <= 26
-                    })
-                    .unwrap_or_else(|| {
-                        panic!("commands palette content frame\n{}", snapshot.to_markdown())
-                    });
 
                 assert!(
                     modal.rect.h <= 26,
                     "commands modal height {} exceeded 65% of 40-row viewport\n{}",
                     modal.rect.h,
-                    snapshot.to_markdown()
-                );
-                assert!(
-                    content_frame.rect.h <= 26,
-                    "commands content frame height {} exceeded 65% of 40-row viewport\n{}",
-                    content_frame.rect.h,
                     snapshot.to_markdown()
                 );
             })
@@ -954,7 +884,13 @@ mod tests {
                     padding > settings,
                     "padding editor must be the topmost modal"
                 );
+                let settings_rect = frames[settings].rect;
                 let rect = frames[padding].rect;
+                assert_eq!(
+                    rect.y,
+                    settings_rect.y + 1,
+                    "padding card sits one row below Settings, like Change keybinding on Keybindings"
+                );
                 assert!(
                     rect.w <= 46 && rect.x + rect.w as i16 <= 96 && rect.y + rect.h as i16 <= 40,
                     "editor must fit wide viewport"
@@ -1120,8 +1056,8 @@ mod tests {
                 let frame = backend.capture_frame();
                 let lines = frame.to_fixed_grid_lines();
                 let rendered = lines.join("\n");
-                assert!(rendered.contains("next Ctrl+n"), "{rendered}");
-                assert!(rendered.contains("previous Ctrl+p"), "{rendered}");
+                assert!(rendered.contains("next Ctrl+N"), "{rendered}");
+                assert!(rendered.contains("previous Ctrl+P"), "{rendered}");
                 assert!(rendered.contains("pane Tab"), "{rendered}");
                 assert!(rendered.contains("1 / 1 matches (pane)"), "{rendered}");
                 assert!(!rendered.contains("scope:"), "{rendered}");
@@ -1798,23 +1734,23 @@ mod tests {
                     "restorable Enter should restore, not connect\n{joined}"
                 );
                 assert!(
-                    lines.iter().any(|line| line.contains("forget Ctrl+k")),
+                    lines.iter().any(|line| line.contains("forget Ctrl+K")),
                     "restorable Ctrl+K should forget the snapshot\n{joined}"
                 );
                 assert!(
-                    lines.iter().any(|line| line.contains("new Ctrl+n")),
+                    lines.iter().any(|line| line.contains("new Ctrl+N")),
                     "{joined}"
                 );
                 assert!(
                     lines
                         .iter()
-                        .any(|line| line.contains("name current Ctrl+s")),
+                        .any(|line| line.contains("name current Ctrl+S")),
                     "{joined}"
                 );
                 assert!(
                     lines
                         .iter()
-                        .any(|line| line.contains("remote hosts Ctrl+r")),
+                        .any(|line| line.contains("remote hosts Ctrl+R")),
                     "{joined}"
                 );
                 assert!(

@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use tui_lipan::prelude::{FloatRect, Rect, TextInput, Theme, ThemeWatcher};
+use tui_lipan::prelude::{FloatRect, Rect, Theme, ThemeWatcher};
 
 use crate::config::Config;
 use crate::layout::anim::GeometryAnimation;
@@ -12,6 +12,7 @@ mod appearance;
 mod attachment;
 mod drag;
 mod identity;
+mod keybindings;
 mod layout;
 mod mode;
 mod pane;
@@ -30,6 +31,7 @@ pub use appearance::*;
 pub use attachment::*;
 pub use drag::*;
 pub use identity::*;
+pub use keybindings::*;
 pub use layout::*;
 pub use mode::*;
 pub use pane::*;
@@ -72,38 +74,6 @@ pub const MAX_SPLIT_RATIO: f32 = 0.80;
 pub const RATIO_STEP: f32 = 0.04;
 /// Default weight for tile width against height when choosing a dwindle split direction.
 pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum HelpTab {
-    #[default]
-    Global,
-    Modes,
-    Unbound,
-    All,
-}
-
-impl HelpTab {
-    /// The tab strip's order, shared by the strip, the keyboard cycle, and `HelpTabSelected`, so
-    /// the three cannot disagree about which index is which tab.
-    pub const ORDER: [Self; 4] = [Self::Global, Self::Modes, Self::Unbound, Self::All];
-
-    pub fn index(self) -> usize {
-        Self::ORDER
-            .iter()
-            .position(|tab| *tab == self)
-            .unwrap_or_default()
-    }
-
-    pub fn from_index(index: usize) -> Self {
-        Self::ORDER.get(index).copied().unwrap_or_default()
-    }
-
-    /// The tab `steps` places along the strip, wrapping at both ends.
-    pub fn stepped(self, steps: isize) -> Self {
-        let count = Self::ORDER.len();
-        Self::from_index((self.index() + count.wrapping_add_signed(steps)) % count)
-    }
-}
 
 pub struct PublishStreamState {
     pub id: u64,
@@ -175,9 +145,8 @@ pub struct State {
     /// Whether the command palette's trimmed query is exactly `sidebar`. This scopes the primary
     /// Sidebar toggle's result priority to that one broad query without disturbing empty-list order.
     pub command_palette_sidebar_query: bool,
-    pub show_help: bool,
-    pub help_query: TextInput,
-    pub help_tab: HelpTab,
+    /// The Keybindings overlay, present while it is open.
+    pub keybindings: Option<KeybindingsState>,
     pub show_settings: bool,
     /// Highlighted settings row. Drives Left/Right stepping and
     /// `initial_selected_item_index` while the overlay is open.
@@ -448,9 +417,7 @@ impl State {
             workbar: WorkbarState::default(),
             show_palette: false,
             command_palette_sidebar_query: false,
-            show_help: false,
-            help_query: TextInput::new(""),
-            help_tab: HelpTab::Global,
+            keybindings: None,
             show_settings: false,
             settings_selected: None,
             do_not_disturb: false,
@@ -902,7 +869,7 @@ impl State {
         self.show_pick
             || self.show_palette
             || self.show_settings
-            || self.show_help
+            || self.keybindings.is_some()
             || self.show_theme_picker
             || self.show_layout_picker
             || self.extensions.is_some()

@@ -91,7 +91,7 @@ fn a_sessionless_client_renders_the_launcher_panel() {
             assert!(
                 lines
                     .iter()
-                    .any(|line| line.contains("Ctrl+a q / Ctrl+a d") && line.contains("leave")),
+                    .any(|line| line.contains("Ctrl+A q / Ctrl+A d") && line.contains("leave")),
                 "the launcher must say how to leave, got {lines:#?}"
             );
             // The launcher claims a bare Enter (`input::routing::launcher_start_key`); advertising
@@ -99,7 +99,7 @@ fn a_sessionless_client_renders_the_launcher_panel() {
             assert!(
                 lines
                     .iter()
-                    .any(|line| line.contains("Enter / Ctrl+a Enter")
+                    .any(|line| line.contains("Enter / Ctrl+A Enter")
                         && line.contains("ephemeral shell")),
                 "the launcher must offer the bare Enter it accepts, got {lines:#?}"
             );
@@ -171,6 +171,7 @@ fn user_run_command_in_launcher_defers_until_ephemeral_attaches() {
             let mut backend = launcher_backend();
             backend.state_mut().config.user_commands = vec![UserCommand {
                 action: UserCommandAction::run("htop"),
+                trigger: rozi::config::BindingExpr::parse("ctrl-a h").expect("trigger"),
                 bindings: vec![KeyBinding::from_str("ctrl-a h").expect("binding")],
                 hint: "ctrl+a h".to_string(),
                 label: None,

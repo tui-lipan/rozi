@@ -22,8 +22,8 @@ Do not hand-roll filtering, fuzzy matching, keyboard navigation, scrolling, hove
 chrome.
 
 - Searchable pickers use `view::shared_search_palette::<T>(ctx, height, highlight_matches)`, then
-  add entries and selection callbacks. Wrap them with `action_palette_modal` and
-  `action_palette_frame`. Use `search_entries_with_groups` for grouped rows.
+  add entries and selection callbacks. Wrap them with `action_palette_modal`. Use
+  `search_entries_with_groups` for grouped rows.
 - Text prompts add a thin wrapper around `view/overlays/prompts.rs::prompt_overlay`.
 - Plain modals use `view::styled_modal`.
 

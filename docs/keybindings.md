@@ -1,7 +1,80 @@
 # Keybindings
 
-This page is the canonical reference for Rozi's default keys. The help overlay, opened with `?`,
-shows the active keys after configuration overrides.
+This page is the canonical reference for Rozi's default keys. The **Keybindings** overlay, opened
+with `?`, shows the active keys after configuration overrides and edits them in place.
+
+## Edit keybindings in Rozi
+
+Open **Keybindings** with `?` and type to filter. The search field keeps focus the whole time:
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` | Move the selection |
+| `←` / `→`, `Tab` / `Shift+Tab` | Switch tabs |
+| `Enter` | Change the selected binding |
+| `Ctrl+U` | Unbind the selected action |
+| `Ctrl+D` | Reset the selected action to its default |
+| `Ctrl+R` | Reset every keybinding override |
+| `Esc` | Close |
+
+Clicking a row edits it, like `Enter`. Then press the replacement key or chord. Review the
+captured binding and press `Enter` to save it. Only the live recorder takes keys: while a candidate
+is shown, other keys are ignored and `Esc` clears it to record again. From the live recorder, `Esc`
+closes the capture card without changing the binding.
+
+Every row can be selected. The footer lists only the actions the selected row supports. Workspace
+ranges, mouse gestures, and the **Modes** tab are reference only.
+
+The **Prefix** row records one key step, like any binding. The **Mod** row opens a chooser instead:
+`←` / `→` pick `Alt`, `Super`, or `Off`, and `Enter` saves. `Off` turns the held-modifier layer off
+and keeps the chosen modifier for when it is turned back on. Every command key that follows the
+scheme moves with the new Prefix or Mod; literal chords such as `ctrl-a q` stay exactly as written.
+When some literal chords spell the old Prefix or Mod, the card counts them and `Tab` offers to
+convert them to `prefix:` or `mod:` forms so they follow too. Nothing is converted unless you turn
+that on. A Prefix or Mod change that would make two commands collide is refused, and the card lists
+the colliding pairs.
+
+While recording, terminals with enhanced keyboard support show held modifiers immediately (for
+example, `Ctrl+`, then `Ctrl+Shift+`, then `Ctrl+Shift+A`). Other terminals still show the complete
+chord as soon as they report it.
+
+The recorder saves exactly the modifiers the terminal reports and never infers `Shift` from a
+letter's case, since Caps Lock also produces capitals. Terminals without enhanced keyboard
+reporting send `Ctrl+A` and `Ctrl+Shift+A` identically, so there both record as `Ctrl+A`. A
+`Shift` shown in Rozi is always part of the binding.
+
+The editor writes each change to `config.toml` immediately and reloads the effective keymap. A
+recorded command key such as `Enter` is saved as `"enter"` and follows the scheme; a chord with
+`Ctrl`, `Alt`, or `Super` is saved literally. If the new binding belongs to another action, the
+capture card names every conflict. Recording the Prefix key itself names Prefix, not every command
+that follows it. Press `Enter` to replace a command conflict, or press `Esc` to listen for another
+binding. Replacing takes only the chords that collide: taking `Alt+Enter` from New pane leaves it
+`"prefix:enter"`, which still follows the prefix. The Prefix key cannot be taken from the Prefix
+row this way; change Prefix first. **Unbind** leaves the selected action without a
+key and moves it to the **Unbound** tab, keeping the highlight on the next remaining row.
+**Reset** restores its default, and **Reset all** removes every keybinding override after
+confirmation.
+
+Built-in actions and named `[[commands]]` entries are editable. Inline `run` and `send` entries in
+`[keys]` have no stable action id, so they remain config-only. In-app config writes preserve
+comments while trimming trailing whitespace, collapsing extra blank lines, and leaving exactly one
+blank line before each table.
+
+Unchanged bindings show their keys. An override uses `current ← default`; an unbound override
+appears as `— ← default`.
+
+## Key notation
+
+Rozi writes keys the same way everywhere: here, in the Keybindings overlay, footers, and the
+which-key strip.
+
+| Kind | Notation | Examples |
+| --- | --- | --- |
+| Printable key with `Ctrl`, `Alt`, or `Super` | Every modifier written out; letters uppercase, case means nothing | `Ctrl+A`, `Ctrl+Shift+A`, `Alt+Shift+W`, `Ctrl+Shift+/` |
+| Printable key on its own, such as after the prefix | The character it types | `s`, `S`, `?` |
+| Named key | Every modifier written out | `Tab`, `Shift+Tab`, `Ctrl+Shift+Left` |
+
+So `S` after the prefix means Shift+S, while `Ctrl+S` never includes Shift.
 
 ## Prefix and held modifier
 
@@ -29,12 +102,12 @@ See [Configuration](configuration.md#input).
 | Close pane | `w` |
 | Toggle floating | `t` |
 | Toggle fullscreen | `f` |
-| Rename pane | `Shift+N` |
+| Rename pane | `N` |
 | Paste text | `v` |
 | Paste text directly | `Ctrl+V` |
 | Promote to master | `.` |
-| Swap left, down, up, right | `Shift+h/j/k/l`, or `Shift` plus arrows |
-| Move and reinsert left, down, up, right | `Ctrl+h/j/k/l`, or `Ctrl` plus arrows |
+| Swap left, down, up, right | `H/J/K/L`, or `Shift` plus arrows |
+| Move and reinsert left, down, up, right | `Ctrl+H/J/K/L`, or `Ctrl` plus arrows |
 | Focus left, down, up, right | `h/j/k/l`, or arrows |
 | Cycle focus forward or backward | `Tab` or `Shift+Tab` |
 
@@ -50,7 +123,7 @@ through to the pane. The prefix and held-modifier forms are always explicit text
 | Shrink split or master area | `-` |
 | Resize mode | `r` |
 | Cycle layout | `m` |
-| Choose layout | `Shift+M` |
+| Choose layout | `M` |
 | Rename workspace | `n` |
 | Switch to workspace 1 through 9 | `1` through `9` |
 | Move pane to workspace 1 through 9 | `Shift+1` through `Shift+9` |
@@ -59,7 +132,7 @@ through to the pane. The prefix and held-modifier forms are always explicit text
 The shifted workspace keys may arrive as `!@#$%^&*(` on terminals that report shifted symbols.
 Rozi accepts both terminal encodings for whole-workspace movement.
 
-See [Layouts and panes](layouts-and-panes.md) for layout behavior. `Shift+N` renames a pane. Bare
+See [Layouts and panes](layouts-and-panes.md) for layout behavior. `N` renames a pane. Bare
 `n` renames the workspace.
 
 ### App, profiles, sessions, and collaboration
@@ -73,10 +146,10 @@ See [Layouts and panes](layouts-and-panes.md) for layout behavior. `Shift+N` ren
 | Scratchpad | backtick |
 | Search scrollback | `/` |
 | Profiles | `o` |
-| Capture session as profile | `Shift+O` |
+| Capture session as profile | `O` |
 | Sessions | `s` |
 | Agents | `a` |
-| Rename or name current session | `Shift+S` |
+| Rename or name current session | `S` |
 | Take or request layout control | `g` |
 | Grant layout control | `e` |
 | Quit client | `q` |
@@ -92,7 +165,7 @@ rules in [Sessions](sessions.md#leave-rozi).
 | --- | --- |
 | Toggle sidebar | `b` |
 | Toggle one or two panels | `\` |
-| Focus sidebar | `Shift+B` |
+| Focus sidebar | `B` |
 | Next sidebar tab | `PageDown` |
 | Previous sidebar tab | `PageUp` |
 
@@ -190,8 +263,19 @@ spawn = { add = "super-enter" }
 ```
 
 A modified key is literal unless it starts with `scheme:`. For example,
-`copy-mode = "scheme:ctrl-t"` generates both the prefix form and the held-modifier form. See
-[Configuration](configuration.md#keys) for lists, `run`, `send`, and named commands.
+`copy-mode = "scheme:ctrl-t"` generates both the prefix form and the held-modifier form.
+
+`prefix:` and `mod:` take one half of the scheme. They follow later Prefix and Mod changes, which a
+literal chord does not:
+
+```toml
+[keys]
+spawn = "prefix:enter"      # Ctrl+A Enter, and Ctrl+B Enter after a prefix change
+copy-mode = "mod:b"         # Alt+B, dormant while modifier_shortcuts is off
+detach = "ctrl-a d"         # always Ctrl+A D
+```
+
+See [Configuration](configuration.md#keys) for lists, `run`, `send`, and named commands.
 
 ## Resize mode
 
@@ -234,7 +318,7 @@ or custom target. `Esc` or `q` exits. All other input stays out of the PTY.
 
 ## Sidebar keys
 
-After `Shift+B` focuses the sidebar:
+After `B` focuses the sidebar:
 
 | Key | Action |
 | --- | --- |

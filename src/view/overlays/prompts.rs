@@ -291,7 +291,7 @@ pub(super) fn prompt_overlay(
 
     let mut modal = action_palette_modal(ctx, title)
         .on_close(ctx.link().callback(move |_| close.clone()))
-        .child(action_palette_frame(body));
+        .child(body);
     if dim_behind {
         // The same recession the workspace makes for any dialog, applied by the overlay stack, so
         // every layer already on screen fades together rather than one panel at a time.
@@ -586,9 +586,8 @@ fn askpass_choice_overlay(
     )
 }
 
-/// Assemble a palette-style overlay: shared modal chrome, a borderless frame, a close handler, and
-/// the overlay's focus key. `content` is the palette itself, or a body wrapping a palette plus a
-/// hint footer.
+/// Assemble a palette-style overlay: shared modal chrome, a close handler, and the overlay's
+/// focus key. `content` is the palette itself, or a body wrapping a palette plus a hint footer.
 pub(super) fn action_palette(
     ctx: &Context<AppRoot>,
     title: &str,
@@ -599,6 +598,6 @@ pub(super) fn action_palette(
 ) -> Element {
     action_palette_modal_with_width(ctx, title, width)
         .on_close(ctx.link().callback(move |_| close.clone()))
-        .child(action_palette_frame(content))
+        .child(content)
         .key(key)
 }

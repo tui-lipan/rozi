@@ -96,7 +96,7 @@ fn local_install_copies_enables_and_removes_without_touching_the_source() {
     let listed = rozi(&temp, &["extensions", "list", "--verbose"]);
     let listed = String::from_utf8_lossy(&listed.stdout);
     assert!(listed.contains("suggested keybindings"));
-    assert!(listed.contains("Ctrl+h"));
+    assert!(listed.contains("Ctrl+H"));
     assert!(listed.contains("smart-focus-left"));
     assert!(listed.contains("active"));
     let destination = temp.path().join("data/rozi/extensions/disabled");

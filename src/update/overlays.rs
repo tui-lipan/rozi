@@ -117,43 +117,30 @@ pub(super) fn command_palette_query_changed(ctx: &mut Context<AppRoot>, query: S
 }
 
 pub(super) fn close_help(ctx: &mut Context<AppRoot>) -> Update {
-    ctx.state.show_help = false;
-    ctx.state.help_query = TextInput::new("");
-    ctx.state.help_tab = crate::state::HelpTab::Global;
+    ctx.state.keybindings = None;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
 }
 
+/// A new query re-ranks the rows, so the highlight returns to the first match, as in every picker.
 pub(super) fn help_query_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
-    event.apply_to(&mut ctx.state.help_query);
-    ctx.request_focus(crate::view::help_filter_key());
+    let Some(keybindings) = ctx.state.keybindings.as_mut() else {
+        return Update::none();
+    };
+    event.apply_to(&mut keybindings.query);
+    keybindings.selected = None;
     Update::full()
 }
 
 pub(super) fn help_tab_selected(ctx: &mut Context<AppRoot>, index: usize) -> Update {
-    ctx.state.help_tab = crate::state::HelpTab::from_index(index);
-    ctx.request_focus(crate::view::help_scroll_key());
-    Update::full()
-}
-
-pub(super) fn help_focus_filter(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(keybindings) = ctx.state.keybindings.as_mut() else {
+        return Update::none();
+    };
+    keybindings.tab = crate::state::HelpTab::from_index(index);
+    keybindings.selected = None;
     ctx.request_focus(crate::view::help_filter_key());
     Update::full()
-}
-
-pub(super) fn help_blur_filter(ctx: &mut Context<AppRoot>) -> Update {
-    ctx.request_focus(crate::view::help_scroll_key());
-    Update::full()
-}
-
-/// Esc steps out of the filter before it closes the overlay: the first press only drops focus back
-/// to the list, keeping the query and its results, and the second press closes.
-pub(super) fn help_escape(ctx: &mut Context<AppRoot>) -> Update {
-    if ctx.has_focus_within_key(crate::view::help_filter_key()) {
-        return help_blur_filter(ctx);
-    }
-    close_help(ctx)
 }
 
 pub(super) fn close_settings(ctx: &mut Context<AppRoot>) -> Update {
@@ -898,7 +885,7 @@ mod tests {
     }
 
     #[test]
-    fn help_filter_stays_flush_with_the_header_corner() {
+    fn help_filter_uses_picker_style_body_chrome() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
@@ -907,48 +894,67 @@ mod tests {
                 w: 96,
                 h: 40,
             });
-            backend.state_mut().show_help = true;
+            backend.state_mut().keybindings = Some(crate::state::KeybindingsState::default());
             backend.render();
 
             let placeholder = backend
                 .capture_frame()
                 .to_fixed_grid_lines()
                 .into_iter()
-                .find(|line| line.contains("Keybindings"))
-                .expect("help header");
-            assert!(placeholder.contains("Search… (/)╮"));
+                .find(|line| line.contains("Search keybindings"))
+                .expect("help search row");
+            assert!(placeholder.contains("│ Search keybindings…"));
+            assert!(placeholder.contains("57/57 │"));
 
-            backend.state_mut().help_query = TextInput::new("here i am quite long");
+            help_state(&mut backend).query = TextInput::new("here i am quite long");
             backend.render();
             let populated = backend
                 .capture_frame()
                 .to_fixed_grid_lines()
                 .into_iter()
-                .find(|line| line.contains("Keybindings"))
-                .expect("help header");
+                .find(|line| line.contains("here i am quite long"))
+                .expect("populated help search row");
             assert!(
-                populated.contains("here i am quite long ╮"),
-                "growing search input should stay flush with the corner: {populated}"
+                populated.contains("here i am quite long"),
+                "growing search input should stay inside the modal: {populated}"
             );
 
-            backend.state_mut().help_query =
+            help_state(&mut backend).query =
                 TextInput::new("here i am quite long and it is moving left");
             backend.render();
             let overflowing = backend
                 .capture_frame()
                 .to_fixed_grid_lines()
                 .into_iter()
-                .find(|line| line.contains("Keybindings"))
-                .expect("help header");
+                .find(|line| line.contains("and it is moving left"))
+                .expect("overflowing help search row");
             assert!(
-                overflowing.contains("and it is moving left ╮"),
-                "overflowing search input should stay flush with the corner: {overflowing}"
+                overflowing.contains("and it is moving left"),
+                "overflowing search input should keep its tail visible: {overflowing}"
             );
         });
     }
 
+    fn help_state(backend: &mut TestBackend<AppRoot>) -> &mut crate::state::KeybindingsState {
+        backend
+            .state_mut()
+            .keybindings
+            .as_mut()
+            .expect("keybindings overlay is open")
+    }
+
+    fn press(backend: &mut TestBackend<AppRoot>, code: KeyCode) {
+        backend
+            .send_key(KeyEvent {
+                code,
+                mods: KeyMods::NONE,
+            })
+            .expect("send key");
+        backend.render();
+    }
+
     #[test]
-    fn help_filter_blurs_without_closing_and_list_escape_closes() {
+    fn keybindings_search_owns_every_key_and_escape_closes() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
@@ -963,7 +969,7 @@ mod tests {
             backend.render();
             assert_eq!(
                 backend.focused_key().map(|key| key.as_ref()),
-                Some(crate::view::help_scroll_key())
+                Some(crate::view::help_filter_key())
             );
             let pane_id = backend.state().focused_pane().expect("focused pane");
             let epoch = backend.state().runtime_epoch;
@@ -982,7 +988,8 @@ mod tests {
             backend.render();
             assert_eq!(
                 backend.focused_key().map(|key| key.as_ref()),
-                Some(crate::view::help_scroll_key())
+                Some(crate::view::help_filter_key()),
+                "the search field reclaims focus"
             );
             let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(frame.contains("Keybindings"));
@@ -990,14 +997,25 @@ mod tests {
                 frame.contains("╭Keybindings─"),
                 "title should sit flush on the border like other modals: {frame}"
             );
+            assert!(frame.contains("│ Search keybindings…"));
             assert!(
-                frame.contains("Search… (/)╮"),
-                "search should sit flush before the corner: {frame}"
+                !frame.contains('├') && !frame.contains('┤'),
+                "the search divider must not join the frame, like other pickers: {frame}"
             );
+            assert!(
+                frame.contains("────────"),
+                "the search divider should still draw a muted rule: {frame}"
+            );
+            // The first row is the prefix scheme row, which has no unbind/reset to advertise.
+            assert!(frame.contains("change Enter"), "{frame}");
+            assert!(!frame.contains("switch tabs ←/→"), "{frame}");
+            assert!(!frame.contains("unbind Ctrl+U"), "{frame}");
+            assert!(!frame.contains("edit e"), "no separate edit mode:\n{frame}");
             assert!(!frame.contains("╭─ Keybindings"));
+            assert!(!frame.contains("Keybindings · Edit"));
             assert!(frame.contains("Search"));
             assert!(frame.contains("Global"));
-            assert!(frame.contains("Ctrl+a"));
+            assert!(frame.contains("Ctrl+A"));
             assert!(frame.contains("Prefix · then key"));
             assert!(frame.contains("Alt"));
             assert!(frame.contains("Mod · hold + key"));
@@ -1011,38 +1029,20 @@ mod tests {
                 !frame.contains("SIDEBAR FOCUSED"),
                 "Global tab hides direct mode keys: {frame}"
             );
-            backend
-                .send_key(KeyEvent {
-                    code: KeyCode::Char('/'),
-                    mods: KeyMods::NONE,
-                })
-                .expect("focus help filter");
-            backend.render();
-            assert_eq!(
-                backend.focused_key().map(|key| key.as_ref()),
-                Some(crate::view::help_filter_key())
-            );
-            backend
-                .send_key(KeyEvent {
-                    code: KeyCode::Enter,
-                    mods: KeyMods::NONE,
-                })
-                .expect("enter blurs help filter");
-            backend.render();
-            assert!(backend.state().show_help);
-            assert_eq!(
-                backend.focused_key().map(|key| key.as_ref()),
-                Some(crate::view::help_scroll_key())
-            );
-            backend
-                .dispatch(Msg::HelpTabSelected(1))
-                .expect("show mode bindings");
-            backend.render();
+            // Former mode keys are ordinary query text now.
+            for code in [KeyCode::Char('/'), KeyCode::Char('e')] {
+                press(&mut backend, code);
+            }
+            assert_eq!(help_state(&mut backend).query.text(), "/e");
+            help_state(&mut backend).query = TextInput::new("");
+
+            press(&mut backend, KeyCode::Right);
+            assert_eq!(help_state(&mut backend).tab, crate::state::HelpTab::Modes);
             let modes = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(modes.contains("COPY MODE"));
             assert!(modes.contains("SIDEBAR FOCUSED"));
             assert!(modes.contains("DIRECT"));
-            assert!(modes.contains("Cycle tabs"));
+            assert!(modes.contains("Exit copy mode"));
             assert!(
                 !modes.contains("Prefix · then key"),
                 "Modes omits scheme rows: {modes}"
@@ -1067,46 +1067,23 @@ mod tests {
             assert!(all.contains("Edit scrollback"));
             assert!(all.contains("Prefix · then key"));
             assert!(all.contains("Mod · hold + key"));
-            assert_eq!(backend.state().help_tab, crate::state::HelpTab::All);
-            backend
-                .send_key(KeyEvent {
-                    code: KeyCode::Char('/'),
-                    mods: KeyMods::NONE,
-                })
-                .expect("focus help filter");
-            backend.render();
-            backend
-                .send_key(KeyEvent {
-                    code: KeyCode::Char('z'),
-                    mods: KeyMods::NONE,
-                })
-                .expect("type help query");
-            backend.render();
-            assert!(!backend.state().help_query.text().is_empty());
-            backend
-                .send_key(KeyEvent {
-                    code: KeyCode::Esc,
-                    mods: KeyMods::NONE,
-                })
-                .expect("esc blurs the help filter");
-            backend.render();
-            assert!(backend.state().show_help);
-            assert_eq!(
-                backend.state().help_query.text(),
-                "z",
-                "leaving the filter keeps the query and its results"
+            assert_eq!(help_state(&mut backend).tab, crate::state::HelpTab::All);
+            press(&mut backend, KeyCode::Char('z'));
+            assert_eq!(help_state(&mut backend).query.text(), "z");
+            press(&mut backend, KeyCode::Esc);
+            assert!(
+                backend.state().keybindings.is_none(),
+                "Esc closes, query or not"
             );
-            assert_eq!(
-                backend.focused_key().map(|key| key.as_ref()),
-                Some(crate::view::help_scroll_key())
-            );
+            assert!(!backend.modifier_key_reporting_enabled());
+
+            // Reopening starts fresh.
             backend
-                .send_key(KeyEvent {
-                    code: KeyCode::Esc,
-                    mods: KeyMods::NONE,
-                })
-                .expect("close help");
-            assert!(!backend.state().show_help);
+                .dispatch(Msg::RunAction(Action::ToggleHelp))
+                .expect("reopen help");
+            let reopened = help_state(&mut backend);
+            assert!(reopened.query.text().is_empty());
+            assert_eq!(reopened.tab, crate::state::HelpTab::Global);
         });
     }
 
@@ -1118,7 +1095,7 @@ mod tests {
                 let state = backend.state_mut();
                 state.show_session_picker = true;
                 state.session_picker = Some(crate::state::SessionPickerState::new(Vec::new()));
-                state.show_help = true;
+                state.keybindings = Some(crate::state::KeybindingsState::default());
                 state.overlay_return = Some(crate::state::OverlayOrigin::Settings);
             }
 
@@ -1128,7 +1105,7 @@ mod tests {
 
             assert!(!backend.state().show_session_picker);
             assert!(backend.state().session_picker.is_none());
-            assert!(!backend.state().show_help);
+            assert!(backend.state().keybindings.is_none());
             assert!(backend.state().overlay_return.is_none());
             assert!(backend.state().show_settings);
             assert_eq!(

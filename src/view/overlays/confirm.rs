@@ -155,7 +155,7 @@ pub(super) fn dialog_overlay(
 
     let mut modal = action_palette_modal(ctx, title)
         .on_close(ctx.link().callback(move |_| close.clone()))
-        .child(action_palette_frame(body));
+        .child(body);
     if dim_behind {
         modal =
             modal.backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION));

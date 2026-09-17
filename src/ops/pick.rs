@@ -83,7 +83,7 @@ pub(crate) fn open_pick_stream(
         reply: sender,
     });
     ctx.state.show_pick = true;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.show_palette = false;
     ctx.state.show_theme_picker = false;
     ctx.state.show_layout_picker = false;
@@ -533,7 +533,7 @@ mod tests {
     #[test]
     fn open_is_rejected_when_overlay_is_open() {
         with_backend(|backend| {
-            backend.state_mut().show_help = true;
+            backend.state_mut().keybindings = Some(Default::default());
 
             let (tx, _rx) = mpsc::sync_channel(1);
             let (ack_tx, ack_rx) = mpsc::channel();

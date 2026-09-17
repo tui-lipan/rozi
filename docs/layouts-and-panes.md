@@ -1,6 +1,6 @@
 # Layouts and panes
 
-Rozi gives each workspace its own pane layout. Press `m` to cycle layouts, or `Shift+M` to open the
+Rozi gives each workspace its own pane layout. Press `m` to cycle layouts, or `M` to open the
 layout picker. The picker previews each layout. Press `Ctrl+F` there to make the highlighted layout
 the default for new workspaces.
 
@@ -19,15 +19,15 @@ pressing them:
 | Open a floating pane | `Shift+Enter` |
 | Close the focused pane | `w` |
 | Focus left, down, up, right | `h`, `j`, `k`, `l`, or arrow keys |
-| Swap with a neighbor | `Shift+h/j/k/l`, or `Shift` plus arrows |
-| Move and reinsert beside a neighbor | `Ctrl+h/j/k/l`, or `Ctrl` plus arrows |
+| Swap with a neighbor | `H/J/K/L`, or `Shift` plus arrows |
+| Move and reinsert beside a neighbor | `Ctrl+H/J/K/L`, or `Ctrl` plus arrows |
 | Cycle focus | `Tab` or `Shift+Tab` |
 | Grow or shrink | `=` or `-` |
 | Enter resize mode | `r` |
 | Toggle floating | `t` |
 | Toggle fullscreen | `f` |
 | Promote to master | `.` |
-| Rename the pane | `Shift+N` |
+| Rename the pane | `N` |
 
 Swap exchanges two pane positions without changing the layout shape. Move removes the focused pane
 and reinserts it beside the neighbor, so the split tree can change.
@@ -137,7 +137,7 @@ it its character: where Scale grows from, where Portal opens, which corner Scan 
 
 The displayed pane title uses this order:
 
-1. A custom title set with `Shift+N`.
+1. A custom title set with `N`.
 2. A title supplied by the application.
 3. The current working directory.
 4. The pane's fallback label.
@@ -176,7 +176,7 @@ and destination. Settings → Workspace switching turns this off. In `[animation
 `workspace = false` to disable it or `workspace_ms` to change the duration from the default 220 ms.
 The master `enabled` switch also disables workspace motion.
 
-Bare `n` renames the workspace. `Shift+N` renames the focused pane.
+Bare `n` renames the workspace. `N` renames the focused pane.
 
 Each workspace keeps its layout, name, focused pane, and pane order. An empty workspace remains
 available and prompts you to start a shell. Profiles save workspace names and layouts. Live named

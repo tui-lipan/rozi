@@ -195,7 +195,7 @@ pub(super) fn validate_suggested_keybinding(
     if !seen.insert((action.clone(), canonical)) {
         return;
     }
-    let display_key = crate::view::keys_display::format_binding(&binding);
+    let display_key = binding.label();
     info.suggested_keybindings
         .push(ExtensionSuggestedKeybindingDiagnostic {
             extension_id: extension_id.to_string(),

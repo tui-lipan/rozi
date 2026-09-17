@@ -1,27 +1,32 @@
-use tui_lipan::prelude::KeyBinding;
+//! Display helpers that sit on top of tui-lipan's key notation.
+//!
+//! Parsed bindings use `KeyBinding::label`. This module only formats handwritten help text
+//! (ranges, mouse gestures, mixed descriptions) and the recorder's in-progress modifier preview.
 
-/// Format from `canonical_lowercase`, not `canonical()`: tui-lipan prints `ctrl+a` as `Ctrl+A`.
-pub fn format_binding(binding: &KeyBinding) -> String {
-    binding
-        .canonical_lowercase()
-        .split_whitespace()
-        .map(format_step)
-        .collect::<Vec<_>>()
-        .join(" ")
+use tui_lipan::format_binding;
+use tui_lipan::prelude::KeyMods;
+
+/// The recorder's preview while only modifiers are held (`Ctrl+Shift+`), in the same order the
+/// completed chord's `KeyBinding::label` will use. tui-lipan writes the names; the trailing `+`
+/// and the empty-state ellipsis are the recorder's.
+pub fn format_held_modifiers(modifiers: KeyMods) -> String {
+    match modifiers.label().as_str() {
+        "" => "…".to_string(),
+        label => format!("{label}+"),
+    }
 }
 
+/// Format a handwritten key legend: alternatives separated by ` / `, chords by `, `.
+///
+/// Parseable chords go through tui-lipan's [`format_binding`]. The rest keeps Rozi's help-text
+/// rules: workspace ranges (`1-9`), mouse gestures, and mixed descriptions stay as written, and
+/// arrow glyphs become named keys (`Ctrl+Shift+←` → `Ctrl+Shift+Left`).
 pub fn format_keys(text: &str) -> String {
     text.split(" / ")
         .map(|group| {
             group
                 .split(", ")
-                .map(|chord| {
-                    chord
-                        .split_whitespace()
-                        .map(format_step)
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
+                .map(format_handwritten_chord)
                 .collect::<Vec<_>>()
                 .join(", ")
         })
@@ -29,59 +34,47 @@ pub fn format_keys(text: &str) -> String {
         .join(" / ")
 }
 
-fn format_step(step: &str) -> String {
-    let step = match step {
-        "←" => "left",
-        "→" => "right",
-        "↑" => "up",
-        "↓" => "down",
-        _ => step,
-    };
-    let mut rest = step;
+fn format_handwritten_chord(chord: &str) -> String {
+    chord
+        .split_whitespace()
+        .map(format_handwritten_step)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn format_handwritten_step(step: &str) -> String {
+    let normalized = step
+        .replace('←', "left")
+        .replace('→', "right")
+        .replace('↑', "up")
+        .replace('↓', "down");
+    // A lone letter is already display text (`H` vs `h` in copy mode). Routing it through
+    // KeyBinding would canonicalize it to the unshifted character.
+    if !is_standalone_letter(step)
+        && let Ok(label) = format_binding(&normalized)
+    {
+        return label;
+    }
+    let mut rest = normalized.as_str();
     let mut modifiers = Vec::new();
     while let Some((modifier, after)) = take_modifier(rest) {
-        modifiers.push(modifier.to_string());
+        modifiers.push(modifier);
         rest = after;
     }
-    if modifiers.is_empty() && !is_key(rest) {
-        return rest.to_string();
+    if modifiers.is_empty() {
+        return step.to_string();
     }
-
-    let rest = match rest {
-        "←" => "left",
-        "→" => "right",
-        "↑" => "up",
-        "↓" => "down",
-        _ => rest,
-    };
-    let mut key = named_key(rest).unwrap_or(rest).to_string();
-    if is_function_key(&key) {
-        key.make_ascii_uppercase();
-    }
-    let shifted = modifiers.iter().any(|modifier| modifier == "Shift");
-    let range = is_numeric_range(&key);
-    if shifted && !range {
-        if key.len() == 1 && key.as_bytes()[0].is_ascii_alphabetic() {
-            key.make_ascii_uppercase();
-            modifiers.retain(|modifier| modifier != "Shift");
-        } else if let Some(glyph) = shifted_us_layout_glyph(&key) {
-            key = glyph.to_string();
-            modifiers.retain(|modifier| modifier != "Shift");
-        }
-    }
-    if key.eq_ignore_ascii_case("backtab") {
-        key = "Tab".to_string();
-        if !modifiers.iter().any(|modifier| modifier == "Shift") {
-            modifiers.push("Shift".to_string());
-        }
-    }
-    let mut out = ["Ctrl", "Alt", "Super", "Shift"]
+    let mut parts: Vec<&str> = ["Ctrl", "Alt", "Super", "Shift"]
         .into_iter()
-        .filter(|wanted| modifiers.iter().any(|modifier| modifier == wanted))
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    out.push(key);
-    out.join("+")
+        .filter(|wanted| modifiers.contains(wanted))
+        .collect();
+    parts.push(rest);
+    parts.join("+")
+}
+
+fn is_standalone_letter(step: &str) -> bool {
+    let mut chars = step.chars();
+    matches!(chars.next(), Some(ch) if ch.is_ascii_alphabetic()) && chars.next().is_none()
 }
 
 fn take_modifier(step: &str) -> Option<(&'static str, &str)> {
@@ -100,79 +93,11 @@ fn take_modifier(step: &str) -> Option<(&'static str, &str)> {
     ))
 }
 
-fn named_key(key: &str) -> Option<&'static str> {
-    Some(match key.to_ascii_lowercase().as_str() {
-        "enter" | "return" => "Enter",
-        "tab" => "Tab",
-        "esc" | "escape" => "Esc",
-        "space" => "Space",
-        "backspace" => "Backspace",
-        "delete" | "del" => "Delete",
-        "insert" | "ins" => "Insert",
-        "home" => "Home",
-        "end" => "End",
-        "pageup" | "page-up" | "pgup" => "PageUp",
-        "pagedown" | "page-down" | "pgdown" => "PageDown",
-        "left" => "Left",
-        "right" => "Right",
-        "up" => "Up",
-        "down" => "Down",
-        _ => return None,
-    })
-}
-
-fn is_key(key: &str) -> bool {
-    named_key(key).is_some()
-        || key.eq_ignore_ascii_case("backtab")
-        || key.len() == 1
-        || is_numeric_range(key)
-        || is_function_key(key)
-}
-
-fn is_numeric_range(key: &str) -> bool {
-    matches!(key.as_bytes(), [start, b'-', end] if start.is_ascii_digit() && end.is_ascii_digit())
-}
-
-fn is_function_key(key: &str) -> bool {
-    matches!(
-        key.as_bytes(),
-        [b'f', digit] | [b'F', digit] if (b'1'..=b'9').contains(digit)
-    ) || matches!(
-        key.as_bytes(),
-        [b'f', b'1', digit] | [b'F', b'1', digit] if (b'0'..=b'2').contains(digit)
-    )
-}
-
-fn shifted_us_layout_glyph(key: &str) -> Option<char> {
-    Some(match key {
-        "`" => '~',
-        "1" => '!',
-        "2" => '@',
-        "3" => '#',
-        "4" => '$',
-        "5" => '%',
-        "6" => '^',
-        "7" => '&',
-        "8" => '*',
-        "9" => '(',
-        "0" => ')',
-        "-" => '_',
-        "=" => '+',
-        "[" => '{',
-        "]" => '}',
-        "\\" => '|',
-        ";" => ':',
-        "'" => '"',
-        "," => '<',
-        "." => '>',
-        "/" => '?',
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+
+    use tui_lipan::prelude::KeyBinding;
 
     use super::*;
 
@@ -181,39 +106,48 @@ mod tests {
     }
 
     #[test]
-    fn formats_shifted_printable_keys() {
-        assert_eq!(format_binding(&binding("a")), "a");
-        assert_eq!(format_binding(&binding("shift-a")), "A");
-        assert_eq!(format_binding(&binding("shift-e")), "E");
-        assert_eq!(format_binding(&binding("ctrl-a")), "Ctrl+a");
-        assert_eq!(format_binding(&binding("ctrl-shift-a")), "Ctrl+A");
-        assert_eq!(format_binding(&binding("alt-a")), "Alt+a");
-        assert_eq!(format_binding(&binding("alt-shift-a")), "Alt+A");
-        assert_eq!(format_binding(&binding("ctrl-alt-e")), "Ctrl+Alt+e");
-        assert_eq!(format_binding(&binding("ctrl-alt-shift-e")), "Ctrl+Alt+E");
-        assert_eq!(format_binding(&binding("shift-/")), "?");
+    fn parsed_bindings_use_tui_lipan_labels() {
+        assert_eq!(binding("a").label(), "a");
+        assert_eq!(binding("shift-a").label(), "A");
+        assert_eq!(binding("shift-/").label(), "?");
+        assert_eq!(binding("ctrl-a q").label(), "Ctrl+A q");
+        assert_eq!(binding("ctrl-shift-a").label(), "Ctrl+Shift+A");
+        assert_eq!(binding("cmd-shift-p").label(), "Super+Shift+P");
+        assert_eq!(binding("ctrl-shift-/").label(), "Ctrl+Shift+/");
+        assert_eq!(binding("shift-tab").label(), "Shift+Tab");
+        assert_eq!(binding("page-up").label(), "PageUp");
     }
 
     #[test]
-    fn keeps_shift_for_named_keys_and_ranges() {
-        assert_eq!(format_binding(&binding("shift-tab")), "Shift+Tab");
-        assert_eq!(
-            format_binding(&binding("ctrl-shift-left")),
-            "Ctrl+Shift+Left"
+    fn recorder_preview_is_a_prefix_of_the_finished_chord() {
+        let held = KeyMods {
+            ctrl: true,
+            shift: true,
+            ..KeyMods::NONE
+        };
+        assert_eq!(format_held_modifiers(KeyMods::NONE), "…");
+        assert_eq!(format_held_modifiers(KeyMods::CTRL), "Ctrl+");
+        assert_eq!(format_held_modifiers(held), "Ctrl+Shift+");
+        assert!(
+            binding("ctrl-shift-a")
+                .label()
+                .starts_with(&format_held_modifiers(held))
         );
-        assert_eq!(format_binding(&binding("page-up")), "PageUp");
-        assert_eq!(format_binding(&binding("page-down")), "PageDown");
+    }
+
+    #[test]
+    fn handwritten_keys_keep_ranges_and_descriptions() {
+        assert_eq!(format_keys("shift+?"), "?");
         assert_eq!(format_keys("1-9"), "1-9");
         assert_eq!(format_keys("shift+1-9"), "Shift+1-9");
         assert_eq!(format_keys("ctrl+shift+1-9"), "Ctrl+Shift+1-9");
-    }
-
-    #[test]
-    fn formats_handwritten_keys_without_losing_shifted_glyphs() {
+        assert_eq!(format_keys("enter / esc"), "Enter / Esc");
         assert_eq!(format_keys("H / shift+left"), "H / Shift+Left");
-        assert_eq!(format_keys("Ctrl+a"), "Ctrl+a");
-        assert_eq!(format_keys("Ctrl+A"), "Ctrl+A");
+        assert_eq!(format_keys("Ctrl+a"), "Ctrl+A");
+        assert_eq!(format_keys("Ctrl+Shift+A"), "Ctrl+Shift+A");
+        assert_eq!(format_keys("S"), "S");
         assert_eq!(format_keys("Ctrl+Shift+←"), "Ctrl+Shift+Left");
+        assert_eq!(format_keys("←/→"), "←/→");
         assert_eq!(
             format_keys("arrows / hjkl / drag gap"),
             "arrows / hjkl / drag gap"

@@ -47,7 +47,7 @@ fn modal_dim_covers_the_sidebar_as_well_as_the_workspace() {
             let mut backend = backend();
             let (sidebar_lit, workspace_lit) = cells(&backend);
 
-            backend.state_mut().show_help = true;
+            backend.state_mut().keybindings = Some(rozi::state::KeybindingsState::default());
             backend.render();
             let (sidebar_dimmed, workspace_dimmed) = cells(&backend);
 
@@ -67,7 +67,7 @@ fn modal_dim_covers_the_sidebar_as_well_as_the_workspace() {
                  lit={sidebar_lit:?} dimmed={sidebar_dimmed:?} backdrop={backdrop:?}"
             );
 
-            backend.state_mut().show_help = false;
+            backend.state_mut().keybindings = None;
             backend.render();
             assert_eq!(
                 cells(&backend),

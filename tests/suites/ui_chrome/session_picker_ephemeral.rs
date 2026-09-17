@@ -62,7 +62,7 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
             "with no row to activate, Enter carries the scratch session:\n{rendered}"
         );
         assert!(
-            !rendered.contains("ephemeral shell Ctrl+t"),
+            !rendered.contains("ephemeral shell Ctrl+T"),
             "the chord goes unsaid while Enter already offers it:\n{rendered}"
         );
 
@@ -123,7 +123,7 @@ fn a_populated_list_advertises_the_chord_until_the_scratch_session_exists() {
 
         let rendered = screen(&mut backend);
         assert!(
-            rendered.contains("ephemeral shell Ctrl+t"),
+            rendered.contains("ephemeral shell Ctrl+T"),
             "with rows on the list, Enter belongs to them and the chord is spelled out:\n{rendered}"
         );
         assert!(
@@ -150,7 +150,7 @@ fn holding_the_scratch_session_drops_the_hint_but_not_the_key() {
 
         let rendered = screen(&mut backend);
         assert!(
-            !rendered.contains("ephemeral shell Ctrl+t")
+            !rendered.contains("ephemeral shell Ctrl+T")
                 && !rendered.contains("ephemeral shell Enter"),
             "the scratch session is on the list itself, so the pill would be noise:\n{rendered}"
         );
@@ -190,7 +190,7 @@ fn a_parked_scratch_session_also_drops_the_hint() {
 
         let rendered = screen(&mut backend);
         assert!(
-            !rendered.contains("ephemeral shell Ctrl+t"),
+            !rendered.contains("ephemeral shell Ctrl+T"),
             "a scratch session parked in the background is one the client already has:\n{rendered}"
         );
     });
@@ -213,11 +213,11 @@ fn the_global_pickers_keys_name_their_scope_once_a_host_is_in_play() {
 
         let local_only = screen(&mut backend);
         assert!(
-            local_only.contains("new Ctrl+n") && !local_only.contains("new local"),
+            local_only.contains("new Ctrl+N") && !local_only.contains("new local"),
             "with nothing remote anywhere, `new` needs no qualifier:\n{local_only}"
         );
         assert!(
-            local_only.contains("ephemeral shell Ctrl+t"),
+            local_only.contains("ephemeral shell Ctrl+T"),
             "and the scratch chord keeps its plain name:\n{local_only}"
         );
 
@@ -231,11 +231,11 @@ fn the_global_pickers_keys_name_their_scope_once_a_host_is_in_play() {
 
         let with_remote = screen(&mut backend);
         assert!(
-            with_remote.contains("new local Ctrl+n"),
+            with_remote.contains("new local Ctrl+N"),
             "attached to a host, the global picker says which machine its `new` means:\n{with_remote}"
         );
         assert!(
-            with_remote.contains("local ephemeral Ctrl+t"),
+            with_remote.contains("local ephemeral Ctrl+T"),
             "and so does its scratch chord, which is local for the same reason:\n{with_remote}"
         );
     });

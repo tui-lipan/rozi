@@ -26,7 +26,6 @@ use tui_lipan::prelude::*;
 use super::fg_only;
 use crate::AppRoot;
 use crate::state::WORKBAR_HEIGHT;
-use crate::view::keys_display::format_binding;
 
 /// Blank columns between two packed columns.
 const COLUMN_GAP: usize = 3;
@@ -173,7 +172,7 @@ fn prefix_continuation(binding: &KeyBinding, prefix: &str) -> Option<String> {
     }
     KeyBinding::from_str(&rest.join(" "))
         .ok()
-        .map(|binding| format_binding(&binding))
+        .map(|binding| binding.label())
 }
 
 /// Fold a family's member keys into one display string, or `None` when they no longer form a set
@@ -187,7 +186,7 @@ fn collapse_keys(parts: &[String], joiner: &str) -> Option<String> {
         return Some(parts.join(joiner));
     }
     // Every member must be the same modifier combination applied to a single character, so the
-    // combination can be lifted out front: `h j k l` -> `hjkl`, `ctrl+h …` -> `ctrl+hjkl`.
+    // combination can be lifted out front: `h j k l` -> `hjkl`, `Ctrl+H …` -> `Ctrl+HJKL`.
     let split = |key: &String| -> Option<(String, char)> {
         let mut chars = key.chars();
         let last = chars.next_back()?;

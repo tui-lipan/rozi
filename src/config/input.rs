@@ -4,9 +4,10 @@ use std::str::FromStr;
 use tui_lipan::prelude::KeyBinding;
 
 use super::file::{KeyBindingSpec, UserCommandTableSpec};
-use super::schema::{
-    InputConfig, UserCommand, UserCommandAction, WhichKey, WmModifier, scheme_shortcuts,
-};
+#[cfg(test)]
+use super::keymap::resolve_key_overrides;
+use super::keymap::{BindingExpr, BindingExprError, KeyOverrideSpec, OverrideMode};
+use super::schema::{InputConfig, UserCommand, UserCommandAction, WhichKey, WmModifier};
 
 pub(super) fn apply_input_config(
     input: &mut InputConfig,
@@ -50,7 +51,7 @@ pub(super) fn apply_input_config(
 
 /// True when a `[keys]` candidate is a bare key step: a single chord step carrying at most
 /// `shift`. Such bindings are expanded through the configured input scheme.
-fn is_bare_key_step(candidate: &str) -> bool {
+pub(crate) fn is_bare_key_step(candidate: &str) -> bool {
     let mut steps = candidate.split_whitespace();
     let (Some(step), None) = (steps.next(), steps.next()) else {
         return false;
@@ -63,8 +64,8 @@ fn is_bare_key_step(candidate: &str) -> bool {
         .any(|token| MODIFIERS.contains(&token.to_ascii_lowercase().as_str()))
 }
 
-/// Build `[keys]` overrides. Strings/lists replace an action's defaults, `{ add = ... }` extends
-/// its generated defaults, and `{ run = ... }` / `{ send = ... }` defines a user command.
+/// Build `[keys]` overrides resolved for `input`. See [`build_key_sources`].
+#[cfg(test)]
 pub(crate) fn build_key_overrides(
     keys: HashMap<String, KeyBindingSpec>,
     input: &InputConfig,
@@ -72,98 +73,78 @@ pub(crate) fn build_key_overrides(
     user_commands: &mut Vec<UserCommand>,
     warnings: &mut Vec<String>,
 ) -> HashMap<String, Vec<KeyBinding>> {
-    let mut overrides = HashMap::new();
+    let sources = build_key_sources(keys, input, named_ids, user_commands, warnings);
+    resolve_key_overrides(&sources, input)
+}
+
+/// Parse `[keys]` into source entries. Strings/lists replace an action's defaults, `{ add = ... }`
+/// extends them, and `{ run = ... }` / `{ send = ... }` defines a user command, bound immediately
+/// for `input`.
+pub(crate) fn build_key_sources(
+    keys: HashMap<String, KeyBindingSpec>,
+    input: &InputConfig,
+    named_ids: &HashSet<String>,
+    user_commands: &mut Vec<UserCommand>,
+    warnings: &mut Vec<String>,
+) -> HashMap<String, KeyOverrideSpec> {
+    let mut sources = HashMap::new();
     for (key, spec) in keys {
         if let KeyBindingSpec::UserCommand(table) = spec {
             bind_user_command(user_commands, &key, table, input, warnings);
             continue;
         }
 
-        let default_bindings = match crate::commands::default_shortcuts_for_action(input, &key) {
-            Some(defaults) => defaults,
-            None if named_ids.contains(&key) => Vec::new(),
-            None if super::extensions::is_extension_scoped_id(&key) => {
+        if crate::commands::default_binding_exprs(&key).is_none() && !named_ids.contains(&key) {
+            if super::extensions::is_extension_scoped_id(&key) {
                 warnings.push(format!(
                     "Extension command `{key}` is currently unavailable; its binding is preserved but inactive"
                 ));
-                Vec::new()
-            }
-            None => {
+            } else {
                 warnings.push(format!("Unknown key action `{key}`; skipped"));
                 continue;
             }
-        };
+        }
 
-        let (bindings, additive) = match spec {
-            KeyBindingSpec::One(value) => (vec![value], false),
-            KeyBindingSpec::Many(values) => (values, false),
-            KeyBindingSpec::Add(table) => (table.add.into_vec(), true),
+        let (values, mode) = match spec {
+            KeyBindingSpec::One(value) => (vec![value], OverrideMode::Replace),
+            KeyBindingSpec::Many(values) => (values, OverrideMode::Replace),
+            KeyBindingSpec::Add(table) => (table.add.into_vec(), OverrideMode::Add),
             KeyBindingSpec::UserCommand(_) => unreachable!(),
         };
 
-        let mut parsed_bindings = if additive {
-            default_bindings
-        } else {
-            Vec::new()
-        };
+        let mut bindings = Vec::new();
         let mut candidate_count = 0;
-        let initial_binding_count = parsed_bindings.len();
-        for binding in bindings {
-            for candidate in binding
+        for value in values {
+            for candidate in value
                 .split(',')
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
                 candidate_count += 1;
-                let scheme_key = if let Some(key_step) = candidate.strip_prefix("scheme:") {
-                    match KeyBinding::from_str(key_step) {
-                        Ok(binding) if binding.step_count() == 1 => Some(key_step),
-                        _ => {
-                            warnings.push(format!(
-                                "Could not parse scheme binding `{candidate}` for `{key}`; expected one key step"
-                            ));
-                            continue;
+                match BindingExpr::parse(candidate) {
+                    Ok(expr) => {
+                        if !bindings.contains(&expr) {
+                            bindings.push(expr);
                         }
                     }
-                } else {
-                    is_bare_key_step(candidate).then_some(candidate)
-                };
-                if let Some(key_step) = scheme_key {
-                    let expanded = scheme_shortcuts(input, key_step);
-                    if expanded.is_empty() {
-                        warnings.push(format!(
-                            "Could not parse binding `{candidate}` for `{key}`; skipped"
-                        ));
-                    } else {
-                        for binding in expanded {
-                            if !parsed_bindings.contains(&binding) {
-                                parsed_bindings.push(binding);
-                            }
-                        }
-                    }
-                    continue;
-                }
-                match KeyBinding::from_str(candidate) {
-                    Ok(parsed) => {
-                        if !parsed_bindings.contains(&parsed) {
-                            parsed_bindings.push(parsed);
-                        }
-                    }
-                    Err(_) => warnings.push(format!(
+                    Err(BindingExprError::NotOneStep) => warnings.push(format!(
+                        "Could not parse binding `{candidate}` for `{key}`; `scheme:`, `prefix:`, and `mod:` expect one key step"
+                    )),
+                    Err(BindingExprError::Invalid) => warnings.push(format!(
                         "Could not parse binding `{candidate}` for `{key}`; skipped"
                     )),
                 }
             }
         }
-        if candidate_count > 0 && parsed_bindings.len() == initial_binding_count && !additive {
+        if candidate_count > 0 && bindings.is_empty() && mode == OverrideMode::Replace {
             warnings.push(format!(
                 "No valid bindings for `{key}`; keeping its default shortcuts"
             ));
             continue;
         }
-        overrides.insert(key, parsed_bindings);
+        sources.insert(key, KeyOverrideSpec { mode, bindings });
     }
-    overrides
+    sources
 }
 
 pub(super) fn bind_user_command(
@@ -182,32 +163,20 @@ pub(super) fn bind_user_command(
     else {
         return;
     };
-    // A user command earns the same treatment as a rebound built-in: a bare key step expands
+    // A user command's trigger means what it would for a rebound built-in: a bare key step expands
     // through the input scheme, so `i = { run = … }` answers to both the prefix chord and the
-    // held modifier. Binding it literally made every user command prefix-only, which contradicts
-    // the rule that those two spellings are one keymap.
-    let (bindings, hint) = if is_bare_key_step(key) {
-        let hint = KeyBinding::from_str(key)
-            .map(|binding| crate::view::keys_display::format_binding(&binding))
-            .unwrap_or_else(|_| key.to_string());
-        (scheme_shortcuts(input, key), hint)
-    } else {
-        match KeyBinding::from_str(key) {
-            Ok(binding) => {
-                let hint = crate::view::keys_display::format_binding(&binding);
-                (vec![binding], hint)
-            }
-            Err(_) => (Vec::new(), String::new()),
-        }
-    };
-    if bindings.is_empty() {
+    // held modifier, `prefix:i` / `mod:i` take one half, and a modified chord stays literal.
+    let Ok(expr) = BindingExpr::parse(key) else {
         warnings.push(format!(
             "Could not parse binding `{key}` for a user command; skipped"
         ));
         return;
-    }
+    };
+    let bindings = expr.resolve(input);
+    let hint = expr.display_parts(input).join(" / ");
     user_commands.push(UserCommand {
         action,
+        trigger: expr,
         bindings,
         hint,
         label,

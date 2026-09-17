@@ -1,6 +1,7 @@
 mod attach;
 mod hosts;
 pub(crate) use attach::spawn_state_panes_on_session;
+pub(crate) mod keybindings;
 mod overlays;
 mod panes;
 mod prompts;
@@ -98,9 +99,27 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::CloseHelp => overlays::close_help(ctx),
         Msg::HelpQueryChanged(event) => overlays::help_query_changed(ctx, event),
         Msg::HelpTabSelected(index) => overlays::help_tab_selected(ctx, index),
-        Msg::HelpFocusFilter => overlays::help_focus_filter(ctx),
-        Msg::HelpBlurFilter => overlays::help_blur_filter(ctx),
-        Msg::HelpEscape => overlays::help_escape(ctx),
+        Msg::KeybindingSelect(id) => keybindings::keybinding_select(ctx, id),
+        Msg::KeybindingCapture(id) => keybindings::keybinding_capture(ctx, id),
+        Msg::KeybindingCapturePrefix => keybindings::keybinding_capture_prefix(ctx),
+        Msg::KeybindingCaptured(key) => keybindings::keybinding_captured(ctx, key),
+        Msg::KeybindingSaveCaptured => keybindings::keybinding_save_captured(ctx),
+        Msg::KeybindingRetryCapture => keybindings::keybinding_retry_capture(ctx),
+        Msg::KeybindingCancelCapture => keybindings::keybinding_cancel_capture(ctx),
+        Msg::KeybindingToggleConversion => keybindings::keybinding_toggle_conversion(ctx),
+        Msg::KeybindingUnbind(id) => keybindings::keybinding_unbind(ctx, id),
+        Msg::KeybindingReset(id) => keybindings::keybinding_reset(ctx, id),
+        Msg::KeybindingResetAll => keybindings::keybinding_reset_all(ctx),
+        Msg::KeybindingFocusAnswer(index) => keybindings::keybinding_focus_answer(ctx, index),
+        Msg::KeybindingResolveConflict(replace) => {
+            keybindings::keybinding_resolve_conflict(ctx, replace)
+        }
+        Msg::KeybindingConfirmResetAll(reset) => {
+            keybindings::keybinding_confirm_reset_all(ctx, reset)
+        }
+        Msg::KeybindingEditModifier => keybindings::keybinding_edit_modifier(ctx),
+        Msg::KeybindingStepModifier(steps) => keybindings::keybinding_step_modifier(ctx, steps),
+        Msg::KeybindingSaveModifier => keybindings::keybinding_save_modifier(ctx),
         Msg::CloseSettings => overlays::close_settings(ctx),
         Msg::SettingsSelect(action) => overlays::settings_select(ctx, action),
         Msg::SettingsActivate(action) => overlays::settings_activate(ctx, action),
@@ -822,6 +841,17 @@ fn strongest_update_level(left: UpdateLevel, right: UpdateLevel) -> UpdateLevel 
     }
 }
 
+/// Standalone modifier reports are scoped to the keybinding recorder, so normal composed text input
+/// never sees them. Derived from state after every message and key so no close path can leak it.
+pub(crate) fn sync_modifier_key_reporting(ctx: &mut Context<AppRoot>) {
+    let capturing = ctx
+        .state
+        .keybindings
+        .as_ref()
+        .is_some_and(crate::state::KeybindingsState::is_capturing);
+    ctx.set_modifier_key_reporting(capturing);
+}
+
 fn post_update_sync(
     ctx: &mut Context<AppRoot>,
     mut update: Update,
@@ -867,12 +897,18 @@ fn post_update_sync(
 
     crate::commands::sync_if_needed(ctx);
 
-    if ctx.state.show_help
+    // The Keybindings search field owns every key while the list is showing; only its capture and
+    // reset dialogs take focus away.
+    if ctx
+        .state
+        .keybindings
+        .as_ref()
+        .is_some_and(|keybindings| keybindings.stage == crate::state::KeybindingEditorStage::List)
         && !ctx.has_focus_within_key(crate::view::help_filter_key())
-        && !ctx.has_focus_within_key(crate::view::help_scroll_key())
     {
-        ctx.request_focus(crate::view::help_scroll_key());
+        ctx.request_focus(crate::view::help_filter_key());
     }
+    sync_modifier_key_reporting(ctx);
 
     // Layout commit chokepoint: after every message, schedule a bounded trailing-edge diff. The
     // flush message itself is excluded so an idle client does not perpetually re-arm the timer.

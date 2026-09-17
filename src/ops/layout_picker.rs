@@ -27,7 +27,7 @@ pub(crate) fn open_layout_picker(ctx: &mut Context<AppRoot>) -> Update {
     let (selected, original) = current_layout(ctx);
     ctx.state.layout_picker = Some(LayoutPickerState::new(selected, original));
     ctx.state.show_layout_picker = true;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.show_palette = false;
     ctx.state.show_theme_picker = false;
     ctx.state.search = None;

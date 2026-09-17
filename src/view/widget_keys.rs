@@ -134,12 +134,12 @@ pub fn pane_padding_horizontal_key() -> &'static str {
     "rozi-pane-padding-horizontal"
 }
 
-pub fn help_scroll_key() -> &'static str {
-    "rozi-help-scroll"
-}
-
 pub fn help_filter_key() -> &'static str {
     "rozi-help-filter"
+}
+
+pub fn keybinding_capture_key() -> &'static str {
+    "rozi-keybinding-capture"
 }
 
 #[cfg(test)]

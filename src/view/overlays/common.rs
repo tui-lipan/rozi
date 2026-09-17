@@ -2,6 +2,10 @@ use tui_lipan::prelude::*;
 
 use super::fg_only;
 
+const HINT_PAD_TOP: u16 = 1;
+const HINT_PAD_X: u16 = 1;
+const HINT_GAP: u16 = 3;
+
 /// Ctrl plus `letter`, case-insensitive. Overlay interceptors share this so a chord the footer
 /// omitted is the same test the handler uses when it stays silent.
 pub(super) fn ctrl_letter(key: &KeyEvent, letter: char) -> bool {
@@ -30,5 +34,8 @@ pub(super) fn hint_pill(theme: &Theme, label: &str, key: &str) -> Element {
 /// The base footer row shared by every overlay hint bar: content-height with a leading gap above
 /// it. Callers add [`hint_pill`] children and may override justify/gap.
 pub(super) fn hint_row() -> Flow {
-    Flow::new().padding((1, 1, 0, 1)).gap(3).row_gap(0)
+    Flow::new()
+        .padding((HINT_PAD_TOP, HINT_PAD_X, 0, HINT_PAD_X))
+        .gap(HINT_GAP)
+        .row_gap(0)
 }

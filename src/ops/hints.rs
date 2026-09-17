@@ -75,7 +75,7 @@ pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
         offset,
     });
     ctx.state.mode = Mode::Hint;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.show_palette = false;
     ctx.state.search = None;
     Update::full()

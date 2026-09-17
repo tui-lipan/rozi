@@ -25,7 +25,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     let update_check_epoch = next_update_check_epoch();
     let git_ids = git_installation_ids(&scan.installation_kinds);
     ctx.state.show_palette = false;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.show_settings = false;
     ctx.state.settings_selected = None;
     ctx.state.pane_padding_editor = None;

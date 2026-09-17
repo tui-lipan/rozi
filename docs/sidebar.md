@@ -1,6 +1,6 @@
 # Sidebar
 
-Press the `b` command key to show or hide the sidebar. Press `Shift+B` to show it and move keyboard
+Press the `b` command key to show or hide the sidebar. Press `B` to show it and move keyboard
 focus into its rows. The sidebar is client-local and does not become part of a shared session
 layout.
 
@@ -10,7 +10,7 @@ The default sidebar has Activity, Panes, Sessions, Files, and Git tabs. `PageUp`
 switch tabs while the sidebar is visible. `\` switches between one and two panels without losing
 the saved tab assignment.
 
-After `Shift+B` focuses the sidebar:
+After `B` focuses the sidebar:
 
 | Key | Action |
 | --- | --- |

@@ -688,6 +688,8 @@ for an inline command.
 | --- | --- |
 | `"b"` or `["b", "super-enter"]` | Replaces defaults. A bare key expands through the prefix and modifier scheme. A literal chord stays literal. |
 | `"scheme:ctrl-t"` | Expands one modified key through the prefix and modifier scheme. |
+| `"prefix:w"` | Binds only the prefix form of one key step. Follows `[input] prefix`. |
+| `"mod:v"` | Binds only the held-modifier form of one key step. Follows `[input] modifier`; inactive while `modifier_shortcuts` is `false`. |
 | `{ add = "super-enter" }` | Adds one binding without removing defaults. `add` also accepts an array. |
 | `""` or `[]` | Removes all bindings for that action. |
 
@@ -709,8 +711,9 @@ An inline command table uses these keys:
 | `exec` | string | none | Runs detached and discards output. |
 | `keep_open` | bool | `true` | Applies to `run` and `popup`. |
 
-Exactly one action is required. Inline commands do not have stable action IDs and cannot be called
-with `run-action`.
+Exactly one action is required. The trigger accepts the same forms as a binding: `g`,
+`"scheme:ctrl-g"`, `"prefix:g"`, `"mod:g"`, or a literal chord. Inline commands do not have stable
+action IDs and cannot be called with `run-action`.
 
 ```toml
 [keys]

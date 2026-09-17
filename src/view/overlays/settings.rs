@@ -64,7 +64,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     CyclePickerTabStyle,
                 ),
                 (
-                    "Selection",
+                    "Selection style",
                     cap_style_label(pane.picker_selection_style).to_string(),
                     CyclePickerSelectionStyle,
                 ),

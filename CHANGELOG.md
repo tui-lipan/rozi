@@ -13,7 +13,7 @@
   tiled unless you set it.
 - Pickers gain a **Pickers** Settings group: border, a category **Tab strip** that uses the same
   lifted fill as the sidebar tab strip (`picker_tab_background`), a **Tab style** that follows
-  `workbar_tab_style` when omitted (`picker_tab_style`), and a global **Selection** cap style for
+  `workbar_tab_style` when omitted (`picker_tab_style`), and a global **Selection style** for
   the highlighted row (`picker_selection_style`). List start and end caps apply across the
   command palette, Settings, Help, Search, and the other pickers. Needs tui-lipan 0.11.2 so the
   caps sit in the selected row's inset instead of stacking beside it.

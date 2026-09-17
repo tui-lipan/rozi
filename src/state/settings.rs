@@ -252,7 +252,7 @@ impl SettingsAction {
                 cap_style_label,
             )),
             Self::CyclePickerSelectionStyle => Some(choice_ring(
-                "Picker selection",
+                "Picker selection style",
                 badge_cap_styles(),
                 pane.picker_selection_style,
                 cap_style_label,

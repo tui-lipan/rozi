@@ -103,6 +103,7 @@ pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "picker border",
             "picker tab",
             "picker selection",
+            "picker selection style",
             "titlebar",
             "titlebars",
             "titlebar style",
@@ -358,6 +359,7 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "picker tab caps",
         ]),
         CyclePickerSelectionStyle => alias_list(&[
+            "picker selection style",
             "picker selection",
             "palette selection",
             "list caps",

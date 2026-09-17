@@ -206,7 +206,7 @@ fn settings_all_keeps_every_control_available() {
             "Which-key",
             "Focus on hover",
             "Border",
-            "Selection",
+            "Selection style",
             "Terminal padding",
             "Background follows terminal",
             "Show titlebar",
@@ -253,7 +253,7 @@ fn settings_all_keeps_every_control_available() {
         setting_row(pickers, "Border");
         setting_row(pickers, "Tab strip");
         setting_row(pickers, "Tab style");
-        setting_row(pickers, "Selection");
+        setting_row(pickers, "Selection style");
         let titlebar = group_rows(&frame, "Titlebar", "Workbar");
         setting_row(titlebar, "Style");
         let workbar = group_rows(&frame, "Workbar", "Sidebar");

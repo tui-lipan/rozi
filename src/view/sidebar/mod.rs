@@ -64,9 +64,11 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .unwrap_or(0);
     let bar_id = panel_bar_id(panel);
     let strip = strip_fill(ctx);
+    let theme = &ctx.state.theme;
+    let hover_bg = strip.elevate_by(0.08);
     let hover_style = Style::new()
-        .fg(ctx.state.theme.surface.menu)
-        .bg(strip.elevate_by(0.08));
+        .fg(crate::ops::theme::chrome_label_fg(theme, hover_bg))
+        .bg(hover_bg);
     let tab_caps = ctx
         .state
         .config
@@ -91,13 +93,18 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         // tab label carries, so the hint starts in the same column a tab would.
         .empty_text(" Drag tabs here")
         .empty_text_style(super::fg_only(&ctx.state.theme.muted))
-        .style(Style::new().fg(ctx.state.theme.surface.menu).bg(strip))
-        .active_style(
+        .style(
             Style::new()
-                .fg(ctx.state.theme.surface.backdrop)
-                .bg(ctx.state.theme.border_active)
-                .bold(),
+                .fg(crate::ops::theme::chrome_label_fg(theme, strip))
+                .bg(strip),
         )
+        .active_style({
+            let active_bg = theme.border_active;
+            Style::new()
+                .fg(crate::ops::theme::chrome_label_fg(theme, active_bg))
+                .bg(active_bg)
+                .bold()
+        })
         .tab_hover_style(hover_style)
         .overflow_style(Style::new().fg(ctx.state.theme.border_active))
         .overflow_hover_style(

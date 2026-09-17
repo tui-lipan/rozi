@@ -511,13 +511,18 @@ pub(super) fn picker_tabs(
                 .fg(theme.border_active)
                 .bg(strip.elevate_by(0.08)),
         )
-        .style(Style::new().fg(theme.surface.menu).bg(strip))
-        .active_style(
+        .style(
             Style::new()
-                .fg(theme.surface.backdrop)
-                .bg(theme.border_active)
-                .bold(),
+                .fg(crate::ops::theme::chrome_label_fg(theme, strip))
+                .bg(strip),
         )
+        .active_style({
+            let active_bg = theme.border_active;
+            Style::new()
+                .fg(crate::ops::theme::chrome_label_fg(theme, active_bg))
+                .bg(active_bg)
+                .bold()
+        })
         .tab_hover_style(Style::new().transform_bg(crate::view::hover_lift()))
         .on_change(on_change)
         .into()

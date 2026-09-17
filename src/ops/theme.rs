@@ -438,22 +438,20 @@ pub(crate) fn tab_alert_background_trough(theme: &Theme) -> Color {
 /// same fade the background is already doing. The tab style pairs this with
 /// `ContrastPolicy::Off` - without that the renderer would overwrite it again every frame.
 pub(crate) fn tab_alert_foreground(theme: &Theme, color: BadgeColor) -> Color {
-    tab_label_on(theme, tab_alert_background(theme, color))
+    chrome_label_fg(theme, tab_alert_background(theme, color))
 }
 
-/// The tab label colour resolved for `background`.
+/// Readable label colour for a chrome chip (tabs, workbar badges) on `background`.
 ///
-/// Every endpoint of a marked tab's fade goes through this, not just the tinted one: the tab opts
-/// out of the renderer's contrast policy so the label can fade instead of flipping, which also means
-/// nothing downstream will rescue an unreadable pair. Some themes (Lipan) put `surface.menu` below
-/// the readable threshold on `surface.panel` already, so even the untinted end needs resolving.
-fn tab_label_on(theme: &Theme, background: Color) -> Color {
+/// Some themes (Lipan) put `surface.menu` below the readable threshold on `surface.panel` already,
+/// so even an untinted tab needs resolving rather than using `menu` as ink.
+pub(crate) fn chrome_label_fg(theme: &Theme, background: Color) -> Color {
     readable_text_color(Some(theme.surface.menu), background)
 }
 
 /// The label colour of an unmarked tab, and so the resting end of a marked tab's fade.
 pub(crate) fn tab_foreground(theme: &Theme) -> Color {
-    tab_label_on(theme, tab_alert_background_trough(theme))
+    chrome_label_fg(theme, tab_alert_background_trough(theme))
 }
 
 /// Whether a marked tab's breathe can actually fade, for the channel that moves.
@@ -586,6 +584,15 @@ mod tests {
         assert!(!chrome_color_animates(Color::Black));
         assert!(!chrome_color_animates(Color::Indexed(14)));
         assert!(chrome_color_animates(Color::Rgb(0, 255, 255)));
+    }
+
+    #[test]
+    fn light_theme_chip_ink_is_not_the_canvas() {
+        let theme = Theme::ayu_light();
+        assert_ne!(
+            chrome_label_fg(&theme, theme.border_active),
+            theme.surface.backdrop
+        );
     }
 
     /// Both ends of a marked tab's breathe must be readable *on their own background*. The bug this

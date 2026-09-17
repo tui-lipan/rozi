@@ -51,46 +51,66 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
     // session badge - usually the last right segment, and the one that stays visible - is pinned
     // to the far edge and mode chips like PREFIX land to its left. Chips are collected first so
     // the cluster can decide how to lay them out.
-    let text_fg = theme.surface.backdrop;
+    let chip_fg = |bg| crate::ops::theme::chrome_label_fg(theme, bg);
     let mut trailing: Vec<TrailingChip> = Vec::new();
     if ctx.command_chord_pending() {
         trailing.push(TrailingChip::badge(
             " PREFIX ",
-            text_fg,
+            chip_fg(theme.status.warning),
             theme.status.warning,
         ));
     }
     if state.mode == Mode::Resize {
         trailing.push(TrailingChip::badge(
             " RESIZE ",
-            text_fg,
+            chip_fg(theme.status.success),
             theme.status.success,
         ));
     } else if state.mode == Mode::Copy {
-        trailing.push(TrailingChip::badge(" COPY ", text_fg, theme.status.info));
+        trailing.push(TrailingChip::badge(
+            " COPY ",
+            chip_fg(theme.status.info),
+            theme.status.info,
+        ));
     } else if state.mode == Mode::Hint {
-        trailing.push(TrailingChip::badge(" HINT ", text_fg, theme.status.info));
+        trailing.push(TrailingChip::badge(
+            " HINT ",
+            chip_fg(theme.status.info),
+            theme.status.info,
+        ));
     }
     // Not a `Mode`: the sidebar owning the keyboard is ordinary widget focus, and the framework is
     // the authority on that. Mirroring it into a mode would be a second source of truth that goes
     // stale the moment a click moves focus somewhere else.
     if state.sidebar.focused {
-        trailing.push(TrailingChip::badge(" SIDEBAR ", text_fg, theme.status.info));
+        trailing.push(TrailingChip::badge(
+            " SIDEBAR ",
+            chip_fg(theme.status.info),
+            theme.status.info,
+        ));
     }
     // Synchronization silently sends every keystroke to every pane on the workspace, and nothing
     // else on screen says so. It gets warning color for the same reason it gets a permanent chip:
     // typing into what looks like one pane while hitting several is the costly surprise.
     if state.current().workspaces[state.current().active_workspace].synchronized {
-        trailing.push(TrailingChip::badge(" SYNC ", text_fg, theme.status.warning));
+        trailing.push(TrailingChip::badge(
+            " SYNC ",
+            chip_fg(theme.status.warning),
+            theme.status.warning,
+        ));
     }
     if state.do_not_disturb {
-        trailing.push(TrailingChip::badge(" DND ", text_fg, theme.status.warning));
+        trailing.push(TrailingChip::badge(
+            " DND ",
+            chip_fg(theme.status.warning),
+            theme.status.warning,
+        ));
     }
     // Keep session identity in the configured session badge and collaboration state in one chip.
     // A normal solo client needs no status; read-only remains visible because it explains why
     // typing is blocked.
     if let Some((label, color)) = collaboration_status(state, theme) {
-        trailing.push(TrailingChip::badge(label, text_fg, color));
+        trailing.push(TrailingChip::badge(label, chip_fg(color), color));
     }
     for item in &workbar_cfg.right {
         if let Some(chip) = trailing_chip(ctx, item) {
@@ -351,23 +371,11 @@ fn location_badge_color(state: &crate::state::State) -> BadgeColor {
     }
 }
 
-/// Map a [`BadgeColor`] role to concrete `(bg, fg)` colors from the active theme. Saturated roles
-/// pair with the backdrop foreground for contrast; the muted `neutral`/`panel` roles use the
-/// primary text color so a low-contrast surface still reads as text.
+/// Map a [`BadgeColor`] role to concrete `(bg, fg)` colors from the active theme. Label ink is the
+/// same readable-on-fill colour workspace and picker tabs use.
 fn resolve_badge_color(theme: &Theme, color: BadgeColor) -> (Color, Color) {
-    let on_accent = theme.surface.backdrop;
-    let text = theme
-        .primary
-        .fg
-        .map(Paint::color)
-        .unwrap_or(theme.surface.backdrop);
-    (
-        crate::ops::theme::badge_role_color(theme, color),
-        match color {
-            BadgeColor::Neutral | BadgeColor::Panel => text,
-            _ => on_accent,
-        },
-    )
+    let bg = crate::ops::theme::badge_role_color(theme, color);
+    (bg, crate::ops::theme::chrome_label_fg(theme, bg))
 }
 
 /// Wrap the full-width workbar in end caps so the whole panel bar reads as a pill/point over the
@@ -759,6 +767,7 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
         .glyphs()
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
+    let fill = workbar_fill(ctx);
 
     Tabs::new()
         .tabs(tabs)
@@ -773,13 +782,18 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .height(Length::Px(1))
         .divider(' ')
         .caps(tab_caps)
-        .style(Style::new().fg(theme.surface.menu).bg(workbar_fill(ctx)))
-        .active_style(
+        .style(
             Style::new()
-                .fg(theme.surface.backdrop)
-                .bg(theme.border_active)
-                .bold(),
+                .fg(crate::ops::theme::chrome_label_fg(theme, fill))
+                .bg(fill),
         )
+        .active_style({
+            let active_bg = theme.border_active;
+            Style::new()
+                .fg(crate::ops::theme::chrome_label_fg(theme, active_bg))
+                .bg(active_bg)
+                .bold()
+        })
         // A relative transform, not an absolute color: an alerting tab carries its own background,
         // and `bg(panel.elevate_by(..))` would resolve to a fixed panel-derived color that overwrites
         // it, so hovering a marked tab would drop the alert. `Elevate` stacks on whatever the tab
@@ -1141,9 +1155,21 @@ mod tests {
     #[test]
     fn resolve_badge_color_maps_roles_to_theme() {
         let theme = Theme::default();
+        for color in [
+            BadgeColor::Accent,
+            BadgeColor::Info,
+            BadgeColor::Success,
+            BadgeColor::Warning,
+            BadgeColor::Error,
+            BadgeColor::Neutral,
+            BadgeColor::Panel,
+        ] {
+            let (bg, fg) = resolve_badge_color(&theme, color);
+            assert_eq!(fg, crate::ops::theme::chrome_label_fg(&theme, bg));
+        }
         assert_eq!(
-            resolve_badge_color(&theme, BadgeColor::Accent),
-            (theme.border_active, theme.surface.backdrop)
+            resolve_badge_color(&theme, BadgeColor::Accent).0,
+            theme.border_active
         );
         assert_eq!(
             resolve_badge_color(&theme, BadgeColor::Info).0,

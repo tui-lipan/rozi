@@ -376,9 +376,10 @@ the selected row or submits a prompt.
   search field is not focused. The arrow and paging keys scroll the list. `/` searches the current
   help tab. `Enter` or `Esc` leaves the search field, and a second `Esc` closes help.
 - Settings: `Tab`, `Shift+Tab`, and `Left`/`Right` switch categories and restore each category's
-  last highlighted row. `Enter` cycles the highlighted row. `Shift+Enter` opens a compact picker
-  for multi-value settings; the highlight previews, `Enter` saves, and `Esc` restores. Theme and
-  Terminal padding keep their own editors. Settings has no footer hint pills.
+  last highlighted row. `Enter` toggles a two-option row. A multi-value row shows `…` after its
+  label; `Enter` opens a compact picker for those settings; the highlight previews,
+  `Enter` saves, and `Esc` restores. `Shift+Enter` cycles the live value. Theme and Terminal
+  padding keep their own editors. Settings has no footer hint pills.
 - Extensions: `Enter` enables or disables the selected extension, `Ctrl+D` opens details,
   `Ctrl+I` opens the install prompt, `Ctrl+U` updates a Git-managed installation, `Ctrl+R` reloads,
   `Ctrl+O` opens the manifest, `Ctrl+Y` copies the report, and `Ctrl+K` twice removes the

@@ -53,7 +53,7 @@ fn setting_label_matches(line: &str, label: &str) -> bool {
         return false;
     };
     let after = &line[pos + label.len()..];
-    after.is_empty() || after.starts_with("  ")
+    after.is_empty() || after.starts_with("  ") || after.starts_with('…')
 }
 
 fn setting_row<'a>(frame: &'a str, label: &str) -> &'a str {
@@ -123,6 +123,44 @@ fn settings_lists_both_effect_rows_with_their_current_modes() {
         assert!(
             setting_row(&frame, "Workspace tab effect").contains("Pulse"),
             "workspace alert row is misbound:\n{frame}"
+        );
+    });
+}
+
+#[test]
+fn settings_marks_multi_value_rows_with_an_ellipsis() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 160);
+        let frame = rendered_rows(&mut backend);
+        assert!(
+            setting_row(&frame, "Which-key").contains("Which-key…"),
+            "multi-value rows should mark the compact picker on the label:\n{frame}"
+        );
+        assert!(
+            setting_row(&frame, "Which-key").contains("Short")
+                && !setting_row(&frame, "Which-key").contains("Short…"),
+            "the current value stays unmarked:\n{frame}"
+        );
+        assert!(
+            setting_row(&frame, "Open/close animation").contains("Open/close animation…"),
+            "{frame}"
+        );
+        let animations = setting_row(&frame, "Animations");
+        assert!(
+            animations.contains("Enabled") && !animations.contains('…'),
+            "two-option rows stay unmarked:\n{animations}"
+        );
+        let highlight = setting_row(&frame, "Workspace tab highlight");
+        assert!(
+            !highlight.contains('…'),
+            "a two-option cycle stays unmarked:\n{highlight}"
+        );
+        backend.state_mut().config.pane.border_mode = PaneBorderMode::None;
+        let disabled = rendered_rows(&mut backend);
+        let effect = setting_row(&disabled, "Pane border effect");
+        assert!(
+            effect.contains("Needs pane borders") && !effect.contains('…'),
+            "disabled reasons stay unmarked:\n{effect}"
         );
     });
 }
@@ -739,7 +777,7 @@ fn settings_tabs_remember_their_highlighted_row() {
 }
 
 #[test]
-fn settings_arrows_switch_tabs_and_shift_enter_opens_a_choice_picker() {
+fn settings_arrows_switch_tabs_and_enter_opens_a_choice_picker() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 35);
         backend.state_mut().settings_navigation.tab = SettingsTab::General;
@@ -762,11 +800,15 @@ fn settings_arrows_switch_tabs_and_shift_enter_opens_a_choice_picker() {
         let original = backend.state().config.animations.pane_style;
         backend.state_mut().config.animations.enabled = true;
         key(&mut backend, KeyCode::Enter);
+        assert!(backend.state().settings_choice.is_some());
+        assert_eq!(backend.state().config.animations.pane_style, original);
+        key(&mut backend, KeyCode::Esc);
+        assert!(backend.state().settings_choice.is_none());
+        key_mods(&mut backend, KeyCode::Enter, KeyMods::SHIFT);
         assert!(backend.state().settings_choice.is_none());
         assert_ne!(backend.state().config.animations.pane_style, original);
-        key_mods(&mut backend, KeyCode::Enter, KeyMods::SHIFT);
-        assert!(backend.state().settings_choice.is_some());
         let cycled = backend.state().config.animations.pane_style;
+        key(&mut backend, KeyCode::Enter);
         backend
             .dispatch(rozi::Msg::SettingsChoiceSelect(0))
             .unwrap();
@@ -788,7 +830,7 @@ fn settings_choice_lists_every_option() {
     on_large_stack(|| {
         let mut backend = settings_backend(80, 30);
         backend
-            .dispatch(rozi::Msg::SettingsOpenChoice(SettingsAction::CycleWhichKey))
+            .dispatch(rozi::Msg::SettingsActivate(SettingsAction::CycleWhichKey))
             .unwrap();
         let frame = rendered_rows(&mut backend);
         for label in ["Off", "Instant", "Short", "Long"] {

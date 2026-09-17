@@ -612,6 +612,13 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
             }
             SearchEntry::Item(item) => {
                 let disabled_reason = item.value.0.disabled_reason(&config);
+                let marked =
+                    disabled_reason.is_none() && item.value.0.shows_choice_ellipsis(&config);
+                let label = if marked {
+                    format!("{}…", item.label)
+                } else {
+                    item.label.to_string()
+                };
                 let status = disabled_reason.unwrap_or(&item.value.1);
                 let style = if disabled_reason.is_some() {
                     disabled_style
@@ -619,7 +626,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     item_style
                 };
                 items.push(picker_row(
-                    [Span::new(item.label.as_ref()).style(style)],
+                    [Span::new(label).style(style)],
                     status,
                     if disabled_reason.is_some() {
                         disabled_style
@@ -791,8 +798,8 @@ fn settings_actions(
         .hide_hint(),
         OverlayAction::new(
             "shift-enter",
-            "choose",
-            Msg::SettingsOpenChoice(selected.unwrap_or(SettingsAction::Theme)),
+            "cycle",
+            Msg::SettingsCycleChoice(selected.unwrap_or(SettingsAction::Theme)),
             selected.is_some_and(|action| {
                 action.disabled_reason(&ctx.state.config).is_none()
                     && action.choice_ring(&ctx.state.config).is_some()
@@ -801,7 +808,7 @@ fn settings_actions(
         .hide_hint(),
         OverlayAction::new(
             "enter",
-            "change",
+            "choose",
             Msg::SettingsActivate(selected.unwrap_or(SettingsAction::Theme)),
             can_change,
         )

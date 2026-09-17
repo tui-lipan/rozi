@@ -57,7 +57,7 @@ pub enum Msg {
     SettingsTabSelected(crate::state::SettingsTab),
     SettingsSelect(crate::state::SettingsAction),
     SettingsActivate(crate::state::SettingsAction),
-    SettingsOpenChoice(crate::state::SettingsAction),
+    SettingsCycleChoice(crate::state::SettingsAction),
     SettingsChoiceSelect(usize),
     SettingsChoicePick(usize),
     SettingsChoiceSave,

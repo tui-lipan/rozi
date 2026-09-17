@@ -87,9 +87,10 @@
   longer flashes the strip. Instant is still immediate.
 - Settings is a tabbed picker with the same chrome as Keybindings: search, then a scrollable
   category strip, then the list. `Tab`, `Shift+Tab`, and the horizontal arrows switch categories
-  and restore each category's last highlighted row. `Enter` cycles the highlighted row.
-  `Shift+Enter` opens a compact picker for multi-value
-  settings; the highlight previews, `Enter` saves, and `Esc` restores. Unavailable rows use the
+  and restore each category's last highlighted row. `Enter` toggles a two-option row and opens a
+  compact picker on a multi-value row; the highlight previews, `Enter` saves, and `Esc` restores.
+  `Shift+Enter` cycles the live value. A multi-value row shows `…` after its label so that
+  picker is visible on the row. Unavailable rows use the
   same border color as the search divider for both label and status. A category omits the inner
   heading that repeats the tab name; All and search keep every group heading. In-group labels drop
   a repeated Titlebar, Workbar, or Sidebar prefix; the sidebar tab-bar fill is **Tab strip**.

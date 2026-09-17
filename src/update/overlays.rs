@@ -216,11 +216,11 @@ pub(super) fn settings_activate(
     settings_apply(ctx, action)
 }
 
-pub(super) fn settings_open_choice(
+pub(super) fn settings_cycle_choice(
     ctx: &mut Context<AppRoot>,
     action: crate::state::SettingsAction,
 ) -> Update {
-    open_settings_choice(ctx, action)
+    cycle_settings_choice(ctx, action)
 }
 
 pub(super) fn settings_choice_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
@@ -331,7 +331,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleWorkbarAlert
         | CycleStartupMode
         | CycleResurrectForeground => {
-            return cycle_settings_choice(ctx, action);
+            return open_settings_choice(ctx, action);
         }
         ToggleWorkbar => {
             execute_action(ctx, Action::ToggleWorkbar);
@@ -965,13 +965,25 @@ mod tests {
     }
 
     #[test]
-    fn settings_enter_cycles_alert_modes_and_the_picker_writes_on_pick() {
+    fn settings_enter_opens_alert_picker_and_shift_enter_cycles() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend.state_mut().config.pane.show_workbar = true;
             backend
                 .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleAlertBorder,
+                ))
+                .unwrap();
+            assert!(backend.state().settings_choice.is_some());
+            assert_eq!(
+                backend.state().config.pane.alert_border,
+                crate::state::AlertMode::Pulse
+            );
+            backend.dispatch(Msg::SettingsChoiceCancel).unwrap();
+
+            backend
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleAlertBorder,
                 ))
                 .unwrap();
@@ -982,15 +994,10 @@ mod tests {
             );
 
             backend
-                .dispatch(Msg::SettingsOpenChoice(
+                .dispatch(Msg::SettingsActivate(
                     crate::state::SettingsAction::CycleAlertBorder,
                 ))
                 .unwrap();
-            assert!(backend.state().settings_choice.is_some());
-            assert_eq!(
-                backend.state().config.pane.alert_border,
-                crate::state::AlertMode::Off
-            );
             backend.dispatch(Msg::SettingsChoiceSelect(1)).unwrap();
             assert_eq!(
                 backend.state().config.pane.alert_border,
@@ -1004,7 +1011,7 @@ mod tests {
                 crate::state::AlertMode::Off
             );
             backend
-                .dispatch(Msg::SettingsOpenChoice(
+                .dispatch(Msg::SettingsActivate(
                     crate::state::SettingsAction::CycleAlertBorder,
                 ))
                 .unwrap();
@@ -1019,7 +1026,7 @@ mod tests {
             );
 
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleWorkbarAlert,
                 ))
                 .unwrap();
@@ -1028,7 +1035,7 @@ mod tests {
                 crate::state::AlertMode::Off
             );
             backend
-                .dispatch(Msg::SettingsOpenChoice(
+                .dispatch(Msg::SettingsActivate(
                     crate::state::SettingsAction::CycleWorkbarAlert,
                 ))
                 .unwrap();
@@ -1312,16 +1319,16 @@ mod tests {
         });
     }
 
-    /// The startup row is a value ring: Enter cycles immediately. What reaches `[session]` is
+    /// The startup row is a value ring: Shift+Enter cycles immediately. What reaches `[session]` is
     /// pinned deterministically in `config::persist` instead - these tests share one scratch config
     /// file and run in parallel, so reading it back here would race a sibling's write.
     #[test]
-    fn settings_enter_cycles_startup_mode() {
+    fn settings_shift_enter_cycles_startup_mode() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleStartupMode,
                 ))
                 .unwrap();
@@ -1330,7 +1337,7 @@ mod tests {
                 crate::config::SessionStartup::Ephemeral
             );
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleStartupMode,
                 ))
                 .unwrap();
@@ -1345,7 +1352,7 @@ mod tests {
             assert!(backend.state().show_settings, "the dialog stays open");
 
             backend
-                .dispatch(Msg::SettingsOpenChoice(
+                .dispatch(Msg::SettingsActivate(
                     crate::state::SettingsAction::CycleStartupMode,
                 ))
                 .unwrap();
@@ -1358,12 +1365,12 @@ mod tests {
     }
 
     #[test]
-    fn settings_enter_cycles_foreground_restore() {
+    fn settings_shift_enter_cycles_foreground_restore() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleResurrectForeground,
                 ))
                 .unwrap();
@@ -1372,7 +1379,7 @@ mod tests {
                 crate::config::ForegroundRestore::Never
             );
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleResurrectForeground,
                 ))
                 .unwrap();
@@ -1387,7 +1394,7 @@ mod tests {
             assert!(backend.state().show_settings, "the dialog stays open");
 
             backend
-                .dispatch(Msg::SettingsOpenChoice(
+                .dispatch(Msg::SettingsActivate(
                     crate::state::SettingsAction::CycleResurrectForeground,
                 ))
                 .unwrap();
@@ -1407,7 +1414,7 @@ mod tests {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleStartupMode,
                 ))
                 .unwrap();
@@ -1417,12 +1424,12 @@ mod tests {
                 crate::config::SessionStartup::Ephemeral
             );
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleStartupMode,
                 ))
                 .unwrap();
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleStartupMode,
                 ))
                 .unwrap();
@@ -1434,17 +1441,17 @@ mod tests {
 
             backend.state_mut().config.profile.default = Some("dev".to_string());
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleStartupMode,
                 ))
                 .unwrap();
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleStartupMode,
                 ))
                 .unwrap();
             backend
-                .dispatch(Msg::SettingsActivate(
+                .dispatch(Msg::SettingsCycleChoice(
                     crate::state::SettingsAction::CycleStartupMode,
                 ))
                 .unwrap();

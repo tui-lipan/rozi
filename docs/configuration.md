@@ -90,10 +90,11 @@ query closes Settings. Selecting a category clears the query and restores that c
 highlighted row.
 
 Use Tab, Shift+Tab, Left, and Right to switch categories, and Up/Down to select a setting.
-Enter cycles the highlighted row: toggles two-option settings and steps multi-value ones.
-Shift+Enter opens a compact picker for a multi-value row. Moving the highlight previews the
-value; Enter saves it, Esc restores the previous one. Theme and Terminal padding keep
-their own editors. Row Enter saves immediately. Settings has no footer hint pills.
+Enter toggles a two-option row. A multi-value row shows `…` after its label; Enter
+opens a compact picker of every option. Moving the highlight previews the value; Enter
+saves it, Esc restores the previous one. Shift+Enter cycles the live value without opening
+the picker. Theme and Terminal padding keep their own editors. Settings has no footer hint
+pills.
 
 Unavailable controls remain visible and searchable with their saved values dimmed. Enabling
 the parent feature makes its dependent controls editable.

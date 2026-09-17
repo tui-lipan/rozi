@@ -229,7 +229,7 @@ impl SettingsAction {
         ]
     }
 
-    /// Multi-value rows. Enter cycles the live value; Shift+Enter opens a compact picker.
+    /// Multi-value rows. Enter opens a compact picker; Shift+Enter cycles the live value.
     pub fn choice_ring(self, config: &Config) -> Option<SettingsChoiceRing> {
         let pane = &config.pane;
         match self {
@@ -358,6 +358,14 @@ impl SettingsAction {
             )),
             _ => None,
         }
+    }
+
+    /// Whether the Settings label should wear `…`. That mark is for rows whose compact picker
+    /// lists more than two options, so Enter is visible on the row; two-option toggles stay
+    /// unmarked.
+    pub fn shows_choice_ellipsis(self, config: &Config) -> bool {
+        self.choice_ring(config)
+            .is_some_and(|ring| ring.options.len() > 2)
     }
 
     /// Write `index` into live config without persisting.
@@ -641,6 +649,18 @@ mod tests {
         assert!(asymmetric.vertical.text().is_empty());
         assert!(asymmetric.horizontal.text().is_empty());
         assert!(asymmetric.normalizes_asymmetric);
+    }
+
+    #[test]
+    fn multi_value_rows_advertise_a_choice_picker() {
+        let config = Config::default();
+        assert!(SettingsAction::CycleWhichKey.shows_choice_ellipsis(&config));
+        assert!(SettingsAction::CyclePaneAnimation.shows_choice_ellipsis(&config));
+        assert!(SettingsAction::CycleStartupMode.shows_choice_ellipsis(&config));
+        assert!(!SettingsAction::ToggleAnimations.shows_choice_ellipsis(&config));
+        assert!(!SettingsAction::ToggleWorkbarPosition.shows_choice_ellipsis(&config));
+        assert!(!SettingsAction::CycleWorkbarAlertPaint.shows_choice_ellipsis(&config));
+        assert!(!SettingsAction::Theme.shows_choice_ellipsis(&config));
     }
 
     #[test]

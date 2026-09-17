@@ -126,7 +126,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::CloseSettings => overlays::close_settings(ctx),
         Msg::SettingsSelect(action) => overlays::settings_select(ctx, action),
         Msg::SettingsActivate(action) => overlays::settings_activate(ctx, action),
-        Msg::SettingsOpenChoice(action) => overlays::settings_open_choice(ctx, action),
+        Msg::SettingsCycleChoice(action) => overlays::settings_cycle_choice(ctx, action),
         Msg::SettingsChoiceSelect(index) => overlays::settings_choice_select(ctx, index),
         Msg::SettingsChoicePick(index) => overlays::settings_choice_pick(ctx, index),
         Msg::SettingsChoiceSave => overlays::settings_choice_save(ctx),

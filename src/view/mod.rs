@@ -526,14 +526,6 @@ pub(crate) fn picker_selection_cap_glyphs(
         .unwrap_or(("", ""))
 }
 
-pub(crate) fn picker_list_item_horizontal_padding(config: &crate::config::Config) -> (u16, u16) {
-    if picker_selection_cap_glyphs(config) == ("", "") {
-        (0, 1)
-    } else {
-        (0, 0)
-    }
-}
-
 pub(crate) fn picker_selection_cap_style(theme: &Theme, fill: Color) -> Style {
     Style::new().fg(fill).bg(theme.surface.element)
 }
@@ -585,7 +577,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .list_selection_style(selection_style)
         .list_unfocused_selection_style(selection_style)
         .list_item_hover_style(Style::new().bg(theme.surface.element.elevate_by(0.08)))
-        .list_item_horizontal_padding(picker_list_item_horizontal_padding(&ctx.state.config))
+        .list_item_horizontal_padding((0, 1))
         .list_header_horizontal_padding((0, 1))
         .item_style(fg_only(&theme.primary))
         .active_item_style(search_palette_active_item_style())

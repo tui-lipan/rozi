@@ -666,9 +666,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
         .selection_style(picker_selection_style(theme, None))
         .unfocused_selection_style(picker_selection_style(theme, None))
         .item_hover_style(Style::new().bg(theme.surface.element.elevate_by(0.08)))
-        .item_horizontal_padding(crate::view::picker_list_item_horizontal_padding(
-            &ctx.state.config,
-        ))
+        .item_horizontal_padding((0, 1))
         .header_horizontal_padding((0, 1))
         .scroll_wheel(true)
         .scrollbar(true)

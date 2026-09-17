@@ -554,6 +554,10 @@ fn picker_tab_strip_and_selection_caps_follow_pane_config() {
             !rendered.contains(" \u{e0b4}"),
             "capped selection kept trailing item padding:\n{rendered}"
         );
+        assert!(
+            rendered.contains("│ Animations"),
+            "unselected rows should keep their inset:\n{rendered}"
+        );
     });
 }
 

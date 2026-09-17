@@ -66,7 +66,7 @@ exclude = [
 # a test that used to observe work settle on its own must `advance(...)` for it.
 # 0.10.3 reads host color and capability probe replies on macOS `/dev/tty`, where `poll(2)` does
 # not work, so they no longer leak into the shell after exit.
-tui-lipan = { version = "0.11.0", features = [
+tui-lipan = { version = "0.11.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

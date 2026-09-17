@@ -343,6 +343,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             .initial_query(initial_query.into_owned())
             .initial_selected_item_index(selected)
             .sync_selection(true);
+        let has_gutter = item_gutter.is_some();
         palette = apply_palette_options(
             palette,
             empty_text,
@@ -352,6 +353,13 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             on_activate,
             item_gutter,
         );
+        if has_gutter {
+            palette = palette.list_item_horizontal_padding((0, 1, 0, 0));
+            let (left, _) = crate::view::picker_selection_cap_glyphs(&ctx.state.config);
+            if !left.is_empty() {
+                palette = palette.list_unselected_symbol(" ");
+            }
+        }
         palette = apply_item_rendering(palette, &ctx.state.theme, armed_row, confirm, render_item);
 
         let action_interceptor = overlay_interceptor(ctx, &actions);

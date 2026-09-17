@@ -1580,6 +1580,7 @@ mod tests {
                 let session_name = "eph-test".to_string();
                 backend.state_mut().current_mut().session_name = Some(session_name.clone());
                 backend.state_mut().current_mut().session_attached = true;
+                backend.state_mut().config.pane.picker_selection_style = CapStyle::Arrow;
                 backend.state_mut().show_session_picker = true;
                 backend.state_mut().session_picker =
                     Some(crate::state::SessionPickerState::new(vec![
@@ -1635,6 +1636,14 @@ mod tests {
                     });
                 let current_col = row.find('●').expect("current gutter marker");
                 let pane_col = row.find("1 pane").expect("right pane count");
+                assert!(
+                    row.contains("\u{e0b2}● ephemeral"),
+                    "selection cap should sit flush against the status marker\n{row}"
+                );
+                assert!(
+                    !row.contains("\u{e0b2} ●"),
+                    "selection cap should not leave a gap before the marker\n{row}"
+                );
                 assert!(
                     pane_col > current_col + 12,
                     "pane count should be right-aligned, not inline\n{row}"

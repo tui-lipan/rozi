@@ -42,6 +42,8 @@
 
 ### Fixed
 
+- Session, host, and agent picker rows keep the status marker flush against a selection cap, with
+  the space after the glyph (`● name` rather than ` ●name`).
 - Searching Settings no longer leaves a blank row under the category strip when the first match
   sits in a later group. The list still keeps one spacer between groups.
 - Unbinding a key in Keybindings no longer jumps the highlight back to Prefix. The next remaining

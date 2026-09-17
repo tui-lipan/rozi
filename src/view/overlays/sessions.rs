@@ -667,7 +667,6 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         ctx.link()
             .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
     )
-    // Leading space indents the marker; list item left padding is the gap before the label.
     .item_gutter(Arc::new(move |item: &SearchItem<usize>, _hl| {
         let status = *statuses.get(item.value)?;
         session_status_gutter(status, status_styles, reserve_discovered_gutter)

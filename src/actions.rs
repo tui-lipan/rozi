@@ -220,6 +220,9 @@ fn execute_action_inner(
     if closes_settings(action) {
         ctx.state.show_settings = false;
         ctx.state.settings_selected = None;
+        if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
+            ctx.set_command_chord_reveal_delay(delay);
+        }
         ctx.state.pane_padding_editor = None;
     }
     // Any action can flip a dynamic label (a toggle, layout cycling) or the `commands_active`
@@ -531,7 +534,14 @@ fn closes_settings(action: Action) -> bool {
 fn open_settings(ctx: &mut Context<AppRoot>, selected: crate::state::SettingsAction) -> Update {
     clear_non_settings_overlays(ctx);
     ctx.state.show_settings = true;
-    ctx.state.settings_selected = Some(selected);
+    ctx.state.settings_navigation = crate::state::SettingsNavigation::with_tab(
+        if selected == crate::state::SettingsAction::ToggleBellUrgency {
+            crate::state::SettingsTab::Alerts
+        } else {
+            crate::state::SettingsTab::General
+        },
+    );
+    crate::state::assign_settings_selection(&mut ctx.state, Some(selected));
     ctx.state.commands_dirty = true;
     ctx.request_focus(crate::view::settings_palette_key());
     Update::full()
@@ -547,6 +557,9 @@ fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
     ctx.state.keybindings = None;
     ctx.state.show_settings = false;
     ctx.state.settings_selected = None;
+    if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
+        ctx.set_command_chord_reveal_delay(delay);
+    }
     ctx.state.pane_padding_editor = None;
     ctx.state.search = None;
     ctx.state.rename = None;

@@ -497,53 +497,18 @@ fn stepped_help_row(
     Some(rows[position.saturating_add_signed(delta).min(last)])
 }
 
-fn help_search_divider(theme: &Theme) -> Element {
-    Divider::horizontal()
-        .join_frame(false)
-        .style(fg_only(&theme.border))
-        .into()
-}
-
 fn help_group_row_count(groups: &[(String, Vec<HelpRow>)]) -> usize {
     groups.iter().map(|(_, rows)| rows.len()).sum()
 }
 
 fn help_tabs(ctx: &Context<AppRoot>, tab: crate::state::HelpTab) -> Element {
-    let theme = &ctx.state.theme;
-    let caps = ctx
-        .state
-        .config
-        .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
-        .glyphs()
-        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
-    Tabs::new()
-        .tabs(vec![
-            Tab::new("Global"),
-            Tab::new("Modes"),
-            Tab::new("Unbound"),
-            Tab::new("All"),
-        ])
-        .active(tab.index())
-        // Switched from the search field (`keybindings_key_handler`) or by click; never a focus
-        // target of its own.
-        .focusable(false)
-        .width(Length::Flex(1))
-        .height(Length::Px(1))
-        .divider(' ')
-        .caps(caps)
-        .style(Style::new().fg(theme.surface.menu).bg(theme.surface.panel))
-        .active_style(
-            Style::new()
-                .fg(theme.surface.backdrop)
-                .bg(theme.border_active)
-                .bold(),
-        )
-        .tab_hover_style(Style::new().transform_bg(crate::view::hover_lift()))
-        .on_change(
-            ctx.link()
-                .callback(|event: TabsEvent| Msg::HelpTabSelected(event.index)),
-        )
-        .into()
+    super::palette::picker_tabs(
+        ctx,
+        &["Global", "Modes", "Unbound", "All"],
+        tab.index(),
+        ctx.link()
+            .callback(|event: TabsEvent| Msg::HelpTabSelected(event.index)),
+    )
 }
 
 /// The Keybindings overlay: one searchable, tabbed list that is both the reference and the editor.
@@ -664,7 +629,7 @@ pub(crate) fn help_overlay(
     let body = VStack::new()
         .height(Length::Auto)
         .child(search)
-        .child(help_search_divider(theme))
+        .child(super::palette::picker_divider(theme))
         .child(help_tabs(ctx, keybindings.tab))
         .child(Spacer::new().height(Length::Px(1)))
         .child(list)
@@ -682,17 +647,12 @@ pub(crate) fn help_overlay(
         .frame_style(Style::new().bg(theme.surface.element))
         .dismiss_on_escape(false)
         .on_close(ctx.link().callback(|_| Msg::CloseHelp))
-        .child(
-            Frame::new()
-                .header_left("Keybindings")
-                .header_style(theme.accent.bold())
-                .border(true)
-                .border_style(overlay_border_style(ctx))
-                .style(Style::new().bg(theme.surface.element))
-                .padding(0)
-                .height(Length::Auto)
-                .child(body),
-        )
+        .child(super::palette::tabbed_picker_panel(
+            ctx,
+            "Keybindings",
+            Length::Auto,
+            body.into(),
+        ))
         .into()
 }
 

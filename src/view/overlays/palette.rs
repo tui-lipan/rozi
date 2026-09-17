@@ -468,3 +468,74 @@ pub(super) fn wrap_palette(
         .child(panel)
         .key(key)
 }
+
+/// Shared category navigation. Query inputs retain keyboard focus while tabs accept clicks.
+pub(super) fn picker_tabs(
+    ctx: &Context<AppRoot>,
+    labels: &[&str],
+    active: usize,
+    on_change: Callback<TabsEvent>,
+) -> Element {
+    let theme = &ctx.state.theme;
+    let strip = theme.surface.panel;
+    let caps = ctx
+        .state
+        .config
+        .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
+        .glyphs()
+        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
+    DraggableTabBar::new()
+        .tabs(labels.iter().map(|label| DraggableTab::new(*label)))
+        .active(active)
+        .draggable(false)
+        .focusable(false)
+        .tab_stop(false)
+        .show_close_buttons(false)
+        .height(Length::Px(1))
+        .divider(' ')
+        .caps(caps)
+        .overflow_left_label(|_| Arc::from("❮ "))
+        .overflow_right_label(|_| Arc::from(" ❯"))
+        .overflow_style(Style::new().fg(theme.border_active))
+        .overflow_hover_style(
+            Style::new()
+                .fg(theme.border_active)
+                .bg(strip.elevate_by(0.08)),
+        )
+        .style(Style::new().fg(theme.surface.menu).bg(strip))
+        .active_style(
+            Style::new()
+                .fg(theme.surface.backdrop)
+                .bg(theme.border_active)
+                .bold(),
+        )
+        .tab_hover_style(Style::new().transform_bg(crate::view::hover_lift()))
+        .on_change(on_change)
+        .into()
+}
+
+pub(super) fn picker_divider(theme: &Theme) -> Element {
+    Divider::horizontal()
+        .join_frame(false)
+        .style(fg_only(&theme.border))
+        .into()
+}
+
+/// Frame shared by the tabbed Keybindings and Settings pickers.
+pub(super) fn tabbed_picker_panel(
+    ctx: &Context<AppRoot>,
+    title: &str,
+    height: Length,
+    body: Element,
+) -> Element {
+    Frame::new()
+        .header_left(title)
+        .header_style(ctx.state.theme.accent.bold())
+        .border(true)
+        .border_style(overlay_border_style(ctx))
+        .style(Style::new().bg(ctx.state.theme.surface.element))
+        .padding(0)
+        .height(height)
+        .child(body)
+        .into()
+}

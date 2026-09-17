@@ -134,6 +134,9 @@ pub(crate) fn open_theme_picker(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_palette = false;
     ctx.state.show_settings = false;
     ctx.state.pane_padding_editor = None;
+    if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
+        ctx.set_command_chord_reveal_delay(delay);
+    }
     ctx.state.search = None;
     ctx.state.mode = Mode::Normal;
     request_theme_picker_focus(ctx);

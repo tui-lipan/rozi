@@ -23,8 +23,8 @@ pub use widget_keys::{
     pane_body_key, pane_id_from_window_key, pane_padding_horizontal_key, pane_padding_vertical_key,
     pane_terminal_key, pick_key, pick_prompt_input_key, profile_picker_key, remote_picker_key,
     rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
-    session_picker_key, settings_palette_key, sidebar_body_key, sidebar_region_key,
-    theme_picker_key,
+    session_picker_key, settings_choice_key, settings_palette_key, sidebar_body_key,
+    sidebar_region_key, theme_picker_key,
 };
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
 pub(crate) use workspace::{WorkspaceLayer, render_workspace_panes};
@@ -35,7 +35,7 @@ use crate::layout::geometry::{empty_workspace_rect, viewport_bounds};
 use crate::state::WORKBAR_HEIGHT;
 use crate::{AppRoot, Msg};
 
-pub(crate) use overlays::{DIALOG_AFFIRM, neighbor_keybinding_id};
+pub(crate) use overlays::{DIALOG_AFFIRM, neighbor_keybinding_id, settings_query_selection};
 
 use overlays::{
     agent_picker_overlay, askpass_overlay, collaboration_overlay, extension_detail_overlay,
@@ -43,7 +43,8 @@ use overlays::{
     keybinding_editor_dialog_overlay, layout_picker_overlay, palette_overlay, pane_padding_overlay,
     pick_overlay, pick_prompt_overlay, profile_picker_overlay, reconnecting_overlay,
     remote_picker_overlay, rename_overlay, rename_session_overlay, save_profile_overlay,
-    search_overlay, session_picker_overlay, settings_overlay, theme_picker_overlay,
+    search_overlay, session_picker_overlay, settings_choice_overlay, settings_overlay,
+    theme_picker_overlay,
 };
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
 
@@ -267,6 +268,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.show_settings && ctx.state.pane_padding_editor.is_some() {
         root = root.child(pane_padding_overlay(ctx));
+    }
+    if ctx.state.show_settings && ctx.state.settings_choice.is_some() {
+        root = root.child(settings_choice_overlay(ctx));
     }
     // The report replaces the picker rather than stacking on it, like every other nested dialog
     // (see `ops::overlay_return`). The picker is rebuilt from `restore_query` on the way back.

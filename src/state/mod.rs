@@ -148,9 +148,11 @@ pub struct State {
     /// The Keybindings overlay, present while it is open.
     pub keybindings: Option<KeybindingsState>,
     pub show_settings: bool,
-    /// Highlighted settings row. Drives Left/Right stepping and
+    /// Highlighted settings row. Drives the choice card and
     /// `initial_selected_item_index` while the overlay is open.
     pub settings_selected: Option<SettingsAction>,
+    pub settings_navigation: SettingsNavigation,
+    pub settings_choice: Option<SettingsChoiceEditor>,
     pub do_not_disturb: bool,
     pub(crate) sound_cues: HashMap<crate::platform::sound::Cue, std::time::Instant>,
     pub pane_padding_editor: Option<PanePaddingEditorState>,
@@ -420,6 +422,8 @@ impl State {
             keybindings: None,
             show_settings: false,
             settings_selected: None,
+            settings_navigation: SettingsNavigation::default(),
+            settings_choice: None,
             do_not_disturb: false,
             sound_cues: HashMap::new(),
             pane_padding_editor: None,

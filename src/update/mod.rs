@@ -120,10 +120,17 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::KeybindingEditModifier => keybindings::keybinding_edit_modifier(ctx),
         Msg::KeybindingStepModifier(steps) => keybindings::keybinding_step_modifier(ctx, steps),
         Msg::KeybindingSaveModifier => keybindings::keybinding_save_modifier(ctx),
+        Msg::SettingsEscape => overlays::settings_escape(ctx),
+        Msg::SettingsQueryChanged(event) => overlays::settings_query_changed(ctx, event),
+        Msg::SettingsTabSelected(tab) => overlays::settings_tab_selected(ctx, tab),
         Msg::CloseSettings => overlays::close_settings(ctx),
         Msg::SettingsSelect(action) => overlays::settings_select(ctx, action),
         Msg::SettingsActivate(action) => overlays::settings_activate(ctx, action),
-        Msg::SettingsStep { reverse } => overlays::settings_step(ctx, reverse),
+        Msg::SettingsOpenChoice(action) => overlays::settings_open_choice(ctx, action),
+        Msg::SettingsChoiceSelect(index) => overlays::settings_choice_select(ctx, index),
+        Msg::SettingsChoicePick(index) => overlays::settings_choice_pick(ctx, index),
+        Msg::SettingsChoiceSave => overlays::settings_choice_save(ctx),
+        Msg::SettingsChoiceCancel => overlays::settings_choice_cancel(ctx),
         Msg::CloseExtensions => crate::ops::extensions_manager::close(ctx),
         Msg::ExtensionsQueryChanged(query) => {
             crate::ops::extensions_manager::query_changed(ctx, query)

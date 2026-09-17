@@ -414,6 +414,10 @@ impl PaneBorderStyle {
 
 const BADGE_CAP_STYLES: &[CapStyle] = &[CapStyle::Padded, CapStyle::Round, CapStyle::Arrow];
 
+pub(crate) fn badge_cap_styles() -> &'static [CapStyle] {
+    BADGE_CAP_STYLES
+}
+
 /// Parse rozi's historical cap-style aliases into tui-lipan's shared cap primitive.
 pub(crate) fn parse_cap_style(value: &str) -> Option<CapStyle> {
     match value
@@ -467,17 +471,9 @@ pub(crate) fn next_cap_style(style: CapStyle) -> CapStyle {
     step_ring(CapStyle::all(), style, false)
 }
 
-pub(crate) fn prev_cap_style(style: CapStyle) -> CapStyle {
-    step_ring(CapStyle::all(), style, true)
-}
-
 /// Cycle workbar badges and tabs without exposing the unsupported half-block option.
 pub(crate) fn next_badge_cap_style(style: CapStyle) -> CapStyle {
     step_ring(BADGE_CAP_STYLES, style, false)
-}
-
-pub(crate) fn prev_badge_cap_style(style: CapStyle) -> CapStyle {
-    step_ring(BADGE_CAP_STYLES, style, true)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

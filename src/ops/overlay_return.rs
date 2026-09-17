@@ -64,7 +64,10 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
         OverlayOrigin::Settings => {
             ctx.state.show_settings = true;
             if ctx.state.settings_selected.is_none() {
-                ctx.state.settings_selected = Some(crate::state::SettingsAction::Theme);
+                crate::state::assign_settings_selection(
+                    &mut ctx.state,
+                    Some(crate::state::SettingsAction::Theme),
+                );
             }
             ctx.state.commands_dirty = true;
             ctx.request_focus(crate::view::settings_palette_key());

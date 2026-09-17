@@ -28,6 +28,9 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.keybindings = None;
     ctx.state.show_settings = false;
     ctx.state.settings_selected = None;
+    if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
+        ctx.set_command_chord_reveal_delay(delay);
+    }
     ctx.state.pane_padding_editor = None;
     ctx.state.extensions = Some(ExtensionsState {
         entries: scan.entries,

@@ -111,6 +111,10 @@ pub fn settings_palette_key() -> &'static str {
     "rozi-settings-palette"
 }
 
+pub fn settings_choice_key() -> &'static str {
+    "rozi-settings-choice"
+}
+
 pub fn extensions_key() -> &'static str {
     "rozi-extensions"
 }

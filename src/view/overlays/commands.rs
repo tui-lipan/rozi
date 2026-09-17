@@ -247,6 +247,8 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         CyclePaneAnimation => alias_list(&[
             "pane open animation",
             "pane close animation",
+            "pane open/close animation",
+            "open/close animation",
             "spawn animation",
             "slide panes",
             "scale panes",
@@ -288,6 +290,8 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         ]),
         ToggleSidebarBackground => alias_list(&[
             "sidebar background",
+            "tab strip",
+            "tab bar",
             "tab bar background",
             "sidebar strip",
             "sidebar tab strip",

@@ -35,6 +35,8 @@
 
 ### Fixed
 
+- Searching Settings no longer leaves a blank row under the category strip when the first match
+  sits in a later group. The list still keeps one spacer between groups.
 - Unbinding a key in Keybindings no longer jumps the highlight back to Prefix. The next remaining
   row stays selected, so the list does not scroll to the top.
 - In-app config writes leave exactly one blank line before each table, and a new key is inserted
@@ -74,6 +76,15 @@
 
 ### Changed
 
+- Settings is a tabbed picker with the same chrome as Keybindings: search, then a scrollable
+  category strip, then the list. `Tab`, `Shift+Tab`, and the horizontal arrows switch categories
+  and restore each category's last highlighted row. `Enter` cycles the highlighted row.
+  `Shift+Enter` opens a compact picker for multi-value
+  settings; the highlight previews, `Enter` saves, and `Esc` restores. Unavailable rows use the
+  same border color as the search divider for both label and status. A category omits the inner
+  heading that repeats the tab name; All and search keep every group heading. In-group labels drop
+  a repeated Titlebar, Workbar, or Sidebar prefix; the sidebar tab-bar fill is **Tab strip**.
+  Settings has no footer hint pills.
 - Overlay pickers no longer wrap their body in a borderless inner `Frame`. The modal already
   hugs content and owns the height cap; the extra node only blocked `join_frame` from the chrome.
   Their search divider stays an inner rule and does not join the modal border.

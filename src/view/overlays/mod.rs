@@ -18,7 +18,7 @@ pub(in crate::view::overlays) use super::widget_keys::{
     layout_picker_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
     pick_key, pick_prompt_input_key, profile_picker_key, remote_picker_key, rename_input_key,
     rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
-    settings_palette_key, theme_picker_key,
+    settings_choice_key, settings_palette_key, theme_picker_key,
 };
 pub(in crate::view::overlays) use super::{
     action_palette_modal, action_palette_modal_with_width, fg_only, modal_scrollbar_config,
@@ -59,7 +59,10 @@ pub(crate) use search::search_overlay;
 pub(crate) use sessions::{
     collaboration_overlay, follow_prompt_overlay, reconnecting_overlay, session_picker_overlay,
 };
-pub(crate) use settings::{pane_padding_overlay, settings_overlay, theme_picker_overlay};
+pub(crate) use settings::{
+    pane_padding_overlay, settings_choice_overlay, settings_overlay, settings_query_selection,
+    theme_picker_overlay,
+};
 
 pub(in crate::view::overlays) use commands::settings_palette_aliases;
 pub(in crate::view::overlays) use common::{ctrl_letter, hint_pill, hint_row};

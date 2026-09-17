@@ -1,7 +1,7 @@
 //! Settings keeps persisted appearance and alert preferences in one searchable grouped list.
 
 use rozi::AppRoot;
-use rozi::state::{AlertMode, PaneBorderMode};
+use rozi::state::{AlertMode, PaneBorderMode, SettingsAction, SettingsTab};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
 
@@ -12,6 +12,7 @@ fn settings_backend(w: u16, h: u16) -> TestBackend<AppRoot> {
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
     backend.state_mut().show_settings = true;
+    backend.state_mut().settings_navigation.tab = SettingsTab::All;
     backend
 }
 
@@ -62,6 +63,35 @@ fn setting_row<'a>(frame: &'a str, label: &str) -> &'a str {
         .unwrap_or_else(|| panic!("rendered Settings row `{label}`:\n{frame}"))
 }
 
+fn list_body(frame: &str) -> String {
+    let lines: Vec<_> = frame.lines().collect();
+    let tabs = lines
+        .iter()
+        .position(|line| {
+            line.contains("General")
+                && line.contains("Panes")
+                && line.contains("Bars")
+                && line.contains("Alerts")
+                && line.contains("Sessions")
+        })
+        .unwrap_or_else(|| panic!("settings tab strip:\n{frame}"));
+    lines[tabs + 1..].join("\n")
+}
+
+fn body_has_group_header(body: &str, name: &str) -> bool {
+    body.lines().any(|line| setting_label_matches(line, name))
+}
+
+fn list_gap_after_tabs(frame: &str) -> usize {
+    list_body(frame)
+        .lines()
+        .take_while(|line| {
+            line.chars()
+                .all(|ch| ch.is_whitespace() || matches!(ch, '│' | '▐' | '▌'))
+        })
+        .count()
+}
+
 /// Rendering the full app tree needs more stack than a default test thread has, same as
 /// `sidebar_toggle_smoke`.
 fn on_large_stack(body: impl FnOnce() + Send + 'static) {
@@ -76,7 +106,7 @@ fn on_large_stack(body: impl FnOnce() + Send + 'static) {
 #[test]
 fn settings_lists_both_effect_rows_with_their_current_modes() {
     on_large_stack(|| {
-        let mut backend = settings_backend(100, 80);
+        let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
             state.config.pane.alert_border = AlertMode::Static;
@@ -100,24 +130,43 @@ fn settings_lists_both_effect_rows_with_their_current_modes() {
 #[test]
 fn settings_rows_report_their_disabled_reasons() {
     on_large_stack(|| {
-        // Each row depends on a different parent feature, so a shared "Needs ..." string would hide
-        // a row wired to the wrong dependency.
-        let mut backend = settings_backend(100, 80);
+        let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
             state.config.pane.border_mode = PaneBorderMode::None;
-            state.config.pane.show_workbar = false;
+            state.config.pane.alert_border = AlertMode::Pulse;
         }
-        let frame = rendered_rows(&mut backend);
-
+        backend.render();
+        let capture = backend.capture_frame();
+        let lines = capture.to_fixed_grid_lines();
+        let frame = lines.join("\n");
         assert!(
             setting_row(&frame, "Pane border effect").contains("Needs pane borders"),
-            "pane alert row is misbound:\n{frame}"
+            "{frame}"
         );
-        assert!(
-            setting_row(&frame, "Workspace tab effect").contains("Needs workbar"),
-            "workspace alert row is misbound:\n{frame}"
-        );
+        let search = lines
+            .iter()
+            .position(|line| line.contains("Search settings"))
+            .expect("settings search");
+        let divider = &lines[search + 1];
+        let rule = divider.find('─').expect("search divider");
+        let divider_fg = capture.cell(rule as u16, (search + 1) as u16).fg;
+        let row = lines
+            .iter()
+            .position(|line| setting_label_matches(line, "Pane border effect"))
+            .expect("disabled settings row");
+        let label = lines[row]
+            .find("Pane border effect")
+            .expect("disabled label");
+        let reason = lines[row]
+            .find("Needs pane borders")
+            .expect("disabled reason");
+        assert_eq!(capture.cell(label as u16, row as u16).fg, divider_fg);
+        assert_eq!(capture.cell(reason as u16, row as u16).fg, divider_fg);
+        type_query(&mut backend, "pane border effect");
+        key(&mut backend, KeyCode::Enter);
+        assert!(backend.state().settings_choice.is_none());
+        assert_eq!(backend.state().config.pane.alert_border, AlertMode::Pulse);
     });
 }
 
@@ -143,151 +192,191 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 }
 
 #[test]
-fn settings_renders_the_accepted_groups_and_row_labels() {
+fn settings_all_keeps_every_control_available() {
     on_large_stack(|| {
-        let mut backend = settings_backend(100, 120);
+        let mut backend = settings_backend(100, 160);
         let frame = rendered_rows(&mut backend);
-        // Counted from the action list rather than hardcoded, so a row added to one and not the
-        // other fails here instead of drifting until someone notices a setting nobody can search.
-        let rows = rozi::state::SettingsAction::all().len();
+        let rows = SettingsAction::all().len();
+        assert!(frame.contains(&format!("{rows}/{rows}")), "{frame}");
+        for label in [
+            "Theme",
+            "Animations",
+            "Workspace switching animation",
+            "Nerd icons",
+            "Which-key",
+            "Focus on hover",
+            "Picker border",
+            "Terminal padding",
+            "Background follows terminal",
+            "Show titlebar",
+            "Layout",
+            "Show workbar",
+            "Position",
+            "Background",
+            "Badge style",
+            "Powerline",
+            "Focused background",
+            "Focused border",
+            "Focused titlebar",
+            "Border mode",
+            "Border style",
+            "Floating border",
+            "Scratchpad border",
+            "Fullscreen border",
+            "Open/close animation",
+            "Tab strip",
+            "Bell urgency",
+            "Pane border effect",
+            "Workspace tab effect",
+            "Workspace tab highlight",
+            "Bell mark",
+            "Blocked mark",
+            "Finished mark",
+            "Working mark",
+            "Idle mark",
+            "Show notifications",
+            "Blocked",
+            "Finished",
+            "Exit",
+            "Exit with error",
+            "Play sounds",
+            "Bell",
+            "Startup mode",
+            "Layout autosave",
+            "Resurrect named sessions",
+            "Restored running commands",
+        ] {
+            setting_row(&frame, label);
+        }
+        let titlebar = group_rows(&frame, "Titlebar", "Workbar");
+        setting_row(titlebar, "Style");
+        let workbar = group_rows(&frame, "Workbar", "Sidebar");
+        setting_row(workbar, "Gap");
+        setting_row(workbar, "Style");
+        setting_row(workbar, "Tab style");
+        let sidebar = group_rows(&frame, "Sidebar", "Alerts");
+        setting_row(sidebar, "Background follows terminal");
+        setting_row(sidebar, "Gap");
+        setting_row(sidebar, "Tab style");
+        assert!(!frame.contains("Extensions"), "{frame}");
+        let body = list_body(&frame);
+        for group in [
+            "General",
+            "Panes",
+            "Titlebar",
+            "Workbar",
+            "Sidebar",
+            "Alerts",
+            "Desktop notifications",
+            "Sounds",
+            "Sessions",
+        ] {
+            assert!(
+                body_has_group_header(&body, group),
+                "All is missing the {group} header:\n{frame}"
+            );
+        }
+    });
+}
+
+#[test]
+fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 160);
+        backend.state_mut().settings_navigation.tab = SettingsTab::General;
+        let general = rendered_rows(&mut backend);
+        let general_body = list_body(&general);
         assert!(
-            frame.contains(&format!("{rows}/{rows}")),
-            "expected {rows} Settings rows:\n{frame}"
+            !body_has_group_header(&general_body, "General"),
+            "General repeats its tab name:\n{general}"
+        );
+        setting_row(&general, "Theme");
+
+        backend.state_mut().settings_navigation.tab = SettingsTab::Panes;
+        let panes = rendered_rows(&mut backend);
+        let panes_body = list_body(&panes);
+        assert!(
+            !body_has_group_header(&panes_body, "Panes"),
+            "Panes repeats its tab name:\n{panes}"
+        );
+        assert!(
+            body_has_group_header(&panes_body, "Titlebar"),
+            "Panes is missing Titlebar:\n{panes}"
         );
 
-        for (group, rows, next_group) in [
-            (
-                "General",
-                &[
-                    "Theme",
-                    "Terminal padding",
-                    "Animations",
-                    "Nerd icons",
-                    "Which-key",
-                    "Focus on hover",
-                    "Background follows terminal",
-                    "Picker border",
-                ][..],
-                "Titlebar",
-            ),
-            (
-                "Titlebar",
-                &["Show titlebar", "Layout", "Style"][..],
-                "Workbar",
-            ),
-            (
-                "Workbar",
-                &[
-                    "Show workbar",
-                    "Position",
-                    "Gap",
-                    "Background",
-                    "Style",
-                    "Badge style",
-                    "Tab style",
-                    "Powerline",
-                ][..],
-                "Panes",
-            ),
-            (
-                "Panes",
-                &[
-                    "Focused background",
-                    "Focused border",
-                    "Focused titlebar",
-                    "Border mode",
-                    "Border style",
-                    "Floating border",
-                    "Scratchpad border",
-                    "Fullscreen border",
-                    "Open/close animation",
-                ][..],
-                "Sidebar",
-            ),
-            (
-                "Sidebar",
-                &[
-                    "Background follows terminal",
-                    "Gap",
-                    "Background",
-                    "Tab style",
-                ][..],
-                "Alerts",
-            ),
-            (
-                "Alerts",
-                &[
-                    "Bell urgency",
-                    "Pane border effect",
-                    "Workspace tab effect",
-                    "Workspace tab highlight",
-                    "Bell mark",
-                    "Blocked mark",
-                    "Finished mark",
-                    "Working mark",
-                    "Idle mark",
-                ][..],
-                "Desktop notifications",
-            ),
-            (
-                "Desktop notifications",
-                &[
-                    "Show notifications",
-                    "Blocked",
-                    "Finished",
-                    "Exit",
-                    "Exit with error",
-                ][..],
-                "Sounds",
-            ),
-            (
-                "Sounds",
-                &[
-                    "Play sounds",
-                    "Bell",
-                    "Blocked",
-                    "Finished",
-                    "Exit with error",
-                ][..],
-                "Sessions",
-            ),
-            (
-                "Sessions",
-                &[
-                    "Startup mode",
-                    "Layout autosave",
-                    "Resurrect named sessions",
-                ][..],
-                "",
-            ),
-        ] {
-            let rows_in_group = group_rows(&frame, group, next_group);
-            for label in rows {
-                assert!(
-                    rows_in_group
-                        .lines()
-                        .any(|line| setting_label_matches(line, label)),
-                    "{group} is missing {label}:\n{frame}"
-                );
-            }
-        }
+        backend.state_mut().settings_navigation.tab = SettingsTab::Bars;
+        let bars = rendered_rows(&mut backend);
+        let bars_body = list_body(&bars);
         assert!(
-            !frame.contains("Extensions"),
-            "Extensions belongs in the command palette, not Settings:\n{frame}"
+            body_has_group_header(&bars_body, "Workbar"),
+            "Bars is missing Workbar:\n{bars}"
+        );
+        assert!(
+            body_has_group_header(&bars_body, "Sidebar"),
+            "Bars is missing Sidebar:\n{bars}"
+        );
+
+        backend.state_mut().settings_navigation.tab = SettingsTab::Alerts;
+        let alerts = rendered_rows(&mut backend);
+        let alerts_body = list_body(&alerts);
+        assert!(
+            !body_has_group_header(&alerts_body, "Alerts"),
+            "Alerts repeats its tab name:\n{alerts}"
+        );
+        assert!(
+            body_has_group_header(&alerts_body, "Desktop notifications"),
+            "Alerts is missing Desktop notifications:\n{alerts}"
+        );
+        assert!(
+            body_has_group_header(&alerts_body, "Sounds"),
+            "Alerts is missing Sounds:\n{alerts}"
+        );
+
+        backend.state_mut().settings_navigation.tab = SettingsTab::Sessions;
+        let sessions = rendered_rows(&mut backend);
+        let sessions_body = list_body(&sessions);
+        assert!(
+            !body_has_group_header(&sessions_body, "Sessions"),
+            "Sessions repeats its tab name:\n{sessions}"
+        );
+        setting_row(&sessions, "Startup mode");
+
+        type_query(&mut backend, "titlebar");
+        let search = rendered_rows(&mut backend);
+        assert!(
+            search.contains("Panes › Titlebar"),
+            "search dropped the Titlebar breadcrumb:\n{search}"
         );
     });
 }
 
-/// Left/Right still step a highlighted value; the footer just does not spell that out.
 #[test]
-fn settings_does_not_advertise_left_right_stepping() {
+fn settings_matches_keybindings_chrome_without_hints() {
     on_large_stack(|| {
         let mut backend = settings_backend(80, 30);
-        backend.state_mut().settings_selected = Some(rozi::state::SettingsAction::ToggleAnimations);
+        backend.state_mut().settings_selected = Some(SettingsAction::ToggleAnimations);
         let frame = rendered_rows(&mut backend);
+        let lines: Vec<_> = frame.lines().collect();
+        let search = lines
+            .iter()
+            .position(|line| line.contains("Search settings"))
+            .expect("settings search field");
+        let tabs = lines
+            .iter()
+            .position(|line| {
+                line.contains("General")
+                    && line.contains("Panes")
+                    && line.contains("Bars")
+                    && line.contains("Alerts")
+                    && line.contains("Sessions")
+            })
+            .expect("settings tab strip");
+        assert!(search < tabs, "{frame}");
+        assert!(!frame.contains("change Enter"), "{frame}");
+        assert!(!frame.contains("←→ change"), "{frame}");
         assert!(
             !frame.contains("previous Left") && !frame.contains("next Right"),
-            "Left/Right stepping should stay unadvertised:\n{frame}"
+            "{frame}"
         );
     });
 }
@@ -296,7 +385,7 @@ fn settings_does_not_advertise_left_right_stepping() {
 #[test]
 fn settings_reports_startup_and_session_values() {
     on_large_stack(|| {
-        let mut backend = settings_backend(100, 120);
+        let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
             state.config.session.startup = rozi::config::SessionStartup::Last;
@@ -319,11 +408,11 @@ fn settings_reports_startup_and_session_values() {
     });
 }
 
-/// Sidebar background lives in its own group, so a shared label with Workbar cannot hide a miswire.
+/// Sidebar chrome lives in its own group, so a shared label with Workbar cannot hide a miswire.
 #[test]
 fn settings_reports_sidebar_values() {
     on_large_stack(|| {
-        let mut backend = settings_backend(100, 120);
+        let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
             state.config.sidebar.background_follows_terminal = true;
@@ -342,8 +431,8 @@ fn settings_reports_sidebar_values() {
             "sidebar gap row is misbound:\n{frame}"
         );
         assert!(
-            setting_row(sidebar, "Background").contains("Disabled"),
-            "sidebar background row is misbound:\n{frame}"
+            setting_row(sidebar, "Tab strip").contains("Disabled"),
+            "sidebar tab strip row is misbound:\n{frame}"
         );
         assert!(
             setting_row(sidebar, "Tab style").contains("Round"),
@@ -373,6 +462,29 @@ fn settings_filtered_duplicate_labels_keep_their_group_headers() {
                 .count(),
             3,
             "expected one Blocked row in each alert channel:\n{frame}"
+        );
+    });
+}
+
+#[test]
+fn settings_search_does_not_leave_a_double_gap_under_the_tabs() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(80, 24);
+        type_query(&mut backend, "bg");
+        let later = rendered_rows(&mut backend);
+        assert_eq!(
+            list_gap_after_tabs(&later),
+            1,
+            "later-group search opened a double gap:\n{later}"
+        );
+        assert!(later.contains("Panes"), "{later}");
+        key(&mut backend, KeyCode::Esc);
+        type_query(&mut backend, "theme");
+        let first = rendered_rows(&mut backend);
+        assert_eq!(
+            list_gap_after_tabs(&first),
+            1,
+            "first-group search gap drifted:\n{first}"
         );
     });
 }
@@ -409,7 +521,11 @@ fn workspace_animation_setting_is_searchable_persisted_and_gated_by_master() {
         backend.state_mut().config.animations.workspace = true;
         type_query(&mut backend, "workspace switching");
         assert!(
-            setting_row(&rendered_rows(&mut backend), "Workspace switching").contains("Enabled")
+            setting_row(
+                &rendered_rows(&mut backend),
+                "Workspace switching animation"
+            )
+            .contains("Enabled")
         );
         backend
             .dispatch(rozi::Msg::SettingsActivate(ToggleWorkspaceAnimation))
@@ -429,6 +545,238 @@ fn workspace_animation_setting_is_searchable_persisted_and_gated_by_master() {
         assert_eq!(
             ToggleWorkspaceAnimation.disabled_reason(&backend.state().config),
             Some("Needs animations")
+        );
+    });
+}
+
+fn key(backend: &mut TestBackend<AppRoot>, code: KeyCode) {
+    key_mods(backend, code, KeyMods::NONE);
+}
+
+fn key_mods(backend: &mut TestBackend<AppRoot>, code: KeyCode, mods: KeyMods) {
+    backend.send_key(KeyEvent { code, mods }).unwrap();
+    backend.render();
+}
+
+#[test]
+fn settings_searches_globally_and_escape_restores_browse_selection() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 35);
+        backend.state_mut().settings_navigation.tab = SettingsTab::Panes;
+        backend.state_mut().settings_selected = Some(SettingsAction::CycleBorderMode);
+        backend.render();
+        type_query(&mut backend, "startup");
+        let frame = rendered_rows(&mut backend);
+        assert!(
+            frame.contains("Sessions") && frame.contains("Startup mode"),
+            "{frame}"
+        );
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleStartupMode)
+        );
+        key(&mut backend, KeyCode::Esc);
+        assert!(backend.state().show_settings);
+        assert_eq!(backend.state().settings_navigation.tab, SettingsTab::Panes);
+        assert!(backend.state().settings_navigation.query.text().is_empty());
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleBorderMode)
+        );
+        let frame = rendered_rows(&mut backend);
+        assert!(!frame.contains("Startup mode"), "{frame}");
+        key(&mut backend, KeyCode::Esc);
+        assert!(!backend.state().show_settings);
+    });
+}
+
+#[test]
+fn settings_tabs_remember_their_highlighted_row() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 50);
+        backend.state_mut().settings_navigation.tab = SettingsTab::General;
+        backend
+            .dispatch(rozi::Msg::SettingsSelect(SettingsAction::CycleWhichKey))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsTabSelected(SettingsTab::Panes))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsSelect(SettingsAction::CycleBorderMode))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsTabSelected(SettingsTab::All))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsSelect(SettingsAction::ToggleNerdIcons))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsTabSelected(SettingsTab::General))
+            .unwrap();
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleWhichKey)
+        );
+        backend
+            .dispatch(rozi::Msg::SettingsTabSelected(SettingsTab::Panes))
+            .unwrap();
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleBorderMode)
+        );
+        backend
+            .dispatch(rozi::Msg::SettingsTabSelected(SettingsTab::All))
+            .unwrap();
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::ToggleNerdIcons)
+        );
+
+        backend
+            .dispatch(rozi::Msg::SettingsTabSelected(SettingsTab::Panes))
+            .unwrap();
+        type_query(&mut backend, "startup");
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleStartupMode)
+        );
+        backend
+            .dispatch(rozi::Msg::SettingsTabSelected(SettingsTab::Alerts))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsTabSelected(SettingsTab::Panes))
+            .unwrap();
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleBorderMode)
+        );
+    });
+}
+
+#[test]
+fn settings_arrows_switch_tabs_and_shift_enter_opens_a_choice_picker() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 35);
+        backend.state_mut().settings_navigation.tab = SettingsTab::General;
+        backend.render();
+        key(&mut backend, KeyCode::BackTab);
+        assert_eq!(backend.state().settings_navigation.tab, SettingsTab::All);
+        key(&mut backend, KeyCode::Tab);
+        assert_eq!(
+            backend.state().settings_navigation.tab,
+            SettingsTab::General
+        );
+        key(&mut backend, KeyCode::Right);
+        assert_eq!(backend.state().settings_navigation.tab, SettingsTab::Panes);
+        key(&mut backend, KeyCode::Left);
+        assert_eq!(
+            backend.state().settings_navigation.tab,
+            SettingsTab::General
+        );
+        type_query(&mut backend, "pane open/close");
+        let original = backend.state().config.animations.pane_style;
+        backend.state_mut().config.animations.enabled = true;
+        key(&mut backend, KeyCode::Enter);
+        assert!(backend.state().settings_choice.is_none());
+        assert_ne!(backend.state().config.animations.pane_style, original);
+        key_mods(&mut backend, KeyCode::Enter, KeyMods::SHIFT);
+        assert!(backend.state().settings_choice.is_some());
+        let cycled = backend.state().config.animations.pane_style;
+        backend
+            .dispatch(rozi::Msg::SettingsChoiceSelect(0))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsChoiceSelect(1))
+            .unwrap();
+        key(&mut backend, KeyCode::Esc);
+        assert!(backend.state().settings_choice.is_none());
+        assert_eq!(backend.state().config.animations.pane_style, cycled);
+        assert_eq!(
+            backend.state().settings_navigation.tab,
+            SettingsTab::General
+        );
+    });
+}
+
+#[test]
+fn settings_choice_lists_every_option() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(80, 30);
+        backend
+            .dispatch(rozi::Msg::SettingsOpenChoice(SettingsAction::CycleWhichKey))
+            .unwrap();
+        let frame = rendered_rows(&mut backend);
+        for label in ["Off", "Instant", "Short", "Long"] {
+            assert!(frame.contains(label), "{label} missing:\n{frame}");
+        }
+        assert!(frame.contains("Search…"), "{frame}");
+        assert!(frame.contains("current"), "{frame}");
+        assert!(!frame.contains('‹') && !frame.contains('›'), "{frame}");
+        assert!(!frame.contains("change Enter"), "{frame}");
+        assert!(!frame.contains("choose"), "{frame}");
+    });
+}
+
+#[test]
+fn settings_empty_search_does_not_edit_a_stale_selection() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 35);
+        type_query(&mut backend, "nothing_matches_this_setting_123");
+        let frame = rendered_rows(&mut backend);
+        assert!(frame.contains("No matches"), "{frame}");
+        assert_eq!(backend.state().settings_selected, None);
+        let animations = backend.state().config.animations.enabled;
+        key(&mut backend, KeyCode::Enter);
+        assert_eq!(backend.state().config.animations.enabled, animations);
+        assert!(backend.state().show_settings);
+        key(&mut backend, KeyCode::Esc);
+        assert!(backend.state().show_settings);
+        assert!(backend.state().settings_navigation.query.text().is_empty());
+    });
+}
+
+#[test]
+fn settings_categories_cover_all_controls_and_keep_pane_motion_local() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 50);
+        for (tab, count, expected) in [
+            (SettingsTab::General, 7, "Workspace switching animation"),
+            (SettingsTab::Panes, 14, "Open/close animation"),
+            (SettingsTab::Bars, 12, "Show workbar"),
+            (SettingsTab::Alerts, 19, "Bell urgency"),
+            (SettingsTab::Sessions, 4, "Startup mode"),
+        ] {
+            backend
+                .dispatch(rozi::Msg::SettingsTabSelected(tab))
+                .unwrap();
+            let frame = rendered_rows(&mut backend);
+            assert!(
+                frame.contains(&format!("{count}/{count}")),
+                "{tab:?}: {frame}"
+            );
+            assert!(frame.contains(expected), "{tab:?}: {frame}");
+        }
+    });
+}
+
+#[test]
+fn deleting_the_query_restores_category_and_selection() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 35);
+        backend.state_mut().settings_navigation.tab = SettingsTab::Panes;
+        backend.state_mut().settings_selected = Some(SettingsAction::CycleBorderMode);
+        type_query(&mut backend, "startup");
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleStartupMode)
+        );
+        for _ in 0..7 {
+            key(&mut backend, KeyCode::Backspace);
+        }
+        assert_eq!(backend.state().settings_navigation.tab, SettingsTab::Panes);
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleBorderMode)
         );
     });
 }

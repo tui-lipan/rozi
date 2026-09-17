@@ -60,6 +60,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
             | Action::ToggleHelp
     ) {
         ctx.state.pane_padding_editor = None;
+        discard_settings_choice(ctx);
     }
     let cycle_layout_in_palette = matches!(action, Action::ToggleLayout) && ctx.state.show_palette;
     let from_palette = ctx.state.show_palette;
@@ -143,7 +144,55 @@ pub(super) fn help_tab_selected(ctx: &mut Context<AppRoot>, index: usize) -> Upd
     Update::full()
 }
 
+pub(super) fn settings_escape(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.settings_navigation.query.text().is_empty() {
+        return close_settings(ctx);
+    }
+    ctx.state.settings_navigation.query = TextInput::new("");
+    sync_settings_query_selection(ctx, true);
+    ctx.request_focus(crate::view::settings_palette_key());
+    Update::full()
+}
+
+pub(super) fn settings_query_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
+    let was_empty = ctx.state.settings_navigation.query.text().is_empty();
+    event.apply_to(&mut ctx.state.settings_navigation.query);
+    sync_settings_query_selection(ctx, was_empty);
+    ctx.request_focus(crate::view::settings_palette_key());
+    Update::full()
+}
+
+fn sync_settings_query_selection(ctx: &mut Context<AppRoot>, was_empty: bool) {
+    let is_empty = ctx.state.settings_navigation.query.text().is_empty();
+    if was_empty && !is_empty {
+        ctx.state.settings_navigation.browse_selected = ctx.state.settings_selected;
+    }
+    if is_empty {
+        ctx.state.settings_selected = ctx.state.settings_navigation.browse_selected.take();
+    }
+    let selected = crate::view::settings_query_selection(ctx);
+    crate::state::assign_settings_selection(&mut ctx.state, selected);
+}
+
+pub(super) fn settings_tab_selected(
+    ctx: &mut Context<AppRoot>,
+    tab: crate::state::SettingsTab,
+) -> Update {
+    let from_tab = ctx.state.settings_navigation.tab;
+    if ctx.state.settings_navigation.query.text().is_empty() {
+        let selected = ctx.state.settings_selected;
+        ctx.state.settings_navigation.remember(from_tab, selected);
+    }
+    ctx.state.settings_navigation.tab = tab;
+    ctx.state.settings_navigation.query = TextInput::new("");
+    ctx.state.settings_navigation.browse_selected = None;
+    ctx.state.settings_selected = ctx.state.settings_navigation.remembered(tab);
+    ctx.request_focus(crate::view::settings_palette_key());
+    Update::full()
+}
+
 pub(super) fn close_settings(ctx: &mut Context<AppRoot>) -> Update {
+    discard_settings_choice(ctx);
     ctx.state.show_settings = false;
     ctx.state.settings_selected = None;
     ctx.state.pane_padding_editor = None;
@@ -156,9 +205,7 @@ pub(super) fn settings_select(
     ctx: &mut Context<AppRoot>,
     action: crate::state::SettingsAction,
 ) -> Update {
-    ctx.state.settings_selected = Some(action);
-    // The key interceptor is rebuilt from this live selection: Theme/Padding leave Left/Right to
-    // the search caret, while value rows consume them for stepping.
+    crate::state::assign_settings_selection(&mut ctx.state, Some(action));
     Update::full()
 }
 
@@ -166,24 +213,85 @@ pub(super) fn settings_activate(
     ctx: &mut Context<AppRoot>,
     action: crate::state::SettingsAction,
 ) -> Update {
-    settings_activate_dir(ctx, action, false)
+    settings_apply(ctx, action)
 }
 
-pub(super) fn settings_step(ctx: &mut Context<AppRoot>, reverse: bool) -> Update {
-    let Some(action) = ctx.state.settings_selected else {
-        return Update::none();
-    };
-    if !action.steps_horizontally() {
-        return Update::none();
-    }
-    settings_activate_dir(ctx, action, reverse)
-}
-
-fn settings_activate_dir(
+pub(super) fn settings_open_choice(
     ctx: &mut Context<AppRoot>,
     action: crate::state::SettingsAction,
-    reverse: bool,
 ) -> Update {
+    open_settings_choice(ctx, action)
+}
+
+pub(super) fn settings_choice_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    let action = {
+        let Some(editor) = ctx.state.settings_choice.as_mut() else {
+            return Update::none();
+        };
+        if index >= editor.options.len() {
+            return Update::none();
+        }
+        if editor.index == index {
+            ctx.request_focus(crate::view::settings_choice_key());
+            return Update::full();
+        }
+        editor.index = index;
+        editor.action
+    };
+    apply_settings_choice(ctx, action, index, false);
+    ctx.request_focus(crate::view::settings_choice_key());
+    Update::full()
+}
+
+pub(super) fn settings_choice_pick(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    let Some(editor) = ctx.state.settings_choice.as_mut() else {
+        return Update::none();
+    };
+    if index >= editor.options.len() {
+        return Update::none();
+    }
+    editor.index = index;
+    settings_choice_save(ctx)
+}
+
+pub(super) fn settings_choice_save(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(editor) = ctx.state.settings_choice.take() else {
+        return Update::none();
+    };
+    apply_settings_choice(ctx, editor.action, editor.index, true);
+    ctx.state.show_settings = true;
+    crate::state::assign_settings_selection(&mut ctx.state, Some(editor.action));
+    ctx.request_focus(crate::view::settings_palette_key());
+    Update::full()
+}
+
+pub(super) fn settings_choice_cancel(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.settings_choice.is_none() {
+        return Update::none();
+    }
+    discard_settings_choice(ctx);
+    ctx.request_focus(crate::view::settings_palette_key());
+    Update::full()
+}
+
+fn open_settings_choice(
+    ctx: &mut Context<AppRoot>,
+    action: crate::state::SettingsAction,
+) -> Update {
+    if action.disabled_reason(&ctx.state.config).is_some() {
+        ctx.request_focus(crate::view::settings_palette_key());
+        return Update::full();
+    }
+    let Some(ring) = action.choice_ring(&ctx.state.config) else {
+        return Update::none();
+    };
+    ctx.state.settings_choice = Some(crate::state::SettingsChoiceEditor::from_ring(action, ring));
+    crate::state::assign_settings_selection(&mut ctx.state, Some(action));
+    ctx.request_focus(crate::view::settings_choice_key());
+    Update::full()
+}
+
+fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsAction) -> Update {
     if action.disabled_reason(&ctx.state.config).is_some() {
         ctx.request_focus(crate::view::settings_palette_key());
         return Update::full();
@@ -203,21 +311,25 @@ fn settings_activate_dir(
         ToggleTitles => {
             execute_action(ctx, Action::ToggleTitles);
         }
-        CycleTitlebar if reverse => {
-            let value = ctx.state.config.pane.titlebar.prev();
-            ctx.state.config.pane.titlebar = value;
-            persist_pane_string_or_toast(ctx, "titlebar", value.id());
-        }
-        CycleTitlebar => {
-            execute_action(ctx, Action::CycleTitlebar);
-        }
-        CycleTitleStyle if reverse => {
-            let value = crate::state::prev_cap_style(ctx.state.config.pane.title_style);
-            ctx.state.config.pane.title_style = value;
-            persist_pane_string_or_toast(ctx, "title_style", crate::state::cap_style_id(value));
-        }
-        CycleTitleStyle => {
-            execute_action(ctx, Action::CycleTitleStyle);
+        CycleTitlebar
+        | CycleTitleStyle
+        | CycleSidebarTabStyle
+        | CycleWorkbarStyle
+        | CycleWorkbarBadgeStyle
+        | CycleWorkbarTabStyle
+        | CyclePaneAnimation
+        | CycleWhichKey
+        | CycleBorderMode
+        | CycleBorderStyle
+        | CycleFloatBorderStyle
+        | CycleScratchBorderStyle
+        | CycleFullscreenBorderStyle
+        | CyclePickerBorderStyle
+        | CycleAlertBorder
+        | CycleWorkbarAlert
+        | CycleStartupMode
+        | CycleResurrectForeground => {
+            return cycle_settings_choice(ctx, action);
         }
         ToggleWorkbar => {
             execute_action(ctx, Action::ToggleWorkbar);
@@ -240,47 +352,6 @@ fn settings_activate_dir(
         ToggleSidebarBackgroundFollowsTerminal => {
             execute_action(ctx, Action::ToggleSidebarBackgroundFollowsTerminal);
         }
-        CycleSidebarTabStyle if reverse => {
-            let value = crate::state::prev_badge_cap_style(ctx.state.config.sidebar.tab_style);
-            ctx.state.config.sidebar.tab_style = value;
-            persist_sidebar_string_or_toast(ctx, "tab_style", crate::state::cap_style_id(value));
-        }
-        CycleSidebarTabStyle => {
-            execute_action(ctx, Action::CycleSidebarTabStyle);
-        }
-        CycleWorkbarStyle if reverse => {
-            let value = crate::state::prev_cap_style(ctx.state.config.pane.workbar_style);
-            ctx.state.config.pane.workbar_style = value;
-            persist_pane_string_or_toast(ctx, "workbar_style", crate::state::cap_style_id(value));
-        }
-        CycleWorkbarStyle => {
-            execute_action(ctx, Action::CycleWorkbarStyle);
-        }
-        CycleWorkbarBadgeStyle if reverse => {
-            let value =
-                crate::state::prev_badge_cap_style(ctx.state.config.pane.workbar_badge_style);
-            ctx.state.config.pane.workbar_badge_style = value;
-            persist_pane_string_or_toast(
-                ctx,
-                "workbar_badge_style",
-                crate::state::cap_style_id(value),
-            );
-        }
-        CycleWorkbarBadgeStyle => {
-            execute_action(ctx, Action::CycleWorkbarBadgeStyle);
-        }
-        CycleWorkbarTabStyle if reverse => {
-            let value = crate::state::prev_badge_cap_style(ctx.state.config.pane.workbar_tab_style);
-            ctx.state.config.pane.workbar_tab_style = value;
-            persist_pane_string_or_toast(
-                ctx,
-                "workbar_tab_style",
-                crate::state::cap_style_id(value),
-            );
-        }
-        CycleWorkbarTabStyle => {
-            execute_action(ctx, Action::CycleWorkbarTabStyle);
-        }
         ToggleWorkbarPowerline => {
             execute_action(ctx, Action::ToggleWorkbarPowerline);
         }
@@ -297,27 +368,6 @@ fn settings_activate_dir(
         ToggleNerdIcons => {
             execute_action(ctx, Action::ToggleNerdIcons);
         }
-        CyclePaneAnimation => {
-            let value = if reverse {
-                ctx.state.config.animations.pane_style.prev()
-            } else {
-                ctx.state.config.animations.pane_style.next()
-            };
-            ctx.state.config.animations.pane_style = value;
-            if let Err(err) = crate::config::persist_animation_string("pane_style", value.id()) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleWhichKey => {
-            let value = ctx.state.config.input.which_key.step(reverse);
-            ctx.state.config.input.which_key = value;
-            // The delay lives in the runtime, not in `State`, so the new value has to be pushed
-            // across the same way `reload_config` does or the row would change nothing.
-            ctx.set_command_chord_reveal_delay(value.reveal_delay());
-            if let Err(err) = crate::config::persist_input_string("which_key", value.id()) {
-                preference_error(ctx, err);
-            }
-        }
         ToggleFocusOnHover => {
             execute_action(ctx, Action::ToggleFocusOnHover);
         }
@@ -333,76 +383,12 @@ fn settings_activate_dir(
         ToggleHighlightFocusedTitlebar => {
             execute_action(ctx, Action::ToggleHighlightFocusedTitlebar);
         }
-        CycleBorderMode if reverse => {
-            let value = ctx.state.config.pane.border_mode.prev();
-            ctx.state.config.pane.border_mode = value;
-            persist_pane_string_or_toast(ctx, "border_mode", value.id());
-        }
-        CycleBorderMode => {
-            execute_action(ctx, Action::CycleBorderMode);
-        }
-        CycleBorderStyle if reverse => {
-            crate::ops::preferences::reverse_border_style(ctx);
-        }
-        CycleBorderStyle => {
-            execute_action(ctx, Action::CycleBorderStyle);
-        }
-        CycleFloatBorderStyle if reverse => {
-            crate::ops::preferences::reverse_float_border_style(ctx);
-        }
-        CycleFloatBorderStyle => {
-            execute_action(ctx, Action::CycleFloatBorderStyle);
-        }
-        CycleScratchBorderStyle if reverse => {
-            crate::ops::preferences::reverse_scratch_border_style(ctx);
-        }
-        CycleScratchBorderStyle => {
-            execute_action(ctx, Action::CycleScratchBorderStyle);
-        }
-        CycleFullscreenBorderStyle if reverse => {
-            crate::ops::preferences::reverse_fullscreen_border_style(ctx);
-        }
-        CycleFullscreenBorderStyle => {
-            execute_action(ctx, Action::CycleFullscreenBorderStyle);
-        }
-        CyclePickerBorderStyle if reverse => {
-            crate::ops::preferences::reverse_picker_border_style(ctx);
-        }
-        CyclePickerBorderStyle => {
-            execute_action(ctx, Action::CyclePickerBorderStyle);
-        }
         ToggleBellUrgency => {
             ctx.state.config.notifications.bell = !ctx.state.config.notifications.bell;
             persisted = Some(("notifications", "bell", ctx.state.config.notifications.bell));
         }
-        CycleAlertBorder => {
-            let value = if reverse {
-                ctx.state.config.pane.alert_border.prev()
-            } else {
-                ctx.state.config.pane.alert_border.next()
-            };
-            ctx.state.config.pane.alert_border = value;
-            if let Err(err) = crate::config::persist_pane_string("alert_border", value.id()) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleWorkbarAlert => {
-            let value = if reverse {
-                ctx.state.config.workbar.alert.mode.prev()
-            } else {
-                ctx.state.config.workbar.alert.mode.next()
-            };
-            ctx.state.config.workbar.alert.mode = value;
-            if let Err(err) = crate::config::persist_workbar_alert_string("mode", value.id()) {
-                preference_error(ctx, err);
-            }
-        }
         CycleWorkbarAlertPaint => {
-            let value = if reverse {
-                ctx.state.config.workbar.alert.paint.prev()
-            } else {
-                ctx.state.config.workbar.alert.paint.next()
-            };
+            let value = ctx.state.config.workbar.alert.paint.next();
             ctx.state.config.workbar.alert.paint = value;
             if let Err(err) = crate::config::persist_workbar_alert_string("paint", value.id()) {
                 preference_error(ctx, err);
@@ -502,15 +488,6 @@ fn settings_activate_dir(
             ctx.state.config.sounds.error = !ctx.state.config.sounds.error;
             persisted = Some(("sounds", "error", ctx.state.config.sounds.error));
         }
-        CycleStartupMode => {
-            let choices =
-                crate::config::SessionStartup::choices(ctx.state.config.profile.default.is_some());
-            let value = ctx.state.config.session.startup.step_in(&choices, reverse);
-            ctx.state.config.session.startup = value;
-            if let Err(err) = crate::config::persist_session_string("startup", value.id()) {
-                preference_error(ctx, err);
-            }
-        }
         ToggleSessionAutosave => {
             ctx.state.config.session.autosave = !ctx.state.config.session.autosave;
             persisted = Some(("session", "autosave", ctx.state.config.session.autosave));
@@ -518,20 +495,6 @@ fn settings_activate_dir(
         ToggleSessionResurrect => {
             ctx.state.config.session.resurrect = !ctx.state.config.session.resurrect;
             persisted = Some(("session", "resurrect", ctx.state.config.session.resurrect));
-        }
-        CycleResurrectForeground => {
-            let value = ctx
-                .state
-                .config
-                .session
-                .resurrect_foreground
-                .step_in(reverse);
-            ctx.state.config.session.resurrect_foreground = value;
-            if let Err(err) =
-                crate::config::persist_session_string("resurrect_foreground", value.as_str())
-            {
-                preference_error(ctx, err);
-            }
         }
     }
     if let Some((section, key, value)) = persisted {
@@ -548,7 +511,7 @@ fn settings_activate_dir(
     }
     if !matches!(action, Theme | EditPadding) {
         ctx.state.show_settings = true;
-        ctx.state.settings_selected = Some(action);
+        crate::state::assign_settings_selection(&mut ctx.state, Some(action));
         ctx.request_focus(crate::view::settings_palette_key());
     }
     Update::full()
@@ -582,6 +545,162 @@ fn persist_sidebar_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value:
             Some("Preference not saved".to_string()),
             err,
         );
+    }
+}
+
+fn cycle_settings_choice(
+    ctx: &mut Context<AppRoot>,
+    action: crate::state::SettingsAction,
+) -> Update {
+    if action.disabled_reason(&ctx.state.config).is_some() {
+        ctx.request_focus(crate::view::settings_palette_key());
+        return Update::full();
+    }
+    let Some(ring) = action.choice_ring(&ctx.state.config) else {
+        return Update::none();
+    };
+    let count = ring.options.len();
+    if count == 0 {
+        return Update::none();
+    }
+    apply_settings_choice(ctx, action, (ring.index + 1) % count, true);
+    ctx.state.show_settings = true;
+    crate::state::assign_settings_selection(&mut ctx.state, Some(action));
+    ctx.request_focus(crate::view::settings_palette_key());
+    Update::full()
+}
+
+fn discard_settings_choice(ctx: &mut Context<AppRoot>) {
+    if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
+        ctx.set_command_chord_reveal_delay(delay);
+    }
+}
+
+fn apply_settings_choice(
+    ctx: &mut Context<AppRoot>,
+    action: crate::state::SettingsAction,
+    index: usize,
+    persist: bool,
+) {
+    if !action.apply_choice(&mut ctx.state.config, index) {
+        return;
+    }
+    if matches!(action, crate::state::SettingsAction::CycleWhichKey) {
+        ctx.set_command_chord_reveal_delay(ctx.state.config.input.which_key.reveal_delay());
+    }
+    if persist {
+        persist_applied_settings_choice(ctx, action);
+    }
+}
+
+fn persist_applied_settings_choice(
+    ctx: &mut Context<AppRoot>,
+    action: crate::state::SettingsAction,
+) {
+    use crate::state::SettingsAction::*;
+    match action {
+        CycleWhichKey => {
+            if let Err(err) = crate::config::persist_input_string(
+                "which_key",
+                ctx.state.config.input.which_key.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CyclePickerBorderStyle => persist_pane_string_or_toast(
+            ctx,
+            "picker_border_style",
+            ctx.state.config.pane.picker_border_style.id(),
+        ),
+        CycleTitlebar => {
+            persist_pane_string_or_toast(ctx, "titlebar", ctx.state.config.pane.titlebar.id())
+        }
+        CycleTitleStyle => persist_pane_string_or_toast(
+            ctx,
+            "title_style",
+            crate::state::cap_style_id(ctx.state.config.pane.title_style),
+        ),
+        CycleWorkbarStyle => persist_pane_string_or_toast(
+            ctx,
+            "workbar_style",
+            crate::state::cap_style_id(ctx.state.config.pane.workbar_style),
+        ),
+        CycleWorkbarBadgeStyle => persist_pane_string_or_toast(
+            ctx,
+            "workbar_badge_style",
+            crate::state::cap_style_id(ctx.state.config.pane.workbar_badge_style),
+        ),
+        CycleWorkbarTabStyle => persist_pane_string_or_toast(
+            ctx,
+            "workbar_tab_style",
+            crate::state::cap_style_id(ctx.state.config.pane.workbar_tab_style),
+        ),
+        CycleBorderMode => {
+            persist_pane_string_or_toast(ctx, "border_mode", ctx.state.config.pane.border_mode.id())
+        }
+        CycleBorderStyle => persist_pane_string_or_toast(
+            ctx,
+            "border_style",
+            ctx.state.config.pane.border_style.id(),
+        ),
+        CycleFloatBorderStyle => persist_pane_string_or_toast(
+            ctx,
+            "float_border_style",
+            ctx.state.config.pane.float_border_style.id(),
+        ),
+        CycleScratchBorderStyle => persist_pane_string_or_toast(
+            ctx,
+            "scratch_border_style",
+            ctx.state.config.pane.scratch_border_style.id(),
+        ),
+        CycleFullscreenBorderStyle => persist_pane_string_or_toast(
+            ctx,
+            "fullscreen_border_style",
+            ctx.state.config.pane.fullscreen_border_style.id(),
+        ),
+        CyclePaneAnimation => {
+            if let Err(err) = crate::config::persist_animation_string(
+                "pane_style",
+                ctx.state.config.animations.pane_style.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleSidebarTabStyle => persist_sidebar_string_or_toast(
+            ctx,
+            "tab_style",
+            crate::state::cap_style_id(ctx.state.config.sidebar.tab_style),
+        ),
+        CycleAlertBorder => persist_pane_string_or_toast(
+            ctx,
+            "alert_border",
+            ctx.state.config.pane.alert_border.id(),
+        ),
+        CycleWorkbarAlert => {
+            if let Err(err) = crate::config::persist_workbar_alert_string(
+                "mode",
+                ctx.state.config.workbar.alert.mode.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleStartupMode => {
+            if let Err(err) = crate::config::persist_session_string(
+                "startup",
+                ctx.state.config.session.startup.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleResurrectForeground => {
+            if let Err(err) = crate::config::persist_session_string(
+                "resurrect_foreground",
+                ctx.state.config.session.resurrect_foreground.as_str(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -828,17 +947,50 @@ mod tests {
     }
 
     #[test]
-    fn settings_left_right_steps_alert_modes_and_keeps_selection() {
+    fn settings_enter_cycles_alert_modes_and_the_picker_writes_on_pick() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend.state_mut().config.pane.show_workbar = true;
-            backend.state_mut().settings_selected =
-                Some(crate::state::SettingsAction::CycleAlertBorder);
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleAlertBorder,
+                ))
+                .unwrap();
+            assert!(backend.state().settings_choice.is_none());
+            assert_eq!(
+                backend.state().config.pane.alert_border,
+                crate::state::AlertMode::Off
+            );
 
             backend
-                .dispatch(Msg::SettingsStep { reverse: true })
+                .dispatch(Msg::SettingsOpenChoice(
+                    crate::state::SettingsAction::CycleAlertBorder,
+                ))
                 .unwrap();
+            assert!(backend.state().settings_choice.is_some());
+            assert_eq!(
+                backend.state().config.pane.alert_border,
+                crate::state::AlertMode::Off
+            );
+            backend.dispatch(Msg::SettingsChoiceSelect(1)).unwrap();
+            assert_eq!(
+                backend.state().config.pane.alert_border,
+                crate::state::AlertMode::Static
+            );
+            assert!(backend.state().settings_choice.is_some());
+            backend.dispatch(Msg::SettingsChoiceCancel).unwrap();
+            assert!(backend.state().settings_choice.is_none());
+            assert_eq!(
+                backend.state().config.pane.alert_border,
+                crate::state::AlertMode::Off
+            );
+            backend
+                .dispatch(Msg::SettingsOpenChoice(
+                    crate::state::SettingsAction::CycleAlertBorder,
+                ))
+                .unwrap();
+            backend.dispatch(Msg::SettingsChoicePick(1)).unwrap();
             assert_eq!(
                 backend.state().config.pane.alert_border,
                 crate::state::AlertMode::Static
@@ -849,18 +1001,26 @@ mod tests {
             );
 
             backend
-                .dispatch(Msg::SettingsStep { reverse: false })
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleWorkbarAlert,
+                ))
                 .unwrap();
             assert_eq!(
-                backend.state().config.pane.alert_border,
-                crate::state::AlertMode::Pulse
+                backend.state().config.workbar.alert.mode,
+                crate::state::AlertMode::Off
             );
-
-            backend.state_mut().settings_selected =
-                Some(crate::state::SettingsAction::CycleWorkbarAlert);
             backend
-                .dispatch(Msg::SettingsStep { reverse: true })
+                .dispatch(Msg::SettingsOpenChoice(
+                    crate::state::SettingsAction::CycleWorkbarAlert,
+                ))
                 .unwrap();
+            backend.dispatch(Msg::SettingsChoiceSelect(1)).unwrap();
+            assert_eq!(
+                backend.state().config.workbar.alert.mode,
+                crate::state::AlertMode::Static
+            );
+            assert!(backend.state().settings_choice.is_some());
+            backend.dispatch(Msg::SettingsChoicePick(1)).unwrap();
             assert_eq!(
                 backend.state().config.workbar.alert.mode,
                 crate::state::AlertMode::Static
@@ -1134,28 +1294,31 @@ mod tests {
         });
     }
 
-    /// The startup row is a value ring like the alert modes: both arrows work and the row keeps the
-    /// highlight. What reaches `[session]` is pinned deterministically in `config::persist` instead -
-    /// these tests share one scratch config file and run in parallel, so reading it back here would
-    /// race a sibling's write.
+    /// The startup row is a value ring: Enter cycles immediately. What reaches `[session]` is
+    /// pinned deterministically in `config::persist` instead - these tests share one scratch config
+    /// file and run in parallel, so reading it back here would race a sibling's write.
     #[test]
-    fn settings_steps_startup_mode_in_both_directions() {
+    fn settings_enter_cycles_startup_mode() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
-            backend.state_mut().settings_selected =
-                Some(crate::state::SettingsAction::CycleStartupMode);
-            assert_eq!(
-                backend.state().config.session.startup,
-                crate::config::SessionStartup::Picker
-            );
-
             backend
-                .dispatch(Msg::SettingsStep { reverse: false })
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleStartupMode,
+                ))
                 .unwrap();
             assert_eq!(
                 backend.state().config.session.startup,
                 crate::config::SessionStartup::Ephemeral
+            );
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleStartupMode,
+                ))
+                .unwrap();
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Last
             );
             assert_eq!(
                 backend.state().settings_selected,
@@ -1164,8 +1327,11 @@ mod tests {
             assert!(backend.state().show_settings, "the dialog stays open");
 
             backend
-                .dispatch(Msg::SettingsStep { reverse: true })
+                .dispatch(Msg::SettingsOpenChoice(
+                    crate::state::SettingsAction::CycleStartupMode,
+                ))
                 .unwrap();
+            backend.dispatch(Msg::SettingsChoicePick(0)).unwrap();
             assert_eq!(
                 backend.state().config.session.startup,
                 crate::config::SessionStartup::Picker
@@ -1174,23 +1340,27 @@ mod tests {
     }
 
     #[test]
-    fn settings_steps_foreground_restore_in_both_directions() {
+    fn settings_enter_cycles_foreground_restore() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
-            backend.state_mut().settings_selected =
-                Some(crate::state::SettingsAction::CycleResurrectForeground);
-            assert_eq!(
-                backend.state().config.session.resurrect_foreground,
-                crate::config::ForegroundRestore::Auto
-            );
-
             backend
-                .dispatch(Msg::SettingsStep { reverse: false })
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleResurrectForeground,
+                ))
                 .unwrap();
             assert_eq!(
                 backend.state().config.session.resurrect_foreground,
                 crate::config::ForegroundRestore::Never
+            );
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleResurrectForeground,
+                ))
+                .unwrap();
+            assert_eq!(
+                backend.state().config.session.resurrect_foreground,
+                crate::config::ForegroundRestore::Hold
             );
             assert_eq!(
                 backend.state().settings_selected,
@@ -1199,8 +1369,11 @@ mod tests {
             assert!(backend.state().show_settings, "the dialog stays open");
 
             backend
-                .dispatch(Msg::SettingsStep { reverse: true })
+                .dispatch(Msg::SettingsOpenChoice(
+                    crate::state::SettingsAction::CycleResurrectForeground,
+                ))
                 .unwrap();
+            backend.dispatch(Msg::SettingsChoicePick(2)).unwrap();
             assert_eq!(
                 backend.state().config.session.resurrect_foreground,
                 crate::config::ForegroundRestore::Auto
@@ -1215,22 +1388,47 @@ mod tests {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
-            backend.state_mut().settings_selected =
-                Some(crate::state::SettingsAction::CycleStartupMode);
-            assert!(backend.state().config.profile.default.is_none());
-
             backend
-                .dispatch(Msg::SettingsStep { reverse: true })
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleStartupMode,
+                ))
+                .unwrap();
+            assert!(backend.state().config.profile.default.is_none());
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Ephemeral
+            );
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleStartupMode,
+                ))
+                .unwrap();
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleStartupMode,
+                ))
                 .unwrap();
             assert_eq!(
                 backend.state().config.session.startup,
-                crate::config::SessionStartup::Last,
+                crate::config::SessionStartup::Picker,
                 "with no default profile the ring wraps straight past `profile`"
             );
 
             backend.state_mut().config.profile.default = Some("dev".to_string());
             backend
-                .dispatch(Msg::SettingsStep { reverse: false })
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleStartupMode,
+                ))
+                .unwrap();
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleStartupMode,
+                ))
+                .unwrap();
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleStartupMode,
+                ))
                 .unwrap();
             assert_eq!(
                 backend.state().config.session.startup,

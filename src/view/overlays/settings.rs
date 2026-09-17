@@ -1,28 +1,30 @@
 use super::*;
 
-const SETTINGS_MAX_HEIGHT_PERCENT: u16 = 65;
+use std::collections::HashSet;
 
-pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
+const SETTINGS_MAX_HEIGHT_PERCENT: u16 = 70;
+const SETTINGS_MODAL_WIDTH: u16 = 64;
+const SETTINGS_CHOICE_WIDTH: u16 = 40;
+
+type SettingEntry = SearchEntry<(SettingsAction, String)>;
+type SettingGroup = (&'static str, Vec<SettingEntry>);
+
+fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
     use SettingsAction::*;
 
     let pane = &ctx.state.config.pane;
-    let entries = search_entries_with_groups([
+    vec![
         settings_group(
             "General",
             vec![
                 ("Theme", current_theme_label(ctx), Theme),
-                (
-                    "Terminal padding",
-                    padding_summary(pane.padding),
-                    EditPadding,
-                ),
                 (
                     "Animations",
                     enabled_status(ctx.state.config.animations.enabled),
                     ToggleAnimations,
                 ),
                 (
-                    "Workspace switching",
+                    "Workspace switching animation",
                     enabled_status(ctx.state.config.animations.workspace),
                     ToggleWorkspaceAnimation,
                 ),
@@ -40,11 +42,6 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     "Focus on hover",
                     enabled_status(pane.focus_on_hover),
                     ToggleFocusOnHover,
-                ),
-                (
-                    "Background follows terminal",
-                    enabled_status(pane.background_follows_terminal),
-                    ToggleBackgroundFollowsTerminal,
                 ),
                 (
                     "Picker border",
@@ -119,6 +116,16 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
             "Panes",
             vec![
                 (
+                    "Background follows terminal",
+                    enabled_status(pane.background_follows_terminal),
+                    ToggleBackgroundFollowsTerminal,
+                ),
+                (
+                    "Terminal padding",
+                    padding_summary(pane.padding),
+                    EditPadding,
+                ),
+                (
                     "Focused background",
                     enabled_status(pane.highlight_focused_background),
                     ToggleHighlightFocusedBackground,
@@ -179,7 +186,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     ToggleSidebarGap,
                 ),
                 (
-                    "Background",
+                    "Tab strip",
                     enabled_status(ctx.state.config.sidebar.background),
                     ToggleSidebarBackground,
                 ),
@@ -338,31 +345,247 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                 ),
             ],
         ),
-    ]);
+    ]
+}
 
-    let config = ctx.state.config.clone();
-    let item_style = fg_only(&ctx.state.theme.primary);
-    let description_style = fg_only(&ctx.state.theme.muted);
-    let disabled_style = fg_only(&ctx.state.theme.muted);
-    let actions = settings_actions(ctx);
-    let selected_index = ctx.state.settings_selected.and_then(|selected| {
-        entries
-            .iter()
-            .filter_map(|entry| match entry {
-                SearchEntry::Item(item) => Some(item.value.0),
-                _ => None,
-            })
-            .position(|action| action == selected)
-    });
-    let palette = shared_search_palette::<(SettingsAction, String)>(ctx, Length::Auto, false)
-        .entries(entries)
+fn setting_category(group: &str) -> crate::state::SettingsTab {
+    use crate::state::SettingsTab;
+    match group {
+        "General" => SettingsTab::General,
+        "Panes" | "Titlebar" => SettingsTab::Panes,
+        "Workbar" | "Sidebar" => SettingsTab::Bars,
+        "Alerts" | "Desktop notifications" | "Sounds" => SettingsTab::Alerts,
+        "Sessions" => SettingsTab::Sessions,
+        _ => unreachable!("unknown settings group"),
+    }
+}
+
+fn settings_query(ctx: &Context<AppRoot>) -> &str {
+    ctx.state.settings_navigation.query.text()
+}
+
+fn settings_entries(ctx: &Context<AppRoot>) -> Vec<SettingEntry> {
+    let searching = !settings_query(ctx).is_empty();
+    let tab = if searching {
+        crate::state::SettingsTab::All
+    } else {
+        ctx.state.settings_navigation.tab
+    };
+    settings_entries_for_tab(ctx, tab, searching)
+}
+
+fn settings_item_count(entries: &[SettingEntry]) -> usize {
+    entries
+        .iter()
+        .filter(|entry| matches!(entry, SearchEntry::Item(_)))
+        .count()
+}
+
+fn visible_settings_entries(entries: &[SettingEntry], query: &str) -> Vec<SettingEntry> {
+    if query.is_empty() {
+        return entries.to_vec();
+    }
+    let items: Vec<_> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            SearchEntry::Item(item) => Some(item.clone()),
+            _ => None,
+        })
+        .collect();
+    let matched: HashSet<usize> = rank_search_palette_indices_with_mode(
+        &items,
+        query,
+        SearchMatchMode::Hybrid,
+        |_, _, score| score as f64,
+    )
+    .into_iter()
+    .collect();
+    let mut visible = Vec::new();
+    let mut chrome = Vec::new();
+    let mut item_index = 0;
+    for entry in entries {
+        match entry {
+            SearchEntry::Spacer => {
+                chrome.clear();
+                chrome.push(entry.clone());
+            }
+            SearchEntry::Header(_) => chrome.push(entry.clone()),
+            SearchEntry::Item(_) => {
+                if matched.contains(&item_index) {
+                    if visible.is_empty() {
+                        chrome.retain(|entry| !matches!(entry, SearchEntry::Spacer));
+                    }
+                    visible.append(&mut chrome);
+                    visible.push(entry.clone());
+                }
+                item_index += 1;
+            }
+        }
+    }
+    visible
+}
+
+fn settings_entries_for_tab(
+    ctx: &Context<AppRoot>,
+    tab: crate::state::SettingsTab,
+    searching: bool,
+) -> Vec<SettingEntry> {
+    let mut groups = settings_groups(ctx);
+    groups.sort_by_key(|(group, _)| (setting_category(group).index(), *group == "Titlebar"));
+    search_entries_with_groups(groups.into_iter().filter_map(|(group, entries)| {
+        let category = setting_category(group);
+        if tab != crate::state::SettingsTab::All && tab != category {
+            return None;
+        }
+        let heading = if searching && category.label() != group {
+            format!("{} › {group}", category.label())
+        } else {
+            group.to_string()
+        };
+        Some((heading, entries))
+    }))
+    .into_iter()
+    .filter(|entry| match entry {
+        SearchEntry::Header(title) if !searching => title.as_ref() != tab.label(),
+        _ => true,
+    })
+    .collect()
+}
+
+pub(crate) fn settings_query_selection(ctx: &Context<AppRoot>) -> Option<SettingsAction> {
+    let actions: Vec<_> = visible_settings_entries(&settings_entries(ctx), settings_query(ctx))
+        .into_iter()
+        .filter_map(|entry| match entry {
+            SearchEntry::Item(item) => Some(item.value.0),
+            _ => None,
+        })
+        .collect();
+    actions
+        .iter()
+        .copied()
+        .find(|action| Some(*action) == ctx.state.settings_selected)
+        .or_else(|| actions.first().copied())
+}
+
+fn settings_section_item(title: &str, theme: &Theme) -> ListItem {
+    ListItem::header(title).style(fg_only(&theme.accent).bold())
+}
+
+fn settings_list_rows(ctx: &Context<AppRoot>, rows: usize) -> u16 {
+    const ABOVE_LIST: u16 = 7;
+    let cap = (ctx.viewport().h * SETTINGS_MAX_HEIGHT_PERCENT / 100)
+        .saturating_sub(ABOVE_LIST)
+        .max(3);
+    u16::try_from(rows).unwrap_or(u16::MAX).clamp(1, cap)
+}
+
+fn stepped_settings_row(
+    targets: &[Option<SettingsAction>],
+    current: Option<usize>,
+    delta: isize,
+) -> Option<usize> {
+    let rows = targets
+        .iter()
+        .enumerate()
+        .filter_map(|(index, target)| target.map(|_| index))
+        .collect::<Vec<_>>();
+    let last = rows.len().checked_sub(1)?;
+    let position = current
+        .and_then(|current| rows.iter().position(|row| *row == current))
+        .unwrap_or(0);
+    Some(rows[position.saturating_add_signed(delta).min(last)])
+}
+
+fn settings_key_handler(
+    ctx: &Context<AppRoot>,
+    targets: Arc<[Option<SettingsAction>]>,
+    selected: Option<usize>,
+    page: isize,
+    actions: &[OverlayAction],
+) -> KeyHandler {
+    let actions = actions
+        .iter()
+        .filter(|action| action.enabled && action.intercept)
+        .map(|action| (action.key.clone(), action.msg.clone()))
+        .collect::<Vec<_>>();
+    ctx.link().key_handler(move |key| {
+        let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key;
+        let navigation = match key.code {
+            code if plain && !key.mods.shift => {
+                let delta = match code {
+                    KeyCode::Up => Some(-1),
+                    KeyCode::Down => Some(1),
+                    KeyCode::PageUp => Some(-page),
+                    KeyCode::PageDown => Some(page),
+                    KeyCode::Home => Some(isize::MIN),
+                    KeyCode::End => Some(isize::MAX),
+                    _ => None,
+                };
+                delta.and_then(|delta| {
+                    let index = stepped_settings_row(&targets, selected, delta)?;
+                    targets[index].map(Msg::SettingsSelect)
+                })
+            }
+            _ => None,
+        };
+        navigation.or_else(|| {
+            actions
+                .iter()
+                .find(|(binding, _)| binding.matches_sequence(&[key]))
+                .map(|(_, msg)| msg.clone())
+        })
+    })
+}
+
+fn settings_search(
+    ctx: &Context<AppRoot>,
+    matches: usize,
+    total: usize,
+    keys: KeyHandler,
+) -> Element {
+    let theme = &ctx.state.theme;
+    Input::bound(&ctx.state.settings_navigation.query)
         .placeholder("Search settings…")
-        .preserve_groups(true)
-        .initial_selected_item_index(selected_index)
-        .sync_selection(true)
-        .input_key_interceptor(overlay_interceptor(ctx, &actions))
-        .render_item(Arc::new(
-            move |item: &SearchItem<(SettingsAction, String)>, _highlight| {
+        .suffix(format!("{matches}/{total}"))
+        .style(fg_only(&theme.muted))
+        .focus_style(Style::new().fg(theme.border_active))
+        .placeholder_style(fg_only(&theme.muted))
+        .suffix_style(fg_only(&theme.primary))
+        .focus_suffix_style(fg_only(&theme.primary))
+        .selection_style(theme.text_selection)
+        .width(Length::Flex(1))
+        .height(Length::Px(1))
+        .border(false)
+        .padding((0, 1))
+        .on_change(ctx.link().callback(Msg::SettingsQueryChanged))
+        .key_interceptor(keys)
+        .key(settings_palette_key())
+}
+
+pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
+    let theme = &ctx.state.theme;
+    let query = settings_query(ctx);
+    let entries = settings_entries(ctx);
+    let total = settings_item_count(&entries);
+    let visible = visible_settings_entries(&entries, query);
+    let matches = settings_item_count(&visible);
+    let config = ctx.state.config.clone();
+    let item_style = fg_only(&theme.primary);
+    let description_style = fg_only(&theme.muted);
+    let disabled_style = fg_only(&theme.border);
+    let mut items = Vec::new();
+    let mut targets = Vec::new();
+    for entry in &visible {
+        match entry {
+            SearchEntry::Spacer => {
+                items.push(ListItem::spacer());
+                targets.push(None);
+            }
+            SearchEntry::Header(title) => {
+                items.push(settings_section_item(title, theme));
+                targets.push(None);
+            }
+            SearchEntry::Item(item) => {
                 let disabled_reason = item.value.0.disabled_reason(&config);
                 let status = disabled_reason.unwrap_or(&item.value.1);
                 let style = if disabled_reason.is_some() {
@@ -370,7 +593,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                 } else {
                     item_style
                 };
-                picker_row(
+                items.push(picker_row(
                     [Span::new(item.label.as_ref()).style(style)],
                     status,
                     if disabled_reason.is_some() {
@@ -378,43 +601,80 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     } else {
                         description_style
                     },
-                )
-                .into()
-            },
-        ))
-        .on_select(
-            ctx.link()
-                .callback(|event: SearchEvent<(SettingsAction, String)>| {
-                    Msg::SettingsSelect(event.item.value.0)
-                }),
-        )
-        .on_activate(
-            ctx.link()
-                .callback(|event: SearchEvent<(SettingsAction, String)>| {
-                    Msg::SettingsActivate(event.item.value.0)
-                }),
-        );
-
-    let mut body = VStack::new().height(Length::Auto).child(palette);
-    if actions.iter().any(OverlayAction::shows_hint) {
-        body = body.child(overlay_hints(&ctx.state.theme, &actions));
+                ));
+                targets.push(Some(item.value.0));
+            }
+        }
     }
-    let panel: Element = Frame::new()
-        .header_left("Settings")
-        .header_style(ctx.state.theme.accent.bold())
-        .border_style(overlay_border_style(ctx))
-        .padding(0)
-        .style(Style::new().bg(ctx.state.theme.surface.element))
+    let selected_index = ctx
+        .state
+        .settings_selected
+        .and_then(|selected| {
+            targets
+                .iter()
+                .position(|target| target.is_some_and(|action| action == selected))
+        })
+        .or_else(|| targets.iter().position(Option::is_some));
+    let selected = selected_index.and_then(|index| targets[index]);
+    let actions = settings_actions(ctx, selected);
+    let targets: Arc<[Option<SettingsAction>]> = targets.into();
+    let select_targets = targets.clone();
+    let activate_targets = targets.clone();
+    let list_rows = settings_list_rows(ctx, targets.len());
+    let page = isize::from(i16::try_from(list_rows.saturating_sub(1).max(1)).unwrap_or(i16::MAX));
+    let keys = settings_key_handler(ctx, targets, selected_index, page, &actions);
+    let search = settings_search(ctx, matches, total, keys);
+    let list = List::new()
+        .items(items)
+        .selected(selected_index)
+        .border(false)
+        .selection_symbol(Some(""))
+        .unselected_symbol(Some(""))
+        .selection_full_width(true)
+        .selection_style(picker_selection_style(theme, None))
+        .unfocused_selection_style(picker_selection_style(theme, None))
+        .item_hover_style(Style::new().bg(theme.surface.element.elevate_by(0.08)))
+        .item_horizontal_padding((0, 1))
+        .header_horizontal_padding((0, 1))
+        .scroll_wheel(true)
+        .scrollbar(true)
+        .scrollbar_config(modal_scrollbar_config(theme))
+        .empty_text("No matches")
+        .empty_text_style(fg_only(&theme.muted))
+        .height(Length::Px(list_rows))
+        .focusable(false)
+        .on_select(ctx.link().callback_opt(move |event: ListEvent| {
+            select_targets.get(event.index)?.map(Msg::SettingsSelect)
+        }))
+        .on_activate(ctx.link().callback_opt(move |event: ListEvent| {
+            activate_targets
+                .get(event.index)?
+                .map(Msg::SettingsActivate)
+        }));
+    let tabs = super::palette::picker_tabs(
+        ctx,
+        &crate::state::SettingsTab::ALL.map(|tab| tab.label()),
+        if query.is_empty() {
+            ctx.state.settings_navigation.tab.index()
+        } else {
+            crate::state::SettingsTab::All.index()
+        },
+        ctx.link().callback(|event: TabsEvent| {
+            Msg::SettingsTabSelected(crate::state::SettingsTab::ALL[event.index])
+        }),
+    );
+    let body = VStack::new()
         .height(Length::Auto)
-        .child(body)
-        .into();
+        .child(search)
+        .child(super::palette::picker_divider(theme))
+        .child(tabs)
+        .child(Spacer::new().height(Length::Px(1)))
+        .child(list);
+    let panel = super::palette::tabbed_picker_panel(ctx, "Settings", Length::Auto, body.into());
+    let nested = ctx.state.pane_padding_editor.is_some() || ctx.state.settings_choice.is_some();
     let dim_progress = ctx.transition::<f32>(
         "rozi-settings-padding-dim",
-        if ctx.state.pane_padding_editor.is_some() {
-            1.0
-        } else {
-            0.0
-        },
+        if nested { 1.0 } else { 0.0 },
         crate::view::animation::scratch_transition_config(ctx),
     );
     let panel: Element = if dim_progress > 0.0 {
@@ -428,16 +688,17 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
     };
 
     Modal::new()
-        .width(Length::Px(60))
+        .width(Length::Px(SETTINGS_MODAL_WIDTH))
         .height(Length::Auto)
         .max_height(Length::Percent(SETTINGS_MAX_HEIGHT_PERCENT))
         .reserve_height(Length::Percent(SETTINGS_MAX_HEIGHT_PERCENT))
         .border(false)
         .padding(0)
         .frame_style(Style::new().bg(ctx.state.theme.surface.element))
+        .dismiss_on_escape(false)
         .on_close(ctx.link().callback(|_| Msg::CloseSettings))
         .child(panel)
-        .key(settings_palette_key())
+        .into()
 }
 
 fn settings_group(
@@ -447,33 +708,70 @@ fn settings_group(
     let entries = rows
         .into_iter()
         .map(|(label, status, action)| {
-            SearchEntry::Item(
-                SearchItem::new(label, (action, status))
-                    .aliases(settings_palette_aliases(group, action)),
-            )
+            let mut aliases = settings_palette_aliases(group, action);
+            aliases.push(Arc::from(setting_category(group).label()));
+            SearchEntry::Item(SearchItem::new(label, (action, status)).aliases(aliases))
         })
         .collect();
     (group, entries)
 }
 
-fn settings_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
-    let enabled = ctx
-        .state
-        .settings_selected
-        .is_some_and(SettingsAction::steps_horizontally);
+fn settings_actions(
+    ctx: &Context<AppRoot>,
+    selected: Option<SettingsAction>,
+) -> Vec<OverlayAction> {
+    let can_change =
+        selected.is_some_and(|action| action.disabled_reason(&ctx.state.config).is_none());
+    let tab = if settings_query(ctx).is_empty() {
+        ctx.state.settings_navigation.tab
+    } else {
+        crate::state::SettingsTab::All
+    };
     vec![
+        OverlayAction::new("esc", "clear / close", Msg::SettingsEscape, true).hide_hint(),
+        OverlayAction::new(
+            "tab",
+            "category",
+            Msg::SettingsTabSelected(tab.stepped(false)),
+            true,
+        )
+        .hide_hint(),
+        OverlayAction::new(
+            "shift-tab",
+            "category",
+            Msg::SettingsTabSelected(tab.stepped(true)),
+            true,
+        )
+        .hide_hint(),
         OverlayAction::new(
             "left",
-            "previous",
-            Msg::SettingsStep { reverse: true },
-            enabled,
+            "category",
+            Msg::SettingsTabSelected(tab.stepped(true)),
+            true,
         )
         .hide_hint(),
         OverlayAction::new(
             "right",
-            "next",
-            Msg::SettingsStep { reverse: false },
-            enabled,
+            "category",
+            Msg::SettingsTabSelected(tab.stepped(false)),
+            true,
+        )
+        .hide_hint(),
+        OverlayAction::new(
+            "shift-enter",
+            "choose",
+            Msg::SettingsOpenChoice(selected.unwrap_or(SettingsAction::Theme)),
+            selected.is_some_and(|action| {
+                action.disabled_reason(&ctx.state.config).is_none()
+                    && action.choice_ring(&ctx.state.config).is_some()
+            }),
+        )
+        .hide_hint(),
+        OverlayAction::new(
+            "enter",
+            "change",
+            Msg::SettingsActivate(selected.unwrap_or(SettingsAction::Theme)),
+            can_change,
         )
         .hide_hint(),
     ]
@@ -604,6 +902,48 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
         .on_close(ctx.link().callback(|_| Msg::ClosePanePaddingEditor))
         .child(body)
         .into()
+}
+
+pub(crate) fn settings_choice_overlay(ctx: &Context<AppRoot>) -> Element {
+    let Some(editor) = ctx.state.settings_choice.as_ref() else {
+        return Text::new("").into();
+    };
+    let theme = &ctx.state.theme;
+    let entries: Vec<SearchEntry<usize>> = editor
+        .options
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let mut entry = SearchEntry::item(*label, index);
+            if index == editor.original_index {
+                entry = entry.description(picker_description("current"));
+            }
+            entry
+        })
+        .collect();
+    let actions =
+        vec![OverlayAction::new("esc", "cancel", Msg::SettingsChoiceCancel, true).hide_hint()];
+    let palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
+        .entries(entries)
+        .placeholder("Search…")
+        .initial_selected_item_index(Some(editor.index))
+        .sync_selection(true)
+        .input_key_interceptor(overlay_interceptor(ctx, &actions))
+        .on_select(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::SettingsChoiceSelect(event.item.value)),
+        )
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::SettingsChoicePick(event.item.value)),
+        );
+    nested_action_palette_modal(ctx, editor.title, SETTINGS_MAX_HEIGHT_PERCENT)
+        .width(Length::Px(SETTINGS_CHOICE_WIDTH))
+        .backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION))
+        .dismiss_on_escape(false)
+        .on_close(ctx.link().callback(|_| Msg::SettingsChoiceCancel))
+        .child(palette)
+        .key(settings_choice_key())
 }
 
 fn enabled_status(enabled: bool) -> String {

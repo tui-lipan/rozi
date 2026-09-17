@@ -76,6 +76,28 @@ its arguments, honoring quotes around a path that contains spaces (`"/opt/my edi
 --wait`), then passes the config path as a separate argument. Shell syntax in `EDITOR` - pipes,
 redirection, variable expansion - is not interpreted.
 
+## Settings picker
+
+Open Settings from the command palette or with `prefix -`. Browse General, Panes, Bars,
+Alerts, Sessions, or All. Open/close animation lives under Panes; workspace animation
+and the master animation switch live under General.
+
+Type to search every category. The category strip sits under the search field, as in
+Keybindings. Results retain their category and group headings. Browsing a category omits the inner
+heading that repeats the tab name; All and search keep every group heading. Clearing the
+query, or pressing Esc once, returns to the previous category and selection. Esc with an empty
+query closes Settings. Selecting a category clears the query and restores that category's last
+highlighted row.
+
+Use Tab, Shift+Tab, Left, and Right to switch categories, and Up/Down to select a setting.
+Enter cycles the highlighted row: toggles two-option settings and steps multi-value ones.
+Shift+Enter opens a compact picker for a multi-value row. Moving the highlight previews the
+value; Enter saves it, Esc restores the previous one. Theme and Terminal padding keep
+their own editors. Row Enter saves immediately. Settings has no footer hint pills.
+
+Unavailable controls remain visible and searchable with their saved values dimmed. Enabling
+the parent feature makes its dependent controls editable.
+
 ## Minimal example
 
 ```toml
@@ -205,7 +227,7 @@ Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `succes
 | `tile_float` | bool | `true` | Animates tile and float transitions. |
 | `axis_change` | bool | `true` | Animates split-axis changes. |
 | `sidebar` | bool | `true` | Animates sidebar movement. |
-| `workspace` | bool | `true` | Slides workspace content horizontally when switching. Also available as Workspace switching in Settings. |
+| `workspace` | bool | `true` | Slides workspace content horizontally when switching. Also available as Workspace switching animation in Settings. |
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds; `0` switches instantly. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `pane_style` | string | `"scale"` | `"scale"`, `"slide"`, `"portal"`, `"scan"`, or a recipe ID. Builtin values are case-insensitive. Unknown values fall back to Scale with a warning. |

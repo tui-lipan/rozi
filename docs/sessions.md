@@ -283,7 +283,7 @@ picker without choosing anything, leaves it where it is.
 
 ## Name or rename a session
 
-Use **Name session** or **Rename session**, with the default `Shift+S` command key. The same server,
+Use **Name session** or **Rename session**, with the default `S` command key. The same server,
 panes, processes, and scrollback continue under the new name.
 
 Rozi rejects names already used by a running session and names reserved for temporary servers.

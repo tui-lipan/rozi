@@ -25,7 +25,7 @@ pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
         search_truncated: false,
     });
     ctx.state.mode = Mode::Copy;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.show_palette = false;
     ctx.state.search = None;
     Update::full()

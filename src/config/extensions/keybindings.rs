@@ -46,7 +46,7 @@ pub(crate) fn resolve(
 
 fn classify_by_precedence(
     suggestions: &[SuggestedKeybindingContribution],
-    higher_priority: &[(String, String)],
+    higher_priority: &[(KeyBinding, String)],
     core_bound_actions: &HashSet<String>,
     explicitly_configured_actions: &HashSet<String>,
     diagnostics: &mut [ExtensionSuggestedKeybindingDiagnostic],
@@ -71,7 +71,7 @@ fn classify_by_precedence(
 
 fn higher_priority_blocker(
     suggestion: &SuggestedKeybindingContribution,
-    higher_priority: &[(String, String)],
+    higher_priority: &[(KeyBinding, String)],
     core_bound_actions: &HashSet<String>,
     explicitly_configured_actions: &HashSet<String>,
 ) -> Option<(ExtensionSuggestedKeybindingStatus, String)> {
@@ -87,10 +87,9 @@ fn higher_priority_blocker(
             format!("core provides bindings for `{}`", suggestion.action),
         ));
     }
-    let canonical = suggestion.binding.canonical_lowercase();
     let (_, owner) = higher_priority
         .iter()
-        .find(|(claimed, _)| bindings_conflict(&canonical, claimed))?;
+        .find(|(claimed, _)| suggestion.binding.conflicts_with(claimed))?;
     Some((
         ExtensionSuggestedKeybindingStatus::Conflict,
         format!("already bound to {owner}"),
@@ -119,14 +118,12 @@ fn conflicting_peer_labels(
     pending: &[usize],
     suggestion: &SuggestedKeybindingContribution,
 ) -> Vec<String> {
-    let canonical = suggestion.binding.canonical_lowercase();
     let mut peers = pending
         .iter()
         .copied()
         .filter(|other_index| {
             let other = &suggestions[*other_index];
-            other.action != suggestion.action
-                && bindings_conflict(&canonical, &other.binding.canonical_lowercase())
+            other.action != suggestion.action && suggestion.binding.conflicts_with(&other.binding)
         })
         .map(|other_index| {
             let other = &suggestions[other_index];
@@ -197,34 +194,21 @@ fn declared_diagnostic(
     }
 }
 
-fn higher_priority_claims(config: &Config) -> Vec<(String, String)> {
-    let mut claimed = crate::commands::core_default_shortcuts(&config.input)
+fn higher_priority_claims(config: &Config) -> Vec<(KeyBinding, String)> {
+    let mut claimed = crate::config::hard_claims(config)
         .into_iter()
-        .filter(|(id, _)| !config.key_overrides.contains_key(id))
-        .map(|(id, binding)| (binding.canonical_lowercase(), format!("core action `{id}`")))
+        .map(|claim| {
+            let owner = match claim.owner {
+                crate::config::KeymapOwner::Core(id) => format!("core action `{id}`"),
+                crate::config::KeymapOwner::Override(id) => format!("user binding for `{id}`"),
+                crate::config::KeymapOwner::UserCommand(_) => "a user `[keys]` command".to_string(),
+            };
+            (claim.binding, owner)
+        })
         .collect::<Vec<_>>();
-    for (id, bindings) in &config.key_overrides {
-        for binding in bindings {
-            claimed.push((
-                binding.canonical_lowercase(),
-                format!("user binding for `{id}`"),
-            ));
-        }
-    }
-    for command in &config.user_commands {
-        for binding in &command.bindings {
-            claimed.push((
-                binding.canonical_lowercase(),
-                "a user `[keys]` command".to_string(),
-            ));
-        }
-    }
     for (id, bindings) in &config.extension_key_defaults {
         for binding in bindings {
-            claimed.push((
-                binding.canonical_lowercase(),
-                format!("extension command `{id}`"),
-            ));
+            claimed.push((binding.clone(), format!("extension command `{id}`")));
         }
     }
     claimed
@@ -240,12 +224,6 @@ fn core_bound_actions(config: &Config) -> HashSet<String> {
         })
         .map(|id| (*id).to_string())
         .collect()
-}
-
-fn bindings_conflict(left: &str, right: &str) -> bool {
-    left == right
-        || left.starts_with(&format!("{right} "))
-        || right.starts_with(&format!("{left} "))
 }
 
 #[cfg(test)]

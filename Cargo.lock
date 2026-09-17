@@ -2592,11 +2592,12 @@ dependencies = [
 
 [[package]]
 name = "ratatui-image"
-version = "11.0.6"
+version = "11.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e000b7a22eae639460bc6ec8bb1cc689ecae5b0ed21935cd7d7dd52d38270c86"
+checksum = "9593d10c61ec2007f429d1fafc4f4a19fecdbae4d06b531a2d505227fb82f5ea"
 dependencies = [
  "base64-simd",
+ "flate2",
  "icy_sixel",
  "image",
  "rand 0.8.7",
@@ -3630,9 +3631,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan"
-version = "0.10.3"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e880300238afc7fc0b73a377647a580caa3c14105c5463c2f497e4c8cd8d17bd"
+checksum = "21d43895b3289a95b792f5271b254c0d745ea01f68bfc4e4b64d3b0e335b5f24"
 dependencies = [
  "alacritty_terminal",
  "arboard",
@@ -3671,9 +3672,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan-macro"
-version = "0.10.3"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de816fcfbecd23c2b57a0f8398b555d90a464eebc8aca2e468483e87189ef73e"
+checksum = "91ccf8b0751671da7cc1497ee16b7c5153eca76f712437c2baa6af5dc4faa863"
 dependencies = [
  "prettyplease",
  "proc-macro-crate",

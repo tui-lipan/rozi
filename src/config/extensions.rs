@@ -794,7 +794,7 @@ mod tests {
         let entry = &entries[0];
         assert_eq!(entry.status, ExtensionStatus::Loaded);
         assert_eq!(entry.suggested_keybindings.len(), 2);
-        assert_eq!(entry.suggested_keybindings[0].key, "Ctrl+h");
+        assert_eq!(entry.suggested_keybindings[0].key, "Ctrl+H");
         assert!(
             entry
                 .suggested_keybindings

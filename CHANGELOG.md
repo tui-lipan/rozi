@@ -35,6 +35,13 @@
 
 ### Fixed
 
+- Unbinding a key in Keybindings no longer jumps the highlight back to Prefix. The next remaining
+  row stays selected, so the list does not scroll to the top.
+- In-app config writes leave exactly one blank line before each table, and a new key is inserted
+  before a section's trailing separator rather than after it. Saving sidebar or pane settings no
+  longer glues the next `[section]` onto the new assignment.
+- The Terminal padding card sits one row below Settings, matching Change keybinding on Keybindings.
+  Nested cards share that inset instead of lining up with the parent's top edge.
 - Quitting or detaching no longer flashes the "Reconnecting" overlay. The server closing the
   connection in answer to the client leaving was read as a lost link and started a reconnect.
 - On macOS, rozi no longer leaves terminal color replies such as `^[]4;0;rgb:…` in the shell after
@@ -67,12 +74,23 @@
 
 ### Changed
 
+- Overlay pickers no longer wrap their body in a borderless inner `Frame`. The modal already
+  hugs content and owns the height cap; the extra node only blocked `join_frame` from the chrome.
+  Their search divider stays an inner rule and does not join the modal border.
+- The Keybindings footer no longer shows `switch tabs ←/→`. The tab strip still answers to the
+  arrows, `Tab`, and `Shift+Tab`.
+- The Keybindings search divider no longer joins the modal border. It uses the same border color
+  as the command palette and the other pickers, not the brighter muted text color. The match count
+  in the search field uses the same primary text color as those pickers. The Change keybinding card
+  uses that same border-colored inner rule.
 - Scrollable layout no longer scrolls on hover. With focus on hover, pointing at a clipped column
   focuses it in place; the next key or click scrolls it into view.
 - Moving, swapping, or dragging a Scrollable column keeps the strip still when the column lands in a
   fully visible slot, so the column goes to its new place instead of the rest of the strip sliding
   around it. A clipped landing scrolls only as far as needed. Lifting a column mid-drag no longer
   scrolls the columns left behind.
+- Takes tui-lipan 0.11.0. Shortcut labels, Super spelling, and the in-app key recorder use its
+  `KeyBinding` / `KeyCapture` APIs; list section headers use `ListItem` divider rows.
 - Settings no longer lists Extensions. Open the manager from the command palette.
 - Settings gains a Sidebar group. **Background follows terminal** paints the column with the canvas
   backdrop instead of the elevated panel fill, and **Gap** keeps or drops the blank row between each

@@ -25,7 +25,7 @@ pub(crate) fn open_rename_pane(ctx: &mut Context<AppRoot>) -> Update {
 
     ctx.state.rename = Some(PaneRenameState::new(target, initial));
     ctx.state.show_palette = false;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.search = None;
     ctx.state.mode = Mode::Normal;
     request_rename_focus(ctx);
@@ -69,7 +69,7 @@ pub(crate) fn open_rename_workspace(ctx: &mut Context<AppRoot>) -> Update {
     // Never raised from another dialog; assign so an earlier child's origin cannot leak into it.
     ctx.state.overlay_return = None;
     ctx.state.show_palette = false;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.search = None;
     ctx.state.mode = Mode::Normal;
     request_rename_session_focus(ctx);

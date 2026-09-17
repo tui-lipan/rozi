@@ -8,10 +8,63 @@ use tui_lipan::prelude::*;
 use crate::config::Config;
 use crate::input::Action;
 use crate::state::{Mode, Pane, State, cap_style_label};
-use crate::view::keys_display::format_binding;
 use crate::{AppRoot, Msg};
 
 use super::catalog::*;
+
+#[derive(Clone, Debug)]
+pub(crate) struct EditableCommand {
+    /// Stable id written under `[keys]`.
+    pub(crate) config_id: String,
+    /// Runtime registry id. Named commands carry the `command.` namespace here.
+    pub(crate) registry_id: String,
+    pub(crate) label: String,
+    pub(crate) current_hint: String,
+    pub(crate) default_hint: String,
+    pub(crate) overridden: bool,
+}
+
+/// Commands the in-app keybinding editor can persist without exposing config representation.
+///
+/// Inline `[keys]` commands have no stable action id, generated workspace ranges are intentionally
+/// presented as one help row, and framework/internal commands do not belong to user config.
+pub(crate) fn editable_commands(ctx: &Context<AppRoot>) -> Vec<EditableCommand> {
+    let named_ids = ctx
+        .state
+        .config
+        .commands
+        .iter()
+        .map(|command| command.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+
+    ctx.command_registry()
+        .entries()
+        .into_iter()
+        .filter_map(|entry| {
+            let registry_id = entry.id.as_str();
+            let (config_id, default_hint) = if Action::from_id(registry_id).is_some() {
+                (
+                    registry_id,
+                    builtin_default_keybinding_hint(&ctx.state.config, registry_id),
+                )
+            } else if let Some(id) = registry_id.strip_prefix("command.")
+                && named_ids.contains(id)
+            {
+                (id, named_command_default_hint(&ctx.state.config, id))
+            } else {
+                return None;
+            };
+            Some(EditableCommand {
+                config_id: config_id.to_string(),
+                registry_id: registry_id.to_string(),
+                label: entry.label.to_string(),
+                current_hint: entry.keybinding_hint.as_deref().unwrap_or("").to_string(),
+                default_hint,
+                overridden: ctx.state.config.key_overrides.contains_key(config_id),
+            })
+        })
+        .collect()
+}
 
 /// Whether app command chords should currently match at all: only in `Mode::Normal` with no
 /// modal overlay focused. Scratch is a real pane workspace and keeps pane commands active.
@@ -113,8 +166,7 @@ fn register_forward_prefix_command(ctx: &Context<AppRoot>, config: &Config, acti
 }
 
 fn prefix_forward_binding(config: &Config) -> Option<(KeyBinding, KeyEvent)> {
-    let prefix = config.input.prefix.canonical_lowercase();
-    let binding = KeyBinding::from_str(&format!("{prefix} {prefix}")).ok()?;
+    let binding = prefix_forward_chord(&config.input)?;
     let mut events = config.input.prefix.key_events().ok()?;
     (events.len() == 1).then(|| (binding, events.remove(0)))
 }
@@ -223,8 +275,8 @@ fn register_named_commands(ctx: &Context<AppRoot>, config: &Config, active: bool
         let hint = if config.key_overrides.contains_key(&command.id) {
             builtin_keybinding_hint(config, &command.id, &[])
         } else {
-            let parts: Vec<_> = suggested.iter().map(format_binding).collect();
-            (!parts.is_empty()).then(|| Arc::<str>::from(parts.join(" / ")))
+            let hint = KeyBindings::from_bindings(suggested.iter().cloned()).label();
+            (!hint.is_empty()).then(|| Arc::<str>::from(hint))
         };
         let link = ctx.link().clone();
         ctx.register_command(
@@ -310,7 +362,7 @@ pub(crate) fn command_prefix_chord(ctx: &Context<AppRoot>, id: &str) -> Option<S
         .find(|entry| entry.id.as_str() == id)?
         .shortcuts
         .primary()
-        .map(format_binding)
+        .map(KeyBinding::label)
 }
 
 /// Resolve a builtin command's shortcuts: an explicit `[keys]` override (verbatim, including an
@@ -323,8 +375,7 @@ fn resolve_shortcuts(config: &Config, id: &str, defaults: &[&str]) -> KeyBinding
     } else {
         let mut bindings = default_shortcuts_for(config, defaults);
         if id == "paste" {
-            bindings
-                .push(KeyBinding::from_str(PASTE_DIRECT_SHORTCUT).expect("paste shortcut parses"));
+            bindings.push(paste_direct_binding());
         }
         if let Some(suggested) = config.extension_action_key_defaults.get(id) {
             for binding in suggested {
@@ -360,26 +411,86 @@ fn builtin_keybinding_hint(config: &Config, id: &str, defaults: &[&str]) -> Opti
     (!unique.is_empty()).then(|| Arc::<str>::from(unique.join(" / ")))
 }
 
+fn builtin_default_keybinding_hint(config: &Config, id: &str) -> String {
+    let Some(command) = BUILTIN_COMMANDS
+        .iter()
+        .find(|command| command.action.id() == Some(id))
+    else {
+        return String::new();
+    };
+    let mut hints = builtin_default_keybinding_hint_parts(config, id, command.default_keys);
+    if id == "quit"
+        && let Some(detach) = BUILTIN_COMMANDS
+            .iter()
+            .find(|command| command.action == Action::Detach)
+    {
+        hints.extend(builtin_default_keybinding_hint_parts(
+            config,
+            "detach",
+            detach.default_keys,
+        ));
+    }
+    hints.dedup();
+    hints.join(" / ")
+}
+
+fn named_command_default_hint(config: &Config, id: &str) -> String {
+    let Some(steps) = config
+        .commands
+        .iter()
+        .find(|command| command.id == id)
+        .and_then(|command| command.default_key.as_deref())
+    else {
+        return String::new();
+    };
+    let prefix = config.input.prefix.canonical_lowercase();
+    KeyBinding::from_str(&format!("{prefix} {EXTENSION_KEY_LEADER} {steps}"))
+        .map(|binding| binding.label())
+        .unwrap_or_default()
+}
+
 /// Return the live display alternatives for one built-in action. Defaults intentionally stay as
 /// command key steps (`w`, `x`, …), granted extension suggestions use their literal binding, and
-/// explicit overrides retain their exact bindings.
+/// explicit overrides read the way they were written: a scheme entry as its command key, anything
+/// else as the chord it resolves to.
 fn builtin_keybinding_hint_parts(config: &Config, id: &str, defaults: &[&str]) -> Vec<String> {
-    if config.key_overrides.contains_key(id) {
+    if let Some(spec) = config.key_sources.get(id) {
+        let defaults = default_binding_exprs(id).unwrap_or_default();
+        let mut parts = Vec::new();
+        for part in spec
+            .expressions(&defaults)
+            .iter()
+            .flat_map(|expr| expr.display_parts(&config.input))
+        {
+            if !parts.contains(&part) {
+                parts.push(part);
+            }
+        }
+        parts
+    } else if config.key_overrides.contains_key(id) {
         resolve_shortcuts(config, id, defaults)
             .iter()
-            .map(format_binding)
+            .map(KeyBinding::label)
             .collect()
     } else {
-        let mut hints: Vec<_> = defaults
-            .iter()
-            .filter_map(|key| KeyBinding::from_str(key).ok())
-            .map(|binding| format_binding(&binding))
-            .collect();
-        if let Some(suggested) = config.extension_action_key_defaults.get(id) {
-            hints.extend(suggested.iter().map(format_binding));
-        }
-        hints
+        builtin_default_keybinding_hint_parts(config, id, defaults)
     }
+}
+
+fn builtin_default_keybinding_hint_parts(
+    config: &Config,
+    id: &str,
+    defaults: &[&str],
+) -> Vec<String> {
+    let mut hints: Vec<_> = defaults
+        .iter()
+        .filter_map(|key| KeyBinding::from_str(key).ok())
+        .map(|binding| binding.label())
+        .collect();
+    if let Some(suggested) = config.extension_action_key_defaults.get(id) {
+        hints.extend(suggested.iter().map(KeyBinding::label));
+    }
+    hints
 }
 
 /// For each key step, build the leader-prefix chord (`<prefix> <key>`) and, when
@@ -397,37 +508,26 @@ fn default_shortcuts_for<S: AsRef<str>>(config: &Config, keys: &[S]) -> Vec<KeyB
         .collect()
 }
 
-/// Every chord the built-in commands answer to out of the box, paired with the id that owns it.
-/// Used to tell an extension its suggested chord is already spoken for.
-pub(crate) fn builtin_default_shortcuts(
-    input: &crate::config::InputConfig,
-) -> Vec<(&'static str, KeyBinding)> {
-    let mut shortcuts = BUILTIN_COMMANDS
+/// Every core-owned default as a source expression: built-in actions, direct paste, and the
+/// generated workspace commands. Extension suggestions resolve against all of them (through
+/// [`crate::config::hard_claims`]), so a generated command cannot be shadowed merely because it is
+/// not a static [`BuiltinCommand`]. Prefix forwarding is not an expression, since both of its steps
+/// are the prefix itself; see [`prefix_forward_chord`].
+pub(crate) fn core_default_exprs() -> Vec<(String, crate::config::BindingExpr)> {
+    use crate::config::BindingExpr;
+    let scheme = |key: &str| KeyBinding::from_str(key).ok().map(BindingExpr::Scheme);
+    let mut exprs = BUILTIN_COMMANDS
         .iter()
         .filter_map(|command| Some((command.action.id()?, command.default_keys)))
         .flat_map(|(id, keys)| {
             keys.iter()
-                .flat_map(move |key| crate::config::scheme_shortcuts(input, key))
-                .map(move |binding| (id, binding))
+                .filter_map(move |key| scheme(key).map(|expr| (id.to_string(), expr)))
         })
         .collect::<Vec<_>>();
-    shortcuts.push((
-        "paste",
-        KeyBinding::from_str(PASTE_DIRECT_SHORTCUT).expect("paste shortcut parses"),
+    exprs.push((
+        "paste".to_string(),
+        BindingExpr::Literal(paste_direct_binding()),
     ));
-    shortcuts
-}
-
-/// Every core-owned default shortcut, including generated workspace and prefix-forward commands.
-/// Extension suggestions use this complete set so a generated command cannot be shadowed merely
-/// because it is not represented by one static [`BuiltinCommand`].
-pub(crate) fn core_default_shortcuts(
-    input: &crate::config::InputConfig,
-) -> Vec<(String, KeyBinding)> {
-    let mut shortcuts = builtin_default_shortcuts(input)
-        .into_iter()
-        .map(|(id, binding)| (id.to_string(), binding))
-        .collect::<Vec<_>>();
     for index in 0..9 {
         let digit = WORKSPACE_DIGITS[index];
         let symbol = WORKSPACE_SHIFT_SYMBOLS[index];
@@ -440,24 +540,31 @@ pub(crate) fn core_default_shortcuts(
             ),
         ] {
             let id = format!("workspace.{kind}.{}", index + 1);
-            shortcuts.extend(
+            exprs.extend(
                 keys.iter()
-                    .flat_map(|key| crate::config::scheme_shortcuts(input, key))
-                    .map(|binding| (id.clone(), binding)),
+                    .filter_map(|key| scheme(key).map(|expr| (id.clone(), expr))),
             );
         }
     }
+    exprs
+}
+
+/// `Prefix Prefix`, which sends the prefix itself to the pane.
+pub(crate) fn prefix_forward_chord(input: &crate::config::InputConfig) -> Option<KeyBinding> {
     let prefix = input.prefix.canonical_lowercase();
-    if let Ok(binding) = KeyBinding::from_str(&format!("{prefix} {prefix}")) {
-        shortcuts.push((FORWARD_PREFIX_COMMAND_ID.to_string(), binding));
-    }
-    shortcuts
+    KeyBinding::from_str(&format!("{prefix} {prefix}")).ok()
 }
 
 pub(crate) fn default_shortcuts_for_action(
     input: &crate::config::InputConfig,
     id: &str,
 ) -> Option<Vec<KeyBinding>> {
+    default_binding_exprs(id).map(|exprs| crate::config::resolve_all(&exprs, input))
+}
+
+/// A built-in action's default keys as source expressions: every default is a command key that
+/// follows the scheme. `None` for ids that are not built-in actions.
+pub(crate) fn default_binding_exprs(id: &str) -> Option<Vec<crate::config::BindingExpr>> {
     BUILTIN_COMMANDS
         .iter()
         .find(|command| command.action.id() == Some(id))
@@ -465,9 +572,16 @@ pub(crate) fn default_shortcuts_for_action(
             command
                 .default_keys
                 .iter()
-                .flat_map(|key| crate::config::scheme_shortcuts(input, key))
+                .filter_map(|key| KeyBinding::from_str(key).ok())
+                .filter(|step| step.step_count() == 1)
+                .map(crate::config::BindingExpr::Scheme)
                 .collect()
         })
+}
+
+/// Paste's direct, scheme-independent default.
+pub(crate) fn paste_direct_binding() -> KeyBinding {
+    KeyBinding::from_str(PASTE_DIRECT_SHORTCUT).expect("paste shortcut parses")
 }
 
 /// Resolve a command's live display label, reflecting current state for toggle actions (e.g.
@@ -766,7 +880,11 @@ mod tests {
             "{} {EXTENSION_KEY_LEADER}",
             input.prefix.canonical_lowercase()
         );
-        for (id, binding) in builtin_default_shortcuts(&input) {
+        for (id, binding) in core_default_exprs().into_iter().flat_map(|(id, expr)| {
+            expr.resolve(&input)
+                .into_iter()
+                .map(move |b| (id.clone(), b))
+        }) {
             let canonical = binding.canonical_lowercase();
             assert!(
                 canonical != reserved && !canonical.starts_with(&format!("{reserved} ")),
@@ -1270,8 +1388,7 @@ mod tests {
         );
 
         let binding = KeyBinding::from_str("ctrl-shift-x").expect("binding parses");
-        assert_eq!(binding.compact_display(), "ctrl+shift+x");
-        assert_eq!(format_binding(&binding), "Ctrl+X");
+        assert_eq!(binding.label(), "Ctrl+Shift+X");
         assert!(binding.matches_sequence(&[KeyEvent {
             code: KeyCode::Char('x'),
             mods: KeyMods {
@@ -1297,7 +1414,7 @@ mod tests {
         );
         assert_eq!(
             builtin_keybinding_hint(&overridden, "paste", &["v"]),
-            Some(Arc::<str>::from("Alt+p"))
+            Some(Arc::<str>::from("Alt+P"))
         );
     }
 
@@ -1314,7 +1431,7 @@ mod tests {
 
         assert_eq!(
             builtin_keybinding_hint(&config, "close", &["w"]),
-            Some(Arc::<str>::from("Ctrl+b k / Alt+x"))
+            Some(Arc::<str>::from("Ctrl+B k / Alt+X"))
         );
     }
 
@@ -1337,7 +1454,7 @@ mod tests {
         );
         assert_eq!(
             builtin_keybinding_hint(&overridden, "quit", &["q"]),
-            Some(Arc::<str>::from("Ctrl+q / Alt+d"))
+            Some(Arc::<str>::from("Ctrl+Q / Alt+D"))
         );
     }
 

@@ -28,7 +28,7 @@ pub(crate) fn open_save_profile_prompt(ctx: &mut Context<AppRoot>) -> Update {
     // changed); raised standalone it leads back to the pane.
     ctx.state.overlay_return = crate::ops::overlay_return::picker_origin(&ctx.state);
     ctx.state.show_palette = false;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.search = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
@@ -150,7 +150,7 @@ fn open_profile_picker_mode(ctx: &mut Context<AppRoot>, apply_mode: bool) -> Upd
     ctx.state.profile_picker = Some(picker);
     ctx.state.show_profile_picker = true;
     ctx.state.show_palette = false;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.search = None;
     ctx.state.rename = None;
     ctx.state.save_profile_prompt = None;

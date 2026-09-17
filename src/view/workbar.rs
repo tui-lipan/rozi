@@ -919,7 +919,7 @@ fn workspace_tab_count(state: &crate::state::State) -> usize {
 }
 
 pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Element {
-    let prefix = crate::view::keys_display::format_binding(&input.prefix);
+    let prefix = input.prefix.label();
     let spawn_hint = if input.modifier_shortcuts {
         format!(
             "Press {}+Enter or {prefix} Enter to spawn a shell.",
@@ -966,7 +966,7 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// still aligns.
 pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     let input = &ctx.state.config.input;
-    let prefix = crate::view::keys_display::format_binding(&input.prefix);
+    let prefix = input.prefix.label();
     let mut leave_keys: Vec<_> = ["quit", "detach"]
         .into_iter()
         .filter_map(|id| crate::commands::command_prefix_chord(ctx, id))

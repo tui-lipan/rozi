@@ -510,9 +510,11 @@
 #restart = "on-failure"
 #env = { RUST_LOG = "info" }
 
-# Rebind built-in actions, or define new commands. Three binding forms:
+# Rebind built-in actions, or define new commands. Binding forms:
 #   "b"              bare key - replaces the default and follows the [input] scheme
 #   "scheme:ctrl-t"  a modified key that still expands through the [input] scheme
+#   "prefix:w"       only <prefix> w; follows prefix changes
+#   "mod:v"          only <modifier>-v; follows modifier changes, dormant while it is off
 #   "ctrl-a c"       literal binding, never mirrored or rewritten
 # Configuring an action replaces all of its defaults; `{ add = ... }` keeps them. An empty
 # value clears an action's keys. Action ids are listed in docs/keybindings.md.
@@ -522,6 +524,8 @@
 #save-profile = ["ctrl-a z", "alt-z"]
 #spawn = { add = "super-enter" }
 #spawn-float = "alt-shift-n"
+#close = "prefix:w"
+#paste = "mod:v"
 #scratchpad = []
 # A trigger mapped to a table defines a new command instead of rebinding one. A bare key
 # expands through the [input] scheme like a built-in does, so `g` answers to both <prefix> g

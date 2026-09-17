@@ -165,20 +165,13 @@ impl Default for InputConfig {
 
 /// Expand one key step into its scheme-generated shortcuts: the leader chord
 /// (`<prefix> <key>`) plus, when `modifier_shortcuts` is enabled, the held WM-modifier chord
-/// (`<modifier>-<key>`). A step that fails to parse in either form is simply dropped, so a
-/// malformed step yields an empty result rather than a panic.
+/// (`<modifier>-<key>`). A malformed step yields an empty result rather than a panic.
 pub fn scheme_shortcuts(input: &InputConfig, key: &str) -> Vec<KeyBinding> {
-    let prefix = input.prefix.canonical_lowercase();
-    let mut out = Vec::new();
-    if let Ok(chord) = KeyBinding::from_str(&format!("{prefix} {key}")) {
-        out.push(chord);
-    }
-    if input.modifier_shortcuts
-        && let Ok(held) = KeyBinding::from_str(&format!("{}-{key}", input.modifier.token()))
-    {
-        out.push(held);
-    }
-    out
+    KeyBinding::from_str(key)
+        .ok()
+        .filter(|step| step.step_count() == 1)
+        .map(|step| super::BindingExpr::Scheme(step).resolve(input))
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Debug)]
@@ -1049,9 +1042,12 @@ pub struct Config {
         std::collections::BTreeMap<String, super::extensions::ExtensionRuntimeFingerprint>,
     pub logging: LoggingConfig,
     pub workbar: WorkbarConfig,
-    /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
-    /// present with an empty list is an explicit unbind; an id absent here uses the built-in
-    /// defaults (see `crate::commands`).
+    /// `[keys]` action and named-command entries as written. The source of truth for anything that
+    /// edits bindings; see [`crate::config::BindingExpr`].
+    pub key_sources: HashMap<String, super::KeyOverrideSpec>,
+    /// [`Self::key_sources`] resolved for [`Self::input`]: command id -> native `KeyBinding`
+    /// shortcuts. A command id present with an empty list is an explicit unbind; an id absent here
+    /// uses the built-in defaults (see `crate::commands`). Never edited directly.
     pub key_overrides: HashMap<String, Vec<KeyBinding>>,
     /// User-defined `[keys]` entries keyed by a literal trigger binding (rather than a built-in
     /// action id): each becomes its own generated command (see `crate::commands`).
@@ -1574,6 +1570,8 @@ impl Default for SidebarConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserCommand {
     pub action: UserCommandAction,
+    /// The `[keys]` trigger as written. [`Self::bindings`] is this resolved for the current scheme.
+    pub trigger: super::BindingExpr,
     /// Every chord this command answers to. A bare key step expands through the input scheme the
     /// same way a built-in action's default does, so one entry yields both the prefix chord and
     /// the held-modifier chord; an explicitly-written chord binds only itself.
@@ -1684,6 +1682,7 @@ impl Default for Config {
             extension_runtime: std::collections::BTreeMap::new(),
             logging: LoggingConfig::default(),
             workbar: WorkbarConfig::default(),
+            key_sources: HashMap::new(),
             key_overrides: HashMap::new(),
             user_commands: Vec::new(),
         }
@@ -2063,6 +2062,7 @@ mod tests {
     fn user_command_label_describes_run_and_send() {
         let run = UserCommand {
             action: UserCommandAction::run("lazygit".to_string()),
+            trigger: crate::config::BindingExpr::parse("ctrl-a g").unwrap(),
             bindings: vec![KeyBinding::from_str("ctrl-a g").unwrap()],
             hint: "ctrl+a g".to_string(),
             label: None,
@@ -2071,6 +2071,7 @@ mod tests {
 
         let send = UserCommand {
             action: UserCommandAction::Send("ls -la\n".to_string()),
+            trigger: crate::config::BindingExpr::parse("ctrl-a g").unwrap(),
             bindings: vec![KeyBinding::from_str("ctrl-a g").unwrap()],
             hint: "ctrl+a g".to_string(),
             label: None,
@@ -2082,6 +2083,7 @@ mod tests {
     fn user_command_label_truncates_long_commands() {
         let run = UserCommand {
             action: UserCommandAction::run("x".repeat(60)),
+            trigger: crate::config::BindingExpr::parse("ctrl-a g").unwrap(),
             bindings: vec![KeyBinding::from_str("ctrl-a g").unwrap()],
             hint: "ctrl+a g".to_string(),
             label: None,

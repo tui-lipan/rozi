@@ -47,6 +47,13 @@ exclude = [
 # with it, which is what put the caret at the end of its row for the length of a focus transition.
 # 0.7.4 lets attach seeding stream terminal replays into bounded cache storage. It also keeps
 # provided file-tree paths in the remote host's path flavor for cross-platform remote sessions.
+# 0.11.0 names Super as Super rather than Cmd, replaces compact_display with KeyBinding::label,
+# and adds KeyBinding::to_source / from_key_event / conflicts_with, KeyCapture, and ListItem
+# divider rows. It also keeps wrapping Auto Flow wrap height when Flex/Px siblings oversubscribe.
+# It is a minor bump because KeyBinding display and canonical Super spelling changed.
+# 0.10.6 adds scoped standalone modifier-key reporting for live shortcut capture and reconciles
+# malformed Shift releases from Ghostty/Wayland. Rozi enables the mode only while the keybinding
+# recorder is listening, so normal composed text input is unchanged.
 # 0.9.2 reads Unix terminal input only through Termina, so a client whose terminal hangs up while it
 # exits (window closed, `ssh` dropped) no longer spins a core forever or aborts with a core dump.
 # 0.9.1 builds terminal snapshot spans from attribute runs instead of a `Style` per cell, and stops
@@ -59,7 +66,7 @@ exclude = [
 # a test that used to observe work settle on its own must `advance(...)` for it.
 # 0.10.3 reads host color and capability probe replies on macOS `/dev/tty`, where `poll(2)` does
 # not work, so they no longer leak into the shell after exit.
-tui-lipan = { version = "0.10.3", features = [
+tui-lipan = { version = "0.11.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

@@ -9,6 +9,7 @@ use super::schema::ProfileEntry;
 /// Writes an updated config text, creating the config directory when needed, and records the
 /// text as last-seen so the live-reload watcher does not treat our own write as an edit.
 fn write_config_text(path: &Path, updated: String) -> std::result::Result<(), String> {
+    let updated = format_config_text(&updated);
     toml::from_str::<toml::Value>(&updated).map_err(|error| {
         format!(
             "Refusing to write invalid config {}: {error}",
@@ -30,6 +31,126 @@ fn write_config_text(path: &Path, updated: String) -> std::result::Result<(), St
         .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
     note_config_text(Some(updated));
     Ok(())
+}
+
+/// Apply conservative whitespace formatting after every in-app config edit.
+///
+/// Rozi edits source text instead of serializing the parsed value so comments, table order, and
+/// user-chosen value spellings survive. The formatter therefore limits itself to whitespace that
+/// has no TOML meaning: trailing spaces, leading/trailing blank lines, repeated blank rows, and
+/// exactly one blank line before each table or array-table header (except at the start of the
+/// file). Blank lines inside a table stay; nothing is reordered or respelled.
+fn format_config_text(text: &str) -> String {
+    let mut output = Vec::new();
+    let mut blank = false;
+    let mut multiline = None;
+
+    for line in text.lines() {
+        if multiline.is_some() {
+            output.push(line.to_string());
+            toml_comment_with_multiline_state(line, &mut multiline);
+            continue;
+        }
+
+        if open_multiline_string(line).is_some() {
+            if blank {
+                output.push(String::new());
+                blank = false;
+            }
+            output.push(line.to_string());
+            toml_comment_with_multiline_state(line, &mut multiline);
+            continue;
+        }
+
+        let line = line.trim_end();
+        if line.is_empty() {
+            if !output.is_empty() {
+                blank = true;
+            }
+            continue;
+        }
+        let section_gap = table_header_path(line).is_some() && !output.is_empty();
+        if section_gap || blank {
+            output.push(String::new());
+            blank = false;
+        }
+        output.push(line.to_string());
+    }
+
+    let mut formatted = output.join("\n");
+    if !formatted.is_empty() {
+        formatted.push('\n');
+    }
+    formatted
+}
+
+#[derive(Clone, Copy)]
+enum MultilineQuote {
+    Basic,
+    Literal,
+}
+
+impl MultilineQuote {
+    fn delimiter(self) -> &'static str {
+        match self {
+            Self::Basic => "\"\"\"",
+            Self::Literal => "'''",
+        }
+    }
+}
+
+/// Return the first multiline delimiter outside a comment or ordinary quoted string.
+fn open_multiline_string(line: &str) -> Option<(MultilineQuote, usize)> {
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    let mut quoted = None;
+    while index < bytes.len() {
+        match (quoted, bytes[index]) {
+            (None, b'#') => return None,
+            (None, quote @ (b'"' | b'\'')) if bytes[index..].starts_with(&[quote; 3]) => {
+                let quote = if quote == b'"' {
+                    MultilineQuote::Basic
+                } else {
+                    MultilineQuote::Literal
+                };
+                return Some((quote, index));
+            }
+            (None, quote @ (b'"' | b'\'')) => quoted = Some(quote),
+            (Some(b'"'), b'\\') => index += 1,
+            (Some(quote), candidate) if quote == candidate => quoted = None,
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Byte offset immediately after the first unescaped closing delimiter on this line.
+fn multiline_string_close_end(line: &str, quote: MultilineQuote) -> Option<usize> {
+    let delimiter = quote.delimiter();
+    let mut offset = 0;
+    while let Some(relative) = line[offset..].find(delimiter) {
+        let index = offset + relative;
+        if matches!(quote, MultilineQuote::Literal)
+            || line[..index]
+                .bytes()
+                .rev()
+                .take_while(|byte| *byte == b'\\')
+                .count()
+                % 2
+                == 0
+        {
+            let quote = delimiter.as_bytes()[0];
+            let run = line[index..]
+                .bytes()
+                .take_while(|candidate| *candidate == quote)
+                .count()
+                .min(5);
+            return Some(index + run);
+        }
+        offset = index + delimiter.len();
+    }
+    None
 }
 
 pub fn persist_theme_name(name: &str) -> std::result::Result<PathBuf, String> {
@@ -167,6 +288,63 @@ pub fn persist_animation_string(key: &str, value: &str) -> std::result::Result<P
 
 fn toml_string(value: &str) -> String {
     toml::Value::String(value.to_string()).to_string()
+}
+
+/// The current config document, or an empty one when none exists yet.
+pub fn read_config_text() -> std::result::Result<String, String> {
+    let path = config_path();
+    match fs::read_to_string(&path) {
+        Ok(text) => Ok(text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(err) => Err(format!("Could not read config {}: {err}", path.display())),
+    }
+}
+
+/// Apply a keybinding edit to config source text. Validation and the eventual write run this same
+/// transform, so what was checked is what gets saved.
+///
+/// Override entries are written from their source expressions. `None` removes an entry so the
+/// command follows its defaults again. Inline `[keys]` commands are keyed by a trigger rather than
+/// a stable command id and are intentionally outside this API.
+pub fn apply_keymap_edit(text: &str, edit: &super::KeymapEdit) -> String {
+    let mut text = text.to_string();
+    for (id, spec) in &edit.overrides {
+        text = match spec {
+            Some(spec) => upsert_value_in_section(&text, "keys", id, &spec.toml_value()),
+            None => remove_value_in_section(&text, "keys", id),
+        };
+    }
+    if let Some(prefix) = &edit.prefix {
+        let value = toml_string(&prefix.to_source());
+        text = upsert_value_in_section(&text, "input", "prefix", &value);
+    }
+    if let Some(modifier) = edit.modifier {
+        let value = toml_string(modifier.token());
+        text = upsert_value_in_section(&text, "input", "modifier", &value);
+    }
+    if let Some(enabled) = edit.modifier_shortcuts {
+        text = upsert_bool_in_section(&text, "input", "modifier_shortcuts", enabled);
+    }
+    text
+}
+
+/// Persist a keybinding edit with one validated config write.
+pub fn persist_keymap_edit(edit: &super::KeymapEdit) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = apply_keymap_edit(&read_config_text()?, edit);
+    write_config_text(&path, text)?;
+    Ok(path)
+}
+
+fn toml_key_name(key: &str) -> String {
+    if key
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        key.to_string()
+    } else {
+        toml_string(key)
+    }
 }
 
 pub fn persist_notification_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
@@ -411,11 +589,17 @@ fn upsert_top_level_value(text: &str, key: &str, line_value: &str) -> String {
             && candidate.trim() == key
         {
             if !wrote_key {
-                output.push_str(&assignment);
+                output.push_str(&assignment_with_comment(
+                    &assignment,
+                    toml_line_comment(old_value),
+                ));
                 output.push('\n');
                 wrote_key = true;
             }
-            consume_toml_value(old_value.trim(), &mut lines);
+            for comment in consume_toml_value(old_value.trim(), &mut lines) {
+                output.push_str(&comment);
+                output.push('\n');
+            }
             continue;
         }
 
@@ -443,6 +627,7 @@ fn upsert_top_level_value(text: &str, key: &str, line_value: &str) -> String {
 /// assignment rather than leaving continuation lines behind.
 fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &str) -> String {
     let section_header = format!("[{section}]");
+    let key_source = toml_key_name(key);
     let target = section.split('.').map(str::to_string).collect::<Vec<_>>();
     let mut output = String::new();
     let mut in_section = false;
@@ -459,12 +644,16 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
                 }
                 output.push_str(&section_header);
                 output.push('\n');
-                output.push_str(&format!("{key} = {line_value}\n\n"));
+                output.push_str(&format!("{key_source} = {line_value}\n\n"));
                 saw_section = true;
                 wrote_key = true;
             }
             if in_section && !wrote_key {
-                output.push_str(&format!("{key} = {line_value}\n"));
+                // Keep the new key with the section body. A trailing blank before the next table
+                // is a separator, not a hole to append into; writing after it glues the next
+                // `[section]` onto the new assignment.
+                trim_trailing_blank_lines(&mut output);
+                output.push_str(&format!("{key_source} = {line_value}\n"));
                 wrote_key = true;
             }
             in_section = current == target;
@@ -473,13 +662,21 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
 
         if in_section
             && let Some((candidate, old_value)) = trimmed.split_once('=')
-            && candidate.trim() == key
+            && assignment_key(candidate) == Some(key)
         {
             if !wrote_key {
-                output.push_str(&format!("{key} = {line_value}\n"));
+                let assignment = format!("{key_source} = {line_value}");
+                output.push_str(&assignment_with_comment(
+                    &assignment,
+                    toml_line_comment(old_value),
+                ));
+                output.push('\n');
                 wrote_key = true;
             }
-            consume_toml_value(old_value.trim(), &mut lines);
+            for comment in consume_toml_value(old_value.trim(), &mut lines) {
+                output.push_str(&comment);
+                output.push('\n');
+            }
             continue;
         }
 
@@ -488,17 +685,24 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
     }
 
     if in_section && !wrote_key {
-        output.push_str(&format!("{key} = {line_value}\n"));
+        trim_trailing_blank_lines(&mut output);
+        output.push_str(&format!("{key_source} = {line_value}\n"));
     } else if !saw_section {
         if !output.is_empty() && !output.ends_with("\n\n") {
             output.push('\n');
         }
         output.push_str(&section_header);
         output.push('\n');
-        output.push_str(&format!("{key} = {line_value}\n"));
+        output.push_str(&format!("{key_source} = {line_value}\n"));
     }
 
     output
+}
+
+fn trim_trailing_blank_lines(output: &mut String) {
+    while output.ends_with("\n\n") {
+        output.pop();
+    }
 }
 
 fn remove_value_in_section(text: &str, section: &str, key: &str) -> String {
@@ -515,9 +719,16 @@ fn remove_value_in_section(text: &str, section: &str, key: &str) -> String {
 
         if in_section
             && let Some((candidate, old_value)) = trimmed.split_once('=')
-            && candidate.trim() == key
+            && assignment_key(candidate) == Some(key)
         {
-            consume_toml_value(old_value.trim(), &mut lines);
+            if let Some(comment) = toml_line_comment(old_value) {
+                output.push_str(comment);
+                output.push('\n');
+            }
+            for comment in consume_toml_value(old_value.trim(), &mut lines) {
+                output.push_str(&comment);
+                output.push('\n');
+            }
             continue;
         }
 
@@ -526,6 +737,81 @@ fn remove_value_in_section(text: &str, section: &str, key: &str) -> String {
     }
 
     output
+}
+
+fn assignment_with_comment(assignment: &str, comment: Option<&str>) -> String {
+    match comment {
+        Some(comment) => format!("{assignment} {comment}"),
+        None => assignment.to_string(),
+    }
+}
+
+fn toml_line_comment(source: &str) -> Option<&str> {
+    toml_comment_with_multiline_state(source, &mut None)
+}
+
+fn toml_comment_with_multiline_state<'a>(
+    source: &'a str,
+    multiline: &mut Option<MultilineQuote>,
+) -> Option<&'a str> {
+    if let Some(quote) = *multiline {
+        let end = multiline_string_close_end(source, quote)?;
+        *multiline = None;
+        return toml_comment_with_multiline_state(&source[end..], multiline);
+    }
+    let Some((quote, opening)) = open_multiline_string(source) else {
+        return toml_inline_comment(source);
+    };
+    let content = opening + quote.delimiter().len();
+    match multiline_string_close_end(&source[content..], quote) {
+        Some(relative_end) => {
+            toml_comment_with_multiline_state(&source[content + relative_end..], multiline)
+        }
+        None => {
+            *multiline = Some(quote);
+            None
+        }
+    }
+}
+
+/// Find a TOML comment outside an ordinary quoted string.
+fn toml_inline_comment(source: &str) -> Option<&str> {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    let mut quoted = None;
+    while index < bytes.len() {
+        match (quoted, bytes[index]) {
+            (None, b'#') => return Some(source[index..].trim_end()),
+            (None, quote @ (b'"' | b'\'')) => quoted = Some(quote),
+            (Some(b'"'), b'\\') => index += 1,
+            (Some(quote), candidate) if quote == candidate => quoted = None,
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn assignment_key(source: &str) -> Option<&str> {
+    let source = source.trim();
+    if source
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        return Some(source);
+    }
+    let quote = source.chars().next()?;
+    if !matches!(quote, '"' | '\'') || !source.ends_with(quote) {
+        return None;
+    }
+    let parsed = toml::from_str::<toml::Table>(&format!("{source} = true")).ok()?;
+    let (key, _) = parsed.into_iter().next()?;
+    // Quoted ids written by this module contain no escapes today. Returning a borrowed value keeps
+    // the common path allocation-free; escaped hand-written ids simply do not match an action id.
+    source
+        .strip_prefix(quote)?
+        .strip_suffix(quote)
+        .filter(|candidate| *candidate == key)
 }
 
 fn table_header_path(line: &str) -> Option<Vec<String>> {
@@ -564,14 +850,23 @@ fn find_table_probe(
     }
 }
 
-fn consume_toml_value<'a>(first_line: &str, lines: &mut std::iter::Peekable<std::str::Lines<'a>>) {
+fn consume_toml_value<'a>(
+    first_line: &str,
+    lines: &mut std::iter::Peekable<std::str::Lines<'a>>,
+) -> Vec<String> {
     let mut assignment = format!("value = {first_line}");
     let mut consumed_continuation = false;
+    let mut comments = Vec::new();
+    let mut multiline = None;
+    toml_comment_with_multiline_state(first_line, &mut multiline);
     while toml::from_str::<toml::Value>(&assignment).is_err() {
         let Some(line) = lines.next() else {
             break;
         };
         consumed_continuation = true;
+        if let Some(comment) = toml_comment_with_multiline_state(line, &mut multiline) {
+            comments.push(comment.to_string());
+        }
         assignment.push('\n');
         assignment.push_str(line);
     }
@@ -590,12 +885,18 @@ fn consume_toml_value<'a>(first_line: &str, lines: &mut std::iter::Peekable<std:
             orphaned.push_str(line);
             if toml::from_str::<toml::Value>(&orphaned).is_ok() {
                 for _ in 0..=index {
-                    lines.next();
+                    if let Some(line) = lines.next()
+                        && let Some(comment) =
+                            toml_comment_with_multiline_state(line, &mut multiline)
+                    {
+                        comments.push(comment.to_string());
+                    }
                 }
                 break;
             }
         }
     }
+    comments
 }
 
 #[cfg(test)]
@@ -990,6 +1291,197 @@ mod tests {
         assert!(updated.contains("focus_on_hover = false"));
         assert!(updated.contains("# keep"));
         assert!(!updated.contains("focus_on_hover = true"));
+    }
+
+    #[test]
+    fn config_formatter_keeps_source_content_but_cleans_blank_and_trailing_space() {
+        let source = "\n\n# keep this   \n\n\n[pane]  \nshow_titles = true   \n\n\n";
+        assert_eq!(
+            format_config_text(source),
+            "# keep this\n\n[pane]\nshow_titles = true\n"
+        );
+    }
+
+    #[test]
+    fn config_formatter_does_not_change_multiline_string_content() {
+        let source = "\nmessage = \"\"\"\nkeep trailing spaces   \n\n\nkeep blank rows\n\"\"\"   \n\n\n# ''' is only a comment   \nvalue = true   \n";
+        assert_eq!(
+            format_config_text(source),
+            "message = \"\"\"\nkeep trailing spaces   \n\n\nkeep blank rows\n\"\"\"   \n\n# ''' is only a comment\nvalue = true\n"
+        );
+    }
+
+    #[test]
+    fn config_formatter_tracks_adjacent_multiline_strings() {
+        let source = "\nvalue = [\"\"\"first\"\"\", \"\"\"second\n# string content   \nend\"\"\"]   \nnext = true   \n";
+        assert_eq!(
+            format_config_text(source),
+            "value = [\"\"\"first\"\"\", \"\"\"second\n# string content   \nend\"\"\"]   \nnext = true\n"
+        );
+        toml::from_str::<toml::Value>(source).expect("fixture is valid TOML");
+    }
+
+    #[test]
+    fn config_formatter_inserts_one_blank_line_before_table_headers() {
+        let source = "\
+nerd_icons = true
+[sidebar]
+gap = true
+
+background = true
+tab_style = \"arrow\"
+[animations]
+enabled = true
+curve = [0.16, 1.0, 0.3, 1.0]
+
+[pane]
+show_titles = false
+
+workbar_gap = false
+[theme]
+name = \"rozi\"
+[[commands]]
+name = \"one\"
+[[commands]]
+name = \"two\"
+";
+        assert_eq!(
+            format_config_text(source),
+            "\
+nerd_icons = true
+
+[sidebar]
+gap = true
+
+background = true
+tab_style = \"arrow\"
+
+[animations]
+enabled = true
+curve = [0.16, 1.0, 0.3, 1.0]
+
+[pane]
+show_titles = false
+
+workbar_gap = false
+
+[theme]
+name = \"rozi\"
+
+[[commands]]
+name = \"one\"
+
+[[commands]]
+name = \"two\"
+"
+        );
+    }
+
+    #[test]
+    fn appending_a_missing_key_keeps_the_blank_before_the_next_table() {
+        let sidebar = "\
+[sidebar]
+gap = true
+
+[animations]
+enabled = true
+";
+        let sidebar_updated = format_config_text(&upsert_value_in_section(
+            sidebar,
+            "sidebar",
+            "background",
+            "true",
+        ));
+        assert_eq!(
+            sidebar_updated,
+            "\
+[sidebar]
+gap = true
+background = true
+
+[animations]
+enabled = true
+"
+        );
+
+        let pane = "\
+[pane]
+show_titles = false
+
+[theme]
+name = \"rozi\"
+";
+        let pane_updated = format_config_text(&upsert_value_in_section(
+            pane,
+            "pane",
+            "workbar_gap",
+            "false",
+        ));
+        assert_eq!(
+            pane_updated,
+            "\
+[pane]
+show_titles = false
+workbar_gap = false
+
+[theme]
+name = \"rozi\"
+"
+        );
+    }
+
+    #[test]
+    fn key_override_upsert_quotes_dotted_ids_and_preserves_inline_commands() {
+        let source = "[keys]\n\
+                      \"ctrl-a g\" = { run = \"lazygit\" }\n\
+                      \"tasks.run\" = \"ctrl-a t\" # keep task note\n";
+        let spec = crate::config::KeyOverrideSpec::replace(vec![
+            crate::config::BindingExpr::parse("ctrl-p").unwrap(),
+        ]);
+        let updated = upsert_value_in_section(source, "keys", "tasks.run", &spec.toml_value());
+        assert!(updated.contains("\"ctrl-a g\" = { run = \"lazygit\" }"));
+        assert!(updated.contains("\"tasks.run\" = \"ctrl-p\" # keep task note"));
+        let parsed: toml::Value = toml::from_str(&updated).expect("updated keys remain valid");
+        assert_eq!(parsed["keys"]["tasks.run"].as_str(), Some("ctrl-p"));
+    }
+
+    #[test]
+    fn reset_removes_quoted_key_override_only() {
+        let source = "[keys]\n\
+                      \"tasks.run\" = \"ctrl-p\" # keep task note\n\
+                      close = \"w\"\n";
+        let updated = remove_value_in_section(source, "keys", "tasks.run");
+        assert!(!updated.contains("tasks.run"));
+        assert!(updated.contains("# keep task note"));
+        assert!(updated.contains("close = \"w\""));
+    }
+
+    #[test]
+    fn replacing_multiline_binding_preserves_its_comments() {
+        let source = "[keys]\nclose = [\n  # prefix form\n  \"ctrl+a w\",\n  \"alt+w\", # held form\n]\nspawn = \"enter\"\n";
+        let updated = upsert_value_in_section(source, "keys", "close", "\"x\"");
+        assert!(updated.contains("close = \"x\""));
+        assert!(updated.contains("# prefix form"));
+        assert!(updated.contains("# held form"));
+        assert!(updated.contains("spawn = \"enter\""));
+        toml::from_str::<toml::Value>(&updated).expect("comments remain valid TOML");
+    }
+
+    #[test]
+    fn replacing_multiline_string_does_not_turn_content_into_comments() {
+        let source = "[pane]\nlabel = \"\"\"\n# string content\ntext\n\"\"\" # setting note\n";
+        let updated = upsert_value_in_section(source, "pane", "label", "\"new\"");
+        assert!(!updated.contains("# string content"));
+        assert!(updated.contains("# setting note"));
+        toml::from_str::<toml::Value>(&updated).expect("replacement remains valid TOML");
+    }
+
+    #[test]
+    fn multiline_string_quote_before_terminator_keeps_following_comment() {
+        let source = "[pane]\nlabel = \"\"\"text\"\"\"\" # setting note\n";
+        toml::from_str::<toml::Value>(source).expect("fixture is valid TOML");
+        let updated = upsert_value_in_section(source, "pane", "label", "\"new\"");
+        assert!(updated.contains("# setting note"));
     }
 
     #[test]

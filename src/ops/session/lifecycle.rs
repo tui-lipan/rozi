@@ -325,7 +325,7 @@ fn enter_session_rename(ctx: &mut Context<AppRoot>, rename: SessionRenameState) 
     // branches of `apply_rename_session` that attach or detach drop the origin instead.
     ctx.state.overlay_return = crate::ops::overlay_return::picker_origin(&ctx.state);
     ctx.state.show_palette = false;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.search = None;
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;

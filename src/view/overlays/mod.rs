@@ -1,7 +1,6 @@
 pub(in crate::view::overlays) use std::str::FromStr;
 pub(in crate::view::overlays) use std::sync::Arc;
 
-pub(in crate::view::overlays) use tui_lipan::Justify::SpaceBetween;
 pub(in crate::view::overlays) use tui_lipan::prelude::*;
 pub(in crate::view::overlays) use tui_lipan::rank_search_palette_indices_with_mode;
 pub(in crate::view::overlays) use tui_lipan::utils::color_contrast::readable_text_color;
@@ -15,15 +14,15 @@ pub(in crate::view::overlays) use crate::{AppRoot, Msg};
 
 pub(in crate::view::overlays) use super::widget_keys::{
     askpass_input_key, collaboration_key, extension_detail_key, extension_install_error_key,
-    extension_install_input_key, extensions_key, help_filter_key, help_scroll_key,
+    extension_install_input_key, extensions_key, help_filter_key, keybinding_capture_key,
     layout_picker_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
     pick_key, pick_prompt_input_key, profile_picker_key, remote_picker_key, rename_input_key,
     rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
     settings_palette_key, theme_picker_key,
 };
 pub(in crate::view::overlays) use super::{
-    action_palette_frame, action_palette_modal, action_palette_modal_with_width, fg_only,
-    modal_scrollbar_config, overlay_border_style, search_entries_with_groups,
+    action_palette_modal, action_palette_modal_with_width, fg_only, modal_scrollbar_config,
+    nested_action_palette_modal, overlay_border_style, search_entries_with_groups,
     shared_search_palette, styled_modal,
 };
 
@@ -47,7 +46,7 @@ pub(crate) use agents::agent_picker_overlay;
 pub(crate) use commands::palette_overlay;
 pub(crate) use confirm::{DIALOG_AFFIRM, DIALOG_REFUSE};
 pub(crate) use extensions::{extension_detail_overlay, extensions_overlay};
-pub(crate) use help::help_overlay;
+pub(crate) use help::{help_overlay, keybinding_editor_dialog_overlay, neighbor_keybinding_id};
 pub(crate) use layout::layout_picker_overlay;
 pub(crate) use pick::{pick_overlay, pick_prompt_overlay};
 pub(crate) use profiles::profile_picker_overlay;

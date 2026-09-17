@@ -19,7 +19,7 @@ pub use widget_keys::pane_window_key;
 pub use widget_keys::{
     agent_picker_key, askpass_input_key, collaboration_key, dialog_answer_key,
     extension_detail_key, extension_install_input_key, extensions_key, follow_prompt_key,
-    help_filter_key, help_scroll_key, host_form_input_key, layout_picker_key, palette_key,
+    help_filter_key, host_form_input_key, keybinding_capture_key, layout_picker_key, palette_key,
     pane_body_key, pane_id_from_window_key, pane_padding_horizontal_key, pane_padding_vertical_key,
     pane_terminal_key, pick_key, pick_prompt_input_key, profile_picker_key, remote_picker_key,
     rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
@@ -35,15 +35,15 @@ use crate::layout::geometry::{empty_workspace_rect, viewport_bounds};
 use crate::state::WORKBAR_HEIGHT;
 use crate::{AppRoot, Msg};
 
-pub(crate) use overlays::DIALOG_AFFIRM;
+pub(crate) use overlays::{DIALOG_AFFIRM, neighbor_keybinding_id};
 
 use overlays::{
     agent_picker_overlay, askpass_overlay, collaboration_overlay, extension_detail_overlay,
     extension_install_prompt_overlay, extensions_overlay, follow_prompt_overlay, help_overlay,
-    layout_picker_overlay, palette_overlay, pane_padding_overlay, pick_overlay,
-    pick_prompt_overlay, profile_picker_overlay, reconnecting_overlay, remote_picker_overlay,
-    rename_overlay, rename_session_overlay, save_profile_overlay, search_overlay,
-    session_picker_overlay, settings_overlay, theme_picker_overlay,
+    keybinding_editor_dialog_overlay, layout_picker_overlay, palette_overlay, pane_padding_overlay,
+    pick_overlay, pick_prompt_overlay, profile_picker_overlay, reconnecting_overlay,
+    remote_picker_overlay, rename_overlay, rename_session_overlay, save_profile_overlay,
+    search_overlay, session_picker_overlay, settings_overlay, theme_picker_overlay,
 };
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
 
@@ -127,7 +127,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
             .is_some_and(|pending| pending.reconnect);
     let dialog_open = reconnecting
         || ctx.state.show_palette
-        || ctx.state.show_help
+        || ctx.state.keybindings.is_some()
         || ctx.state.show_settings
         || ctx.state.extensions.is_some()
         || ctx.state.show_theme_picker
@@ -296,8 +296,16 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     {
         root = root.child(extension_install_prompt_overlay(ctx));
     }
-    if ctx.state.show_help {
-        root = root.child(help_overlay(ctx));
+    if let Some(keybindings) = ctx.state.keybindings.as_ref() {
+        root = root.child(help_overlay(ctx, keybindings));
+    }
+    if ctx
+        .state
+        .keybindings
+        .as_ref()
+        .is_some_and(|keybindings| keybindings.stage != crate::state::KeybindingEditorStage::List)
+    {
+        root = root.child(keybinding_editor_dialog_overlay(ctx));
     }
     if ctx.state.show_theme_picker {
         root = root.child(theme_picker_overlay(ctx));
@@ -531,6 +539,8 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .input_prefix("")
         .input_padding((0, 1))
         .input_style(input_style)
+        .input_divider_style(fg_only(&theme.border))
+        .input_divider_join_frame(false)
         .input_focus_style(
             Style::new()
                 .fg(theme.border_active)
@@ -682,6 +692,18 @@ pub(crate) fn action_palette_modal(ctx: &Context<AppRoot>, title: &str) -> Modal
     action_palette_modal_with_width(ctx, title, 60)
 }
 
+/// A card stacked on a list overlay (Change keybinding on Keybindings, Terminal padding on
+/// Settings). Portals pin their top at `(viewport - reserve_height) / 2`; two fewer reserved rows
+/// than the parent drops that edge by one, so the card sits just below instead of sharing a top.
+pub(crate) fn nested_action_palette_modal(
+    ctx: &Context<AppRoot>,
+    title: &str,
+    parent_reserve_percent: u16,
+) -> Modal {
+    let parent_band = Length::Percent(parent_reserve_percent).resolve(ctx.viewport().h, 0);
+    action_palette_modal(ctx, title).reserve_height(Length::Px(parent_band.saturating_sub(2)))
+}
+
 pub(crate) fn action_palette_modal_with_width(
     ctx: &Context<AppRoot>,
     title: &str,
@@ -692,17 +714,6 @@ pub(crate) fn action_palette_modal_with_width(
         .max_height(Length::Percent(65))
         .reserve_height(Length::Percent(65))
         .padding(0)
-}
-
-/// Wrap palette content in a borderless, content-sized frame so it hugs the currently-visible
-/// rows; the enclosing [`action_palette_modal`] owns the 65% height cap.
-pub(crate) fn action_palette_frame(child: impl Into<Element>) -> Element {
-    Frame::new()
-        .border(false)
-        .height(Length::Auto)
-        .padding(0)
-        .child(child)
-        .into()
 }
 
 pub(crate) fn canvas_rect_to_root(rect: FloatRect, top_chrome: u16) -> FloatRect {

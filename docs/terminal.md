@@ -120,7 +120,7 @@ files. Scrollback files may contain passwords, tokens, and private output.
 
 ## Titles and urgency
 
-Programs set terminal titles with OSC 0 or OSC 2. A custom title set with the `Shift+N` command key
+Programs set terminal titles with OSC 0 or OSC 2. A custom title set with the `N` command key
 takes precedence. See [Layouts and panes](layouts-and-panes.md#titles-and-exited-panes).
 
 With `[notifications] bell = true`, BEL from an unattended pane marks its workspace. A pane is

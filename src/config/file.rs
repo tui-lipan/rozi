@@ -12,7 +12,8 @@ use crate::state::{AlertMode, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode,
 
 use super::appearance::{apply_animations, resolve_pane_padding};
 use super::commands::build_named_commands;
-use super::input::{apply_input_config, build_key_overrides};
+use super::input::{apply_input_config, build_key_sources};
+use super::keymap::{KeymapOwner, hard_claims, resolve_key_overrides};
 use super::rules::{build_hints, build_rules};
 use super::schema::*;
 use super::sidebar::apply_sidebar_config;
@@ -605,6 +606,17 @@ pub fn load_config() -> LoadedConfig {
     load_config_from_text_with_extensions(&text, &path, extension_scan, Vec::new())
 }
 
+/// Load a config document that has not been written yet, through the full pipeline including
+/// installed extensions, so an editor can validate exactly what a reload would produce.
+pub fn load_config_candidate(text: &str) -> LoadedConfig {
+    load_config_from_text_with_extensions(
+        text,
+        &config_path(),
+        super::extensions::scan_extensions(),
+        Vec::new(),
+    )
+}
+
 /// Applies one config document over the defaults. `path` only names the source in warnings, so
 /// this is the whole load pipeline minus the filesystem.
 #[cfg(test)]
@@ -1076,13 +1088,14 @@ fn load_config_from_text_with_extensions(
         .map(|(id, _)| id.clone())
         .collect::<HashSet<_>>();
     let mut user_commands = Vec::new();
-    config.key_overrides = build_key_overrides(
+    config.key_sources = build_key_sources(
         parsed.keys,
         &config.input,
         &named_ids,
         &mut user_commands,
         &mut warnings,
     );
+    config.key_overrides = resolve_key_overrides(&config.key_sources, &config.input);
     config.user_commands = user_commands;
     config.extension_key_defaults = resolve_extension_key_defaults(&config, &mut warnings);
     let resolved = super::extensions::resolve_suggested_keybindings(
@@ -1109,24 +1122,16 @@ fn resolve_extension_key_defaults(
     config: &Config,
     warnings: &mut Vec<String>,
 ) -> HashMap<String, Vec<KeyBinding>> {
-    let mut claimed: Vec<(String, String)> = crate::commands::core_default_shortcuts(&config.input)
+    let mut claimed: Vec<(KeyBinding, String)> = hard_claims(config)
         .into_iter()
-        .filter(|(id, _)| !config.key_overrides.contains_key(id))
-        .map(|(id, binding)| (binding.canonical_lowercase(), format!("`{id}`")))
+        .map(|claim| {
+            let owner = match claim.owner {
+                KeymapOwner::Core(id) | KeymapOwner::Override(id) => format!("`{id}`"),
+                KeymapOwner::UserCommand(_) => "a `[keys]` command".to_string(),
+            };
+            (claim.binding, owner)
+        })
         .collect();
-    for (id, bindings) in &config.key_overrides {
-        for binding in bindings {
-            claimed.push((binding.canonical_lowercase(), format!("`{id}`")));
-        }
-    }
-    for command in &config.user_commands {
-        for binding in &command.bindings {
-            claimed.push((
-                binding.canonical_lowercase(),
-                "a `[keys]` command".to_string(),
-            ));
-        }
-    }
 
     let prefix = format!(
         "{} {}",
@@ -1145,19 +1150,17 @@ fn resolve_extension_key_defaults(
         let Ok(binding) = KeyBinding::from_str(&format!("{prefix} {steps}")) else {
             continue;
         };
-        let canonical = binding.canonical_lowercase();
-        let conflict = claimed.iter().find(|(existing, _)| {
-            existing == &canonical
-                || canonical.starts_with(&format!("{existing} "))
-                || existing.starts_with(&format!("{canonical} "))
-        });
+        let conflict = claimed
+            .iter()
+            .find(|(existing, _)| binding.conflicts_with(existing));
         match conflict {
             Some((_, owner)) => warnings.push(format!(
-                "Extension command `{}` suggests `{canonical}`, which {owner} already uses; bind it in `[keys]` to use it anyway",
-                command.id
+                "Extension command `{}` suggests `{}`, which {owner} already uses; bind it in `[keys]` to use it anyway",
+                command.id,
+                binding.to_source()
             )),
             None => {
-                claimed.push((canonical, format!("`{}`", command.id)));
+                claimed.push((binding.clone(), format!("`{}`", command.id)));
                 defaults.insert(command.id.clone(), vec![binding]);
             }
         }
@@ -2111,6 +2114,277 @@ mod file_tests {
     const SUGGESTED_BINDING_MANIFEST: &str = "[extension]\nid = \"vim-rozi\"\napi = 1\n\
          [[suggested_keybindings]]\naction = \"smart-focus-left\"\nkey = \"ctrl-h\"\n\
          [[suggested_keybindings]]\naction = \"smart-focus-down\"\nkey = \"ctrl-j\"\n";
+
+    fn keymap(text: &str) -> Config {
+        let loaded = load_config_from_text(text, Path::new("config.toml"));
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        loaded.config
+    }
+
+    fn resolved(config: &Config, id: &str) -> Vec<String> {
+        config.key_overrides[id]
+            .iter()
+            .map(KeyBinding::canonical_lowercase)
+            .collect()
+    }
+
+    /// The source forms survive a write and a reload unchanged, and the input scheme they are
+    /// resolved against comes from the same document.
+    #[test]
+    fn keymap_sources_round_trip_through_the_config_file() {
+        let edit = super::super::KeymapEdit {
+            overrides: vec![
+                (
+                    "spawn".to_string(),
+                    Some(super::super::KeyOverrideSpec::replace(
+                        ["enter", "scheme:ctrl-t", "prefix:x", "mod:y", "ctrl-b z"]
+                            .map(|source| super::super::BindingExpr::parse(source).unwrap())
+                            .to_vec(),
+                    )),
+                ),
+                (
+                    "close".to_string(),
+                    Some(super::super::KeyOverrideSpec {
+                        mode: super::super::OverrideMode::Add,
+                        bindings: vec![super::super::BindingExpr::parse("mod:q").unwrap()],
+                    }),
+                ),
+            ],
+            prefix: Some(KeyBinding::from_str("ctrl-b").unwrap()),
+            modifier: Some(WmModifier::Super),
+            modifier_shortcuts: Some(true),
+        };
+        let text = super::super::apply_keymap_edit("# mine\n[keys]\ncopy-mode = \"z\"\n", &edit);
+        assert!(text.contains("# mine"), "{text}");
+        assert!(text.contains("copy-mode = \"z\""), "{text}");
+        let config = keymap(&text);
+        assert_eq!(
+            config.key_sources["spawn"],
+            edit.overrides[0].1.clone().unwrap()
+        );
+        assert_eq!(
+            config.key_sources["close"],
+            edit.overrides[1].1.clone().unwrap()
+        );
+        assert_eq!(
+            resolved(&config, "spawn"),
+            [
+                "ctrl+b enter",
+                "super+enter",
+                "ctrl+b ctrl+t",
+                "ctrl+super+t",
+                "ctrl+b x",
+                "super+y",
+                "ctrl+b z"
+            ]
+        );
+        assert!(resolved(&config, "close").ends_with(&["super+q".to_string()]));
+    }
+
+    #[test]
+    fn half_scheme_forms_follow_only_their_half() {
+        let text = "[keys]\nspawn = \"prefix:n\"\nclose = \"mod:q\"\n";
+        let default = keymap(text);
+        assert_eq!(resolved(&default, "spawn"), ["ctrl+a n"]);
+        assert_eq!(resolved(&default, "close"), ["alt+q"]);
+
+        let moved = keymap(&format!(
+            "[input]\nprefix = \"ctrl-b\"\nmodifier = \"super\"\n{text}"
+        ));
+        assert_eq!(resolved(&moved, "spawn"), ["ctrl+b n"]);
+        assert_eq!(resolved(&moved, "close"), ["super+q"]);
+
+        let mod_off = keymap(&format!("[input]\nmodifier_shortcuts = false\n{text}"));
+        assert_eq!(resolved(&mod_off, "spawn"), ["ctrl+a n"]);
+        assert!(resolved(&mod_off, "close").is_empty());
+        // Turning Mod off keeps the remembered modifier.
+        let super_off = keymap("[input]\nmodifier = \"super\"\nmodifier_shortcuts = false\n");
+        assert_eq!(super_off.input.modifier, WmModifier::Super);
+    }
+
+    #[test]
+    fn user_command_triggers_use_the_same_source_forms() {
+        let config = keymap(
+            "[keys]\n\"prefix:g\" = { run = \"lazygit\" }\n\"mod:h\" = { run = \"htop\" }\n",
+        );
+        let bindings = config
+            .user_commands
+            .iter()
+            .map(|command| {
+                command
+                    .bindings
+                    .iter()
+                    .map(KeyBinding::canonical_lowercase)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            bindings.contains(&vec!["ctrl+a g".to_string()]),
+            "{bindings:?}"
+        );
+        assert!(
+            bindings.contains(&vec!["alt+h".to_string()]),
+            "{bindings:?}"
+        );
+    }
+
+    fn collision_owners(baseline: &str, candidate: &str) -> Vec<(String, String)> {
+        let baseline = keymap(baseline);
+        let candidate = keymap(candidate);
+        super::super::new_collisions(&baseline, &candidate)
+            .into_iter()
+            .map(|collision| {
+                (
+                    collision.first.owner.registry_id(&candidate),
+                    collision.second.owner.registry_id(&candidate),
+                )
+            })
+            .collect()
+    }
+
+    /// Every hard claim in the global command domain takes part: generated workspace commands,
+    /// prefix forwarding, inline and named commands, and sequences that start with another.
+    #[test]
+    fn hard_collisions_span_the_whole_command_domain() {
+        let involves = |pairs: &[(String, String)], owner: &str| {
+            pairs
+                .iter()
+                .any(|(first, second)| first == owner || second == owner)
+        };
+        let workspace = collision_owners("", "[keys]\nclose = \"ctrl-a 1\"\n");
+        assert!(involves(&workspace, "workspace.switch.1"), "{workspace:?}");
+
+        let forward = collision_owners("", "[keys]\nclose = \"ctrl-a ctrl-a\"\n");
+        assert!(
+            involves(&forward, crate::commands::FORWARD_PREFIX_COMMAND_ID),
+            "{forward:?}"
+        );
+
+        let inline = collision_owners(
+            "[keys]\n\"ctrl-a g\" = { run = \"lazygit\" }\n",
+            "[keys]\n\"ctrl-a g\" = { run = \"lazygit\" }\nclose = \"ctrl-a g\"\n",
+        );
+        assert!(involves(&inline, "user.0"), "{inline:?}");
+
+        let named = "[[commands]]\nid = \"build\"\nrun = \"make\"\n";
+        let named_collision = collision_owners(
+            &format!("{named}[keys]\nbuild = \"ctrl-a y\"\n"),
+            &format!("{named}[keys]\nbuild = \"ctrl-a y\"\nclose = \"ctrl-a y\"\n"),
+        );
+        assert!(
+            involves(&named_collision, "command.build"),
+            "{named_collision:?}"
+        );
+
+        let sequence = collision_owners(
+            "",
+            "[keys]\nclose = \"ctrl-a w x\"\ncopy-mode = \"ctrl-a w\"\n",
+        );
+        assert!(involves(&sequence, "copy-mode"), "{sequence:?}");
+
+        // Aliases of one action never collide with each other.
+        assert!(
+            collision_owners("", "[keys]\nclose = [\"ctrl-a w\", \"ctrl-a w x\"]\n").is_empty()
+        );
+    }
+
+    /// A collision that already existed does not block later edits, even once the prefix moves
+    /// both of its chords.
+    #[test]
+    fn only_new_collisions_block() {
+        let existing = "[keys]\nclose = \"ctrl-b 1\"\ncopy-mode = \"ctrl-b 1\"\n";
+        assert!(collision_owners(existing, existing).is_empty());
+        assert!(
+            collision_owners(
+                "[keys]\nclose = \"prefix:1\"\ncopy-mode = \"prefix:1\"\n",
+                "[input]\nprefix = \"ctrl-b\"\n[keys]\nclose = \"prefix:1\"\ncopy-mode = \"prefix:1\"\n",
+            )
+            .is_empty()
+        );
+
+        // An existing conflict between two commands does not hide a new one on another binding.
+        let masked = collision_owners(
+            "[keys]\nclose = \"ctrl-x\"\ncopy-mode = \"ctrl-x\"\n",
+            "[keys]\nclose = [\"ctrl-x\", \"ctrl-b x\"]\ncopy-mode = [\"ctrl-x\", \"ctrl-b x\"]\n",
+        );
+        assert_eq!(masked.len(), 1, "{masked:?}");
+
+        // Nor a Prefix change that newly lines a literal up with a scheme binding of the same pair.
+        let moved = collision_owners(
+            "[keys]\nclose = [\"ctrl-x\", \"ctrl-b f5\"]\ncopy-mode = [\"ctrl-x\", \"prefix:f5\"]\n",
+            "[input]\nprefix = \"ctrl-b\"\n\
+             [keys]\nclose = [\"ctrl-x\", \"ctrl-b f5\"]\ncopy-mode = [\"ctrl-x\", \"prefix:f5\"]\n",
+        );
+        assert_eq!(moved.len(), 1, "{moved:?}");
+    }
+
+    /// With the Mod layer off, every form keeps its prefix half and loses its Mod half; turning
+    /// the layer back on restores them without any change to the source.
+    #[test]
+    fn mod_off_drops_only_mod_halves_and_restores_them_from_source() {
+        let keys = "[keys]\ncopy-mode = \"x\"\nsearch = \"scheme:ctrl-x\"\nspawn = \"prefix:x\"\nclose = \"mod:x\"\n";
+        let off = keymap(&format!("[input]\nmodifier_shortcuts = false\n{keys}"));
+        assert_eq!(resolved(&off, "copy-mode"), ["ctrl+a x"]);
+        assert_eq!(resolved(&off, "search"), ["ctrl+a ctrl+x"]);
+        assert_eq!(resolved(&off, "spawn"), ["ctrl+a x"]);
+        assert!(resolved(&off, "close").is_empty());
+
+        let on = keymap(keys);
+        assert_eq!(on.key_sources, off.key_sources, "the source is untouched");
+        assert_eq!(resolved(&on, "copy-mode"), ["ctrl+a x", "alt+x"]);
+        assert_eq!(resolved(&on, "search"), ["ctrl+a ctrl+x", "ctrl+alt+x"]);
+        assert_eq!(resolved(&on, "spawn"), ["ctrl+a x"]);
+        assert_eq!(resolved(&on, "close"), ["alt+x"]);
+    }
+
+    /// Extension suggestions are the weakest claim: taking their chord suppresses them during the
+    /// candidate load instead of blocking the user's edit.
+    #[test]
+    fn extension_suggestions_yield_instead_of_blocking() {
+        let load = |text: &str| {
+            let temp = tempfile::tempdir().unwrap();
+            load_config_from_text_with_extensions(
+                text,
+                Path::new("config.toml"),
+                scan_with(temp.path(), SUGGESTED_BINDING_MANIFEST),
+                Vec::new(),
+            )
+            .config
+        };
+        let baseline = load("");
+        let ctrl_h = KeyBinding::from_str("ctrl-h").unwrap();
+        assert!(baseline.extension_action_key_defaults["smart-focus-left"].contains(&ctrl_h));
+        let candidate = load("[keys]\nclose = \"ctrl-h\"\n");
+        assert!(super::super::new_collisions(&baseline, &candidate).is_empty());
+        assert!(
+            !candidate
+                .extension_action_key_defaults
+                .get("smart-focus-left")
+                .is_some_and(|bindings| bindings.contains(&ctrl_h))
+        );
+    }
+
+    /// Losing part of an additive entry's generated defaults keeps every surviving expression
+    /// semantic rather than freezing effective chords.
+    #[test]
+    fn subtraction_from_additive_entries_preserves_semantic_sources() {
+        let config = keymap("[keys]\nspawn = { add = \"mod:m\" }\n");
+        let taken = [KeyBinding::from_str("alt-enter").unwrap()];
+        let remaining = super::super::effective_expressions(&config, "spawn")
+            .iter()
+            .filter_map(|expr| expr.without(&config.input, &taken))
+            .map(|expr| expr.source())
+            .collect::<Vec<_>>();
+        assert!(
+            remaining.contains(&"prefix:enter".to_string()),
+            "{remaining:?}"
+        );
+        assert!(remaining.contains(&"mod:m".to_string()), "{remaining:?}");
+        assert!(
+            !remaining.iter().any(|source| source.contains("ctrl+a")),
+            "{remaining:?}"
+        );
+    }
 
     #[test]
     fn extension_problem_count_survives_a_config_parse_failure() {

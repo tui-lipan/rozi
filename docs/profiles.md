@@ -18,7 +18,7 @@ Profiles are TOML files in:
 ~/.config/rozi/profiles/<name>.toml
 ```
 
-Capture the current session with the `Shift+O` command key or **Capture session as profile** in the
+Capture the current session with the `O` command key or **Capture session as profile** in the
 command palette. Rozi prompts for a name and leaves the live session unchanged. Overwriting an
 existing file requires a second `Enter`.
 

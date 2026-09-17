@@ -493,7 +493,7 @@ fn host_form_overlay(ctx: &Context<AppRoot>, form: &crate::state::HostFormState)
 
     action_palette_modal(ctx, form.title())
         .on_close(ctx.link().callback(|_| Msg::CloseHostForm))
-        .child(action_palette_frame(body))
+        .child(body)
         .into()
 }
 

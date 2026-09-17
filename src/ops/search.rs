@@ -24,7 +24,7 @@ pub(crate) fn open_search(ctx: &mut Context<AppRoot>) -> Update {
     };
     invalidate_search_scan(&mut ctx.state);
     ctx.state.search = Some(ScrollbackSearchState::new(target));
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.show_palette = false;
     ctx.state.mode = crate::state::Mode::Normal;
     request_search_focus(ctx);
@@ -45,7 +45,7 @@ pub(crate) fn open_search_from_copy_mode(ctx: &mut Context<AppRoot>) -> Update {
     };
     invalidate_search_scan(&mut ctx.state);
     ctx.state.search = Some(ScrollbackSearchState::from_copy_mode(target));
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.show_palette = false;
     // Keep Mode::Copy so confirm/cancel can restore the copy-mode cursor path.
     request_search_focus(ctx);

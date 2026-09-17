@@ -339,7 +339,7 @@ fn execute_action_inner(
         }
         Action::EnterResizeMode => {
             ctx.state.mode = Mode::Resize;
-            ctx.state.show_help = false;
+            ctx.state.keybindings = None;
             ctx.state.show_palette = false;
             Update::full()
         }
@@ -409,23 +409,19 @@ fn execute_action_inner(
             ctx.state.show_palette = !ctx.state.show_palette;
             ctx.state.command_palette_sidebar_query = false;
             if ctx.state.show_palette {
-                ctx.state.show_help = false;
+                ctx.state.keybindings = None;
                 request_palette_focus(ctx);
             }
             Update::full()
         }
         Action::ToggleHelp => {
             ctx.state.pane_padding_editor = None;
-            ctx.state.show_help = !ctx.state.show_help;
-            if ctx.state.show_help {
-                ctx.state.show_palette = false;
-                ctx.state.help_query = TextInput::new("");
-                ctx.state.help_tab = crate::state::HelpTab::Global;
-                ctx.request_focus(crate::view::help_scroll_key());
-            } else {
-                ctx.state.help_query = TextInput::new("");
-                ctx.state.help_tab = crate::state::HelpTab::Global;
+            if ctx.state.keybindings.take().is_some() {
                 request_current_pane_focus(ctx);
+            } else {
+                ctx.state.show_palette = false;
+                ctx.state.keybindings = Some(crate::state::KeybindingsState::default());
+                ctx.request_focus(crate::view::help_filter_key());
             }
             Update::full()
         }
@@ -548,7 +544,7 @@ fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
         let _ = crate::ops::layout_picker::cancel_layout_picker(ctx);
     }
     ctx.state.show_palette = false;
-    ctx.state.show_help = false;
+    ctx.state.keybindings = None;
     ctx.state.show_settings = false;
     ctx.state.settings_selected = None;
     ctx.state.pane_padding_editor = None;

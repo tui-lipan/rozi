@@ -133,7 +133,9 @@ fn directional_families_render_as_one_row_each() {
         let mut backend = backend(3, WhichKey::Instant);
         backend.send_key(prefix()).expect("prefix goes pending");
         let view = rendered(&mut backend);
-        for collapsed in ["hjkl Focus pane", "HJKL Swap pane", "Ctrl+hjkl Move pane"] {
+        // Standalone letters show the typed character (`HJKL` is Shift); a modifier chord is a
+        // keycap, so `Ctrl+HJKL` carries no Shift.
+        for collapsed in ["hjkl Focus pane", "HJKL Swap pane", "Ctrl+HJKL Move pane"] {
             assert!(
                 view.contains(collapsed),
                 "expected `{collapsed}` in:\n{view}"

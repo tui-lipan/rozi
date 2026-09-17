@@ -17,7 +17,7 @@ pub(crate) fn search_overlay(ctx: &Context<AppRoot>) -> Element {
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))
         .height(Length::Auto)
-        .child(action_palette_frame(body))
+        .child(body)
         .into();
     Modal::new()
         .width(Length::Px(90))

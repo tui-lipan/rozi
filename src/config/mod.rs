@@ -3,6 +3,7 @@ mod commands;
 mod extensions;
 mod file;
 mod input;
+mod keymap;
 mod persist;
 mod rules;
 mod schema;
@@ -29,6 +30,7 @@ pub(crate) use extensions::{
     validate_extension_installation_id,
 };
 pub use file::*;
+pub use keymap::*;
 pub use persist::*;
 pub use schema::*;
 pub use theme::*;

@@ -325,6 +325,8 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleScratchBorderStyle
         | CycleFullscreenBorderStyle
         | CyclePickerBorderStyle
+        | CyclePickerTabStyle
+        | CyclePickerSelectionStyle
         | CycleAlertBorder
         | CycleWorkbarAlert
         | CycleStartupMode
@@ -343,8 +345,14 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         ToggleWorkbarBackground => {
             execute_action(ctx, Action::ToggleWorkbarBackground);
         }
+        TogglePickerTabBackground => {
+            execute_action(ctx, Action::TogglePickerTabBackground);
+        }
         ToggleSidebarGap => {
             execute_action(ctx, Action::ToggleSidebarGap);
+        }
+        ToggleSidebarPosition => {
+            execute_action(ctx, Action::ToggleSidebarPosition);
         }
         ToggleSidebarBackground => {
             execute_action(ctx, Action::ToggleSidebarBackground);
@@ -611,6 +619,16 @@ fn persist_applied_settings_choice(
             ctx,
             "picker_border_style",
             ctx.state.config.pane.picker_border_style.id(),
+        ),
+        CyclePickerTabStyle => persist_pane_string_or_toast(
+            ctx,
+            "picker_tab_style",
+            crate::state::cap_style_id(ctx.state.config.pane.picker_tab_style),
+        ),
+        CyclePickerSelectionStyle => persist_pane_string_or_toast(
+            ctx,
+            "picker_selection_style",
+            crate::state::cap_style_id(ctx.state.config.pane.picker_selection_style),
         ),
         CycleTitlebar => {
             persist_pane_string_or_toast(ctx, "titlebar", ctx.state.config.pane.titlebar.id())

@@ -568,6 +568,15 @@ pub struct PaneConfig {
     pub fullscreen_border_style: PaneBorderStyle,
     /// Border glyphs for command palettes, Settings, Help, Search, and the other pickers.
     pub picker_border_style: PaneBorderStyle,
+    /// Whether picker category tabs sit on a distinct strip. Uses the same lift as the sidebar tab
+    /// strip over `surface.element`. Off, the tabs share the picker body fill.
+    pub picker_tab_background: bool,
+    /// End-cap style for picker category tabs. A config that omits this key inherits
+    /// `workbar_tab_style`.
+    pub picker_tab_style: CapStyle,
+    /// End-cap style for the selected row in command palettes, Settings, Help, Search, and the
+    /// other pickers.
+    pub picker_selection_style: CapStyle,
     /// Blank cells inserted between a pane's border and its terminal grid, as
     /// `(top, right, bottom, left)`. Purely cosmetic: each cell of padding costs a column/row of
     /// usable terminal space, so this stays off by default. Painted with the pane's frame
@@ -625,6 +634,9 @@ impl Default for PaneConfig {
             scratch_border_style: PaneBorderStyle::Double,
             fullscreen_border_style: PaneBorderStyle::Rounded,
             picker_border_style: PaneBorderStyle::Rounded,
+            picker_tab_background: true,
+            picker_tab_style: CapStyle::Padded,
+            picker_selection_style: CapStyle::Padded,
             padding: (0, 0, 0, 0),
             title_style: CapStyle::Padded,
             workbar_badge_style: CapStyle::Padded,
@@ -1319,6 +1331,27 @@ impl SidebarPosition {
             "left" => Some(Self::Left),
             "right" => Some(Self::Right),
             _ => None,
+        }
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Left => "Left",
+            Self::Right => "Right",
+        }
+    }
+
+    pub const fn toggled(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
         }
     }
 }
@@ -2130,6 +2163,12 @@ mod tests {
         assert_eq!(
             PaneConfig::default().picker_border_style,
             PaneBorderStyle::Rounded
+        );
+        assert!(PaneConfig::default().picker_tab_background);
+        assert_eq!(PaneConfig::default().picker_tab_style, CapStyle::Padded);
+        assert_eq!(
+            PaneConfig::default().picker_selection_style,
+            CapStyle::Padded
         );
         assert!(PaneConfig::default().keep_special_borders);
         assert!(PaneConfig::default().highlight_focused_titlebar);

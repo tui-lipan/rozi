@@ -10,6 +10,11 @@
   border** row styles the command palette, Settings, Help, Search, and the other pickers
   (`picker_border_style`). Floating and the scratchpad still default to double; fullscreen follows
   tiled unless you set it.
+- Pickers gain a **Pickers** Settings group: border, a category **Tab strip** that uses the same
+  lifted fill as the sidebar tab strip (`picker_tab_background`), a **Tab style** that follows
+  `workbar_tab_style` when omitted (`picker_tab_style`), and a global **Selection** cap style for
+  the highlighted row (`picker_selection_style`). List start and end caps apply across the
+  command palette, Settings, Help, Search, and the other pickers.
 - A detached session can be driven from a script. `rozi --session <NAME>` in front of a pane
   command sends it to that session server instead of to a running UI, so `dev` can be listed,
   captured, typed into, and grown a pane with nothing attached — from a shell script, a cron job,

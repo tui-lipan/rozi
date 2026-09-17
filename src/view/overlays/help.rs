@@ -597,17 +597,26 @@ pub(crate) fn help_overlay(
         &actions,
     );
     let search = help_search(ctx, keybindings, matches, total, keys);
+    let (selection_left, selection_right) =
+        crate::view::picker_selection_cap_glyphs(&ctx.state.config);
     let list = List::new()
         .items(items)
         .selected(selected_index)
         .border(false)
-        .selection_symbol(Some(""))
+        .selection_symbol(Some(selection_left))
+        .selection_symbol_right(Some(selection_right))
+        .selection_symbol_style(crate::view::picker_selection_cap_style(
+            theme,
+            theme.border_active,
+        ))
         .unselected_symbol(Some(""))
         .selection_full_width(true)
         .selection_style(picker_selection_style(theme, None))
         .unfocused_selection_style(picker_selection_style(theme, None))
         .item_hover_style(Style::new().bg(theme.surface.element.elevate_by(0.08)))
-        .item_horizontal_padding((0, 1))
+        .item_horizontal_padding(crate::view::picker_list_item_horizontal_padding(
+            &ctx.state.config,
+        ))
         .header_horizontal_padding(0)
         .scroll_wheel(true)
         .scrollbar(true)
@@ -1400,6 +1409,8 @@ mod palette_alias_tests {
             "scratchpad border",
             "fullscreen border",
             "picker border",
+            "picker tab",
+            "picker selection",
             "sidebar gap",
             "sidebar background",
             "sidebar tab",

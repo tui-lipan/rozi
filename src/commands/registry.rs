@@ -647,6 +647,12 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleSidebarSplit => {
             enable_disable_label("sidebar split", state.config.sidebar.split)
         }
+        Action::ToggleSidebarPosition => {
+            format!(
+                "Move sidebar to {}",
+                state.config.sidebar.position.toggled().id()
+            )
+        }
         Action::ToggleSidebarGap => enable_disable_label("sidebar gap", state.config.sidebar.gap),
         Action::ToggleSidebarBackground => {
             enable_disable_label("sidebar background", state.config.sidebar.background)
@@ -765,6 +771,21 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             format!(
                 "Picker border style: {}",
                 state.config.pane.picker_border_style.label()
+            )
+        }
+        Action::TogglePickerTabBackground => {
+            enable_disable_label("picker tab strip", state.config.pane.picker_tab_background)
+        }
+        Action::CyclePickerTabStyle => {
+            format!(
+                "Picker tab style: {}",
+                cap_style_label(state.config.pane.picker_tab_style)
+            )
+        }
+        Action::CyclePickerSelectionStyle => {
+            format!(
+                "Picker selection style: {}",
+                cap_style_label(state.config.pane.picker_selection_style)
             )
         }
         Action::CycleTitlebar => {

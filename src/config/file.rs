@@ -17,7 +17,10 @@ use super::keymap::{KeymapOwner, hard_claims, resolve_key_overrides};
 use super::rules::{build_hints, build_rules};
 use super::schema::*;
 use super::sidebar::apply_sidebar_config;
-use super::workbar::{apply_pane_alert_colors, apply_workbar_config, apply_workbar_style_config};
+use super::workbar::{
+    apply_pane_alert_colors, apply_picker_style_config, apply_workbar_config,
+    apply_workbar_style_config,
+};
 
 #[derive(Debug)]
 pub struct LoadedConfig {
@@ -412,6 +415,9 @@ pub(super) struct PaneFileConfig {
     scratch_border_style: Option<String>,
     fullscreen_border_style: Option<String>,
     picker_border_style: Option<String>,
+    pub(super) picker_tab_background: Option<bool>,
+    pub(super) picker_tab_style: Option<String>,
+    pub(super) picker_selection_style: Option<String>,
     padding: Option<PaddingSpec>,
     titlebar: Option<String>,
     title_style: Option<String>,
@@ -937,6 +943,7 @@ fn load_config_from_text_with_extensions(
         }
     }
     apply_workbar_style_config(&mut config.pane, &parsed.pane, &mut warnings);
+    apply_picker_style_config(&mut config.pane, &parsed.pane, &mut warnings);
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
     }

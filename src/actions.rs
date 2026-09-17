@@ -441,6 +441,7 @@ fn execute_action_inner(
         Action::ToggleWorkbarPowerline => crate::ops::preferences::toggle_workbar_powerline(ctx),
         Action::ToggleSidebar => crate::update::sidebar::toggle_visible(ctx),
         Action::ToggleSidebarSplit => crate::update::sidebar::toggle_split(ctx),
+        Action::ToggleSidebarPosition => crate::ops::preferences::toggle_sidebar_position(ctx),
         Action::ToggleSidebarGap => crate::ops::preferences::toggle_sidebar_gap(ctx),
         Action::ToggleSidebarBackground => crate::ops::preferences::toggle_sidebar_background(ctx),
         Action::ToggleSidebarBackgroundFollowsTerminal => {
@@ -488,6 +489,13 @@ fn execute_action_inner(
             crate::ops::preferences::cycle_fullscreen_border_style(ctx)
         }
         Action::CyclePickerBorderStyle => crate::ops::preferences::cycle_picker_border_style(ctx),
+        Action::TogglePickerTabBackground => {
+            crate::ops::preferences::toggle_picker_tab_background(ctx)
+        }
+        Action::CyclePickerTabStyle => crate::ops::preferences::cycle_picker_tab_style(ctx),
+        Action::CyclePickerSelectionStyle => {
+            crate::ops::preferences::cycle_picker_selection_style(ctx)
+        }
         Action::CycleTitleStyle => crate::ops::preferences::cycle_title_style(ctx),
         Action::CycleWorkbarBadgeStyle => crate::ops::preferences::cycle_workbar_badge_style(ctx),
         Action::CycleWorkbarTabStyle => crate::ops::preferences::cycle_workbar_tab_style(ctx),

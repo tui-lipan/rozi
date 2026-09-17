@@ -613,6 +613,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::ToggleSidebarPosition,
+        label: "Sidebar position",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleSidebarGap,
         label: "Sidebar gap",
         category: "Settings",
@@ -770,6 +777,27 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::CyclePickerBorderStyle,
         label: "Picker border style",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::TogglePickerTabBackground,
+        label: "Picker tab strip",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::CyclePickerTabStyle,
+        label: "Picker tab style",
+        category: "Settings",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::CyclePickerSelectionStyle,
+        label: "Picker selection style",
         category: "Settings",
         default_keys: &[],
         palette: false,

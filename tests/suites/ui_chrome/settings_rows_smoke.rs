@@ -3,7 +3,7 @@
 use rozi::AppRoot;
 use rozi::state::{AlertMode, PaneBorderMode, SettingsAction, SettingsTab};
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+use tui_lipan::prelude::{CapStyle, KeyCode, KeyEvent, KeyMods, Rect};
 
 /// Isolated per `AGENTS.md`: building a `AppRoot` otherwise resolves the developer's own config
 /// and state directories.
@@ -205,7 +205,8 @@ fn settings_all_keeps_every_control_available() {
             "Nerd icons",
             "Which-key",
             "Focus on hover",
-            "Picker border",
+            "Border",
+            "Selection",
             "Terminal padding",
             "Background follows terminal",
             "Show titlebar",
@@ -248,6 +249,11 @@ fn settings_all_keeps_every_control_available() {
         ] {
             setting_row(&frame, label);
         }
+        let pickers = group_rows(&frame, "Pickers", "Panes");
+        setting_row(pickers, "Border");
+        setting_row(pickers, "Tab strip");
+        setting_row(pickers, "Tab style");
+        setting_row(pickers, "Selection");
         let titlebar = group_rows(&frame, "Titlebar", "Workbar");
         setting_row(titlebar, "Style");
         let workbar = group_rows(&frame, "Workbar", "Sidebar");
@@ -262,6 +268,7 @@ fn settings_all_keeps_every_control_available() {
         let body = list_body(&frame);
         for group in [
             "General",
+            "Pickers",
             "Panes",
             "Titlebar",
             "Workbar",
@@ -291,6 +298,10 @@ fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
             "General repeats its tab name:\n{general}"
         );
         setting_row(&general, "Theme");
+        assert!(
+            body_has_group_header(&general_body, "Pickers"),
+            "General is missing Pickers:\n{general}"
+        );
 
         backend.state_mut().settings_navigation.tab = SettingsTab::Panes;
         let panes = rendered_rows(&mut backend);
@@ -485,6 +496,63 @@ fn settings_search_does_not_leave_a_double_gap_under_the_tabs() {
             list_gap_after_tabs(&first),
             1,
             "first-group search gap drifted:\n{first}"
+        );
+    });
+}
+
+#[test]
+fn picker_tab_strip_and_selection_caps_follow_pane_config() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 40);
+        backend.state_mut().settings_navigation.tab = SettingsTab::General;
+        let theme = backend.state().theme.clone();
+        let host = theme.surface.element;
+        let strip = host.elevate_by(0.05);
+        backend.render();
+        let capture = backend.capture_frame();
+        let lines = capture.to_fixed_grid_lines();
+        let tabs = lines
+            .iter()
+            .position(|line| line.contains("General") && line.contains("Panes"))
+            .expect("settings tab strip");
+        let panes = lines[tabs].find("Panes").expect("inactive Panes tab");
+        assert_eq!(
+            capture.cell(panes as u16, tabs as u16).bg,
+            strip,
+            "picker tab strip should lift like the sidebar:\n{}",
+            lines.join("\n")
+        );
+
+        backend.state_mut().config.pane.picker_tab_background = false;
+        backend.render();
+        let capture = backend.capture_frame();
+        let lines = capture.to_fixed_grid_lines();
+        let tabs = lines
+            .iter()
+            .position(|line| line.contains("General") && line.contains("Panes"))
+            .expect("settings tab strip");
+        let panes = lines[tabs].find("Panes").expect("inactive Panes tab");
+        assert_eq!(
+            capture.cell(panes as u16, tabs as u16).bg,
+            host,
+            "picker tab strip off should match the picker body:\n{}",
+            lines.join("\n")
+        );
+
+        backend.state_mut().config.pane.picker_selection_style = CapStyle::Round;
+        backend.state_mut().settings_selected = Some(SettingsAction::Theme);
+        let rendered = rendered_rows(&mut backend);
+        assert!(
+            rendered.contains('\u{e0b6}'),
+            "round picker selection cap missing:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\u{e0b6} "),
+            "capped selection kept leading item padding:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains(" \u{e0b4}"),
+            "capped selection kept trailing item padding:\n{rendered}"
         );
     });
 }
@@ -740,7 +808,7 @@ fn settings_categories_cover_all_controls_and_keep_pane_motion_local() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 7, "Workspace switching animation"),
+            (SettingsTab::General, 10, "Workspace switching animation"),
             (SettingsTab::Panes, 14, "Open/close animation"),
             (SettingsTab::Bars, 12, "Show workbar"),
             (SettingsTab::Alerts, 19, "Bell urgency"),

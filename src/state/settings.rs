@@ -117,8 +117,12 @@ pub enum SettingsAction {
     CycleScratchBorderStyle,
     CycleFullscreenBorderStyle,
     CyclePickerBorderStyle,
+    TogglePickerTabBackground,
+    CyclePickerTabStyle,
+    CyclePickerSelectionStyle,
     CyclePaneAnimation,
     ToggleSidebarBackgroundFollowsTerminal,
+    ToggleSidebarPosition,
     ToggleSidebarGap,
     ToggleSidebarBackground,
     CycleSidebarTabStyle,
@@ -163,6 +167,9 @@ impl SettingsAction {
             Self::ToggleFocusOnHover,
             Self::ToggleBackgroundFollowsTerminal,
             Self::CyclePickerBorderStyle,
+            Self::TogglePickerTabBackground,
+            Self::CyclePickerTabStyle,
+            Self::CyclePickerSelectionStyle,
             // Titlebar
             Self::ToggleTitles,
             Self::CycleTitlebar,
@@ -187,6 +194,7 @@ impl SettingsAction {
             Self::CycleFullscreenBorderStyle,
             Self::CyclePaneAnimation,
             // Sidebar
+            Self::ToggleSidebarPosition,
             Self::ToggleSidebarBackgroundFollowsTerminal,
             Self::ToggleSidebarGap,
             Self::ToggleSidebarBackground,
@@ -236,6 +244,18 @@ impl SettingsAction {
                 PaneBorderStyle::all(),
                 pane.picker_border_style,
                 PaneBorderStyle::label,
+            )),
+            Self::CyclePickerTabStyle => Some(choice_ring(
+                "Picker tab style",
+                badge_cap_styles(),
+                pane.picker_tab_style,
+                cap_style_label,
+            )),
+            Self::CyclePickerSelectionStyle => Some(choice_ring(
+                "Picker selection",
+                badge_cap_styles(),
+                pane.picker_selection_style,
+                cap_style_label,
             )),
             Self::CycleTitlebar => Some(choice_ring(
                 "Titlebar layout",
@@ -350,6 +370,14 @@ impl SettingsAction {
                 PaneBorderStyle::all(),
                 index,
                 &mut config.pane.picker_border_style,
+            ),
+            Self::CyclePickerTabStyle => {
+                assign_choice(badge_cap_styles(), index, &mut config.pane.picker_tab_style)
+            }
+            Self::CyclePickerSelectionStyle => assign_choice(
+                badge_cap_styles(),
+                index,
+                &mut config.pane.picker_selection_style,
             ),
             Self::CycleTitlebar => {
                 assign_choice(PaneTitlebarMode::all(), index, &mut config.pane.titlebar)

@@ -192,6 +192,9 @@ See [Layouts and panes](layouts-and-panes.md).
 | `scratch_border_style` | string | `float_border_style` | Same tokens as `border_style`. Scratchpad panes. Omitted, it follows `float_border_style`. |
 | `fullscreen_border_style` | string | `border_style` | Same tokens as `border_style`. Omitted, it follows `border_style`. |
 | `picker_border_style` | string | `"rounded"` | Same tokens as `border_style`. Command palette, Settings, Help, Search, and the other pickers. |
+| `picker_tab_background` | bool | `true` | Paints picker category tabs as a distinct strip using the same lift as the sidebar tab strip. Off, the tabs share the picker body. |
+| `picker_tab_style` | string | `workbar_tab_style` | `"padded"`, `"round"`, or `"arrow"`. Omitted, it follows `workbar_tab_style`. |
+| `picker_selection_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Start and end caps on the selected picker row. |
 | `keep_special_borders` | bool | `true` | Keeps frames on floating panes, popups, and scratchpads in borderless modes. |
 | `padding` | integer or integer array | `0` | One value, `[vertical, horizontal]`, or `[top, right, bottom, left]`. Each side is clamped to `0..=8`. |
 | `title_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, or `"arrow"`. |

@@ -188,6 +188,40 @@ pub(super) fn apply_workbar_style_config(
     }
 }
 
+pub(super) fn apply_picker_style_config(
+    config: &mut PaneConfig,
+    parsed: &PaneFileConfig,
+    warnings: &mut Vec<String>,
+) {
+    if let Some(picker_tab_background) = parsed.picker_tab_background {
+        config.picker_tab_background = picker_tab_background;
+    }
+    if parsed.picker_tab_style.is_none() {
+        config.picker_tab_style = config.workbar_tab_style;
+    } else if let Some(picker_tab_style) = parsed.picker_tab_style.as_deref() {
+        match parse_cap_style(picker_tab_style) {
+            Some(TuiCapStyle::Half) => warnings.push(format!(
+                "Ignored pane.picker_tab_style \"{picker_tab_style}\" (half block is not available for tab bars)"
+            )),
+            Some(style) => config.picker_tab_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown pane.picker_tab_style \"{picker_tab_style}\" (expected one of: padded, round, arrow)"
+            )),
+        }
+    }
+    if let Some(picker_selection_style) = parsed.picker_selection_style.as_deref() {
+        match parse_cap_style(picker_selection_style) {
+            Some(TuiCapStyle::Half) => warnings.push(format!(
+                "Ignored pane.picker_selection_style \"{picker_selection_style}\" (half block is not available for picker selection)"
+            )),
+            Some(style) => config.picker_selection_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown pane.picker_selection_style \"{picker_selection_style}\" (expected one of: padded, round, arrow)"
+            )),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +390,66 @@ mod tests {
         assert!(warnings.is_empty());
         assert_eq!(pane.workbar_badge_style, TuiCapStyle::Arrow);
         assert_eq!(pane.workbar_tab_style, TuiCapStyle::Round);
+    }
+
+    #[test]
+    fn omitted_picker_tab_style_follows_workbar_tabs() {
+        let parsed: PaneFileConfig =
+            toml::from_str(r#"workbar_tab_style = "round""#).expect("config parses");
+        let mut pane = PaneConfig::default();
+        let mut warnings = Vec::new();
+        apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
+        apply_picker_style_config(&mut pane, &parsed, &mut warnings);
+        assert!(warnings.is_empty());
+        assert_eq!(pane.picker_tab_style, TuiCapStyle::Round);
+        assert_eq!(pane.picker_selection_style, TuiCapStyle::Padded);
+        assert!(pane.picker_tab_background);
+    }
+
+    #[test]
+    fn omitted_picker_tab_style_follows_badge_inherited_tabs() {
+        let parsed: PaneFileConfig =
+            toml::from_str(r#"workbar_badge_style = "arrow""#).expect("config parses");
+        let mut pane = PaneConfig::default();
+        let mut warnings = Vec::new();
+        apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
+        apply_picker_style_config(&mut pane, &parsed, &mut warnings);
+        assert!(warnings.is_empty());
+        assert_eq!(pane.picker_tab_style, TuiCapStyle::Arrow);
+    }
+
+    #[test]
+    fn explicit_picker_styles_win_and_half_is_rejected() {
+        let parsed: PaneFileConfig = toml::from_str(
+            r#"
+            workbar_tab_style = "round"
+            picker_tab_background = false
+            picker_tab_style = "arrow"
+            picker_selection_style = "round"
+            "#,
+        )
+        .expect("config parses");
+        let mut pane = PaneConfig::default();
+        let mut warnings = Vec::new();
+        apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
+        apply_picker_style_config(&mut pane, &parsed, &mut warnings);
+        assert!(warnings.is_empty());
+        assert!(!pane.picker_tab_background);
+        assert_eq!(pane.picker_tab_style, TuiCapStyle::Arrow);
+        assert_eq!(pane.picker_selection_style, TuiCapStyle::Round);
+
+        let parsed: PaneFileConfig = toml::from_str(
+            r#"
+            picker_tab_style = "half"
+            picker_selection_style = "half"
+            "#,
+        )
+        .expect("config parses");
+        let mut pane = PaneConfig::default();
+        let mut warnings = Vec::new();
+        apply_picker_style_config(&mut pane, &parsed, &mut warnings);
+        assert_eq!(warnings.len(), 2);
+        assert_eq!(pane.picker_tab_style, TuiCapStyle::Padded);
+        assert_eq!(pane.picker_selection_style, TuiCapStyle::Padded);
     }
 }

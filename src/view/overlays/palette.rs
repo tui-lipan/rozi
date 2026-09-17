@@ -412,7 +412,11 @@ pub(super) fn apply_item_rendering<T: Clone + PartialEq + 'static>(
         let selection_style = picker_selection_style(theme, Some(confirm.accent));
         palette = palette
             .list_selection_style(selection_style)
-            .list_unfocused_selection_style(selection_style);
+            .list_unfocused_selection_style(selection_style)
+            .list_selection_symbol_style(crate::view::picker_selection_cap_style(
+                theme,
+                confirm.accent,
+            ));
     }
     if armed_row.is_none() && render_item.is_none() {
         return palette;
@@ -477,11 +481,16 @@ pub(super) fn picker_tabs(
     on_change: Callback<TabsEvent>,
 ) -> Element {
     let theme = &ctx.state.theme;
-    let strip = theme.surface.panel;
+    let host = theme.surface.element;
+    let strip = if ctx.state.config.pane.picker_tab_background {
+        crate::view::strip_background(theme, false, host)
+    } else {
+        host
+    };
     let caps = ctx
         .state
         .config
-        .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
+        .effective_cap_style(ctx.state.config.pane.picker_tab_style)
         .glyphs()
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
     DraggableTabBar::new()

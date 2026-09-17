@@ -43,10 +43,30 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     enabled_status(pane.focus_on_hover),
                     ToggleFocusOnHover,
                 ),
+            ],
+        ),
+        settings_group(
+            "Pickers",
+            vec![
                 (
-                    "Picker border",
+                    "Border",
                     pane.picker_border_style.label().to_string(),
                     CyclePickerBorderStyle,
+                ),
+                (
+                    "Tab strip",
+                    enabled_status(pane.picker_tab_background),
+                    TogglePickerTabBackground,
+                ),
+                (
+                    "Tab style",
+                    cap_style_label(pane.picker_tab_style).to_string(),
+                    CyclePickerTabStyle,
+                ),
+                (
+                    "Selection",
+                    cap_style_label(pane.picker_selection_style).to_string(),
+                    CyclePickerSelectionStyle,
                 ),
             ],
         ),
@@ -175,6 +195,11 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
         settings_group(
             "Sidebar",
             vec![
+                (
+                    "Position",
+                    ctx.state.config.sidebar.position.label().to_string(),
+                    ToggleSidebarPosition,
+                ),
                 (
                     "Background follows terminal",
                     enabled_status(ctx.state.config.sidebar.background_follows_terminal),
@@ -351,7 +376,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
 fn setting_category(group: &str) -> crate::state::SettingsTab {
     use crate::state::SettingsTab;
     match group {
-        "General" => SettingsTab::General,
+        "General" | "Pickers" => SettingsTab::General,
         "Panes" | "Titlebar" => SettingsTab::Panes,
         "Workbar" | "Sidebar" => SettingsTab::Bars,
         "Alerts" | "Desktop notifications" | "Sounds" => SettingsTab::Alerts,
@@ -624,17 +649,26 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
     let page = isize::from(i16::try_from(list_rows.saturating_sub(1).max(1)).unwrap_or(i16::MAX));
     let keys = settings_key_handler(ctx, targets, selected_index, page, &actions);
     let search = settings_search(ctx, matches, total, keys);
+    let (selection_left, selection_right) =
+        crate::view::picker_selection_cap_glyphs(&ctx.state.config);
     let list = List::new()
         .items(items)
         .selected(selected_index)
         .border(false)
-        .selection_symbol(Some(""))
+        .selection_symbol(Some(selection_left))
+        .selection_symbol_right(Some(selection_right))
+        .selection_symbol_style(crate::view::picker_selection_cap_style(
+            theme,
+            theme.border_active,
+        ))
         .unselected_symbol(Some(""))
         .selection_full_width(true)
         .selection_style(picker_selection_style(theme, None))
         .unfocused_selection_style(picker_selection_style(theme, None))
         .item_hover_style(Style::new().bg(theme.surface.element.elevate_by(0.08)))
-        .item_horizontal_padding((0, 1))
+        .item_horizontal_padding(crate::view::picker_list_item_horizontal_padding(
+            &ctx.state.config,
+        ))
         .header_horizontal_padding((0, 1))
         .scroll_wheel(true)
         .scrollbar(true)

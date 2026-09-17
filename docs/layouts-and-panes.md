@@ -154,7 +154,9 @@ pane** from the command palette to restart its saved launch command and working 
 `[pane] border_mode` chooses separate frames, merged frames, none, or split dividers. Frame glyphs
 are five settings: tiled panes use `border_style`; floating panes and popups use
 `float_border_style`; scratchpad panes use `scratch_border_style`; fullscreen panes use
-`fullscreen_border_style`; pickers use `picker_border_style`. Merged frames fuse inside a layer.
+`fullscreen_border_style`; pickers use `picker_border_style`. Picker category tabs use
+`picker_tab_background` and `picker_tab_style`; the highlighted picker row uses
+`picker_selection_style`. Merged frames fuse inside a layer.
 The scratchpad sits above the workspace, so its seams do not join the tiles underneath. See
 [Configuration](configuration.md#pane).
 

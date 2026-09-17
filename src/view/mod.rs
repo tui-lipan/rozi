@@ -517,17 +517,40 @@ pub(crate) fn modal_scrollbar_config(theme: &Theme) -> ScrollbarConfig {
         .thumb_focus_style(Style::new().fg(theme.border_active))
 }
 
+pub(crate) fn picker_selection_cap_glyphs(
+    config: &crate::config::Config,
+) -> (&'static str, &'static str) {
+    config
+        .effective_cap_style(config.pane.picker_selection_style)
+        .glyphs()
+        .unwrap_or(("", ""))
+}
+
+pub(crate) fn picker_list_item_horizontal_padding(config: &crate::config::Config) -> (u16, u16) {
+    if picker_selection_cap_glyphs(config) == ("", "") {
+        (0, 1)
+    } else {
+        (0, 0)
+    }
+}
+
+pub(crate) fn picker_selection_cap_style(theme: &Theme, fill: Color) -> Style {
+    Style::new().fg(fill).bg(theme.surface.element)
+}
+
 pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
     ctx: &Context<AppRoot>,
     height: Length,
     highlight_matches: bool,
 ) -> SearchPalette<T> {
     let theme = &ctx.state.theme;
+    let selection_fill = theme.border_active;
     let selection_style = Style::new()
         .fg(theme.surface.backdrop)
-        .bg(theme.border_active)
+        .bg(selection_fill)
         .bold()
         .contrast_policy(ContrastPolicy::BlackOrWhite);
+    let (selection_left, selection_right) = picker_selection_cap_glyphs(&ctx.state.config);
     let input_style = theme.primary.patch(Style::new().bg(theme.surface.element));
 
     let palette = SearchPalette::<T>::new()
@@ -555,12 +578,14 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .list_scrollbar(true)
         .list_scrollbar_config(modal_scrollbar_config(theme))
         .list_selection_full_width(true)
-        .list_selection_symbol("")
+        .list_selection_symbol(selection_left)
+        .list_selection_symbol_right(selection_right)
+        .list_selection_symbol_style(picker_selection_cap_style(theme, selection_fill))
         .list_unselected_symbol("")
         .list_selection_style(selection_style)
         .list_unfocused_selection_style(selection_style)
         .list_item_hover_style(Style::new().bg(theme.surface.element.elevate_by(0.08)))
-        .list_item_horizontal_padding((0, 1))
+        .list_item_horizontal_padding(picker_list_item_horizontal_padding(&ctx.state.config))
         .list_header_horizontal_padding((0, 1))
         .item_style(fg_only(&theme.primary))
         .active_item_style(search_palette_active_item_style())

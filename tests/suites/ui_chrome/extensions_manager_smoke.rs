@@ -143,6 +143,25 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 install_prompt.contains("Install extension"),
                 "{install_prompt}"
             );
+            let frames: Vec<_> = backend
+                .capture_ui_snapshot()
+                .widgets
+                .into_iter()
+                .filter(|widget| widget.kind == tui_lipan::UiWidgetKind::Frame)
+                .collect();
+            let extensions_frame = frames
+                .iter()
+                .find(|widget| widget.title.as_deref() == Some("Extensions"))
+                .expect("extensions frame");
+            let install_frame = frames
+                .iter()
+                .find(|widget| widget.title.as_deref() == Some("Install extension"))
+                .expect("install frame");
+            assert_eq!(
+                install_frame.rect.y,
+                extensions_frame.rect.y + 1,
+                "install prompt sits one row below Extensions, like Change keybinding on Keybindings"
+            );
             assert!(
                 install_prompt.contains("Local path or Git HTTPS/SSH URL"),
                 "{install_prompt}"

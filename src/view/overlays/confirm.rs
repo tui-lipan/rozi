@@ -117,6 +117,8 @@ pub(super) struct DialogChrome<'a> {
     pub(super) caption: Option<PromptCaption<'a>>,
     /// Fade whatever is already on screen behind this dialog. See [`PromptChrome::dim_behind`].
     pub(super) dim_behind: bool,
+    /// When this dialog stacks on a list overlay, pin it one row below that overlay's top.
+    pub(super) parent_reserve_percent: Option<u16>,
 }
 
 /// Shared chrome for the dialogs answered by choosing rather than typing: the palette modal every
@@ -134,6 +136,7 @@ pub(super) fn dialog_overlay(
         highlight,
         caption,
         dim_behind,
+        parent_reserve_percent,
     } = chrome;
     let theme = &ctx.state.theme;
     let mut body = VStack::new().height(Length::Auto).padding((1, 0, 0, 0));
@@ -153,9 +156,12 @@ pub(super) fn dialog_overlay(
     // `cancel esc` would put a second name on what the refusal chip is already offering.
     body = body.child(dialog_button_row(ctx, &close, buttons));
 
-    let mut modal = action_palette_modal(ctx, title)
-        .on_close(ctx.link().callback(move |_| close.clone()))
-        .child(body);
+    let mut modal = match parent_reserve_percent {
+        Some(parent) => nested_action_palette_modal(ctx, title, parent),
+        None => action_palette_modal(ctx, title),
+    }
+    .on_close(ctx.link().callback(move |_| close.clone()))
+    .child(body);
     if dim_behind {
         modal =
             modal.backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION));

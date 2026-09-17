@@ -1254,14 +1254,15 @@ fn keybinding_reset_all_overlay(ctx: &Context<AppRoot>) -> Element {
             highlight: None,
             caption: None,
             dim_behind: false,
+            parent_reserve_percent: Some(HELP_MAX_HEIGHT_PERCENT),
         },
         Msg::KeybindingConfirmResetAll(false),
         &buttons,
     )
 }
 
-/// Cap and reserved band for the Keybindings list overlay. Nested cards (Change keybinding)
-/// reserve two fewer rows so they sit one row below this top edge.
+/// Cap and reserved band for the Keybindings list overlay. Nested cards (Change keybinding,
+/// Reset all) reserve two fewer rows so they sit one row below this top edge.
 const HELP_MAX_HEIGHT_PERCENT: u16 = 70;
 const HELP_MODAL_WIDTH: u16 = 64;
 
@@ -1599,10 +1600,7 @@ mod palette_alias_tests {
         assert_eq!(super::keycap_inner("Enter", true), " Enter ");
         assert_eq!(super::keycap_inner("Ctrl+C", true), "Ctrl+C ");
         assert_eq!(super::keycap_inner("u", false), "   u   ");
-        assert_eq!(
-            super::keycap_inner("Ctrl+Shift+E", false),
-            " Ctrl+Shift+E "
-        );
+        assert_eq!(super::keycap_inner("Ctrl+Shift+E", false), " Ctrl+Shift+E ");
     }
 
     /// The Mod row is how the layer is turned back on, so it stays listed while off.

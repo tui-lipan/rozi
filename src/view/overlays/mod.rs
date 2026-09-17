@@ -21,9 +21,9 @@ pub(in crate::view::overlays) use super::widget_keys::{
     settings_choice_key, settings_palette_key, theme_picker_key,
 };
 pub(in crate::view::overlays) use super::{
-    action_palette_modal, action_palette_modal_with_width, fg_only, modal_scrollbar_config,
-    nested_action_palette_modal, overlay_border_style, search_entries_with_groups,
-    shared_search_palette, styled_modal,
+    ACTION_PALETTE_MAX_HEIGHT_PERCENT, action_palette_modal, action_palette_modal_with_width,
+    fg_only, modal_scrollbar_config, nested_action_palette_modal, overlay_border_style,
+    search_entries_with_groups, shared_search_palette, styled_modal,
 };
 
 mod agents;

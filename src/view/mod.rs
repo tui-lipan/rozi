@@ -704,6 +704,10 @@ pub(crate) fn styled_modal(ctx: &Context<AppRoot>, title: &str, width: u16) -> M
         .frame_style(Style::new().bg(theme.surface.element))
 }
 
+/// Shared cap for command-palette-shaped overlays (`OverlayPalette`, theme picker, install
+/// prompt). Nested cards pass this to [`nested_action_palette_modal`] so they sit one row below.
+pub(crate) const ACTION_PALETTE_MAX_HEIGHT_PERCENT: u16 = 65;
+
 /// The command palette / theme picker modal: shared chrome, content-sized, no inner padding
 /// (the `SearchPalette` manages its own). The modal hugs its content so filtering to a few
 /// matches shrinks it, but is capped at 65% of the viewport (the inner list scrolls past that);
@@ -713,9 +717,10 @@ pub(crate) fn action_palette_modal(ctx: &Context<AppRoot>, title: &str) -> Modal
     action_palette_modal_with_width(ctx, title, 60)
 }
 
-/// A card stacked on a list overlay (Change keybinding on Keybindings, Terminal padding on
-/// Settings). Portals pin their top at `(viewport - reserve_height) / 2`; two fewer reserved rows
-/// than the parent drops that edge by one, so the card sits just below instead of sharing a top.
+/// A card stacked on a list overlay (Change keybinding / Reset all on Keybindings, Terminal
+/// padding on Settings, Install extension on Extensions). Portals pin their top at
+/// `(viewport - reserve_height) / 2`; two fewer reserved rows than the parent drops that edge
+/// by one, so the card sits just below instead of sharing a top.
 pub(crate) fn nested_action_palette_modal(
     ctx: &Context<AppRoot>,
     title: &str,
@@ -732,8 +737,8 @@ pub(crate) fn action_palette_modal_with_width(
 ) -> Modal {
     styled_modal(ctx, title, width)
         .height(Length::Auto)
-        .max_height(Length::Percent(65))
-        .reserve_height(Length::Percent(65))
+        .max_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
+        .reserve_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
         .padding(0)
 }
 

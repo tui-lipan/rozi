@@ -328,6 +328,32 @@ fn body() {
 }
 
 #[test]
+fn reset_all_card_sits_one_row_below_keybindings() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend();
+            backend.state_mut().config.key_sources.insert(
+                "close".into(),
+                rozi::config::KeyOverrideSpec::replace(vec![]),
+            );
+            backend
+                .dispatch(rozi::Msg::KeybindingResetAll)
+                .expect("open reset all");
+            let shown = frame(&mut backend);
+            assert!(shown.contains("Reset all keybindings?"), "{shown}");
+            assert_eq!(
+                frame_y(&backend, "Reset all keybindings?"),
+                frame_y(&backend, "Keybindings") + 1,
+                "reset all sits one row below Keybindings, like Change keybinding"
+            );
+        })
+        .expect("spawn reset-all offset smoke thread")
+        .join()
+        .expect("reset-all offset smoke completes");
+}
+
+#[test]
 fn unbind_keeps_the_highlight_on_the_next_row() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)

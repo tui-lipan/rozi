@@ -138,6 +138,8 @@ pub(super) struct PromptChrome<'a> {
     /// than replacing it; the modal's own backdrop does the work, so it covers the dialog's border
     /// and title too, not just the body.
     dim_behind: bool,
+    /// When this prompt stacks on a list overlay, pin it one row below that overlay's top.
+    parent_reserve_percent: Option<u16>,
 }
 
 impl<'a> PromptChrome<'a> {
@@ -157,6 +159,7 @@ impl<'a> PromptChrome<'a> {
             submit_hints,
             always_cancel_hint: false,
             dim_behind: false,
+            parent_reserve_percent: None,
         }
     }
 }
@@ -185,6 +188,7 @@ pub(super) fn prompt_overlay(
         submit_hints,
         always_cancel_hint,
         dim_behind,
+        parent_reserve_percent,
     } = chrome;
     let theme = &ctx.state.theme;
     let busy = caption.is_some_and(PromptCaption::is_busy);
@@ -289,9 +293,12 @@ pub(super) fn prompt_overlay(
         ));
     }
 
-    let mut modal = action_palette_modal(ctx, title)
-        .on_close(ctx.link().callback(move |_| close.clone()))
-        .child(body);
+    let mut modal = match parent_reserve_percent {
+        Some(parent) => nested_action_palette_modal(ctx, title, parent),
+        None => action_palette_modal(ctx, title),
+    }
+    .on_close(ctx.link().callback(move |_| close.clone()))
+    .child(body);
     if dim_behind {
         // The same recession the workspace makes for any dialog, applied by the overlay stack, so
         // every layer already on screen fades together rather than one panel at a time.
@@ -346,6 +353,7 @@ pub(crate) fn extension_install_prompt_overlay(ctx: &Context<AppRoot>) -> Elemen
             caption,
             caption_document,
             dim_behind: true,
+            parent_reserve_percent: Some(ACTION_PALETTE_MAX_HEIGHT_PERCENT),
             ..PromptChrome::new(
                 "Install extension",
                 "Local path or Git HTTPS/SSH URL",
@@ -580,6 +588,7 @@ fn askpass_choice_overlay(
             highlight: fingerprint,
             caption,
             dim_behind: true,
+            parent_reserve_percent: None,
         },
         Msg::CancelRemoteAskpass,
         &buttons,

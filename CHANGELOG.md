@@ -103,6 +103,8 @@
   as the command palette and the other pickers, not the brighter muted text color. The match count
   in the search field uses the same primary text color as those pickers. The Change keybinding card
   uses that same border-colored inner rule.
+- Change keybinding current and default pills pad a short key to the width of `   u   `, and
+  otherwise keep only one cell of padding: the cap itself, or a space when caps are off.
 - Scrollable layout no longer scrolls on hover. With focus on hover, pointing at a clipped column
   focuses it in place; the next key or click scrolls it into view.
 - Moving, swapping, or dragging a Scrollable column keeps the strip still when the column lands in a

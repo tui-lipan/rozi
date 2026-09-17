@@ -768,9 +768,6 @@ const KEYBINDING_CARD_WIDTH: u16 = 52;
 
 /// Keys drawn as keycaps, capped with the workbar tab style so they read like the tab strip.
 fn keycap_pills(ctx: &Context<AppRoot>, keys: &str, style: Style) -> Vec<Span> {
-    /// Columns of pill fill on each side of the key, inside the caps.
-    const PILL_PADDING: usize = 3;
-    let pad = " ".repeat(PILL_PADDING);
     let caps = ctx
         .state
         .config
@@ -786,7 +783,7 @@ fn keycap_pills(ctx: &Context<AppRoot>, keys: &str, style: Style) -> Vec<Span> {
         if index > 0 {
             spans.push(Span::new(" "));
         }
-        let label = Span::new(format!("{pad}{key}{pad}")).style(style);
+        let label = Span::new(keycap_inner(key, caps.is_some())).style(style);
         match caps {
             Some((left, right)) => {
                 spans.push(Span::new(left).style(cap_style));
@@ -797,6 +794,18 @@ fn keycap_pills(ctx: &Context<AppRoot>, keys: &str, style: Style) -> Vec<Span> {
         }
     }
     spans
+}
+
+/// Inner fill of a keycap. A one-character key sits in `   u   `; a longer chord keeps only one
+/// cell of padding — the cap itself when caps are on, a space when they are not.
+fn keycap_inner(key: &str, has_caps: bool) -> String {
+    use unicode_width::UnicodeWidthStr;
+    const MIN_INNER: usize = 7; // "   u   "
+    let extra = MIN_INNER.saturating_sub(key.width());
+    let min_pad = usize::from(!has_caps);
+    let left = (extra / 2).max(min_pad);
+    let right = (extra - extra / 2).max(min_pad);
+    format!("{}{key}{}", " ".repeat(left), " ".repeat(right))
 }
 
 /// The rule between a card's heading and its input: structure, not content, so it stays quiet.
@@ -1581,6 +1590,19 @@ mod palette_alias_tests {
         assert!(filtered_help_groups(rows.clone(), HelpTab::Modes, "").is_empty());
         assert!(filtered_help_groups(rows.clone(), HelpTab::Unbound, "").is_empty());
         assert_eq!(filtered_help_groups(rows, HelpTab::All, "")[0].0, "");
+    }
+
+    #[test]
+    fn keycap_inner_pads_a_short_key_and_lets_a_long_chord_keep_one_cell() {
+        assert_eq!(super::keycap_inner("u", true), "   u   ");
+        assert_eq!(super::keycap_inner("Ctrl+Shift+E", true), "Ctrl+Shift+E");
+        assert_eq!(super::keycap_inner("Enter", true), " Enter ");
+        assert_eq!(super::keycap_inner("Ctrl+C", true), "Ctrl+C ");
+        assert_eq!(super::keycap_inner("u", false), "   u   ");
+        assert_eq!(
+            super::keycap_inner("Ctrl+Shift+E", false),
+            " Ctrl+Shift+E "
+        );
     }
 
     /// The Mod row is how the layer is turned back on, so it stays listed while off.

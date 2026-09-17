@@ -504,23 +504,6 @@ fn settings_list_rows(ctx: &Context<AppRoot>, rows: usize) -> u16 {
     u16::try_from(rows).unwrap_or(u16::MAX).clamp(1, cap)
 }
 
-fn stepped_settings_row(
-    targets: &[Option<SettingsAction>],
-    current: Option<usize>,
-    delta: isize,
-) -> Option<usize> {
-    let rows = targets
-        .iter()
-        .enumerate()
-        .filter_map(|(index, target)| target.map(|_| index))
-        .collect::<Vec<_>>();
-    let last = rows.len().checked_sub(1)?;
-    let position = current
-        .and_then(|current| rows.iter().position(|row| *row == current))
-        .unwrap_or(0);
-    Some(rows[position.saturating_add_signed(delta).min(last)])
-}
-
 fn settings_key_handler(
     ctx: &Context<AppRoot>,
     targets: Arc<[Option<SettingsAction>]>,
@@ -537,17 +520,18 @@ fn settings_key_handler(
         let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key;
         let navigation = match key.code {
             code if plain && !key.mods.shift => {
-                let delta = match code {
-                    KeyCode::Up => Some(-1),
-                    KeyCode::Down => Some(1),
-                    KeyCode::PageUp => Some(-page),
-                    KeyCode::PageDown => Some(page),
-                    KeyCode::Home => Some(isize::MIN),
-                    KeyCode::End => Some(isize::MAX),
+                let step = match code {
+                    KeyCode::Up => Some((-1, true)),
+                    KeyCode::Down => Some((1, true)),
+                    KeyCode::PageUp => Some((-page, false)),
+                    KeyCode::PageDown => Some((page, false)),
+                    KeyCode::Home => Some((isize::MIN, false)),
+                    KeyCode::End => Some((isize::MAX, false)),
                     _ => None,
                 };
-                delta.and_then(|delta| {
-                    let index = stepped_settings_row(&targets, selected, delta)?;
+                step.and_then(|(delta, wrap)| {
+                    let index =
+                        super::palette::stepped_selectable_row(&targets, selected, delta, wrap)?;
                     targets[index].map(Msg::SettingsSelect)
                 })
             }

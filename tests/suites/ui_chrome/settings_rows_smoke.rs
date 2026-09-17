@@ -777,6 +777,43 @@ fn settings_tabs_remember_their_highlighted_row() {
 }
 
 #[test]
+fn settings_up_and_down_wrap_around_the_list() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 35);
+        backend.state_mut().settings_selected = Some(SettingsAction::Theme);
+        backend.render();
+        key(&mut backend, KeyCode::Up);
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleResurrectForeground),
+            "Up from the first row wraps to the last"
+        );
+        key(&mut backend, KeyCode::Down);
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::Theme),
+            "Down from the last row wraps to the first"
+        );
+        key(&mut backend, KeyCode::Home);
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::Theme)
+        );
+        key(&mut backend, KeyCode::PageUp);
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::Theme),
+            "PageUp stops at the first row"
+        );
+        key(&mut backend, KeyCode::End);
+        assert_eq!(
+            backend.state().settings_selected,
+            Some(SettingsAction::CycleResurrectForeground)
+        );
+    });
+}
+
+#[test]
 fn settings_arrows_switch_tabs_and_enter_opens_a_choice_picker() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 35);

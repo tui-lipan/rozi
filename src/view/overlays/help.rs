@@ -396,17 +396,18 @@ fn keybindings_key_handler(
             KeyCode::Left if plain && !key.mods.shift => Some(help_tab_msg(tab, -1)),
             KeyCode::Right if plain && !key.mods.shift => Some(help_tab_msg(tab, 1)),
             code if plain && !key.mods.shift => {
-                let delta = match code {
-                    KeyCode::Up => Some(-1),
-                    KeyCode::Down => Some(1),
-                    KeyCode::PageUp => Some(-page),
-                    KeyCode::PageDown => Some(page),
-                    KeyCode::Home => Some(isize::MIN),
-                    KeyCode::End => Some(isize::MAX),
+                let step = match code {
+                    KeyCode::Up => Some((-1, true)),
+                    KeyCode::Down => Some((1, true)),
+                    KeyCode::PageUp => Some((-page, false)),
+                    KeyCode::PageDown => Some((page, false)),
+                    KeyCode::Home => Some((isize::MIN, false)),
+                    KeyCode::End => Some((isize::MAX, false)),
                     _ => None,
                 };
-                delta.and_then(|delta| {
-                    let index = stepped_help_row(&targets, selected, delta)?;
+                step.and_then(|(delta, wrap)| {
+                    let index =
+                        super::palette::stepped_selectable_row(&targets, selected, delta, wrap)?;
                     let target = targets[index].as_ref()?;
                     Some(Msg::KeybindingSelect(target.id.clone()))
                 })
@@ -475,26 +476,6 @@ fn help_row_id(row: &HelpRow) -> String {
     row.config_id
         .clone()
         .unwrap_or_else(|| format!("{}\u{1f}{}", row.category, row.label))
-}
-
-/// The selectable row `delta` rows away from `current`, clamped to the ends. Headers and spacers
-/// (`None`) are skipped, and an unknown `current` counts as the first row, which is what the list
-/// highlights in that case.
-fn stepped_help_row(
-    targets: &[Option<HelpTarget>],
-    current: Option<usize>,
-    delta: isize,
-) -> Option<usize> {
-    let rows = targets
-        .iter()
-        .enumerate()
-        .filter_map(|(index, target)| target.as_ref().map(|_| index))
-        .collect::<Vec<_>>();
-    let last = rows.len().checked_sub(1)?;
-    let position = current
-        .and_then(|current| rows.iter().position(|row| *row == current))
-        .unwrap_or(0);
-    Some(rows[position.saturating_add_signed(delta).min(last)])
 }
 
 fn help_group_row_count(groups: &[(String, Vec<HelpRow>)]) -> usize {

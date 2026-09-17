@@ -101,6 +101,8 @@
   heading that repeats the tab name; All and search keep every group heading. In-group labels drop
   a repeated Titlebar, Workbar, or Sidebar prefix; the sidebar tab-bar fill is **Tab strip**.
   Settings has no footer hint pills.
+- Keybindings and Settings wrap Up/Down at the ends of the list, matching the other pickers.
+  PageUp, PageDown, Home, and End still stop at the first and last rows. Needs tui-lipan 0.11.4.
 - Overlay pickers no longer wrap their body in a borderless inner `Frame`. The modal already
   hugs content and owns the height cap; the extra node only blocked `join_frame` from the chrome.
   Their search divider stays an inner rule and does not join the modal border.

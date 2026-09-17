@@ -105,6 +105,16 @@ fn body() {
     );
     press(&mut backend, KeyCode::Home);
     assert_eq!(full, frame(&mut backend), "Home does not return to the top");
+    press(&mut backend, KeyCode::Up);
+    assert!(
+        selected(&backend).is_some_and(|id| !id.contains("Prefix")),
+        "Up from the first row wraps to the last"
+    );
+    press(&mut backend, KeyCode::Down);
+    assert!(
+        selected(&backend).is_some_and(|id| id.contains("Prefix")),
+        "Down from the last row wraps to the first"
+    );
 
     // Tab, Shift+Tab, and the horizontal arrows walk the tab strip, wrapping at both ends, and
     // focus never leaves the search field.

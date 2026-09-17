@@ -561,3 +561,47 @@ pub(super) fn tabbed_picker_panel(
         .child(body)
         .into()
 }
+
+/// Next selectable row after moving `delta` steps. Up/Down wrap like SearchPalette; Page/Home/End
+/// still stop at the ends so a long grouped list does not jump a whole viewport on PageUp.
+pub(super) fn stepped_selectable_row<T>(
+    targets: &[Option<T>],
+    current: Option<usize>,
+    delta: isize,
+    wrap: bool,
+) -> Option<usize> {
+    let matches: Vec<bool> = targets.iter().map(|target| target.is_some()).collect();
+    List::step_matching(&matches, current.unwrap_or(0), delta, wrap)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn selectable_rows_wrap_on_arrows_and_clamp_on_paging() {
+        let targets = [None, Some("a"), None, Some("b"), Some("c")];
+        assert_eq!(
+            super::stepped_selectable_row(&targets, Some(1), -1, true),
+            Some(4)
+        );
+        assert_eq!(
+            super::stepped_selectable_row(&targets, Some(4), 1, true),
+            Some(1)
+        );
+        assert_eq!(
+            super::stepped_selectable_row(&targets, Some(1), -1, false),
+            Some(1)
+        );
+        assert_eq!(
+            super::stepped_selectable_row(&targets, Some(4), 1, false),
+            Some(4)
+        );
+        assert_eq!(
+            super::stepped_selectable_row(&targets, Some(3), isize::MIN, false),
+            Some(1)
+        );
+        assert_eq!(
+            super::stepped_selectable_row(&targets, Some(1), isize::MAX, false),
+            Some(4)
+        );
+    }
+}

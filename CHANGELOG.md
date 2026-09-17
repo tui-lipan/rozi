@@ -81,7 +81,7 @@
   server started. A rule edited today applies to a session server that has been running since last
   week, which is what makes "the same spawn policy" true of the inputs and not just the code path.
 - Reloading a broken `config.toml` no longer resets to factory defaults. Invalid TOML and
-  unrecoverable types keep the last good runtime config; startup still falls back to defaults.
+  values of the wrong type keep the last good runtime config; startup still falls back to defaults.
 
 ### Changed
 

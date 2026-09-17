@@ -193,6 +193,8 @@ const SIDEBAR_TAB_KEYS: &[&str] = &[
 
 const LAUNCHER_ENTRY_KEYS: &[&str] = &["label", "group", "run", "send", "popup", "keep_open"];
 
+const USER_COMMAND_KEYS: &[&str] = &["label", "run", "send", "popup", "exec", "keep_open"];
+
 const COMMAND_KEYS: &[&str] = &["id", "label", "run", "send", "popup", "exec", "keep_open"];
 
 const BINDING_TABLE_KEYS: &[&str] = &["add", "label", "run", "send", "popup", "exec", "keep_open"];
@@ -294,7 +296,7 @@ fn collect_tab_list(sidebar: &Table, unknown: &mut Vec<String>) {
         let path = format!("sidebar.tabs[{index}]");
         report_unknown(tab_table, &path, SIDEBAR_TAB_KEYS, unknown);
         collect_array_tables(tab_table, &path, "entries", LAUNCHER_ENTRY_KEYS, unknown);
-        collect_named_table(tab_table, &path, "on_click", COMMAND_KEYS, unknown);
+        collect_named_table(tab_table, &path, "on_click", USER_COMMAND_KEYS, unknown);
     }
 }
 
@@ -437,6 +439,20 @@ mod tests {
     fn unknown_nested_key_is_reported() {
         let unknown = parse("[sidebar]\nwidth = 42\nwidht = 7\n");
         assert_eq!(unknown, ["sidebar.widht"]);
+    }
+
+    #[test]
+    fn unknown_top_level_key_is_reported() {
+        let unknown = parse("theem = \"rozi\"\nframe_rate = 60\n");
+        assert_eq!(unknown, ["theem"]);
+    }
+
+    #[test]
+    fn on_click_id_is_unknown() {
+        let unknown = parse(
+            "[sidebar]\ntabs = [{ name = \"rows\", label = \"Rows\", on_click = { id = \"x\", send = \"hi\" } }]\n",
+        );
+        assert_eq!(unknown, ["sidebar.tabs[0].on_click.id"]);
     }
 
     #[test]

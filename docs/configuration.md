@@ -1,10 +1,10 @@
 # Configuration
 
-Rozi reads one TOML file. Every key is optional. Invalid TOML or a value whose type cannot be
-read rejects the document: startup loads defaults, a live reload keeps the last good runtime
-config, and Rozi shows an error. An unknown key or an invalid enum token leaves the rest of the
-file in place, uses that setting's default, and warns. Several warnings share one toast; each
-warning is also printed to stderr.
+Rozi reads one TOML file. Every key is optional. Invalid TOML or a value of the wrong type
+rejects the document: startup loads defaults, a live reload keeps the last good runtime config,
+and Rozi shows an error. An unknown key or an invalid enum token leaves the rest of the file in
+place, uses that setting's default, and warns. Several warnings share one toast. Each warning is
+also printed to stderr.
 
 The complete inert example is [`examples/config.toml`](../examples/config.toml). Uncomment only the
 settings you need.
@@ -38,8 +38,8 @@ Relative `XDG_*` values are ignored. Rozi requires absolute roots.
 
 Rozi watches the config file and applies changes without replacing panes or workspaces. A reload
 builds a candidate first and replaces the running config only when the document is usable. If the
-file is unreadable, not valid TOML, or has a type that cannot be recovered per field, the last
-good runtime config stays. Installed extension directories are not watched; rescan them after
+file is unreadable, not valid TOML, or has a value of the wrong type, the last good runtime
+config stays. Installed extension directories are not watched; rescan them after
 installing, updating, or removing an extension:
 
 ```bash

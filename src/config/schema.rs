@@ -1550,11 +1550,11 @@ pub struct SidebarConfig {
     /// Fraction of the split sidebar height assigned to the top panel.
     pub split_ratio: f32,
     /// Paints the sidebar with the canvas backdrop instead of the elevated panel fill.
-    pub background_follows_terminal: bool,
+    pub background_follows_canvas: bool,
     /// Keeps one row between each panel's tab bar and its list.
     pub gap: bool,
     /// Paints the tab strip as a distinct bar: an elevated body fill on a solid sidebar,
-    /// `surface.element` when the sidebar follows the terminal. Off, the strip matches the body.
+    /// `surface.element` when the sidebar follows the canvas. Off, the strip matches the body.
     pub background: bool,
     /// End-cap style for sidebar tabs. Half-block is not available on tab bars.
     pub tab_style: CapStyle,
@@ -1592,7 +1592,7 @@ impl Default for SidebarConfig {
             // The bottom panel starts larger: a repository has far more rows to show than a
             // session has agents and panes.
             split_ratio: 0.4,
-            background_follows_terminal: false,
+            background_follows_canvas: false,
             gap: true,
             background: true,
             tab_style: CapStyle::Padded,

@@ -452,9 +452,9 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `panels` | array of one or two string arrays | `[["activity", "panes", "sessions"], ["files", "git"]]` | Orders tab IDs. Unknown and duplicate IDs are skipped. Omitted configured tabs are appended to the first panel. |
 | `split` | bool | Inferred from panel count, `true` by default | Shows two saved panel groups. |
 | `split_ratio` | float | `0.4` | Finite value clamped to `0.15..=0.85`. |
-| `background_follows_terminal` | bool | `false` | Paints the sidebar with the canvas backdrop instead of the elevated panel fill. |
+| `background_follows_canvas` | bool | `false` | Paints the sidebar with the canvas backdrop instead of the elevated panel fill. |
 | `gap` | bool | `true` | Keeps one row between each panel's tab bar and its list. |
-| `background` | bool | `true` | Paints the tab strip as a distinct bar: an elevated sidebar fill when follow-terminal is off, `element` when the sidebar follows the terminal. Off, the strip matches the body. |
+| `background` | bool | `true` | Paints the tab strip as a distinct bar: an elevated sidebar fill when follow-canvas is off, `element` when the sidebar follows the canvas. Off, the strip matches the body. |
 | `tab_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Round and arrow need nerd icons. |
 
 A table in `tabs` can configure `files` or `git`, or define a custom launcher or command tab.

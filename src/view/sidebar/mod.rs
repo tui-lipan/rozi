@@ -17,7 +17,7 @@ use crate::{AppRoot, Msg};
 /// frame of the slide instead.
 pub(super) fn sidebar(ctx: &Context<AppRoot>, width: u16) -> Element {
     let theme = &ctx.state.theme;
-    let fill = fill_color(theme, ctx.state.config.sidebar.background_follows_terminal);
+    let fill = fill_color(theme, ctx.state.config.sidebar.background_follows_canvas);
     let panels: Element = if ctx.state.sidebar.panels.len() > 1 {
         let divider_style = Style::new().fg(fill.elevate_by(0.15)).bg(fill);
         Splitter::horizontal()
@@ -475,8 +475,8 @@ pub(super) fn row_highlight(fill: Color) -> Style {
     Style::new().bg(fill.elevate_by(super::HOVER_LIFT))
 }
 
-pub(crate) fn fill_color(theme: &Theme, follow_terminal: bool) -> Color {
-    if follow_terminal {
+pub(crate) fn fill_color(theme: &Theme, follow_canvas: bool) -> Color {
+    if follow_canvas {
         theme.surface.backdrop
     } else {
         theme.surface.element
@@ -486,7 +486,7 @@ pub(crate) fn fill_color(theme: &Theme, follow_terminal: bool) -> Color {
 pub(super) fn fill(ctx: &Context<AppRoot>) -> Color {
     fill_color(
         &ctx.state.theme,
-        ctx.state.config.sidebar.background_follows_terminal,
+        ctx.state.config.sidebar.background_follows_canvas,
     )
 }
 
@@ -495,7 +495,7 @@ fn strip_fill(ctx: &Context<AppRoot>) -> Color {
     if ctx.state.config.sidebar.background {
         super::strip_background(
             &ctx.state.theme,
-            ctx.state.config.sidebar.background_follows_terminal,
+            ctx.state.config.sidebar.background_follows_canvas,
             host,
         )
     } else {
@@ -541,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn fill_tracks_the_follow_terminal_flag() {
+    fn fill_tracks_the_follow_canvas_flag() {
         let theme = Theme::default();
         assert_eq!(fill_color(&theme, false), theme.surface.element);
         assert_eq!(fill_color(&theme, true), theme.surface.backdrop);

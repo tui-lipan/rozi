@@ -137,6 +137,7 @@ pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "which key delay",
             "background follows terminal",
             "terminal background",
+            "background follows canvas",
             "sidebar",
             "sidebar position",
             "sidebar gap",
@@ -289,10 +290,11 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "dock left",
             "dock right",
         ]),
-        ToggleSidebarBackgroundFollowsTerminal => alias_list(&[
-            "sidebar terminal background",
-            "match terminal sidebar",
-            "sidebar follows terminal",
+        ToggleSidebarBackgroundFollowsCanvas => alias_list(&[
+            "sidebar canvas background",
+            "match canvas sidebar",
+            "sidebar follows canvas",
+            "app background",
         ]),
         ToggleSidebarGap => alias_list(&[
             "sidebar gap",

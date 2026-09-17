@@ -121,7 +121,7 @@ pub enum SettingsAction {
     CyclePickerTabStyle,
     CyclePickerSelectionStyle,
     CyclePaneAnimation,
-    ToggleSidebarBackgroundFollowsTerminal,
+    ToggleSidebarBackgroundFollowsCanvas,
     ToggleSidebarPosition,
     ToggleSidebarGap,
     ToggleSidebarBackground,
@@ -195,7 +195,7 @@ impl SettingsAction {
             Self::CyclePaneAnimation,
             // Sidebar
             Self::ToggleSidebarPosition,
-            Self::ToggleSidebarBackgroundFollowsTerminal,
+            Self::ToggleSidebarBackgroundFollowsCanvas,
             Self::ToggleSidebarGap,
             Self::ToggleSidebarBackground,
             Self::CycleSidebarTabStyle,

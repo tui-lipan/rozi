@@ -47,7 +47,7 @@ tabs = ["activity", "panes", "sessions", "files", "git"]
 panels = [["activity", "panes", "sessions"], ["files", "git"]]
 split = true
 split_ratio = 0.5
-background_follows_terminal = false
+background_follows_canvas = false
 gap = true
 background = true
 tab_style = "padded"
@@ -59,10 +59,10 @@ first are ignored.
 
 Set `split = false` to display one panel while retaining the two saved groups. Settings → Position
 docks the sidebar left or right, or set `[sidebar] position` to `"right"`.
-`background_follows_terminal` paints the sidebar with the canvas
+`background_follows_canvas` paints the sidebar with the canvas
 backdrop instead of the elevated panel fill. `gap` keeps one blank row between each tab bar and
 its list. `background` paints the tab strip as a distinct bar (an elevated sidebar fill when
-follow-terminal is off, `element` when it follows the terminal); off, the strip matches the body.
+follow-canvas is off, `element` when it follows the canvas); off, the strip matches the body.
 `tab_style` is `padded`, `round`, or `arrow` — the same end caps as workbar tabs. See
 [Configuration](configuration.md#sidebar) for defaults, size limits, tree options, and custom tab
 syntax. A complete example is in

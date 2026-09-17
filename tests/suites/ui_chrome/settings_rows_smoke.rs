@@ -209,6 +209,7 @@ fn settings_all_keeps_every_control_available() {
             "Selection style",
             "Terminal padding",
             "Background follows terminal",
+            "Background follows canvas",
             "Show titlebar",
             "Layout",
             "Show workbar",
@@ -263,7 +264,7 @@ fn settings_all_keeps_every_control_available() {
         setting_row(workbar, "Tab style");
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
         setting_row(sidebar, "Position");
-        setting_row(sidebar, "Background follows terminal");
+        setting_row(sidebar, "Background follows canvas");
         setting_row(sidebar, "Gap");
         setting_row(sidebar, "Tab style");
         assert!(!frame.contains("Extensions"), "{frame}");
@@ -429,7 +430,7 @@ fn settings_reports_sidebar_values() {
         {
             let state = backend.state_mut();
             state.config.sidebar.position = rozi::config::SidebarPosition::Right;
-            state.config.sidebar.background_follows_terminal = true;
+            state.config.sidebar.background_follows_canvas = true;
             state.config.sidebar.gap = false;
             state.config.sidebar.background = false;
             state.config.sidebar.tab_style = tui_lipan::prelude::CapStyle::Round;
@@ -446,7 +447,7 @@ fn settings_reports_sidebar_values() {
             "sidebar position row is misbound:\n{frame}"
         );
         assert!(
-            setting_row(sidebar, "Background follows terminal").contains("Enabled"),
+            setting_row(sidebar, "Background follows canvas").contains("Enabled"),
             "sidebar backdrop row is misbound:\n{frame}"
         );
         assert!(

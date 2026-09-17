@@ -133,13 +133,13 @@ pub(crate) fn toggle_sidebar_background(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
-pub(crate) fn toggle_sidebar_background_follows_terminal(ctx: &mut Context<AppRoot>) -> Update {
-    ctx.state.config.sidebar.background_follows_terminal =
-        !ctx.state.config.sidebar.background_follows_terminal;
+pub(crate) fn toggle_sidebar_background_follows_canvas(ctx: &mut Context<AppRoot>) -> Update {
+    ctx.state.config.sidebar.background_follows_canvas =
+        !ctx.state.config.sidebar.background_follows_canvas;
     persist_sidebar_toggle(
         ctx,
-        "background_follows_terminal",
-        ctx.state.config.sidebar.background_follows_terminal,
+        "background_follows_canvas",
+        ctx.state.config.sidebar.background_follows_canvas,
     );
     Update::full()
 }

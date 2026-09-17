@@ -68,12 +68,12 @@ background_follows_terminal = true
 This keeps the chosen theme but replaces its backdrop with the host terminal's reported background.
 Rozi queries the color at startup. Restart after changing the host terminal theme.
 
-The sidebar has the same switch of its own. Off, it keeps the elevated panel fill; on, it uses that
-canvas backdrop:
+Use **Background follows canvas** in Settings. Off, the sidebar keeps the elevated panel fill; on,
+it uses that canvas backdrop:
 
 ```toml
 [sidebar]
-background_follows_terminal = true
+background_follows_canvas = true
 ```
 
 ## Create a custom theme

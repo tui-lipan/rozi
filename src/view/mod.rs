@@ -432,7 +432,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         // The splitter paints its own handle column outside both children, so it has to be dimmed
         // by hand to keep the seam from staying lit between two dimmed panes.
         let divider_bg =
-            sidebar::fill_color(theme, ctx.state.config.sidebar.background_follows_terminal)
+            sidebar::fill_color(theme, ctx.state.config.sidebar.background_follows_canvas)
                 .blend_toward(theme.surface.backdrop, 1.0 - sidebar_dim);
         let divider_style = Style::new().fg(divider_bg.elevate_by(0.15)).bg(divider_bg);
         // The same window `set_width` clamps to, handed to the splitter so the drag stops there

@@ -342,11 +342,11 @@
 # Fraction of split-sidebar height given to the top panel, clamped to 0.15-0.85.
 #split_ratio = 0.4
 # Paint the sidebar with the canvas backdrop instead of the elevated panel fill.
-#background_follows_terminal = false
+#background_follows_canvas = false
 # One blank row between each panel's tab bar and its list.
 #gap = true
 # Paint the tab strip as a distinct bar: elevated sidebar fill when
-# follow-terminal is off, element when the sidebar follows the terminal. Off,
+# follow-canvas is off, element when the sidebar follows the canvas. Off,
 # the strip matches the sidebar body.
 #background = true
 # Tab end caps: "padded", "round", or "arrow". Round and arrow need nerd icons.

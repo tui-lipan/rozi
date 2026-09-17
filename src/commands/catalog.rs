@@ -634,8 +634,8 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
-        action: Action::ToggleSidebarBackgroundFollowsTerminal,
-        label: "Sidebar background follows terminal",
+        action: Action::ToggleSidebarBackgroundFollowsCanvas,
+        label: "Sidebar background follows canvas",
         category: "Settings",
         default_keys: &[],
         palette: false,

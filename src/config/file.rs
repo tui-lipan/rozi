@@ -205,7 +205,7 @@ pub(super) struct SidebarFileConfig {
     pub(super) panels: Option<Vec<Vec<String>>>,
     pub(super) split: Option<bool>,
     pub(super) split_ratio: Option<f32>,
-    pub(super) background_follows_terminal: Option<bool>,
+    pub(super) background_follows_canvas: Option<bool>,
     pub(super) gap: Option<bool>,
     pub(super) background: Option<bool>,
     pub(super) tab_style: Option<String>,

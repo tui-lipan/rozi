@@ -357,8 +357,8 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         ToggleSidebarBackground => {
             execute_action(ctx, Action::ToggleSidebarBackground);
         }
-        ToggleSidebarBackgroundFollowsTerminal => {
-            execute_action(ctx, Action::ToggleSidebarBackgroundFollowsTerminal);
+        ToggleSidebarBackgroundFollowsCanvas => {
+            execute_action(ctx, Action::ToggleSidebarBackgroundFollowsCanvas);
         }
         ToggleWorkbarPowerline => {
             execute_action(ctx, Action::ToggleWorkbarPowerline);

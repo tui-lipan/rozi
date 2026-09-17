@@ -91,7 +91,7 @@ pub enum Action {
     ToggleSidebarPosition,
     ToggleSidebarGap,
     ToggleSidebarBackground,
-    ToggleSidebarBackgroundFollowsTerminal,
+    ToggleSidebarBackgroundFollowsCanvas,
     CycleSidebarTabStyle,
     /// Move keyboard focus into the sidebar's row list. The sidebar is outside the Tab ring and
     /// click-to-focus, so this is the only way in.
@@ -218,7 +218,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::ToggleSidebarPosition,
     Action::ToggleSidebarGap,
     Action::ToggleSidebarBackground,
-    Action::ToggleSidebarBackgroundFollowsTerminal,
+    Action::ToggleSidebarBackgroundFollowsCanvas,
     Action::CycleSidebarTabStyle,
     Action::FocusSidebar,
     Action::SidebarNextTab,
@@ -342,8 +342,8 @@ impl Action {
             Action::ToggleSidebarPosition => "toggle-sidebar-position",
             Action::ToggleSidebarGap => "toggle-sidebar-gap",
             Action::ToggleSidebarBackground => "toggle-sidebar-background",
-            Action::ToggleSidebarBackgroundFollowsTerminal => {
-                "toggle-sidebar-background-follows-terminal"
+            Action::ToggleSidebarBackgroundFollowsCanvas => {
+                "toggle-sidebar-background-follows-canvas"
             }
             Action::CycleSidebarTabStyle => "cycle-sidebar-tab-style",
             Action::FocusSidebar => "focus-sidebar",

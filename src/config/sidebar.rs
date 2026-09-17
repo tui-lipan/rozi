@@ -110,8 +110,8 @@ pub(super) fn apply_sidebar_config(
             )),
         }
     }
-    if let Some(background_follows_terminal) = raw.background_follows_terminal {
-        sidebar.background_follows_terminal = background_follows_terminal;
+    if let Some(background_follows_canvas) = raw.background_follows_canvas {
+        sidebar.background_follows_canvas = background_follows_canvas;
     }
     if let Some(gap) = raw.gap {
         sidebar.gap = gap;
@@ -531,7 +531,7 @@ mod tests {
         assert_eq!(config.position, SidebarPosition::Left);
         assert!(config.split);
         assert_eq!(config.split_ratio, 0.4);
-        assert!(!config.background_follows_terminal);
+        assert!(!config.background_follows_canvas);
         assert!(config.gap);
         assert!(config.background);
         assert_eq!(config.tab_style, tui_lipan::prelude::CapStyle::Padded);
@@ -561,10 +561,10 @@ mod tests {
     #[test]
     fn appearance_flags_apply_without_replacing_the_tab_catalog() {
         let (config, warnings) = parse(
-            "background_follows_terminal = true\ngap = false\nbackground = false\ntab_style = \"round\"\n",
+            "background_follows_canvas = true\ngap = false\nbackground = false\ntab_style = \"round\"\n",
         );
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(config.background_follows_terminal);
+        assert!(config.background_follows_canvas);
         assert!(!config.gap);
         assert!(!config.background);
         assert_eq!(config.tab_style, tui_lipan::prelude::CapStyle::Round);

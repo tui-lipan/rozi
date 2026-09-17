@@ -657,9 +657,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleSidebarBackground => {
             enable_disable_label("sidebar background", state.config.sidebar.background)
         }
-        Action::ToggleSidebarBackgroundFollowsTerminal => enable_disable_label(
-            "sidebar background follows terminal",
-            state.config.sidebar.background_follows_terminal,
+        Action::ToggleSidebarBackgroundFollowsCanvas => enable_disable_label(
+            "sidebar background follows canvas",
+            state.config.sidebar.background_follows_canvas,
         ),
         Action::CycleSidebarTabStyle => {
             format!(

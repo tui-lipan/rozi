@@ -201,9 +201,9 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     ToggleSidebarPosition,
                 ),
                 (
-                    "Background follows terminal",
-                    enabled_status(ctx.state.config.sidebar.background_follows_terminal),
-                    ToggleSidebarBackgroundFollowsTerminal,
+                    "Background follows canvas",
+                    enabled_status(ctx.state.config.sidebar.background_follows_canvas),
+                    ToggleSidebarBackgroundFollowsCanvas,
                 ),
                 (
                     "Gap",

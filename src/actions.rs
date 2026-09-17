@@ -444,8 +444,8 @@ fn execute_action_inner(
         Action::ToggleSidebarPosition => crate::ops::preferences::toggle_sidebar_position(ctx),
         Action::ToggleSidebarGap => crate::ops::preferences::toggle_sidebar_gap(ctx),
         Action::ToggleSidebarBackground => crate::ops::preferences::toggle_sidebar_background(ctx),
-        Action::ToggleSidebarBackgroundFollowsTerminal => {
-            crate::ops::preferences::toggle_sidebar_background_follows_terminal(ctx)
+        Action::ToggleSidebarBackgroundFollowsCanvas => {
+            crate::ops::preferences::toggle_sidebar_background_follows_canvas(ctx)
         }
         Action::CycleSidebarTabStyle => crate::ops::preferences::cycle_sidebar_tab_style(ctx),
         Action::FocusSidebar => crate::update::sidebar::focus_body(ctx),

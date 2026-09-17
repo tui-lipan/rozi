@@ -1269,6 +1269,7 @@ mod tests {
         assert!(!is_palette_eligible("choose-theme"));
         assert!(!is_palette_eligible("toggle-titles"));
         assert!(!is_palette_eligible("toggle-workbar"));
+        assert!(!is_palette_eligible("toggle-sidebar-position"));
         assert!(!is_palette_eligible("toggle-animations"));
         assert!(!is_palette_eligible("toggle-highlight-focused-background"));
         assert!(!is_palette_eligible("toggle-highlight-focused-border"));

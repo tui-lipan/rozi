@@ -4,6 +4,7 @@
 
 ### Added
 
+- Settings → Sidebar **Position** docks the sidebar on the left or right (`[sidebar] position`).
 - Pane frames can use every tui-lipan border style, including the dashed ones. Settings now
   cycles tiled, floating, scratchpad, and fullscreen borders separately (`[pane] border_style`,
   `float_border_style`, `scratch_border_style`, `fullscreen_border_style`), and one **Picker

@@ -1409,6 +1409,7 @@ mod palette_alias_tests {
             "picker border",
             "picker tab",
             "picker selection",
+            "sidebar position",
             "sidebar gap",
             "sidebar background",
             "sidebar tab",

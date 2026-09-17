@@ -57,8 +57,9 @@ tab_style = "padded"
 bottom panel. If `tabs` is set without `panels`, all tabs use one panel. Duplicate ids after the
 first are ignored.
 
-Set `split = false` to display one panel while retaining the two saved groups. Set `position` to
-`"right"` to move the sidebar. `background_follows_terminal` paints the sidebar with the canvas
+Set `split = false` to display one panel while retaining the two saved groups. Settings → Position
+docks the sidebar left or right, or set `[sidebar] position` to `"right"`.
+`background_follows_terminal` paints the sidebar with the canvas
 backdrop instead of the elevated panel fill. `gap` keeps one blank row between each tab bar and
 its list. `background` paints the tab strip as a distinct bar (an elevated sidebar fill when
 follow-terminal is off, `element` when it follows the terminal); off, the strip matches the body.

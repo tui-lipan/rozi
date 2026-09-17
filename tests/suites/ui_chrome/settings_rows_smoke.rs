@@ -257,10 +257,12 @@ fn settings_all_keeps_every_control_available() {
         let titlebar = group_rows(&frame, "Titlebar", "Workbar");
         setting_row(titlebar, "Style");
         let workbar = group_rows(&frame, "Workbar", "Sidebar");
+        setting_row(workbar, "Position");
         setting_row(workbar, "Gap");
         setting_row(workbar, "Style");
         setting_row(workbar, "Tab style");
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
+        setting_row(sidebar, "Position");
         setting_row(sidebar, "Background follows terminal");
         setting_row(sidebar, "Gap");
         setting_row(sidebar, "Tab style");
@@ -426,13 +428,23 @@ fn settings_reports_sidebar_values() {
         let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
+            state.config.sidebar.position = rozi::config::SidebarPosition::Right;
             state.config.sidebar.background_follows_terminal = true;
             state.config.sidebar.gap = false;
             state.config.sidebar.background = false;
             state.config.sidebar.tab_style = tui_lipan::prelude::CapStyle::Round;
         }
         let frame = rendered_rows(&mut backend);
+        let workbar = group_rows(&frame, "Workbar", "Sidebar");
+        assert!(
+            setting_row(workbar, "Position").contains("Top"),
+            "workbar position row was overwritten by sidebar:\n{frame}"
+        );
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
+        assert!(
+            setting_row(sidebar, "Position").contains("Right"),
+            "sidebar position row is misbound:\n{frame}"
+        );
         assert!(
             setting_row(sidebar, "Background follows terminal").contains("Enabled"),
             "sidebar backdrop row is misbound:\n{frame}"
@@ -814,7 +826,7 @@ fn settings_categories_cover_all_controls_and_keep_pane_motion_local() {
         for (tab, count, expected) in [
             (SettingsTab::General, 10, "Workspace switching animation"),
             (SettingsTab::Panes, 14, "Open/close animation"),
-            (SettingsTab::Bars, 12, "Show workbar"),
+            (SettingsTab::Bars, 13, "Show workbar"),
             (SettingsTab::Alerts, 19, "Bell urgency"),
             (SettingsTab::Sessions, 4, "Startup mode"),
         ] {

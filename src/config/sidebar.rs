@@ -514,6 +514,16 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_position_round_trips_and_toggles() {
+        for position in [SidebarPosition::Left, SidebarPosition::Right] {
+            assert_eq!(SidebarPosition::parse(position.id()), Some(position));
+            assert_eq!(position.toggled().toggled(), position);
+        }
+        assert_eq!(SidebarPosition::Left.label(), "Left");
+        assert_eq!(SidebarPosition::Right.label(), "Right");
+    }
+
+    #[test]
     fn defaults_match_documented_schema() {
         let config = SidebarConfig::default();
         assert!(!config.visible);

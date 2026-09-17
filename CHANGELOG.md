@@ -15,8 +15,8 @@
   lifted fill as the sidebar tab strip (`picker_tab_background`), a **Tab style** that follows
   `workbar_tab_style` when omitted (`picker_tab_style`), and a global **Selection style** for
   the highlighted row (`picker_selection_style`). List start and end caps apply across the
-  command palette, Settings, Help, Search, and the other pickers. Needs tui-lipan 0.11.2 so the
-  caps sit in the selected row's inset instead of stacking beside it.
+  command palette, Settings, Help, Search, and the other pickers. Needs tui-lipan 0.11.3 so the
+  caps sit in the selected row's inset and keep the same fill as the highlight on light themes.
 - A detached session can be driven from a script. `rozi --session <NAME>` in front of a pane
   command sends it to that session server instead of to a running UI, so `dev` can be listed,
   captured, typed into, and grown a pane with nothing attached — from a shell script, a cron job,
@@ -109,11 +109,11 @@
   fully visible slot, so the column goes to its new place instead of the rest of the strip sliding
   around it. A clipped landing scrolls only as far as needed. Lifting a column mid-drag no longer
   scrolls the columns left behind.
-- Takes tui-lipan 0.11.2. Shortcut labels, Super spelling, and the in-app key recorder use its
+- Takes tui-lipan 0.11.3. Shortcut labels, Super spelling, and the in-app key recorder use its
   `KeyBinding` / `KeyCapture` APIs; list section headers use `ListItem` divider rows; selection
-  caps consume item padding on the highlighted row.
+  caps consume item padding on the highlighted row and keep their fill on light themes.
 - Settings no longer lists Extensions. Open the manager from the command palette.
-- Settings gains a Sidebar group. **Background follows terminal** paints the column with the canvas
+- Settings gains a Sidebar group. **Background follows canvas** paints the column with the canvas
   backdrop instead of the elevated panel fill, and **Gap** keeps or drops the blank row between each
   tab bar and its list. Both write `[sidebar]`.
 - Sidebar and workbar **Background** paint the tab strip and workbar as a distinct bar. Off, each

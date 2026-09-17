@@ -381,3 +381,62 @@ fn the_scale_style_grows_an_opening_pane_inside_its_tile_instead() {
         );
     });
 }
+
+#[test]
+fn a_launcher_session_open_snaps_when_animations_are_off() {
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: WIDTH,
+            h: HEIGHT,
+        });
+        {
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.config.animations.pane_style = PaneAnimationStyle::Slide;
+            state.config.animations.geometry_duration = Duration::from_millis(220);
+            state.config.pane.show_workbar = false;
+            state.config.pane.show_titles = false;
+            state.config.pane.border_mode = PaneBorderMode::Separate;
+            *state.current_mut() = rozi::state::Attachment::new();
+        }
+        backend.render();
+        assert!(backend.state().is_launcher());
+
+        {
+            let state = backend.state_mut();
+            let mut pane = Pane::new(
+                1,
+                5_000,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: f32::from(WIDTH),
+                    h: f32::from(HEIGHT),
+                },
+            );
+            pane.opening = true;
+            pane.slide_edge = SlideEdge::Bottom;
+            pane.terminal_active = true;
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.panes = vec![pane];
+            workspace.tile_tree = build_dwindle_tree(&[1], SplitAxis::Horizontal, &[]);
+            workspace.focused_pane = Some(1);
+            state.current_mut().focused_pane = Some(1);
+        }
+        backend.render();
+        backend.state_mut().current_mut().workspaces[0].panes[0].opening = false;
+        backend.render();
+        backend.advance(Duration::from_millis(80));
+
+        assert_eq!(
+            border_columns(&mut backend),
+            vec![0, (WIDTH - 1) as usize],
+            "the first session pane must occupy its tile immediately when Animations is off:\n{}",
+            grid(&mut backend)
+        );
+    });
+}

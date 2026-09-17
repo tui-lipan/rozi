@@ -264,8 +264,13 @@ pub(crate) fn render_workspace_panes(
         } else if pane.closing {
             // Preserve the legacy bare-flag close path for un-snapshotted panes.
             close_rect(floating_rect)
-        } else if pane.opening {
-            // Preserve the legacy bare-flag open path for un-snapshotted panes.
+        } else if pane.opening
+            && crate::layout::anim::geometry_animation_enabled(
+                &ctx.state,
+                pane,
+                layer.viewport_changed,
+            )
+        {
             close_rect(base_rect)
         } else if let Some(drag) = moving
             && !pane.fullscreen

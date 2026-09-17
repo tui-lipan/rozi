@@ -273,8 +273,19 @@ pub(crate) fn prepare_session_install(ctx: &mut Context<AppRoot>) {
 pub(crate) fn finish_session_install(ctx: &mut Context<AppRoot>) {
     // Snap to the new session's geometry rather than interpolating from the previous layout.
     ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
+    // The launcher reuses `runtime_epoch` when it starts an ephemeral session. Without this the
+    // workspace-slide keys treat that as a switch away from workspace 0 (the launcher panel).
+    ctx.state.workspace_slide.set(None);
     ctx.state.commands_dirty = true;
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
+    let animations = ctx.state.config.animations;
+    for workspace in &mut ctx.state.current_mut().workspaces {
+        for pane in workspace.panes.iter_mut() {
+            if pane.opening && pane.opening_animation.is_none() {
+                pane.begin_open_animation(animations);
+            }
+        }
+    }
 }
 
 /// Install `attachment` as the current session, dropping the outgoing one. Used only where the

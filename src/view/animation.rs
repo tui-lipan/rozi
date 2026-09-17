@@ -25,7 +25,7 @@ pub(crate) fn slide_progress(ctx: &Context<AppRoot>, pane: &Pane, key: String) -
     if spec.kind != anim::PaneAnimationStyle::Slide || pane.floating {
         return 1.0;
     }
-    let (target, enabled) = open_close_target(pane);
+    let (target, enabled) = open_close_target(pane, animations);
     // Disabled means no motion, not a pane parked outside its own tile: snap to deployed rather
     // than letting an instant transition land the target of 0.0 and hide it.
     if !enabled {
@@ -41,20 +41,17 @@ pub(crate) fn slide_progress(ctx: &Context<AppRoot>, pane: &Pane, key: String) -
 /// `Pane::opening` on purpose - it holds the effect mounted and on its original recipe until
 /// the terminal goes live - so reading it here would park every opening pane at its starting
 /// value for the whole transition and then snap it to settled when the snapshot cleared.
-fn open_close_target(pane: &Pane) -> (f32, bool) {
-    if pane.closing {
-        (
-            0.0,
-            pane.closing_animation
-                .is_none_or(|snapshot| snapshot.active),
-        )
-    } else {
-        (
-            if pane.opening { 0.0 } else { 1.0 },
-            pane.opening_animation
-                .is_none_or(|snapshot| snapshot.active),
-        )
-    }
+/// Timing follows [`anim::lifecycle_motion_enabled`]: a missing snapshot is not a licence to
+/// ignore the Animations master switch.
+fn open_close_target(pane: &Pane, animations: anim::WindowAnimationConfig) -> (f32, bool) {
+    (
+        if pane.closing || pane.opening {
+            0.0
+        } else {
+            1.0
+        },
+        anim::lifecycle_motion_enabled(animations, pane),
+    )
 }
 
 /// Progress for a centre-scaled pane while its subtree remains at the settled rectangle.
@@ -68,7 +65,7 @@ pub(crate) fn scale_progress(ctx: &Context<AppRoot>, pane: &Pane, key: String) -
     if spec.kind != anim::PaneAnimationStyle::Scale {
         return 1.0;
     }
-    let (target, enabled) = open_close_target(pane);
+    let (target, enabled) = open_close_target(pane, animations);
     if !enabled {
         return 1.0;
     }
@@ -90,7 +87,7 @@ pub(crate) fn pane_reveal_progress(
     ) {
         return 1.0;
     }
-    let (target, enabled) = open_close_target(pane);
+    let (target, enabled) = open_close_target(pane, animations);
     if !enabled {
         return 1.0;
     }

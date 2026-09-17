@@ -352,24 +352,35 @@ pub fn pane_slides(animations: WindowAnimationConfig, pane: &crate::state::Pane)
     pane_animation_for_pane(animations, pane).kind == PaneAnimationStyle::Slide && !pane.floating
 }
 
+/// Whether an open or close effect is timed, as opposed to snapping.
+///
+/// A snapshot taken while the master switch (or the spawn/close sub-flag) was off stays inactive
+/// for the rest of that transition. A pane that never took one — a launcher seed, a fixture —
+/// follows the live config, so disabling Animations cannot leave it interpolating on the default
+/// duration.
+pub fn lifecycle_motion_enabled(
+    animations: WindowAnimationConfig,
+    pane: &crate::state::Pane,
+) -> bool {
+    if pane.closing {
+        pane.closing_animation
+            .map(|snapshot| snapshot.active)
+            .unwrap_or(animations.enabled && animations.close)
+    } else {
+        pane.opening_animation
+            .map(|snapshot| snapshot.active)
+            .unwrap_or(animations.enabled && animations.spawn)
+    }
+}
+
 /// Whether a pane should fade during its current open or close transition.
 pub fn pane_opacity_animates(animations: WindowAnimationConfig, pane: &crate::state::Pane) -> bool {
     let spec = pane_animation_for_pane(animations, pane);
-    let opening = pane_opening_transition(pane);
     spec.fade
         && !pane_slides(animations, pane)
-        && ((opening
-            && pane
-                .opening_animation
-                .map(|snapshot| snapshot.active)
-                .unwrap_or(animations.enabled && animations.spawn)
-            && spec.kind != PaneAnimationStyle::Slide)
-            || (pane.closing
-                && pane
-                    .closing_animation
-                    .map(|snapshot| snapshot.active)
-                    .unwrap_or(animations.enabled && animations.close)
-                && spec.kind != PaneAnimationStyle::Slide))
+        && spec.kind != PaneAnimationStyle::Slide
+        && lifecycle_motion_enabled(animations, pane)
+        && (pane_opening_transition(pane) || pane.closing)
 }
 
 /// Visibility target for a pane's open/close opacity animation.
@@ -765,17 +776,8 @@ pub(crate) fn geometry_animation_enabled(
     if !animations.enabled && !opening && !pane.closing {
         return false;
     }
-    if opening {
-        return pane
-            .opening_animation
-            .map(|snapshot| snapshot.active)
-            .unwrap_or(animations.enabled && animations.spawn);
-    }
-    if pane.closing {
-        return pane
-            .closing_animation
-            .map(|snapshot| snapshot.active)
-            .unwrap_or(animations.enabled && animations.close);
+    if opening || pane.closing {
+        return lifecycle_motion_enabled(animations, pane);
     }
     match state.animation {
         GeometryAnimation::None => false,
@@ -1135,6 +1137,28 @@ mod tests {
         pane.closing = true;
         animations.pane_style = PaneAnimationStyle::Slide;
         assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+    }
+
+    #[test]
+    fn unsnapshotted_lifecycle_motion_follows_the_master_switch() {
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        let mut animations = WindowAnimationConfig::default();
+        assert!(lifecycle_motion_enabled(animations, &pane));
+
+        animations.enabled = false;
+        assert!(!lifecycle_motion_enabled(animations, &pane));
+        assert!(!pane_opacity_animates(animations, &pane));
+
+        pane.begin_open_animation(animations);
+        assert!(!pane.opening_animation.expect("snapshot").active);
+        assert!(!lifecycle_motion_enabled(animations, &pane));
+
+        pane.opening = false;
+        pane.opening_animation = None;
+        pane.closing = true;
+        assert!(!lifecycle_motion_enabled(animations, &pane));
+        pane.begin_close_animation(animations);
+        assert!(!lifecycle_motion_enabled(animations, &pane));
     }
 
     /// The snapshot deliberately outlives `Pane::opening` so the effect stays mounted on its

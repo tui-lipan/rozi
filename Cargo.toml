@@ -33,39 +33,7 @@ exclude = [
 ]
 
 [dependencies]
-# 0.6.0 gives `Splitter` per-pane size limits, so the sidebar's splitter stops where the sidebar's
-# own width bounds do instead of dragging past them. It also carries the file-tree fixes the Git
-# tab needs - a collapsed root no longer reads as a clean repository, and a symlink is its own row
-# rather than a second name for its target - plus `FileTreeEntry::symlink_target` for remote trees.
-# 0.6.1 puts a link's target beside its name instead of right-aligning it away from the row.
-# 0.7.0 adds `Update::terminal_paint()`, which is what lets a pane's own output repaint the rows
-# the emulator says changed rather than the whole window - see
-# docs/performance/audits/2026-09-04-idle-repaint.md. It is a minor bump because `UpdateLevel`
-# gained a variant below `Paint`, so the matches in `src/update/mod.rs` had to grow an arm.
-# 0.7.2 is required, not merely preferred. Both of its predecessors left the caret behind: 0.7.0's
-# row repaint never placed it at all, and 0.7.1 still let the resync that follows a repaint walk off
-# with it, which is what put the caret at the end of its row for the length of a focus transition.
-# 0.7.4 lets attach seeding stream terminal replays into bounded cache storage. It also keeps
-# provided file-tree paths in the remote host's path flavor for cross-platform remote sessions.
-# 0.11.0 names Super as Super rather than Cmd, replaces compact_display with KeyBinding::label,
-# and adds KeyBinding::to_source / from_key_event / conflicts_with, KeyCapture, and ListItem
-# divider rows. It also keeps wrapping Auto Flow wrap height when Flex/Px siblings oversubscribe.
-# It is a minor bump because KeyBinding display and canonical Super spelling changed.
-# 0.10.6 adds scoped standalone modifier-key reporting for live shortcut capture and reconciles
-# malformed Shift releases from Ghostty/Wayland. Rozi enables the mode only while the keybinding
-# recorder is listening, so normal composed text input is unchanged.
-# 0.9.2 reads Unix terminal input only through Termina, so a client whose terminal hangs up while it
-# exits (window closed, `ssh` dropped) no longer spins a core forever or aborts with a core dump.
-# 0.9.1 builds terminal snapshot spans from attribute runs instead of a `Style` per cell, and stops
-# putting the shared-memory graphics query to hosts that print it (such as terminals over `ssh`).
-# 0.9.0 adds validated custom cubic Bézier easing used by named pane animation recipes. 0.8.0 added
-# the automation session: an app-authored `automation_id`, a hierarchical semantic tree
-# per committed generation, typed operations over one mounted app that keeps its state, a
-# per-session clock so waiting cannot advance the app, and a versioned Unix control protocol
-# (`TUI_LIPAN_AUTOMATION_HEADLESS=1`). It is a breaking release: `TestBackend` is now controlled, so
-# a test that used to observe work settle on its own must `advance(…)` for it.
-# 0.10.3 reads host color and capability probe replies on macOS `/dev/tty`, where `poll(2)` does
-# not work, so they no longer leak into the shell after exit.
+# 0.11.3: selection-cap fill, KeyBinding/KeyCapture APIs, ListItem dividers.
 tui-lipan = { version = "0.11.3", features = [
   "terminal",
   "terminal-images",

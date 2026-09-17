@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.19 - 2026-09-18
+
 ### Added
 
 - Settings → Sidebar **Position** docks the sidebar on the left or right (`[sidebar] position`).

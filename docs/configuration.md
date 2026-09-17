@@ -152,7 +152,7 @@ Hyprland. Existing panes keep their original environment.
 | `modifier` | string | `"alt"` | `"alt"` or `"super"`. `mod` aliases Alt. `meta`, `logo`, `win`, and `windows` alias Super. |
 | `prefix` | string | `"ctrl-a"` | One valid tui-lipan key step. |
 | `modifier_shortcuts` | bool | `true` | Mirrors generated prefix bindings onto held modifier chords. |
-| `which_key` | string | `"short"` | `"off"`, `"instant"`, `"short"` at 300 ms, or `"long"` at 750 ms. |
+| `which_key` | string | `"short"` | `"off"`, `"instant"`, `"short"` at 500 ms, or `"long"` at 1000 ms. |
 
 See [Keybindings](keybindings.md).
 

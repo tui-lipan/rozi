@@ -83,6 +83,8 @@
 
 ### Changed
 
+- Default which-key `short` waits 500 ms and `long` waits 1000 ms, so a fluent prefix chord no
+  longer flashes the strip. Instant is still immediate.
 - Settings is a tabbed picker with the same chrome as Keybindings: search, then a scrollable
   category strip, then the list. `Tab`, `Shift+Tab`, and the horizontal arrows switch categories
   and restore each category's last highlighted row. `Enter` cycles the highlighted row.

@@ -128,7 +128,7 @@ impl WhichKey {
         !matches!(self, Self::Off)
     }
 
-    /// `Short` sits near a typed chord's own duration, so it reads as "you hesitated" rather than
+    /// `Short` sits past a fluent prefix chord, so it reads as "you hesitated" rather than
     /// "you were slow". `Long` is roughly double that: past any hesitation, into a deliberate stop.
     ///
     /// `Off` has no meaningful delay - nothing waits on the revealed flag - so it reports zero
@@ -136,8 +136,8 @@ impl WhichKey {
     pub fn reveal_delay(self) -> std::time::Duration {
         std::time::Duration::from_millis(match self {
             Self::Off | Self::Instant => 0,
-            Self::Short => 300,
-            Self::Long => 750,
+            Self::Short => 500,
+            Self::Long => 1000,
         })
     }
 

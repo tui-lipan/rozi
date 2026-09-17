@@ -244,15 +244,16 @@ fn the_reveal_delay_holds_the_strip_back_without_hiding_the_prefix_badge() {
 }
 
 /// The four named steps are the whole which-key UI, so their order, wrap, and durations are the
-/// contract: `Off` must draw nothing, `Instant` must actually mean no wait, and `Long` must outlast
-/// `Short`.
+/// contract: `Off` must draw nothing, `Instant` must actually mean no wait, and `Short`/`Long`
+/// wait 500 ms and 1000 ms.
 #[test]
 fn it_steps_through_its_four_named_states() {
     assert_eq!(WhichKey::default(), WhichKey::Short);
     assert!(!WhichKey::Off.enabled());
     assert!(WhichKey::Instant.enabled());
     assert_eq!(WhichKey::Instant.reveal_delay(), Duration::ZERO);
-    assert!(WhichKey::Long.reveal_delay() > WhichKey::Short.reveal_delay());
+    assert_eq!(WhichKey::Short.reveal_delay(), Duration::from_millis(500));
+    assert_eq!(WhichKey::Long.reveal_delay(), Duration::from_millis(1000));
 
     let mut which_key = WhichKey::Off;
     for expected in [

@@ -112,6 +112,9 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     // change.
     ctx.state.commands_dirty = true;
     let loaded = crate::config::load_config();
+    if loaded.rejected {
+        return report_config_issues(ctx, &loaded.warnings, true, None);
+    }
     let mut new_config = loaded.config;
     // The framework clipboard service is configured when the runtime starts. Keep the state-side
     // gate aligned with it until restart so child OSC 52 and rozi-originated copies cannot disagree.
@@ -199,21 +202,16 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     let start_services_tick =
         !ctx.state.services.running.is_empty() || !ctx.state.services.pending.is_empty();
 
-    for warning in loaded.warnings.iter().chain(&resolved.warnings) {
-        crate::pane::pty_events::notify_error(ctx, "Config warning", warning.clone());
-    }
-    if loaded.warnings.is_empty() && resolved.warnings.is_empty() {
-        if let Some(message) = success_message {
-            crate::pane::pty_events::notify_info(ctx, message);
-        }
-        crate::events::emit(
-            &ctx.state,
-            crate::events::Event::new(
-                crate::events::EventKind::ConfigReloaded,
-                vec![("path", crate::config::config_path().display().to_string())],
-            ),
-        );
-    }
+    let mut warnings = loaded.warnings;
+    warnings.extend(resolved.warnings);
+    let _ = report_config_issues(ctx, &warnings, false, success_message);
+    crate::events::emit(
+        &ctx.state,
+        crate::events::Event::new(
+            crate::events::EventKind::ConfigReloaded,
+            vec![("path", crate::config::config_path().display().to_string())],
+        ),
+    );
 
     if start_theme_tick
         || start_workbar_tick
@@ -247,6 +245,29 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     } else {
         Update::full()
     }
+}
+
+fn report_config_issues(
+    ctx: &mut Context<AppRoot>,
+    warnings: &[String],
+    rejected: bool,
+    success_message: Option<&str>,
+) -> Update {
+    crate::config::log_config_warnings(warnings);
+    if rejected {
+        let body = if warnings.is_empty() {
+            "Config parse failed".to_string()
+        } else {
+            warnings.join("\n")
+        };
+        return crate::pane::pty_events::notify_error(ctx, "Config not applied", body).update();
+    }
+    if let Some((title, body)) = crate::config::config_warnings_toast(warnings) {
+        crate::pane::pty_events::notify_warning(ctx, title, body);
+    } else if let Some(message) = success_message {
+        crate::pane::pty_events::notify_info(ctx, message);
+    }
+    Update::none()
 }
 
 /// Opens `config.toml` in `$EDITOR` (falling back to `$VISUAL`, then `vi`) in a new pane, so

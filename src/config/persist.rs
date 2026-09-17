@@ -1260,8 +1260,8 @@ mod tests {
         }
     }
 
-    /// `[profile]` denies unknown fields, so anything else under it is a key this build does not
-    /// own yet - rewriting the default must not quietly delete it.
+    /// Anything else under `[profile]` is a key this build does not own yet - rewriting the
+    /// default must not quietly delete it.
     #[test]
     fn profile_upsert_preserves_unrelated_profile_lines() {
         assert_eq!(

@@ -41,7 +41,7 @@ Every hook receives `ROZI_EVENT`. Event fields become uppercase `ROZI_*` variabl
 | `profile-loaded` | A profile seeds a newly created session. | `profile`, `path`, `session` |
 | `profile-applied` | A profile replaces panes in an existing session. | `profile`, `path`, `session` |
 | `profile-saved` | A profile is saved or overwritten. | `profile`, `path` |
-| `config-reloaded` | A live config reload finishes without warnings. | `path` |
+| `config-reloaded` | A live config reload applies a usable document. Field-level warnings still fire it; a rejected document does not. | `path` |
 
 Field details:
 

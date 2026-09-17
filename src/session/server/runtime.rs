@@ -233,8 +233,9 @@ impl SessionServer {
     /// would otherwise never hear that config changed.
     pub(super) fn reload_spawn_policy(&mut self) {
         let loaded = crate::config::load_config();
-        for warning in loaded.warnings {
-            eprintln!("rozi: {warning}");
+        crate::config::log_config_warnings(&loaded.warnings);
+        if loaded.rejected {
+            return;
         }
         let (shell, command_shell) = crate::platform::command::resolve_launch_argv(
             loaded.config.shell.as_deref(),
@@ -262,8 +263,9 @@ impl SessionServer {
 
     pub(super) fn reload_agent_definitions(&mut self) {
         let loaded = crate::config::load_config();
-        for warning in loaded.warnings {
-            eprintln!("rozi: {warning}");
+        crate::config::log_config_warnings(&loaded.warnings);
+        if loaded.rejected {
+            return;
         }
         self.apply_agent_definitions(super::agent_catalog(loaded.config.agents));
     }

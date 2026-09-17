@@ -296,8 +296,10 @@ impl Component for AppRoot {
     fn init(&mut self, ctx: &mut Context<Self>) -> Option<Command> {
         commands::sync(ctx);
 
-        for message in std::mem::take(&mut self.startup_messages) {
-            crate::pane::pty_events::notify_error(ctx, "Startup warning", message);
+        let messages = std::mem::take(&mut self.startup_messages);
+        if !messages.is_empty() {
+            crate::config::log_config_warnings(&messages);
+            crate::pane::pty_events::notify_error(ctx, "Startup warning", messages.join("\n"));
         }
         Self::start_theme_watcher(ctx);
         let start = self.prepare_session_start(ctx);

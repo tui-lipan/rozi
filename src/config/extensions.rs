@@ -1622,13 +1622,11 @@ mod tests {
         assert_eq!(parsed.disabled, ["git-tools"]);
         assert_eq!(parsed.settings["tasks"]["runner"].as_str(), Some("just"));
         assert_eq!(parsed.settings["tasks"]["rows"].as_integer(), Some(50));
-        assert!(
-            parse_user_extension_config(
-                "unknown_top_level = true\n[extensions]\ndisabled = [\"tasks\"]\n"
-            )
-            .is_err(),
-            "manager parsing must reject the same document as the runtime loader"
-        );
+        let with_unknown_top_level = parse_user_extension_config(
+            "unknown_top_level = true\n[extensions]\ndisabled = [\"tasks\"]\n",
+        )
+        .expect("unknown keys do not block reading [extensions]");
+        assert_eq!(with_unknown_top_level.disabled, ["tasks"]);
     }
 
     /// A setting Rozi cannot carry is the extension's bug, not the user's, so it fails at load the

@@ -864,13 +864,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_table_fields_are_parse_errors() {
-        assert!(
-            toml::from_str::<SidebarFileConfig>(
-                r#"tabs = [{ name = "x", label = "X", entries = [], typo = true }]"#
-            )
-            .is_err()
-        );
+    fn unknown_table_fields_are_ignored() {
+        let (config, warnings) =
+            parse(r#"tabs = [{ name = "x", label = "X", entries = [], typo = true }]"#);
+        assert!(warnings.is_empty());
+        assert_eq!(config.tabs.len(), 1);
+        assert_eq!(config.tabs[0].id().as_str(), "x");
     }
 
     #[test]

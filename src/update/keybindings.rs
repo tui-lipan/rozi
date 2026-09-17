@@ -483,10 +483,22 @@ fn converted(
 /// load pipeline a reload runs. Soft extension claims resolve away inside that load.
 fn candidate_collisions(edit: &KeymapEdit) -> std::result::Result<Vec<KeymapCollision>, String> {
     let text = crate::config::read_config_text()?;
-    let baseline = crate::config::load_config_candidate(&text).config;
-    let candidate =
-        crate::config::load_config_candidate(&crate::config::apply_keymap_edit(&text, edit)).config;
+    let baseline = load_applied_candidate(&text)?;
+    let candidate = load_applied_candidate(&crate::config::apply_keymap_edit(&text, edit))?;
     Ok(crate::config::new_collisions(&baseline, &candidate))
+}
+
+fn load_applied_candidate(text: &str) -> std::result::Result<crate::config::Config, String> {
+    let loaded = crate::config::load_config_candidate(text);
+    if loaded.rejected {
+        Err(loaded
+            .warnings
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "Config parse failed".to_string()))
+    } else {
+        Ok(loaded.config)
+    }
 }
 
 fn validated_persist(ctx: &mut Context<AppRoot>, edit: KeymapEdit, failure: &str) -> Update {

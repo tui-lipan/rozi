@@ -80,9 +80,13 @@
 - A headless `split` reads `[[rules]]` and the configured shell when it spawns, not when the
   server started. A rule edited today applies to a session server that has been running since last
   week, which is what makes "the same spawn policy" true of the inputs and not just the code path.
+- Reloading a broken `config.toml` no longer resets to factory defaults. Invalid TOML and
+  unrecoverable types keep the last good runtime config; startup still falls back to defaults.
 
 ### Changed
 
+- Unknown config keys no longer reject the whole file. The rest of the document loads, that key is
+  ignored, and a warning is shown. Several config warnings share one toast.
 - Default which-key `short` waits 500 ms and `long` waits 1000 ms, so a fluent prefix chord no
   longer flashes the strip. Instant is still immediate.
 - Settings is a tabbed picker with the same chrome as Keybindings: search, then a scrollable

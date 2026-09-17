@@ -10,6 +10,7 @@ mod schema;
 mod services;
 mod sidebar;
 mod theme;
+mod unknown_keys;
 mod workbar;
 
 pub use appearance::*;

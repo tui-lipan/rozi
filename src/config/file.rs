@@ -26,6 +26,45 @@ use super::workbar::{
 pub struct LoadedConfig {
     pub config: Config,
     pub warnings: Vec<String>,
+    /// Document-level failure (unreadable file, invalid TOML, or a type that cannot be recovered
+    /// per field). `config` is then the defaults-plus-extensions fallback used at startup; a reload
+    /// must keep the last good runtime config instead.
+    pub rejected: bool,
+}
+
+impl LoadedConfig {
+    fn applied(config: Config, warnings: Vec<String>) -> Self {
+        Self {
+            config,
+            warnings,
+            rejected: false,
+        }
+    }
+
+    fn rejected(config: Config, warnings: Vec<String>) -> Self {
+        Self {
+            config,
+            warnings,
+            rejected: true,
+        }
+    }
+}
+
+pub(crate) fn log_config_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("rozi: {warning}");
+    }
+}
+
+pub(crate) fn config_warnings_toast(warnings: &[String]) -> Option<(String, String)> {
+    match warnings {
+        [] => None,
+        [one] => Some(("Config warning".to_string(), one.clone())),
+        many => Some((
+            format!("Config loaded with {} warnings", many.len()),
+            many.join("\n"),
+        )),
+    }
 }
 
 /// `shell`/`command_shell` config value: the historical bare string (a program name with no
@@ -46,8 +85,10 @@ impl ShellFileValue {
     }
 }
 
+/// User `config.toml` schema. Unknown keys are collected as warnings rather than rejecting the
+/// document; invalid TOML and unrecoverable types still fail the parse.
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct FileConfig {
     shell: Option<ShellFileValue>,
     command_shell: Option<ShellFileValue>,
@@ -90,7 +131,6 @@ pub(crate) fn parse_extensions_config(text: &str) -> Result<ExtensionsFileConfig
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ServiceFileConfig {
     pub(crate) name: Option<String>,
     pub(crate) run: Option<String>,
@@ -101,7 +141,7 @@ pub(crate) struct ServiceFileConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(crate) struct NamedCommandFileConfig {
     pub(crate) id: Option<String>,
     pub(crate) label: Option<String>,
@@ -137,14 +177,13 @@ pub(crate) struct ExtensionsFileConfig {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct HookFileConfig {
     event: String,
     run: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct LoggingFileConfig {
     dir: Option<String>,
     max_bytes: Option<u64>,
@@ -161,7 +200,6 @@ pub(super) enum KeyBindingSpec {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct AddKeyBindingSpec {
     pub(super) add: KeyBindingCandidates,
 }
@@ -183,7 +221,7 @@ impl KeyBindingCandidates {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct UserCommandTableSpec {
     /// Name shown in the command palette and help overlay instead of the generated
     /// `Run: <command>`, which truncates a pipeline into something unreadable.
@@ -196,7 +234,7 @@ pub(super) struct UserCommandTableSpec {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct SidebarFileConfig {
     pub(super) visible: Option<bool>,
     pub(super) width: Option<u16>,
@@ -221,7 +259,7 @@ pub(super) enum SidebarTabSpec {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct SidebarTabTableSpec {
     pub(super) name: String,
     pub(super) label: String,
@@ -241,7 +279,7 @@ pub(super) struct SidebarTabTableSpec {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct SidebarLauncherEntrySpec {
     pub(super) label: String,
     pub(super) group: Option<String>,
@@ -269,7 +307,7 @@ impl SidebarLauncherEntrySpec {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct ConfirmFileConfig {
     close_pane: Option<bool>,
     kill_workspace: Option<bool>,
@@ -280,7 +318,7 @@ struct ConfirmFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct ScratchpadFileConfig {
     command: Option<String>,
     cwd: Option<String>,
@@ -288,7 +326,7 @@ struct ScratchpadFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct WorkbarFileConfig {
     pub(super) left: Option<Vec<WorkbarSegmentSpec>>,
     pub(super) right: Option<Vec<WorkbarSegmentSpec>>,
@@ -297,7 +335,7 @@ pub(super) struct WorkbarFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct WorkbarAlertFileConfig {
     pub(super) bell: Option<bool>,
     pub(super) blocked: Option<bool>,
@@ -322,25 +360,25 @@ pub(super) enum WorkbarSegmentSpec {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct ProfileFileConfig {
     default: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct ShellIntegrationFileConfig {
     mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct EnvironmentFileConfig {
     forward: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct SessionFileConfig {
     autosave: Option<bool>,
     path: Option<String>,
@@ -351,7 +389,7 @@ struct SessionFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct RemoteFileConfig {
     default_host: Option<String>,
     connection_timeout_secs: Option<u64>,
@@ -364,7 +402,7 @@ struct RemoteFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct RemoteHostFileConfig {
     host: Option<String>,
     user: Option<String>,
@@ -376,7 +414,7 @@ struct RemoteHostFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct LayoutFileConfig {
     split_width_multiplier: Option<f32>,
     default: Option<String>,
@@ -392,7 +430,7 @@ pub(super) enum PaddingSpec {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct PaneFileConfig {
     resize_debounce_ms: Option<u64>,
     hold_on_exit: Option<bool>,
@@ -429,7 +467,7 @@ pub(super) struct PaneFileConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct PaneAlertFileConfig {
     pub(super) blocked: Option<String>,
     pub(super) finished: Option<String>,
@@ -438,7 +476,7 @@ pub(super) struct PaneAlertFileConfig {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct RuleFileConfig {
     #[serde(rename = "match", default)]
     pub(super) matches: String,
@@ -470,14 +508,14 @@ impl Default for RuleFileConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct HintFileConfig {
     pub(super) pattern: String,
     pub(super) open: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct InputFileConfig {
     modifier: Option<String>,
     prefix: Option<String>,
@@ -486,26 +524,26 @@ struct InputFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct ThemeFileConfig {
     name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct ClipboardFileConfig {
     enable_osc52: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct UpdatesFileConfig {
     check: Option<bool>,
     interval_hours: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct NotificationsFileConfig {
     enabled: Option<bool>,
     pane_exit: Option<bool>,
@@ -516,7 +554,7 @@ struct NotificationsFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct SoundsFileConfig {
     enabled: Option<bool>,
     bell: Option<bool>,
@@ -532,13 +570,13 @@ struct SoundsFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct NavigationFileConfig {
     editors: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct AnimationFileConfig {
     pub(super) enabled: Option<bool>,
     pub(super) spawn: Option<bool>,
@@ -602,9 +640,14 @@ pub fn load_config() -> LoadedConfig {
         }
         Err(err) => {
             note_config_text(None);
-            let mut warnings = Vec::new();
-            warnings.push(format!("Config read failed for {}: {err}", path.display()));
-            return load_config_from_text_with_extensions("", &path, extension_scan, warnings);
+            let mut loaded =
+                load_config_from_text_with_extensions("", &path, extension_scan, Vec::new());
+            loaded.warnings.insert(
+                0,
+                format!("Config read failed for {}: {err}", path.display()),
+            );
+            loaded.rejected = true;
+            return loaded;
         }
     };
     note_config_text(Some(text.clone()));
@@ -673,7 +716,7 @@ fn load_config_from_text_with_extensions(
         );
         config.extension_action_key_defaults = resolved.active;
         config.suggested_keybinding_resolutions = resolved.diagnostics;
-        return LoadedConfig { config, warnings };
+        return LoadedConfig::rejected(config, warnings);
     };
 
     if let Some(shell) = non_empty_argv(parsed.shell) {
@@ -1114,7 +1157,7 @@ fn load_config_from_text_with_extensions(
     config.extension_action_key_defaults = resolved.active;
     config.suggested_keybinding_resolutions = resolved.diagnostics;
 
-    LoadedConfig { config, warnings }
+    LoadedConfig::applied(config, warnings)
 }
 
 /// Turn each extension's suggested chord into a real binding, unless something already answers to
@@ -1176,21 +1219,33 @@ fn resolve_extension_key_defaults(
 }
 
 fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Option<FileConfig> {
-    match toml::from_str::<FileConfig>(text) {
-        Ok(parsed) => Some(parsed),
+    let value: toml::Value = match toml::from_str(text) {
+        Ok(value) => value,
         Err(err) => {
-            let legacy_hooks = toml::from_str::<toml::Value>(text)
-                .ok()
-                .and_then(|value| value.get("hooks").cloned())
-                .is_some_and(|hooks| hooks.is_table());
-            if legacy_hooks {
-                warnings.push(
-                    "Legacy [hooks] is no longer supported; migrate each command to `[[hooks]]` with `event = \"…\"` and `run = \"…\"`"
-                        .to_string(),
-                );
-            } else {
-                warnings.push(format!("Config parse failed for {}: {err}", path.display()));
+            warnings.push(format!("Config parse failed for {}: {err}", path.display()));
+            return None;
+        }
+    };
+    if value.get("hooks").is_some_and(toml::Value::is_table) {
+        warnings.push(
+            "Legacy [hooks] is no longer supported; migrate each command to `[[hooks]]` with `event = \"…\"` and `run = \"…\"`"
+                .to_string(),
+        );
+        return None;
+    }
+    let unknown = value
+        .as_table()
+        .map(super::unknown_keys::collect_unknown_keys)
+        .unwrap_or_default();
+    match FileConfig::deserialize(value) {
+        Ok(parsed) => {
+            for key in unknown {
+                warnings.push(format!("Unknown config key `{key}`; ignored"));
             }
+            Some(parsed)
+        }
+        Err(err) => {
+            warnings.push(format!("Config parse failed for {}: {err}", path.display()));
             None
         }
     }
@@ -1533,10 +1588,94 @@ mod file_tests {
     }
 
     #[test]
-    fn top_level_input_aliases_are_rejected() {
-        let error = toml::from_str::<FileConfig>("prefix = \"ctrl-b\"\nmodifier = \"super\"")
-            .expect_err("top-level input aliases should not parse");
-        assert!(error.to_string().contains("unknown field"), "{error}");
+    fn top_level_input_aliases_are_ignored_with_a_warning() {
+        let loaded = load_config_from_text(
+            "prefix = \"ctrl-b\"\nmodifier = \"super\"",
+            Path::new("config.toml"),
+        );
+        assert!(!loaded.rejected);
+        assert_eq!(
+            loaded.config.input.prefix,
+            crate::config::InputConfig::default().prefix
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("`prefix`")),
+            "{:?}",
+            loaded.warnings
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("`modifier`")),
+            "{:?}",
+            loaded.warnings
+        );
+    }
+
+    #[test]
+    fn unknown_key_does_not_drop_the_rest_of_the_file() {
+        let loaded = load_config_from_text(
+            "[theme]\nname = \"catppuccin\"\n[sidebar]\nwidth = 42\nwidht = 7\n",
+            Path::new("config.toml"),
+        );
+        assert!(!loaded.rejected);
+        assert_eq!(loaded.config.theme.name, "catppuccin");
+        assert_eq!(loaded.config.sidebar.width, 42);
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("`sidebar.widht`")),
+            "{:?}",
+            loaded.warnings
+        );
+    }
+
+    #[test]
+    fn invalid_toml_rejects_the_document() {
+        let loaded = load_config_from_text("frame_rate =\n", Path::new("config.toml"));
+        assert!(loaded.rejected);
+        assert_eq!(loaded.config.frame_rate, Config::default().frame_rate);
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("Config parse failed")),
+            "{:?}",
+            loaded.warnings
+        );
+    }
+
+    #[test]
+    fn wrong_type_rejects_the_document() {
+        let loaded = load_config_from_text("scrollback = \"lots\"\n", Path::new("config.toml"));
+        assert!(loaded.rejected);
+        assert_eq!(loaded.config.scrollback, Config::default().scrollback);
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("Config parse failed")),
+            "{:?}",
+            loaded.warnings
+        );
+    }
+
+    #[test]
+    fn config_warnings_toast_aggregates_multiple_entries() {
+        assert_eq!(config_warnings_toast(&[]), None);
+        assert_eq!(
+            config_warnings_toast(&["one".into()]),
+            Some(("Config warning".into(), "one".into()))
+        );
+        assert_eq!(
+            config_warnings_toast(&["a".into(), "b".into()]),
+            Some(("Config loaded with 2 warnings".into(), "a\nb".into()))
+        );
     }
 
     #[test]
@@ -2016,9 +2155,9 @@ mod file_tests {
         assert!(loaded.config.nerd_icons);
     }
 
-    /// Guards `examples/config.toml` against silent drift. Every struct in the file model denies
-    /// unknown fields, so a renamed or dropped key fails to parse here, and a renamed value token
-    /// (a cap style, a layout name, a hook event) shows up as a warning.
+    /// Guards `examples/config.toml` against silent drift. A renamed or dropped key is reported as
+    /// unknown, and a renamed value token (a cap style, a layout name, a hook event) shows up as a
+    /// warning.
     #[test]
     fn reference_example_is_a_valid_warning_free_config_once_uncommented() {
         let text = activate_reference_example(REFERENCE_EXAMPLE);
@@ -2402,6 +2541,7 @@ mod file_tests {
             scan_with(temp.path(), "[extension]\nid = \"invalid.id\"\napi = 1\n"),
             Vec::new(),
         );
+        assert!(loaded.rejected);
         assert_eq!(loaded.config.extension_problems, 1);
     }
 

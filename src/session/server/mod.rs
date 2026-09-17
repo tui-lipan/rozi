@@ -1784,9 +1784,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
 
     let (listener, endpoint) = bind_session_socket(name)?;
     let loaded = crate::config::load_config();
-    for warning in loaded.warnings {
-        eprintln!("rozi: {warning}");
-    }
+    crate::config::log_config_warnings(&loaded.warnings);
     let (shell, command_shell) = crate::platform::command::resolve_launch_argv(
         loaded.config.shell.as_deref(),
         loaded.config.command_shell.as_deref(),

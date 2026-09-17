@@ -38,9 +38,10 @@
 #frame_rate = 120
 
 # Nerd Font private-use glyphs in UI chrome: pane title icons, workbar location and
-# session badges, the Sessions client-count badge, directory chevrons, and round/arrow
-# end caps. Off, those badges use ⌁ / ∞ / ⋈, directory chevrons use ▶ / ▼, and pane
-# titles drop the icon. File-kind icons in the sidebar still need a tab's icons = true.
+# session badges, the Sessions client-count badge, directory chevrons, the Files
+# explorer search prefix, and round/arrow end caps. Off, those badges use ⌁ / ∞ / ⋈,
+# directory chevrons use ▶ / ▼, the explorer prefix uses ⌕, and pane titles drop
+# the icon. File-kind icons in the sidebar still need a tab's icons = true.
 #nerd_icons = true
 
 [shell_integration]

@@ -1004,8 +1004,9 @@ pub struct Config {
     pub frame_rate: u16,
     /// Use Nerd Font private-use glyphs for decorative UI chrome: pane title icons, workbar
     /// location and named-session badges, the Sessions sidebar client-count badge, sidebar
-    /// directory chevrons, and `round`/`arrow` end caps. File-kind icons in the sidebar still need
-    /// the per-tab `icons` flag as well. On by default so existing installs keep their current look.
+    /// directory chevrons, the Files explorer search prefix, and `round`/`arrow` end caps.
+    /// File-kind icons in the sidebar still need the per-tab `icons` flag as well. On by default
+    /// so existing installs keep their current look.
     pub nerd_icons: bool,
     pub input: InputConfig,
     pub animations: WindowAnimationConfig,

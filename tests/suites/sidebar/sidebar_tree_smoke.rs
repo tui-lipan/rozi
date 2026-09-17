@@ -147,6 +147,7 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
     let lines = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
+            rozi::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
@@ -159,9 +160,11 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
                 state.sidebar_visible = true;
                 state.config.animations.sidebar = false;
                 state.config.nerd_icons = false;
+                let mut config = SidebarTreeConfig::for_view(SidebarTreeView::Files);
+                config.explorer = true;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,
-                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+                    config,
                 };
                 state.sidebar.panels[0].tabs = vec![tab.id()];
                 state.sidebar.panels[0].active_tab = Some(tab.id());
@@ -194,6 +197,14 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
     assert!(
         !joined.contains('') && !joined.contains(''),
         "nerd directory chevrons stay off: {joined}"
+    );
+    assert!(
+        joined.contains("Find files"),
+        "explorer input still renders without nerd icons: {joined}"
+    );
+    assert!(
+        joined.contains('⌕') && !joined.contains(''),
+        "explorer search prefix uses standard unicode: {joined}"
     );
 }
 

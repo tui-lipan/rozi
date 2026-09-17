@@ -167,6 +167,11 @@ pub(super) fn tree_tab(
     if config.explorer {
         tree = tree
             .explorer(true)
+            .explorer_prefix(if ctx.state.config.nerd_icons {
+                " "
+            } else {
+                "⌕ "
+            })
             .explorer_placeholder("Find files…")
             .explorer_match_style(super::super::fg_only(&theme.accent).bold())
             .on_explorer_focus(

@@ -140,7 +140,7 @@ let frame = backend.capture_frame();
 
 ```toml
 [dependencies]
-tui-lipan = { version = "...", features = ["ui-snapshot-json"] }
+tui-lipan = { version = "…", features = ["ui-snapshot-json"] }
 ```
 
 ## CapturedFrame export
@@ -160,7 +160,7 @@ tui-lipan = { version = "...", features = ["ui-snapshot-json"] }
 
 | Field | Meaning |
 |-------|---------|
-| `kind` | `UiWidgetKind` (Frame, List, Input, ...) |
+| `kind` | `UiWidgetKind` (Frame, List, Input, …) |
 | `key` | Reconciliation key |
 | `rect` | Bounds in viewport |
 | `focused` / `hovered` | Interaction flags |

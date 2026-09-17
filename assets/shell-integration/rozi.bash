@@ -97,7 +97,7 @@ __rozi_arm() {
 }
 
 # DEBUG trap (preexec-equivalent): fires before every simple command, including every command run
-# by other `PROMPT_COMMAND` hooks (zoxide, starship, ...) and by function bodies. Only the first
+# by other `PROMPT_COMMAND` hooks (zoxide, starship, …) and by function bodies. Only the first
 # firing after `__rozi_arm` armed the prompt is a genuinely typed command; matching
 # `$BASH_COMMAND` against `$PROMPT_COMMAND` instead (the previous guard) misses hooks held in the
 # bash >= 5.1 `PROMPT_COMMAND` *array* and every command inside a hook's function body, which left
@@ -132,7 +132,7 @@ case "${PROMPT_COMMAND[*]:-}" in
     ;;
 esac
 
-# `\[...\]` marks the escape sequence as zero-width for readline's prompt-length accounting.
+# `\[…\]` marks the escape sequence as zero-width for readline's prompt-length accounting.
 case "$PS1" in
 *'\[\e]133;B\e\\\]'*) ;;
 *) PS1="${PS1}\[\e]133;B\e\\\]" ;;

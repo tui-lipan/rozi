@@ -150,7 +150,7 @@ pub struct SpawnPaneRequest {
 // makes `Control` noticeably larger than `PaneInput`. Every outbound message already goes through
 // an `mpsc` channel send regardless (one heap-ish allocation either way), and this is a
 // per-user-action/per-input-chunk channel, not a hot per-byte loop, so boxing `ClientMessage` here
-// to shrink the enum is not worth the churn across every `ClientOutbound::Control(...)` construction
+// to shrink the enum is not worth the churn across every `ClientOutbound::Control(…)` construction
 // and match site.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ClientOutbound {

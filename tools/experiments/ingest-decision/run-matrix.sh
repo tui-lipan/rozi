@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The decision matrix, interleaved so machine drift lands on both binaries equally.
-# Usage: EXP_DIR=... REPS=5 run-matrix.sh OUT.jsonl [CONFIG...]   (CONFIG is "PANES CONTENT CLIENTS")
+# Usage: EXP_DIR=… REPS=5 run-matrix.sh OUT.jsonl [CONFIG...]   (CONFIG is "PANES CONTENT CLIENTS")
 set -uo pipefail
 : "${EXP_DIR:?set EXP_DIR to the directory holding rozi-dense and rozi-compact}"
 OUT=${1:?output jsonl}

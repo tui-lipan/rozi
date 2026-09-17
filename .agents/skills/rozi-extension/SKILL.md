@@ -108,7 +108,7 @@ entries = [
   deduplicate; different actions proposed for the same free key both become visible conflicts.
   Suggestions are resolved at load time and never put extension code on the input path.
 - Use `exec = ["program", "arg"]` for direct, argument-preserving execution.
-- Use `shell = "..."` only when shell syntax is intentional. Never put a shell command string in
+- Use `shell = "…"` only when shell syntax is intentional. Never put a shell command string in
   `exec`.
 - A command declares exactly one of `exec`, `shell`, or `send`.
 - A service declares exactly one of `exec` or `shell`; restart is `on-failure` (default), `always`,
@@ -230,7 +230,7 @@ the complete row set:
 
 Read `{"selected":"main"}`, `{"action":"new","input":"feat/x","selected":"main"}`, or
 `{"cancelled":true}` from stdout. An action stays open unless it declares `"close":true`; send a new
-`{"rows":[...]}` line after mutation to refresh in place.
+`{"rows":[…]}` line after mutation to refresh in place.
 
 ### Publish
 
@@ -257,7 +257,7 @@ Notify failures and useful off-screen outcomes, not successful state already vis
 rozi subscribe pane-status-changed pane-exited config-reloaded
 ```
 
-Read newline-delimited `{"event":"pane-status-changed","data":{...}}` objects until the stream
+Read newline-delimited `{"event":"pane-status-changed","data":{…}}` objects until the stream
 closes. Event fields live under `data`, not at the top level. An empty event list subscribes to all
 events.
 

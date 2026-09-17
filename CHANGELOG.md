@@ -647,12 +647,12 @@ Both installers now say whether the command they installed can actually be run b
   the script neither reads nor writes.
 - The installation docs record how to pass an argument to the piped Windows form. `iex` receives
   only the script's text and cannot take parameters, but the same text run as a script block can:
-  `& ([scriptblock]::Create((irm ...))) -AddToPath`.
+  `& ([scriptblock]::Create((irm …))) -AddToPath`.
 
 ## 0.0.8 - 2026-08-27
 
 Stops the Windows installer taking the terminal down with it. Every install through the advertised
-`irm ... | iex` path ended by closing the user's shell, whether it succeeded or failed.
+`irm … | iex` path ended by closing the user's shell, whether it succeeded or failed.
 
 ### Fixed
 
@@ -664,7 +664,7 @@ Stops the Windows installer taking the terminal down with it. Every install thro
   look like rozi killing the terminal on success. The script now exits only when there is a real
   script invocation to leave, detected through `$PSCommandPath`, which is empty under `iex` even
   when nested inside another script; every other caller receives the status through
-  `$LASTEXITCODE`. `install.sh` was never affected, because `curl ... | bash` runs the script in a
+  `$LASTEXITCODE`. `install.sh` was never affected, because `curl … | bash` runs the script in a
   child shell.
 
 ## 0.0.7 - 2026-08-27
@@ -683,7 +683,7 @@ download, and makes the installer's output survive being read or served under an
   last one arrived, filling the bar early and defeating the final cell the meter deliberately
   reserves. All three sites now floor explicitly and the band index is clamped.
 - The installer prints its status glyphs correctly when run from disk. Serving the script as
-  `text/plain; charset=utf-8` fixed `irm ... | iex`, but PowerShell 5.1 reads a script file with no
+  `text/plain; charset=utf-8` fixed `irm … | iex`, but PowerShell 5.1 reads a script file with no
   byte-order mark as the system ANSI code page, so the documented `.\install.ps1` form still
   mangled every glyph. A byte-order mark would fix that and break the piped form, because `iex`
   treats a leading U+FEFF as part of the first token; the six glyphs are now built from code

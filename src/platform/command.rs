@@ -346,7 +346,7 @@ impl ShellCommand {
         self
     }
 
-    /// Flatten to the wire/argv form: `[program, ...args]`.
+    /// Flatten to the wire/argv form: `[program, …args]`.
     pub fn as_argv(&self) -> Vec<String> {
         let mut argv = Vec::with_capacity(1 + self.args.len());
         argv.push(self.program.clone());
@@ -379,7 +379,7 @@ pub struct ShellEnv {
     pub comspec: Option<String>,
     /// Directories to search for a program on Windows, in `PATH` order.
     pub windows_path_dirs: Vec<std::path::PathBuf>,
-    /// `%PATHEXT%` split into extensions (`.COM`, `.EXE`, `.BAT`, ...), in precedence order. Empty
+    /// `%PATHEXT%` split into extensions (`.COM`, `.EXE`, `.BAT`, …), in precedence order. Empty
     /// on Unix, which has no such concept.
     pub windows_path_exts: Vec<String>,
 }

@@ -60,7 +60,7 @@ Read bundled references only when needed:
 5. Write view code in `ui!` by default; use builder helpers where parameterized reuse is clearer.
 6. Extract repeated chrome and configured widgets into named helper functions or composite widgets that return `Element`.
 7. Add stable keys before wiring focus, overlays, or dynamic children.
-8. Push blocking work into `ctx.link().command(...)`; use keyed commands with `TaskPolicy::LatestOnly` for live search or filtering.
+8. Push blocking work into `ctx.link().command(…)`; use keyed commands with `TaskPolicy::LatestOnly` for live search or filtering.
 9. For user-visible UI changes, run a visual checkpoint before final validation.
 10. Verify with the project-local workflow at the end.
 
@@ -105,7 +105,7 @@ Do not judge a visible UI change from source alone when tui-lipan can render the
 - Do not use `Frame` for plain layout. Use it only for border, header/footer labels, tabs, clipping, or decoration.
 - Do not block in `update()` or `view()`.
 - Do not use `TaskPolicy::QueueAll` for filter-as-you-type.
-- Do not forget stable `.key(...)` values on dynamic children and focus targets.
+- Do not forget stable `.key(…)` values on dynamic children and focus targets.
 - Do not assume `fg` inherits from the parent. Set text color explicitly where needed.
 
 ## Reuse UI Intentionally
@@ -136,19 +136,19 @@ Keep `ui!` focused on composition. Move chrome, repeated styling, and prepared w
 
 ## Style With Minimal Noise
 
-- Set app-wide defaults with `App::theme(...)`.
+- Set app-wide defaults with `App::theme(…)`.
 - Use `ThemeProvider` for subtree theming.
-- Prefer `Color::rgb(...)` when exact contrast matters.
+- Prefer `Color::rgb(…)` when exact contrast matters.
 - Let containers fill space with their default `Length::Flex(1)` unless you need something else.
 - Let leaves size naturally with `Length::Auto` unless the layout requires fixed or proportional sizing.
 - Use focus styling on the container around an interactive region so active panels are obvious.
 
 ## Handle Interaction Correctly
 
-- Use `ctx.request_focus(...)` and `ctx.has_focus_within_key(...)` for panel routing.
+- Use `ctx.request_focus(…)` and `ctx.has_focus_within_key(…)` for panel routing.
 - Focused `Button` activates `on_click` on plain `Enter` and `Space`; custom `on_key` runs first and can consume the key.
 - In headless tests, use `TestBackend::focus_next()` / `focus_prev()` for traversal and `TestBackend::focused_key()` to assert the keyed focus target.
-- Use `KeyUpdate::handled(...)` to stop bubbling and `KeyUpdate::unhandled(...)` to allow it.
+- Use `KeyUpdate::handled(…)` to stop bubbling and `KeyUpdate::unhandled(…)` to allow it.
 - Mirror controlled widget state in the parent only when the parent truly needs ownership.
 - Emit child-to-parent communication through callback props, not shared mutable access.
 - Use state flags for overlays and dialogs.

@@ -81,7 +81,7 @@ $script:CurrentOperation = ''
 # 5.1 reads a script without a byte-order mark as the system ANSI code page, which mangles a UTF-8
 # glyph in the source whenever the file is run from disk - the documented `.\install.ps1` form -
 # however cleanly the site serves it over the wire. A BOM would fix that case and break a worse
-# one: `iex` treats a leading U+FEFF as part of the first token, so `irm ... | iex` would fail
+# one: `iex` treats a leading U+FEFF as part of the first token, so `irm … | iex` would fail
 # outright on any body whose BOM survived the fetch. ASCII source has neither problem.
 $script:GlyphOk     = [string][char]0x2713  # CHECK MARK
 $script:GlyphFailed = [string][char]0x2717  # BALLOT X
@@ -282,7 +282,7 @@ function Fail([string]$Message) {
 }
 
 
-# `irm ... | iex` runs this text in the caller's own session, where a top-level `exit` terminates
+# `irm … | iex` runs this text in the caller's own session, where a top-level `exit` terminates
 # *their* shell rather than this script. That closed the terminal on every install, successful or
 # not, and handed the installer's status back as the shell's own exit code - a failed install took
 # the window down with `exit 1`. `$PSCommandPath` is set only when there is a real script
@@ -979,7 +979,7 @@ try {
     $target = Get-Target
     # The Resolve row is still active and its thread is still turning: erasing the line and writing
     # the header underneath a live spinner puts the frame and the header on the same row, which is
-    # what `Resolve   latest release rozi 0.0.11 - x86_64-...` was. Any main-thread write while a
+    # what `Resolve   latest release rozi 0.0.11 - x86_64-…` was. Any main-thread write while a
     # row is spinning has to stop it first.
     Stop-Spinner
     if ($script:Interactive) { Write-Host -NoNewline "`r$($script:Esc)[2K" }

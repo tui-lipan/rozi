@@ -231,7 +231,7 @@ Open a pane inside a disposable clone below `$LAB`, focus away and back, then ru
 "$ROZI_BIN" run-action pr-dashboard.open
 ```
 
-Compare the picker with `gh pr status --json ...`. Verify refresh, browser actions, status
+Compare the picker with `gh pr status --json …`. Verify refresh, browser actions, status
 transitions, and service retirement on detach. Unset `GH_TOKEN` when finished.
 
 ## Opt-in Docker integration

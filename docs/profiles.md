@@ -180,7 +180,7 @@ workspace.
 | `pane_id` | integer | Optional server pane identity written by capture and snapshots. Hand-written profiles can omit it. |
 | `name` | string | Pane title restored by the profile. |
 | `title` | string | Older title field used when `name` is absent. New files should use `name`. |
-| `cwd` | path | Starting directory. `~` and `~/...` expand from the user's home. |
+| `cwd` | path | Starting directory. `~` and `~/…` expand from the user's home. |
 | `command` | string | Command typed into the interactive shell at its first prompt. |
 | `argv` | array of strings | Program and arguments launched directly without a shell. |
 | `keep_open` | boolean | After a directly launched process exits, replace it with an interactive shell in the same pane. Shell-replayed `command` entries already return to their prompt. |

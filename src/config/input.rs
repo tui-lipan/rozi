@@ -77,8 +77,8 @@ pub(crate) fn build_key_overrides(
     resolve_key_overrides(&sources, input)
 }
 
-/// Parse `[keys]` into source entries. Strings/lists replace an action's defaults, `{ add = ... }`
-/// extends them, and `{ run = ... }` / `{ send = ... }` defines a user command, bound immediately
+/// Parse `[keys]` into source entries. Strings/lists replace an action's defaults, `{ add = … }`
+/// extends them, and `{ run = … }` / `{ send = … }` defines a user command, bound immediately
 /// for `input`.
 pub(crate) fn build_key_sources(
     keys: HashMap<String, KeyBindingSpec>,

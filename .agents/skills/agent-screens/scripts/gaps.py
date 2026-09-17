@@ -62,7 +62,7 @@ def agents() -> list[dict]:
 
 
 def ledger(name: str) -> list[str]:
-    """One `const NAME: &[&str] = &[...]` list from `fixtures.rs`, comments stripped."""
+    """One `const NAME: &[&str] = &[…]` list from `fixtures.rs`, comments stripped."""
     text = LEDGERS.read_text(encoding="utf-8")
     match = re.search(rf"const {name}: &\[&str\] = &\[(.*?)\];", text, re.S)
     if not match:

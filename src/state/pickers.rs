@@ -145,7 +145,7 @@ impl HostFormField {
 
     pub fn placeholder(self) -> &'static str {
         match self {
-            Self::Host => "host / alias / ssh://...",
+            Self::Host => "host / alias / ssh://…",
             Self::User => "leave empty to let SSH decide",
             Self::Port => "22",
         }

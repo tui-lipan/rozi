@@ -413,7 +413,7 @@ fn prune_scrollback_dumps(dir: &std::path::Path, cap: usize) -> io::Result<()> {
 ///
 /// Unix: an absolute path (leading `/`) is already canonical; anything else is rejected.
 ///
-/// Windows: accepts a drive path (`C:\...` or `C:/...`) and a UNC path (`\\server\share\...`),
+/// Windows: accepts a drive path (`C:\…` or `C:/…`) and a UNC path (`\\server\share\…`),
 /// rejects a drive-relative path (`C:foo`, which means "whatever `C:`'s current directory happens
 /// to be" - a per-process notion no other process can resolve) and a rooted-but-driveless path
 /// (`\foo`, which is relative to the current drive). Separators are normalized to `\` and a drive
@@ -437,7 +437,7 @@ pub fn normalize_reported_cwd(path: &str) -> Option<String> {
         normalized = rest.to_string();
     }
     if let Some(rest) = normalized.strip_prefix("\\\\") {
-        // UNC: `\\server\share\...`. Requires at least a server and a share to name anything.
+        // UNC: `\\server\share\…`. Requires at least a server and a share to name anything.
         let mut parts = rest.splitn(3, '\\').filter(|part| !part.is_empty());
         let (Some(_server), Some(_share)) = (parts.next(), parts.next()) else {
             return None;

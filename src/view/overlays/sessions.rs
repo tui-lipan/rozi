@@ -650,7 +650,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     .preserve_groups(true)
     .actions(session_picker_actions(ctx))
     .armed_row(pending_kill.or(pending_restart))
-    .placeholder("Search sessions...")
+    .placeholder("Search sessions…")
     .initial_query(picker.input.text().to_string())
     .selected(Some(picker.selected))
     .empty_text(empty_text)

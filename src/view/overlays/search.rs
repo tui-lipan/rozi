@@ -55,7 +55,7 @@ fn scrollback_search_palette(
     shared_search_palette::<usize>(ctx, Length::Auto, true)
         .items_arc(Arc::clone(&search.items))
         .sync_match_limit(MAX_MATCHES)
-        .placeholder("Search scrollback...")
+        .placeholder("Search scrollback…")
         .initial_query(query.to_string())
         .initial_selected_item_index(Some(current))
         .sync_selection(true)

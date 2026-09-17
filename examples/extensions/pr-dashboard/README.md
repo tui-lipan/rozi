@@ -92,7 +92,7 @@ current dashboard snapshot.
 
 1. Focus a pane in an authenticated GitHub repository and switch away and back. Within one GitHub
    query round, Activity should show stable `#<number>` rows or one idle “no relevant PRs” row.
-2. Compare the rows with the machine-readable `gh pr status --json ...` command above.
+2. Compare the rows with the machine-readable `gh pr status --json …` command above.
 3. Open `pr-dashboard.open`, press `r`, select a PR, and verify that `Enter` opens that exact PR.
 4. Focus a pane in a directory without a GitHub repository. Activity should show an idle
    **No GitHub repository** diagnostic and one informational notification, without a service

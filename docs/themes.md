@@ -143,7 +143,7 @@ Every style table accepts:
 - `fg`, `bg`, and `underline_color`
 - `bold`, `dim`, `italic`, `underline`, `reverse`, and `strikethrough`
 - `dim_amount` from `0.0` to `1.0`
-- `tint = { color = "...", alpha = 0.0 }`
+- `tint = { color = "…", alpha = 0.0 }`
 
 `fg`, `bg`, and `underline_color` accept solid colors and alpha paint. Palette fields such as
 `status.error` accept solid colors.

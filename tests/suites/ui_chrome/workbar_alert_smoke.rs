@@ -183,7 +183,7 @@ fn hovering_a_marked_tab_keeps_its_alert_background() {
         );
 
         // The hover style layers over the tab's own background rather than replacing it, so a
-        // hovered marked tab is a *lifted* alert colour. An absolute `bg(...)` there collapses it
+        // hovered marked tab is a *lifted* alert colour. An absolute `bg(…)` there collapses it
         // to the same colour an unmarked tab hovers to, which is the regression this pins.
         let mut quiet = quiet_backend();
         row_backgrounds(&mut quiet);

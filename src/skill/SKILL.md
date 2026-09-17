@@ -109,7 +109,7 @@ rozi subscribe pane-exited pane-status-changed
 
 Use `notify` only for results the user cannot already see. Plain `pick` prints the chosen input line;
 cancellation exits 1. `subscribe` streams `{event,data}` JSON rows. `publish` is a long-lived
-bidirectional stream: write complete `{"rows":[...]}` snapshots and read `{"activate":"<id>"}`;
+bidirectional stream: write complete `{"rows":[…]}` snapshots and read `{"activate":"<id>"}`;
 closing it withdraws the rows. `switch-workspace` and `move-to-workspace` also require a UI.
 
 A detached endpoint supports `list-panes`, `metrics`, `send-text`, `send-keys`, `capture-pane`,

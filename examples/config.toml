@@ -489,7 +489,7 @@
 #run = "logger workspace=$ROZI_WORKSPACE"
 
 # Stable, reusable commands. They appear in the palette without a key, can be invoked with
-# `rozi run-action <id>`, and can be bound below with `[keys] <id> = ...`.
+# `rozi run-action <id>`, and can be bound below with `[keys] <id> = …`.
 [[commands]]
 #id = "branches"
 #label = "Switch branch"
@@ -525,7 +525,7 @@
 #   "prefix:w"       only <prefix> w; follows prefix changes
 #   "mod:v"          only <modifier>-v; follows modifier changes, dormant while it is off
 #   "ctrl-a c"       literal binding, never mirrored or rewritten
-# Configuring an action replaces all of its defaults; `{ add = ... }` keeps them. An empty
+# Configuring an action replaces all of its defaults; `{ add = … }` keeps them. An empty
 # value clears an action's keys. Action ids are listed in docs/keybindings.md.
 [keys]
 #copy-mode = "b"

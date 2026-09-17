@@ -57,16 +57,16 @@ Good candidates for extraction:
 ## Async And Commands
 
 - Never block in `update()` or `view()`.
-- Use `ctx.link().command(...)` for blocking I/O or expensive work.
-- Use `ctx.link().command_keyed(..., TaskPolicy::LatestOnly, ...)` for live search and filtering.
+- Use `ctx.link().command(…)` for blocking I/O or expensive work.
+- Use `ctx.link().command_keyed(…, TaskPolicy::LatestOnly, …)` for live search and filtering.
 - Return `Update::full()` only when visible state changed.
 - Return `Update::none()` for no-op events and child-to-parent callback forwarding.
 
 ## Focus And Keys
 
-- Give stable `.key(...)` values to dynamic children and focus targets.
-- Use `ctx.request_focus(...)` after mode changes, dialog open/close, and panel jumps.
-- Use `ctx.has_focus_within_key(...)` to drive active panel chrome.
+- Give stable `.key(…)` values to dynamic children and focus targets.
+- Use `ctx.request_focus(…)` after mode changes, dialog open/close, and panel jumps.
+- Use `ctx.has_focus_within_key(…)` to drive active panel chrome.
 - Keep global shortcuts in `on_key()`.
 
 ## Styling Rules
@@ -76,7 +76,7 @@ Good candidates for extraction:
 - Do not expect `fg` to inherit.
 - Use `Frame` only when you need chrome.
 - Prefer app theme plus targeted overrides over per-widget styling everywhere.
-- Prefer `Color::rgb(...)` for precise interactive contrast.
+- Prefer `Color::rgb(…)` for precise interactive contrast.
 
 ## Common Traps
 

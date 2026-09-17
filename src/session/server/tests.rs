@@ -2409,13 +2409,13 @@ fn request_control_flags_requester_and_notifies_controller_without_stealing() {
     let responses = server.handle_message(second, ClientMessage::RequestControl);
     // A present controller is never stolen from; control stays put.
     assert_eq!(server.controller, Some(first));
-    // The requester is flagged in the broadcast roster...
+    // The requester is flagged in the broadcast roster…
     assert!(responses.iter().any(|(target, message)| matches!(
         (target, message),
         (Target::Broadcast, ServerMessage::ClientsChanged { clients, .. })
             if clients.iter().any(|c| c.id == second && c.requesting_control)
     )));
-    // ...and only the controller is notified.
+    // …and only the controller is notified.
     assert!(responses.iter().any(|(target, message)| matches!(
         (target, message),
         (Target::Client(id), ServerMessage::ControlRequested { from })

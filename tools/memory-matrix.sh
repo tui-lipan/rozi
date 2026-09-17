@@ -52,7 +52,7 @@ OUTPUT_DIR=$(cd "$OUTPUT_DIR" && pwd)
 JSONL="$OUTPUT_DIR/scenarios.jsonl"
 : >"$JSONL"
 
-echo "Building release binary..." >&2
+echo "Building release binary…" >&2
 cargo build --release
 BIN="$REPO/target/release/rozi"
 

@@ -302,7 +302,7 @@ export default defineConfig({
       provider: "local",
       options: {
         translations: {
-          button: { buttonText: "Search...", buttonAriaLabel: "Search" },
+          button: { buttonText: "Search…", buttonAriaLabel: "Search" },
         },
         // `index.md` is the repository's folder index; `/` serves the landing
         // page instead of rendering it. Indexing it would answer searches with

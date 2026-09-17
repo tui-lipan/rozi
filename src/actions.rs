@@ -1067,7 +1067,7 @@ mod tests {
 
     // Both rejections depend only on `session_attached`, which is deterministically false in a
     // fresh backend. Anything gated on a focused pane would race the async first spawn, and
-    // anything `command_available` gates (RequestControl, GrantControl, ...) never reaches its
+    // anything `command_available` gates (RequestControl, GrantControl, …) never reaches its
     // handler at all here, since no shared session exists to enable it.
     const NOT_ATTACHED: &str = "Not attached to a session";
     const COMMAND_FAILED: &str = "Command failed\0toast test failure";

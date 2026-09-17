@@ -81,7 +81,7 @@ __rozi_preexec() {
 add-zsh-hook precmd __rozi_precmd
 add-zsh-hook preexec __rozi_preexec
 
-# `%{...%}` marks the escape sequence as zero-width for zsh's prompt-length accounting. Appended
+# `%{…%}` marks the escape sequence as zero-width for zsh's prompt-length accounting. Appended
 # once, at load time, to whatever `PROMPT`/`PS1` the user's real config already set, so it is
 # always the last thing printed before input reading begins.
 PROMPT="${PROMPT}%{$(printf '\e]133;B\e\\')%}"

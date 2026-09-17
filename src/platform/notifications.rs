@@ -7,7 +7,7 @@
 //! | Platform | Mechanism |
 //! |---|---|
 //! | Linux/BSD | `notify-send` (the freedesktop `org.freedesktop.Notifications` CLI) |
-//! | macOS | `osascript -e 'display notification ...'` |
+//! | macOS | `osascript -e 'display notification …'` |
 //! | Windows | PowerShell + the WinRT toast API |
 //!
 //! Best-effort throughout: a host without the relevant tool simply shows no notification. That is

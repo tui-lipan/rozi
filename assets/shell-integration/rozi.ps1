@@ -48,7 +48,7 @@ function Global:__rozi_urlencode([string] $Value, [string] $Keep = '') {
 }
 
 function Global:__rozi_cwd() {
-    # `$PWD` can point at a non-filesystem PowerShell drive (Registry::, Cert:, ...). Those have no
+    # `$PWD` can point at a non-filesystem PowerShell drive (Registry::, Cert:, …). Those have no
     # meaningful working directory for a pane to inherit, so report nothing rather than a path that
     # would fail `Command::current_dir`.
     if ($PWD.Provider.Name -ne 'FileSystem') {

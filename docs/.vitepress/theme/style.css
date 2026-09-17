@@ -767,7 +767,7 @@ body {
     letter-spacing: normal !important;
 }
 
-/* Top-level accordion headers (Getting Started, Core Concepts...) */
+/* Top-level accordion headers (Getting Started, Core Concepts…) */
 .VPSidebarItem.level-0.collapsible > .item {
     display: flex !important;
     align-items: center !important;

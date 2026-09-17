@@ -120,7 +120,7 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     .entries(profile_picker_entries(ctx, picker))
     .actions(actions)
     .armed_row(armed_row)
-    .placeholder("Search profiles...")
+    .placeholder("Search profiles…")
     .initial_query(picker.input.text().to_string())
     .preserve_groups(false)
     .selected(Some(picker.selected))

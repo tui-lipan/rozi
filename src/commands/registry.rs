@@ -1191,7 +1191,7 @@ mod tests {
         let config = Config::default();
         let shortcuts = default_shortcuts_for(&config, &["ctrl-#", "ctrl-shift-3"]);
 
-        // Some terminals report Ctrl+Shift+3 as the shifted symbol with only ctrl set...
+        // Some terminals report Ctrl+Shift+3 as the shifted symbol with only ctrl set…
         assert!(shortcuts.iter().any(|binding| binding.matches_sequence(&[
             ctrl('a'),
             KeyEvent {
@@ -1202,7 +1202,7 @@ mod tests {
                 },
             }
         ])));
-        // ...and others as the base digit with both ctrl and shift set.
+        // …and others as the base digit with both ctrl and shift set.
         assert!(shortcuts.iter().any(|binding| binding.matches_sequence(&[
             ctrl('a'),
             KeyEvent {

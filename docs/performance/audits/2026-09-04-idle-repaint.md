@@ -106,7 +106,7 @@ pane costs a full-window frame.**
 
 ## Where an update's 1.7 ms goes
 
-`draw_current_tree` funnels every render path, and its one `terminal.draw(...)` call does two
+`draw_current_tree` funnels every render path, and its one `terminal.draw(…)` call does two
 separable things: `render(f, &ctx)` paints the widget tree into ratatui's next `Buffer`, and the
 rest of the call diffs that against the previous buffer and writes the result. Timing them
 separately, at 30 updates/s:
@@ -222,7 +222,7 @@ worth keeping are the isolated root, the `script`-hosted client, and reading the
 for host bytes.
 
 The paint-versus-diff split needed no profiler: a temporary timer inside `draw_current_tree`
-around `render(f, &ctx)`, against one around the whole `terminal.draw(...)`, reported to a file
+around `render(f, &ctx)`, against one around the whole `terminal.draw(…)`, reported to a file
 named by an environment variable. That instrumentation was not kept.
 
 A finer attribution *within* painting would need a sampled profile, and that is blocked here:

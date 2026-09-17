@@ -991,14 +991,14 @@ mod tests {
                 backend.render();
 
                 let filtered = commands_modal(&backend);
-                // The modal hugs the filtered rows (well under the cap)...
+                // The modal hugs the filtered rows (well under the cap)…
                 assert!(
                     filtered.h < unfiltered.h,
                     "filtered modal height {} should shrink below the capped {}",
                     filtered.h,
                     unfiltered.h
                 );
-                // ...while its top edge stays put instead of re-centering.
+                // …while its top edge stays put instead of re-centering.
                 assert_eq!(
                     filtered.y, unfiltered.y,
                     "filtered modal top drifted from {} to {}",

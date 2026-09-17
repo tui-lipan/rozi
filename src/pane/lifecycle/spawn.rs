@@ -729,7 +729,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     } else {
         resolved_launch_argv(&state.config)
     };
-    // Shell-integration env (`ZDOTDIR`, `XDG_DATA_DIRS`, ...) comes first so any caller-supplied
+    // Shell-integration env (`ZDOTDIR`, `XDG_DATA_DIRS`, …) comes first so any caller-supplied
     // override for the same key (rare, but a pane/profile could set one deliberately) wins.
     let env = extra_env.into_iter().chain(env).collect::<Vec<_>>();
     let request = crate::session::client::SpawnPaneRequest {

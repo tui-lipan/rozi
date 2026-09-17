@@ -31,7 +31,7 @@ Start with local examples, demos, tests, and existing screens in the current wor
 - Focus-driven border or panel styling
 - Reusable shell helpers instead of copied layout code
 - Typed event payloads mapped into message enums
-- `Update::with_command(...)` for background work
+- `Update::with_command(…)` for background work
 - `TaskPolicy::LatestOnly` for live queries
 - Conditional overlays driven by state flags
 - Shared state for synchronized widgets such as editor plus preview

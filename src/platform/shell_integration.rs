@@ -212,7 +212,7 @@ fn inject_powershell(
 ) -> (ShellCommand, Vec<(String, String)>) {
     let already_directed = shell.args.iter().any(|arg| {
         let lowered = arg.to_ascii_lowercase();
-        // PowerShell accepts any unambiguous prefix of a parameter name (`-Comm`, `-c`, ...), which
+        // PowerShell accepts any unambiguous prefix of a parameter name (`-Comm`, `-c`, …), which
         // is why this matches on a prefix rather than the full spelling.
         ["-c", "-f", "-e", "/c"]
             .iter()

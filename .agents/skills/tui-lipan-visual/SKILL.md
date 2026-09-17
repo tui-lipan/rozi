@@ -132,7 +132,7 @@ empty space after a layout change and still reports success. Use coordinates
 only for widgets that have no automation ID of their own.
 
 **Give widgets IDs to make them scriptable.** Add
-`.automation_id("name")`; `.key(...)` remains sibling-scoped reconciliation
+`.automation_id("name")`; `.key(…)` remains sibling-scoped reconciliation
 identity and is never an automation fallback.
 
 **Check where focus starts before scripting `tab`.** Many apps focus their
@@ -682,7 +682,7 @@ wiring.
 - **Suspecting the framework first.** Wrong rects are usually a sizing-usage bug:
   re-check `Length` choices, container-vs-leaf defaults, padding, and gaps.
   `VStack`, `HStack`, and `Frame` default to `Flex(1)`; fixed headers, footers,
-  and status bars need `Length::Px(...)`. If it really is a framework bug, use
+  and status bars need `Length::Px(…)`. If it really is a framework bug, use
   `tui-lipan-layout-debug`.
 
 ## Additional resources

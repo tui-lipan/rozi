@@ -1474,7 +1474,7 @@ mod tests {
 
     /// Cursor's `agent` launcher ends in `exec -a "$0" node --use-system-ca index.js "$@"`, so the
     /// process calls itself `agent` while running `node`. Its `argv[1..]` is the interpreter's
-    /// command line, and restoring it once typed `agent --use-system-ca .../index.js` into a pane.
+    /// command line, and restoring it once typed `agent --use-system-ca …/index.js` into a pane.
     #[cfg(unix)]
     #[test]
     fn a_wrapper_that_execs_under_its_own_name_recovers_script_arguments() {

@@ -216,7 +216,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             key,
             close,
             width,
-            placeholder: Cow::Borrowed("Search..."),
+            placeholder: Cow::Borrowed("Search…"),
             entries: Vec::new(),
             actions: Vec::new(),
             armed_row: None,

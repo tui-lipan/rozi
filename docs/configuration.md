@@ -11,7 +11,7 @@ settings you need.
 Rozi chooses the file in this order:
 
 1. `--config <PATH>`, which also sets `ROZI_CONFIG` for the process.
-2. `ROZI_CONFIG`. `~` and `~/...` expand to the home directory.
+2. `ROZI_CONFIG`. `~` and `~/…` expand to the home directory.
 3. `$XDG_CONFIG_HOME/rozi/config.toml`, or `~/.config/rozi/config.toml`.
 4. `%APPDATA%\rozi\config.toml` on Windows.
 
@@ -538,7 +538,7 @@ No selected path is inserted into a command string. See [Sidebar files](sidebar.
 | `right` | segment array | `["location", "session"]` | Ordered right region. |
 | `clock_format` | string | `"%H:%M"` | Valid strftime format. Invalid formats are ignored. |
 
-A segment is a string or `{ segment = "...", color = "..." }`. Colors are `accent`, `info`,
+A segment is a string or `{ segment = "…", color = "…" }`. Colors are `accent`, `info`,
 `success`, `warning`, `error`, `neutral`, or `panel`.
 
 Segment names are `title`, `workspaces`, `location`, `session`, `clock`, `layout`, `activity`,

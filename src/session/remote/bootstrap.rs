@@ -1787,7 +1787,7 @@ protocol_max={beyond}
                 .as_nanos()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        // Mirror release.yml: dist/<name>/{rozi,README...} tarred as `<name>`.
+        // Mirror release.yml: dist/<name>/{rozi,README…} tarred as `<name>`.
         let name = "rozi-9.9.9-x86_64-unknown-linux-gnu";
         let staging = root.join("dist");
         let pkg = staging.join(name);

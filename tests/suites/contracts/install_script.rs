@@ -16,7 +16,7 @@ fn install_sh() -> PathBuf {
 /// they read. Running this and stopping is what loads the real installer's functions without
 /// letting it download anything.
 ///
-/// Cut here in Rust rather than by piping the script through `sed` into `source <(...)`. That
+/// Cut here in Rust rather than by piping the script through `sed` into `source <(…)`. That
 /// depended on two things this test has no reason to depend on — a `sed` that reads
 /// `/^main() {/,$d` the way GNU does, and a shell that sources a process substitution — and when
 /// either came up empty the `source` still succeeded, so the only symptom was the *next* line
@@ -186,7 +186,7 @@ Write-Output (Get-CommandHintState $bin '' '')"
 /// PATH entries are compared the way Windows resolves them, and only that way.
 ///
 /// A directory that merely starts with the same text is a different directory: matching it would
-/// suppress the hint for someone who has `...\rozi\bin2` and no working command.
+/// suppress the hint for someone who has `…\rozi\bin2` and no working command.
 #[cfg(windows)]
 #[test]
 fn path_entry_matching_ignores_case_and_trailing_separators_but_not_prefixes() {

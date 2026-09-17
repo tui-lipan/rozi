@@ -410,7 +410,7 @@ fn run_publish_stream(
 ///
 /// After acknowledging the request on the UI thread, the caller may write row updates, each
 /// replacing the previous set. When the picker closes, rozi writes exactly one terminal JSON line
-/// (`{"selected":"..."}` or `{"cancelled":true}`).
+/// (`{"selected":"…"}` or `{"cancelled":true}`).
 ///
 /// Note: `IpcConnection` exposes no `shutdown()`, so after writing the terminal line rozi cannot
 /// force the connection closed from this end; the reader thread reaps once the client closes.

@@ -79,7 +79,7 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     )
     .entries(entries)
     .actions(actions)
-    .placeholder("Search agents...")
+    .placeholder("Search agents…")
     .initial_query(picker.input.text().to_string())
     .selected(selected)
     .empty_text(empty_text)

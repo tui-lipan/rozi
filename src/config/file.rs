@@ -1185,7 +1185,7 @@ fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Opt
                 .is_some_and(|hooks| hooks.is_table());
             if legacy_hooks {
                 warnings.push(
-                    "Legacy [hooks] is no longer supported; migrate each command to `[[hooks]]` with `event = \"...\"` and `run = \"...\"`"
+                    "Legacy [hooks] is no longer supported; migrate each command to `[[hooks]]` with `event = \"…\"` and `run = \"…\"`"
                         .to_string(),
                 );
             } else {

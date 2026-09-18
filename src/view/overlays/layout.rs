@@ -40,35 +40,30 @@ pub(crate) fn layout_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         OverlayAction::new("ctrl-f", "set default", Msg::LayoutPickerSetDefault, true),
     ];
 
-    OverlayPalette::new(
-        "Choose layout",
-        layout_picker_key(),
-        Msg::CloseLayoutPicker,
-        52,
-    )
-    .entries(entries)
-    .actions(actions)
-    .placeholder("Search layouts…")
-    .preserve_groups(false)
-    .selected(selected)
-    .initial_query(
-        ctx.state
-            .layout_picker
-            .as_ref()
-            .map(|picker| picker.query.clone())
-            .unwrap_or_default(),
-    )
-    .on_query_change(
-        ctx.link()
-            .callback(|query: Arc<str>| Msg::LayoutPickerQueryChanged(query.to_string())),
-    )
-    .on_select(
-        ctx.link()
-            .callback(|event: SearchEvent<usize>| Msg::LayoutPickerSelect(event.item.value)),
-    )
-    .on_activate(
-        ctx.link()
-            .callback(|event: SearchEvent<usize>| Msg::SelectLayout(event.item.value)),
-    )
-    .render(ctx)
+    OverlayPalette::new("Layouts", layout_picker_key(), Msg::CloseLayoutPicker, 52)
+        .entries(entries)
+        .actions(actions)
+        .placeholder("Search layouts…")
+        .preserve_groups(false)
+        .selected(selected)
+        .initial_query(
+            ctx.state
+                .layout_picker
+                .as_ref()
+                .map(|picker| picker.query.clone())
+                .unwrap_or_default(),
+        )
+        .on_query_change(
+            ctx.link()
+                .callback(|query: Arc<str>| Msg::LayoutPickerQueryChanged(query.to_string())),
+        )
+        .on_select(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::LayoutPickerSelect(event.item.value)),
+        )
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::SelectLayout(event.item.value)),
+        )
+        .render(ctx)
 }

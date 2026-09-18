@@ -53,7 +53,7 @@ Followers can still:
 
 Use the `g` command key to take or request control. With `[session].allow_takeover = true`, the
 default, control transfers immediately. When it is false, the controller receives a request and can
-grant it with the `e` command key or through **Manage collaborators**.
+grant it with the `e` command key or through **Collaborators**.
 
 The current controller can change the running session's takeover policy with **Toggle immediate
 control takeover**. The config value sets the initial policy for new servers and does not rewrite a
@@ -111,9 +111,9 @@ Pane synchronization is separate from collaboration. It copies one client's term
 eligible panes in the active workspace. See
 [Layouts and panes](layouts-and-panes.md#pane-synchronization).
 
-## Manage collaborators
+## Collaborators
 
-Open **Manage collaborators** from the command palette when another client is attached. Type to
+Open **Collaborators** from the command palette when another client is attached. Type to
 filter the roster.
 
 | Key | Action |

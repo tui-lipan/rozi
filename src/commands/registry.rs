@@ -1091,6 +1091,8 @@ mod tests {
 
         assert_eq!(keys_for("toggle-layout"), &["m"]);
         assert_eq!(keys_for("choose-layout"), &["shift-m"]);
+        assert!(!is_palette_eligible("toggle-layout"));
+        assert!(is_palette_eligible("choose-layout"));
 
         // The picker key follows the `[input]` scheme like any other: leader chord plus mirror.
         let picker = default_shortcuts_for(&config, keys_for("choose-layout"));
@@ -1240,6 +1242,7 @@ mod tests {
         assert!(is_palette_eligible("spawn"));
         assert!(is_palette_eligible("close"));
         assert!(!is_palette_eligible("toggle-float"));
+        assert!(!is_palette_eligible("toggle-layout"));
         assert!(is_palette_eligible("rename-pane"));
         assert!(is_palette_eligible("save-profile"));
     }

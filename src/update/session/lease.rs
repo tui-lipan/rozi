@@ -179,7 +179,7 @@ pub(crate) fn control_requested(ctx: &mut Context<AppRoot>, epoch: u64, from: Cl
     // hardcoded key; fall back to the collaborators view when the action is unbound.
     let how = crate::commands::command_prefix_chord(ctx, "grant-control")
         .map(|chord| format!("{chord} to grant"))
-        .unwrap_or_else(|| "grant from Manage collaborators".to_string());
+        .unwrap_or_else(|| "grant from Collaborators".to_string());
     crate::pane::pty_events::notify_info(ctx, format!("{who} requests layout control\n{how}"));
     ctx.state.commands_dirty = true;
     Update::full()

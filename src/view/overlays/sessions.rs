@@ -67,7 +67,7 @@ pub(crate) fn collaboration_overlay(ctx: &Context<AppRoot>) -> Element {
     });
 
     OverlayPalette::new(
-        "Manage collaborators",
+        "Collaborators",
         collaboration_key(),
         Msg::CloseCollaboration,
         64,

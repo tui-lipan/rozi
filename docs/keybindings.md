@@ -124,7 +124,7 @@ through to the pane. The prefix and held-modifier forms are always explicit text
 | Shrink split or master area | `-` |
 | Resize mode | `r` |
 | Cycle layout | `m` |
-| Choose layout | `M` |
+| Layouts | `M` |
 | Rename workspace | `n` |
 | Switch to workspace 1 through 9 | `1` through `9` |
 | Move pane to workspace 1 through 9 | `Shift+1` through `Shift+9` |

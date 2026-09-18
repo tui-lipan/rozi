@@ -209,11 +209,11 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Switch layout",
         category: "Workspace",
         default_keys: &["m"],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::OpenLayoutPicker,
-        label: "Choose layout…",
+        label: "Layouts…",
         category: "Workspace",
         // The shifted sibling of the `m` cycle: same key, one step up from blind cycling to
         // picking a layout outright.
@@ -427,7 +427,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::OpenCollaborators,
-        label: "Manage collaborators…",
+        label: "Collaborators…",
         category: "Collaboration",
         default_keys: &[],
         palette: true,

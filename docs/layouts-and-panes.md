@@ -1,8 +1,8 @@
 # Layouts and panes
 
-Rozi gives each workspace its own pane layout. Press `m` to cycle layouts, or `M` to open the
-layout picker. The picker previews each layout. Press `Ctrl+F` there to make the highlighted layout
-the default for new workspaces.
+Rozi gives each workspace its own pane layout. Press `m` to cycle layouts, or `M` to open Layouts.
+The picker previews each layout. Press `Ctrl+F` there to make the highlighted layout the default for
+new workspaces.
 
 The default layout is Dwindle. Profiles can choose a different layout per workspace. See
 [Profiles](profiles.md) for saved layouts and [Keybindings](keybindings.md) for the full default-key

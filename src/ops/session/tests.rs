@@ -383,7 +383,7 @@ fn collaborators_dialog_is_rows_and_chrome_with_no_prose_line() {
             let rendered = backend.capture_frame().to_fixed_grid();
             // Title and self-context share the top border, so neither costs a content row.
             assert!(
-                rendered.contains("Manage collaborators"),
+                rendered.contains("Collaborators"),
                 "expected the title on the border: {rendered}"
             );
             assert!(

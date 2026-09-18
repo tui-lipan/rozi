@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Commands lists **Layouts…** and **Collaborators…**, matching Sessions and Agents. Switch layout
+  (`m`) still cycles and stays in Keybindings; it is no longer a palette row beside the picker.
+
 ### Fixed
 
 - Padded picker selection on guttered lists keeps a 1-cell left inset (`│ ● name` rather than

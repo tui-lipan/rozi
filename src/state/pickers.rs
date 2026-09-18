@@ -421,7 +421,7 @@ impl RemotePickerState {
     }
 }
 
-/// The open *Manage collaborators* dialog: the roster of everyone else on the session. The
+/// The open *Collaborators* dialog: the roster of everyone else on the session. The
 /// session-wide controls it sits beside (request control, input lock, takeover) are ordinary
 /// command-palette entries, not part of this dialog.
 pub struct CollaborationState {

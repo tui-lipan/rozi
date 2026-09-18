@@ -4,6 +4,9 @@
 
 ### Added
 
+- `rozi pick --json` can name empty-collection copy (`empty`) and can open a stacked prompt as a
+  title string or as `{title, placeholder, value, masked}`. Masking hides characters on screen; the
+  submitted `input` is still plaintext.
 - Control JSON request lines larger than 1 MiB are rejected and the connection is closed. Replies
   Rozi writes, including a full `capture-pane` scrollback, are not capped at 1 MiB. Picker snapshots
   keep at most 512 rows.

@@ -22,6 +22,7 @@ pub(crate) struct PickOpen {
     pub id: u64,
     pub title: Option<String>,
     pub placeholder: Option<String>,
+    pub empty: Option<String>,
     pub width: Option<u16>,
     pub actions: Vec<crate::state::PickAction>,
     pub extension: Option<crate::config::ExtensionProvenance>,
@@ -37,6 +38,7 @@ pub(crate) fn open_pick_stream(
         id,
         title,
         placeholder,
+        empty,
         width,
         actions,
         extension,
@@ -62,6 +64,7 @@ pub(crate) fn open_pick_stream(
         extension,
         title: title.unwrap_or_else(|| "Pick".to_string()),
         placeholder: placeholder.unwrap_or_else(|| "Search…".to_string()),
+        empty: empty.filter(|text| !text.is_empty()),
         width: width
             .unwrap_or(PICK_DEFAULT_WIDTH)
             .clamp(PICK_MIN_WIDTH, PICK_MAX_WIDTH),
@@ -167,13 +170,22 @@ pub(crate) fn cancel_pick(ctx: &mut Context<AppRoot>, reason: Option<&str>) -> U
 }
 
 pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
-    if let Some(pick) = ctx.state.pick.as_mut() {
-        pick.query = query;
-        // A filter change moves what is under the cursor, so an armed confirmation must not
-        // survive it - the same reason moving the highlight disarms.
-        pick.pending_action = None;
+    let was_empty = ctx
+        .state
+        .pick
+        .as_ref()
+        .is_some_and(|pick| pick.query.trim().is_empty());
+    let Some(pick) = ctx.state.pick.as_mut() else {
+        return Update::none();
+    };
+    pick.query = query;
+    let is_empty = pick.query.trim().is_empty();
+    let disarmed = pick.pending_action.take().is_some();
+    if was_empty != is_empty || disarmed {
+        Update::full()
+    } else {
+        Update::none()
     }
-    Update::none()
 }
 
 pub(crate) fn pick_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
@@ -242,14 +254,16 @@ pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update 
         }
     }
 
-    if let Some(title) = action.prompt.clone() {
+    if let Some(spec) = action.prompt {
         if let Some(pick) = ctx.state.pick.as_mut() {
             // The picker unmounts while the prompt is up, so capture what to rebuild it with.
             pick.restore_query = pick.query.clone();
             pick.prompt = Some(crate::state::PickPrompt {
                 action: index,
-                title,
-                input: tui_lipan::prelude::TextInput::new(""),
+                title: spec.title().to_string(),
+                placeholder: spec.placeholder().to_string(),
+                masked: spec.masked(),
+                input: tui_lipan::prelude::TextInput::new(spec.value()),
             });
         }
         ctx.state.commands_dirty = true;
@@ -371,6 +385,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
+                crate::test_support::isolate_user_dirs();
                 let mut backend = TestBackend::new(crate::AppRoot::default());
                 body(&mut backend);
             })
@@ -391,6 +406,7 @@ mod tests {
                     actions: Vec::new(),
                     title: Some("Branches".into()),
                     placeholder: None,
+                    empty: None,
                     extension: None,
                     sender: tx,
                     ack: ack_tx,
@@ -432,6 +448,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    empty: None,
                     extension: None,
                     sender: tx,
                     ack: ack_tx,
@@ -475,6 +492,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    empty: None,
                     extension: None,
                     sender: tx,
                     ack: ack_tx,
@@ -503,6 +521,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    empty: None,
                     extension: None,
                     sender: tx1,
                     ack: ack_tx1,
@@ -519,6 +538,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    empty: None,
                     extension: None,
                     sender: tx2,
                     ack: ack_tx2,
@@ -544,6 +564,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    empty: None,
                     extension: None,
                     sender: tx,
                     ack: ack_tx,
@@ -560,7 +581,7 @@ mod tests {
             id: id.to_string(),
             key: key.to_string(),
             label: id.to_string(),
-            prompt: prompt.map(str::to_string),
+            prompt: prompt.map(|title| crate::state::PickPromptSpec::Title(title.to_string())),
             close,
             confirm: false,
         }
@@ -578,6 +599,7 @@ mod tests {
                 id: 1,
                 title: None,
                 placeholder: None,
+                empty: None,
                 width,
                 actions,
                 extension: None,
@@ -809,10 +831,10 @@ mod tests {
         });
     }
 
-    /// The prompt replaces the picker rather than stacking on it, and cancelling rebuilds the
-    /// picker seeded with the filter that was typed before.
+    /// A stacked prompt keeps the picker underneath; cancelling restores it seeded with the
+    /// filter that was typed before.
     #[test]
-    fn a_prompt_replaces_the_picker_and_restores_its_query() {
+    fn a_stacked_prompt_restores_the_picker_query() {
         with_backend(|backend| {
             open_with(
                 backend,
@@ -883,6 +905,92 @@ mod tests {
         });
     }
 
+    fn prompt_fields(
+        title: &str,
+        placeholder: Option<&str>,
+        value: Option<&str>,
+        masked: bool,
+    ) -> crate::state::PickAction {
+        crate::state::PickAction {
+            id: "edit".into(),
+            key: "ctrl-e".into(),
+            label: "edit".into(),
+            prompt: Some(crate::state::PickPromptSpec::Fields(
+                crate::state::PickPromptFields {
+                    title: title.into(),
+                    placeholder: placeholder.map(str::to_string),
+                    value: value.map(str::to_string),
+                    masked,
+                },
+            )),
+            close: false,
+            confirm: false,
+        }
+    }
+
+    #[test]
+    fn producer_empty_copy_is_kept_for_an_empty_filter() {
+        with_backend(|backend| {
+            let (tx, _rx) = mpsc::sync_channel(1);
+            let (ack_tx, _ack_rx) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::PickStreamOpen {
+                    id: 1,
+                    title: None,
+                    placeholder: None,
+                    empty: Some("No snippets yet".into()),
+                    width: None,
+                    actions: Vec::new(),
+                    extension: None,
+                    sender: tx,
+                    ack: ack_tx,
+                })
+                .expect("dispatch open");
+            let pick = backend.state().pick.as_ref().expect("picker open");
+            assert_eq!(pick.empty.as_deref(), Some("No snippets yet"));
+            backend
+                .dispatch(crate::Msg::PickQueryChanged("feat".into()))
+                .expect("type a filter");
+            assert_eq!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .map(|pick| pick.query.as_str()),
+                Some("feat")
+            );
+        });
+    }
+
+    #[test]
+    fn a_prompt_object_seeds_placeholder_value_and_masking() {
+        with_backend(|backend| {
+            open_with(
+                backend,
+                vec![prompt_fields(
+                    "Edit command",
+                    Some("git status"),
+                    Some("git status --short"),
+                    true,
+                )],
+                None,
+            );
+            backend
+                .dispatch(crate::Msg::PickActionKey(0))
+                .expect("raise the prompt");
+            let prompt = backend
+                .state()
+                .pick
+                .as_ref()
+                .and_then(|pick| pick.prompt.as_ref())
+                .expect("prompt open");
+            assert_eq!(prompt.title, "Edit command");
+            assert_eq!(prompt.placeholder, "git status");
+            assert_eq!(prompt.input.text(), "git status --short");
+            assert!(prompt.masked);
+        });
+    }
+
     #[test]
     fn disabled_row_is_inert_on_activate() {
         with_backend(|backend| {
@@ -895,6 +1003,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    empty: None,
                     extension: None,
                     sender: tx,
                     ack: ack_tx,
@@ -945,6 +1054,7 @@ mod tests {
                     actions: Vec::new(),
                     title: Some("Extension picker".into()),
                     placeholder: None,
+                    empty: None,
                     extension: Some(provenance),
                     sender: tx,
                     ack: ack_tx,
@@ -975,6 +1085,7 @@ mod tests {
                     actions: Vec::new(),
                     title: None,
                     placeholder: None,
+                    empty: None,
                     extension: Some(crate::config::ExtensionProvenance {
                         id: "git-tools".to_string(),
                         generation: "retired".to_string(),

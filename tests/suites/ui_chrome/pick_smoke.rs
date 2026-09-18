@@ -20,6 +20,7 @@ fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, mpsc::Receiver<String>
             id: 1,
             title: Some("Select Branch".into()),
             placeholder: Some("Search branches…".into()),
+            empty: None,
             extension: None,
             sender: tx,
             ack: ack_tx,
@@ -135,6 +136,124 @@ fn pick_overlay_filters_rows() {
     });
 }
 
+#[test]
+fn typing_a_miss_on_a_populated_picker_shows_no_matches() {
+    on_large_stack(|| {
+        let (mut backend, _rx) = pick_backend(100, 30);
+        type_query(&mut backend, "zzzzz-not-a-branch");
+        let frame = rendered_lines(&mut backend);
+        assert!(
+            frame.contains("No matches"),
+            "a live filter miss on a populated list:\n{frame}"
+        );
+        assert!(
+            !frame.contains("feat/x"),
+            "matching rows must leave:\n{frame}"
+        );
+    });
+}
+
+#[test]
+fn an_empty_collection_shows_producer_copy_and_a_filter_miss_says_no_matches() {
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 24,
+        });
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let (ack_tx, _ack_rx) = mpsc::channel();
+        backend
+            .dispatch(rozi::Msg::PickStreamOpen {
+                width: None,
+                actions: Vec::new(),
+                id: 1,
+                title: Some("Snippets".into()),
+                placeholder: Some("Filter…".into()),
+                empty: Some("No snippets yet".into()),
+                extension: None,
+                sender: tx,
+                ack: ack_tx,
+            })
+            .expect("dispatch open");
+
+        let empty_list = rendered_lines(&mut backend);
+        assert!(
+            empty_list.contains("No snippets yet"),
+            "producer empty copy:\n{empty_list}"
+        );
+        assert!(
+            !empty_list.contains("No matches"),
+            "empty collection must not borrow the filter-miss copy:\n{empty_list}"
+        );
+
+        backend
+            .dispatch(rozi::Msg::PickQueryChanged("zzz".into()))
+            .expect("type a filter");
+        let miss = rendered_lines(&mut backend);
+        assert!(miss.contains("No matches"), "filter miss copy:\n{miss}");
+        assert!(
+            !miss.contains("No snippets yet"),
+            "filter miss must not keep the producer empty copy:\n{miss}"
+        );
+    });
+}
+
+#[test]
+fn a_masked_prompt_hides_its_seed_value() {
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 24,
+        });
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let (ack_tx, _ack_rx) = mpsc::channel();
+        backend
+            .dispatch(rozi::Msg::PickStreamOpen {
+                width: None,
+                actions: vec![rozi::state::PickAction {
+                    id: "token".into(),
+                    key: "ctrl-n".into(),
+                    label: "token".into(),
+                    prompt: Some(rozi::state::PickPromptSpec::Fields(
+                        rozi::state::PickPromptFields {
+                            title: "Token".into(),
+                            placeholder: None,
+                            value: Some("super-secret-token".into()),
+                            masked: true,
+                        },
+                    )),
+                    close: false,
+                    confirm: false,
+                }],
+                id: 1,
+                title: Some("Secrets".into()),
+                placeholder: None,
+                empty: None,
+                extension: None,
+                sender: tx,
+                ack: ack_tx,
+            })
+            .expect("dispatch open");
+        backend
+            .dispatch(rozi::Msg::PickActionKey(0))
+            .expect("open prompt");
+        let frame = rendered_lines(&mut backend);
+        assert!(frame.contains("Token"), "prompt title:\n{frame}");
+        assert!(
+            !frame.contains("super-secret-token"),
+            "masked seed must not appear:\n{frame}"
+        );
+    });
+}
+
 /// A producer can send a description far longer than the row: a build command line beside a short
 /// script name. The label is what the user is choosing between, so it must survive whole.
 #[test]
@@ -157,6 +276,7 @@ fn a_long_description_never_costs_a_row_its_label() {
                 id: 1,
                 title: Some("Tasks".into()),
                 placeholder: Some("Filter tasks…".into()),
+                empty: None,
                 extension: None,
                 sender: tx,
                 ack: ack_tx,

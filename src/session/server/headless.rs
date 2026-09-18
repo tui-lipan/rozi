@@ -1439,6 +1439,7 @@ mod tests {
             ControlCommand::Pick {
                 title: None,
                 placeholder: None,
+                empty: None,
                 width: None,
                 actions: Vec::new(),
             },

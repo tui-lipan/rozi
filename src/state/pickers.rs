@@ -934,10 +934,11 @@ pub struct PickAction {
     pub key: String,
     /// Footer text, e.g. `new branch`.
     pub label: String,
-    /// When set, the key opens a text prompt with this title and the entered text rides back as
-    /// `input`. Cancelling the prompt returns to the picker without reporting anything.
-    #[serde(default)]
-    pub prompt: Option<String>,
+    /// When set, the key opens a text prompt and the entered text rides back as `input`.
+    /// A string is the title. An object may also set placeholder, a seed value, and masking.
+    /// Cancelling the prompt returns to the picker without reporting anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<PickPromptSpec>,
     /// Whether firing it ends the picker. Default `false`: the caller usually wants to push an
     /// updated row set and keep going.
     #[serde(default)]
@@ -949,11 +950,67 @@ pub struct PickAction {
     pub confirm: bool,
 }
 
+/// How a pick action describes the stacked text prompt.
+///
+/// The string form is the title. The object form is additive: every existing `"prompt":"Title"`
+/// caller stays valid.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum PickPromptSpec {
+    Title(String),
+    Fields(PickPromptFields),
+}
+
+/// Object form of [`PickPromptSpec`].
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PickPromptFields {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// Hide typed characters on screen. The submitted `input` is still plaintext on the stream.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub masked: bool,
+}
+
+impl PickPromptSpec {
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Title(title) => title,
+            Self::Fields(fields) => &fields.title,
+        }
+    }
+
+    pub fn placeholder(&self) -> &str {
+        match self {
+            Self::Title(_) => "",
+            Self::Fields(fields) => fields.placeholder.as_deref().unwrap_or(""),
+        }
+    }
+
+    pub fn value(&self) -> &str {
+        match self {
+            Self::Title(_) => "",
+            Self::Fields(fields) => fields.value.as_deref().unwrap_or(""),
+        }
+    }
+
+    pub fn masked(&self) -> bool {
+        match self {
+            Self::Title(_) => false,
+            Self::Fields(fields) => fields.masked,
+        }
+    }
+}
+
 /// An open prompt raised by a [`PickAction`], holding the picker underneath it.
 pub struct PickPrompt {
     /// Index into [`PickState::actions`].
     pub action: usize,
     pub title: String,
+    pub placeholder: String,
+    pub masked: bool,
     pub input: TextInput,
 }
 
@@ -994,6 +1051,9 @@ pub struct PickState {
     pub extension: Option<crate::config::ExtensionProvenance>,
     pub title: String,
     pub placeholder: String,
+    /// Producer copy when the row list is empty and the filter is empty. Filter misses use
+    /// Rozi's `"No matches"` instead. Omitted leaves the list's ordinary empty appearance.
+    pub empty: Option<String>,
     /// Caller-chosen modal width in columns, clamped on the way in.
     pub width: u16,
     pub actions: Vec<PickAction>,
@@ -1074,5 +1134,24 @@ mod tests {
 
         history.refused("ssh-1");
         assert!(!history.is_retry_of("ssh-1", PROMPT));
+    }
+
+    #[test]
+    fn pick_prompt_spec_accepts_a_title_string_or_an_object() {
+        let string: PickAction = serde_json::from_str(
+            r#"{"id":"create","key":"ctrl-n","label":"new","prompt":"Command"}"#,
+        )
+        .expect("string prompt");
+        assert_eq!(string.prompt, Some(PickPromptSpec::Title("Command".into())));
+
+        let object: PickAction = serde_json::from_str(
+            r#"{"id":"edit","key":"ctrl-e","label":"edit","prompt":{"title":"Edit command","placeholder":"git status","value":"git status --short","masked":true}}"#,
+        )
+        .expect("object prompt");
+        let spec = object.prompt.expect("prompt");
+        assert_eq!(spec.title(), "Edit command");
+        assert_eq!(spec.placeholder(), "git status");
+        assert_eq!(spec.value(), "git status --short");
+        assert!(spec.masked());
     }
 }

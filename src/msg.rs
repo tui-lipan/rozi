@@ -445,6 +445,7 @@ pub enum Msg {
         id: u64,
         title: Option<String>,
         placeholder: Option<String>,
+        empty: Option<String>,
         width: Option<u16>,
         actions: Vec<crate::state::PickAction>,
         extension: Option<crate::config::ExtensionProvenance>,

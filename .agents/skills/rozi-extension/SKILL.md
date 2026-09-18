@@ -220,12 +220,12 @@ Plain labels:
 printf '%s\n' main feature/x | rozi pick --title Branch
 ```
 
-Use `rozi pick --json` for groups, descriptions, disabled/active rows, actions, input prompts, or
-live refresh. The first stdin line contains request metadata and optional rows; later lines replace
-the complete row set:
+Use `rozi pick --json` for groups, descriptions, disabled/active rows, actions, input prompts, empty
+copy, or live refresh. The first stdin line contains request metadata and optional rows; later lines
+replace the complete row set:
 
 ```json
-{"title":"Branches","actions":[{"id":"new","key":"ctrl-n","label":"new","prompt":"Branch name"}],"rows":[{"id":"main","label":"main","group":"Current","active":true},{"id":"old","label":"old","disabled":"protected"}]}
+{"title":"Branches","empty":"No branches","actions":[{"id":"new","key":"ctrl-n","label":"new","prompt":{"title":"New branch","placeholder":"feat/…"}}],"rows":[{"id":"main","label":"main","group":"Current","active":true},{"id":"old","label":"old","disabled":"protected"}]}
 ```
 
 Read `{"selected":"main"}`, `{"action":"new","input":"feat/x","selected":"main"}`, or

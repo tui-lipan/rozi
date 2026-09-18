@@ -139,7 +139,7 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
             }),
     );
 
-    OverlayPalette::new(title, pick_key(), Msg::ClosePick, width)
+    let mut palette = OverlayPalette::new(title, pick_key(), Msg::ClosePick, width)
         .entries(entries)
         .placeholder(placeholder)
         // Rebuilt, not un-hidden: the picker unmounts while a prompt is up, so it comes back
@@ -187,8 +187,19 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
         .on_activate(
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::PickActivate(event.item.value)),
-        )
-        .render(ctx)
+        );
+    if let Some(text) = pick_empty_text(pick) {
+        palette = palette.empty_text(text);
+    }
+    palette.render(ctx)
+}
+
+fn pick_empty_text(pick: &crate::state::PickState) -> Option<&str> {
+    if pick.query.trim().is_empty() {
+        pick.empty.as_deref()
+    } else {
+        Some("No matches")
+    }
 }
 
 /// The text prompt an action raised. Rendered above the picker, which stays mounted underneath so
@@ -202,9 +213,13 @@ pub(crate) fn pick_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
     else {
         return Text::new("").into();
     };
+    let mut chrome = PromptChrome::new(&prompt.title, &prompt.placeholder, &[("submit", "enter")]);
+    if prompt.masked {
+        chrome = chrome.mask('•');
+    }
     prompt_overlay(
         ctx,
-        PromptChrome::new(&prompt.title, "", &[("submit", "enter")]),
+        chrome,
         &prompt.input,
         pick_prompt_input_key(),
         Msg::PickPromptChanged,

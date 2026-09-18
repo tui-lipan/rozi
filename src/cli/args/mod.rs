@@ -620,6 +620,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         &control::ControlCommand::Pick {
                             title: title.clone(),
                             placeholder: placeholder.clone(),
+                            empty: None,
                             width: None,
                             actions: Vec::new(),
                         },

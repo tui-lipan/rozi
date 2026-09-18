@@ -349,7 +349,7 @@ Action fields:
 | `id` | string | required | Returned as `action`. |
 | `key` | string | required | One valid key chord. |
 | `label` | string | required | Footer label. |
-| `prompt` | string or object | none | Replaces the picker with a text prompt and returns `input`. A string is the title. An object may also set `placeholder`, a seed `value`, and `masked`. |
+| `prompt` | string or object | none | Opens a stacked text prompt over the picker and returns `input`. A string is the title. An object may also set `placeholder`, a seed `value`, and `masked`. |
 | `close` | bool | `false` | Closes after the action. |
 | `confirm` | bool | `false` | Requires a second press on the same row. |
 

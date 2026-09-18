@@ -1,7 +1,7 @@
 # Snippets extension
 
 A picker of commands you save yourself. Selecting a row pastes it into the focused pane. `Ctrl-N`
-opens a nested prompt for a new command and keeps the picker open so you can pick it next. An empty
+opens a stacked prompt for a new command and keeps the picker open so you can pick it next. An empty
 list shows `No snippets yet` rather than a fake row.
 
 This extension uses the Python standard library and the public `rozi` CLI. It does not import Rozi
@@ -43,8 +43,10 @@ cannot be deleted from the picker; change them in `config.toml`.
 
 ## State
 
-Saved rows live in `$XDG_STATE_HOME/rozi-snippets/commands.json` (or `~/.local/state/rozi-snippets/`),
-never inside the installed extension directory.
+Saved rows live in `$XDG_STATE_HOME/rozi-snippets/commands/<id>.json` (or
+`~/.local/state/rozi-snippets/commands/`), never inside the installed extension directory. Each
+saved command is its own file, so two Rozi clients can add or delete at the same time without
+overwriting each other.
 
 ## Tests
 

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Saved-command picker. Paste a row into the focused pane, or add one from a nested prompt."""
+"""Saved-command picker. Paste a row into the focused pane, or add one from a stacked prompt."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +16,7 @@ from pathlib import Path
 
 ROZI = os.environ.get("ROZI_BIN") or "rozi"
 EXTENSION_ID = "snippets"
-STATE_FILE = "commands.json"
+SNIPPET_NAME = re.compile(r"^[0-9a-f]{32}\.json$")
 
 
 class ToolError(RuntimeError):
@@ -26,6 +28,7 @@ class Snippet:
     id: str
     text: str
     saved: bool
+    created: int = 0
 
 
 def settings() -> dict:
@@ -44,61 +47,87 @@ def settings() -> dict:
     }
 
 
-def state_path() -> Path | None:
+def commands_dir() -> Path | None:
     base = os.environ.get("XDG_STATE_HOME")
     if not base:
         if os.name == "nt":
             base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         else:
             base = str(Path.home() / ".local" / "state")
-    directory = Path(base) / "rozi-snippets"
+    directory = Path(base) / "rozi-snippets" / "commands"
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError:
         return None
-    return directory / STATE_FILE
+    return directory
 
 
 def load_saved() -> list[Snippet]:
-    path = state_path()
-    if path is None or not path.is_file():
-        return []
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    items = raw.get("commands") if isinstance(raw, dict) else None
-    if not isinstance(items, list):
+    directory = commands_dir()
+    if directory is None:
         return []
     snippets = []
-    for item in items:
-        if not isinstance(item, dict):
+    for path in directory.iterdir():
+        if not path.is_file() or not SNIPPET_NAME.match(path.name):
             continue
-        snippet_id = item.get("id")
-        text = item.get("text")
-        if isinstance(snippet_id, str) and snippet_id and isinstance(text, str) and text.strip():
-            snippets.append(Snippet(snippet_id, text, True))
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        text = raw.get("text")
+        created = raw.get("created", 0)
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if not isinstance(created, int):
+            created = 0
+        snippets.append(Snippet(path.stem, text, True, created))
+    snippets.sort(key=lambda item: (item.created, item.id))
     return snippets
 
 
-def save_saved(snippets: list[Snippet]) -> None:
-    path = state_path()
-    if path is None:
+def write_snippet(snippet: Snippet) -> None:
+    directory = commands_dir()
+    if directory is None:
         raise ToolError("Could not write snippet state")
-    payload = {
-        "commands": [{"id": item.id, "text": item.text} for item in snippets if item.saved]
-    }
+    dest = directory / f"{snippet.id}.json"
+    temporary = directory / f".{snippet.id}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+    payload = {"text": snippet.text, "created": snippet.created}
     encoded = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    temporary = path.with_name(path.name + ".tmp")
     try:
         temporary.write_text(encoded, encoding="utf-8")
-        temporary.replace(path)
+        os.replace(temporary, dest)
     except OSError as error:
         try:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
         raise ToolError("Could not write snippet state") from error
+
+
+def add_snippet(value: object) -> Snippet:
+    text = valid_text(value)
+    if any(item.text == text for item in load_saved()):
+        raise ToolError("Command already saved")
+    snippet = Snippet(uuid.uuid4().hex, text, True, time.time_ns())
+    write_snippet(snippet)
+    return snippet
+
+
+def delete_snippet(selected: object, items: dict[str, Snippet]) -> None:
+    snippet = items.get(str(selected))
+    if snippet is None:
+        raise ToolError("Nothing to delete")
+    if not snippet.saved:
+        raise ToolError("Config snippets cannot be deleted here")
+    directory = commands_dir()
+    if directory is None:
+        raise ToolError("Could not write snippet state")
+    try:
+        (directory / f"{snippet.id}.json").unlink(missing_ok=True)
+    except OSError as error:
+        raise ToolError("Could not delete snippet") from error
 
 
 def all_snippets(config: dict) -> list[Snippet]:
@@ -111,10 +140,6 @@ def all_snippets(config: dict) -> list[Snippet]:
     return snippets
 
 
-def new_id() -> str:
-    return uuid.uuid4().hex[:12]
-
-
 def valid_text(value: object) -> str:
     text = str(value).strip()
     if not text:
@@ -122,26 +147,6 @@ def valid_text(value: object) -> str:
     if "\n" in text or "\r" in text:
         raise ToolError("Command cannot contain a newline")
     return text
-
-
-def add_snippet(value: object) -> Snippet:
-    text = valid_text(value)
-    snippets = load_saved()
-    if any(item.text == text for item in snippets):
-        raise ToolError("Command already saved")
-    snippet = Snippet(new_id(), text, True)
-    snippets.append(snippet)
-    save_saved(snippets)
-    return snippet
-
-
-def delete_snippet(selected: object, items: dict[str, Snippet]) -> None:
-    snippet = items.get(str(selected))
-    if snippet is None:
-        raise ToolError("Nothing to delete")
-    if not snippet.saved:
-        raise ToolError("Config snippets cannot be deleted here")
-    save_saved([item for item in load_saved() if item.id != snippet.id])
 
 
 def rows(snippets: list[Snippet]) -> list[dict[str, object]]:

@@ -44,11 +44,27 @@ class IsolatedState(unittest.TestCase):
         self.assertEqual([item.text for item in loaded], ["git status"])
         self.assertEqual(loaded[0].id, added.id)
         self.assertTrue(loaded[0].saved)
-        path = snippets.state_path()
-        self.assertIsNotNone(path)
-        assert path is not None
+        directory = snippets.commands_dir()
+        self.assertIsNotNone(directory)
+        assert directory is not None
+        path = directory / f"{added.id}.json"
         self.assertTrue(path.is_file())
-        self.assertEqual(path.parent.name, "rozi-snippets")
+        self.assertEqual(directory.name, "commands")
+        self.assertEqual(directory.parent.name, "rozi-snippets")
+
+    def test_adds_and_deletes_are_independent_files(self) -> None:
+        first = snippets.add_snippet("echo one")
+        second = snippets.add_snippet("echo two")
+        directory = snippets.commands_dir()
+        assert directory is not None
+        self.assertEqual(
+            {path.name for path in directory.glob("*.json")},
+            {f"{first.id}.json", f"{second.id}.json"},
+        )
+        snippets.delete_snippet(first.id, {first.id: first, second.id: second})
+        self.assertEqual([item.text for item in snippets.load_saved()], ["echo two"])
+        self.assertFalse((directory / f"{first.id}.json").exists())
+        self.assertTrue((directory / f"{second.id}.json").is_file())
 
     def test_empty_or_duplicate_add_is_rejected(self) -> None:
         with self.assertRaisesRegex(snippets.ToolError, "empty"):

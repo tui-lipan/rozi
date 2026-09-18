@@ -137,6 +137,23 @@ fn pick_overlay_filters_rows() {
 }
 
 #[test]
+fn typing_a_miss_on_a_populated_picker_shows_no_matches() {
+    on_large_stack(|| {
+        let (mut backend, _rx) = pick_backend(100, 30);
+        type_query(&mut backend, "zzzzz-not-a-branch");
+        let frame = rendered_lines(&mut backend);
+        assert!(
+            frame.contains("No matches"),
+            "a live filter miss on a populated list:\n{frame}"
+        );
+        assert!(
+            !frame.contains("feat/x"),
+            "matching rows must leave:\n{frame}"
+        );
+    });
+}
+
+#[test]
 fn an_empty_collection_shows_producer_copy_and_a_filter_miss_says_no_matches() {
     on_large_stack(|| {
         rozi::test_support::isolate_user_dirs();

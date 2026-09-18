@@ -831,8 +831,8 @@ mod tests {
         });
     }
 
-    /// The prompt replaces the picker rather than stacking on it, and cancelling rebuilds the
-    /// picker seeded with the filter that was typed before.
+    /// A stacked prompt keeps the picker underneath; cancelling restores it seeded with the
+    /// filter that was typed before.
     #[test]
     fn a_prompt_replaces_the_picker_and_restores_its_query() {
         with_backend(|backend| {

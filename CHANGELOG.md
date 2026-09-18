@@ -12,6 +12,9 @@
 
 ### Fixed
 
+- In-app writes of `config.toml` and saved hosts replace the destination as a whole file, so an
+  interrupted save cannot leave a truncated document. A symlink at the config path stays a
+  symlink.
 - Prefix and Mod in Keybindings show `current ← default` when they differ from the compiled-in
   values, and `Ctrl+D` resets them the way it resets a command binding.
 - Guttered pickers inset empty-state copy instead of sitting flush against the frame. Needs

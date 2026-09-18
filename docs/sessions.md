@@ -152,7 +152,8 @@ it. A login left empty is a real answer, and hands the question to `~/.ssh/confi
 sleeping laptop, a VPN that is down, or a login typed wrong is not a reason to lose the entry.
 Rozi never stores a password: OpenSSH asks for one when it needs one, through its own prompt.
 
-The roster is written to `saved-hosts` in the state directory, which rozi keeps private to you. If
+The roster is written to `saved-hosts` in the state directory, which rozi keeps private to you.
+The file is replaced as a whole so an interrupted save cannot leave a truncated roster. If
 that write still fails, the host is listed and usable for the rest of the session anyway and a
 warning names the reason; only the memory of it across restarts is lost.
 

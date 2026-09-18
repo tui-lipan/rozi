@@ -22,6 +22,10 @@ Rozi chooses the file in this order:
 commands that load configuration. Control commands do not load configuration and reject
 `--config`.
 
+In-app saves replace `config.toml` as a whole file, so an interrupted write cannot leave a
+truncated document. If that path is a symlink, Rozi writes the target and leaves the link in
+place.
+
 ## User directories
 
 | Purpose | Linux and macOS | Windows |

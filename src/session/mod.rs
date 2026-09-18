@@ -53,7 +53,7 @@ fn write_last_sessions(entries: &std::collections::HashMap<String, String>) {
         return;
     }
     if let Ok(text) = serde_json::to_string_pretty(entries) {
-        let _ = std::fs::write(path, text);
+        let _ = crate::platform::persist::replace_file(&path, text.as_bytes());
     }
 }
 
@@ -107,7 +107,7 @@ fn write_recent_remotes(entries: &[remote::RemoteTarget]) {
         .map(remote::RemoteTarget::to_spec)
         .collect::<Vec<_>>()
         .join("\n");
-    let _ = std::fs::write(path, text);
+    let _ = crate::platform::persist::replace_file(&path, text.as_bytes());
 }
 
 fn update_recent_targets(entries: &mut Vec<remote::RemoteTarget>, target: &remote::RemoteTarget) {
@@ -196,7 +196,8 @@ fn write_saved_hosts(entries: &[remote::RemoteTarget]) -> Result<(), String> {
         .map(remote::RemoteTarget::to_spec)
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))
+    crate::platform::persist::replace_file(&path, text.as_bytes())
+        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// Hosts the user added by hand, oldest first.
@@ -348,7 +349,7 @@ fn write_host_session_cache(cache: &HostSessionCache) {
         return;
     }
     if let Ok(text) = serde_json::to_string_pretty(cache) {
-        let _ = std::fs::write(path, text);
+        let _ = crate::platform::persist::replace_file(&path, text.as_bytes());
     }
 }
 

@@ -27,7 +27,7 @@ fn write_config_text(path: &Path, updated: String) -> std::result::Result<(), St
             )
         })?;
     }
-    fs::write(path, &updated)
+    crate::platform::persist::replace_file(path, updated.as_bytes())
         .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
     note_config_text(Some(updated));
     Ok(())

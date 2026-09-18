@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.20 - 2026-09-18
+
 ### Added
 
 - `rozi pick --json` can name empty-collection copy (`empty`) and can open a stacked prompt as a

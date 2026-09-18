@@ -12,6 +12,17 @@ pub mod server;
 /// alias, and an alias may not contain a scheme), so it cannot collide with a host.
 const LOCAL_SCOPE_KEY: &str = "local";
 
+fn persist_io<T>(f: impl FnOnce() -> T) -> T {
+    #[cfg(test)]
+    {
+        crate::test_support::with_persisted_state(f)
+    }
+    #[cfg(not(test))]
+    {
+        f()
+    }
+}
+
 /// Which workplace a "last session" memory belongs to: this machine, or one exact remote host.
 ///
 /// `startup = "last"` reopens the last session *of the scope it launches into*. A bare `rozi` must
@@ -53,32 +64,38 @@ fn write_last_sessions(entries: &std::collections::HashMap<String, String>) {
         return;
     }
     if let Ok(text) = serde_json::to_string_pretty(entries) {
-        let _ = std::fs::write(path, text);
+        let _ = crate::platform::persist::replace_file(&path, text.as_bytes());
     }
 }
 
 pub(crate) fn record_last_session(scope: Option<&remote::RemoteTarget>, name: &str) {
-    if !discovery::valid_session_name(name) {
-        return;
-    }
-    let mut entries = read_last_sessions();
-    entries.insert(last_session_scope_key(scope), name.to_string());
-    write_last_sessions(&entries);
+    persist_io(|| {
+        if !discovery::valid_session_name(name) {
+            return;
+        }
+        let mut entries = read_last_sessions();
+        entries.insert(last_session_scope_key(scope), name.to_string());
+        write_last_sessions(&entries);
+    });
 }
 
 pub(crate) fn read_last_session(scope: Option<&remote::RemoteTarget>) -> Option<String> {
-    let entries = read_last_sessions();
-    let name = entries.get(&last_session_scope_key(scope))?;
-    discovery::valid_session_name(name).then(|| name.clone())
+    persist_io(|| {
+        let entries = read_last_sessions();
+        let name = entries.get(&last_session_scope_key(scope))?;
+        discovery::valid_session_name(name).then(|| name.clone())
+    })
 }
 
 /// Drop one host's last-session memory, for the same reason forgetting a host drops its session
 /// cache: the user asked for that machine to stop being one of their workplaces.
 pub(crate) fn forget_last_session(scope: Option<&remote::RemoteTarget>) {
-    let mut entries = read_last_sessions();
-    if entries.remove(&last_session_scope_key(scope)).is_some() {
-        write_last_sessions(&entries);
-    }
+    persist_io(|| {
+        let mut entries = read_last_sessions();
+        if entries.remove(&last_session_scope_key(scope)).is_some() {
+            write_last_sessions(&entries);
+        }
+    });
 }
 
 /// The most recently used remote targets, most-recent first. Only canonical target specs are
@@ -107,7 +124,7 @@ fn write_recent_remotes(entries: &[remote::RemoteTarget]) {
         .map(remote::RemoteTarget::to_spec)
         .collect::<Vec<_>>()
         .join("\n");
-    let _ = std::fs::write(path, text);
+    let _ = crate::platform::persist::replace_file(&path, text.as_bytes());
 }
 
 fn update_recent_targets(entries: &mut Vec<remote::RemoteTarget>, target: &remote::RemoteTarget) {
@@ -118,40 +135,46 @@ fn update_recent_targets(entries: &mut Vec<remote::RemoteTarget>, target: &remot
 
 /// Record a successfully-used remote target, moving it to the front and capping the list.
 pub(crate) fn record_recent_remote(target: &remote::RemoteTarget) {
-    let mut entries = read_recent_remotes();
-    update_recent_targets(&mut entries, target);
-    write_recent_remotes(&entries);
+    persist_io(|| {
+        let mut entries = read_recent_remotes();
+        update_recent_targets(&mut entries, target);
+        write_recent_remotes(&entries);
+    });
 }
 
 /// Forget one exact remote identity without affecting a target with the same display label.
 pub(crate) fn forget_recent_remote(target: &remote::RemoteTarget) {
-    let mut entries = read_recent_remotes();
-    entries.retain(|entry| entry != target);
-    write_recent_remotes(&entries);
+    persist_io(|| {
+        let mut entries = read_recent_remotes();
+        entries.retain(|entry| entry != target);
+        write_recent_remotes(&entries);
+    });
 }
 
 /// Recently used ad-hoc remote targets, most-recent first.
 pub(crate) fn read_recent_remotes() -> Vec<remote::RemoteTarget> {
-    let Some(path) = recent_remotes_path() else {
-        return Vec::new();
-    };
-    std::fs::read_to_string(path)
-        .map(|text| {
-            let mut entries = Vec::new();
-            for target in text
-                .lines()
-                .filter_map(|line| remote::parse_remote_target(line.trim()).ok())
-            {
-                if !entries.contains(&target) {
-                    entries.push(target);
+    persist_io(|| {
+        let Some(path) = recent_remotes_path() else {
+            return Vec::new();
+        };
+        std::fs::read_to_string(path)
+            .map(|text| {
+                let mut entries = Vec::new();
+                for target in text
+                    .lines()
+                    .filter_map(|line| remote::parse_remote_target(line.trim()).ok())
+                {
+                    if !entries.contains(&target) {
+                        entries.push(target);
+                    }
+                    if entries.len() == MAX_RECENT_REMOTES {
+                        break;
+                    }
                 }
-                if entries.len() == MAX_RECENT_REMOTES {
-                    break;
-                }
-            }
-            entries
-        })
-        .unwrap_or_default()
+                entries
+            })
+            .unwrap_or_default()
+    })
 }
 
 /// Hosts the user added by hand in **Remote hosts**, in the order they were added.
@@ -196,49 +219,56 @@ fn write_saved_hosts(entries: &[remote::RemoteTarget]) -> Result<(), String> {
         .map(remote::RemoteTarget::to_spec)
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))
+    crate::platform::persist::replace_file(&path, text.as_bytes())
+        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// Hosts the user added by hand, oldest first.
 pub(crate) fn read_saved_hosts() -> Vec<remote::RemoteTarget> {
-    let Some(path) = saved_hosts_path() else {
-        return Vec::new();
-    };
-    std::fs::read_to_string(path)
-        .map(|text| {
-            let mut entries: Vec<remote::RemoteTarget> = Vec::new();
-            for target in text
-                .lines()
-                .filter_map(|line| remote::parse_remote_target(line.trim()).ok())
-            {
-                if !entries.contains(&target) {
-                    entries.push(target);
+    persist_io(|| {
+        let Some(path) = saved_hosts_path() else {
+            return Vec::new();
+        };
+        std::fs::read_to_string(path)
+            .map(|text| {
+                let mut entries: Vec<remote::RemoteTarget> = Vec::new();
+                for target in text
+                    .lines()
+                    .filter_map(|line| remote::parse_remote_target(line.trim()).ok())
+                {
+                    if !entries.contains(&target) {
+                        entries.push(target);
+                    }
                 }
-            }
-            entries
-        })
-        .unwrap_or_default()
+                entries
+            })
+            .unwrap_or_default()
+    })
 }
 
 /// Add a host the user typed. Appends rather than promoting: this list is a roster, not a history,
 /// so a host does not jump around under the cursor for having been touched.
 pub(crate) fn save_host(target: &remote::RemoteTarget) -> Result<(), String> {
-    let mut entries = read_saved_hosts();
-    if entries.contains(target) {
-        return Ok(());
-    }
-    entries.push(target.clone());
-    write_saved_hosts(&entries)
+    persist_io(|| {
+        let mut entries = read_saved_hosts();
+        if entries.contains(target) {
+            return Ok(());
+        }
+        entries.push(target.clone());
+        write_saved_hosts(&entries)
+    })
 }
 
 /// Drop one saved host, keeping the position of every other.
 pub(crate) fn forget_saved_host(target: &remote::RemoteTarget) {
-    let mut entries = read_saved_hosts();
-    let before = entries.len();
-    entries.retain(|entry| entry != target);
-    if entries.len() != before {
-        let _ = write_saved_hosts(&entries);
-    }
+    persist_io(|| {
+        let mut entries = read_saved_hosts();
+        let before = entries.len();
+        entries.retain(|entry| entry != target);
+        if entries.len() != before {
+            let _ = write_saved_hosts(&entries);
+        }
+    });
 }
 
 /// Rewrite one saved host in place, so an edited host keeps its position in the roster instead of
@@ -251,13 +281,15 @@ pub(crate) fn replace_saved_host(
     old: &remote::RemoteTarget,
     new: &remote::RemoteTarget,
 ) -> Result<(), String> {
-    let mut entries = read_saved_hosts();
-    let Some(index) = entries.iter().position(|entry| entry == old) else {
-        return save_host(new);
-    };
-    entries.retain(|entry| entry == old || entry != new);
-    entries[index] = new.clone();
-    write_saved_hosts(&entries)
+    persist_io(|| {
+        let mut entries = read_saved_hosts();
+        let Some(index) = entries.iter().position(|entry| entry == old) else {
+            return save_host(new);
+        };
+        entries.retain(|entry| entry == old || entry != new);
+        entries[index] = new.clone();
+        write_saved_hosts(&entries)
+    })
 }
 
 /// A last-seen session on a remote host, cached so a host's known workplaces stay visible when it is
@@ -285,13 +317,15 @@ fn host_sessions_path() -> Option<std::path::PathBuf> {
 /// Read the persisted per-host session cache. Empty on any error (missing file, parse failure): the
 /// cache is a convenience, never a source of truth.
 pub(crate) fn read_host_session_cache() -> HostSessionCache {
-    let Some(path) = host_sessions_path() else {
-        return HostSessionCache::new();
-    };
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    persist_io(|| {
+        let Some(path) = host_sessions_path() else {
+            return HostSessionCache::new();
+        };
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    })
 }
 
 /// Read one target's cache by canonical identity, with a legacy display-label fallback.
@@ -348,7 +382,7 @@ fn write_host_session_cache(cache: &HostSessionCache) {
         return;
     }
     if let Ok(text) = serde_json::to_string_pretty(cache) {
-        let _ = std::fs::write(path, text);
+        let _ = crate::platform::persist::replace_file(&path, text.as_bytes());
     }
 }
 
@@ -359,16 +393,25 @@ pub(crate) fn record_host_sessions(
     target: &remote::RemoteTarget,
     sessions: Vec<CachedHostSession>,
 ) {
-    let mut cache = read_host_session_cache();
-    set_cached_host_sessions(&mut cache, target, sessions);
-    write_host_session_cache(&cache);
+    persist_io(|| {
+        let mut cache = read_host_session_cache();
+        set_cached_host_sessions(&mut cache, target, sessions);
+        write_host_session_cache(&cache);
+    });
 }
 
 /// Remove both canonical and legacy cache identities for one exact target.
 pub(crate) fn forget_host_sessions(target: &remote::RemoteTarget) {
-    let mut cache = read_host_session_cache();
-    remove_cached_host_sessions(&mut cache, target);
-    write_host_session_cache(&cache);
+    persist_io(|| {
+        let mut cache = read_host_session_cache();
+        remove_cached_host_sessions(&mut cache, target);
+        write_host_session_cache(&cache);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn reset_host_session_cache() {
+    persist_io(|| write_host_session_cache(&HostSessionCache::new()));
 }
 
 #[cfg(test)]
@@ -381,6 +424,7 @@ mod tests {
     /// host has never heard of.
     #[test]
     fn last_session_is_remembered_per_workplace() {
+        let _persist = crate::test_support::lock_persisted_state();
         crate::test_support::isolate_user_dirs();
         let workbox = remote::RemoteTarget::Alias("workbox".into());
         let other = remote::RemoteTarget::Url {
@@ -413,6 +457,7 @@ mod tests {
     /// An unusable name never reaches the file, so a later launch cannot be handed one to attach.
     #[test]
     fn an_invalid_session_name_is_not_remembered() {
+        let _persist = crate::test_support::lock_persisted_state();
         crate::test_support::isolate_user_dirs();
         let target = remote::RemoteTarget::Alias("scratchbox".into());
         record_last_session(Some(&target), "not a session name");

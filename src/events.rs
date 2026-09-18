@@ -172,7 +172,7 @@ fn run_hooks(state: &crate::state::State, event: &Event) {
     for command in commands {
         let env = env.clone();
         let runner = runner.clone();
-        std::thread::spawn(move || {
+        let _ = crate::jobs::try_spawn(move || {
             if let Ok(mut child) = std::process::Command::new(runner.program)
                 .args(runner.args)
                 .arg(command)
@@ -289,6 +289,8 @@ mod tests {
     fn emit_fans_out_all_matching_hooks() {
         use crate::config::{Config, HookConfig};
         use std::time::{Duration, Instant};
+
+        let _jobs = crate::jobs::lock_for_tests();
 
         let dir = std::env::temp_dir().join(format!("rozi-hook-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

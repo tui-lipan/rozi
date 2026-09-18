@@ -13,7 +13,7 @@ Open **Keybindings** with `?` and type to filter. The search field keeps focus t
 | `←` / `→`, `Tab` / `Shift+Tab` | Switch tabs |
 | `Enter` | Change the selected binding |
 | `Ctrl+U` | Unbind the selected action |
-| `Ctrl+D` | Reset the selected action to its default |
+| `Ctrl+D` | Reset the selected binding, Prefix, or Mod to its default |
 | `Ctrl+R` | Reset every keybinding override |
 | `Esc` | Close |
 
@@ -27,7 +27,8 @@ ranges, mouse gestures, and the **Modes** tab are reference only.
 
 The **Prefix** row records one key step, like any binding. The **Mod** row opens a chooser instead:
 `←` / `→` pick `Alt`, `Super`, or `Off`, and `Enter` saves. `Off` turns the held-modifier layer off
-and keeps the chosen modifier for when it is turned back on. Every command key that follows the
+and keeps the chosen modifier for when it is turned back on. A Prefix or Mod that is not the
+default shows `current ← default`, and **Reset** restores it. Every command key that follows the
 scheme moves with the new Prefix or Mod; literal chords such as `ctrl-a q` stay exactly as written.
 When some literal chords spell the old Prefix or Mod, the card counts them and `Tab` offers to
 convert them to `prefix:` or `mod:` forms so they follow too. Nothing is converted unless you turn
@@ -52,8 +53,8 @@ binding. Replacing takes only the chords that collide: taking `Alt+Enter` from N
 `"prefix:enter"`, which still follows the prefix. The Prefix key cannot be taken from the Prefix
 row this way; change Prefix first. **Unbind** leaves the selected action without a
 key and moves it to the **Unbound** tab, keeping the highlight on the next remaining row.
-**Reset** restores its default, and **Reset all** removes every keybinding override after
-confirmation.
+**Reset** restores the selected command, Prefix, or Mod to its default. **Reset all** removes every
+command keybinding override after confirmation.
 
 Built-in actions and named `[[commands]]` entries are editable. Inline `run` and `send` entries in
 `[keys]` have no stable action id, so they remain config-only. In-app config writes preserve

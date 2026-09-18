@@ -16,7 +16,7 @@ On Windows PowerShell:
 irm https://rozi.tui-lipan.dev/install.ps1 | iex
 ```
 
-You can also use `cargo install rozi` with Rust 1.90 or newer. See
+You can also use `cargo install rozi --locked` with Rust 1.90 or newer. See
 [Installation](installation.md) for PATH setup, source builds, updates, and rollback.
 
 ## 2. Open the session picker

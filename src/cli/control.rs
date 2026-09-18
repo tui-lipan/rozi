@@ -66,9 +66,8 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 
     let reader_stream = stream.try_clone()?;
-    let mut reply = String::new();
     let mut reader = BufReader::new(reader_stream);
-    reader.read_line(&mut reply)?;
+    let reply = read_socket_line(&mut reader)?;
     let value: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
     if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
@@ -80,8 +79,7 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
     // Activations arrive whenever the user clicks; forward them as they come rather than pairing
     // them with anything this process writes.
     std::thread::spawn(move || {
-        for line in reader.lines() {
-            let Ok(line) = line else { return };
+        while let Ok(Some(line)) = crate::control::read_control_reply_line(&mut reader) {
             let mut stdout = std::io::stdout().lock();
             // A publisher that stopped reading its activations has gone away; end the thread
             // rather than spinning on a broken pipe.
@@ -94,8 +92,8 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
         }
     });
 
-    for line in std::io::stdin().lock().lines() {
-        let line = line?;
+    let mut stdin = BufReader::new(std::io::stdin().lock());
+    while let Some(line) = crate::control::read_control_line(&mut stdin)? {
         writeln!(stream, "{line}")?;
     }
     Ok(())
@@ -123,8 +121,7 @@ pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 
     let mut reader = BufReader::new(stream);
-    let mut response = String::new();
-    reader.read_line(&mut response)?;
+    let response = read_socket_line(&mut reader)?;
     let value: serde_json::Value = serde_json::from_str(&response).unwrap_or_default();
     if value.get("ok").and_then(|value| value.as_bool()) != Some(true) {
         if let Some(error) = value.get("error").and_then(|value| value.as_str()) {
@@ -134,8 +131,8 @@ pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
     }
 
     let mut stdout = std::io::stdout().lock();
-    for line in reader.lines() {
-        writeln!(stdout, "{}", line?)?;
+    while let Some(line) = crate::control::read_control_reply_line(&mut reader)? {
+        writeln!(stdout, "{line}")?;
         stdout.flush()?;
     }
     Ok(())
@@ -160,10 +157,9 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
     // declare `width` and `actions` - they have no flag spelling, and a mini-language inside one
     // would be worse than the object the caller is already writing. Its `rows`, if present, become
     // the initial set. Plain mode is a dumb list and needs none of it.
-    let mut first_line = String::new();
     let mut opening_rows = None;
     let (title, placeholder, width, actions) = if command.json {
-        std::io::stdin().lock().read_line(&mut first_line)?;
+        let first_line = read_socket_line(&mut BufReader::new(std::io::stdin().lock()))?;
         let spec: serde_json::Value =
             serde_json::from_str(first_line.trim()).unwrap_or(serde_json::Value::Null);
         if spec.get("rows").is_some() {
@@ -197,9 +193,8 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 
     let reader_stream = stream.try_clone()?;
-    let mut reply = String::new();
     let mut reader = BufReader::new(reader_stream);
-    reader.read_line(&mut reply)?;
+    let reply = read_socket_line(&mut reader)?;
     let value: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
     if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
@@ -210,8 +205,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
 
     let json = command.json;
     let reader_thread = std::thread::spawn(move || {
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
+        while let Ok(Some(line)) = crate::control::read_control_reply_line(&mut reader) {
             if line.trim().is_empty() {
                 continue;
             }
@@ -248,8 +242,8 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         if let Some(rows) = opening_rows {
             let _ = writeln!(stream, "{rows}");
         }
-        for line in std::io::stdin().lock().lines() {
-            let Ok(line) = line else { break };
+        let mut stdin = BufReader::new(std::io::stdin().lock());
+        while let Ok(Some(line)) = crate::control::read_control_line(&mut stdin) {
             if writeln!(stream, "{line}").is_err() {
                 break;
             }
@@ -259,13 +253,17 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         // stdin closes immediately, and one send beats a redraw per line on a long pipeline. A
         // caller that wants to grow the list while the palette is open uses `--json` and controls
         // its own batching.
-        let rows: Vec<serde_json::Value> = std::io::stdin()
-            .lock()
-            .lines()
-            .map_while(std::result::Result::ok)
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::json!({ "id": line, "label": line }))
-            .collect();
+        let mut stdin = BufReader::new(std::io::stdin().lock());
+        let mut rows = Vec::new();
+        while let Ok(Some(line)) = crate::control::read_control_line(&mut stdin) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            rows.push(serde_json::json!({ "id": line, "label": line }));
+            if rows.len() >= crate::control::MAX_PICK_ROWS {
+                break;
+            }
+        }
         let _ = writeln!(stream, "{}", serde_json::json!({ "rows": rows }));
     }
 
@@ -317,8 +315,7 @@ fn ask_ui_endpoint(
         }
     };
     writeln!(stream, "{}", serde_json::to_string(request).unwrap())?;
-    let mut line = String::new();
-    BufReader::new(stream).read_line(&mut line)?;
+    let line = read_socket_line(&mut BufReader::new(stream))?;
     if line.trim().is_empty() {
         eprintln!("empty response from rozi");
         std::process::exit(2);
@@ -386,6 +383,16 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn read_socket_line(reader: &mut impl BufRead) -> std::io::Result<String> {
+    match crate::control::read_control_reply_line(reader)? {
+        Some(line) => Ok(line),
+        None => Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "control connection closed",
+        )),
+    }
 }
 
 #[cfg(test)]

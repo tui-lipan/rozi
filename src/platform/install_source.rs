@@ -62,7 +62,7 @@ fn absolute_env(key: &str) -> Option<PathBuf> {
 pub enum InstallSource {
     /// Installed by rozi itself, into the `relswap` managed layout.
     Managed,
-    /// `cargo install rozi`, or `cargo binstall`.
+    /// `cargo install rozi --locked`, or `cargo binstall`.
     Cargo,
     Mise,
     Homebrew,

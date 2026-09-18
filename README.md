@@ -39,7 +39,7 @@ irm https://rozi.tui-lipan.dev/install.ps1 | iex
 You can also install with Cargo:
 
 ```bash
-cargo install rozi
+cargo install rozi --locked
 ```
 
 Building from source requires Rust 1.90 or newer. See [Installation](docs/installation.md) for

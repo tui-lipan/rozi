@@ -20,7 +20,7 @@ This used to be a correctness requirement rather than a preference: rozi carried
 `[patch.crates-io]` for `termina`, whose mouse decoder panicked the input worker on a report at
 column or row 0, and **cargo strips `[patch]` when publishing** — a build from the crate would have
 silently contained that panic. tui-lipan 0.4.1 requires a fixed `termina` on its own, so the patch
-is gone and `cargo install rozi` is a supported install path again.
+is gone and `cargo install rozi --locked` is a supported install path again.
 
 ## Publishing
 

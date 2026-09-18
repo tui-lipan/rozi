@@ -17,7 +17,7 @@ irm https://rozi.tui-lipan.dev/install.ps1 | iex
 With Cargo:
 
 ```bash
-cargo install rozi
+cargo install rozi --locked
 ```
 
 On NetBSD, from pkgsrc:

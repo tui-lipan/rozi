@@ -4,11 +4,24 @@
 
 ### Added
 
+- Control JSON request lines larger than 1 MiB are rejected and the connection is closed. Replies
+  Rozi writes, including a full `capture-pane` scrollback, are not capped at 1 MiB. Picker snapshots
+  keep at most 512 rows.
+- Hook and detached `exec` commands share a 32-job ceiling. Matching hooks still overlap, but a
+  burst of `focus-changed` events no longer creates an unbounded number of threads and processes.
+- The compiled release trust store includes `release-2026-b` as a cold spare alongside the active
+  `release-2026-a` key. Installed clients trust the spare only after they take an update signed by
+  the active key.
 - A last-seen remote session in Sessions can be forgotten with `Ctrl+K`. That drops it from the
   local host-session cache only; reconnecting the host and finding it still there lists it again.
 
 ### Fixed
 
+- In-app writes of `config.toml` and saved hosts replace the destination as a whole file, so an
+  interrupted save cannot leave a truncated document. A symlink at the config path stays a
+  symlink.
+- Prefix and Mod in Keybindings show `current ← default` when they differ from the compiled-in
+  values, and `Ctrl+D` resets them the way it resets a command binding.
 - Guttered pickers inset empty-state copy instead of sitting flush against the frame. Needs
   tui-lipan 0.11.5.
 

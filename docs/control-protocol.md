@@ -33,7 +33,10 @@ a discovery-entry path on Windows.
 
 ## Framing
 
-The protocol is UTF-8 newline-delimited JSON.
+The protocol is UTF-8 newline-delimited JSON. Incoming request and stream-update lines, including
+the trailing newline, are at most 1 MiB. A larger incoming line is a protocol error and Rozi closes
+the connection. Replies Rozi writes, including `capture-pane --scrollback full`, are not capped at
+1 MiB.
 
 For a one-shot command:
 
@@ -296,7 +299,8 @@ Otherwise it sends `{"ok":true}`. `title` defaults to `"Pick"`, `placeholder` de
 `"Search…"`, and `width` defaults to 60 columns and is clamped to `30..=120`. Actions with an empty
 ID or invalid key chord are omitted.
 
-The client may then write row snapshots. Each line replaces the full row set:
+The client may then write row snapshots. Each line replaces the full row set. Rozi keeps at most
+512 rows from each snapshot.
 
 ```json
 {"rows":[{"id":"main","label":"main","description":"current","group":"Local","active":true},{"id":"old","label":"old","disabled":"protected"}]}

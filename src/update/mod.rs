@@ -109,6 +109,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::KeybindingToggleConversion => keybindings::keybinding_toggle_conversion(ctx),
         Msg::KeybindingUnbind(id) => keybindings::keybinding_unbind(ctx, id),
         Msg::KeybindingReset(id) => keybindings::keybinding_reset(ctx, id),
+        Msg::KeybindingResetPrefix => keybindings::keybinding_reset_prefix(ctx),
+        Msg::KeybindingResetModifier => keybindings::keybinding_reset_modifier(ctx),
         Msg::KeybindingResetAll => keybindings::keybinding_reset_all(ctx),
         Msg::KeybindingFocusAnswer(index) => keybindings::keybinding_focus_answer(ctx, index),
         Msg::KeybindingResolveConflict(replace) => {

@@ -475,7 +475,8 @@
 #pattern = '\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
 
 # Client-side commands run on rozi events, launched asynchronously through
-# command_shell. Hooks receive ROZI_EVENT, event fields, and ROZI_SOCKET. Events:
+# command_shell, with at most 32 overlapping hook and detached exec jobs.
+# Hooks receive ROZI_EVENT, event fields, and ROZI_SOCKET. Events:
 # pane-spawned, pane-exited, pane-status-changed, bell, focus-changed, workspace-switched,
 # session-attached, session-detached, session-renamed, session-created,
 # controller-changed, client-joined, client-left, profile-loaded, profile-applied,

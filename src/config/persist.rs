@@ -27,7 +27,7 @@ fn write_config_text(path: &Path, updated: String) -> std::result::Result<(), St
             )
         })?;
     }
-    fs::write(path, &updated)
+    crate::platform::persist::replace_file(path, updated.as_bytes())
         .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
     note_config_text(Some(updated));
     Ok(())
@@ -304,7 +304,8 @@ pub fn read_config_text() -> std::result::Result<String, String> {
 /// transform, so what was checked is what gets saved.
 ///
 /// Override entries are written from their source expressions. `None` removes an entry so the
-/// command follows its defaults again. Inline `[keys]` commands are keyed by a trigger rather than
+/// command follows its defaults again. `clear_*` drops the matching `[input]` key so the
+/// compiled-in Prefix or Mod applies. Inline `[keys]` commands are keyed by a trigger rather than
 /// a stable command id and are intentionally outside this API.
 pub fn apply_keymap_edit(text: &str, edit: &super::KeymapEdit) -> String {
     let mut text = text.to_string();
@@ -314,15 +315,21 @@ pub fn apply_keymap_edit(text: &str, edit: &super::KeymapEdit) -> String {
             None => remove_value_in_section(&text, "keys", id),
         };
     }
-    if let Some(prefix) = &edit.prefix {
+    if edit.clear_prefix {
+        text = remove_value_in_section(&text, "input", "prefix");
+    } else if let Some(prefix) = &edit.prefix {
         let value = toml_string(&prefix.to_source());
         text = upsert_value_in_section(&text, "input", "prefix", &value);
     }
-    if let Some(modifier) = edit.modifier {
+    if edit.clear_modifier {
+        text = remove_value_in_section(&text, "input", "modifier");
+    } else if let Some(modifier) = edit.modifier {
         let value = toml_string(modifier.token());
         text = upsert_value_in_section(&text, "input", "modifier", &value);
     }
-    if let Some(enabled) = edit.modifier_shortcuts {
+    if edit.clear_modifier_shortcuts {
+        text = remove_value_in_section(&text, "input", "modifier_shortcuts");
+    } else if let Some(enabled) = edit.modifier_shortcuts {
         text = upsert_bool_in_section(&text, "input", "modifier_shortcuts", enabled);
     }
     text

@@ -35,7 +35,7 @@ Leave the TUI with `prefix d`.
 
 After dependency changes, run both policy and vulnerability checks. Install the
 tools with `cargo install cargo-deny --locked` and
-`cargo install cargo-audit --locked` if needed.
+`cargo install cargo-audit --locked --version 0.22.2` if needed.
 
 ```bash
 cargo deny check licenses sources advisories bans

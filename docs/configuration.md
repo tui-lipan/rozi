@@ -22,6 +22,10 @@ Rozi chooses the file in this order:
 commands that load configuration. Control commands do not load configuration and reject
 `--config`.
 
+In-app saves replace `config.toml` as a whole file, so an interrupted write cannot leave a
+truncated document. If that path is a symlink, Rozi writes the target and leaves the link in
+place.
+
 ## User directories
 
 | Purpose | Linux and macOS | Windows |
@@ -635,7 +639,7 @@ Built-in URL, path, and Git SHA hints run first and win overlaps. See [Terminal 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `event` | string | required | Public event ID. Unknown IDs are skipped. |
-| `run` | string | required | Nonempty command string run through `command_shell`. |
+| `run` | string | required | Nonempty command string run through `command_shell`. At most 32 hook and detached `exec` jobs overlap; further launches are skipped. |
 
 Multiple hooks may use the same event. See [Hooks](hooks.md).
 
@@ -650,7 +654,7 @@ Named commands have stable IDs and can be invoked with `rozi run-action`.
 | `run` | string | none | Opens a pane through `command_shell`. |
 | `send` | string | none | Sends literal text to the focused PTY. |
 | `popup` | string | none | Opens a centered popup through `command_shell`. |
-| `exec` | string | none | Runs detached through `command_shell`, discarding output. |
+| `exec` | string | none | Runs detached through `command_shell`, discarding output. Shares the 32-job ceiling with hooks. |
 | `keep_open` | bool | `true` | Applies to `run` and `popup`. |
 
 Exactly one of `run`, `send`, `popup`, or `exec` is required.

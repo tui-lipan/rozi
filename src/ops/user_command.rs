@@ -147,7 +147,9 @@ fn exec_argv(
     };
     let program = program.clone();
     let args = args.to_vec();
-    std::thread::spawn(move || {
+    let overflow_link = link.clone();
+    let overflow_label = label.clone();
+    if !crate::jobs::try_spawn(move || {
         let mut process = std::process::Command::new(program);
         process
             .args(args)
@@ -172,6 +174,12 @@ fn exec_argv(
         if let Some(message) = failure {
             link.send(crate::Msg::UserCommandFailed { message });
         }
-    });
+    }) {
+        overflow_link.send(crate::Msg::UserCommandFailed {
+            message: format!(
+                "`{overflow_label}` was not started; too many detached commands are already running"
+            ),
+        });
+    }
     Update::none()
 }

@@ -17,6 +17,7 @@ pub mod control;
 pub mod events;
 mod extension_installation;
 pub mod input;
+mod jobs;
 pub mod layout;
 pub mod msg;
 mod ops;

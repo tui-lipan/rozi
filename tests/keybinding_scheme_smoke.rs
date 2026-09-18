@@ -84,6 +84,7 @@ fn body() {
     a_colliding_prefix_is_refused(&mut backend);
     a_mod_change_moves_scheme_bindings_and_off_keeps_the_modifier(&mut backend);
     a_colliding_mod_is_refused(&mut backend);
+    prefix_and_mod_reset_restore_defaults(&mut backend);
     edited_entries_use_rozis_spelling_and_others_stay_as_written(&mut backend);
 }
 
@@ -264,4 +265,73 @@ fn a_colliding_mod_is_refused(backend: &mut TestBackend<AppRoot>) {
     assert!(!conflicts.is_empty());
     assert!(frame(backend).contains("Collides:"));
     assert_eq!(config_text(), text, "nothing is written");
+    press(backend, KeyCode::Esc, KeyMods::NONE);
+}
+
+fn prefix_and_mod_reset_restore_defaults(backend: &mut TestBackend<AppRoot>) {
+    if backend.state().keybindings.is_some() {
+        backend
+            .dispatch(rozi::Msg::CloseHelp)
+            .expect("close leftover editor");
+    }
+    load(
+        backend,
+        "[input]\nprefix = \"ctrl-b\"\nmodifier = \"super\"\nmodifier_shortcuts = false\n",
+    );
+    let list = frame(backend);
+    assert!(list.contains("Ctrl+B ← Ctrl+A"), "{list}");
+    assert!(list.contains("Off ← Alt"), "{list}");
+    assert!(list.contains("reset Ctrl+D"), "{list}");
+    assert!(!list.contains("unbind Ctrl+U"), "{list}");
+
+    backend
+        .dispatch(rozi::Msg::KeybindingResetPrefix)
+        .expect("reset prefix");
+    let after_prefix = config_text();
+    assert!(
+        !after_prefix.contains("prefix ="),
+        "prefix key remained:\n{after_prefix}"
+    );
+    assert_eq!(
+        backend.state().config.input.prefix.canonical_lowercase(),
+        "ctrl+a"
+    );
+    let prefix_restored = frame(backend);
+    assert!(
+        !prefix_restored.contains("Ctrl+B ← Ctrl+A"),
+        "{prefix_restored}"
+    );
+    assert!(prefix_restored.contains("Ctrl+A"), "{prefix_restored}");
+    assert!(prefix_restored.contains("Off ← Alt"), "{prefix_restored}");
+    assert!(
+        !prefix_restored.contains("reset Ctrl+D"),
+        "prefix is already default:\n{prefix_restored}"
+    );
+
+    press(backend, KeyCode::Down, KeyMods::NONE);
+    let mod_row = frame(backend);
+    assert!(mod_row.contains("reset Ctrl+D"), "{mod_row}");
+    backend
+        .dispatch(rozi::Msg::KeybindingResetModifier)
+        .expect("reset modifier");
+    let after_mod = config_text();
+    assert!(
+        !after_mod.contains("modifier ="),
+        "modifier key remained:\n{after_mod}"
+    );
+    assert!(
+        !after_mod.contains("modifier_shortcuts"),
+        "modifier_shortcuts remained:\n{after_mod}"
+    );
+    assert_eq!(
+        ModifierChoice::from_input(&backend.state().config.input),
+        ModifierChoice::Alt
+    );
+    let restored = frame(backend);
+    assert!(!restored.contains("Off ← Alt"), "{restored}");
+    assert!(restored.contains("Alt"), "{restored}");
+    assert!(
+        !restored.contains("reset Ctrl+D"),
+        "mod is already default:\n{restored}"
+    );
 }

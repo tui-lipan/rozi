@@ -500,6 +500,12 @@ pub struct KeymapEdit {
     pub prefix: Option<KeyBinding>,
     pub modifier: Option<WmModifier>,
     pub modifier_shortcuts: Option<bool>,
+    /// Drop `[input] prefix` so the compiled-in default applies.
+    pub clear_prefix: bool,
+    /// Drop `[input] modifier` so the compiled-in default applies.
+    pub clear_modifier: bool,
+    /// Drop `[input] modifier_shortcuts` so the compiled-in default applies.
+    pub clear_modifier_shortcuts: bool,
 }
 
 /// Rewrite every literal that `equivalent` can express scheme-relatively, keeping each entry's mode.

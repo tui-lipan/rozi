@@ -18,6 +18,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+#[cfg(test)]
+use std::cell::Cell;
+#[cfg(test)]
+use std::sync::{Mutex, MutexGuard};
+
 use tui_lipan::CommandLink;
 
 use crate::platform::paths::PlatformEnv;
@@ -253,6 +258,54 @@ pub(crate) fn private_temp_dir(label: &str) -> PathBuf {
     crate::platform::fs_security::ensure_private_dir(&dir)
         .expect("private scratch directory for a test endpoint");
     dir
+}
+
+#[cfg(test)]
+thread_local! {
+    static PERSIST_HELD: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+static PERSIST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Held exclusive access to process-wide persisted session files under the scratch root.
+#[cfg(test)]
+#[must_use = "the persist lock is released when the guard is dropped"]
+pub(crate) struct PersistGuard {
+    _lock: MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for PersistGuard {
+    fn drop(&mut self) {
+        PERSIST_HELD.with(|held| held.set(false));
+    }
+}
+
+/// Serialize tests that read or write process-wide persisted state under the per-process scratch
+/// root. Unit tests share one `host-sessions.json`, `saved-hosts`, `recent-remotes`, and
+/// `last-sessions.json`, so two tests mutating those files in parallel can observe each other's
+/// leftovers. Hold this for the whole read/write/assert sequence, on the thread that performs the
+/// I/O.
+#[cfg(test)]
+pub(crate) fn lock_persisted_state() -> PersistGuard {
+    let lock = PERSIST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    PERSIST_HELD.with(|held| held.set(true));
+    PersistGuard { _lock: lock }
+}
+
+/// Run `f` with exclusive access to persisted session files. Nested calls on the same thread reuse
+/// the held guard so a test lock and a persist helper cannot deadlock.
+#[cfg(test)]
+pub(crate) fn with_persisted_state<T>(f: impl FnOnce() -> T) -> T {
+    if PERSIST_HELD.with(Cell::get) {
+        f()
+    } else {
+        let _guard = lock_persisted_state();
+        f()
+    }
 }
 
 /// Build the real configured root with a live control endpoint inside the isolated test

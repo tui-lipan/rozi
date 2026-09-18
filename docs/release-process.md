@@ -15,10 +15,14 @@ A release maintainer needs:
 - access to the protected `ROZI_RELEASE_PRIVATE_KEY` environment secret;
 - a crates.io API token stored as `CARGO_REGISTRY_TOKEN` in the same environment.
 
-The committed `release-keys.json` trust store is populated. It currently contains the Ed25519 key
-`release-2026-a`. The GitHub `release` environment must hold the matching base64 private key in
-`ROZI_RELEASE_PRIVATE_KEY`. `ROZI_RELEASE_KEY_ID` may select another committed key; the workflow
-defaults to `release-2026-a`.
+The committed `release-keys.json` trust store holds two Ed25519 keys:
+
+- `release-2026-a` is the active signing key. The GitHub `release` environment holds its private
+  half in `ROZI_RELEASE_PRIVATE_KEY`. `ROZI_RELEASE_KEY_ID` may select another committed key; the
+  workflow defaults to `release-2026-a`.
+- `release-2026-b` is the cold spare. Its private half stays offline and must never be stored in
+  GitHub, CI, or this repository. Existing installs only trust it after they have taken an update
+  signed by `release-2026-a` that already compiled this spare in.
 
 Keep private keys outside the repository. The signing job exposes the private value only as
 `RELSWAP_RELEASE_PRIVATE_KEY` during the signing step. Build, test, package, pull-request, and manual
@@ -233,10 +237,15 @@ Generate a key with the tool pinned by `Cargo.lock`; it requires explicit output
 to overwrite either:
 
 ```bash
-relswap keygen --private release-2027-a.private --public release-2027-a.public
+relswap keygen \
+  --id release-2027-a \
+  --private-key release-2027-a.private \
+  --public-key release-2027-a.public.json
 ```
 
-Keep the private half offline. Then rotate in this order, one release at a time:
+Keep the private half offline. The spare `release-2026-b` is already in the trust store; generate
+another key only when rotating or replacing that spare. Then rotate in this order, one release at
+a time:
 
 1. Commit the new public key **alongside** every still-supported key in `release-keys.json`. Do not
    remove anything yet. `cargo test` covers the shape of this file, and the release workflow's

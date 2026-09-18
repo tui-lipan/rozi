@@ -10,6 +10,8 @@
 //! - [`paths`] - config/state/cache/data/runtime directory resolution (Phase 3), wired into
 //!   `config::file`, `profiles`, `session::server::resurrect`, `session::server::panes`,
 //!   `platform::shell_integration`, and `control::runtime_dir`.
+//! - [`persist`] - atomic file replacement that follows a trailing symlink, used for `config.toml`
+//!   and user-owned state files.
 //! - [`fs_security`] - private-directory policy: Unix ownership/mode/symlink enforcement, Windows
 //!   protected current-user-SID DACL plus reparse-point rejection (Phase 3/5). Re-exported from
 //!   `relswap::fs::security` so session/control/IPC and the updater share one implementation. The
@@ -51,6 +53,7 @@ pub mod fs_security;
 pub mod install;
 pub mod install_source;
 pub mod paths;
+pub mod persist;
 pub mod user;
 
 pub mod ansi;

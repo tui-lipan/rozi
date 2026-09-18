@@ -171,11 +171,12 @@ jobs:
       ROZI_NIGHTLY_COMMIT: ${{ needs.select.outputs.short }}
       ROZI_NIGHTLY_BUILT: ${{ needs.select.outputs.built }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.select.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@1.90
+      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
         with:
+          toolchain: "1.90"
           targets: ${{ matrix.target }}
 
       - name: Build payload
@@ -308,7 +309,7 @@ jobs:
           done
 
       - name: Upload archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nightly-${{ matrix.target }}
           path: |
@@ -335,7 +336,7 @@ jobs:
       attestations: write
     steps:
       - name: Download archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: nightly-*
           path: dist
@@ -415,7 +416,7 @@ jobs:
       # place as the file it describes. It still is not a release: nothing here says the commit
       # was reviewed, and no update path will ever select it.
       - name: Attest nightly archive provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             dist/*.tar.gz

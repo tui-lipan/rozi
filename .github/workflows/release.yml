@@ -34,7 +34,7 @@ jobs:
   # Every platform this release ships a binary for, not just the one that is cheapest to run.
   #
   # This gate used to be Ubuntu alone, while `package` below built and signed archives for five
-  # targets. `ci.yml` does run on the tag push - it has a bare `on: push` - but the two workflows
+  # targets. `ci.yml` does run on the tag push, but the two workflows
   # decide independently, so a red matrix on the exact commit being released did not stop
   # publication: 0.0.16 shipped with `extensions install <git-url>` broken on Windows, and the
   # Windows CI job for that tag had failed while this workflow published to crates.io. A release is

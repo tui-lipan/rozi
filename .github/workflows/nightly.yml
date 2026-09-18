@@ -423,8 +423,8 @@ jobs:
             dist/*.zip
 
       # A published release will not move its own tag, so move the ref first and let the release
-      # follow it. `refs/tags/nightly` is excluded from `ci.yml`, which triggers on branches and
-      # v-tags, so this does not start a second matrix every night.
+      # follow it. `refs/tags/nightly` is excluded from `ci.yml`, which triggers on master, pull
+      # requests, and v-tags, so this does not start a second matrix every night.
       - name: Move the rolling nightly tag
         env:
           GH_TOKEN: ${{ github.token }}

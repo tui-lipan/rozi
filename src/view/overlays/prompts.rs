@@ -162,6 +162,11 @@ impl<'a> PromptChrome<'a> {
             parent_reserve_percent: None,
         }
     }
+
+    pub(super) fn mask(mut self, glyph: char) -> Self {
+        self.mask = Some(glyph);
+        self
+    }
 }
 
 /// Shared chrome for the single-input prompt overlays so they all read like the command palette:

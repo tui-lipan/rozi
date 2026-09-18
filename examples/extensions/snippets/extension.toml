@@ -1,0 +1,16 @@
+[extension]
+id = "snippets"
+title = "Snippets"
+description = "Pick a saved command and paste it into the focused pane"
+version = "1.0.0"
+api = 1
+
+[[commands]]
+id = "pick"
+label = "Snippets…"
+exec = ["python", "{extension_dir}/bin/snippets.py", "pick"]
+key = "s"
+
+[settings]
+submit = false
+commands = []

@@ -291,13 +291,18 @@ rozi subscribe pane-exited pane-status-changed
 Open with:
 
 ```json
-{"cmd":"pick","title":"Branches","placeholder":"Filter","width":72,"actions":[{"id":"new","key":"ctrl-n","label":"new","prompt":"Branch name"}]}
+{"cmd":"pick","title":"Branches","placeholder":"Filter","empty":"No branches","width":72,"actions":[{"id":"new","key":"ctrl-n","label":"new","prompt":"Branch name"}]}
 ```
 
 If another picker or modal overlay is open, Rozi returns an error and closes the connection.
 Otherwise it sends `{"ok":true}`. `title` defaults to `"Pick"`, `placeholder` defaults to
-`"Search…"`, and `width` defaults to 60 columns and is clamped to `30..=120`. Actions with an empty
-ID or invalid key chord are omitted.
+`"Search…"`, and `width` defaults to 60 columns and is clamped to `30..=120`. `empty` is optional
+producer copy for a row list that is empty while the filter is empty. A nonempty filter with no
+matching rows always shows `No matches`; omitted `empty` leaves the list's ordinary empty
+appearance. Actions with an empty ID or invalid key chord are omitted.
+
+`prompt` and any future form are substates of this picker, not a second overlay. A second `pick`
+while one is open is still refused.
 
 The client may then write row snapshots. Each line replaces the full row set. Rozi keeps at most
 512 rows from each snapshot.
@@ -344,9 +349,26 @@ Action fields:
 | `id` | string | required | Returned as `action`. |
 | `key` | string | required | One valid key chord. |
 | `label` | string | required | Footer label. |
-| `prompt` | string | none | Replaces the picker with a text prompt and returns `input`. |
+| `prompt` | string or object | none | Replaces the picker with a text prompt and returns `input`. A string is the title. An object may also set `placeholder`, a seed `value`, and `masked`. |
 | `close` | bool | `false` | Closes after the action. |
 | `confirm` | bool | `false` | Requires a second press on the same row. |
+
+Prompt object fields:
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `title` | string | required | Prompt title. |
+| `placeholder` | string | none | Empty-field hint. |
+| `value` | string | none | Initial contents. |
+| `masked` | bool | `false` | Hide typed characters on screen. The submitted `input` is still plaintext on the stream. |
+
+The string form is the shortcut for `{ "title": "…" }`:
+
+```json
+{"prompt":"Command"}
+{"prompt":{"title":"Edit command","placeholder":"git status","value":"git status --short"}}
+{"prompt":{"title":"Token","masked":true}}
+```
 
 The CLI bridge uses a simpler plain-line mode or a JSON mode. In JSON mode, the first stdin line
 contains picker metadata and optional initial `rows`; later lines are row snapshots:

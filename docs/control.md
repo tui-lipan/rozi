@@ -259,15 +259,17 @@ git switch -- "$branch"
 Selection exits `0`, cancellation exits `1`, and transport failure exits `2`.
 
 Use `--json` for stable row IDs, descriptions, groups, disabled or active rows, custom actions,
-prompts, and live replacement. The first input line is picker metadata and may contain initial
-rows. Later input lines replace the complete row set.
+prompts, empty-collection copy, and live replacement. The first input line is picker metadata and
+may contain initial rows. Later input lines replace the complete row set.
 
 ```json
 {"title":"Branches","rows":[{"id":"main","label":"main","active":true},{"id":"old","label":"old","disabled":"protected"}]}
 ```
 
 JSON mode prints selection, cancellation, and action objects. An action without `close: true` keeps
-the picker open so the producer can send refreshed rows. See
+the picker open so the producer can send refreshed rows. `empty` is producer copy for an empty row
+list while the filter is empty; a filter miss always says `No matches`. `prompt` may be a title
+string or an object with `title`, `placeholder`, `value`, and `masked`. See
 [Picker protocol](control-protocol.md#picker-stream).
 
 ## Published activity

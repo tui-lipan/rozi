@@ -158,7 +158,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
     // would be worse than the object the caller is already writing. Its `rows`, if present, become
     // the initial set. Plain mode is a dumb list and needs none of it.
     let mut opening_rows = None;
-    let (title, placeholder, width, actions) = if command.json {
+    let (title, placeholder, empty, width, actions) = if command.json {
         let first_line = read_socket_line(&mut BufReader::new(std::io::stdin().lock()))?;
         let spec: serde_json::Value =
             serde_json::from_str(first_line.trim()).unwrap_or(serde_json::Value::Null);
@@ -174,6 +174,10 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
                 .and_then(|v| v.as_str())
                 .map(str::to_string)
                 .or(command.placeholder),
+            spec.get("empty")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .filter(|text| !text.is_empty()),
             spec.get("width").and_then(|v| v.as_u64()).map(|v| v as u16),
             spec.get("actions")
                 .cloned()
@@ -181,12 +185,13 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
                 .unwrap_or_default(),
         )
     } else {
-        (command.title, command.placeholder, None, Vec::new())
+        (command.title, command.placeholder, None, None, Vec::new())
     };
 
     let request = control_request(control::ControlCommand::Pick {
         title,
         placeholder,
+        empty,
         width,
         actions,
     });

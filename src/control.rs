@@ -175,6 +175,9 @@ pub enum ControlCommand {
         title: Option<String>,
         #[serde(default)]
         placeholder: Option<String>,
+        /// Copy shown when the row list is empty and the filter is empty.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        empty: Option<String>,
         /// Modal width in columns, clamped to a readable range. Omitted uses the shared default.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width: Option<u16>,
@@ -520,6 +523,7 @@ fn run_pick_stream(
     id: u64,
     title: Option<String>,
     placeholder: Option<String>,
+    empty: Option<String>,
     width: Option<u16>,
     actions: Vec<crate::state::PickAction>,
     extension: Option<crate::config::ExtensionProvenance>,
@@ -538,6 +542,7 @@ fn run_pick_stream(
         id,
         title,
         placeholder,
+        empty,
         width,
         actions,
         extension,
@@ -787,6 +792,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
     if let ControlCommand::Pick {
         title,
         placeholder,
+        empty,
         width,
         actions,
     } = &request.command
@@ -799,6 +805,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             id,
             title.clone(),
             placeholder.clone(),
+            empty.clone(),
             *width,
             actions.clone(),
             request.extension.clone(),
@@ -1047,6 +1054,7 @@ mod tests {
             command: ControlCommand::Pick {
                 title: Some("Branch".into()),
                 placeholder: Some("Search branches…".into()),
+                empty: None,
                 width: None,
                 actions: Vec::new(),
             },

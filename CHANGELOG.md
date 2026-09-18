@@ -11,6 +11,10 @@
 
 - Padded picker selection on guttered lists keeps a 1-cell left inset (`│ ● name` rather than
   `│● name`). Round and arrow caps still sit flush against the status marker.
+- A session created over `rozi --remote` through Tailscale SSH (or any login without
+  `XDG_RUNTIME_DIR`) no longer shows as restorable to the host's own clients. Without the variable,
+  rozi now uses `/run/user/<uid>` when that directory exists and is private, rather than a temporary
+  directory the desktop clients never scan.
 
 ## 0.0.20 - 2026-09-18
 

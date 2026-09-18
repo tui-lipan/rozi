@@ -11,7 +11,7 @@
 //! | Config  | `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi` | `%APPDATA%\rozi` |
 //! | State   | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi\state` |
 //! | Cache   | `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
-//! | Runtime | `$XDG_RUNTIME_DIR/rozi`, else a private per-uid temp dir | `%LOCALAPPDATA%\rozi\run`, else `%TEMP%\rozi-<user-sid>` |
+//! | Runtime | `$XDG_RUNTIME_DIR/rozi`, else `/run/user/<uid>/rozi`, else a private per-uid temp dir | `%LOCALAPPDATA%\rozi\run`, else `%TEMP%\rozi-<user-sid>` |
 //!
 //! The Windows column is written per the plan and believed correct against documented API
 //! contracts, but is **unverified**: this environment has no Windows target to run it on. See
@@ -60,7 +60,8 @@ pub struct PlatformEnv {
     pub xdg_cache_home: Option<PathBuf>,
     /// `$XDG_DATA_HOME`, only if it was set to a non-empty absolute path.
     pub xdg_data_home: Option<PathBuf>,
-    /// `$XDG_RUNTIME_DIR`, only if it was set to a non-empty absolute path.
+    /// `$XDG_RUNTIME_DIR`, only if it was set to a non-empty absolute path. When it is unset, the
+    /// process snapshot substitutes the login manager's directory (see [`login_runtime_dir`]).
     pub xdg_runtime_dir: Option<PathBuf>,
     /// `%APPDATA%` (Windows only).
     pub appdata: Option<PathBuf>,
@@ -92,7 +93,7 @@ impl PlatformEnv {
             xdg_state_home: env_absolute_path("XDG_STATE_HOME"),
             xdg_cache_home: env_absolute_path("XDG_CACHE_HOME"),
             xdg_data_home: env_absolute_path("XDG_DATA_HOME"),
-            xdg_runtime_dir: env_absolute_path("XDG_RUNTIME_DIR"),
+            xdg_runtime_dir: env_absolute_path("XDG_RUNTIME_DIR").or_else(login_runtime_dir),
             appdata: env_absolute_path("APPDATA"),
             local_appdata: env_absolute_path("LOCALAPPDATA"),
         }
@@ -103,6 +104,39 @@ fn env_path(key: &str) -> Option<PathBuf> {
     std::env::var_os(key)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
+}
+
+/// The per-user runtime directory a login manager created, for a process started without
+/// `XDG_RUNTIME_DIR`.
+///
+/// Not every way in sets the variable. Tailscale SSH, `su`, cron, and some service managers start a
+/// login shell outside `pam_systemd`, and a session server started that way bound its endpoint in
+/// the temp-directory fallback while every desktop client of the same user looked under
+/// `/run/user/<uid>`. Neither could see the other, so a live session showed up as merely restorable
+/// from its snapshot. Picking the directory a desktop login would have been given puts both on the
+/// same path.
+///
+/// Accepted only as a real directory owned by this user and closed to everyone else, the same
+/// test [`runtime_dir`] applies; anything else falls through to [`fallback_runtime_dir_path`].
+#[cfg(unix)]
+fn login_runtime_dir() -> Option<PathBuf> {
+    login_runtime_dir_in(
+        std::path::Path::new("/run/user"),
+        fs_security::current_uid(),
+    )
+}
+
+#[cfg(not(unix))]
+fn login_runtime_dir() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(unix)]
+fn login_runtime_dir_in(base: &std::path::Path, uid: u32) -> Option<PathBuf> {
+    let dir = base.join(uid.to_string());
+    let metadata = fs::symlink_metadata(&dir).ok()?;
+    fs_security::validate_private_dir(&dir, &metadata).ok()?;
+    Some(dir)
 }
 
 /// Like [`env_path`], but additionally rejects a relative path.
@@ -214,8 +248,8 @@ fn xdg_style_dir(
 
 /// Runtime endpoint directory, created (if missing) and validated private to the current user.
 ///
-/// Unix/macOS: `$XDG_RUNTIME_DIR/rozi`, falling back to [`fallback_runtime_dir_path`] when
-/// `XDG_RUNTIME_DIR` is unset. Windows: `%LOCALAPPDATA%\rozi\run`.
+/// Unix/macOS: `$XDG_RUNTIME_DIR/rozi`, or `/run/user/<uid>/rozi` when the variable is unset but a
+/// login manager made that directory, falling back to [`fallback_runtime_dir_path`] otherwise. Windows: `%LOCALAPPDATA%\rozi\run`.
 pub fn runtime_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
     let dir = runtime_dir_path(env);
     fs_security::ensure_private_dir(&dir)?;
@@ -254,7 +288,8 @@ pub fn runtime_dir_path(env: &PlatformEnv) -> PathBuf {
 #[cfg(unix)]
 const RUNTIME_DIR_HEADROOM: usize = 78;
 
-/// Per-user private fallback runtime directory when `$XDG_RUNTIME_DIR` is unavailable.
+/// Per-user private fallback runtime directory when neither `$XDG_RUNTIME_DIR` nor a login
+/// manager's `/run/user/<uid>` is available.
 ///
 /// Normally the temp directory. macOS is the exception that forced this to be a decision: it sets
 /// no `XDG_RUNTIME_DIR` and its per-user `TMPDIR` is a 48-byte `/var/folders/<two>/<hash>/T`, so
@@ -963,6 +998,32 @@ mod tests {
             assert_eq!(dir, temp.join("run").join(APP_DIR));
         }
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// A server reached through Tailscale SSH has no `XDG_RUNTIME_DIR`; it must still land where the
+    /// desktop clients of the same user look, or its session reads as restorable to them.
+    #[cfg(unix)]
+    #[test]
+    fn login_runtime_dir_accepts_only_a_private_directory_of_this_user() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("rozi-login-run-{}", std::process::id()));
+        let uid = fs_security::current_uid();
+        let dir = base.join(uid.to_string());
+        assert_eq!(login_runtime_dir_in(&base, uid), None, "missing directory");
+
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(login_runtime_dir_in(&base, uid), None, "group/other access");
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(login_runtime_dir_in(&base, uid), Some(dir.clone()));
+
+        let other = uid.wrapping_add(1);
+        std::os::unix::fs::symlink(&dir, base.join(other.to_string())).unwrap();
+        assert_eq!(login_runtime_dir_in(&base, other), None, "symlink");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

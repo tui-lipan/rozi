@@ -34,9 +34,14 @@ place.
 | Data, including extensions | `$XDG_DATA_HOME/rozi`, else `~/.local/share/rozi` | `%LOCALAPPDATA%\rozi` |
 | State | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi` |
 | Cache | `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
-| Runtime endpoints | `$XDG_RUNTIME_DIR/rozi`, else a private per-user temporary directory | `%LOCALAPPDATA%\rozi\run` |
+| Runtime endpoints | `$XDG_RUNTIME_DIR/rozi`, else `/run/user/<uid>/rozi`, else a private per-user temporary directory | `%LOCALAPPDATA%\rozi\run` |
 
 Relative `XDG_*` values are ignored. Rozi requires absolute roots.
+
+When `XDG_RUNTIME_DIR` is unset, as it is under Tailscale SSH, `su`, or cron, rozi uses
+`/run/user/<uid>` if that directory exists, belongs to you, and is private. A server started that
+way then shares its endpoints with your desktop clients. Otherwise the sessions it starts would be
+invisible to them and would show up only as restorable.
 
 ## Reloading and editing
 

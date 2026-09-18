@@ -51,7 +51,7 @@ Discovery fails if the runtime directory contains no live endpoints or more than
 
 | Platform | Endpoint named by `ROZI_SOCKET` |
 | --- | --- |
-| Linux | Unix-domain socket under `$XDG_RUNTIME_DIR/rozi`, or a private per-user temporary directory |
+| Linux | Unix-domain socket under `$XDG_RUNTIME_DIR/rozi`, `/run/user/<uid>/rozi`, or a private per-user temporary directory |
 | macOS | Unix-domain socket in Rozi's private runtime directory |
 | Windows | Discovery entry under `%LOCALAPPDATA%\rozi\run` for a current-user named pipe |
 

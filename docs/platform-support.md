@@ -51,7 +51,7 @@ same Unix code paths cover them and `platform::errno` already names FreeBSD and 
 | Configuration | `$XDG_CONFIG_HOME/rozi`, or `~/.config/rozi` | `%APPDATA%\rozi` |
 | State | `$XDG_STATE_HOME/rozi`, or `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi` |
 | Cache | `$XDG_CACHE_HOME/rozi`, or `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
-| Runtime data | `$XDG_RUNTIME_DIR/rozi`, or a private temporary directory | `%LOCALAPPDATA%\rozi\run` |
+| Runtime data | `$XDG_RUNTIME_DIR/rozi`, or `/run/user/<uid>/rozi`, or a private temporary directory | `%LOCALAPPDATA%\rozi\run` |
 
 Set `ROZI_CONFIG` to use a different configuration file on any platform.
 

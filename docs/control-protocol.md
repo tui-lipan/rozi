@@ -17,7 +17,7 @@ Each running UI creates one private control endpoint.
 
 | Platform | Transport | Discovery path |
 | --- | --- | --- |
-| Linux | Unix-domain socket | `$XDG_RUNTIME_DIR/rozi/control-<pid>.sock`, or the private fallback runtime directory |
+| Linux | Unix-domain socket | `$XDG_RUNTIME_DIR/rozi/control-<pid>.sock`, else `/run/user/<uid>/rozi`, else the private fallback runtime directory |
 | macOS | Unix-domain socket | Rozi's private runtime directory |
 | Windows | Current-user named pipe | `%LOCALAPPDATA%\rozi\run\control-<pid>.sock` discovery entry |
 

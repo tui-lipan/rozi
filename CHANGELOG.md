@@ -4,7 +4,8 @@
 
 ### Added
 
-- Control JSON lines larger than 1 MiB are rejected and the connection is closed. Picker snapshots
+- Control JSON request lines larger than 1 MiB are rejected and the connection is closed. Replies
+  Rozi writes, including a full `capture-pane` scrollback, are not capped at 1 MiB. Picker snapshots
   keep at most 512 rows.
 - Hook and detached `exec` commands share a 32-job ceiling. Matching hooks still overlap, but a
   burst of `focus-changed` events no longer creates an unbounded number of threads and processes.

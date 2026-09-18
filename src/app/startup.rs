@@ -555,6 +555,7 @@ mod tests {
     /// `workbox` must not become what a bare `rozi` reaches for.
     #[test]
     fn startup_last_reads_only_its_own_scope() {
+        let _persist = crate::test_support::lock_persisted_state();
         crate::test_support::isolate_user_dirs();
         let workbox = crate::session::remote::RemoteTarget::Alias("startup-scope-box".into());
         crate::session::record_last_session(Some(&workbox), "backend");

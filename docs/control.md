@@ -210,7 +210,8 @@ rozi send-keys -- -n hello
 
 `capture-pane` returns the visible grid by default. `--scrollback N` returns trailing retained
 lines, `--scrollback full` returns all retained lines, and `--last-output` returns the most recent
-shell-integration command output.
+shell-integration command output. A full-scrollback reply can exceed 1 MiB; the CLI reads Rozi's
+responses without the incoming request size cap.
 
 ## Actions, status, and notifications
 

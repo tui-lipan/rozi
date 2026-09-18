@@ -294,15 +294,30 @@ pub fn bind_control_socket() -> std::io::Result<(IpcListener, ControlSocketGuard
     Ok((bound.into_listener(), ControlSocketGuard { path }))
 }
 
-/// Largest UTF-8 JSON line the control protocol will accept, including the trailing newline.
+/// Largest UTF-8 JSON line a client may send to Rozi, including the trailing newline.
+///
+/// This bound is for incoming request and stream-update lines. Replies Rozi writes, including
+/// `capture-pane --scrollback full`, are read without it.
 pub const MAX_CONTROL_MESSAGE: usize = 1024 * 1024;
 
 const OVERSIZED_CONTROL_MESSAGE: &str = "control message exceeds maximum size";
 pub(crate) const MAX_PICK_ROWS: usize = 512;
 
 pub(crate) fn read_control_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
+    read_delimited_line(reader, Some(MAX_CONTROL_MESSAGE))
+}
+
+/// Read one control line Rozi wrote. Capture replies can exceed [`MAX_CONTROL_MESSAGE`].
+pub(crate) fn read_control_reply_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
+    read_delimited_line(reader, None)
+}
+
+fn read_delimited_line<R: BufRead>(
+    reader: &mut R,
+    limit: Option<usize>,
+) -> io::Result<Option<String>> {
     let mut buf = Vec::new();
-    let found_newline = append_until_newline(reader, &mut buf)?;
+    let found_newline = append_until_newline(reader, &mut buf, limit)?;
     if buf.is_empty() && !found_newline {
         return Ok(None);
     }
@@ -318,7 +333,11 @@ pub(crate) fn read_control_line<R: BufRead>(reader: &mut R) -> io::Result<Option
     Ok(Some(line))
 }
 
-fn append_until_newline<R: BufRead>(reader: &mut R, buf: &mut Vec<u8>) -> io::Result<bool> {
+fn append_until_newline<R: BufRead>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+    limit: Option<usize>,
+) -> io::Result<bool> {
     loop {
         let available = reader.fill_buf()?;
         if available.is_empty() {
@@ -326,19 +345,22 @@ fn append_until_newline<R: BufRead>(reader: &mut R, buf: &mut Vec<u8>) -> io::Re
         }
         if let Some(newline) = available.iter().position(|&byte| byte == b'\n') {
             let take = newline + 1;
-            if buf.len() + take > MAX_CONTROL_MESSAGE {
-                return Err(oversized_control_line());
-            }
+            reject_if_over_limit(buf.len() + take, limit)?;
             buf.extend_from_slice(&available[..take]);
             reader.consume(take);
             return Ok(true);
         }
-        if buf.len() + available.len() > MAX_CONTROL_MESSAGE {
-            return Err(oversized_control_line());
-        }
+        reject_if_over_limit(buf.len() + available.len(), limit)?;
         buf.extend_from_slice(available);
         let consumed = available.len();
         reader.consume(consumed);
+    }
+}
+
+fn reject_if_over_limit(size: usize, limit: Option<usize>) -> io::Result<()> {
+    match limit {
+        Some(max) if size > max => Err(oversized_control_line()),
+        _ => Ok(()),
     }
 }
 
@@ -1076,5 +1098,33 @@ mod tests {
         let mut reader = io::Cursor::new(payload);
         let error = read_control_line(&mut reader).unwrap_err();
         assert!(is_oversized_control_line(&error));
+    }
+
+    #[test]
+    fn capture_pane_reply_larger_than_the_request_limit_still_reads() {
+        let text = "x".repeat(MAX_CONTROL_MESSAGE);
+        let mut line = serde_json::to_string(&serde_json::json!({
+            "ok": true,
+            "data": { "id": 1, "text": text, "title": null }
+        }))
+        .unwrap();
+        assert!(
+            line.len() > MAX_CONTROL_MESSAGE,
+            "the encoded capture must exceed the incoming request cap"
+        );
+        line.push('\n');
+        let bytes = line.into_bytes();
+
+        let error = read_control_line(&mut io::Cursor::new(bytes.clone())).unwrap_err();
+        assert!(is_oversized_control_line(&error));
+
+        let got = read_control_reply_line(&mut io::Cursor::new(bytes))
+            .unwrap()
+            .expect("reply line");
+        let value: serde_json::Value = serde_json::from_str(&got).unwrap();
+        assert_eq!(
+            value["data"]["text"].as_str().unwrap().len(),
+            MAX_CONTROL_MESSAGE
+        );
     }
 }

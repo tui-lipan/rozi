@@ -810,12 +810,12 @@ fn killing_the_last_attached_session_stays_sessionless_without_auto_attach() {
     use crate::state::ConnectionState;
     use tui_lipan::TestBackend;
 
-    let _persist = crate::test_support::lock_persisted_state();
-    crate::session::reset_host_session_cache();
-
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
+            let _persist = crate::test_support::lock_persisted_state();
+            crate::session::reset_host_session_cache();
+
             let mut backend = TestBackend::new(AppRoot::default());
             let (client, _rx) = SessionClient::test_channel();
             {
@@ -1897,11 +1897,10 @@ fn forgetting_a_last_seen_row_drops_only_that_cached_observation() {
     use crate::session::CachedHostSession;
     use tui_lipan::TestBackend;
 
-    let _persist = crate::test_support::lock_persisted_state();
-
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
+            let _persist = crate::test_support::lock_persisted_state();
             let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
             let remembered = crate::session::discovery::DiscoveredSession {
                 name: "test".to_string(),

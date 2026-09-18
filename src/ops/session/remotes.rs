@@ -1610,6 +1610,7 @@ mod tests {
     #[test]
     fn a_last_seen_host_session_is_forgotten_locally() {
         with_backend(|backend| {
+            let _persist = crate::test_support::lock_persisted_state();
             let target = RemoteTarget::Alias("winvm".into());
             let session = crate::session::discovery::DiscoveredSession {
                 name: "test".into(),

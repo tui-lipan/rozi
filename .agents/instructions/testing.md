@@ -14,6 +14,10 @@ live-reloads config. An unisolated test can alter the UI the developer is using.
   has already measured. Endpoints go in a per-process directory inside the real `XDG_RUNTIME_DIR`
   rather than under the scratch root, because a socket path must stay under `SUN_LEN`.
 - Unit tests get a per-process scratch root through `PlatformEnv::from_process` under `cfg(test)`.
+- Tests that read or write `last-sessions.json`, `recent-remotes`, `saved-hosts`, or
+  `host-sessions.json` must hold `lock_persisted_state()` on the thread that performs the I/O for
+  the whole read/write/assert sequence. Persist helpers take that lock themselves; nested calls on
+  the same thread reuse it.
 - An integration helper that builds `AppRoot` must call
   `rozi::test_support::isolate_user_dirs()` before constructing its `TestBackend`.
 - Never redirect an in-process test with `std::env::set_var` for `HOME`, `XDG_*`, `APPDATA`, or

@@ -79,7 +79,7 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
     // Activations arrive whenever the user clicks; forward them as they come rather than pairing
     // them with anything this process writes.
     std::thread::spawn(move || {
-        while let Ok(Some(line)) = crate::control::read_control_line(&mut reader) {
+        while let Ok(Some(line)) = crate::control::read_control_reply_line(&mut reader) {
             let mut stdout = std::io::stdout().lock();
             // A publisher that stopped reading its activations has gone away; end the thread
             // rather than spinning on a broken pipe.
@@ -131,7 +131,7 @@ pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
     }
 
     let mut stdout = std::io::stdout().lock();
-    while let Some(line) = crate::control::read_control_line(&mut reader)? {
+    while let Some(line) = crate::control::read_control_reply_line(&mut reader)? {
         writeln!(stdout, "{line}")?;
         stdout.flush()?;
     }
@@ -205,7 +205,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
 
     let json = command.json;
     let reader_thread = std::thread::spawn(move || {
-        while let Ok(Some(line)) = crate::control::read_control_line(&mut reader) {
+        while let Ok(Some(line)) = crate::control::read_control_reply_line(&mut reader) {
             if line.trim().is_empty() {
                 continue;
             }
@@ -386,7 +386,7 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
 }
 
 fn read_socket_line(reader: &mut impl BufRead) -> std::io::Result<String> {
-    match crate::control::read_control_line(reader)? {
+    match crate::control::read_control_reply_line(reader)? {
         Some(line) => Ok(line),
         None => Err(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,

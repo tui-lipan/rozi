@@ -33,8 +33,10 @@ a discovery-entry path on Windows.
 
 ## Framing
 
-The protocol is UTF-8 newline-delimited JSON. Each line, including the trailing newline, is at
-most 1 MiB. A larger line is a protocol error and Rozi closes the connection.
+The protocol is UTF-8 newline-delimited JSON. Incoming request and stream-update lines, including
+the trailing newline, are at most 1 MiB. A larger incoming line is a protocol error and Rozi closes
+the connection. Replies Rozi writes, including `capture-pane --scrollback full`, are not capped at
+1 MiB.
 
 For a one-shot command:
 

@@ -806,10 +806,12 @@ fn killing_the_last_attached_session_stays_sessionless_without_auto_attach() {
     use crate::AppRoot;
     use crate::Msg;
     use crate::input::Action;
-    use crate::session::bootstrap::has_session_candidates;
     use crate::session::client::SessionClient;
     use crate::state::ConnectionState;
     use tui_lipan::TestBackend;
+
+    let _persist = crate::test_support::lock_persisted_state();
+    crate::session::reset_host_session_cache();
 
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -837,9 +839,11 @@ fn killing_the_last_attached_session_stays_sessionless_without_auto_attach() {
             let state = backend.state();
             assert!(state.is_launcher());
             assert!(state.current().pending_session_attach.is_none());
-            // Other sessions on the host machine still count as choices; only a truly empty
-            // discovery set keeps the picker closed.
-            assert_eq!(state.show_session_picker, has_session_candidates());
+            // Seeded with an empty discovery set and an empty host-session cache. Do not re-read
+            // `has_session_candidates()` here: that predicate looks at process-wide files another
+            // test may write after this kill has already decided.
+            assert!(!state.show_session_picker);
+            assert!(state.session_picker.is_none());
         })
         .expect("spawn last-session kill test")
         .join()
@@ -1892,6 +1896,8 @@ fn forgetting_a_last_seen_row_drops_only_that_cached_observation() {
     use crate::AppRoot;
     use crate::session::CachedHostSession;
     use tui_lipan::TestBackend;
+
+    let _persist = crate::test_support::lock_persisted_state();
 
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)

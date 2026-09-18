@@ -372,6 +372,11 @@ pub(crate) fn forget_host_sessions(target: &remote::RemoteTarget) {
 }
 
 #[cfg(test)]
+pub(crate) fn reset_host_session_cache() {
+    write_host_session_cache(&HostSessionCache::new());
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -381,6 +386,7 @@ mod tests {
     /// host has never heard of.
     #[test]
     fn last_session_is_remembered_per_workplace() {
+        let _persist = crate::test_support::lock_persisted_state();
         crate::test_support::isolate_user_dirs();
         let workbox = remote::RemoteTarget::Alias("workbox".into());
         let other = remote::RemoteTarget::Url {
@@ -413,6 +419,7 @@ mod tests {
     /// An unusable name never reaches the file, so a later launch cannot be handed one to attach.
     #[test]
     fn an_invalid_session_name_is_not_remembered() {
+        let _persist = crate::test_support::lock_persisted_state();
         crate::test_support::isolate_user_dirs();
         let target = remote::RemoteTarget::Alias("scratchbox".into());
         record_last_session(Some(&target), "not a session name");

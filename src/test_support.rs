@@ -247,6 +247,15 @@ pub fn isolate_user_dirs() -> &'static Path {
 ///
 /// `cfg(test)` because every caller is a unit test in this crate. The rest of this module is
 /// compiled into normal builds for integration tests to link against; this has no such caller.
+/// Serialize tests that read or write process-wide persisted state under the per-process scratch
+/// root. Unit tests share one `host-sessions.json`, `saved-hosts`, and `last-sessions.json`, so two
+/// tests mutating those files in parallel can observe each other's leftovers.
+#[cfg(test)]
+pub(crate) fn lock_persisted_state() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 pub(crate) fn private_temp_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("rozi-{label}-{}", std::process::id()));

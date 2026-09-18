@@ -1504,6 +1504,7 @@ mod tests {
     #[test]
     fn adding_a_host_saves_it_before_connecting() {
         with_backend(|backend| {
+            let _persist = crate::test_support::lock_persisted_state();
             crate::test_support::isolate_user_dirs();
             backend
                 .dispatch(Msg::SessionPickerRemoteHosts)

@@ -88,7 +88,8 @@ fn body() {
     send(&mut backend, KeyCode::Up);
     let first = selected(&backend).expect("Up selects the first row");
     assert!(first.contains("Prefix"), "{first}");
-    // The Prefix row changes the scheme itself: it can be changed, but not unbound or reset.
+    // The Prefix row changes the scheme itself: it can be changed, but not unbound. Reset stays
+    // off until the prefix differs from its default.
     let footer = frame(&mut backend);
     assert!(footer.contains("change Enter"), "{footer}");
     for hint in ["unbind Ctrl+U", "reset Ctrl+D", "switch tabs ←/→"] {

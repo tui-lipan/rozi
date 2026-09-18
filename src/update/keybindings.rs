@@ -270,6 +270,37 @@ pub(super) fn keybinding_reset(ctx: &mut Context<AppRoot>, id: String) -> Update
     )
 }
 
+pub(super) fn keybinding_reset_prefix(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.config.input.prefix == crate::config::InputConfig::default().prefix {
+        return Update::none();
+    }
+    validated_persist(
+        ctx,
+        KeymapEdit {
+            clear_prefix: true,
+            ..KeymapEdit::default()
+        },
+        "Prefix not reset",
+    )
+}
+
+pub(super) fn keybinding_reset_modifier(ctx: &mut Context<AppRoot>) -> Update {
+    let defaults = crate::config::InputConfig::default();
+    if ModifierChoice::from_input(&ctx.state.config.input) == ModifierChoice::from_input(&defaults)
+    {
+        return Update::none();
+    }
+    validated_persist(
+        ctx,
+        KeymapEdit {
+            clear_modifier: true,
+            clear_modifier_shortcuts: true,
+            ..KeymapEdit::default()
+        },
+        "Modifier not reset",
+    )
+}
+
 pub(super) fn keybinding_reset_all(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.config.key_sources.is_empty() {
         return Update::none();

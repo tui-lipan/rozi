@@ -42,6 +42,8 @@ pub enum Msg {
     KeybindingCancelCapture,
     KeybindingUnbind(String),
     KeybindingReset(String),
+    KeybindingResetPrefix,
+    KeybindingResetModifier,
     KeybindingResetAll,
     KeybindingFocusAnswer(usize),
     KeybindingResolveConflict(bool),

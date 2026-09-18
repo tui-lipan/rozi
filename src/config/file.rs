@@ -2299,6 +2299,7 @@ mod file_tests {
             prefix: Some(KeyBinding::from_str("ctrl-b").unwrap()),
             modifier: Some(WmModifier::Super),
             modifier_shortcuts: Some(true),
+            ..Default::default()
         };
         let text = super::super::apply_keymap_edit("# mine\n[keys]\ncopy-mode = \"z\"\n", &edit);
         assert!(text.contains("# mine"), "{text}");
@@ -2325,6 +2326,24 @@ mod file_tests {
             ]
         );
         assert!(resolved(&config, "close").ends_with(&["super+q".to_string()]));
+    }
+
+    #[test]
+    fn keymap_edit_clears_prefix_and_modifier_keys() {
+        let source = "[input]\nprefix = \"ctrl-b\"\nmodifier = \"super\"\nmodifier_shortcuts = false\nwhich_key = \"long\"\n";
+        let text = super::super::apply_keymap_edit(
+            source,
+            &super::super::KeymapEdit {
+                clear_prefix: true,
+                clear_modifier: true,
+                clear_modifier_shortcuts: true,
+                ..Default::default()
+            },
+        );
+        assert!(!text.contains("prefix ="), "{text}");
+        assert!(!text.contains("modifier ="), "{text}");
+        assert!(!text.contains("modifier_shortcuts"), "{text}");
+        assert!(text.contains("which_key = \"long\""), "{text}");
     }
 
     #[test]

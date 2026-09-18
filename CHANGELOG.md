@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- Prefix and Mod in Keybindings show `current ← default` when they differ from the compiled-in
+  values, and `Ctrl+D` resets them the way it resets a command binding.
 - Guttered pickers inset empty-state copy instead of sitting flush against the frame. Needs
   tui-lipan 0.11.5.
 

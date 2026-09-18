@@ -303,22 +303,43 @@ fn collapse_ws(text: &str) -> String {
 }
 
 /// The Prefix and Mod rows. Mod stays listed while its layer is off, reading `Off`, so it can be
-/// turned back on from here.
+/// turned back on from here. A value other than the compiled-in default uses `current ← default`.
 fn scheme_rows(input: &crate::config::InputConfig) -> Vec<HelpRow> {
-    let prefix = input.prefix.label();
-    let modifier = crate::state::ModifierChoice::from_input(input).label();
+    let defaults = crate::config::InputConfig::default();
     vec![
-        HelpRow {
-            extra: "prefix then key scheme".to_string(),
-            scheme: Some(SchemeRow::Prefix),
-            ..HelpRow::global("", &prefix, "Prefix · then key")
-        },
-        HelpRow {
-            extra: "mod hold key scheme modifier".to_string(),
-            scheme: Some(SchemeRow::Modifier),
-            ..HelpRow::global("", modifier, "Mod · hold + key")
-        },
+        scheme_row(
+            SchemeRow::Prefix,
+            input.prefix.label(),
+            defaults.prefix.label(),
+            "prefix then key scheme",
+            "Prefix · then key",
+        ),
+        scheme_row(
+            SchemeRow::Modifier,
+            crate::state::ModifierChoice::from_input(input).label(),
+            crate::state::ModifierChoice::from_input(&defaults).label(),
+            "mod hold key scheme modifier",
+            "Mod · hold + key",
+        ),
     ]
+}
+
+fn scheme_row(
+    scheme: SchemeRow,
+    keys: impl Into<String>,
+    default_keys: impl Into<String>,
+    extra: &str,
+    label: &str,
+) -> HelpRow {
+    let keys = keys.into();
+    let default_keys = default_keys.into();
+    HelpRow {
+        extra: extra.to_string(),
+        scheme: Some(scheme),
+        overridden: keys != default_keys,
+        default_keys,
+        ..HelpRow::global("", &keys, label)
+    }
 }
 
 pub(crate) fn keybinding_editor_dialog_overlay(ctx: &Context<AppRoot>) -> Element {
@@ -464,6 +485,15 @@ impl RowEdit {
         }
     }
 
+    fn reset_msg(&self) -> Option<Msg> {
+        match self {
+            Self::None => None,
+            Self::Action(id) => Some(Msg::KeybindingReset(id.clone())),
+            Self::Prefix => Some(Msg::KeybindingResetPrefix),
+            Self::Modifier => Some(Msg::KeybindingResetModifier),
+        }
+    }
+
     fn action_id(&self) -> Option<&str> {
         match self {
             Self::Action(id) => Some(id),
@@ -536,7 +566,9 @@ pub(crate) fn help_overlay(
     let action_id = selected
         .and_then(|target| target.edit.action_id())
         .map(str::to_string);
-    let selected_overridden = selected.is_some_and(|target| target.overridden);
+    let reset = selected
+        .filter(|target| target.overridden)
+        .and_then(|target| target.edit.reset_msg());
     let target = action_id.clone().unwrap_or_default();
     let actions = vec![
         OverlayAction::new(
@@ -548,14 +580,14 @@ pub(crate) fn help_overlay(
         OverlayAction::new(
             "ctrl-u",
             "unbind",
-            Msg::KeybindingUnbind(target.clone()),
+            Msg::KeybindingUnbind(target),
             action_id.is_some(),
         ),
         OverlayAction::new(
             "ctrl-d",
             "reset",
-            Msg::KeybindingReset(target),
-            selected_overridden,
+            reset.clone().unwrap_or(Msg::KeybindingCancelCapture),
+            reset.is_some(),
         ),
         OverlayAction::new(
             "ctrl-r",
@@ -1327,6 +1359,7 @@ mod palette_alias_tests {
         settings_palette_aliases,
     };
     use crate::state::{HelpTab, SettingsAction};
+    use std::str::FromStr;
     use tui_lipan::prelude::SearchEntry;
 
     /// `settings_palette_aliases` always appends the group name, so a row with no aliases of its
@@ -1566,6 +1599,10 @@ mod palette_alias_tests {
         assert_eq!(rows[0].label, "Prefix · then key");
         assert_eq!(rows[1].label, "Mod · hold + key");
         assert_eq!(rows[1].keys, "Alt");
+        assert!(!rows[0].overridden);
+        assert!(!rows[1].overridden);
+        assert_eq!(rows[0].default_keys, "Ctrl+A");
+        assert_eq!(rows[1].default_keys, "Alt");
         let global = filtered_help_groups(rows.clone(), HelpTab::Global, "");
         assert_eq!(global[0].0, "");
         assert_eq!(global[0].1.len(), 2);
@@ -1596,7 +1633,26 @@ mod palette_alias_tests {
         assert_eq!(rows[0].label, "Prefix · then key");
         assert_eq!(rows[1].label, "Mod · hold + key");
         assert_eq!(rows[1].keys, "Off");
+        assert!(rows[1].overridden);
+        assert_eq!(rows[1].default_keys, "Alt");
+        assert!(!rows[0].overridden);
         assert_eq!(super::RowEdit::of(&rows[0]), super::RowEdit::Prefix);
         assert_eq!(super::RowEdit::of(&rows[1]), super::RowEdit::Modifier);
+    }
+
+    #[test]
+    fn scheme_rows_mark_non_default_prefix_and_mod_as_overrides() {
+        let input = crate::config::InputConfig {
+            prefix: tui_lipan::prelude::KeyBinding::from_str("ctrl-b").unwrap(),
+            modifier: crate::config::WmModifier::Super,
+            ..crate::config::InputConfig::default()
+        };
+        let rows = scheme_rows(&input);
+        assert_eq!(rows[0].keys, "Ctrl+B");
+        assert!(rows[0].overridden);
+        assert_eq!(rows[0].default_keys, "Ctrl+A");
+        assert_eq!(rows[1].keys, "Super");
+        assert!(rows[1].overridden);
+        assert_eq!(rows[1].default_keys, "Alt");
     }
 }

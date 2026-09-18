@@ -447,8 +447,8 @@ jobs:
             }
           done
 
-      # This is intentionally before the signing step. release-keys.json starts empty until the
-      # maintainer generates release-2026-a; no protected secret is read when this fails.
+      # This is intentionally before the signing step. An empty or malformed trust store fails
+      # here without reading the protected private key.
       - name: Fail closed if the committed trust store is empty
         shell: bash
         run: release-tool/relswap trust-check --keys release-keys.json

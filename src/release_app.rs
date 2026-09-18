@@ -68,6 +68,10 @@ mod tests {
             keys.keys.iter().all(|key| !key.id.is_empty()),
             "a trusted key has an empty id"
         );
+        assert!(
+            keys.keys.len() >= 2,
+            "release-keys.json needs an active key and a cold spare; a single lost key cannot be replaced through rozi update"
+        );
     }
 
     /// `relswap` reads this to decide which release it is running as, and the release workflow

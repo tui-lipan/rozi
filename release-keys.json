@@ -5,6 +5,11 @@
       "id": "release-2026-a",
       "algorithm": "ed25519",
       "public_key": "f93YnU8j9+eqzeFWvQki1mOYXjVKHoAljhiiCZmyblo="
+    },
+    {
+      "id": "release-2026-b",
+      "algorithm": "ed25519",
+      "public_key": "BixjJBliIP7Cj9MPWB2Y7NtVUrq+nC2Xk+wlr2M7Bwg="
     }
   ]
 }

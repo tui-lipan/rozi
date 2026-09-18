@@ -43,9 +43,9 @@ pub(crate) fn session_row_can_restart(entry: &DiscoveredSession) -> bool {
 }
 
 /// Kill destroys a live session. It stays available against a server we cannot *speak* to — an
-/// incompatible `Unknown` row is exactly the one a user needs to remove — but not against a row
-/// nothing has confirmed exists: the host is offline, so there is nothing there to kill. The
-/// sidebar withholds the same affordance from its cached rows.
+/// incompatible `Unknown` row is exactly the one a user needs to remove — but not against a
+/// last-seen row: that chord forgets the cache entry instead. The sidebar withholds ✕ from its
+/// cached rows for the same reason; the picker still offers forget.
 pub(crate) fn session_row_can_kill(entry: &DiscoveredSession) -> bool {
     !session_row_is_last_seen(entry)
 }
@@ -556,15 +556,10 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
-    // The footer already withholds the chord from a last-seen row; guard here too, the way restart
-    // does, so a refresh landing between render and keypress cannot arm a kill against a session
-    // nothing has confirmed is there.
-    if !session_row_can_kill(&entry) {
-        return Update::none();
-    }
+    let last_seen = session_row_is_last_seen(&entry);
     let armed = picker.pending_kill == Some(index);
     if !armed {
-        // First press arms the kill: drop any stale arming (kill or restart), then mark this row.
+        // First press arms the kill or forget: drop any stale arming, then mark this row.
         clear_pending_session_arms(ctx);
         if let Some(picker) = ctx.state.session_picker.as_mut() {
             picker.pending_kill = Some(index);
@@ -572,13 +567,31 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
         return crate::ops::confirm::arm(ctx);
     }
     clear_pending_session_arms(ctx);
-    let killed = kill_discovered_session(ctx, entry);
-    // Keep the picker open with the killed row gone and selection clamped; only close when the
+    let update = if last_seen {
+        forget_last_seen_session(ctx, &entry);
+        Update::full()
+    } else {
+        kill_discovered_session(ctx, entry)
+    };
+    // Keep the picker open with the row gone and selection clamped; only close when the
     // list (and every other meaningful candidate) is empty.
     if ctx.state.show_session_picker {
         return refresh_picker_after_kill(ctx);
     }
-    killed
+    update
+}
+
+/// Drop one last-seen session from this client's host-session cache. Local only: no SSH, and no
+/// attempt to kill anything on the host. A later probe that still reports the session lists it
+/// again — forget means "stop remembering that I saw this", not "hide it forever".
+pub(crate) fn forget_last_seen_session(ctx: &mut Context<AppRoot>, entry: &DiscoveredSession) {
+    let Some(target) = entry.remote_target.as_ref() else {
+        return;
+    };
+    if !session_row_is_last_seen(entry) {
+        return;
+    }
+    remove_cached_remote_session(ctx, &entry.name, target);
 }
 
 pub(crate) fn restart_selected_session(ctx: &mut Context<AppRoot>) -> Update {

@@ -181,27 +181,29 @@ fn the_remote_group_header_names_the_hosts_state() {
     });
 }
 
-/// Restart and kill act on a live server. Against a row nothing has confirmed exists they were an
-/// invitation to ssh into an offline machine, so the footer withholds them — as the sidebar has,
-/// which gives its cached rows no ✕ for the same reason.
+/// Restart is withheld: there is no live server to recreate. Kill is withheld for the same reason.
+/// Forget is offered instead — the row is local cached knowledge, and Ctrl+K drops that memory
+/// using the same arm-then-confirm the picker already uses for snapshots.
 #[test]
-fn a_remembered_row_offers_neither_restart_nor_kill() {
+fn a_remembered_row_offers_forget_not_kill() {
     on_a_big_stack(|| {
         let target = RemoteTarget::Alias("winvm".to_string());
         let mut backend = picker_showing(vec![last_seen("test", 1, &target)]);
 
         let rendered = screen(&mut backend);
         assert!(
+            rendered.contains("forget Ctrl+K"),
+            "a remembered row can be forgotten:\n{rendered}"
+        );
+        assert!(
             !rendered.contains("restart"),
             "there is no live server to recreate:\n{rendered}"
         );
         assert!(
             !rendered.contains("kill"),
-            "there is nothing there to kill:\n{rendered}"
+            "forgetting a cache entry is not a live kill:\n{rendered}"
         );
 
-        // The keys themselves, not just their pills: a chord the footer withholds must not still
-        // arm a confirmation behind it.
         backend
             .send_key(KeyEvent {
                 code: KeyCode::Char('k'),
@@ -213,9 +215,10 @@ fn a_remembered_row_offers_neither_restart_nor_kill() {
             .session_picker
             .as_ref()
             .expect("the picker is still open");
-        assert!(
-            picker.pending_kill.is_none(),
-            "ctrl+k does not arm a kill against a session nothing has confirmed"
+        assert_eq!(
+            picker.pending_kill,
+            Some(0),
+            "ctrl+k arms forget with the same confirmation the rest of the picker uses"
         );
     });
 }

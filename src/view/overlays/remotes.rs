@@ -263,6 +263,9 @@ fn remote_host_sessions_overlay(
     let can_restart = selected_session
         .as_ref()
         .is_some_and(crate::ops::session::session_row_can_restart);
+    let last_seen = selected_session
+        .as_ref()
+        .is_some_and(crate::ops::session::session_row_is_last_seen);
     let can_disconnect = selected_session.as_ref().is_some_and(|session| {
         crate::ops::session::session_row_can_disconnect(&ctx.state, session)
     });
@@ -304,11 +307,20 @@ fn remote_host_sessions_overlay(
         ),
         OverlayAction::new(
             "ctrl-k",
-            "kill",
+            if last_seen { "forget" } else { "kill" },
             Msg::RemotePickerKillSession,
             selected_session.is_some(),
         )
-        .confirm_if(pending_kill.is_some(), "again to kill", error_bg, true),
+        .confirm_if(
+            pending_kill.is_some(),
+            if last_seen {
+                "again to forget"
+            } else {
+                "again to kill"
+            },
+            error_bg,
+            true,
+        ),
         OverlayAction::new(
             "ctrl-x",
             "disconnect host",

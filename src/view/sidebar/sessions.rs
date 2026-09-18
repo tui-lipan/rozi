@@ -94,8 +94,8 @@ fn session_row(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> SidebarRow 
 /// A cached (last-seen) session row for an offline host: muted, activatable — selecting it connects
 /// to the host and attaches — so a host's known workplaces stay visible while it is offline.
 ///
-/// Deliberately has no ✕: the host is offline, so there is nothing there to kill, and the row is a
-/// memory of a session rather than a live one.
+/// Deliberately has no ✕: there is no live server to kill. The session picker forgets this cache
+/// entry with Ctrl+K; a later probe that still sees the session lists it again.
 fn cached_session_row(
     ctx: &Context<AppRoot>,
     host: &HostEntry,

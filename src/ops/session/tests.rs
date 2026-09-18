@@ -1884,3 +1884,130 @@ fn a_recorded_scope_behind_a_live_session_is_not_a_host_connection() {
     state.current_mut().session_name = Some("dev".into());
     assert!(!crate::ops::session::host_can_disconnect(&state, &workbox));
 }
+
+/// Forgetting a last-seen row drops that session from the host cache and off the picker. It does
+/// not hide the name forever: writing the same observation back lists it again.
+#[test]
+fn forgetting_a_last_seen_row_drops_only_that_cached_observation() {
+    use crate::AppRoot;
+    use crate::session::CachedHostSession;
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
+            let remembered = crate::session::discovery::DiscoveredSession {
+                name: "test".to_string(),
+                ephemeral: false,
+                host: Some("winvm".to_string()),
+                remote_target: Some(target.clone()),
+                status: crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 1 },
+            };
+            let sibling = CachedHostSession {
+                name: "keep".to_string(),
+                ephemeral: false,
+                panes: 2,
+            };
+            let mut backend = TestBackend::new(AppRoot::default());
+            {
+                let state = backend.state_mut();
+                *state.current_mut() = crate::state::Attachment::new();
+                state.show_session_picker = true;
+                state.config.remote.hosts.insert(
+                    "winvm".to_string(),
+                    crate::config::RemoteHostConfig::default(),
+                );
+                state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
+                crate::session::set_cached_host_sessions(
+                    &mut state.remote.session_cache,
+                    &target,
+                    vec![
+                        CachedHostSession {
+                            name: "test".to_string(),
+                            ephemeral: false,
+                            panes: 1,
+                        },
+                        sibling.clone(),
+                    ],
+                );
+                state.session_picker = Some(SessionPickerState::new(vec![remembered]));
+            }
+
+            backend
+                .dispatch(crate::Msg::SessionPickerKillSelected)
+                .expect("arm forget");
+            assert_eq!(
+                backend
+                    .state()
+                    .session_picker
+                    .as_ref()
+                    .and_then(|picker| picker.pending_kill),
+                Some(0)
+            );
+
+            backend
+                .dispatch(crate::Msg::SessionPickerKillSelected)
+                .expect("confirm forget");
+
+            let cache =
+                crate::session::host_sessions_for(&backend.state().remote.session_cache, &target)
+                    .unwrap_or_default();
+            assert!(
+                cache.iter().all(|session| session.name != "test"),
+                "the forgotten observation is gone: {cache:?}"
+            );
+            assert!(
+                cache.iter().any(|session| session.name == "keep"),
+                "a sibling on the same host is left alone: {cache:?}"
+            );
+            let picker = backend
+                .state()
+                .session_picker
+                .as_ref()
+                .expect("picker stays open");
+            assert!(
+                picker.entries.iter().all(|entry| entry.name != "test"),
+                "the row leaves the picker: {:?}",
+                picker.entries
+            );
+
+            let restored = vec![
+                CachedHostSession {
+                    name: "test".to_string(),
+                    ephemeral: false,
+                    panes: 1,
+                },
+                sibling,
+            ];
+            crate::session::record_host_sessions(&target, restored.clone());
+            crate::session::set_cached_host_sessions(
+                &mut backend.state_mut().remote.session_cache,
+                &target,
+                restored,
+            );
+            let epoch = backend.state().session_picker_epoch;
+            backend
+                .update_level(crate::Msg::SessionsDiscovered {
+                    epoch,
+                    rows: Vec::new(),
+                    host_status: Vec::new(),
+                })
+                .expect("replay a later probe");
+            let picker = backend.state().session_picker.as_ref().expect("picker");
+            assert!(
+                picker.entries.iter().any(|entry| {
+                    entry.name == "test"
+                        && matches!(
+                            entry.status,
+                            crate::session::discovery::DiscoveredSessionStatus::LastSeen { .. }
+                        )
+                }),
+                "a rediscovered session is listed again: {:?}",
+                picker.entries
+            );
+        })
+        .expect("spawn last-seen forget test")
+        .join()
+        .expect("last-seen forget test completes");
+}

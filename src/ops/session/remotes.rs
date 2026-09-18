@@ -866,10 +866,15 @@ pub(crate) fn kill_session(ctx: &mut Context<AppRoot>) -> Update {
         picker.pending_kill = None;
         picker.pending_restart = None;
     }
-    if crate::ops::session::session_row_is_current(&ctx.state, &session) {
-        dismiss_remote_picker(&mut ctx.state);
-    }
-    let update = crate::ops::session::kill_discovered_session(ctx, session.clone());
+    let update = if crate::ops::session::session_row_is_last_seen(&session) {
+        crate::ops::session::forget_last_seen_session(ctx, &session);
+        Update::full()
+    } else {
+        if crate::ops::session::session_row_is_current(&ctx.state, &session) {
+            dismiss_remote_picker(&mut ctx.state);
+        }
+        crate::ops::session::kill_discovered_session(ctx, session.clone())
+    };
     let removed = session.remote_target.as_ref().is_some_and(|target| {
         crate::session::host_sessions_for(&ctx.state.remote.session_cache, target)
             .is_none_or(|sessions| sessions.iter().all(|cached| cached.name != session.name))
@@ -1597,6 +1602,54 @@ mod tests {
             assert!(
                 host_can_forget(state, &target) && host_can_edit(state, &target),
                 "and it can be retried, corrected, or forgotten like one"
+            );
+        });
+    }
+
+    #[test]
+    fn a_last_seen_host_session_is_forgotten_locally() {
+        with_backend(|backend| {
+            let target = RemoteTarget::Alias("winvm".into());
+            let session = crate::session::discovery::DiscoveredSession {
+                name: "test".into(),
+                ephemeral: false,
+                host: Some("winvm".into()),
+                remote_target: Some(target.clone()),
+                status: crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 1 },
+            };
+            {
+                let state = backend.state_mut();
+                crate::session::set_cached_host_sessions(
+                    &mut state.remote.session_cache,
+                    &target,
+                    vec![crate::session::CachedHostSession {
+                        name: "test".into(),
+                        ephemeral: false,
+                        panes: 1,
+                    }],
+                );
+                let mut picker = RemotePickerState::new(Some(target.clone()));
+                picker.enter_host_sessions(target.clone());
+                picker.replace_sessions(vec![session]);
+                state.remote_picker = Some(picker);
+            }
+
+            backend
+                .dispatch(Msg::RemotePickerKillSession)
+                .expect("arm forget");
+            backend
+                .dispatch(Msg::RemotePickerKillSession)
+                .expect("confirm forget");
+
+            let cache =
+                crate::session::host_sessions_for(&backend.state().remote.session_cache, &target)
+                    .unwrap_or_default();
+            assert!(cache.is_empty(), "cache dropped the observation: {cache:?}");
+            let picker = backend.state().remote_picker.as_ref().expect("picker");
+            assert!(
+                picker.sessions.is_empty(),
+                "the row left the host list: {:?}",
+                picker.sessions
             );
         });
     }

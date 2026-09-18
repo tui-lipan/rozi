@@ -288,12 +288,13 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
 /// The footer hint row only advertises keys that would actually act on the current state, so a
 /// hint never lies. Enter is **switch** for a background-connected session, **restore** for a
 /// resurrection snapshot, and **connect** when establishing a connection; **disconnect** closes
-/// this client's attachment; **kill** destroys a live session and **forget** drops a snapshot;
-/// **restart** recreates a live session.
+/// this client's attachment; **kill** destroys a live session and **forget** drops a snapshot or a
+/// last-seen cache entry; **restart** recreates a live session.
 ///
 /// Row actions for a restorable snapshot lead the bar (`restore`, `forget`) because those are the
-/// verbs that apply to the highlighted recipe. Global picker actions follow. Restart is omitted:
-/// there is no live server to recreate.
+/// verbs that apply to the highlighted recipe. A last-seen remote row leads with `connect` and
+/// `forget` the same way: it is local cached knowledge, not a live server. Global picker actions
+/// follow. Restart is omitted when there is no live server to recreate.
 ///
 /// `ephemeral shell` is the exception that is deliberately *under*-advertised: `Ctrl+T` always
 /// reaches this client's scratch session, but saying so is only worth a pill when the list cannot
@@ -322,11 +323,21 @@ fn session_picker_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
     };
     let selected = selected_session(picker);
     let restorable = selected.is_some_and(crate::ops::session::session_row_is_restorable);
+    let last_seen = selected.is_some_and(crate::ops::session::session_row_is_last_seen);
     let mut actions = Vec::new();
-    push_session_activation(ctx, picker, selected, restorable, &mut actions);
+    push_session_activation(ctx, picker, selected, restorable, last_seen, &mut actions);
     push_session_creation_actions(ctx, picker, &mut actions);
-    push_session_management_actions(ctx, picker, selected, restorable, &mut actions);
+    push_session_management_actions(ctx, picker, selected, restorable, last_seen, &mut actions);
     actions
+}
+
+fn session_forget_action(ctx: &Context<AppRoot>, picker: &SessionPickerState) -> OverlayAction {
+    OverlayAction::new("ctrl-k", "forget", Msg::SessionPickerKillSelected, true).confirm_if(
+        picker.pending_kill == Some(picker.selected),
+        "again to forget",
+        ctx.state.theme.status.error,
+        true,
+    )
 }
 
 fn push_session_activation(
@@ -334,6 +345,7 @@ fn push_session_activation(
     picker: &SessionPickerState,
     selected: Option<&crate::session::discovery::DiscoveredSession>,
     restorable: bool,
+    last_seen: bool,
     actions: &mut Vec<OverlayAction>,
 ) {
     if picker_list_is_empty(picker) {
@@ -361,15 +373,7 @@ fn push_session_activation(
             )
             .hint_only(),
         );
-        actions.push(
-            OverlayAction::new("ctrl-k", "forget", Msg::SessionPickerKillSelected, true)
-                .confirm_if(
-                    picker.pending_kill == Some(picker.selected),
-                    "again to forget",
-                    ctx.state.theme.status.error,
-                    true,
-                ),
-        );
+        actions.push(session_forget_action(ctx, picker));
     } else if !crate::ops::session::session_row_is_current(&ctx.state, entry) {
         let held = ctx
             .state
@@ -388,6 +392,9 @@ fn push_session_activation(
             )
             .hint_only(),
         );
+        if last_seen {
+            actions.push(session_forget_action(ctx, picker));
+        }
     }
 }
 
@@ -439,10 +446,12 @@ fn push_session_management_actions(
     picker: &SessionPickerState,
     selected: Option<&crate::session::discovery::DiscoveredSession>,
     restorable: bool,
+    last_seen: bool,
     actions: &mut Vec<OverlayAction>,
 ) {
     if let Some(entry) = selected
         && !restorable
+        && !last_seen
     {
         if crate::ops::session::session_row_can_disconnect(&ctx.state, entry) {
             actions.push(OverlayAction::new(

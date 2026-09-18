@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- A last-seen remote session in Sessions can be forgotten with `Ctrl+K`. That drops it from the
+  local host-session cache only; reconnecting the host and finding it still there lists it again.
+
 ### Fixed
 
 - Guttered pickers inset empty-state copy instead of sitting flush against the frame. Needs

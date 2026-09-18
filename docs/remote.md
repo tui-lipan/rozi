@@ -253,6 +253,8 @@ The channel checks health and refreshes the host's session list every two second
 attach to sessions, request terminal frames, or acquire layout control. Each host reconnects
 independently, with delays from 500 ms to 30 seconds. A failed host keeps its last successful
 session list, marked as last seen. Unchanged snapshots do not trigger UI updates or cache writes.
+`Ctrl+K` on a last-seen row forgets that cached observation without contacting the host; if a later
+probe still reports the session, it is listed again.
 
 Background reconnects use noninteractive SSH. If authentication or host-key approval is needed,
 select the host and reconnect with Enter or Ctrl+R. The existing SSH modal handles the prompt

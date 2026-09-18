@@ -340,10 +340,10 @@ After `B` focuses the sidebar:
 ## Picker keys
 
 The session picker uses `Enter` to connect, switch, or restore. `Ctrl+N` creates a named session,
-`Ctrl+K` twice kills or forgets, `Ctrl+E` twice restarts a live session, `Ctrl+W` disconnects a
-background attachment, `Ctrl+X` disconnects a remote host, `Ctrl+R` opens **Remote hosts**, and
-`Ctrl+T` opens the temporary shell. Opening Sessions performs no remote probes. See
-[Sessions](sessions.md#use-the-session-picker).
+`Ctrl+K` twice kills a live session or forgets a snapshot or last-seen cache entry, `Ctrl+E` twice
+restarts a live session, `Ctrl+W` disconnects a background attachment, `Ctrl+X` disconnects a
+remote host, `Ctrl+R` opens **Remote hosts**, and `Ctrl+T` opens the temporary shell. Opening
+Sessions performs no remote probes. See [Sessions](sessions.md#use-the-session-picker).
 
 In **Remote hosts**, `Enter` connects the selected host and stays on the list; a second `Enter`
 opens a host already connected. `Ctrl+N` adds a host, `Ctrl+E` edits the selected one, `Ctrl+R`
@@ -352,8 +352,9 @@ wait for it — only one connection runs at a time — while navigation, `Ctrl+E
 available on the other rows. `Esc` cancels the outstanding probe.
 The host editor moves between its lines with `Tab` and `Shift+Tab`. The host-scoped Sessions view uses
 `Enter` to attach, `Ctrl+N` for a named session, `Ctrl+T` for a temporary session, `Ctrl+K` twice to
-kill, `Ctrl+E` twice to restart, `Ctrl+W` to disconnect a retained attachment, and `Ctrl+X` to
-disconnect from that host. `Esc` returns from host sessions to Remote hosts, then to Sessions.
+kill a live session or forget a last-seen cache entry, `Ctrl+E` twice to restart, `Ctrl+W` to
+disconnect a retained attachment, and `Ctrl+X` to disconnect from that host. `Esc` returns from
+host sessions to Remote hosts, then to Sessions.
 
 The Agents view lists every agent Rozi knows about, on this machine and on every connected host,
 with the ones wanting attention first. `Enter` goes to the highlighted one: a focus change when it

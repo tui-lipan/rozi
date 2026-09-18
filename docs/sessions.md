@@ -67,7 +67,7 @@ Open **Sessions** with the `s` command key.
 | --- | --- |
 | `Enter` | Connect, switch to a background attachment, or restore a snapshot |
 | Type a name, then `Ctrl+N` | Create and switch to a local named session |
-| `Ctrl+K` twice | Kill a live session, or forget a snapshot |
+| `Ctrl+K` twice | Kill a live session, forget a snapshot, or forget a last-seen cache entry |
 | `Ctrl+E` twice | Restart a live session with fresh panes |
 | `Ctrl+W` | Disconnect this client from a background session |
 | `Ctrl+X` | Disconnect a remote host |
@@ -91,9 +91,11 @@ dev                                       3 panes · last seen
 ```
 
 `Enter` still works on those rows: it connects the host and attaches, which is the point of keeping
-them listed. `Ctrl+E` and `Ctrl+K` are withheld, because there is no confirmed live server to
-restart or kill. To act on a host's sessions directly, connect it first — `Ctrl+R`, then the host —
-or expand it in the Sessions sidebar.
+them listed. `Ctrl+E` is withheld, because there is no confirmed live server to restart. `Ctrl+K`
+twice forgets the cached observation — local only, no SSH — and a later probe that still reports
+the session lists it again. Forgetting is dropping memory, not hiding the session. To kill or
+restart a live server, connect the host first — `Ctrl+R`, then the host — or expand it in the
+Sessions sidebar.
 
 ### Browse remote hosts
 
@@ -109,7 +111,7 @@ and does not contact any machine.
 | `Ctrl+E` | Edit the selected host | Restart the selected session (twice) |
 | `Ctrl+R` | Connect the selected host again | — |
 | `Ctrl+T` | — | Create or switch to a temporary session on this host |
-| `Ctrl+K` twice | Forget the selected host | Kill the selected session |
+| `Ctrl+K` twice | Forget the selected host | Kill a live session, or forget a last-seen cache entry |
 | `Ctrl+W` | — | Disconnect a retained session attachment |
 | `Ctrl+X` | — | Disconnect this client from the host |
 | `Esc` | Cancel a connecting probe, otherwise return to Sessions | Return to Remote hosts |

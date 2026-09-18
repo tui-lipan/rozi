@@ -15,6 +15,8 @@
   `XDG_RUNTIME_DIR`) no longer shows as restorable to the host's own clients. Without the variable,
   rozi now uses `/run/user/<uid>` when that directory exists and is private, rather than a temporary
   directory the desktop clients never scan.
+- A named session created on a remote host (`Ctrl+R`, the host, `Ctrl+N`) opens with a shell, or
+  with the `[profile] default` layout, as a local one does, instead of an empty session.
 
 ## 0.0.20 - 2026-09-18
 

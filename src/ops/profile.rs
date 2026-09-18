@@ -540,6 +540,7 @@ pub(crate) fn select_profile(ctx: &mut Context<AppRoot>, index: usize) -> Update
                 profile: entry.name,
                 path: entry.path,
             },
+            None,
         );
     }
 
@@ -559,19 +560,27 @@ pub(crate) enum OpenNamedIntent {
     },
 }
 
+/// Open `name` on this machine, or on `remote` when one is given. A created session starts from the
+/// same seed either way, so a session made on a host opens with a shell just like a local one.
 pub(crate) fn open_named_target(
     ctx: &mut Context<AppRoot>,
     name: String,
     intent: OpenNamedIntent,
+    remote: Option<crate::session::remote::RemoteTarget>,
 ) -> Update {
     if !crate::session::discovery::valid_session_name(&name) {
         crate::pane::pty_events::notify_error(ctx, "Invalid name", "Use letters, numbers, _ or -");
         return Update::full();
     }
-    let exists = crate::session::discovery::discover_session(&name)
-        .ok()
-        .flatten()
-        .is_some();
+    let exists = match remote.as_ref() {
+        None => crate::session::discovery::discover_session(&name)
+            .ok()
+            .flatten()
+            .is_some(),
+        Some(target) => {
+            crate::ops::session::lifecycle::session_name_already_running(ctx, &name, Some(target))
+        }
+    };
     let explicit_create = matches!(
         intent,
         OpenNamedIntent::CreateFresh | OpenNamedIntent::CreateFromProfile { .. }
@@ -584,14 +593,17 @@ pub(crate) fn open_named_target(
         );
         return Update::full();
     }
+    let remote_host = remote
+        .as_ref()
+        .map(crate::session::remote::RemoteTarget::display_label);
     if !explicit_create && exists {
-        return crate::ops::session::attach_session_by_name(ctx, name, None, None, false);
+        return crate::ops::session::attach_session_by_name(ctx, name, remote_host, remote, false);
     }
-    if ctx.state.is_attached_to(&name, None) {
+    if ctx.state.is_attached_to(&name, remote.as_ref()) {
         return Update::none();
     }
     if let Some(pending) = ctx.state.current().pending_session_attach.as_ref() {
-        if pending.name == name {
+        if pending.name == name && ctx.state.current().remote_target == remote {
             return Update::none();
         }
         crate::pane::pty_events::notify_info(ctx, "Attach already in progress");
@@ -657,6 +669,8 @@ pub(crate) fn open_named_target(
             crate::ops::session::install_fresh_attachment(ctx, attachment);
             (None, left)
         };
+    ctx.state.current_mut().remote_host = remote_host.clone();
+    ctx.state.current_mut().remote_target = remote.clone();
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
@@ -664,17 +678,30 @@ pub(crate) fn open_named_target(
         autostart: true,
         read_only: false,
         reconnect: false,
-        remote_host: None,
+        remote_host,
         intent: attach_intent.clone(),
         left,
         parked_epoch,
     });
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
+    let remote_config = ctx.state.config.remote.clone();
     Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || {
-            if explicit_create {
+        std::thread::spawn(move || match remote {
+            Some(target) => crate::session::bootstrap::attach_remote_session_client(
+                epoch,
+                name,
+                false,
+                explicit_create,
+                target,
+                remote_config,
+                // Explicit request: fail fast rather than blocking the UI on a dead host.
+                false,
+                link,
+            ),
+            None if explicit_create => {
                 crate::session::bootstrap::create_session_client(epoch, name, false, link)
-            } else {
+            }
+            None => {
                 crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
             }
         });

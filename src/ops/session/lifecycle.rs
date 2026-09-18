@@ -415,13 +415,6 @@ fn apply_create_session(
         reject_session_name(ctx, format!("Session `{name}` is already running"));
         return Update::full();
     }
-    if let Some(target) = host_target {
-        ctx.state.rename_session = None;
-        crate::ops::overlay_return::leave(ctx);
-        let alias = target.display_label();
-        return attach_session_by_name(ctx, name, Some(alias), Some(target), true);
-    }
-
     ctx.state.rename_session = None;
     crate::ops::overlay_return::leave(ctx);
     let intent = match profile_seed {
@@ -443,7 +436,7 @@ fn apply_create_session(
             },
         );
     }
-    crate::ops::profile::open_named_target(ctx, name, intent)
+    crate::ops::profile::open_named_target(ctx, name, intent, host_target)
 }
 
 fn confirm_empty_ephemeral_leave(

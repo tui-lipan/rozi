@@ -29,12 +29,12 @@ const channels: Channel[] = [
   },
   {
     id: "cargo",
-    command: "cargo install rozi",
+    command: "cargo install rozi --locked",
     note: "Builds from crates.io and requires Rust 1.90 or newer.",
   },
   {
     id: "source",
-    command: "cargo install --git https://github.com/tui-lipan/rozi",
+    command: "cargo install --git https://github.com/tui-lipan/rozi --locked",
     note: "Builds the master branch and requires Rust 1.90 or newer.",
   },
 ];

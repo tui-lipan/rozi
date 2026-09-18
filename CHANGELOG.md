@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.21 - 2026-09-18
+
 ### Changed
 
 - Commands lists **Layouts…** and **Collaborators…**, matching Sessions and Agents. Switch layout

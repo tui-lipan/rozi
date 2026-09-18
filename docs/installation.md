@@ -203,7 +203,7 @@ file with the same detail, and the binary reports it too:
 
 ```console
 $ rozi --version
-rozi 0.0.20
+rozi 0.0.21
 nightly_commit=a257206
 nightly_built=2026-09-10T03:17:00Z
 extension_api=1

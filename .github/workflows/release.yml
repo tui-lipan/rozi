@@ -49,8 +49,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
+        with:
+          toolchain: "1.90"
       # Deliberately not `--all-targets`: that also *runs* the bench binaries, so a release was
       # gated on timing-sensitive benchmarks racing a shared runner - server_fairness synchronises
       # with a helper thread on a deadline and lost that race here. Benchmarks measure, they do not
@@ -102,9 +104,10 @@ jobs:
             archive: zip
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
         with:
+          toolchain: "1.90"
           targets: ${{ matrix.target }}
 
       - name: Resolve package version
@@ -345,7 +348,7 @@ jobs:
           }
 
       - name: Upload immutable final archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: archive-${{ matrix.target }}
           path: |
@@ -376,7 +379,7 @@ jobs:
 
       - name: Upload prebuilt Linux release tool
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-tool-linux
           path: ${{ runner.temp }}/release-tool/bin/relswap
@@ -395,17 +398,17 @@ jobs:
       contents: read
     steps:
       - name: Check out release metadata
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Download completed archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: archive-*
           path: dist
           merge-multiple: true
 
       - name: Download prebuilt Linux release tool
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-tool-linux
           path: release-tool
@@ -548,7 +551,7 @@ jobs:
             --artifacts-dir dist
 
       - name: Upload verified publication bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: verified-release-bundle
           path: |
@@ -576,7 +579,7 @@ jobs:
       attestations: write
     steps:
       - name: Download verified publication bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: verified-release-bundle
           path: dist
@@ -596,7 +599,7 @@ jobs:
       # Subjects are the final archives, after signing and verification, so an attestation exists
       # only for bytes that already satisfied the manifest.
       - name: Attest release archive provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             dist/*.tar.gz
@@ -654,8 +657,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
+        with:
+          toolchain: "1.90"
 
       # The job chain already proved this in `sign_release`, but this is the step that cannot be
       # undone, so it re-checks rather than trusting an upstream job it does not read outputs from.

@@ -23,13 +23,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # rustfmt and clippy are not in the toolchain this action installs by default, and the two
       # steps below are the only reason this job needs them.
-      - uses: dtolnay/rust-toolchain@1.90
+      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
         with:
+          toolchain: "1.90"
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Check formatting
         run: cargo fmt --all -- --check
       # `--features windows-launcher` so the gated Windows launcher binary is still type-checked and
@@ -70,11 +71,12 @@ jobs:
     name: netbsd cross-check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
         with:
+          toolchain: "1.90"
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install cross
         run: cargo install cross --locked --version 0.2.5
       - name: Check
@@ -103,9 +105,9 @@ jobs:
       || github.event_name == 'workflow_dispatch'
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build and test in a NetBSD VM
-        uses: vmactions/netbsd-vm@v1
+        uses: vmactions/netbsd-vm@20ee93a005c9fc78743e6e05269f4cb023b87413 # v1
         with:
           # Pinned rather than tracking the action's default, so a new NetBSD release changes this
           # job in a commit instead of overnight. Bumping it is a one-line change.
@@ -160,7 +162,7 @@ jobs:
     name: integrations
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Test the OpenCode status plugin
         run: node --test integrations/opencode/*.test.mjs
 
@@ -168,20 +170,22 @@ jobs:
     name: audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
+        with:
+          toolchain: "1.90"
       # RustSec advisories are a property of the dependency graph, not of the host, so auditing on
       # all three platforms would report the same findings three times and pay for `cargo install`
       # three times over.
       - name: Audit dependencies
-        run: cargo install cargo-audit --locked && cargo audit
+        run: cargo install cargo-audit --locked --version 0.22.2 && cargo audit
 
   licenses:
     name: licenses and advisories
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check licenses, sources, advisories, and bans
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check licenses sources advisories bans

@@ -128,7 +128,7 @@ cargo audit
 ```
 
 Install missing tools with `cargo install cargo-deny --locked` and
-`cargo install cargo-audit --locked`.
+`cargo install cargo-audit --locked --version 0.22.2`.
 
 ## Pull requests
 

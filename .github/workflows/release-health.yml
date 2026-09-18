@@ -31,8 +31,10 @@ jobs:
     name: verify the published release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
+        with:
+          toolchain: "1.90"
 
       # The same derivation the release workflow uses: the tool that verifies a manifest and the
       # engine that produced it share a wire format, so both come from the version Cargo.lock pins

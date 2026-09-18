@@ -14,7 +14,8 @@ run = "~/.config/rozi/on-attach.sh"
 
 Each entry needs `event` and `run`. Multiple entries may use the same event. Rozi launches matching
 commands in config order through [`command_shell`](configuration.md#top-level-keys). Commands run
-asynchronously and may overlap.
+asynchronously and may overlap. At most 32 hook and detached `exec` jobs run at once; further
+launches are skipped until a slot frees.
 
 Unknown event IDs and empty commands produce warnings and are skipped. Config reload applies hook
 changes.
@@ -84,7 +85,8 @@ fi
 ## Lifecycle
 
 Rozi discards hook stdin, stdout, stderr, and exit status. Redirect output in the command if it
-matters. Rozi does not wait, retry, or supervise hook processes. Use a
+matters. Rozi does not wait, retry, or supervise hook processes. A burst of events can skip matching
+hooks once 32 jobs are already running. Use a
 [`[[services]]`](configuration.md#services) entry with `rozi subscribe` when automation needs
 state, retries, or long-lived event handling.
 

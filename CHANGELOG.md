@@ -4,6 +4,8 @@
 
 ### Added
 
+- Hook and detached `exec` commands share a 32-job ceiling. Matching hooks still overlap, but a
+  burst of `focus-changed` events no longer creates an unbounded number of threads and processes.
 - The compiled release trust store includes `release-2026-b` as a cold spare alongside the active
   `release-2026-a` key. Installed clients trust the spare only after they take an update signed by
   the active key.

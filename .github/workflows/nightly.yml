@@ -171,7 +171,7 @@ jobs:
       ROZI_NIGHTLY_COMMIT: ${{ needs.select.outputs.short }}
       ROZI_NIGHTLY_BUILT: ${{ needs.select.outputs.built }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.select.outputs.sha }}
       - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90

@@ -348,10 +348,18 @@ or sidebar stay quiet.
 Repeated messages renew the existing toast instead of stacking copies. Scripts can report an
 off-screen result with [`rozi notify`](control.md#actions-status-and-notifications).
 
-A newer rozi release gets a short informational toast. A release that raises the extension API or
-session protocol gets a warning toast instead, with the same "rozi vX.Y.Z is available" title and
-the contract change in its body. Failed checks stay silent, and each release is announced only once
-across clients.
+A newer rozi release gets a toast titled `rozi vX.Y.Z available`. Its body gives the version step
+and how to update. It stays up for 15 seconds, and a click dismisses it sooner. A release that
+raises the extension API or session protocol uses warning colors and adds a row naming the change.
+Failed checks stay silent, and each release is toasted only once across clients.
+
+Every client that finds the release also lists **Update rozi to vX.Y.Z** in Commands (`update-rozi`)
+for as long as it runs. The command opens a popup that runs `rozi update`, or the upgrade command of
+the package manager that installed rozi, and the popup stays open to show the result. When the
+updater succeeds, a `rozi vX.Y.Z installed` toast says to quit and start rozi again, because the
+running client keeps its old build. When it fails, the row comes back so you can retry. The row is
+missing when a remote session is in front, because the popup would run on that host, and for a
+distribution package or an unrecognised install.
 
 ## `[notifications]`
 

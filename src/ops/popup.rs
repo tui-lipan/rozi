@@ -138,6 +138,7 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn handle_exit(ctx: &mut Context<AppRoot>) -> Update {
+    crate::ops::update_check::popup_exited(ctx);
     if let Some(pane) = ctx.state.popup.as_mut()
         && pane.identity.keep_open
     {

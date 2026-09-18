@@ -2282,6 +2282,75 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
         .expect("popup teardown test thread panicked");
 }
 
+/// The update popup runs the updater and stays open. Success leaves the old build running, so it
+/// earns a toast naming the step that is left; failure brings **Update rozi** back to retry.
+#[test]
+fn the_update_popup_exit_reports_what_is_left() {
+    fn exit_update_popup(code: i32) -> TestBackend<crate::AppRoot> {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let generation = {
+            let state = backend.state_mut();
+            state.available_update = Some(crate::ops::update_check::AvailableUpdate::for_test(
+                "9.9.9",
+                crate::platform::install_source::InstallSource::Managed,
+                None,
+            ));
+            state.update_started = true;
+            let mut pane = crate::state::Pane::new(
+                crate::state::POPUP_PANE_ID,
+                100,
+                tui_lipan::prelude::FloatRect::default(),
+            );
+            pane.opening = false;
+            pane.identity.keep_open = true;
+            pane.identity.launch = Some(crate::pane::launch::PaneLaunch::shell("rozi update"));
+            let generation = pane.pty_generation;
+            state.popup = Some(pane);
+            generation
+        };
+        backend.render();
+        let epoch = backend.state().runtime_epoch;
+        backend
+            .dispatch(Msg::SessionExited {
+                epoch,
+                pane_id: crate::state::POPUP_PANE_ID,
+                local: true,
+                generation,
+                code,
+            })
+            .expect("update popup exits");
+        backend
+    }
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let installed = exit_update_popup(0);
+            let toast = installed
+                .state()
+                .replaceable_toasts
+                .values()
+                .next()
+                .expect("a successful update is followed up")
+                .content()
+                .replace('\u{0}', " ");
+            assert!(toast.starts_with("rozi v9.9.9 installed"), "{toast}");
+            assert!(toast.contains("quit and start rozi again"), "{toast}");
+            assert!(installed.state().popup.is_some(), "the popup stays open");
+            assert!(installed.state().update_started);
+
+            let failed = exit_update_popup(1);
+            assert!(failed.state().replaceable_toasts.is_empty());
+            assert!(
+                !failed.state().update_started,
+                "a failed update is offered again"
+            );
+        })
+        .expect("spawn update popup test thread")
+        .join()
+        .expect("update popup test thread panicked");
+}
+
 /// Attaching adopts panes that are already live, so no open/activate timer ever runs to hand one
 /// the keyboard - and the framework's `OnDemand` focus policy has no first-widget fallback. Without
 /// an explicit request the session draws its focused pane as focused while input goes nowhere until

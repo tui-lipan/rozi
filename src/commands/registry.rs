@@ -348,6 +348,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::GrantControl => shared
             .is_some_and(|shared| shared.is_controller() && shared.has_pending_control_requests()),
         Action::ApplyProfile => crate::ops::profile::can_replace_session(state),
+        Action::UpdateRozi => crate::ops::update_check::update_command_here(state).is_some(),
         _ => true,
     }
 }
@@ -593,6 +594,11 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
     if action == Action::ToggleLayout {
         let layout = state.active_workspace_ref().layout_kind.label();
         return format!("Switch layout (current: {layout})");
+    }
+    if action == Action::UpdateRozi
+        && let Some(update) = state.available_update.as_ref()
+    {
+        return format!("Update rozi to v{}", update.latest);
     }
     if action == Action::RenameSession {
         // An ephemeral (or not-yet-attached) session carries no user-facing name, so this command

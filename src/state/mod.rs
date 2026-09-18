@@ -249,6 +249,13 @@ pub struct State {
     /// in a client that is allowed to check, but no config edit can turn it on in an integration
     /// app that must stay off the network.
     pub update_checks_allowed: bool,
+    /// The newest release a check found, kept for the rest of this client's life so **Update rozi**
+    /// stays in Commands after its toast is gone.
+    pub(crate) available_update: Option<crate::ops::update_check::AvailableUpdate>,
+    /// Set once **Update rozi** has run for [`Self::available_update`]. The popup shows how that
+    /// went, and this process keeps running the old build either way, so offering the same update
+    /// again would only repeat it.
+    pub(crate) update_started: bool,
     pub event_hub: crate::events::EventHub,
     /// Open `publish` streams, keyed by the pane whose program opened one.
     ///
@@ -478,6 +485,8 @@ impl State {
             popup_return_focus: None,
             control_socket_path: None,
             update_checks_allowed: false,
+            available_update: None,
+            update_started: false,
             event_hub: crate::events::EventHub::default(),
             publish_streams: std::collections::HashMap::new(),
             extension_subscriptions: HashMap::new(),

@@ -164,6 +164,7 @@ pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "focus on hover",
         ]),
         "toggle-do-not-disturb" => alias_list(&["dnd", "mute", "quiet"]),
+        "update-rozi" => alias_list(&["upgrade", "new version", "release"]),
         "new-temporary-session" => alias_list(&["ephemeral"]),
         "spawn" => alias_list(&["new pane", "split pane", "spawn pane"]),
         "close" => alias_list(&["kill pane", "close focused"]),

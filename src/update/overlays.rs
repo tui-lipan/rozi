@@ -868,6 +868,41 @@ pub(super) fn update_check_tick(ctx: &mut Context<AppRoot>) -> Update {
     }
 }
 
+/// Remember a newer release for Commands, and raise its toast if this client claimed it.
+///
+/// The toast is the one-time announcement; the remembered update is what lasts. It keeps
+/// **Update rozi** in Commands for the rest of this client's life, so a toast that went by while
+/// the user looked elsewhere does not lose the news.
+pub(super) fn update_available(
+    ctx: &mut Context<AppRoot>,
+    update: crate::ops::update_check::AvailableUpdate,
+    announce: bool,
+) -> Update {
+    let known = ctx.state.available_update.as_ref() == Some(&update);
+    if !known {
+        // A newer release than the one this client already offered is a fresh offer, even if the
+        // user had started updating to the previous one.
+        ctx.state.update_started = false;
+        ctx.state.available_update = Some(update.clone());
+        ctx.state.commands_dirty = true;
+    }
+    if !announce {
+        return if known {
+            Update::none()
+        } else {
+            Update::full()
+        };
+    }
+    let in_commands = crate::commands::command_available(Action::UpdateRozi, &ctx.state);
+    crate::pane::pty_events::notify_update(
+        ctx,
+        update.toast_title(),
+        update.toast_body(in_commands),
+        update.needs_caution(),
+    );
+    Update::full()
+}
+
 pub(super) fn theme_error(ctx: &mut Context<AppRoot>, message: String) -> Update {
     crate::pane::pty_events::notify_error(ctx, "Theme reload failed", message);
     Update::full()
@@ -907,40 +942,113 @@ mod tests {
         tracked.content().replace('\u{0}', " ")
     }
 
+    fn update_to(version: &str, contracts: Option<(u32, u32)>) -> Msg {
+        Msg::UpdateAvailable {
+            update: crate::ops::update_check::AvailableUpdate::for_test(
+                version,
+                crate::platform::install_source::InstallSource::Managed,
+                contracts,
+            ),
+            announce: true,
+        }
+    }
+
     #[test]
     fn both_update_toasts_lead_with_the_new_version() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
-            backend
-                .dispatch(Msg::UpdateAvailable {
-                    latest: semver::Version::parse("9.9.9").unwrap(),
-                    hint: "Run `rozi update`.".to_string(),
-                    compatibility_warning: None,
-                })
-                .unwrap();
-            assert!(
-                last_toast(&backend).starts_with("rozi v9.9.9 is available"),
-                "{}",
-                last_toast(&backend)
-            );
+            backend.dispatch(update_to("9.9.9", None)).unwrap();
+            let toast = last_toast(&backend);
+            assert!(toast.starts_with("rozi v9.9.9 available"), "{toast}");
+            assert!(toast.contains("→ v9.9.9"), "{toast}");
+            // Commands holds the row in a local client, so the toast says where to find it again.
+            assert!(toast.contains("or use command Update rozi"), "{toast}");
 
             backend.state_mut().replaceable_toasts.clear();
+            let protocol = crate::session::protocol::PROTOCOL_VERSION;
+            let extension_api = crate::config::EXTENSION_API_VERSION;
             backend
-                .dispatch(Msg::UpdateAvailable {
-                    latest: semver::Version::parse("9.9.9").unwrap(),
-                    hint: "Run `rozi update`.".to_string(),
-                    compatibility_warning: Some(
-                        "Session protocol 5 -> 6. Restart running sessions after updating."
-                            .to_string(),
-                    ),
-                })
+                .dispatch(update_to("9.9.10", Some((extension_api, protocol + 1))))
                 .unwrap();
             let toast = last_toast(&backend);
             // The regression this guards: the compatibility toast used to open with
             // "Compatibility change in v9.9.9" and never say an update existed.
-            assert!(toast.starts_with("rozi v9.9.9 is available"), "{toast}");
-            assert!(toast.contains("Session protocol 5 -> 6"), "{toast}");
-            assert!(toast.contains("Run `rozi update`."), "{toast}");
+            assert!(toast.starts_with("rozi v9.9.10 available"), "{toast}");
+            assert!(toast.contains("session protocol"), "{toast}");
+            assert!(toast.contains("run `rozi update`"), "{toast}");
+        });
+    }
+
+    /// Only one client per release raises the toast, but every client that found the release keeps
+    /// it in Commands - which is what makes a missed toast recoverable.
+    #[test]
+    fn an_unannounced_update_still_offers_update_rozi() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            assert!(!crate::commands::command_available(
+                Action::UpdateRozi,
+                backend.state()
+            ));
+            let Msg::UpdateAvailable { update, .. } = update_to("9.9.9", None) else {
+                unreachable!()
+            };
+            backend
+                .dispatch(Msg::UpdateAvailable {
+                    update,
+                    announce: false,
+                })
+                .unwrap();
+
+            assert!(backend.state().replaceable_toasts.is_empty());
+            assert!(crate::commands::command_available(
+                Action::UpdateRozi,
+                backend.state()
+            ));
+            assert_eq!(
+                crate::ops::update_check::update_command_here(backend.state()),
+                Some("rozi update")
+            );
+        });
+    }
+
+    /// The popup runs on the session's server, so a remote session in front would update the host.
+    /// Once run, the same release is not offered again; a newer one is.
+    #[test]
+    fn update_rozi_is_withheld_on_a_remote_session_and_after_it_ran() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.dispatch(update_to("9.9.9", None)).unwrap();
+
+            backend.state_mut().current_mut().remote_target = Some(
+                crate::session::remote::RemoteTarget::Alias("workbox".into()),
+            );
+            assert!(!crate::commands::command_available(
+                Action::UpdateRozi,
+                backend.state()
+            ));
+            let toast_on_remote = {
+                backend.state_mut().replaceable_toasts.clear();
+                backend.dispatch(update_to("9.9.10", None)).unwrap();
+                last_toast(&backend)
+            };
+            assert!(!toast_on_remote.contains("Commands"), "{toast_on_remote}");
+            backend.state_mut().current_mut().remote_target = None;
+
+            backend.state_mut().update_started = true;
+            assert!(!crate::commands::command_available(
+                Action::UpdateRozi,
+                backend.state()
+            ));
+            backend.dispatch(update_to("9.9.10", None)).unwrap();
+            assert!(
+                backend.state().update_started,
+                "the same release stays withdrawn"
+            );
+            backend.dispatch(update_to("9.9.11", None)).unwrap();
+            assert!(crate::commands::command_available(
+                Action::UpdateRozi,
+                backend.state()
+            ));
         });
     }
 

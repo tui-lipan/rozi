@@ -19,9 +19,14 @@ pub(crate) fn input_blocked(ctx: &mut Context<AppRoot>) -> Option<BlockedInput> 
 }
 
 /// How long a tracked toast stays in [`crate::state::State::replaceable_toasts`] before it is
-/// assumed expired and pruned. Comfortably longer than the 6s error toast, which is the longest
-/// anything routed through [`notify`] can live.
-const TOAST_TRACKING_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+/// assumed expired and pruned. Comfortably longer than [`ANNOUNCEMENT_TOAST_SECS`], which is the
+/// longest anything routed through [`notify`] can live.
+const TOAST_TRACKING_TTL: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// How long a once-only announcement stays up. A toast that is raised a single time for a whole
+/// release cannot be as fleeting as feedback on a keypress: it usually lands while the user is
+/// looking at something else. It still leaves on its own, and a click dismisses it sooner.
+const ANNOUNCEMENT_TOAST_SECS: f64 = 15.0;
 
 /// A toast this app is still tracking, so a repeat of it can be recognized.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,6 +199,38 @@ pub(crate) fn notify_warning(
         title,
         message,
     );
+    notify(
+        ctx,
+        ToastKey::Content(content_key(&content)),
+        content,
+        toast,
+    )
+}
+
+/// Announce a newer rozi release: info chrome for news, warning chrome when the release moves a
+/// contract the user has to act on. Titled in both cases so the two read as one notice.
+pub(crate) fn notify_update(
+    ctx: &mut Context<AppRoot>,
+    title: impl Into<String>,
+    message: impl Into<String>,
+    caution: bool,
+) -> Notified {
+    let (title, message) = (title.into(), message.into());
+    let content = toast_content(Some(&title), &message);
+    let theme = &ctx.state.theme;
+    let accent = if caution {
+        theme.status.warning
+    } else {
+        theme.status.info
+    };
+    let toast = titled_toast(
+        theme,
+        accent,
+        ctx.state.config.pane.toast_opacity,
+        title,
+        message,
+    )
+    .duration(ANNOUNCEMENT_TOAST_SECS);
     notify(
         ctx,
         ToastKey::Content(content_key(&content)),

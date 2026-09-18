@@ -6,6 +6,13 @@
 
 - Commands lists **Layouts…** and **Collaborators…**, matching Sessions and Agents. Switch layout
   (`m`) still cycles and stays in Keybindings; it is no longer a palette row beside the picker.
+- The update toast is titled `rozi vX.Y.Z available` in both forms. Its body is terse rows (the
+  version step, how to update, and any extension API or session protocol change), and it stays up
+  for 15 seconds instead of 3.
+- A known newer release adds **Update rozi to vX.Y.Z** to Commands (`update-rozi`) in every client
+  that found it, not just the one that showed the toast. The command runs the install's own updater
+  in a popup that stays open to show the result. On success a `rozi vX.Y.Z installed` toast says to
+  quit and start rozi again; on failure the command is offered again.
 
 ### Fixed
 

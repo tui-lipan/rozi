@@ -83,11 +83,19 @@ and activates the current release, drawing a progress meter on stderr while the 
 
 The TUI also checks on its own, on a worker thread shortly after a client starts and every six
 hours it stays open. It stays silent when rozi is current or the network is unavailable. A newer
-release gets a short toast titled `rozi vX.Y.Z is available`, with the command for the detected
-install channel. If the release raises the extension API or session protocol, the toast keeps that
-title and becomes a warning naming the compatibility change. Rozi records the announced version in
-its state directory, so other clients, later launches, and the re-checks in this one do not repeat
-the same release.
+release gets a toast titled `rozi vX.Y.Z available`, with the version step and the command for the
+detected install channel. If the release raises the extension API or session protocol, the toast
+uses warning colors and adds a row naming the change. Rozi records the announced version in its
+state directory, so other clients, later launches, and the re-checks in this one do not toast the
+same release again. Every client that finds it still lists **Update rozi to vX.Y.Z** in Commands,
+which runs the update in a popup (see [In-app toasts](configuration.md#in-app-toasts)).
+
+Updating installs the new build for the next launch. It does not restart anything that is running.
+The client you updated from keeps running the old build until you quit and start rozi again. Each
+session server also keeps its old build until the session is restarted (`restart-session`, or
+`Ctrl+E` twice in Sessions), and restarting a session ends the programs running in its panes. While the
+session protocol is unchanged, a new client attaches to an old server normally. When a release
+raises the protocol, an old server refuses the new client, so restart it before attaching.
 
 [`[updates]`](configuration.md#updates) turns those checks off or changes the interval.
 

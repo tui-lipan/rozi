@@ -10,7 +10,7 @@ pub(crate) use input::{
 pub(crate) use notifications::{
     PaneStatusNotification, ToastKey, TrackedToast, confirm_toast, maybe_notify_host_agent,
     maybe_notify_pane_exit, maybe_notify_pane_status, notify_error, notify_info, notify_on,
-    notify_warning,
+    notify_update, notify_warning,
 };
 pub(crate) use resize::{
     flush_background_resizes, flush_pending_resizes, handle_pane_resize, rearm_pending_resize_flush,

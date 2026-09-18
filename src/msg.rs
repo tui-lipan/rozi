@@ -12,10 +12,12 @@ pub enum Msg {
     CommandLinkReady(CommandLink<Msg>),
     /// A public release newer than this build was found, by the check a client runs shortly after
     /// it starts or by one of the periodic re-checks that follow.
+    ///
+    /// Every client that finds one is told, so its Commands can offer the update; `announce` is set
+    /// for the one client per release that also raises the toast.
     UpdateAvailable {
-        latest: semver::Version,
-        hint: String,
-        compatibility_warning: Option<String>,
+        update: crate::ops::update_check::AvailableUpdate,
+        announce: bool,
     },
     /// Time to look for a newer release again. Rescheduled from its own handler for as long as
     /// `[updates] check` stays on.

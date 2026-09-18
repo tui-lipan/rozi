@@ -834,7 +834,7 @@ mod tests {
     /// A stacked prompt keeps the picker underneath; cancelling restores it seeded with the
     /// filter that was typed before.
     #[test]
-    fn a_prompt_replaces_the_picker_and_restores_its_query() {
+    fn a_stacked_prompt_restores_the_picker_query() {
         with_backend(|backend| {
             open_with(
                 backend,

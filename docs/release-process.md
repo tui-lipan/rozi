@@ -338,7 +338,7 @@ release — so no stable user is moved onto nightly by any of the paths that ins
 that way: an explicit opt-in such as `rozi update --channel nightly` is a separate decision, worth
 making only if people start using nightlies.
 
-`ci.yml` triggers on branches and `v*` tags, deliberately not on the moving `nightly` tag. A
+`ci.yml` triggers on pull requests, pushes to master, and `v*` tags, deliberately not on the moving `nightly` tag. A
 nightly is built from a commit the matrix has already passed, so re-running it there would cost a
 second full matrix for no new fact.
 

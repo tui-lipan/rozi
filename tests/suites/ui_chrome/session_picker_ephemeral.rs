@@ -33,7 +33,10 @@ fn session_row(name: &str) -> DiscoveredSession {
 fn on_a_big_stack(body: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
-        .spawn(body)
+        .spawn(move || {
+            rozi::test_support::isolate_user_dirs();
+            body();
+        })
         .expect("spawn render thread")
         .join()
         .expect("render thread completes");
@@ -57,6 +60,14 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
         }
 
         let rendered = screen(&mut backend);
+        assert!(
+            rendered.contains("│ No sessions"),
+            "empty-state copy keeps the same 1-cell left inset as the search field:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("│No sessions"),
+            "empty-state copy must not sit flush against the frame:\n{rendered}"
+        );
         assert!(
             rendered.contains("ephemeral shell Enter"),
             "with no row to activate, Enter carries the scratch session:\n{rendered}"
@@ -102,6 +113,10 @@ fn a_query_that_matches_nothing_frees_enter_the_same_way() {
         }
 
         let rendered = screen(&mut backend);
+        assert!(
+            rendered.contains("│ No sessions match"),
+            "a filter empty-state keeps the same 1-cell left inset:\n{rendered}"
+        );
         assert!(
             rendered.contains("ephemeral shell Enter"),
             "a filter that hides every row leaves the list as empty as an empty one:\n{rendered}"

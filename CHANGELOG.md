@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Guttered pickers inset empty-state copy instead of sitting flush against the frame. Needs
+  tui-lipan 0.11.5.
+
 ## 0.0.19 - 2026-09-18
 
 ### Added

@@ -337,13 +337,13 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
                 .filter(|action| action.enabled)
                 .find_map(|action| action.confirm.clone())
         });
+        let has_gutter = item_gutter.is_some();
         let mut palette = shared_search_palette::<T>(ctx, Length::Auto, false)
             .entries(entries)
             .placeholder(placeholder.into_owned())
             .initial_query(initial_query.into_owned())
             .initial_selected_item_index(selected)
             .sync_selection(true);
-        let has_gutter = item_gutter.is_some();
         palette = apply_palette_options(
             palette,
             empty_text,
@@ -354,7 +354,9 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             item_gutter,
         );
         if has_gutter {
-            palette = palette.list_item_horizontal_padding((0, 1, 0, 0));
+            palette = palette
+                .list_item_horizontal_padding((0, 1, 0, 0))
+                .empty_text_padding((0, 0, 0, 1));
             let (left, _) = crate::view::picker_selection_cap_glyphs(&ctx.state.config);
             if !left.is_empty() {
                 palette = palette.list_unselected_symbol(" ");

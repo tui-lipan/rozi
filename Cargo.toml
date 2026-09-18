@@ -33,8 +33,8 @@ exclude = [
 ]
 
 [dependencies]
-# 0.11.4: List::navigation_wrap and step helpers for picker wrap.
-tui-lipan = { version = "0.11.4", features = [
+# 0.11.5: List::empty_text_padding for guttered picker placeholders.
+tui-lipan = { version = "0.11.5", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

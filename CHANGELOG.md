@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Padded picker selection on guttered lists keeps a 1-cell left inset (`│ ● name` rather than
+  `│● name`). Round and arrow caps still sit flush against the status marker.
+
 ## 0.0.20 - 2026-09-18
 
 ### Added

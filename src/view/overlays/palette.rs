@@ -338,6 +338,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
                 .find_map(|action| action.confirm.clone())
         });
         let has_gutter = item_gutter.is_some();
+        let (cap_left, _) = crate::view::picker_selection_cap_glyphs(&ctx.state.config);
         let mut palette = shared_search_palette::<T>(ctx, Length::Auto, false)
             .entries(entries)
             .placeholder(placeholder.into_owned())
@@ -356,13 +357,24 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         if has_gutter {
             palette = palette
                 .list_item_horizontal_padding((0, 1, 0, 0))
-                .empty_text_padding((0, 0, 0, 1));
-            let (left, _) = crate::view::picker_selection_cap_glyphs(&ctx.state.config);
-            if !left.is_empty() {
-                palette = palette.list_unselected_symbol(" ");
+                .empty_text_padding((0, 0, 0, 1))
+                .list_unselected_symbol(" ");
+            if cap_left.is_empty() {
+                let pad_symbol_style = picker_selection_style(&ctx.state.theme, None);
+                palette = palette
+                    .list_selection_symbol(" ")
+                    .list_selection_symbol_style(pad_symbol_style)
+                    .list_unfocused_selection_symbol_style(pad_symbol_style);
             }
         }
-        palette = apply_item_rendering(palette, &ctx.state.theme, armed_row, confirm, render_item);
+        palette = apply_item_rendering(
+            palette,
+            &ctx.state.theme,
+            armed_row,
+            confirm,
+            render_item,
+            cap_left.is_empty(),
+        );
 
         let action_interceptor = overlay_interceptor(ctx, &actions);
         let interceptor = if let Some(fallback) = fallback_interceptor {
@@ -417,16 +429,23 @@ pub(super) fn apply_item_rendering<T: Clone + PartialEq + 'static>(
     armed_row: Option<T>,
     confirm: Option<ConfirmCue>,
     render_item: Option<OverlayItemRenderer<T>>,
+    padded_selection: bool,
 ) -> SearchPalette<T> {
     if let Some(confirm) = confirm.as_ref() {
         let selection_style = picker_selection_style(theme, Some(confirm.accent));
         palette = palette
             .list_selection_style(selection_style)
-            .list_unfocused_selection_style(selection_style)
-            .list_selection_symbol_style(crate::view::picker_selection_cap_style(
+            .list_unfocused_selection_style(selection_style);
+        palette = if padded_selection {
+            palette
+                .list_selection_symbol_style(selection_style)
+                .list_unfocused_selection_symbol_style(selection_style)
+        } else {
+            palette.list_selection_symbol_style(crate::view::picker_selection_cap_style(
                 theme,
                 confirm.accent,
-            ));
+            ))
+        };
     }
     if armed_row.is_none() && render_item.is_none() {
         return palette;

@@ -149,6 +149,44 @@ fn a_populated_list_advertises_the_chord_until_the_scratch_session_exists() {
 }
 
 #[test]
+fn padded_selection_insets_the_current_marker() {
+    on_a_big_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(VIEWPORT);
+        {
+            let state = backend.state_mut();
+            let session_name = rozi::state::ephemeral_session_name();
+            state.current_mut().session_name = Some(session_name.clone());
+            state.current_mut().session_attached = true;
+            state.current_mut().pending_session_attach = None;
+            state.show_session_picker = true;
+            state.session_picker = Some(SessionPickerState::new(vec![DiscoveredSession {
+                name: session_name,
+                ephemeral: true,
+                host: None,
+                remote_target: None,
+                status: DiscoveredSessionStatus::Running {
+                    panes: 1,
+                    has_layout: true,
+                    clients: 1,
+                    created_from_profile: None,
+                },
+            }]));
+        }
+
+        let rendered = screen(&mut backend);
+        assert!(
+            rendered.contains("│ ● ephemeral"),
+            "padded selection keeps a 1-cell inset before the status marker:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("│● ephemeral"),
+            "padded selection must not sit flush against the frame:\n{rendered}"
+        );
+    });
+}
+
+#[test]
 fn holding_the_scratch_session_drops_the_hint_but_not_the_key() {
     on_a_big_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());

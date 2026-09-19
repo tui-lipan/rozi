@@ -147,10 +147,11 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         || ctx.state.follow_prompt.is_some()
         || ctx.state.askpass.is_some();
     // Offline chrome yields to another overlay (Sessions, a password prompt) so those stay
-    // reachable. Reconnecting stays on top of other overlays; Esc abandons it rather than
-    // leaving the spinner covering Sessions.
+    // reachable. Reconnecting yields to an SSH password or host-key prompt: askpass must own
+    // Esc while it is up. Once it closes, the reconnect overlay returns.
     let show_offline = offline && !picker_dialog_open;
-    let dialog_open = reconnecting || show_offline || picker_dialog_open;
+    let show_reconnecting = reconnecting && ctx.state.askpass.is_none();
+    let dialog_open = show_reconnecting || show_offline || picker_dialog_open;
     let dialog_dim_progress = ctx.transition::<f32>(
         "rozi-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
@@ -374,13 +375,13 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.follow_prompt.is_some() {
         root = root.child(follow_prompt_overlay(ctx));
     }
+    if show_reconnecting || show_offline {
+        root = root.child(reconnecting_overlay(ctx));
+    }
     // Last, so its own backdrop fades every dialog already on screen: an ssh prompt arrives on
     // ssh's schedule, over whatever the user had open, and returns them to it.
     if ctx.state.askpass.is_some() {
         root = root.child(askpass_overlay(ctx));
-    }
-    if reconnecting || show_offline {
-        root = root.child(reconnecting_overlay(ctx));
     }
 
     let content: Element = root.into();
@@ -684,6 +685,60 @@ mod grouped_search_tests {
             .expect("spawn reconnect modal test")
             .join()
             .expect("reconnect modal test completes");
+    }
+
+    #[test]
+    fn ssh_askpass_covers_the_reconnecting_overlay() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+                backend.set_viewport(tui_lipan::prelude::Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("dev".into());
+                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+                state.current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: state.runtime_epoch,
+                        name: "dev".into(),
+                        client: None,
+                        autostart: false,
+                        read_only: false,
+                        reconnect: true,
+                        remote_host: Some("workbox".into()),
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+                state.askpass = Some(crate::state::AskpassState::new(
+                    crate::state::AskpassPrompt {
+                        id: 1,
+                        session: "reconnect".into(),
+                        kind: crate::session::remote::AskpassKind::Secret,
+                        prompt: "user@workbox's password:".into(),
+                        error: None,
+                    },
+                ));
+                backend.render();
+
+                let frame = backend.capture_frame().to_fixed_grid();
+                assert!(
+                    frame.contains("SSH · user@workbox's password"),
+                    "askpass must be visible above reconnect chrome, got:\n{frame}"
+                );
+                assert!(
+                    !frame.contains("reconnecting"),
+                    "reconnect overlay must yield to askpass, got:\n{frame}"
+                );
+            })
+            .expect("spawn askpass-over-reconnect test")
+            .join()
+            .expect("askpass-over-reconnect test completes");
     }
 
     #[test]

@@ -85,12 +85,7 @@ pub(crate) fn connect_remote_within(
         ));
     }
 
-    let remote_bin = if super::askpass::may_prompt() {
-        super::ensure_remote_binary_in_ui(target, config, None)
-    } else {
-        super::ensure_remote_binary(target, config, false)
-    }
-    .map_err(RemoteConnectError::Message)?;
+    let remote_bin = resolve_attach_binary(target, config, budget)?;
     validate_remote_executable_token(&remote_bin).map_err(RemoteConnectError::Message)?;
 
     if budget.is_some_and(|remaining| remaining.is_zero()) {
@@ -136,7 +131,11 @@ pub(crate) fn connect_remote_within(
     let preamble = match preamble::read_preamble(&mut conn) {
         Ok(preamble) => preamble,
         Err(err) => {
-            super::binary::invalidate(target, config);
+            // A quiet or dropped SSH pipe is not evidence the remote binary disappeared.
+            // Reconnect must not flush the remembered path and spend the retry window re-probing.
+            if invalidate_binary_cache_after_preamble_failure(budget) {
+                super::binary::invalidate(target, config);
+            }
             // Kill the proxy before joining stderr. The collector reaches EOF only after the child
             // exits, while the child is owned by this connection.
             let _ = conn.shutdown(std::net::Shutdown::Both);
@@ -161,7 +160,36 @@ pub(crate) fn connect_remote_within(
         }
         return Err(RemoteConnectError::Message(message));
     }
+    let _ = super::binary::remember(target, config, remote_bin);
     Ok((conn, preamble))
+}
+
+fn resolve_attach_binary(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    budget: Option<Duration>,
+) -> Result<String, RemoteConnectError> {
+    if let Some(remaining) = budget {
+        if remaining.is_zero() {
+            return Err(RemoteConnectError::Message(
+                "reconnect deadline elapsed".to_string(),
+            ));
+        }
+        // Reconnect uses the path that already worked. A dead transport is not a missing
+        // binary; probing would spend the retry window on unbudgeted SSH before attach.
+        return super::binary::resolve_with_connect_timeout(
+            target,
+            config,
+            capped_connect_timeout_secs(config, remaining),
+        )
+        .map_err(RemoteConnectError::Message);
+    }
+    if super::askpass::may_prompt() {
+        super::ensure_remote_binary_in_ui(target, config, None)
+    } else {
+        super::ensure_remote_binary(target, config, false)
+    }
+    .map_err(RemoteConnectError::Message)
 }
 
 /// Default wait for the proxy's first bytes when `[remote] connection_timeout_secs` is `0`.
@@ -209,6 +237,11 @@ fn capped_preamble_timeout(config: &RemoteConfig, remaining: Duration) -> Durati
     } else {
         preamble_timeout(config).min(remaining)
     }
+}
+
+/// A quiet SSH pipe during reconnect is not evidence the remote binary disappeared.
+fn invalidate_binary_cache_after_preamble_failure(budget: Option<Duration>) -> bool {
+    budget.is_none()
 }
 
 /// Kill a named session on the remote host via `rozi sessions kill` over ssh.
@@ -335,5 +368,13 @@ mod tests {
             remaining,
             "interactive auth allowance must not outrun the reconnect deadline"
         );
+    }
+
+    #[test]
+    fn reconnect_preamble_failure_keeps_the_remembered_binary() {
+        assert!(!invalidate_binary_cache_after_preamble_failure(Some(
+            Duration::from_secs(30)
+        )));
+        assert!(invalidate_binary_cache_after_preamble_failure(None));
     }
 }

@@ -279,6 +279,14 @@ pub fn probe_remote_report(
     target: &RemoteTarget,
     config: &RemoteConfig,
 ) -> Result<ProbeReport, String> {
+    probe_remote_report_with_connect_timeout(target, config, config.connection_timeout_secs)
+}
+
+fn probe_remote_report_with_connect_timeout(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    connect_timeout_secs: u64,
+) -> Result<ProbeReport, String> {
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
     if let Some(path) = &resolved.binary_path {
@@ -301,13 +309,14 @@ pub fn probe_remote_report(
     // The remote sshd default shell is not always POSIX (Windows defaults to `cmd.exe`). Detect the
     // family with one fixed, shell-agnostic probe, then feed the matching script to the matching
     // interpreter. Probe output is still parsed with fixed keys and never treated as argv.
-    let stdout = match detect_remote_family(&resolved, config)? {
+    let stdout = match detect_remote_family(&resolved, config, connect_timeout_secs)? {
         // PowerShell's `-Command -` truncates a multi-line script read from stdin (only the first
         // statements run) over OpenSSH-for-Windows; pass the script as a base64 `-EncodedCommand`
         // instead, which runs the whole thing and needs no stdin.
         RemoteFamily::Windows => run_probe_command(
             &resolved,
             config,
+            connect_timeout_secs,
             &[
                 "powershell",
                 "-NoProfile",
@@ -316,7 +325,13 @@ pub fn probe_remote_report(
                 &encode_powershell_command(WINDOWS_PROBE_SCRIPT),
             ],
         )?,
-        RemoteFamily::Posix => run_probe_script(&resolved, config, &["sh", "-s"], PROBE_SCRIPT)?,
+        RemoteFamily::Posix => run_probe_script(
+            &resolved,
+            config,
+            connect_timeout_secs,
+            &["sh", "-s"],
+            PROBE_SCRIPT,
+        )?,
     };
     Ok(parse_probe_output(&stdout))
 }
@@ -334,8 +349,9 @@ enum RemoteFamily {
 fn detect_remote_family(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
+    connect_timeout_secs: u64,
 ) -> Result<RemoteFamily, String> {
-    let mut command = ssh_base_command(resolved, config);
+    let mut command = ssh_base_command_with_connect_timeout(resolved, config, connect_timeout_secs);
     append_ssh_destination(&mut command, resolved);
     command.arg("echo").arg("rozi_family=%OS%");
     command
@@ -369,10 +385,11 @@ fn detect_remote_family(
 fn run_probe_script(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
+    connect_timeout_secs: u64,
     interpreter: &[&str],
     script: &str,
 ) -> Result<String, String> {
-    let mut command = ssh_base_command(resolved, config);
+    let mut command = ssh_base_command_with_connect_timeout(resolved, config, connect_timeout_secs);
     append_ssh_destination(&mut command, resolved);
     for arg in interpreter {
         command.arg(arg);
@@ -407,9 +424,10 @@ fn run_probe_script(
 fn run_probe_command(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
+    connect_timeout_secs: u64,
     argv: &[&str],
 ) -> Result<String, String> {
-    let mut command = ssh_base_command(resolved, config);
+    let mut command = ssh_base_command_with_connect_timeout(resolved, config, connect_timeout_secs);
     append_ssh_destination(&mut command, resolved);
     for arg in argv {
         command.arg(arg);
@@ -434,6 +452,16 @@ fn run_probe_command(
 #[allow(dead_code)] // CLI / test helper alongside probe_remote_report
 pub fn probe_remote(target: &RemoteTarget, config: &RemoteConfig) -> Result<ProbeResult, String> {
     Ok(select_compatible(&probe_remote_report(target, config)?))
+}
+
+pub(crate) fn probe_remote_with_connect_timeout(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    connect_timeout_secs: u64,
+) -> Result<ProbeResult, String> {
+    Ok(select_compatible(
+        &probe_remote_report_with_connect_timeout(target, config, connect_timeout_secs)?,
+    ))
 }
 
 /// Shell startup entry point. Non-interactive invocations never install implicitly.

@@ -430,9 +430,10 @@ collaborator removal.
   opens the session picker or launcher. The server and its panes keep running if the server is
   still alive. A remote session treats missed heartbeats the same way as a dropped SSH link — after
   sleep or a lost network the reconnecting overlay appears rather than frozen panes that still
-  accept typing. That overlay retries for up to two minutes; `Esc` cancels it. If the original
-  remote session is already gone, reconnect does not start a replacement. If that reconnect fails,
-  the session stays offline in place so it can reconnect when the host returns.
+  accept typing. That overlay retries for up to two minutes; `Esc` cancels it. An SSH password or
+  host-key prompt covers it while authentication is needed. If the original remote session is
+  already gone, reconnect does not start a replacement. If that reconnect fails, the session stays
+  offline in place so it can reconnect when the host returns.
 - A named server and client must be compatible. After upgrading Rozi, restart an incompatible
   server or update the other end.
 - A restart kills the session's processes and starts fresh panes. It is not the same as detaching

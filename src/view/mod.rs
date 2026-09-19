@@ -488,8 +488,12 @@ pub(crate) fn follower_letterbox_bounds(state: &crate::state::State, viewport: R
     let w = f32::from(cols.max(1));
     let h = f32::from(rows.max(1));
     FloatRect {
-        x: local.x + (local.w - w) / 2.0,
-        y: local.y + (local.h - h) / 2.0,
+        // Terminal geometry has to share one whole-cell origin. An odd size difference produces a
+        // half-cell mathematical centre; leaving that fraction here makes each pane's independent
+        // `FloatRect::to_rect` round on a different side of zero. A split crossing the viewport
+        // edge can then lose its border, while another split gains an extra gap cell.
+        x: local.x + ((local.w - w) / 2.0).round(),
+        y: local.y + ((local.h - h) / 2.0).round(),
         w,
         h,
     }
@@ -851,9 +855,58 @@ pub(crate) fn fg_only(style: &Style) -> Style {
 mod pane_layer_tests {
     use crate::AppRoot;
     use crate::layout::anim::PaneAnimationStyle;
-    use crate::state::Pane;
+    use crate::layout::tiling::DwindleTree;
+    use crate::state::{LayoutKind, Pane, SharedSessionState, SplitAxis};
     use tui_lipan::TestBackend;
     use tui_lipan::prelude::{FloatRect, Rect};
+
+    fn smaller_follower_backend(
+        pane_count: u32,
+        layout_kind: LayoutKind,
+        tile_tree: Option<DwindleTree>,
+        canonical_canvas: (u16, u16),
+    ) -> TestBackend<AppRoot> {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 24,
+        });
+        {
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.config.pane.show_workbar = false;
+            state.config.pane.show_titles = false;
+
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.layout_kind = layout_kind;
+            workspace.panes.clear();
+            workspace.tile_tree = tile_tree;
+            for id in 1..=pane_count {
+                let mut pane = Pane::new(id, 100, FloatRect::default());
+                pane.opening = false;
+                pane.terminal_active = true;
+                workspace.panes.push(pane);
+            }
+            workspace.focused_pane = Some(2);
+            state.current_mut().focused_pane = Some(2);
+
+            let mut shared = SharedSessionState::new(1);
+            shared.controller = Some(2);
+            shared.canonical_canvas = Some(canonical_canvas);
+            state.current_mut().shared = Some(shared);
+        }
+        backend
+    }
+
+    fn border_columns(line: &str, glyph: char) -> Vec<usize> {
+        line.chars()
+            .enumerate()
+            .filter_map(|(column, found)| (found == glyph).then_some(column))
+            .collect()
+    }
 
     /// A leaving pane is drawn *under* the tile taking its space, for every style.
     ///
@@ -922,5 +975,102 @@ mod pane_layer_tests {
                  got closing at {closing_at} and survivor at {survivor_at}"
             );
         }
+    }
+
+    #[test]
+    fn a_smaller_follower_keeps_a_split_border_on_the_viewport_edge() {
+        // The narrow first pane is clipped just left of the follower. With the canonical origin
+        // snapped to -28, pane 2's left frame lands exactly on local column zero.
+        let mut backend = smaller_follower_backend(
+            2,
+            LayoutKind::Dwindle,
+            Some(DwindleTree::Split {
+                axis: SplitAxis::Horizontal,
+                ratio: 0.1,
+                first: Box::new(DwindleTree::Leaf(1)),
+                second: Box::new(DwindleTree::Leaf(2)),
+            }),
+            (135, 25),
+        );
+
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        assert_eq!(
+            lines[12].chars().next(),
+            Some('│'),
+            "the clipped split border drifted off the viewport edge:\n{}",
+            lines.join("\n")
+        );
+
+        let bounds = super::follower_letterbox_bounds(
+            backend.state(),
+            Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            },
+        );
+        assert_eq!((bounds.x, bounds.y), (-28.0, -1.0));
+    }
+
+    #[test]
+    fn a_smaller_follower_keeps_equal_gaps_between_visible_columns() {
+        let mut backend = smaller_follower_backend(3, LayoutKind::Columns, None, (135, 25));
+
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        let borders = border_columns(&lines[12], '│');
+        let gap_widths = borders
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .filter(|distance| *distance <= 3)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            gap_widths,
+            vec![2, 2],
+            "expected two visible pane gaps:\n{}",
+            lines.join("\n")
+        );
+    }
+
+    #[test]
+    fn a_smaller_follower_keeps_visible_border_segments_without_reframing_clipped_edges() {
+        let mut backend = smaller_follower_backend(
+            3,
+            LayoutKind::Dwindle,
+            Some(DwindleTree::Split {
+                axis: SplitAxis::Horizontal,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(1)),
+                second: Box::new(DwindleTree::Split {
+                    axis: SplitAxis::Vertical,
+                    ratio: 0.5,
+                    first: Box::new(DwindleTree::Leaf(2)),
+                    second: Box::new(DwindleTree::Leaf(3)),
+                }),
+            }),
+            (95, 31),
+        );
+
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        let message = || {
+            format!(
+                "visible border segments were erased or clipped panes were reframed:\n{}",
+                lines.join("\n")
+            )
+        };
+        assert!(
+            lines.iter().all(|line| line.starts_with(' ')),
+            "{}",
+            message()
+        );
+        assert!(lines[11].contains("│ ╰"), "{}", message());
+        assert!(lines[11].ends_with('─'), "{}", message());
+        assert!(lines[12].contains("│ ╭"), "{}", message());
+        assert!(lines[12].ends_with('─'), "{}", message());
+        let verticals = border_columns(&lines[13], '│');
+        assert_eq!(verticals, vec![38, 40], "{}", message());
     }
 }

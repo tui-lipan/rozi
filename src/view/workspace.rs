@@ -152,6 +152,13 @@ fn layer_drag(
     })
 }
 
+fn tiled_resize_strips_enabled(ctx: &Context<AppRoot>, layer: &WorkspaceLayer<'_>) -> bool {
+    if layer.scratch || ctx.state.current().shared.is_none() {
+        return true;
+    }
+    ctx.state.is_controller()
+}
+
 /// Draw one workspace - panes, dividers, seam titles, and split-resize strips - into `canvas`.
 ///
 /// Shared by the workspace layer and the scratchpad so the dropdown is a real tiling workspace
@@ -593,10 +600,13 @@ pub(crate) fn render_workspace_panes(
     for (rect, element) in animating_tiles.into_iter().chain(dragged_tiles) {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
-    // Draggable strips sit above every tiled pane but below floating/fullscreen panes, so a
-    // floating pane occludes split handles underneath it instead of passing drag events through.
-    for (rect, element) in tiled_resize_strips(ctx, &placements, workspace) {
-        canvas = canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
+    // Inert follower hitboxes can erase partially clipped frame rows with their empty widgets.
+    if tiled_resize_strips_enabled(ctx, layer) {
+        // Draggable strips sit above every tiled pane but below floating/fullscreen panes, so a
+        // floating pane occludes split handles underneath it instead of passing drag events through.
+        for (rect, element) in tiled_resize_strips(ctx, &placements, workspace) {
+            canvas = canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
+        }
     }
     for (rect, element) in floating_panes {
         canvas = canvas.child_at(rect.to_rect(), element);

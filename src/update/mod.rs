@@ -498,6 +498,13 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => session::connected(ctx, epoch, name, client),
         Msg::ScratchRuntimeFailed(message) => crate::scratchpad::runtime::failed(ctx, message),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
+        Msg::RetrySessionReconnect => {
+            if ctx.state.current().connection == crate::state::ConnectionState::Unreachable {
+                crate::ops::session::reconnect_current_session(ctx)
+            } else {
+                Update::none()
+            }
+        }
         Msg::DrainSessionFrames { epoch, mailbox } => {
             drain_session_frames(_app, ctx, epoch, mailbox).update
         }

@@ -239,8 +239,10 @@ sessions. See [Scope](sessions.md#scope-where-an-action-happens).
 Switching to another local or remote session parks the current attachment in the background.
 Returning to it reuses its live terminal screens.
 
-If a retained SSH connection drops, Rozi marks it offline. Selecting that attachment attempts to
-reconnect in place. The remote named server keeps running independently of the SSH connection.
+If a retained SSH connection drops — including a half-open link after sleep, a lost network, or
+missed session heartbeats — Rozi shows the reconnecting overlay and retries in place for up to two
+minutes. If the host is still down, the session stays on screen as **offline**: `Enter` retries,
+`Esc` opens Sessions. The remote named server keeps running independently of the SSH connection.
 Temporary servers still follow their no-client recovery timer.
 
 ## Connected-host monitoring

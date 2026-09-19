@@ -1664,6 +1664,32 @@ fn retained_remote_reconnect_failure_stays_offline_and_remote() {
         .expect("retained reconnect test completes");
 }
 
+#[test]
+fn retry_session_reconnect_is_a_noop_unless_the_session_is_unreachable() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("dev".to_string());
+                state.current_mut().pending_session_attach = None;
+                state.current_mut().connection = crate::state::ConnectionState::Connected;
+            }
+            backend
+                .dispatch(Msg::RetrySessionReconnect)
+                .expect("dispatch ignored retry");
+            assert_eq!(
+                backend.state().current().connection,
+                crate::state::ConnectionState::Connected
+            );
+            assert!(backend.state().current().pending_session_attach.is_none());
+        })
+        .expect("spawn retry noop test")
+        .join()
+        .expect("retry noop test completes");
+}
+
 /// A local reconnect that fails leaves the session instead of rendering its dead panes as though
 /// the client were still inside it.
 #[test]

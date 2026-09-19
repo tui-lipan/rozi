@@ -165,6 +165,28 @@ pub(crate) fn apply_pending_background_closes(ctx: &mut Context<AppRoot>) {
     }
 }
 
+/// Keys the offline overlay advertises while a remote session has no live transport. `Enter`
+/// retries in place; `Esc` opens Sessions. Returns `None` when this is not that state, so callers
+/// keep routing the key as usual.
+pub(crate) fn handle_offline_session_key(
+    ctx: &mut Context<AppRoot>,
+    key: KeyEvent,
+) -> Option<Update> {
+    if ctx.state.current().connection != crate::state::ConnectionState::Unreachable
+        || ctx.state.current().session_name.is_none()
+        || ctx.state.current().pending_session_attach.is_some()
+        || ctx.state.has_modal_overlay()
+        || !key.mods.is_empty()
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Enter => Some(reconnect_current_session(ctx)),
+        KeyCode::Esc => Some(crate::ops::session::open_session_picker(ctx)),
+        _ => None,
+    }
+}
+
 /// Reconnect the current attachment without replacing its retained screens or window-manager state.
 /// The new id invalidates frames from the dead transport while preserving the attachment identity.
 pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {

@@ -126,8 +126,10 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
             .pending_session_attach
             .as_ref()
             .is_some_and(|pending| pending.reconnect);
-    let dialog_open = reconnecting
-        || ctx.state.show_palette
+    let offline = ctx.state.current().connection == crate::state::ConnectionState::Unreachable
+        && ctx.state.current().session_name.is_some()
+        && ctx.state.current().pending_session_attach.is_none();
+    let picker_dialog_open = ctx.state.show_palette
         || ctx.state.keybindings.is_some()
         || ctx.state.show_settings
         || ctx.state.extensions.is_some()
@@ -144,6 +146,10 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         || ctx.state.collaboration.is_some()
         || ctx.state.follow_prompt.is_some()
         || ctx.state.askpass.is_some();
+    // Offline chrome yields to another overlay (Sessions, a password prompt) so those stay
+    // reachable. Reconnecting stays on top: that window is in-flight and not optional.
+    let show_offline = offline && !picker_dialog_open;
+    let dialog_open = reconnecting || show_offline || picker_dialog_open;
     let dialog_dim_progress = ctx.transition::<f32>(
         "rozi-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
@@ -372,7 +378,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.askpass.is_some() {
         root = root.child(askpass_overlay(ctx));
     }
-    if reconnecting {
+    if reconnecting || show_offline {
         root = root.child(reconnecting_overlay(ctx));
     }
 
@@ -673,6 +679,46 @@ mod grouped_search_tests {
             .expect("spawn reconnect modal test")
             .join()
             .expect("reconnect modal test completes");
+    }
+
+    #[test]
+    fn unreachable_remote_session_shows_offline_modal() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+                backend.set_viewport(tui_lipan::prelude::Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                let state = backend.state_mut();
+                state.show_session_picker = false;
+                state.session_picker = None;
+                state.current_mut().session_name = Some("dev".into());
+                state.current_mut().remote_host = Some("workbox".into());
+                state.current_mut().pending_session_attach = None;
+                state.current_mut().connection = crate::state::ConnectionState::Unreachable;
+                backend.render();
+
+                let frame = backend.capture_frame().to_fixed_grid();
+                assert!(
+                    frame.contains("Session · dev"),
+                    "expected offline session modal, got:\n{frame}"
+                );
+                assert!(
+                    frame.contains("offline"),
+                    "expected offline token, got:\n{frame}"
+                );
+                assert!(
+                    frame.contains("reconnect"),
+                    "expected reconnect hint, got:\n{frame}"
+                );
+            })
+            .expect("spawn offline modal test")
+            .join()
+            .expect("offline modal test completes");
     }
 }
 

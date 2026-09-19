@@ -264,7 +264,10 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
     .render(ctx)
 }
 
-/// Non-dismissible progress chrome while an automatic reconnect preserves the panes underneath.
+/// Progress chrome while an automatic reconnect preserves the panes underneath, or the offline
+/// prompt after that window ends on a remote host. Neither is dismissible with a bare click: the
+/// first is in-flight, the second is the only honest reading of a retained session whose host is
+/// gone. `Enter` retries from offline; `Esc` opens Sessions so the user can switch away.
 pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
     let name = ctx
         .state
@@ -272,17 +275,35 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
         .session_name
         .as_deref()
         .unwrap_or("session");
-    styled_modal(ctx, &format!("Session · {name}"), 42)
+    let offline = ctx.state.current().connection == crate::state::ConnectionState::Unreachable;
+    let mut modal = styled_modal(ctx, &format!("Session · {name}"), 42)
         .auto_focus(false)
-        .dismiss_on_escape(false)
-        .child(
+        .dismiss_on_escape(false);
+    if offline {
+        let actions = vec![
+            OverlayAction::new("enter", "reconnect", Msg::RetrySessionReconnect, true),
+            OverlayAction::new(
+                "esc",
+                "sessions",
+                Msg::RunAction(Action::OpenSessionPicker),
+                true,
+            ),
+        ];
+        modal = modal.child(
+            VStack::new()
+                .child(Text::new("offline").style(Style::new().fg(ctx.state.theme.status.warning)))
+                .child(overlay_hints(&ctx.state.theme, &actions)),
+        );
+    } else {
+        modal = modal.child(
             Spinner::new()
                 .spinner_style(SpinnerStyle::Dots)
                 .label("reconnecting")
                 .style(Style::new().fg(ctx.state.theme.status.warning))
                 .label_style(fg_only(&ctx.state.theme.primary)),
-        )
-        .into()
+        );
+    }
+    modal.into()
 }
 
 /// The footer hint row only advertises keys that would actually act on the current state, so a

@@ -4,7 +4,7 @@ use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use tui_lipan::prelude::*;
 
@@ -27,6 +27,13 @@ const MAX_INTERLEAVED_PANE_BYTES: usize = 64 * 1024;
 /// before giving up on it. Reaching this means the socket is wedged, not that the frame is slow: a
 /// local write is microseconds.
 const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+/// Inbound silence after which the client treats the link as dropped. Matches
+/// `session::server::DEFAULT_HEARTBEAT_TIMEOUT` so both ends agree. Measured with wall-clock time
+/// so a suspend/resume that `Instant` (CLOCK_MONOTONIC) does not observe still expires the link.
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Read-poll interval so a silent socket or SSH pipe wakes the reader to check the watchdog.
+/// Also the attach-handshake read deadline.
+const HEARTBEAT_POLL: Duration = Duration::from_secs(2);
 
 /// One-shot "the shutdown request is on the wire" signal, raised by the writer thread.
 ///
@@ -277,7 +284,7 @@ impl SessionClient {
         let server_pid = stream.peer_pid();
         let piped_buffer = stream.piped_buffer_stats_handle();
         let mut reader = stream.try_clone()?;
-        reader.set_read_timeout(Some(Duration::from_secs(2)))?;
+        reader.set_read_timeout(Some(HEARTBEAT_POLL))?;
         protocol::write_frame(
             &mut stream,
             &protocol::attach_message(
@@ -288,7 +295,9 @@ impl SessionClient {
             ),
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut reader)?;
-        reader.set_read_timeout(None)?;
+        // Keep the poll timeout after the handshake. A silent transport — sleep, a lost network,
+        // or a half-open SSH pipe — never delivers EOF, so the reader has to wake on its own and
+        // let the inbound watchdog expire the link.
         #[cfg(windows)]
         // A pending synchronous ReadFile on a duplicated named-pipe handle can hold up WriteFile on
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
@@ -373,6 +382,7 @@ impl SessionClient {
                 Some(&reader_metrics_request_pending),
                 metrics_enabled,
                 Some(&reader_shutdown_signal),
+                HEARTBEAT_TIMEOUT,
             );
             reader_outbound.close();
         });
@@ -961,6 +971,16 @@ fn handle_transport_frame(
     TransportFrameDisposition::Forward
 }
 
+/// Whether inbound silence has lasted long enough to treat the transport as dead.
+///
+/// Uses wall-clock time so a machine that slept for hours expires on the first poll after wake,
+/// instead of waiting another heartbeat budget of `Instant` time that did not run during suspend.
+/// A clock step backwards is ignored rather than firing immediately.
+fn inbound_silence_expired(last_activity: SystemTime, timeout: Duration, now: SystemTime) -> bool {
+    now.duration_since(last_activity)
+        .is_ok_and(|elapsed| elapsed >= timeout)
+}
+
 fn forward_inbound<R: std::io::Read>(
     reader: &mut R,
     inbound: &InboundTarget,
@@ -969,16 +989,26 @@ fn forward_inbound<R: std::io::Read>(
     metrics_request_pending: Option<&Arc<AtomicBool>>,
     request_metrics_on_heartbeat: bool,
     shutdown_signal: Option<&Arc<AtomicBool>>,
+    heartbeat_timeout: Duration,
 ) {
     let mut decoder = protocol::FrameDecoder::default();
+    let mut last_activity = SystemTime::now();
     'read: loop {
         if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
             break;
         }
         let would_block = match decoder.read_from_status(reader) {
             Ok(protocol::FrameReadStatus::Eof) => break,
-            Ok(protocol::FrameReadStatus::Read(_)) => false,
-            Ok(protocol::FrameReadStatus::WouldBlock) => true,
+            Ok(protocol::FrameReadStatus::Read(_)) => {
+                last_activity = SystemTime::now();
+                false
+            }
+            Ok(protocol::FrameReadStatus::WouldBlock) => {
+                if inbound_silence_expired(last_activity, heartbeat_timeout, SystemTime::now()) {
+                    break;
+                }
+                true
+            }
             Err(_) => break,
         };
         loop {
@@ -1072,6 +1102,7 @@ mod tests {
             None,
             false,
             None,
+            HEARTBEAT_TIMEOUT,
         );
         assert_eq!(
             inbound_rx
@@ -1121,11 +1152,65 @@ mod tests {
             None,
             false,
             None,
+            HEARTBEAT_TIMEOUT,
         );
 
         assert_eq!(
             outbound.try_pop().unwrap(),
             ClientOutbound::Control(ClientMessage::Pong { seq: 42 })
+        );
+        assert!(inbound_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn inbound_silence_uses_wall_clock_so_a_sleep_expires_the_link() {
+        let timeout = Duration::from_secs(15);
+        let last = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        assert!(inbound_silence_expired(last, timeout, last + timeout,));
+        assert!(!inbound_silence_expired(
+            last,
+            timeout,
+            last + timeout - Duration::from_secs(1),
+        ));
+        // A suspend that jumps the wall clock by hours must count, not wait another 15s awake.
+        assert!(inbound_silence_expired(
+            last,
+            timeout,
+            last + Duration::from_secs(2 * 60 * 60),
+        ));
+        // NTP/clock stepped backwards: do not treat as expired.
+        assert!(!inbound_silence_expired(
+            last + Duration::from_secs(60),
+            timeout,
+            last,
+        ));
+    }
+
+    struct SilentReader;
+
+    impl std::io::Read for SilentReader {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::TimedOut, "silent"))
+        }
+    }
+
+    #[test]
+    fn inbound_silence_ends_the_reader() {
+        let (inbound_tx, inbound_rx) = mpsc::channel();
+        let started = std::time::Instant::now();
+        forward_inbound(
+            &mut SilentReader,
+            &InboundTarget::Channel(inbound_tx),
+            None,
+            None,
+            None,
+            false,
+            None,
+            Duration::from_millis(40),
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "watchdog must not wait for a later EOF"
         );
         assert!(inbound_rx.try_recv().is_err());
     }

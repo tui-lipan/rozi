@@ -282,8 +282,9 @@ fn attach_session_client_with_profile(
 /// How long the remote attach path keeps retrying transient connect failures before giving up. A
 /// remote link needs to ride out suspend, Wi-Fi flap, and VPN blips rather than dying on the first
 /// failed connect (the disconnect handler re-drives this whole path on an established link that
-/// later drops, so this deadline governs the connect phase only).
-const REMOTE_RECONNECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+/// later drops, so this deadline governs the connect phase only). Two minutes covers a typical
+/// wake-then-VPN sequence; a host that is still down after that stays offline in place.
+const REMOTE_RECONNECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 const REMOTE_RECONNECT_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 const REMOTE_RECONNECT_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(4);
 

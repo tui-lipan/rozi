@@ -13,6 +13,10 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "src/bin/rozi-launcher.rs"
+      - ".opencode/commands/changelog.md"
+      - ".opencode/release-notes.json"
+      - "scripts/release_notes.py"
+      - "scripts/tests/test_release_notes.py"
   workflow_dispatch:
 
 # Both tui-lipan and relswap come from crates.io, so Cargo.lock pins the exact engine each signed
@@ -43,6 +47,72 @@ env:
   MANIFEST_LIFETIME_DAYS: "365"
 
 jobs:
+  release_notes:
+    name: generate release notes
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The deterministic range starts at a prior release tag, so a shallow checkout is not
+          # enough. The script resolves both annotated tags to commits and proves ancestry. Do not
+          # leave the workflow token in git config when read-only source access is offered below.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Install pinned OpenCode CLI
+        run: npm install --global opencode-ai@1.18.31
+
+      - name: Prepare exact release range
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/release_notes.py prepare \
+            --repository "$GITHUB_REPOSITORY" \
+            --to-tag "$GITHUB_REF_NAME" \
+            --expected-to-sha "$GITHUB_SHA" \
+            --input release-notes-input.md \
+            --metadata release-notes-range.json
+
+      # OpenCode receives no GitHub, signing, or publication token. Its dedicated config permits
+      # reading source, `git show`, and writing release-notes.md; every other operation is denied.
+      - name: Inspect diffs and write user-facing notes
+        env:
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          OPENCODE_CONFIG: ${{ github.workspace }}/.opencode/release-notes.json
+          OPENCODE_DISABLE_AUTOUPDATE: "true"
+        run: |
+          set -euo pipefail
+          test -n "$GOOGLE_GENERATIVE_AI_API_KEY"
+          opencode run --variant low --command changelog
+          test -s release-notes.md
+
+      - name: Validate and freeze generated Markdown
+        run: |
+          python3 scripts/release_notes.py validate \
+            --input release-notes.md \
+            --output release-notes.md
+
+      - name: Upload immutable release-note input and result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes
+          path: |
+            release-notes.md
+            release-notes-input.md
+            release-notes-range.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 14
+
   # Every platform this release ships a binary for, not just the one that is cheapest to run.
   #
   # This gate used to be Ubuntu alone, while `package` below built and signed archives for five
@@ -82,6 +152,9 @@ jobs:
       - name: Check Unix installer syntax
         if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         run: bash -n install.sh
+      - name: Test release-note range and format policy
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: python3 -m unittest scripts.tests.test_release_notes
 
   package:
     name: package ${{ matrix.target }}
@@ -401,8 +474,11 @@ jobs:
 
   sign_release:
     name: sign verified release
-    needs: [test, package]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [test, package, release_notes]
+    if: >-
+      github.event_name == 'push'
+      && startsWith(github.ref, 'refs/tags/v')
+      && needs.release_notes.result == 'success'
     runs-on: ubuntu-latest
     environment:
       name: release
@@ -596,6 +672,12 @@ jobs:
           name: verified-release-bundle
           path: dist
 
+      - name: Download generated release notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notes
+          path: release-notes
+
       # A second, independent way to answer "did this archive come from this repository's release
       # workflow?" - one that does not go through rozi's own signing key at all.
       #
@@ -639,6 +721,7 @@ jobs:
               --clobber
             gh release edit "v$version" \
               --repo "$GITHUB_REPOSITORY" \
+              --notes-file release-notes/release-notes.md \
               --draft=false \
               --prerelease=false \
               --latest
@@ -652,7 +735,7 @@ jobs:
               dist/*.zip \
               dist/*.sha256 \
               --verify-tag \
-              --generate-notes
+              --notes-file release-notes/release-notes.md
           fi
 
   # Deliberately last, and deliberately after `publish`. A crates.io version can only be yanked,

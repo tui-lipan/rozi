@@ -12,6 +12,8 @@ A release maintainer needs:
 - Rust 1.90 or newer with Cargo, rustfmt, and Clippy;
 - `cargo-audit` and `cargo-deny`;
 - GitHub CLI access for post-publication inspection;
+- a Google Gemini API key stored as `GOOGLE_GENERATIVE_AI_API_KEY` in the protected
+  `release` environment;
 - access to the protected `ROZI_RELEASE_PRIVATE_KEY` environment secret;
 - a crates.io API token stored as `CARGO_REGISTRY_TOKEN` in the same environment.
 
@@ -42,6 +44,9 @@ Key generation and rotation are separate from a normal release, and have their o
 Never commit a private key.
 
 ## Prepare the release
+
+GitHub Releases is the canonical changelog, including the migrated history through 0.0.22. The
+repository intentionally has no `CHANGELOG.md`; do not recreate one or add per-PR note fragments.
 
 1. Choose a semantic version and update `package.version` in `Cargo.toml`.
 2. Let Cargo update `Cargo.lock` and confirm both files describe the same dependency graph.
@@ -95,20 +100,35 @@ an empty stable release before the signing workflow completes.
 
 The workflow performs these gates:
 
-1. `cargo test --locked` and `cargo check --locked --all-targets` run on Linux.
-2. Release archives build for Linux x86_64 and arm64, macOS x86_64 and arm64, and Windows x86_64.
+1. In parallel with testing, the release-note job resolves the newest published, non-draft
+   `v`-tag other than the tag being built, resolves both tags to exact commits, and proves the
+   previous release is an ancestor. It supplies every candidate commit's metadata and changed paths
+   to the reviewed OpenCode command in `.opencode/commands/changelog.md`.
+   `google/gemini-3.8-flash` then inspects each candidate's actual `git show --stat` and `git show`
+   output before writing an entry. Obvious isolated CI, test, documentation, and release-metadata
+   commits are removed conservatively; all other commits remain evidence even when their prefix
+   says `refactor`, `perf`, or `chore`.
+2. The generated Markdown is rejected unless it contains non-empty `Added`, `Changed`, `Fixed`,
+   `Compatibility`, or `Security` sections in that order. The exact accepted bytes, range metadata,
+   and structured agent input are uploaded once as the `release-notes` workflow artifact. A
+   generation, permission, model, or validation failure stops the release; there is no fallback
+   note style.
+3. `cargo test --locked` and `cargo check --locked --all-targets` run on Linux.
+4. Release archives build for Linux x86_64 and arm64, macOS x86_64 and arm64, and Windows x86_64.
    Linux payloads build in pinned manylinux 2.28 containers, and the workflow rejects binaries whose
    ELF version requirements exceed `GLIBC_2.28`.
-3. Each payload reports the tag version and prints help.
-4. Each final archive is extracted and smoke-tested. Windows also tests launcher version selection,
+5. Each payload reports the tag version and prints help.
+6. Each final archive is extracted and smoke-tested. Windows also tests launcher version selection,
    argument and environment forwarding, working-directory forwarding, and exit-code propagation.
-5. The signing job confirms the tag version matches `Cargo.toml`, checks every expected archive,
+7. The signing job starts only after note generation and packaging succeed. It confirms the tag
+   version matches `Cargo.toml`, checks every expected archive,
    and runs `relswap trust-check` against the committed trust store before reading the private key.
-6. The workflow generates the manifest and checksums from final archive bytes, signs the exact
+8. The workflow generates the manifest and checksums from final archive bytes, signs the exact
    manifest bytes, and verifies every archive against `release-keys.json`.
-7. The GitHub publication job receives only the verified bundle. It has no signing secret. It
-   attests each final archive's provenance before uploading.
-8. After the signed GitHub release exists, a final protected job rechecks the tag and runs
+9. The GitHub publication job receives the verified bundle and the frozen release-note artifact.
+   It has no signing secret. It attests each final archive's provenance, publishes the exact
+   generated Markdown as the release body, and uploads the assets.
+10. After the signed GitHub release exists, a final protected job rechecks the tag and runs
    `cargo publish --locked` with `CARGO_REGISTRY_TOKEN`.
 
 The `release` environment can require maintainer approval before signing. Review the tag, commit,
@@ -162,14 +182,18 @@ before executing anything, which is the one thing the bootstrap installers canno
 themselves. Users verify with `gh attestation verify <archive> --repo tui-lipan/rozi`. Nightly
 archives carry the same attestation; they have no manifest and no signature.
 
-Package and verified-bundle workflow artifacts are retained for 14 days. The published GitHub
-release is the durable public copy.
+Package, verified-bundle, and release-note workflow artifacts are retained for 14 days. The
+release-note artifact contains `release-notes.md`, `release-notes-range.json`, and
+`release-notes-input.md`, so the accepted output and its exact inputs remain inspectable. The
+published GitHub release is the durable public changelog and asset copy.
 
 ## Publication
 
-After signing succeeds, the GitHub publication job runs `gh release create` with `--verify-tag`
-and generated release notes. It uploads the manifest, signature envelope, compatibility document,
-archives, and checksums.
+After signing succeeds, the GitHub publication job downloads the existing `release-notes` artifact
+and passes its `release-notes.md` to `gh release create --notes-file` with `--verify-tag`. If a
+website-created prerelease already exists, promotion replaces its body from the same file. The
+publication job never invokes the agent or regenerates notes. It uploads the manifest, signature
+envelope, compatibility document, archives, and checksums.
 
 The workflow publishes the crate to crates.io only after the signed GitHub release succeeds.
 crates.io versions cannot be replaced or deleted. A publication failure leaves the GitHub release
@@ -346,8 +370,11 @@ second full matrix for no new fact.
 ## Failed release and rollback response
 
 If a workflow fails before publication, inspect the failed job and keep the tag fixed while
-rerunning unchanged jobs. If source or packaged bytes must change, make a new release commit and
-use a new version. Never replace signed assets under an existing version.
+rerunning unchanged jobs. Release-note generation is deliberately release-gating: fix the Google
+API key, quota, model, or transient API failure and rerun the job rather than writing notes by hand
+or falling back to GitHub-generated notes. If source, note policy, generator code, or packaged
+bytes must change, make a new release commit and use a new version. Never replace signed assets
+under an existing version.
 
 If a published release is defective:
 

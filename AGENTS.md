@@ -16,6 +16,8 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
 - Do not run Cargo commands concurrently in this workspace; they only contend on build locks.
 - New OS-specific behavior belongs behind `src/platform/`. Existing exceptions are not precedent.
 - Keep user-facing docs in sync with behavior, CLI, configuration, and workflow changes.
+- GitHub Releases is the only changelog. Do not recreate `CHANGELOG.md`; tagged releases generate
+  their canonical notes under `.opencode/commands/changelog.md`.
 - Prefer a clean breaking change over aliases or compatibility shims unless the user asks for
   compatibility or a protocol test intentionally covers version skew.
 - The repository is MPL-2.0. Contributions require a DCO sign-off.

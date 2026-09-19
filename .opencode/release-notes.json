@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "enabled_providers": ["google"],
+  "provider": {
+    "google": {
+      "options": {
+        "apiKey": "{env:GOOGLE_GENERATIVE_AI_API_KEY}"
+      }
+    }
+  },
+  "permission": {
+    "*": "deny",
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "bash": {
+      "*": "deny",
+      "git show *": "allow"
+    },
+    "edit": {
+      "*": "deny",
+      "release-notes.md": "allow"
+    }
+  }
+}

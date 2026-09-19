@@ -1,0 +1,28 @@
+name: Security audit
+
+# cargo-deny checks the dependency graph on every CI run. This independent schedule catches a
+# newly published RustSec advisory even when Cargo.lock has not changed, without making every pull
+# request compile cargo-audit.
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
+        with:
+          toolchain: "1.90"
+      - name: Audit dependencies
+        run: cargo install cargo-audit --locked --version 0.22.2 && cargo audit

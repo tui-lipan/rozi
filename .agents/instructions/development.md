@@ -57,8 +57,11 @@ cargo build --release --features windows-launcher --bin rozi-launcher
 
 CI is defined in `.github/workflows/ci.yml`. Dependency-resolving build, check, Clippy, and test
 commands use `--locked`; manifest and lockfile sources must agree. CI runs on Linux, macOS, and
-Windows, on every pull request, every push to master, and every `v*` tag. The release matrix lives in
-`.github/workflows/release.yml`.
+Windows, on every pull request, every push to master, and every `v*` tag. Pull requests use
+`cargo check --release`; master and tags perform optimized code generation. The release matrix
+lives in `.github/workflows/release.yml` and runs on tags, manual dispatches, and pull requests that
+change release infrastructure. `.github/workflows/security.yml` runs `cargo audit` weekly; the
+regular CI's cargo-deny job checks RustSec advisories on every change.
 
 Code changes belong on a short-lived branch merged through a pull request; `master` is the latest
 CI-passed code and the base a release is tagged from. `CONTRIBUTING.md` has the branch conventions.

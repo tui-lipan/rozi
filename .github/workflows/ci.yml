@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: ${{ matrix.os }}
@@ -33,10 +37,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Check formatting
         run: cargo fmt --all -- --check
-      # `--features windows-launcher` so the gated Windows launcher binary is still type-checked and
-      # linted here. Only the release build below leaves it out, which is the point of the gate.
-      - name: Check
-        run: cargo check --locked --all-targets --features windows-launcher
+      # `--features windows-launcher` so the gated Windows launcher binary is still type-checked
+      # while Clippy lints every target. The release-profile step below leaves it out, which is the
+      # point of the gate.
       - name: Lint
         run: cargo clippy --locked --all-targets --features windows-launcher -- -D warnings
       # This includes extension argv/path probes and service child/grandchild termination tests;
@@ -55,7 +58,13 @@ jobs:
       - name: Test (including native process integration)
         if: ${{ !cancelled() }}
         run: cargo test --locked --no-fail-fast
+      # Pull requests still check release-only cfg and profile behavior without paying for
+      # optimized code generation. Master and tags produce the real release binary.
+      - name: Check release profile
+        if: github.event_name == 'pull_request'
+        run: cargo check --locked --release
       - name: Release build
+        if: github.event_name != 'pull_request'
         run: cargo build --locked --release
 
   # NetBSD ships no rozi binary and nothing in the matrix above runs there, but it is the one
@@ -165,20 +174,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test the OpenCode status plugin
         run: node --test integrations/opencode/*.test.mjs
-
-  audit:
-    name: audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
-        with:
-          toolchain: "1.90"
-      # RustSec advisories are a property of the dependency graph, not of the host, so auditing on
-      # all three platforms would report the same findings three times and pay for `cargo install`
-      # three times over.
-      - name: Audit dependencies
-        run: cargo install cargo-audit --locked --version 0.22.2 && cargo audit
 
   licenses:
     name: licenses and advisories

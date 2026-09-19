@@ -231,7 +231,7 @@ fn file_tree_messages_round_trip() {
             },
             // A link rides its target along: the client cannot read it from the other host.
             WireDirEntry {
-                name: "CLAUDE.md".into(),
+                name: "guide-link.md".into(),
                 is_dir: false,
                 is_symlink: true,
                 symlink_target: Some("AGENTS.md".into()),

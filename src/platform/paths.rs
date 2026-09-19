@@ -15,7 +15,7 @@
 //!
 //! The Windows column is written per the plan and believed correct against documented API
 //! contracts, but is **unverified**: this environment has no Windows target to run it on. See
-//! `AGENTS.md`/`CLAUDE.md` for the cross-platform plan's verification constraints.
+//! `AGENTS.md` for the cross-platform plan's verification constraints.
 
 use std::fs;
 use std::io;

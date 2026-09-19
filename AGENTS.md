@@ -54,7 +54,3 @@ does not repeat, and violating one is usually invisible until review or CI.
 | Commits, history repair, push, or release work | [.agents/instructions/git-contributions.md](.agents/instructions/git-contributions.md) |
 | Agent detection rules or screen fixtures | [.agents/skills/agent-screens/SKILL.md](.agents/skills/agent-screens/SKILL.md) |
 | Extension development | [.agents/skills/rozi-extension/SKILL.md](.agents/skills/rozi-extension/SKILL.md) |
-
-## Repository notes
-
-- `CLAUDE.md` is a symlink to this file. Edit `AGENTS.md`; do not replace the symlink.

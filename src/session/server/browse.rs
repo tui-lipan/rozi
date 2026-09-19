@@ -367,7 +367,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("AGENTS.md"), b"guide").unwrap();
-        std::os::unix::fs::symlink("AGENTS.md", dir.join("CLAUDE.md")).unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", dir.join("guide-link.md")).unwrap();
 
         let (entries, error) = list_directory(&dir.to_string_lossy(), false);
         assert!(error.is_none());
@@ -378,7 +378,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} listed"))
         };
 
-        let link = entry_named("CLAUDE.md");
+        let link = entry_named("guide-link.md");
         assert!(link.is_symlink);
         assert_eq!(link.symlink_target.as_deref(), Some("AGENTS.md"));
         assert_eq!(

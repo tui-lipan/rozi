@@ -52,7 +52,10 @@ pub(super) fn remember(
     validate_remote_executable_token(&path)?;
     let remote = ResolvedRemote::resolve(target, config);
     if let Ok(mut cache) = CACHE.lock() {
-        cache.retain(|entry| entry.remote != remote && entry.checked.elapsed() < MAX_AGE);
+        // Expiry only controls whether discovery may reuse a hint. Reconnect deliberately reads
+        // stale hints, so refreshing one destination must not discard another destination's last
+        // known executable. The roster remains bounded below.
+        cache.retain(|entry| entry.remote != remote);
         if cache.len() >= 128 {
             cache.remove(0);
         }
@@ -115,6 +118,7 @@ mod tests {
     #[test]
     fn reconnect_keeps_a_stale_cached_binary() {
         let target = RemoteTarget::Alias("stale-binary-cache-fixture".into());
+        let other_target = RemoteTarget::Alias("other-binary-cache-fixture".into());
         let config = RemoteConfig::default();
         remember(&target, &config, "/home/u/.local/bin/rozi".into()).unwrap();
         expire(&target, &config);
@@ -122,11 +126,13 @@ mod tests {
             cached(&target, &config).is_none(),
             "fresh lookups must still expire"
         );
+        remember(&other_target, &config, "/opt/rozi/bin/rozi".into()).unwrap();
         assert_eq!(
             last_known(&target, &config).as_deref(),
             Some("/home/u/.local/bin/rozi")
         );
         invalidate(&target, &config);
+        invalidate(&other_target, &config);
         assert!(last_known(&target, &config).is_none());
     }
 

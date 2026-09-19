@@ -14,6 +14,13 @@ from typing import Any, Callable, Sequence
 
 
 SECTIONS = ("Added", "Changed", "Fixed", "Compatibility", "Security")
+FORBIDDEN_PUNCTUATION = {
+    "—": "em dash",
+    "“": "curly double quote",
+    "”": "curly double quote",
+    "‘": "curly single quote",
+    "’": "curly single quote",
+}
 RELEASE_METADATA_PATHS = {
     "Cargo.lock",
     "Cargo.toml",
@@ -236,6 +243,9 @@ def normalize_notes(raw: str) -> str:
         raise ReleaseNotesError("generated release notes exceed 32 KiB")
     if "```" in notes:
         raise ReleaseNotesError("generated release notes contain a code fence")
+    for character, label in FORBIDDEN_PUNCTUATION.items():
+        if character in notes:
+            raise ReleaseNotesError(f"generated release notes contain a {label}")
     return notes
 
 

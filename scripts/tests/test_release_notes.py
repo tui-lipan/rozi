@@ -114,6 +114,12 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(ReleaseNotesError):
             validate_notes("## Fixed\n")
 
+    def test_rejects_ai_tell_punctuation(self):
+        with self.assertRaises(ReleaseNotesError):
+            validate_notes("## Fixed\n\n- Rozi reconnects — without replacing the session.\n")
+        with self.assertRaises(ReleaseNotesError):
+            validate_notes('## Changed\n\n- Rozi calls this mode “offline”.\n')
+
 
 if __name__ == "__main__":
     unittest.main()

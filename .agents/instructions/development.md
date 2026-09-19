@@ -64,11 +64,11 @@ change release infrastructure. `.github/workflows/security.yml` runs `cargo audi
 regular CI's cargo-deny job checks RustSec advisories on every change.
 
 Tagged releases resolve the previous published `v` release and exact tagged commit in
-`scripts/release_notes.py`, then OpenCode runs `.opencode/commands/changelog.md` with
-`google/gemini-3.8-flash` and inspects each candidate's real diff. The workflow validates the fixed
-Markdown section format and publishes the resulting artifact unchanged. Note generation gates
-signing and has no fallback. GitHub Releases is the only changelog; the repository intentionally
-has no `CHANGELOG.md`.
+`scripts/release_notes.py`, then Rosie, the OpenCode release-note agent, runs
+`.opencode/commands/changelog.md` with `google/gemini-3.8-flash` and inspects each candidate's real
+diff. The workflow validates the fixed Markdown section format and publishes the resulting artifact
+unchanged. Note generation gates signing and has no fallback. GitHub Releases is the only
+changelog; the repository intentionally has no `CHANGELOG.md`.
 
 Code changes belong on a short-lived branch merged through a pull request; `master` is the latest
 CI-passed code and the base a release is tagged from. `CONTRIBUTING.md` has the branch conventions.

@@ -1755,8 +1755,18 @@ mod tests {
         });
 
         let (inbound_tx, _inbound_rx) = mpsc::channel();
-        let (_client, attached) =
-            SessionClient::connect_attached(&endpoint, "test", inbound_tx, false).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let (_client, attached) = loop {
+            match SessionClient::connect_attached(&endpoint, "test", inbound_tx.clone(), false) {
+                Ok(attached) => break attached,
+                Err(err)
+                    if err.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(err) => panic!("connect attached failed: {err}"),
+            }
+        };
         assert!(matches!(attached, ServerMessage::Attached { .. }));
         server.join().unwrap();
         endpoint.remove_stale();

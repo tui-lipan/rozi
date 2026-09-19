@@ -120,6 +120,10 @@ impl RemoteAttachMode {
     fn recover_existing(self) -> bool {
         self == Self::Recover
     }
+
+    fn create_only(self, requested: bool) -> bool {
+        requested || self == Self::Recreate
+    }
 }
 
 /// In-place recovery and recreation both get deadline/cancellation handling. Recovery additionally
@@ -139,7 +143,7 @@ pub(crate) fn attach_remote_session_client(
         epoch,
         name,
         read_only,
-        create_only,
+        mode.create_only(create_only),
         remote,
         remote_config,
         mode.reconnect(),
@@ -548,7 +552,7 @@ fn try_attach_remote(
                 drop(stream);
                 return AttachRemoteOutcome::Failed("reconnect cancelled".to_string());
             }
-            if create_only && !preamble.server_started {
+            if create_only_rejects_existing(create_only, preamble.server_started) {
                 drop(stream);
                 return AttachRemoteOutcome::Fatal(format!(
                     "Session `{name}` is already running on the remote host"
@@ -628,6 +632,10 @@ fn reconnect_found_original_missing(
     session_missing: bool,
 ) -> bool {
     recover_existing && (server_started || session_missing)
+}
+
+fn create_only_rejects_existing(create_only: bool, server_started: bool) -> bool {
+    create_only && !server_started
 }
 
 fn should_autostart_session(err: &std::io::Error) -> bool {
@@ -888,8 +896,14 @@ mod tests {
     fn explicit_recreation_is_bounded_and_cancellable_without_requiring_the_original() {
         assert!(RemoteAttachMode::Recreate.reconnect());
         assert!(!RemoteAttachMode::Recreate.recover_existing());
+        assert!(RemoteAttachMode::Recreate.create_only(false));
+        assert!(create_only_rejects_existing(
+            RemoteAttachMode::Recreate.create_only(false),
+            false
+        ));
         assert!(RemoteAttachMode::Recover.reconnect());
         assert!(RemoteAttachMode::Recover.recover_existing());
+        assert!(!RemoteAttachMode::Recover.create_only(false));
         assert!(!RemoteAttachMode::Initial.reconnect());
     }
 

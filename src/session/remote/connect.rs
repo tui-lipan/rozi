@@ -3,13 +3,15 @@
 use std::io::{self, Read};
 use std::process::{ChildStderr, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::config::RemoteConfig;
 use crate::platform::command::program_exists;
 use crate::platform::ipc::{self, IpcConnection};
 
-use super::bootstrap::{append_ssh_destination, ssh_base_command};
+use super::bootstrap::{
+    append_ssh_destination, ssh_base_command, ssh_base_command_with_connect_timeout,
+};
 use super::preamble::{self, RemotePreamble};
 use super::{
     RemoteTarget, ResolvedRemote, validate_remote_executable_token, validate_remote_target,
@@ -59,6 +61,17 @@ pub fn connect_remote(
     session: &str,
     config: &RemoteConfig,
 ) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
+    connect_remote_within(target, session, config, None)
+}
+
+/// Like [`connect_remote`], but cap SSH `ConnectTimeout` and the preamble read to `budget` so a
+/// reconnect attempt cannot outrun the advertised retry window.
+pub(crate) fn connect_remote_within(
+    target: &RemoteTarget,
+    session: &str,
+    config: &RemoteConfig,
+    budget: Option<Duration>,
+) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
     if !crate::session::discovery::valid_attach_target(session) {
         return Err(RemoteConnectError::Message(
             "invalid session name".to_string(),
@@ -80,9 +93,23 @@ pub fn connect_remote(
     .map_err(RemoteConnectError::Message)?;
     validate_remote_executable_token(&remote_bin).map_err(RemoteConnectError::Message)?;
 
+    if budget.is_some_and(|remaining| remaining.is_zero()) {
+        return Err(RemoteConnectError::Message(
+            "reconnect deadline elapsed".to_string(),
+        ));
+    }
+
+    let attempt_started = Instant::now();
     // Keepalive comes from `ssh_base_command` now: with connection multiplexing the master decides
     // it for every client riding on it, so it has to be set wherever the master might be opened.
-    let mut command = ssh_base_command(&resolved, config);
+    let mut command = match budget {
+        Some(remaining) => ssh_base_command_with_connect_timeout(
+            &resolved,
+            config,
+            capped_connect_timeout_secs(config, remaining),
+        ),
+        None => ssh_base_command(&resolved, config),
+    };
     append_ssh_destination(&mut command, &resolved);
     command.arg(&remote_bin);
     command.arg("--remote-serve");
@@ -99,7 +126,13 @@ pub fn connect_remote(
     let stderr_tail = child.stderr.take().map(spawn_stderr_collector);
 
     let mut conn = ipc::connection_from_child(child)?;
-    let _ = conn.set_read_timeout(Some(preamble_timeout(config)));
+    let preamble_wait = match budget {
+        Some(remaining) => {
+            capped_preamble_timeout(config, remaining.saturating_sub(attempt_started.elapsed()))
+        }
+        None => preamble_timeout(config),
+    };
+    let _ = conn.set_read_timeout(Some(preamble_wait));
     let preamble = match preamble::read_preamble(&mut conn) {
         Ok(preamble) => preamble,
         Err(err) => {
@@ -145,15 +178,36 @@ const INTERACTIVE_AUTH_ALLOWANCE: Duration = Duration::from_secs(180);
 
 /// How long to wait for the proxy's preamble.
 fn preamble_timeout(config: &RemoteConfig) -> Duration {
+    preamble_timeout_for(config, super::askpass::may_prompt())
+}
+
+fn preamble_timeout_for(config: &RemoteConfig, interactive: bool) -> Duration {
     let base = if config.connection_timeout_secs > 0 {
         Duration::from_secs(config.connection_timeout_secs.max(1))
     } else {
         DEFAULT_PREAMBLE_TIMEOUT
     };
-    if super::askpass::may_prompt() && !config.batch_mode {
+    if interactive && !config.batch_mode {
         base + INTERACTIVE_AUTH_ALLOWANCE
     } else {
         base
+    }
+}
+
+fn capped_connect_timeout_secs(config: &RemoteConfig, remaining: Duration) -> u64 {
+    let remaining_secs = remaining.as_secs().max(1);
+    if config.connection_timeout_secs > 0 {
+        config.connection_timeout_secs.min(remaining_secs)
+    } else {
+        remaining_secs
+    }
+}
+
+fn capped_preamble_timeout(config: &RemoteConfig, remaining: Duration) -> Duration {
+    if remaining.is_zero() {
+        Duration::from_millis(1)
+    } else {
+        preamble_timeout(config).min(remaining)
     }
 }
 
@@ -240,5 +294,46 @@ mod tests {
         let error = kill_remote_session(&target, "dev", &config)
             .expect_err("hostile executable must be rejected before ssh");
         assert!(error.contains("shell metacharacters"), "{error}");
+    }
+
+    #[test]
+    fn reconnect_budget_caps_ssh_connect_and_preamble_timeouts() {
+        let config = RemoteConfig::default();
+        assert_eq!(
+            capped_connect_timeout_secs(&config, Duration::from_secs(120)),
+            15
+        );
+        assert_eq!(
+            capped_connect_timeout_secs(&config, Duration::from_secs(5)),
+            5
+        );
+        assert_eq!(
+            capped_preamble_timeout(&config, Duration::from_secs(120)),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            capped_preamble_timeout(&config, Duration::from_secs(5)),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            capped_preamble_timeout(&config, Duration::ZERO),
+            Duration::from_millis(1)
+        );
+
+        let interactive = RemoteConfig {
+            batch_mode: false,
+            ..RemoteConfig::default()
+        };
+        let remaining = Duration::from_secs(120);
+        assert_eq!(
+            preamble_timeout_for(&interactive, true),
+            Duration::from_secs(15) + INTERACTIVE_AUTH_ALLOWANCE
+        );
+        let requested = preamble_timeout_for(&interactive, true);
+        assert_eq!(
+            requested.min(remaining),
+            remaining,
+            "interactive auth allowance must not outrun the reconnect deadline"
+        );
     }
 }

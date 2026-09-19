@@ -991,6 +991,16 @@ fn verify_sha256(archive: &Path, sha_file: &Path) -> Result<(), String> {
 /// escaped even one of those invocations would land on the terminal the TUI is drawing on. See
 /// [`super::askpass`].
 pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command {
+    ssh_base_command_with_connect_timeout(resolved, config, config.connection_timeout_secs)
+}
+
+/// Like [`ssh_base_command`], but with an explicit `ConnectTimeout` so a reconnect attempt can
+/// spend only the remaining deadline rather than the configured default.
+pub(crate) fn ssh_base_command_with_connect_timeout(
+    resolved: &ResolvedRemote,
+    config: &RemoteConfig,
+    connection_timeout_secs: u64,
+) -> Command {
     let mut command = Command::new("ssh");
     command.arg("-T");
     super::askpass::configure(&mut command);
@@ -1013,10 +1023,10 @@ pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig)
     if config.batch_mode {
         command.arg("-o").arg("BatchMode=yes");
     }
-    if config.connection_timeout_secs > 0 {
+    if connection_timeout_secs > 0 {
         command
             .arg("-o")
-            .arg(format!("ConnectTimeout={}", config.connection_timeout_secs));
+            .arg(format!("ConnectTimeout={connection_timeout_secs}"));
     }
     if let Some(port) = resolved.port {
         command.arg("-p").arg(port.to_string());
@@ -1969,5 +1979,34 @@ protocol_max={beyond}
         assert!(!args.iter().any(|arg| arg == "-p"));
         assert!(args.iter().any(|arg| arg == "-i"));
         assert!(args.iter().any(|arg| arg == "UserKnownHostsFile=/tmp/kh"));
+    }
+
+    #[test]
+    fn reconnect_budget_can_tighten_ssh_connect_timeout() {
+        let resolved = ResolvedRemote {
+            alias: Some("workbox".into()),
+            host: "workbox".into(),
+            user: None,
+            port: None,
+            identity_file: None,
+            ssh_args: Vec::new(),
+            binary_path: None,
+        };
+        let config = RemoteConfig::default();
+        let args = |secs: u64| -> Vec<String> {
+            ssh_base_command_with_connect_timeout(&resolved, &config, secs)
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert!(
+            args(5).iter().any(|arg| arg == "ConnectTimeout=5"),
+            "remaining reconnect budget must reach ssh argv"
+        );
+        assert!(
+            args(config.connection_timeout_secs)
+                .iter()
+                .any(|arg| arg == "ConnectTimeout=15")
+        );
     }
 }

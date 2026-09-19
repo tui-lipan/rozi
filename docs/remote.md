@@ -241,9 +241,11 @@ Returning to it reuses its live terminal screens.
 
 If a retained SSH connection drops — including a half-open link after sleep, a lost network, or
 missed session heartbeats — Rozi shows the reconnecting overlay and retries in place for up to two
-minutes. If the host is still down, the session stays on screen as **offline**: `Enter` retries,
-`Esc` opens Sessions. The remote named server keeps running independently of the SSH connection.
-Temporary servers still follow their no-client recovery timer.
+minutes. `Esc` cancels that wait and opens Sessions. Reconnect never starts a replacement server
+when the original is gone; the session stays offline instead. If the host is still down after that
+window, the session stays on screen as **offline**: `Enter` retries, `Esc` opens Sessions. Named
+remote servers keep running independently of the SSH connection. Temporary servers still follow
+their no-client recovery timer.
 
 ## Connected-host monitoring
 

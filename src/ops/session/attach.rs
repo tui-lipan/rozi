@@ -165,25 +165,71 @@ pub(crate) fn apply_pending_background_closes(ctx: &mut Context<AppRoot>) {
     }
 }
 
-/// Keys the offline overlay advertises while a remote session has no live transport. `Enter`
-/// retries in place; `Esc` opens Sessions. Returns `None` when this is not that state, so callers
-/// keep routing the key as usual.
+/// Keys the reconnecting / offline overlay advertises while a remote session has no live
+/// transport. During automatic reconnect, `Esc` cancels the in-flight attempt, leaves the
+/// session offline, and opens Sessions. Once offline, `Enter` retries in place and `Esc` opens
+/// Sessions. Returns `None` when this is not that state, so callers keep routing the key as usual.
 pub(crate) fn handle_offline_session_key(
     ctx: &mut Context<AppRoot>,
     key: KeyEvent,
 ) -> Option<Update> {
-    if ctx.state.current().connection != crate::state::ConnectionState::Unreachable
-        || ctx.state.current().session_name.is_none()
-        || ctx.state.current().pending_session_attach.is_some()
-        || ctx.state.has_modal_overlay()
-        || !key.mods.is_empty()
-    {
+    if ctx.state.has_modal_overlay() || !key.mods.is_empty() {
         return None;
     }
-    match key.code {
-        KeyCode::Enter => Some(reconnect_current_session(ctx)),
-        KeyCode::Esc => Some(crate::ops::session::open_session_picker(ctx)),
+    ctx.state.current().session_name.as_ref()?;
+    match ctx.state.current().connection {
+        crate::state::ConnectionState::Unreachable
+            if ctx.state.current().pending_session_attach.is_none() =>
+        {
+            match key.code {
+                KeyCode::Enter => Some(reconnect_current_session(ctx)),
+                KeyCode::Esc => Some(crate::ops::session::open_session_picker(ctx)),
+                _ => None,
+            }
+        }
+        crate::state::ConnectionState::Reconnecting
+            if ctx
+                .state
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .is_some_and(|pending| pending.reconnect) =>
+        {
+            match key.code {
+                KeyCode::Esc => Some(abandon_session_reconnect(ctx)),
+                _ => None,
+            }
+        }
         _ => None,
+    }
+}
+
+/// Drop an in-flight reconnect so the overlay cannot trap the user. A new attachment epoch
+/// makes the pending SSH/preamble result stale; remote sessions stay on screen as offline, local
+/// ones leave the same way a failed reconnect does.
+pub(crate) fn abandon_session_reconnect(ctx: &mut Context<AppRoot>) -> Update {
+    let reconnecting = ctx.state.current().connection
+        == crate::state::ConnectionState::Reconnecting
+        && ctx
+            .state
+            .current()
+            .pending_session_attach
+            .as_ref()
+            .is_some_and(|pending| pending.reconnect);
+    if !reconnecting {
+        return Update::none();
+    }
+    let was_remote = ctx.state.current().remote_target.is_some();
+    let epoch = ctx.state.mint_attachment_id();
+    ctx.state.runtime_epoch = epoch;
+    ctx.state.current_mut().epoch = epoch;
+    ctx.state.current_mut().pending_session_attach = None;
+    ctx.state.commands_dirty = true;
+    if was_remote {
+        ctx.state.current_mut().connection = crate::state::ConnectionState::Unreachable;
+        crate::ops::session::open_session_picker(ctx)
+    } else {
+        land_on_surviving_session(ctx)
     }
 }
 

@@ -267,7 +267,8 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
 /// Progress chrome while an automatic reconnect preserves the panes underneath, or the offline
 /// prompt after that window ends on a remote host. Neither is dismissible with a bare click: the
 /// first is in-flight, the second is the only honest reading of a retained session whose host is
-/// gone. `Enter` retries from offline; `Esc` opens Sessions so the user can switch away.
+/// gone. `Esc` abandons an in-flight reconnect (and opens Sessions) so the overlay cannot trap
+/// the user for the whole retry window. From offline, `Enter` retries; `Esc` opens Sessions.
 pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
     let name = ctx
         .state
@@ -279,8 +280,8 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
     let mut modal = styled_modal(ctx, &format!("Session · {name}"), 42)
         .auto_focus(false)
         .dismiss_on_escape(false);
-    if offline {
-        let actions = vec![
+    let actions = if offline {
+        vec![
             OverlayAction::new("enter", "reconnect", Msg::RetrySessionReconnect, true),
             OverlayAction::new(
                 "esc",
@@ -288,7 +289,16 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
                 Msg::RunAction(Action::OpenSessionPicker),
                 true,
             ),
-        ];
+        ]
+    } else {
+        vec![OverlayAction::new(
+            "esc",
+            "sessions",
+            Msg::AbandonSessionReconnect,
+            true,
+        )]
+    };
+    if offline {
         modal = modal.child(
             VStack::new()
                 .child(Text::new("offline").style(Style::new().fg(ctx.state.theme.status.warning)))
@@ -296,11 +306,15 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
         );
     } else {
         modal = modal.child(
-            Spinner::new()
-                .spinner_style(SpinnerStyle::Dots)
-                .label("reconnecting")
-                .style(Style::new().fg(ctx.state.theme.status.warning))
-                .label_style(fg_only(&ctx.state.theme.primary)),
+            VStack::new()
+                .child(
+                    Spinner::new()
+                        .spinner_style(SpinnerStyle::Dots)
+                        .label("reconnecting")
+                        .style(Style::new().fg(ctx.state.theme.status.warning))
+                        .label_style(fg_only(&ctx.state.theme.primary)),
+                )
+                .child(overlay_hints(&ctx.state.theme, &actions)),
         );
     }
     modal.into()

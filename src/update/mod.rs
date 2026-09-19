@@ -505,6 +505,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
                 Update::none()
             }
         }
+        Msg::AbandonSessionReconnect => crate::ops::session::abandon_session_reconnect(ctx),
         Msg::DrainSessionFrames { epoch, mailbox } => {
             drain_session_frames(_app, ctx, epoch, mailbox).update
         }

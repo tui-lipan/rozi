@@ -147,7 +147,8 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         || ctx.state.follow_prompt.is_some()
         || ctx.state.askpass.is_some();
     // Offline chrome yields to another overlay (Sessions, a password prompt) so those stay
-    // reachable. Reconnecting stays on top: that window is in-flight and not optional.
+    // reachable. Reconnecting stays on top of other overlays; Esc abandons it rather than
+    // leaving the spinner covering Sessions.
     let show_offline = offline && !picker_dialog_open;
     let dialog_open = reconnecting || show_offline || picker_dialog_open;
     let dialog_dim_progress = ctx.transition::<f32>(
@@ -675,6 +676,10 @@ mod grouped_search_tests {
                 let frame = backend.capture_frame().to_fixed_grid();
                 assert!(frame.contains("Session · dev"));
                 assert!(frame.contains("reconnecting"));
+                assert!(
+                    frame.contains("sessions"),
+                    "reconnecting overlay must advertise Esc → Sessions, got:\n{frame}"
+                );
             })
             .expect("spawn reconnect modal test")
             .join()

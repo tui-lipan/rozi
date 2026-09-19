@@ -4,7 +4,7 @@ use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use tui_lipan::prelude::*;
 
@@ -28,8 +28,9 @@ const MAX_INTERLEAVED_PANE_BYTES: usize = 64 * 1024;
 /// local write is microseconds.
 const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 /// Inbound silence after which the client treats the link as dropped. Matches
-/// `session::server::DEFAULT_HEARTBEAT_TIMEOUT` so both ends agree. Measured with wall-clock time
-/// so a suspend/resume that `Instant` (CLOCK_MONOTONIC) does not observe still expires the link.
+/// `session::server::DEFAULT_HEARTBEAT_TIMEOUT` so both ends agree. Wall-clock time catches a
+/// suspend/resume that `Instant` (CLOCK_MONOTONIC) does not observe; monotonic time still fires
+/// when wall-clock steps backwards.
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Read-poll interval so a silent socket or SSH pipe wakes the reader to check the watchdog.
 /// Also the attach-handshake read deadline.
@@ -973,12 +974,20 @@ fn handle_transport_frame(
 
 /// Whether inbound silence has lasted long enough to treat the transport as dead.
 ///
-/// Uses wall-clock time so a machine that slept for hours expires on the first poll after wake,
-/// instead of waiting another heartbeat budget of `Instant` time that did not run during suspend.
-/// A clock step backwards is ignored rather than firing immediately.
-fn inbound_silence_expired(last_activity: SystemTime, timeout: Duration, now: SystemTime) -> bool {
-    now.duration_since(last_activity)
-        .is_ok_and(|elapsed| elapsed >= timeout)
+/// Wall-clock time catches a machine that slept for hours on the first poll after wake, instead of
+/// waiting another heartbeat budget of `Instant` time that did not run during suspend. Monotonic
+/// time still expires the link if NTP steps the wall clock backwards.
+fn inbound_silence_expired(
+    last_instant: Instant,
+    last_wall: SystemTime,
+    timeout: Duration,
+    now_instant: Instant,
+    now_wall: SystemTime,
+) -> bool {
+    now_instant.saturating_duration_since(last_instant) >= timeout
+        || now_wall
+            .duration_since(last_wall)
+            .is_ok_and(|elapsed| elapsed >= timeout)
 }
 
 fn forward_inbound<R: std::io::Read>(
@@ -992,7 +1001,8 @@ fn forward_inbound<R: std::io::Read>(
     heartbeat_timeout: Duration,
 ) {
     let mut decoder = protocol::FrameDecoder::default();
-    let mut last_activity = SystemTime::now();
+    let mut last_instant = Instant::now();
+    let mut last_wall = SystemTime::now();
     'read: loop {
         if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
             break;
@@ -1000,11 +1010,18 @@ fn forward_inbound<R: std::io::Read>(
         let would_block = match decoder.read_from_status(reader) {
             Ok(protocol::FrameReadStatus::Eof) => break,
             Ok(protocol::FrameReadStatus::Read(_)) => {
-                last_activity = SystemTime::now();
+                last_instant = Instant::now();
+                last_wall = SystemTime::now();
                 false
             }
             Ok(protocol::FrameReadStatus::WouldBlock) => {
-                if inbound_silence_expired(last_activity, heartbeat_timeout, SystemTime::now()) {
+                if inbound_silence_expired(
+                    last_instant,
+                    last_wall,
+                    heartbeat_timeout,
+                    Instant::now(),
+                    SystemTime::now(),
+                ) {
                     break;
                 }
                 true
@@ -1165,24 +1182,46 @@ mod tests {
     #[test]
     fn inbound_silence_uses_wall_clock_so_a_sleep_expires_the_link() {
         let timeout = Duration::from_secs(15);
-        let last = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        assert!(inbound_silence_expired(last, timeout, last + timeout,));
-        assert!(!inbound_silence_expired(
-            last,
+        let last_instant = Instant::now();
+        let before_timeout = last_instant + timeout - Duration::from_secs(1);
+        let at_timeout = last_instant + timeout;
+        let last_wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        assert!(inbound_silence_expired(
+            last_instant,
+            last_wall,
             timeout,
-            last + timeout - Duration::from_secs(1),
+            at_timeout,
+            last_wall,
+        ));
+        assert!(!inbound_silence_expired(
+            last_instant,
+            last_wall,
+            timeout,
+            before_timeout,
+            last_wall + timeout - Duration::from_secs(1),
         ));
         // A suspend that jumps the wall clock by hours must count, not wait another 15s awake.
         assert!(inbound_silence_expired(
-            last,
+            last_instant,
+            last_wall,
             timeout,
-            last + Duration::from_secs(2 * 60 * 60),
+            before_timeout,
+            last_wall + Duration::from_secs(2 * 60 * 60),
         ));
-        // NTP/clock stepped backwards: do not treat as expired.
+        // NTP/clock stepped backwards: monotonic time still expires; wall-clock alone does not.
         assert!(!inbound_silence_expired(
-            last + Duration::from_secs(60),
+            last_instant,
+            last_wall + Duration::from_secs(60),
             timeout,
-            last,
+            before_timeout,
+            last_wall,
+        ));
+        assert!(inbound_silence_expired(
+            last_instant,
+            last_wall + Duration::from_secs(60),
+            timeout,
+            at_timeout,
+            last_wall,
         ));
     }
 

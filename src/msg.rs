@@ -497,6 +497,8 @@ pub enum Msg {
     /// Retry an in-place reconnect for the current remote session after the automatic window
     /// ended in `Unreachable`. The retained panes stay on screen.
     RetrySessionReconnect,
+    /// Cancel an in-flight reconnect, leave the session offline, and open Sessions.
+    AbandonSessionReconnect,
     DrainSessionFrames {
         epoch: u64,
         mailbox: std::sync::Arc<session::client::InboundMailbox>,

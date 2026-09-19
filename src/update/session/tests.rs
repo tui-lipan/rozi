@@ -1690,6 +1690,61 @@ fn retry_session_reconnect_is_a_noop_unless_the_session_is_unreachable() {
         .expect("retry noop test completes");
 }
 
+#[test]
+fn abandoning_a_remote_reconnect_stays_offline_and_opens_sessions() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
+            let epoch_before;
+            {
+                let state = backend.state_mut();
+                state.show_session_picker = false;
+                state.session_picker = None;
+                state.current_mut().session_name = Some("dev".to_string());
+                state.current_mut().remote_host = Some("workbox".to_string());
+                state.current_mut().remote_target = Some(target.clone());
+                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+                epoch_before = state.runtime_epoch;
+                state.current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: epoch_before,
+                        name: "dev".to_string(),
+                        client: None,
+                        autostart: false,
+                        read_only: false,
+                        reconnect: true,
+                        remote_host: Some("workbox".to_string()),
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+            }
+
+            backend
+                .dispatch(Msg::AbandonSessionReconnect)
+                .expect("dispatch abandon reconnect");
+
+            let state = backend.state();
+            assert!(state.current().pending_session_attach.is_none());
+            assert_eq!(
+                state.current().connection,
+                crate::state::ConnectionState::Unreachable
+            );
+            assert_eq!(state.current().session_name.as_deref(), Some("dev"));
+            assert_eq!(state.current().remote_target.as_ref(), Some(&target));
+            assert!(state.show_session_picker, "Esc must open Sessions");
+            assert_ne!(
+                state.runtime_epoch, epoch_before,
+                "in-flight attach results must be invalidated"
+            );
+        })
+        .expect("spawn abandon reconnect test")
+        .join()
+        .expect("abandon reconnect test completes");
+}
+
 /// A local reconnect that fails leaves the session instead of rendering its dead panes as though
 /// the client were still inside it.
 #[test]

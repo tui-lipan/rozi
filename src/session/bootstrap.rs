@@ -283,7 +283,8 @@ fn attach_session_client_with_profile(
 /// remote link needs to ride out suspend, Wi-Fi flap, and VPN blips rather than dying on the first
 /// failed connect (the disconnect handler re-drives this whole path on an established link that
 /// later drops, so this deadline governs the connect phase only). Two minutes covers a typical
-/// wake-then-VPN sequence; a host that is still down after that stays offline in place.
+/// wake-then-VPN sequence; a host that is still down after that stays offline in place. Each
+/// attempt is capped by the remaining window so SSH connect and preamble waits cannot outrun it.
 const REMOTE_RECONNECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 const REMOTE_RECONNECT_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 const REMOTE_RECONNECT_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(4);
@@ -316,7 +317,23 @@ fn attach_remote(
             std::time::Duration::ZERO
         };
     let mut backoff = REMOTE_RECONNECT_INITIAL_BACKOFF;
+    let mut last_error = format!("timed out after {}s", REMOTE_RECONNECT_DEADLINE.as_secs());
     loop {
+        // Each attempt is capped by the time still inside the advertised window, so a single
+        // SSH/preamble wait cannot outrun the deadline and then decide whether to try again.
+        let budget = if reconnect {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                link.send(Msg::SessionAttachFailed {
+                    epoch,
+                    message: format!("Remote attach to `{name}` failed: {last_error}"),
+                });
+                return;
+            }
+            Some(remaining)
+        } else {
+            None
+        };
         match try_attach_remote(
             epoch,
             &name,
@@ -324,6 +341,8 @@ fn attach_remote(
             create_only,
             &target,
             &remote_config,
+            reconnect,
+            budget,
             &link,
         ) {
             AttachRemoteOutcome::Done => return,
@@ -348,14 +367,16 @@ fn attach_remote(
                 return;
             }
             AttachRemoteOutcome::Failed(message) => {
+                last_error = message;
                 if Instant::now() >= deadline {
                     link.send(Msg::SessionAttachFailed {
                         epoch,
-                        message: format!("Remote attach to `{name}` failed: {message}"),
+                        message: format!("Remote attach to `{name}` failed: {last_error}"),
                     });
                     return;
                 }
-                std::thread::sleep(backoff);
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(backoff.min(remaining));
                 backoff = (backoff * 2).min(REMOTE_RECONNECT_MAX_BACKOFF);
             }
         }
@@ -384,6 +405,8 @@ fn attach_remote_after_skew(
                 create_only,
                 target,
                 remote_config,
+                false,
+                None,
                 link,
             ) {
                 AttachRemoteOutcome::Done => {}
@@ -419,6 +442,7 @@ enum AttachRemoteOutcome {
     Fatal(String),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_attach_remote(
     epoch: u64,
     name: &str,
@@ -426,16 +450,28 @@ fn try_attach_remote(
     create_only: bool,
     target: &super::remote::RemoteTarget,
     remote_config: &crate::config::RemoteConfig,
+    reconnect: bool,
+    budget: Option<std::time::Duration>,
     link: &CommandLink<Msg>,
 ) -> AttachRemoteOutcome {
     let mailbox = super::client::InboundMailbox::new(epoch, name.to_string(), link.clone());
-    match super::remote::connect_remote(target, name, remote_config) {
+    match super::remote::connect_remote_within(target, name, remote_config, budget) {
         Ok((stream, preamble)) => {
             if create_only && !preamble.server_started {
                 drop(stream);
                 return AttachRemoteOutcome::Fatal(format!(
                     "Session `{name}` is already running on the remote host"
                 ));
+            }
+            // `--remote-serve` autostarts a missing server. Joining that replacement during
+            // reconnect would look like recovery while the original remote processes are gone.
+            if reconnect_started_a_replacement(reconnect, preamble.server_started) {
+                drop(stream);
+                let gone = format!("the original remote session `{name}` is gone");
+                return match super::remote::kill_remote_session(target, name, remote_config) {
+                    Ok(()) => AttachRemoteOutcome::Fatal(gone),
+                    Err(err) => AttachRemoteOutcome::Fatal(format!("{gone} ({err})")),
+                };
             }
             match super::client::SessionClient::from_stream_attached_mailbox(
                 stream,
@@ -469,6 +505,12 @@ fn try_attach_remote(
         Err(err) if err.is_protocol_skew() => AttachRemoteOutcome::ProtocolSkew(err.to_string()),
         Err(err) => AttachRemoteOutcome::Failed(err.to_string()),
     }
+}
+
+/// `--remote-serve` starts a replacement when the original server has already reaped itself.
+/// A reconnect that did so did not recover the session that dropped.
+fn reconnect_started_a_replacement(reconnect: bool, server_started: bool) -> bool {
+    reconnect && server_started
 }
 
 fn should_autostart_session(err: &std::io::Error) -> bool {
@@ -710,5 +752,18 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 state,
             },
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_does_not_treat_an_autostarted_server_as_recovery() {
+        assert!(reconnect_started_a_replacement(true, true));
+        assert!(!reconnect_started_a_replacement(true, false));
+        assert!(!reconnect_started_a_replacement(false, true));
+        assert!(!reconnect_started_a_replacement(false, false));
     }
 }

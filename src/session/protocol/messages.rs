@@ -49,6 +49,10 @@ pub enum ClientMessage {
         /// Absent on a peer that predates the field, where refusing is the safe reading.
         #[serde(default)]
         shares_filesystem: bool,
+        /// One-time identity proof for a server this client just spawned. Ordinary attaches omit
+        /// it; when present, a same-name server with a different startup nonce must reject attach.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_server_nonce: Option<String>,
     },
     /// Record the reusable profile that supplied this session's initial panes. Sent only after the
     /// profile seed requests have been queued successfully.

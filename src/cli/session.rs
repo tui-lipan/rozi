@@ -7,8 +7,8 @@ use super::args::ListFormat;
 use super::output::{OutputStyles, OutputTone, TableCell, format_table};
 use crate::session;
 
-pub(crate) fn run_server_cli(name: &str, fresh: bool) -> Result<()> {
-    session::server::run_named_session_mode(name, fresh)?;
+pub(crate) fn run_server_cli(name: &str, fresh: bool, startup_nonce: Option<String>) -> Result<()> {
+    session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce)?;
     Ok(())
 }
 

@@ -17,6 +17,7 @@ fn version_mismatch_is_refused_without_stopping_the_listener() {
         label: "future-client".to_string(),
         read_only: false,
         shares_filesystem: true,
+        expected_server_nonce: None,
     });
     read_until(&mut client, |frame| {
         matches!(

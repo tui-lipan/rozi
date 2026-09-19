@@ -273,6 +273,16 @@ impl SessionClient {
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
+        Self::from_stream_attached_with_server_nonce(stream, session, inbound, read_only, None)
+    }
+
+    pub fn from_stream_attached_with_server_nonce(
+        stream: IpcConnection,
+        session: impl Into<String>,
+        inbound: mpsc::Sender<Frame<ServerMessage>>,
+        read_only: bool,
+        expected_server_nonce: Option<String>,
+    ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
             session,
@@ -281,6 +291,7 @@ impl SessionClient {
             true,
             HEARTBEAT_POLL,
             None,
+            expected_server_nonce,
         )
     }
 
@@ -300,6 +311,7 @@ impl SessionClient {
             true,
             HEARTBEAT_POLL,
             None,
+            None,
         )
     }
 
@@ -313,6 +325,7 @@ impl SessionClient {
         inbound: Arc<InboundMailbox>,
         read_only: bool,
         shares_filesystem: bool,
+        expected_server_nonce: Option<String>,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
@@ -322,6 +335,7 @@ impl SessionClient {
             shares_filesystem,
             HEARTBEAT_POLL,
             None,
+            expected_server_nonce,
         )
     }
 
@@ -335,6 +349,7 @@ impl SessionClient {
         shares_filesystem: bool,
         handshake_timeout: Duration,
         cancel_epoch: Option<u64>,
+        expected_server_nonce: Option<String>,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
@@ -346,6 +361,7 @@ impl SessionClient {
                 .min(handshake_timeout)
                 .max(Duration::from_millis(1)),
             cancel_epoch,
+            expected_server_nonce,
         )
     }
 
@@ -357,6 +373,7 @@ impl SessionClient {
         shares_filesystem: bool,
         handshake_timeout: Duration,
         cancel_epoch: Option<u64>,
+        expected_server_nonce: Option<String>,
     ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
         let server_pid = stream.peer_pid();
@@ -370,11 +387,12 @@ impl SessionClient {
         }
         protocol::write_frame(
             &mut stream,
-            &protocol::attach_message(
+            &protocol::attach_message_with_server_nonce(
                 session,
                 crate::platform::user::current_user_label(),
                 read_only,
                 shares_filesystem,
+                expected_server_nonce,
             ),
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut HandshakeReader {

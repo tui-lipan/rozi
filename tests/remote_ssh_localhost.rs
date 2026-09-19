@@ -98,6 +98,10 @@ fn attaches_to_a_real_session_over_ssh_to_localhost() {
         "proxy must report that it started the server for a brand-new session"
     );
     assert!(
+        preamble.server_nonce.is_some(),
+        "a newly started server must carry an identity proof"
+    );
+    assert!(
         preamble.protocol_max == PROTOCOL_VERSION,
         "remote is this same binary, so it must advertise our protocol range"
     );
@@ -105,7 +109,13 @@ fn attaches_to_a_real_session_over_ssh_to_localhost() {
 
     // A real attach over the pipe: the session protocol does not know it is not a local socket.
     let (tx, _rx) = mpsc::channel();
-    let attached = SessionClient::from_stream_attached(stream, session.clone(), tx, false);
+    let attached = SessionClient::from_stream_attached_with_server_nonce(
+        stream,
+        session.clone(),
+        tx,
+        false,
+        preamble.server_nonce,
+    );
     let (client, attached) = match attached {
         Ok(pair) => pair,
         Err(err) => {
@@ -206,13 +216,46 @@ fn remote_serve_proxies_a_session_over_pipes() {
         preamble.server_started,
         "proxy must report starting the server for a brand-new session"
     );
+    assert!(
+        preamble.server_nonce.is_some(),
+        "a newly started server must carry an identity proof"
+    );
     assert_eq!(preamble.rozi_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(preamble.platform, std::env::consts::OS);
 
+    // A nonce from a competing create attempt cannot attach to this endpoint.
+    let mut raced =
+        rozi::platform::ipc::connection_from_child(spawn_proxy()).expect("wrap raced proxy stdio");
+    raced
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("set read timeout");
+    let raced_preamble =
+        rozi::session::remote::read_preamble(&mut raced).expect("read raced preamble");
+    assert!(!raced_preamble.server_started);
+    let (raced_tx, _raced_rx) = mpsc::channel();
+    let raced_attach = SessionClient::from_stream_attached_with_server_nonce(
+        raced,
+        session.clone(),
+        raced_tx,
+        false,
+        Some("00000000000000000000000000000000".to_string()),
+    );
+    let raced_error = match raced_attach {
+        Err(error) => error,
+        Ok(_) => panic!("a different creator nonce must be rejected"),
+    };
+    assert!(raced_error.to_string().contains("different server"));
+
     // The session protocol runs over the pipe exactly as it would over a socket.
     let (tx, _rx) = mpsc::channel();
-    let (client, attached) = SessionClient::from_stream_attached(first, session.clone(), tx, false)
-        .expect("attach over the proxy pipe");
+    let (client, attached) = SessionClient::from_stream_attached_with_server_nonce(
+        first,
+        session.clone(),
+        tx,
+        false,
+        preamble.server_nonce,
+    )
+    .expect("attach over the proxy pipe");
     match &attached {
         ServerMessage::Attached { session: name, .. } => assert_eq!(name, &session),
         other => panic!("expected Attached, got {other:?}"),

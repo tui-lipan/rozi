@@ -187,9 +187,10 @@ pub fn run() -> Result<()> {
             name,
             fresh,
             config_path,
+            startup_nonce,
         } => {
             apply_config_path(config_path);
-            return cli::run_server_cli(&name, fresh);
+            return cli::run_server_cli(&name, fresh, startup_nonce);
         }
         cli::ParsedCli::RemoteServe { name, autostart } => {
             return cli::run_remote_serve_cli(&name, autostart);

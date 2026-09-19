@@ -36,6 +36,11 @@ pub struct RemotePreamble {
     /// True when this `--remote-serve` invocation started the session server (create_only identity).
     #[serde(default)]
     pub server_started: bool,
+    /// Nonce the just-spawned server must confirm on the attach carried by this stream. Together
+    /// with `server_started`, this proves the proxy connected to its own child rather than a
+    /// same-name server that won the endpoint race.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_nonce: Option<String>,
     /// Existing-only recovery could not find the original server. The proxy exits after this
     /// preamble instead of autostarting a replacement.
     #[serde(default)]
@@ -44,6 +49,10 @@ pub struct RemotePreamble {
 
 impl RemotePreamble {
     pub fn current(server_started: bool) -> Self {
+        Self::current_with_nonce(server_started, None)
+    }
+
+    pub fn current_with_nonce(server_started: bool, server_nonce: Option<String>) -> Self {
         Self {
             magic: PREAMBLE_MAGIC.to_string(),
             version: PREAMBLE_VERSION,
@@ -53,6 +62,7 @@ impl RemotePreamble {
             protocol_max: PROTOCOL_VERSION,
             protocol_min: MIN_SUPPORTED_PROTOCOL,
             server_started,
+            server_nonce,
             session_missing: false,
         }
     }

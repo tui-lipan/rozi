@@ -190,6 +190,9 @@ pub struct SessionServer {
 
 #[derive(Clone, Debug)]
 pub struct ServerSettings {
+    /// One-time identity proof supplied by the process that spawned this server. Only the matching
+    /// creator sends it back on attach; ordinary later clients omit it.
+    pub startup_nonce: Option<String>,
     pub log_dir: Option<PathBuf>,
     /// Ceiling on one pane log file, mirroring
     /// [`crate::config::LoggingConfig::max_bytes`] including its `0` (unlimited) escape.
@@ -244,6 +247,7 @@ pub struct ServerSettings {
 impl Default for ServerSettings {
     fn default() -> Self {
         Self {
+            startup_nonce: None,
             log_dir: None,
             log_max_bytes: crate::config::DEFAULT_LOG_MAX_BYTES,
             resurrect: false,
@@ -1765,6 +1769,14 @@ pub fn run_named_session(name: &str) -> io::Result<()> {
 }
 
 pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
+    run_named_session_mode_with_nonce(name, fresh, None)
+}
+
+pub fn run_named_session_mode_with_nonce(
+    name: &str,
+    fresh: bool,
+    startup_nonce: Option<String>,
+) -> io::Result<()> {
     if !crate::session::discovery::valid_attach_target(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -1794,6 +1806,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
     let mut server = SessionServer::new_named_with_settings(
         name,
         ServerSettings {
+            startup_nonce,
             log_dir: loaded.config.logging.dir,
             log_max_bytes: loaded.config.logging.max_bytes,
             resurrect: !client_scratch && loaded.config.session.resurrect,

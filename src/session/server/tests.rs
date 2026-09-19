@@ -144,6 +144,7 @@ fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
             label: format!("client-{id}"),
             read_only: false,
             shares_filesystem: true,
+            expected_server_nonce: None,
         },
     );
     assert!(
@@ -166,6 +167,7 @@ fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream)
             label: format!("viewer-{id}"),
             read_only: true,
             shares_filesystem: true,
+            expected_server_nonce: None,
         },
     );
     (id, stream)
@@ -256,6 +258,7 @@ fn a_client_that_cannot_reach_the_filesystem_withdraws_out_of_band_graphics() {
             label: "over-ssh".into(),
             read_only: false,
             shares_filesystem: false,
+            expected_server_nonce: None,
         },
     );
     assert_eq!(server.image_media_policy(), GraphicsMediaPolicy::NONE);
@@ -1095,6 +1098,7 @@ fn runtime_metrics_request_serves_protocol_19_peers() {
             label: "legacy".into(),
             read_only: true,
             shares_filesystem: true,
+            expected_server_nonce: None,
         },
     );
     assert!(
@@ -1120,6 +1124,7 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
         label: "test".into(),
         read_only: false,
         shares_filesystem: true,
+        expected_server_nonce: None,
     };
     let agreed = |responses: &[(Target, ServerMessage)]| match responses.first() {
         Some((_, ServerMessage::Attached { capabilities, .. })) => capabilities.clone(),
@@ -1898,11 +1903,63 @@ fn attach_reports_protocol_mismatch() {
             label: "client".into(),
             read_only: false,
             shares_filesystem: true,
+            expected_server_nonce: None,
         },
     );
     assert!(
         matches!(responses.as_slice(), [(_, ServerMessage::Error { code, .. })] if code == "protocol-mismatch")
     );
+}
+
+#[test]
+fn attach_requires_the_just_started_servers_nonce() {
+    let mut server = SessionServer::new_named_with_settings(
+        "dev",
+        ServerSettings {
+            startup_nonce: Some("proxy-a".to_string()),
+            ..ServerSettings::default()
+        },
+    );
+    let (raced_client, _stream) = add_client(&mut server);
+    let raced = server.handle_message(
+        raced_client,
+        ClientMessage::Attach {
+            capabilities: None,
+            session: "dev".into(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
+            label: "client".into(),
+            read_only: false,
+            shares_filesystem: true,
+            expected_server_nonce: Some("proxy-b".to_string()),
+        },
+    );
+    assert!(matches!(
+        raced.as_slice(),
+        [(_, ServerMessage::Error { code, .. })] if code == "server-identity-mismatch"
+    ));
+    assert!(!server.client_attached(raced_client));
+
+    let (creator, _stream) = add_client(&mut server);
+    let matching = server.handle_message(
+        creator,
+        ClientMessage::Attach {
+            capabilities: None,
+            session: "dev".into(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
+            label: "client".into(),
+            read_only: false,
+            shares_filesystem: true,
+            expected_server_nonce: Some("proxy-a".to_string()),
+        },
+    );
+    assert!(
+        matching
+            .iter()
+            .any(|(_, message)| matches!(message, ServerMessage::Attached { .. }))
+    );
+    assert!(server.client_attached(creator));
 }
 
 #[test]
@@ -3685,6 +3742,7 @@ fn attach_reports_layout_and_panes() {
             label: "client".into(),
             read_only: false,
             shares_filesystem: true,
+            expected_server_nonce: None,
         },
     );
     let Some((

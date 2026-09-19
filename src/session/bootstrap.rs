@@ -273,6 +273,7 @@ fn attach_session_client_with_profile(
                         &exe,
                         &name,
                         create_only,
+                        None,
                     ) {
                         Ok(child) => server_child = Some(child),
                         Err(spawn_err) => {
@@ -552,6 +553,15 @@ fn try_attach_remote(
                 drop(stream);
                 return AttachRemoteOutcome::Failed("reconnect cancelled".to_string());
             }
+            if started_server_lacks_identity(
+                preamble.server_started,
+                preamble.server_nonce.as_deref(),
+            ) {
+                drop(stream);
+                return AttachRemoteOutcome::Fatal(
+                    "Remote proxy started a server without an identity proof".to_string(),
+                );
+            }
             if create_only_rejects_existing(create_only, preamble.server_started) {
                 drop(stream);
                 return AttachRemoteOutcome::Fatal(format!(
@@ -586,6 +596,7 @@ fn try_attach_remote(
                         false,
                         timeout,
                         cancel_epoch,
+                        preamble.server_nonce,
                     )
                 }
                 None => super::client::SessionClient::from_stream_attached_mailbox(
@@ -594,6 +605,7 @@ fn try_attach_remote(
                     std::sync::Arc::clone(&mailbox),
                     read_only,
                     false,
+                    preamble.server_nonce,
                 ),
             };
             match attached {
@@ -609,7 +621,9 @@ fn try_attach_remote(
                 }
                 Err(err) => {
                     let message = err.to_string();
-                    if message.to_ascii_lowercase().contains("incompatible")
+                    if message.contains("different server") {
+                        AttachRemoteOutcome::Fatal(format!("Remote session `{name}`: {message}"))
+                    } else if message.to_ascii_lowercase().contains("incompatible")
                         || message.to_ascii_lowercase().contains("protocol")
                     {
                         AttachRemoteOutcome::ProtocolSkew(message)
@@ -636,6 +650,10 @@ fn reconnect_found_original_missing(
 
 fn create_only_rejects_existing(create_only: bool, server_started: bool) -> bool {
     create_only && !server_started
+}
+
+fn started_server_lacks_identity(server_started: bool, server_nonce: Option<&str>) -> bool {
+    server_started && server_nonce.is_none()
 }
 
 fn should_autostart_session(err: &std::io::Error) -> bool {
@@ -901,6 +919,8 @@ mod tests {
             RemoteAttachMode::Recreate.create_only(false),
             false
         ));
+        assert!(started_server_lacks_identity(true, None));
+        assert!(!started_server_lacks_identity(true, Some("proof")));
         assert!(RemoteAttachMode::Recover.reconnect());
         assert!(RemoteAttachMode::Recover.recover_existing());
         assert!(!RemoteAttachMode::Recover.create_only(false));

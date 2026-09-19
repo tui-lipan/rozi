@@ -33,8 +33,8 @@ exclude = [
 ]
 
 [dependencies]
-# 0.11.5: List::empty_text_padding for guttered picker placeholders.
-tui-lipan = { version = "0.11.5", features = [
+# 0.11.6: clipped wrapped text preserves borders beneath transparent hit regions.
+tui-lipan = { version = "0.11.6", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

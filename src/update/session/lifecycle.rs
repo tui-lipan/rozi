@@ -89,6 +89,7 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
     let was_remote = pending.remote_host.is_some();
     let was_reconnect = pending.reconnect;
     let parked_epoch = pending.parked_epoch;
+    crate::update::cancel_attach_askpass(ctx, epoch);
     ctx.state.current_mut().pending_session_attach = None;
     crate::ops::session::clear_pending_session_action(ctx, Some(&message));
     // The session this was aiming at never arrived, so the pane inside it never will either.
@@ -148,6 +149,34 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
     Update::full()
 }
 
+pub(crate) fn lost(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -> Update {
+    let current_lost = ctx
+        .state
+        .current()
+        .pending_session_attach
+        .as_ref()
+        .is_some_and(|pending| {
+            pending.epoch == epoch && pending.reconnect && pending.remote_host.is_some()
+        });
+    if !current_lost {
+        return Update::none();
+    }
+    crate::update::cancel_attach_askpass(ctx, epoch);
+    ctx.state.current_mut().pending_session_attach = None;
+    crate::ops::session::clear_pending_session_action(ctx, Some(&message));
+    ctx.state.pending_agent_jump = None;
+    ctx.state.current_mut().connection = crate::state::ConnectionState::Unreachable;
+    ctx.state.current_mut().remote_session_lost = true;
+    ctx.state.commands_dirty = true;
+    crate::pane::pty_events::notify_on(
+        ctx,
+        crate::state::ToastChannel::SessionLifecycle,
+        Some("Session lost".to_string()),
+        message,
+    );
+    Update::full()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attached(
     ctx: &mut Context<AppRoot>,
@@ -191,6 +220,7 @@ pub(crate) fn attached(
     }
     ctx.state.current_mut().created_from_profile = created_from_profile;
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connected;
+    ctx.state.current_mut().remote_session_lost = false;
     ctx.state.current_mut().reconnect_read_only = read_only;
     ctx.state.current_mut().session_attached = true;
     // Working somewhere sets the scope you come back to: killing this session leaves the launcher

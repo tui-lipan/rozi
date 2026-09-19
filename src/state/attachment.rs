@@ -72,6 +72,9 @@ pub struct Attachment {
     pub deferred_profile_seed: Option<(String, PathBuf)>,
     pub pending_profile_loaded: Option<(String, PathBuf, String)>,
     pub connection: ConnectionState,
+    /// The previous remote server is confirmed gone. Reattaching is recreation, so the client
+    /// waits for an explicit user choice instead of silently seeding a replacement.
+    pub remote_session_lost: bool,
     /// Attach mode to restore after a dropped link. This remains available after shared-session
     /// bookkeeping is cleared during disconnect.
     pub reconnect_read_only: bool,
@@ -150,6 +153,7 @@ impl Attachment {
             deferred_profile_seed: None,
             pending_profile_loaded: None,
             connection: ConnectionState::Disconnected,
+            remote_session_lost: false,
             reconnect_read_only: false,
             session_attached: false,
             pending_session_attach: None,

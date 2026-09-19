@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+- A remote session whose SSH link goes quiet — laptop sleep, a dropped network, a half-open TCP
+  connection — no longer keeps drawing live panes you cannot type into. The client watches for
+  missed server heartbeats on both monotonic and wall-clock time, so a resume is noticed
+  immediately and a backward clock step cannot disable the watchdog, and shows the reconnecting
+  overlay. `Esc` cancels that wait and opens Sessions. An SSH password or host-key prompt covers
+  the overlay while it is open. Reconnect never starts a replacement when the original remote
+  session is already gone, and it reuses the remote binary that already worked instead of
+  re-probing. If the host is still unreachable after two minutes the session stays on screen as
+  offline; `Enter` retries and `Esc` opens Sessions.
+
 ## 0.0.21 - 2026-09-18
 
 ### Changed

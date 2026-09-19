@@ -4,7 +4,7 @@ use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use tui_lipan::prelude::*;
 
@@ -27,6 +27,14 @@ const MAX_INTERLEAVED_PANE_BYTES: usize = 64 * 1024;
 /// before giving up on it. Reaching this means the socket is wedged, not that the frame is slow: a
 /// local write is microseconds.
 const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+/// Inbound silence after which the client treats the link as dropped. Matches
+/// `session::server::DEFAULT_HEARTBEAT_TIMEOUT` so both ends agree. Wall-clock time catches a
+/// suspend/resume that `Instant` (CLOCK_MONOTONIC) does not observe; monotonic time still fires
+/// when wall-clock steps backwards.
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Read-poll interval so a silent socket or SSH pipe wakes the reader to check the watchdog.
+/// Also the attach-handshake read deadline.
+const HEARTBEAT_POLL: Duration = Duration::from_secs(2);
 
 /// One-shot "the shutdown request is on the wire" signal, raised by the writer thread.
 ///
@@ -117,6 +125,51 @@ pub struct SessionClient {
     /// PTYs report pixel dimensions the child can size images against. Read once: it is a
     /// property of the terminal this process is attached to, not of any one pane.
     cell: tui_lipan::TerminalCellSize,
+}
+
+struct HandshakeReader<'a> {
+    inner: &'a mut IpcConnection,
+    deadline: Instant,
+    cancel_epoch: Option<u64>,
+}
+
+impl std::io::Read for HandshakeReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self
+                .cancel_epoch
+                .is_some_and(crate::session::bootstrap::remote_attach_cancelled)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "reconnect cancelled",
+                ));
+            }
+            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "session handshake deadline elapsed",
+                ));
+            }
+            self.inner.set_read_timeout(Some(
+                remaining
+                    .min(Duration::from_millis(200))
+                    .max(Duration::from_millis(1)),
+            ))?;
+            match std::io::Read::read(self.inner, buf) {
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    continue;
+                }
+                result => return result,
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -220,12 +273,25 @@ impl SessionClient {
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
+        Self::from_stream_attached_with_server_nonce(stream, session, inbound, read_only, None)
+    }
+
+    pub fn from_stream_attached_with_server_nonce(
+        stream: IpcConnection,
+        session: impl Into<String>,
+        inbound: mpsc::Sender<Frame<ServerMessage>>,
+        read_only: bool,
+        expected_server_nonce: Option<String>,
+    ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
             session,
             InboundTarget::Channel(inbound),
             read_only,
             true,
+            HEARTBEAT_POLL,
+            None,
+            expected_server_nonce,
         )
     }
 
@@ -243,6 +309,9 @@ impl SessionClient {
             InboundTarget::Mailbox(inbound),
             read_only,
             true,
+            HEARTBEAT_POLL,
+            None,
+            None,
         )
     }
 
@@ -256,6 +325,7 @@ impl SessionClient {
         inbound: Arc<InboundMailbox>,
         read_only: bool,
         shares_filesystem: bool,
+        expected_server_nonce: Option<String>,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
@@ -263,6 +333,35 @@ impl SessionClient {
             InboundTarget::Mailbox(inbound),
             read_only,
             shares_filesystem,
+            HEARTBEAT_POLL,
+            None,
+            expected_server_nonce,
+        )
+    }
+
+    /// Attach over a remote stream while limiting the handshake to the reconnect budget that
+    /// remains after SSH and the remote preamble.
+    pub(crate) fn from_stream_attached_mailbox_with_timeout(
+        stream: IpcConnection,
+        session: impl Into<String>,
+        inbound: Arc<InboundMailbox>,
+        read_only: bool,
+        shares_filesystem: bool,
+        handshake_timeout: Duration,
+        cancel_epoch: Option<u64>,
+        expected_server_nonce: Option<String>,
+    ) -> io::Result<(Self, ServerMessage)> {
+        Self::from_stream_attached_target(
+            stream,
+            session,
+            InboundTarget::Mailbox(inbound),
+            read_only,
+            shares_filesystem,
+            HEARTBEAT_POLL
+                .min(handshake_timeout)
+                .max(Duration::from_millis(1)),
+            cancel_epoch,
+            expected_server_nonce,
         )
     }
 
@@ -272,23 +371,39 @@ impl SessionClient {
         inbound: InboundTarget,
         read_only: bool,
         shares_filesystem: bool,
+        handshake_timeout: Duration,
+        cancel_epoch: Option<u64>,
+        expected_server_nonce: Option<String>,
     ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
         let server_pid = stream.peer_pid();
         let piped_buffer = stream.piped_buffer_stats_handle();
         let mut reader = stream.try_clone()?;
-        reader.set_read_timeout(Some(Duration::from_secs(2)))?;
+        if cancel_epoch.is_some_and(crate::session::bootstrap::remote_attach_cancelled) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "reconnect cancelled",
+            ));
+        }
         protocol::write_frame(
             &mut stream,
-            &protocol::attach_message(
+            &protocol::attach_message_with_server_nonce(
                 session,
                 crate::platform::user::current_user_label(),
                 read_only,
                 shares_filesystem,
+                expected_server_nonce,
             ),
         )?;
-        let attached = protocol::read_frame::<_, ServerMessage>(&mut reader)?;
-        reader.set_read_timeout(None)?;
+        let attached = protocol::read_frame::<_, ServerMessage>(&mut HandshakeReader {
+            inner: &mut reader,
+            deadline: Instant::now() + handshake_timeout,
+            cancel_epoch,
+        })?;
+        // Keep the poll timeout after the handshake. A silent transport — sleep, a lost network,
+        // or a half-open SSH pipe — never delivers EOF, so the reader has to wake on its own and
+        // let the inbound watchdog expire the link.
+        reader.set_read_timeout(Some(HEARTBEAT_POLL))?;
         #[cfg(windows)]
         // A pending synchronous ReadFile on a duplicated named-pipe handle can hold up WriteFile on
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
@@ -373,6 +488,7 @@ impl SessionClient {
                 Some(&reader_metrics_request_pending),
                 metrics_enabled,
                 Some(&reader_shutdown_signal),
+                HEARTBEAT_TIMEOUT,
             );
             reader_outbound.close();
         });
@@ -961,6 +1077,24 @@ fn handle_transport_frame(
     TransportFrameDisposition::Forward
 }
 
+/// Whether inbound silence has lasted long enough to treat the transport as dead.
+///
+/// Wall-clock time catches a machine that slept for hours on the first poll after wake, instead of
+/// waiting another heartbeat budget of `Instant` time that did not run during suspend. Monotonic
+/// time still expires the link if NTP steps the wall clock backwards.
+fn inbound_silence_expired(
+    last_instant: Instant,
+    last_wall: SystemTime,
+    timeout: Duration,
+    now_instant: Instant,
+    now_wall: SystemTime,
+) -> bool {
+    now_instant.saturating_duration_since(last_instant) >= timeout
+        || now_wall
+            .duration_since(last_wall)
+            .is_ok_and(|elapsed| elapsed >= timeout)
+}
+
 fn forward_inbound<R: std::io::Read>(
     reader: &mut R,
     inbound: &InboundTarget,
@@ -969,16 +1103,34 @@ fn forward_inbound<R: std::io::Read>(
     metrics_request_pending: Option<&Arc<AtomicBool>>,
     request_metrics_on_heartbeat: bool,
     shutdown_signal: Option<&Arc<AtomicBool>>,
+    heartbeat_timeout: Duration,
 ) {
     let mut decoder = protocol::FrameDecoder::default();
+    let mut last_instant = Instant::now();
+    let mut last_wall = SystemTime::now();
     'read: loop {
         if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
             break;
         }
         let would_block = match decoder.read_from_status(reader) {
             Ok(protocol::FrameReadStatus::Eof) => break,
-            Ok(protocol::FrameReadStatus::Read(_)) => false,
-            Ok(protocol::FrameReadStatus::WouldBlock) => true,
+            Ok(protocol::FrameReadStatus::Read(_)) => {
+                last_instant = Instant::now();
+                last_wall = SystemTime::now();
+                false
+            }
+            Ok(protocol::FrameReadStatus::WouldBlock) => {
+                if inbound_silence_expired(
+                    last_instant,
+                    last_wall,
+                    heartbeat_timeout,
+                    Instant::now(),
+                    SystemTime::now(),
+                ) {
+                    break;
+                }
+                true
+            }
             Err(_) => break,
         };
         loop {
@@ -1072,6 +1224,7 @@ mod tests {
             None,
             false,
             None,
+            HEARTBEAT_TIMEOUT,
         );
         assert_eq!(
             inbound_rx
@@ -1121,11 +1274,87 @@ mod tests {
             None,
             false,
             None,
+            HEARTBEAT_TIMEOUT,
         );
 
         assert_eq!(
             outbound.try_pop().unwrap(),
             ClientOutbound::Control(ClientMessage::Pong { seq: 42 })
+        );
+        assert!(inbound_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn inbound_silence_uses_wall_clock_so_a_sleep_expires_the_link() {
+        let timeout = Duration::from_secs(15);
+        let last_instant = Instant::now();
+        let before_timeout = last_instant + timeout - Duration::from_secs(1);
+        let at_timeout = last_instant + timeout;
+        let last_wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        assert!(inbound_silence_expired(
+            last_instant,
+            last_wall,
+            timeout,
+            at_timeout,
+            last_wall,
+        ));
+        assert!(!inbound_silence_expired(
+            last_instant,
+            last_wall,
+            timeout,
+            before_timeout,
+            last_wall + timeout - Duration::from_secs(1),
+        ));
+        // A suspend that jumps the wall clock by hours must count, not wait another 15s awake.
+        assert!(inbound_silence_expired(
+            last_instant,
+            last_wall,
+            timeout,
+            before_timeout,
+            last_wall + Duration::from_secs(2 * 60 * 60),
+        ));
+        // NTP/clock stepped backwards: monotonic time still expires; wall-clock alone does not.
+        assert!(!inbound_silence_expired(
+            last_instant,
+            last_wall + Duration::from_secs(60),
+            timeout,
+            before_timeout,
+            last_wall,
+        ));
+        assert!(inbound_silence_expired(
+            last_instant,
+            last_wall + Duration::from_secs(60),
+            timeout,
+            at_timeout,
+            last_wall,
+        ));
+    }
+
+    struct SilentReader;
+
+    impl std::io::Read for SilentReader {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::TimedOut, "silent"))
+        }
+    }
+
+    #[test]
+    fn inbound_silence_ends_the_reader() {
+        let (inbound_tx, inbound_rx) = mpsc::channel();
+        let started = std::time::Instant::now();
+        forward_inbound(
+            &mut SilentReader,
+            &InboundTarget::Channel(inbound_tx),
+            None,
+            None,
+            None,
+            false,
+            None,
+            Duration::from_millis(40),
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "watchdog must not wait for a later EOF"
         );
         assert!(inbound_rx.try_recv().is_err());
     }
@@ -1509,43 +1738,58 @@ mod tests {
         );
         endpoint.remove_stale();
         let listener = endpoint.bind().unwrap().into_listener();
-        listener.set_nonblocking(true).unwrap();
 
         let server = thread::spawn(move || {
-            let mut stream = loop {
-                match listener.accept() {
-                    Ok(stream) => break stream,
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(1));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let mut stream = listener.accept().expect("accept client");
+                let exchange = (|| -> io::Result<()> {
+                    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                    assert!(matches!(
+                        protocol::read_frame::<_, ClientMessage>(&mut stream)?,
+                        ClientMessage::Attach { .. }
+                    ));
+                    protocol::write_frame(&mut stream, &attached_message())?;
+                    protocol::write_frame(&mut stream, &ServerMessage::Ping { seq: 77 })?;
+                    // The client drives its own traffic too - a runtime-metrics request goes out
+                    // on attach - so the pong is not necessarily the next frame on the wire.
+                    let pong = loop {
+                        let message = protocol::read_frame::<_, ClientMessage>(&mut stream)?;
+                        if matches!(message, ClientMessage::Pong { .. }) {
+                            break message;
+                        }
+                    };
+                    assert_eq!(pong, ClientMessage::Pong { seq: 77 });
+                    Ok(())
+                })();
+                match exchange {
+                    Ok(()) => break,
+                    Err(err)
+                        if err.kind() == io::ErrorKind::BrokenPipe && Instant::now() < deadline =>
+                    {
+                        continue;
                     }
-                    Err(err) => panic!("accept failed: {err}"),
+                    Err(err) => panic!("server exchange failed: {err}"),
                 }
-            };
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            assert!(matches!(
-                protocol::read_frame::<_, ClientMessage>(&mut stream).unwrap(),
-                ClientMessage::Attach { .. }
-            ));
-            protocol::write_frame(&mut stream, &attached_message()).unwrap();
-            protocol::write_frame(&mut stream, &ServerMessage::Ping { seq: 77 }).unwrap();
-            // The client drives its own traffic too - a runtime-metrics request goes out on attach
-            // - so the pong is not necessarily the next frame on the wire. What this test is about
-            // is that the pong arrives at all while the reader is polling, not that it arrives
-            // first. The read timeout above bounds the loop.
-            let pong = loop {
-                let message = protocol::read_frame::<_, ClientMessage>(&mut stream).unwrap();
-                if matches!(message, ClientMessage::Pong { .. }) {
-                    break message;
-                }
-            };
-            assert_eq!(pong, ClientMessage::Pong { seq: 77 });
+            }
         });
 
         let (inbound_tx, _inbound_rx) = mpsc::channel();
-        let (_client, attached) =
-            SessionClient::connect_attached(&endpoint, "test", inbound_tx, false).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (_client, attached) = loop {
+            match SessionClient::connect_attached(&endpoint, "test", inbound_tx.clone(), false) {
+                Ok(attached) => break attached,
+                Err(err)
+                    if (err.kind() == io::ErrorKind::WouldBlock
+                        || err.raw_os_error()
+                            == Some(windows_sys::Win32::Foundation::ERROR_PIPE_BUSY as i32))
+                        && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(err) => panic!("connect attached failed: {err}"),
+            }
+        };
         assert!(matches!(attached, ServerMessage::Attached { .. }));
         server.join().unwrap();
         endpoint.remove_stale();

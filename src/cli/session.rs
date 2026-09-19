@@ -7,13 +7,13 @@ use super::args::ListFormat;
 use super::output::{OutputStyles, OutputTone, TableCell, format_table};
 use crate::session;
 
-pub(crate) fn run_server_cli(name: &str, fresh: bool) -> Result<()> {
-    session::server::run_named_session_mode(name, fresh)?;
+pub(crate) fn run_server_cli(name: &str, fresh: bool, startup_nonce: Option<String>) -> Result<()> {
+    session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce)?;
     Ok(())
 }
 
-pub(crate) fn run_remote_serve_cli(name: &str) -> Result<()> {
-    session::remote::run_remote_serve(name)?;
+pub(crate) fn run_remote_serve_cli(name: &str, autostart: bool) -> Result<()> {
+    session::remote::run_remote_serve(name, autostart)?;
     Ok(())
 }
 

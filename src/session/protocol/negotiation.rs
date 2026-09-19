@@ -72,6 +72,17 @@ pub fn attach_message(
     read_only: bool,
     shares_filesystem: bool,
 ) -> ClientMessage {
+    attach_message_with_server_nonce(session, label, read_only, shares_filesystem, None)
+}
+
+/// Attach while proving that a just-created server owns the endpoint the proxy reached.
+pub fn attach_message_with_server_nonce(
+    session: impl Into<String>,
+    label: impl Into<String>,
+    read_only: bool,
+    shares_filesystem: bool,
+    expected_server_nonce: Option<String>,
+) -> ClientMessage {
     ClientMessage::Attach {
         capabilities: Some(super::Capabilities::current()),
         session: session.into(),
@@ -80,6 +91,7 @@ pub fn attach_message(
         label: label.into(),
         read_only,
         shares_filesystem,
+        expected_server_nonce,
     }
 }
 

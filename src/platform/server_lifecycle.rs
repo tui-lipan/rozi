@@ -62,6 +62,7 @@ pub fn spawn_detached_server(
     exe: &Path,
     name: &str,
     fresh: bool,
+    startup_nonce: Option<&str>,
 ) -> io::Result<std::process::Child> {
     #[cfg(windows)]
     {
@@ -69,30 +70,50 @@ pub fn spawn_detached_server(
             CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW, DETACHED_PROCESS,
         };
         let base = DETACHED_PROCESS | CREATE_NO_WINDOW;
-        match spawn_server_with_flags(exe, name, fresh, base | CREATE_BREAKAWAY_FROM_JOB) {
+        match spawn_server_with_flags(
+            exe,
+            name,
+            fresh,
+            startup_nonce,
+            base | CREATE_BREAKAWAY_FROM_JOB,
+        ) {
             Ok(child) => Ok(child),
             // A job without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` refuses the flag with ACCESS_DENIED;
             // fall back to a plain detached spawn so at least the local path keeps working.
             Err(err) if err.raw_os_error() == Some(5) => {
-                spawn_server_with_flags(exe, name, fresh, base)
+                spawn_server_with_flags(exe, name, fresh, startup_nonce, base)
             }
             Err(err) => Err(err),
         }
     }
     #[cfg(not(windows))]
     {
-        let mut command = base_server_command(exe, name, fresh);
+        let mut command = base_server_command(exe, name, fresh, startup_nonce);
         configure_detached_server(&mut command);
         command.spawn()
     }
 }
 
-fn base_server_command(exe: &Path, name: &str, fresh: bool) -> std::process::Command {
+fn base_server_command(
+    exe: &Path,
+    name: &str,
+    fresh: bool,
+    startup_nonce: Option<&str>,
+) -> std::process::Command {
     let mut command = std::process::Command::new(exe);
+    if let Some(nonce) = startup_nonce {
+        debug_assert!(
+            !fresh,
+            "a fresh server never carries a remote startup nonce"
+        );
+        command.arg("--server-start").arg(name).arg(nonce);
+    } else {
+        command
+            .arg("--session")
+            .arg(name)
+            .arg(if fresh { "--fresh-server" } else { "--server" });
+    }
     command
-        .arg("--session")
-        .arg(name)
-        .arg(if fresh { "--fresh-server" } else { "--server" })
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -119,10 +140,11 @@ fn spawn_server_with_flags(
     exe: &Path,
     name: &str,
     fresh: bool,
+    startup_nonce: Option<&str>,
     flags: u32,
 ) -> io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
-    let mut command = base_server_command(exe, name, fresh);
+    let mut command = base_server_command(exe, name, fresh, startup_nonce);
     command.creation_flags(flags);
     command.spawn()
 }

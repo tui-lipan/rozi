@@ -25,6 +25,14 @@ pub(crate) fn handle_key_routing(
         return (true, crate::ops::popup::close(ctx));
     }
 
+    // An unreachable remote session keeps its panes on screen but has no live transport. Enter
+    // retries the in-place reconnect; Esc opens Sessions so the user can switch away. During
+    // automatic reconnect, Esc abandons the in-flight attempt. Other overlays take precedence
+    // when they are already open.
+    if let Some(update) = crate::ops::session::handle_offline_session_key(ctx, key) {
+        return (true, update);
+    }
+
     // The host editor moves its own cursor between Host / Username / Port. Claimed here because
     // `Tab` is the framework's focus traversal and never reaches a widget's key handler, and
     // because that traversal visits the three inputs in an order of its own rather than the order

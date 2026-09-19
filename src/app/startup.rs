@@ -87,7 +87,7 @@ impl StartupTasks {
                             create_only,
                             remote,
                             self.remote_config,
-                            false,
+                            crate::session::bootstrap::RemoteAttachMode::Initial,
                             link,
                         );
                     } else if create_only {

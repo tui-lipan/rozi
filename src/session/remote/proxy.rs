@@ -11,12 +11,14 @@ use crate::session::server;
 
 use super::preamble::{RemotePreamble, write_preamble};
 
-/// Connect to (or autostart) the named local session, emit a preamble, then pump bytes.
+/// Connect to the named local session, optionally autostarting it, emit a preamble, then pump
+/// bytes. Recovery uses `autostart = false` so a missing original is reported without creating an
+/// empty replacement.
 ///
 /// When the session socket closes, this process exits so the local ssh client's stdout pipe sees
 /// EOF (a blocked `stdin.read` on this side cannot otherwise notice). When stdin closes first,
 /// the socket is dropped and the stdout pump joins normally.
-pub fn run_remote_serve(name: &str) -> io::Result<()> {
+pub fn run_remote_serve(name: &str, autostart: bool) -> io::Result<()> {
     if !discovery::valid_attach_target(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -24,10 +26,32 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
         ));
     }
 
-    let (mut socket, server_started) = connect_or_autostart(name)?;
+    let endpoint = server::session_endpoint(name)?;
+    let (mut socket, server_nonce) = if autostart {
+        connect_or_autostart(name)?
+    } else {
+        match endpoint.connect() {
+            Ok(socket) => (socket, None),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                let mut stdout = io::stdout().lock();
+                write_preamble(&mut stdout, &RemotePreamble::missing())?;
+                stdout.flush()?;
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+    };
     {
         let mut stdout = io::stdout().lock();
-        write_preamble(&mut stdout, &RemotePreamble::current(server_started))?;
+        write_preamble(
+            &mut stdout,
+            &RemotePreamble::current_with_nonce(server_nonce.is_some(), server_nonce),
+        )?;
         stdout.flush()?;
     }
 
@@ -92,14 +116,15 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
     stdin_result
 }
 
-pub(crate) fn connect_or_autostart(name: &str) -> io::Result<(IpcConnection, bool)> {
+pub(crate) fn connect_or_autostart(name: &str) -> io::Result<(IpcConnection, Option<String>)> {
     let endpoint = server::session_endpoint(name)?;
     if let Ok(stream) = endpoint.connect() {
-        return Ok((stream, false));
+        return Ok((stream, None));
     }
 
     let exe = std::env::current_exe()?;
-    let mut child = server_lifecycle::spawn_detached_server(&exe, name, false)?;
+    let nonce = fresh_server_nonce();
+    let mut child = server_lifecycle::spawn_detached_server(&exe, name, false, Some(&nonce))?;
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut last_err = None;
     while Instant::now() < deadline {
@@ -108,7 +133,7 @@ pub(crate) fn connect_or_autostart(name: &str) -> io::Result<(IpcConnection, boo
                 // Detached session server outlives this proxy; do not kill it on drop.
                 let _ = child.try_wait();
                 drop(child);
-                return Ok((stream, true));
+                return Ok((stream, Some(nonce)));
             }
             Err(err) => {
                 last_err = Some(err);
@@ -124,6 +149,12 @@ pub(crate) fn connect_or_autostart(name: &str) -> io::Result<(IpcConnection, boo
             format!("timed out waiting for session `{name}` to start"),
         )
     }))
+}
+
+fn fresh_server_nonce() -> String {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).expect("operating-system randomness unavailable");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -182,8 +213,8 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
 
-        let (_stream, started) = connect_or_autostart(&name).expect("connect existing");
-        assert!(!started);
+        let (_stream, nonce) = connect_or_autostart(&name).expect("connect existing");
+        assert!(nonce.is_none());
 
         // Tear down: remove the socket so run_listener eventually stops accepting usefully,
         // then detach by dropping — the server thread may linger briefly.
@@ -194,9 +225,23 @@ mod tests {
     #[test]
     fn preamble_server_started_flag_round_trips_for_create_only() {
         let mut buf = Vec::new();
-        write_preamble(&mut buf, &RemotePreamble::current(true)).unwrap();
+        write_preamble(
+            &mut buf,
+            &RemotePreamble::current_with_nonce(true, Some("proof".to_string())),
+        )
+        .unwrap();
         let decoded = crate::session::remote::preamble::read_preamble(&mut &buf[..]).unwrap();
         assert!(decoded.server_started);
+        assert_eq!(decoded.server_nonce.as_deref(), Some("proof"));
         decoded.validate_for_client().unwrap();
+    }
+
+    #[test]
+    fn generated_server_nonce_is_strong_hex() {
+        let first = fresh_server_nonce();
+        let second = fresh_server_nonce();
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, second);
     }
 }

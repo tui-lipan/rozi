@@ -279,6 +279,14 @@ pub fn probe_remote_report(
     target: &RemoteTarget,
     config: &RemoteConfig,
 ) -> Result<ProbeReport, String> {
+    probe_remote_report_with_connect_timeout(target, config, config.connection_timeout_secs)
+}
+
+fn probe_remote_report_with_connect_timeout(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    connect_timeout_secs: u64,
+) -> Result<ProbeReport, String> {
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
     if let Some(path) = &resolved.binary_path {
@@ -301,13 +309,14 @@ pub fn probe_remote_report(
     // The remote sshd default shell is not always POSIX (Windows defaults to `cmd.exe`). Detect the
     // family with one fixed, shell-agnostic probe, then feed the matching script to the matching
     // interpreter. Probe output is still parsed with fixed keys and never treated as argv.
-    let stdout = match detect_remote_family(&resolved, config)? {
+    let stdout = match detect_remote_family(&resolved, config, connect_timeout_secs)? {
         // PowerShell's `-Command -` truncates a multi-line script read from stdin (only the first
         // statements run) over OpenSSH-for-Windows; pass the script as a base64 `-EncodedCommand`
         // instead, which runs the whole thing and needs no stdin.
         RemoteFamily::Windows => run_probe_command(
             &resolved,
             config,
+            connect_timeout_secs,
             &[
                 "powershell",
                 "-NoProfile",
@@ -316,7 +325,13 @@ pub fn probe_remote_report(
                 &encode_powershell_command(WINDOWS_PROBE_SCRIPT),
             ],
         )?,
-        RemoteFamily::Posix => run_probe_script(&resolved, config, &["sh", "-s"], PROBE_SCRIPT)?,
+        RemoteFamily::Posix => run_probe_script(
+            &resolved,
+            config,
+            connect_timeout_secs,
+            &["sh", "-s"],
+            PROBE_SCRIPT,
+        )?,
     };
     Ok(parse_probe_output(&stdout))
 }
@@ -334,8 +349,9 @@ enum RemoteFamily {
 fn detect_remote_family(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
+    connect_timeout_secs: u64,
 ) -> Result<RemoteFamily, String> {
-    let mut command = ssh_base_command(resolved, config);
+    let mut command = ssh_base_command_with_connect_timeout(resolved, config, connect_timeout_secs);
     append_ssh_destination(&mut command, resolved);
     command.arg("echo").arg("rozi_family=%OS%");
     command
@@ -369,10 +385,11 @@ fn detect_remote_family(
 fn run_probe_script(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
+    connect_timeout_secs: u64,
     interpreter: &[&str],
     script: &str,
 ) -> Result<String, String> {
-    let mut command = ssh_base_command(resolved, config);
+    let mut command = ssh_base_command_with_connect_timeout(resolved, config, connect_timeout_secs);
     append_ssh_destination(&mut command, resolved);
     for arg in interpreter {
         command.arg(arg);
@@ -407,9 +424,10 @@ fn run_probe_script(
 fn run_probe_command(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
+    connect_timeout_secs: u64,
     argv: &[&str],
 ) -> Result<String, String> {
-    let mut command = ssh_base_command(resolved, config);
+    let mut command = ssh_base_command_with_connect_timeout(resolved, config, connect_timeout_secs);
     append_ssh_destination(&mut command, resolved);
     for arg in argv {
         command.arg(arg);
@@ -991,6 +1009,16 @@ fn verify_sha256(archive: &Path, sha_file: &Path) -> Result<(), String> {
 /// escaped even one of those invocations would land on the terminal the TUI is drawing on. See
 /// [`super::askpass`].
 pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command {
+    ssh_base_command_with_connect_timeout(resolved, config, config.connection_timeout_secs)
+}
+
+/// Like [`ssh_base_command`], but with an explicit `ConnectTimeout` so a reconnect attempt can
+/// spend only the remaining deadline rather than the configured default.
+pub(crate) fn ssh_base_command_with_connect_timeout(
+    resolved: &ResolvedRemote,
+    config: &RemoteConfig,
+    connection_timeout_secs: u64,
+) -> Command {
     let mut command = Command::new("ssh");
     command.arg("-T");
     super::askpass::configure(&mut command);
@@ -1013,10 +1041,10 @@ pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig)
     if config.batch_mode {
         command.arg("-o").arg("BatchMode=yes");
     }
-    if config.connection_timeout_secs > 0 {
+    if connection_timeout_secs > 0 {
         command
             .arg("-o")
-            .arg(format!("ConnectTimeout={}", config.connection_timeout_secs));
+            .arg(format!("ConnectTimeout={connection_timeout_secs}"));
     }
     if let Some(port) = resolved.port {
         command.arg("-p").arg(port.to_string());
@@ -1969,5 +1997,34 @@ protocol_max={beyond}
         assert!(!args.iter().any(|arg| arg == "-p"));
         assert!(args.iter().any(|arg| arg == "-i"));
         assert!(args.iter().any(|arg| arg == "UserKnownHostsFile=/tmp/kh"));
+    }
+
+    #[test]
+    fn reconnect_budget_can_tighten_ssh_connect_timeout() {
+        let resolved = ResolvedRemote {
+            alias: Some("workbox".into()),
+            host: "workbox".into(),
+            user: None,
+            port: None,
+            identity_file: None,
+            ssh_args: Vec::new(),
+            binary_path: None,
+        };
+        let config = RemoteConfig::default();
+        let args = |secs: u64| -> Vec<String> {
+            ssh_base_command_with_connect_timeout(&resolved, &config, secs)
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert!(
+            args(5).iter().any(|arg| arg == "ConnectTimeout=5"),
+            "remaining reconnect budget must reach ssh argv"
+        );
+        assert!(
+            args(config.connection_timeout_secs)
+                .iter()
+                .any(|arg| arg == "ConnectTimeout=15")
+        );
     }
 }

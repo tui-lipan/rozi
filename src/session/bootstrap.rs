@@ -4,6 +4,31 @@ use crate::Msg;
 
 use super::protocol::{Frame, ServerMessage};
 
+/// Reconnect attempts run on detached worker threads, so changing attachment epochs only makes
+/// their eventual messages stale; it does not stop a blocked SSH child. Keep a small cancellation
+/// roster that the transport checks while waiting for its preamble.
+static CANCELLED_REMOTE_ATTACHES: std::sync::Mutex<std::collections::BTreeSet<u64>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+pub(crate) fn cancel_remote_attach(epoch: u64) {
+    let Ok(mut cancelled) = CANCELLED_REMOTE_ATTACHES.lock() else {
+        return;
+    };
+    cancelled.insert(epoch);
+}
+
+pub(crate) fn remote_attach_cancelled(epoch: u64) -> bool {
+    CANCELLED_REMOTE_ATTACHES
+        .lock()
+        .is_ok_and(|cancelled| cancelled.contains(&epoch))
+}
+
+pub(crate) fn finish_cancelled_remote_attach(epoch: u64) {
+    if let Ok(mut cancelled) = CANCELLED_REMOTE_ATTACHES.lock() {
+        cancelled.remove(&epoch);
+    }
+}
+
 /// How a launch begins its session: either attach straight to a session, or show the startup
 /// picker and defer attaching until the user chooses.
 pub(crate) enum SessionStart {
@@ -52,7 +77,7 @@ pub(crate) fn attach_session_client(
     read_only: bool,
     link: CommandLink<Msg>,
 ) {
-    attach_session_client_with_profile(epoch, name, autostart, read_only, false, None, false, link);
+    attach_session_client_with_profile(epoch, name, autostart, read_only, false, false, link);
 }
 
 /// How long a local reconnect keeps retrying a server that is alive but did not answer the
@@ -68,7 +93,7 @@ pub(crate) fn reconnect_session_client(
     read_only: bool,
     link: CommandLink<Msg>,
 ) {
-    attach_session_client_with_profile(epoch, name, autostart, read_only, false, None, true, link);
+    attach_session_client_with_profile(epoch, name, autostart, read_only, false, true, link);
 }
 
 pub(crate) fn create_session_client(
@@ -77,13 +102,32 @@ pub(crate) fn create_session_client(
     read_only: bool,
     link: CommandLink<Msg>,
 ) {
-    attach_session_client_with_profile(epoch, name, true, read_only, true, None, false, link);
+    attach_session_client_with_profile(epoch, name, true, read_only, true, false, link);
 }
 
-/// `reconnect` is true only when re-driving an *established* link that dropped: that path retries
-/// with backoff to ride out a suspend/Wi-Fi/VPN blip. The initial startup / attach-elsewhere path
-/// passes false so an unreachable host fails after one attempt and the caller can fall back to a
-/// local ephemeral instead of leaving the UI blank for the whole retry window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RemoteAttachMode {
+    Initial,
+    Recover,
+    Recreate,
+}
+
+impl RemoteAttachMode {
+    fn reconnect(self) -> bool {
+        matches!(self, Self::Recover | Self::Recreate)
+    }
+
+    fn recover_existing(self) -> bool {
+        self == Self::Recover
+    }
+
+    fn create_only(self, requested: bool) -> bool {
+        requested || self == Self::Recreate
+    }
+}
+
+/// In-place recovery and recreation both get deadline/cancellation handling. Recovery additionally
+/// forbids replacing the original server; explicit recreation deliberately allows a new one.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_remote_session_client(
     epoch: u64,
@@ -92,17 +136,18 @@ pub(crate) fn attach_remote_session_client(
     create_only: bool,
     remote: super::remote::RemoteTarget,
     remote_config: crate::config::RemoteConfig,
-    reconnect: bool,
+    mode: RemoteAttachMode,
     link: CommandLink<Msg>,
 ) {
-    attach_session_client_with_profile(
+    attach_remote(
         epoch,
         name,
-        true,
         read_only,
-        create_only,
-        Some((remote, remote_config)),
-        reconnect,
+        mode.create_only(create_only),
+        remote,
+        remote_config,
+        mode.reconnect(),
+        mode.recover_existing(),
         link,
     );
 }
@@ -114,25 +159,10 @@ fn attach_session_client_with_profile(
     autostart: bool,
     read_only: bool,
     create_only: bool,
-    remote: Option<(super::remote::RemoteTarget, crate::config::RemoteConfig)>,
     reconnect: bool,
     link: CommandLink<Msg>,
 ) {
     use std::time::{Duration, Instant};
-
-    if let Some((target, remote_config)) = remote {
-        attach_remote(
-            epoch,
-            name,
-            read_only,
-            create_only,
-            target,
-            remote_config,
-            reconnect,
-            link,
-        );
-        return;
-    }
 
     let Ok(path) = super::server::session_socket_path(&name) else {
         link.send(Msg::SessionAttachFailed {
@@ -243,6 +273,7 @@ fn attach_session_client_with_profile(
                         &exe,
                         &name,
                         create_only,
+                        None,
                     ) {
                         Ok(child) => server_child = Some(child),
                         Err(spawn_err) => {
@@ -282,8 +313,10 @@ fn attach_session_client_with_profile(
 /// How long the remote attach path keeps retrying transient connect failures before giving up. A
 /// remote link needs to ride out suspend, Wi-Fi flap, and VPN blips rather than dying on the first
 /// failed connect (the disconnect handler re-drives this whole path on an established link that
-/// later drops, so this deadline governs the connect phase only).
-const REMOTE_RECONNECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+/// later drops, so this deadline governs the connect phase only). Two minutes covers a typical
+/// wake-then-VPN sequence; a host that is still down after that stays offline in place. Each
+/// attempt is capped by the remaining window so SSH connect and preamble waits cannot outrun it.
+const REMOTE_RECONNECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 const REMOTE_RECONNECT_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 const REMOTE_RECONNECT_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(4);
 
@@ -296,6 +329,7 @@ fn attach_remote(
     target: super::remote::RemoteTarget,
     remote_config: crate::config::RemoteConfig,
     reconnect: bool,
+    recover_existing: bool,
     link: CommandLink<Msg>,
 ) {
     use std::time::Instant;
@@ -315,18 +349,58 @@ fn attach_remote(
             std::time::Duration::ZERO
         };
     let mut backoff = REMOTE_RECONNECT_INITIAL_BACKOFF;
+    let mut last_error = format!("timed out after {}s", REMOTE_RECONNECT_DEADLINE.as_secs());
     loop {
-        match try_attach_remote(
+        if remote_attach_cancelled(epoch) {
+            finish_cancelled_remote_attach(epoch);
+            return;
+        }
+        // Each attempt is capped by the time still inside the advertised window, so a single
+        // SSH/preamble wait cannot outrun the deadline and then decide whether to try again.
+        let budget = if reconnect {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                link.send(Msg::SessionAttachFailed {
+                    epoch,
+                    message: format!("Remote attach to `{name}` failed: {last_error}"),
+                });
+                return;
+            }
+            Some(remaining)
+        } else {
+            None
+        };
+        let outcome = try_attach_remote(
             epoch,
             &name,
             read_only,
             create_only,
             &target,
             &remote_config,
+            recover_existing,
+            budget,
+            reconnect.then_some(epoch),
             &link,
-        ) {
+        );
+        if remote_attach_cancelled(epoch) {
+            finish_cancelled_remote_attach(epoch);
+            return;
+        }
+        match outcome {
             AttachRemoteOutcome::Done => return,
             AttachRemoteOutcome::ProtocolSkew(message) => {
+                // Restarting here would deliberately destroy the original processes and then seed
+                // a replacement from retained client state. That is valid for a new attach, never
+                // for recovery of a link that was already established.
+                if !may_restart_after_protocol_skew(reconnect) {
+                    link.send(Msg::SessionAttachFailed {
+                        epoch,
+                        message: format!(
+                            "Remote attach to `{name}` failed: the original session runs an incompatible Rozi version and cannot be restarted automatically ({message})"
+                        ),
+                    });
+                    return;
+                }
                 attach_remote_after_skew(
                     epoch,
                     &name,
@@ -346,19 +420,46 @@ fn attach_remote(
                 });
                 return;
             }
+            AttachRemoteOutcome::Lost(message) => {
+                link.send(Msg::SessionLost { epoch, message });
+                return;
+            }
             AttachRemoteOutcome::Failed(message) => {
+                last_error = message;
                 if Instant::now() >= deadline {
                     link.send(Msg::SessionAttachFailed {
                         epoch,
-                        message: format!("Remote attach to `{name}` failed: {message}"),
+                        message: format!("Remote attach to `{name}` failed: {last_error}"),
                     });
                     return;
                 }
-                std::thread::sleep(backoff);
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if !wait_for_remote_retry(epoch, backoff.min(remaining)) {
+                    finish_cancelled_remote_attach(epoch);
+                    return;
+                }
                 backoff = (backoff * 2).min(REMOTE_RECONNECT_MAX_BACKOFF);
             }
         }
     }
+}
+
+fn wait_for_remote_retry(epoch: u64, duration: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + duration;
+    loop {
+        if remote_attach_cancelled(epoch) {
+            return false;
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+        std::thread::park_timeout(remaining.min(std::time::Duration::from_millis(200)));
+    }
+}
+
+fn may_restart_after_protocol_skew(reconnect: bool) -> bool {
+    !reconnect
 }
 
 /// Version-skew recovery: kill the incompatible remote server, then try once more. Backing off and
@@ -383,12 +484,16 @@ fn attach_remote_after_skew(
                 create_only,
                 target,
                 remote_config,
+                false,
+                None,
+                None,
                 link,
             ) {
                 AttachRemoteOutcome::Done => {}
                 AttachRemoteOutcome::ProtocolSkew(again)
                 | AttachRemoteOutcome::Failed(again)
-                | AttachRemoteOutcome::Fatal(again) => {
+                | AttachRemoteOutcome::Fatal(again)
+                | AttachRemoteOutcome::Lost(again) => {
                     link.send(Msg::SessionAttachFailed {
                         epoch,
                         message: format!(
@@ -416,8 +521,11 @@ enum AttachRemoteOutcome {
     Failed(String),
     /// A logical rejection that retrying cannot fix (e.g. `new` against a name already running).
     Fatal(String),
+    /// Existing-only recovery proved the original server is gone.
+    Lost(String),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_attach_remote(
     epoch: u64,
     name: &str,
@@ -425,24 +533,82 @@ fn try_attach_remote(
     create_only: bool,
     target: &super::remote::RemoteTarget,
     remote_config: &crate::config::RemoteConfig,
+    recover_existing: bool,
+    budget: Option<std::time::Duration>,
+    cancel_epoch: Option<u64>,
     link: &CommandLink<Msg>,
 ) -> AttachRemoteOutcome {
+    let attempt_started = std::time::Instant::now();
     let mailbox = super::client::InboundMailbox::new(epoch, name.to_string(), link.clone());
-    match super::remote::connect_remote(target, name, remote_config) {
+    match super::remote::connect_remote_within(
+        target,
+        name,
+        remote_config,
+        budget,
+        cancel_epoch,
+        recover_existing,
+    ) {
         Ok((stream, preamble)) => {
-            if create_only && !preamble.server_started {
+            if cancel_epoch.is_some_and(remote_attach_cancelled) {
+                drop(stream);
+                return AttachRemoteOutcome::Failed("reconnect cancelled".to_string());
+            }
+            if started_server_lacks_identity(
+                preamble.server_started,
+                preamble.server_nonce.as_deref(),
+            ) {
+                drop(stream);
+                return AttachRemoteOutcome::Fatal(
+                    "Remote proxy started a server without an identity proof".to_string(),
+                );
+            }
+            if create_only_rejects_existing(create_only, preamble.server_started) {
                 drop(stream);
                 return AttachRemoteOutcome::Fatal(format!(
                     "Session `{name}` is already running on the remote host"
                 ));
             }
-            match super::client::SessionClient::from_stream_attached_mailbox(
-                stream,
-                name.to_string(),
-                std::sync::Arc::clone(&mailbox),
-                read_only,
-                false,
+            // Recovery asks the proxy not to autostart. `server_started` remains a defensive check
+            // for a version-skewed proxy that still did so.
+            if reconnect_found_original_missing(
+                recover_existing,
+                preamble.server_started,
+                preamble.session_missing,
             ) {
+                drop(stream);
+                return AttachRemoteOutcome::Lost(format!(
+                    "the original remote session `{name}` is gone"
+                ));
+            }
+            let handshake_budget =
+                budget.map(|budget| budget.saturating_sub(attempt_started.elapsed()));
+            if handshake_budget.is_some_and(|remaining| remaining.is_zero()) {
+                drop(stream);
+                return AttachRemoteOutcome::Failed("reconnect deadline elapsed".to_string());
+            }
+            let attached = match handshake_budget {
+                Some(timeout) => {
+                    super::client::SessionClient::from_stream_attached_mailbox_with_timeout(
+                        stream,
+                        name.to_string(),
+                        std::sync::Arc::clone(&mailbox),
+                        read_only,
+                        false,
+                        timeout,
+                        cancel_epoch,
+                        preamble.server_nonce,
+                    )
+                }
+                None => super::client::SessionClient::from_stream_attached_mailbox(
+                    stream,
+                    name.to_string(),
+                    std::sync::Arc::clone(&mailbox),
+                    read_only,
+                    false,
+                    preamble.server_nonce,
+                ),
+            };
+            match attached {
                 Ok((client, attached)) => {
                     link.send(Msg::SessionConnected {
                         epoch,
@@ -455,7 +621,9 @@ fn try_attach_remote(
                 }
                 Err(err) => {
                     let message = err.to_string();
-                    if message.to_ascii_lowercase().contains("incompatible")
+                    if message.contains("different server") {
+                        AttachRemoteOutcome::Fatal(format!("Remote session `{name}`: {message}"))
+                    } else if message.to_ascii_lowercase().contains("incompatible")
                         || message.to_ascii_lowercase().contains("protocol")
                     {
                         AttachRemoteOutcome::ProtocolSkew(message)
@@ -468,6 +636,24 @@ fn try_attach_remote(
         Err(err) if err.is_protocol_skew() => AttachRemoteOutcome::ProtocolSkew(err.to_string()),
         Err(err) => AttachRemoteOutcome::Failed(err.to_string()),
     }
+}
+
+/// Recovery either receives an explicit missing marker from an existing-only proxy, or defensively
+/// spots a version-skewed proxy that autostarted anyway.
+fn reconnect_found_original_missing(
+    recover_existing: bool,
+    server_started: bool,
+    session_missing: bool,
+) -> bool {
+    recover_existing && (server_started || session_missing)
+}
+
+fn create_only_rejects_existing(create_only: bool, server_started: bool) -> bool {
+    create_only && !server_started
+}
+
+fn started_server_lacks_identity(server_started: bool, server_nonce: Option<&str>) -> bool {
+    server_started && server_nonce.is_none()
 }
 
 fn should_autostart_session(err: &std::io::Error) -> bool {
@@ -709,5 +895,55 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 state,
             },
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_does_not_treat_a_missing_or_autostarted_server_as_recovery() {
+        assert!(reconnect_found_original_missing(true, false, true));
+        assert!(reconnect_found_original_missing(true, true, false));
+        assert!(!reconnect_found_original_missing(true, false, false));
+        assert!(!reconnect_found_original_missing(false, true, true));
+    }
+
+    #[test]
+    fn explicit_recreation_is_bounded_and_cancellable_without_requiring_the_original() {
+        assert!(RemoteAttachMode::Recreate.reconnect());
+        assert!(!RemoteAttachMode::Recreate.recover_existing());
+        assert!(RemoteAttachMode::Recreate.create_only(false));
+        assert!(create_only_rejects_existing(
+            RemoteAttachMode::Recreate.create_only(false),
+            false
+        ));
+        assert!(started_server_lacks_identity(true, None));
+        assert!(!started_server_lacks_identity(true, Some("proof")));
+        assert!(RemoteAttachMode::Recover.reconnect());
+        assert!(RemoteAttachMode::Recover.recover_existing());
+        assert!(!RemoteAttachMode::Recover.create_only(false));
+        assert!(!RemoteAttachMode::Initial.reconnect());
+    }
+
+    #[test]
+    fn reconnect_never_restarts_an_incompatible_original_session() {
+        assert!(!may_restart_after_protocol_skew(true));
+        assert!(may_restart_after_protocol_skew(false));
+    }
+
+    #[test]
+    fn remote_attach_cancellation_is_visible_until_finished() {
+        let epoch = u64::MAX - 7;
+        assert!(!remote_attach_cancelled(epoch));
+        cancel_remote_attach(epoch);
+        assert!(remote_attach_cancelled(epoch));
+        assert!(!wait_for_remote_retry(
+            epoch,
+            std::time::Duration::from_secs(1)
+        ));
+        finish_cancelled_remote_attach(epoch);
+        assert!(!remote_attach_cancelled(epoch));
     }
 }

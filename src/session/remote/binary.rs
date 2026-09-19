@@ -18,12 +18,29 @@ static CACHE: Mutex<Vec<CachedBinary>> = Mutex::new(Vec::new());
 const MAX_AGE: Duration = Duration::from_secs(60);
 
 pub(super) fn cached(target: &RemoteTarget, config: &RemoteConfig) -> Option<String> {
+    cached_matching(target, config, true)
+}
+
+/// Last remembered path for this destination, even after the 60s hint expires.
+/// A dropped SSH link does not mean the remote executable moved.
+pub(crate) fn last_known(target: &RemoteTarget, config: &RemoteConfig) -> Option<String> {
+    cached_matching(target, config, false)
+}
+
+fn cached_matching(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    require_fresh: bool,
+) -> Option<String> {
     let remote = ResolvedRemote::resolve(target, config);
     CACHE
         .lock()
         .ok()?
         .iter()
-        .find(|entry| entry.remote == remote && entry.checked.elapsed() < MAX_AGE)
+        .rev()
+        .find(|entry| {
+            entry.remote == remote && (!require_fresh || entry.checked.elapsed() < MAX_AGE)
+        })
         .map(|entry| entry.path.clone())
 }
 
@@ -93,5 +110,38 @@ mod tests {
         assert!(cached(&target, &config).is_none());
         assert!(remember(&target, &config, "rozi;touch /tmp/no".into()).is_err());
         assert!(cached(&target, &config).is_none());
+    }
+
+    #[test]
+    fn reconnect_keeps_a_stale_cached_binary() {
+        let target = RemoteTarget::Alias("stale-binary-cache-fixture".into());
+        let config = RemoteConfig::default();
+        remember(&target, &config, "/home/u/.local/bin/rozi".into()).unwrap();
+        expire(&target, &config);
+        assert!(
+            cached(&target, &config).is_none(),
+            "fresh lookups must still expire"
+        );
+        assert_eq!(
+            last_known(&target, &config).as_deref(),
+            Some("/home/u/.local/bin/rozi")
+        );
+        invalidate(&target, &config);
+        assert!(last_known(&target, &config).is_none());
+    }
+
+    fn expire(target: &RemoteTarget, config: &RemoteConfig) {
+        let remote = ResolvedRemote::resolve(target, config);
+        let Ok(mut cache) = CACHE.lock() else {
+            return;
+        };
+        let stale = Instant::now()
+            .checked_sub(MAX_AGE + Duration::from_secs(1))
+            .expect("monotonic clock can represent a minute ago");
+        for entry in cache.iter_mut() {
+            if entry.remote == remote {
+                entry.checked = stale;
+            }
+        }
     }
 }

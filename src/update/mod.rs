@@ -5,6 +5,7 @@ pub(crate) mod keybindings;
 mod overlays;
 mod panes;
 mod prompts;
+pub(crate) use prompts::cancel_attach_askpass;
 mod services;
 mod session;
 pub(crate) mod sidebar;
@@ -359,9 +360,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::RemoteAskpassPrompt {
             id,
             session,
+            attach_epoch,
             kind,
             prompt,
-        } => prompts::askpass_prompt(ctx, id, session, kind, prompt),
+        } => prompts::askpass_prompt(ctx, id, session, attach_epoch, kind, prompt),
         Msg::RemoteAskpassExpired { id } => prompts::askpass_expired(ctx, id),
         Msg::RemoteAskpassChanged(event) => prompts::askpass_changed(ctx, event),
         Msg::SubmitRemoteAskpass => prompts::submit_askpass(ctx),
@@ -498,10 +500,22 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => session::connected(ctx, epoch, name, client),
         Msg::ScratchRuntimeFailed(message) => crate::scratchpad::runtime::failed(ctx, message),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
+        Msg::RetrySessionReconnect => {
+            if ctx.state.current().connection == crate::state::ConnectionState::Unreachable
+                && !ctx.state.current().remote_session_lost
+            {
+                crate::ops::session::reconnect_current_session(ctx)
+            } else {
+                Update::none()
+            }
+        }
+        Msg::RecreateLostRemoteSession => crate::ops::session::recreate_lost_remote_session(ctx),
+        Msg::AbandonSessionReconnect => crate::ops::session::abandon_session_reconnect(ctx),
         Msg::DrainSessionFrames { epoch, mailbox } => {
             drain_session_frames(_app, ctx, epoch, mailbox).update
         }
         Msg::SessionAttachFailed { epoch, message } => session::attach_failed(ctx, epoch, message),
+        Msg::SessionLost { epoch, message } => session::lost(ctx, epoch, message),
         Msg::SessionAttached {
             epoch,
             session: name,

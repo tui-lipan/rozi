@@ -1545,7 +1545,7 @@ fn the_global_pickers_scratch_key_stays_local_behind_a_remote_session() {
             }
 
             backend
-                .dispatch(Msg::SessionPickerEphemeral)
+                .update_level(Msg::SessionPickerEphemeral)
                 .expect("start the scratch session from the global picker");
 
             let state = backend.state();
@@ -1632,7 +1632,7 @@ fn a_scoped_launcher_starts_its_shell_on_the_host_it_names() {
             assert!(backend.state().is_launcher());
 
             backend
-                .dispatch(Msg::RunAction(Action::Spawn))
+                .update_level(Msg::RunAction(Action::Spawn))
                 .expect("start the launcher's shell");
 
             let state = backend.state();

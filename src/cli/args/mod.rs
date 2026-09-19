@@ -131,10 +131,12 @@ pub(crate) enum ParsedCli {
         name: String,
         fresh: bool,
         config_path: Option<String>,
+        startup_nonce: Option<String>,
     },
-    /// Hidden remote-side stdio proxy (`--remote-serve <NAME>`).
+    /// Hidden remote-side stdio proxy.
     RemoteServe {
         name: String,
+        autostart: bool,
     },
 }
 
@@ -295,6 +297,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     name,
                     fresh: false,
                     config_path: cli.config_path,
+                    startup_nonce: None,
                 });
             }
             "--fresh-server" => {
@@ -315,12 +318,39 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     name,
                     fresh: true,
                     config_path: cli.config_path,
+                    startup_nonce: None,
+                });
+            }
+            "--server-start" => {
+                let name = require_value(&mut iter, "--server-start requires a session name")?;
+                let nonce = require_value(&mut iter, "--server-start requires a nonce")?;
+                if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err("--server-start requires a 32-digit hexadecimal nonce".to_string());
+                }
+                reject_trailing_control_args(&mut iter, "--server-start")?;
+                return Ok(ParsedCli::Server {
+                    name,
+                    fresh: false,
+                    config_path: cli.config_path,
+                    startup_nonce: Some(nonce),
                 });
             }
             "--remote-serve" => {
                 let name = require_value(&mut iter, "--remote-serve requires a session name")?;
                 reject_trailing_control_args(&mut iter, "--remote-serve")?;
-                return Ok(ParsedCli::RemoteServe { name });
+                return Ok(ParsedCli::RemoteServe {
+                    name,
+                    autostart: true,
+                });
+            }
+            "--remote-serve-existing" => {
+                let name =
+                    require_value(&mut iter, "--remote-serve-existing requires a session name")?;
+                reject_trailing_control_args(&mut iter, "--remote-serve-existing")?;
+                return Ok(ParsedCli::RemoteServe {
+                    name,
+                    autostart: false,
+                });
             }
             "--remote" => {
                 // Host is optional when `[remote] default_host` is set (resolved in app::run).
@@ -1795,7 +1825,21 @@ mod tests {
                 "dev".into(),
             ])
             .expect("parses"),
-            ParsedCli::RemoteServe { name } if name == "dev"
+            ParsedCli::RemoteServe {
+                name,
+                autostart: true
+            } if name == "dev"
+        ));
+        assert!(matches!(
+            parse_cli_args(vec![
+                "--remote-serve-existing".into(),
+                "dev".into(),
+            ])
+            .expect("parses"),
+            ParsedCli::RemoteServe {
+                name,
+                autostart: false
+            } if name == "dev"
         ));
 
         assert!(
@@ -1821,6 +1865,7 @@ mod tests {
             vec!["--server", "--pick"],
             vec!["--session", "dev", "--fresh-server", "--pick"],
             vec!["--remote-serve", "--pick"],
+            vec!["--remote-serve-existing", "--pick"],
             vec!["sessions", "kill", "--remote"],
             vec!["--profile", "--read-only"],
             vec!["--config", "--read-only"],
@@ -1967,6 +2012,34 @@ mod tests {
             .expect_err("rejected")
             .contains("sessions list --remote"),
             "the remote rejection should point at the command that does reach a host"
+        );
+    }
+
+    #[test]
+    fn hidden_server_start_carries_only_a_valid_nonce() {
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let parsed =
+            parse_cli_args(vec!["--server-start".into(), "dev".into(), nonce.into()]).unwrap();
+        let ParsedCli::Server {
+            name,
+            fresh,
+            config_path,
+            startup_nonce,
+        } = parsed
+        else {
+            panic!("expected server");
+        };
+        assert_eq!(name, "dev");
+        assert!(!fresh);
+        assert!(config_path.is_none());
+        assert_eq!(startup_nonce.as_deref(), Some(nonce));
+        assert!(
+            parse_cli_args(vec![
+                "--server-start".into(),
+                "dev".into(),
+                "../not-a-nonce".into(),
+            ])
+            .is_err()
         );
     }
 

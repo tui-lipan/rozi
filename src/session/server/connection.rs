@@ -9,6 +9,7 @@ pub(super) struct AttachRequest {
     pub label: String,
     pub read_only: bool,
     pub shares_filesystem: bool,
+    pub expected_server_nonce: Option<String>,
 }
 
 impl SessionServer {
@@ -147,6 +148,7 @@ impl SessionServer {
                 label,
                 read_only,
                 shares_filesystem,
+                expected_server_nonce,
             } => self.handle_attach(
                 client_id,
                 AttachRequest {
@@ -157,6 +159,7 @@ impl SessionServer {
                     label,
                     read_only,
                     shares_filesystem,
+                    expected_server_nonce,
                 },
             ),
             ClientMessage::SetSessionOrigin { profile } => {
@@ -783,6 +786,7 @@ impl SessionServer {
             label,
             read_only,
             shares_filesystem,
+            expected_server_nonce,
         } = request;
         let effective = match protocol::negotiate_protocol(
             protocol_version,
@@ -810,6 +814,17 @@ impl SessionServer {
                         "client requested session {session:?}, but this server owns {:?}",
                         self.session_name
                     ),
+                },
+            )];
+        }
+        if let Some(expected) = expected_server_nonce
+            && self.settings.startup_nonce.as_deref() != Some(expected.as_str())
+        {
+            return vec![(
+                Target::Sender,
+                ServerMessage::Error {
+                    code: "server-identity-mismatch".to_string(),
+                    message: "the session endpoint belongs to a different server".to_string(),
                 },
             )];
         }

@@ -133,6 +133,7 @@ fn protocol_frame_round_trips() {
         label: "alice".into(),
         read_only: false,
         shares_filesystem: true,
+        expected_server_nonce: None,
     };
     let mut buf = Vec::new();
     write_frame(&mut buf, &msg).unwrap();
@@ -515,6 +516,7 @@ fn golden_client_attach_json_shape() {
         label: "alice".into(),
         read_only: true,
         shares_filesystem: true,
+        expected_server_nonce: None,
     })
     .unwrap();
     assert_eq!(
@@ -683,6 +685,7 @@ fn frame_decoder_decodes_interleaved_control_and_binary_frames() {
         label: "alice".into(),
         read_only: false,
         shares_filesystem: true,
+        expected_server_nonce: None,
     };
     let mut encoded = Vec::new();
     write_frame(&mut encoded, &attach).unwrap();
@@ -831,6 +834,7 @@ fn attach_without_min_protocol_deserializes_as_legacy_exact() {
             read_only: false,
             // A client that does not say cannot be assumed to be looking at this machine's files.
             shares_filesystem: false,
+            expected_server_nonce: None,
         }
     );
 }

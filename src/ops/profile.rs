@@ -695,7 +695,7 @@ pub(crate) fn open_named_target(
                 target,
                 remote_config,
                 // Explicit request: fail fast rather than blocking the UI on a dead host.
-                false,
+                crate::session::bootstrap::RemoteAttachMode::Initial,
                 link,
             ),
             None if explicit_create => {

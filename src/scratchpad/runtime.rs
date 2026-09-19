@@ -47,7 +47,7 @@ impl ScratchRuntime {
             ));
         }
         let mut child =
-            crate::platform::server_lifecycle::spawn_detached_server(&exe, &name, true)?;
+            crate::platform::server_lifecycle::spawn_detached_server(&exe, &name, true, None)?;
         let mailbox = InboundMailbox::new(SCRATCH_RUNTIME_EPOCH, name.clone(), link);
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {

@@ -264,7 +264,11 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
     .render(ctx)
 }
 
-/// Non-dismissible progress chrome while an automatic reconnect preserves the panes underneath.
+/// Progress chrome while an automatic reconnect preserves the panes underneath, or the offline
+/// prompt after that window ends on a remote host. Neither is dismissible with a bare click: the
+/// first is in-flight, the second is the only honest reading of a retained session whose host is
+/// gone. `Esc` abandons an in-flight reconnect (and opens Sessions) so the overlay cannot trap
+/// the user for the whole retry window. From offline, `Enter` retries; `Esc` opens Sessions.
 pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
     let name = ctx
         .state
@@ -272,17 +276,61 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
         .session_name
         .as_deref()
         .unwrap_or("session");
-    styled_modal(ctx, &format!("Session · {name}"), 42)
+    let offline = ctx.state.current().connection == crate::state::ConnectionState::Unreachable;
+    let lost = ctx.state.current().remote_session_lost;
+    let mut modal = styled_modal(ctx, &format!("Session · {name}"), 42)
         .auto_focus(false)
-        .dismiss_on_escape(false)
-        .child(
-            Spinner::new()
-                .spinner_style(SpinnerStyle::Dots)
-                .label("reconnecting")
-                .style(Style::new().fg(ctx.state.theme.status.warning))
-                .label_style(fg_only(&ctx.state.theme.primary)),
-        )
-        .into()
+        .dismiss_on_escape(false);
+    let actions = if offline {
+        vec![
+            OverlayAction::new(
+                "enter",
+                if lost { "recreate" } else { "reconnect" },
+                if lost {
+                    Msg::RecreateLostRemoteSession
+                } else {
+                    Msg::RetrySessionReconnect
+                },
+                true,
+            ),
+            OverlayAction::new(
+                "esc",
+                "sessions",
+                Msg::RunAction(Action::OpenSessionPicker),
+                true,
+            ),
+        ]
+    } else {
+        vec![OverlayAction::new(
+            "esc",
+            "sessions",
+            Msg::AbandonSessionReconnect,
+            true,
+        )]
+    };
+    if offline {
+        modal = modal.child(
+            VStack::new()
+                .child(
+                    Text::new(if lost { "session lost" } else { "offline" })
+                        .style(Style::new().fg(ctx.state.theme.status.warning)),
+                )
+                .child(overlay_hints(&ctx.state.theme, &actions)),
+        );
+    } else {
+        modal = modal.child(
+            VStack::new()
+                .child(
+                    Spinner::new()
+                        .spinner_style(SpinnerStyle::Dots)
+                        .label(if lost { "recreating" } else { "reconnecting" })
+                        .style(Style::new().fg(ctx.state.theme.status.warning))
+                        .label_style(fg_only(&ctx.state.theme.primary)),
+                )
+                .child(overlay_hints(&ctx.state.theme, &actions)),
+        );
+    }
+    modal.into()
 }
 
 /// The footer hint row only advertises keys that would actually act on the current state, so a

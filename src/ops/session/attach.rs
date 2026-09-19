@@ -143,6 +143,9 @@ pub(crate) fn switch_to_parked(
         crate::ops::focus::request_pane_focus(ctx, id);
     }
     if !ctx.state.current().session_attached {
+        if ctx.state.current().remote_session_lost {
+            return Update::full();
+        }
         return reconnect_current_session(ctx);
     }
     Update::full()
@@ -165,9 +168,105 @@ pub(crate) fn apply_pending_background_closes(ctx: &mut Context<AppRoot>) {
     }
 }
 
+/// Keys the reconnecting / offline overlay advertises while a remote session has no live
+/// transport. During automatic reconnect, `Esc` cancels the in-flight attempt, leaves the
+/// session offline, and opens Sessions. Once offline, `Enter` retries in place and `Esc` opens
+/// Sessions. Returns `None` when this is not that state, so callers keep routing the key as usual.
+pub(crate) fn handle_offline_session_key(
+    ctx: &mut Context<AppRoot>,
+    key: KeyEvent,
+) -> Option<Update> {
+    if ctx.state.has_modal_overlay() || !key.mods.is_empty() {
+        return None;
+    }
+    ctx.state.current().session_name.as_ref()?;
+    match ctx.state.current().connection {
+        crate::state::ConnectionState::Unreachable
+            if ctx.state.current().pending_session_attach.is_none() =>
+        {
+            match key.code {
+                KeyCode::Enter => Some(if ctx.state.current().remote_session_lost {
+                    recreate_lost_remote_session(ctx)
+                } else {
+                    reconnect_current_session(ctx)
+                }),
+                KeyCode::Esc => Some(crate::ops::session::open_session_picker(ctx)),
+                _ => None,
+            }
+        }
+        crate::state::ConnectionState::Reconnecting
+            if ctx
+                .state
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .is_some_and(|pending| pending.reconnect) =>
+        {
+            match key.code {
+                KeyCode::Esc => Some(abandon_session_reconnect(ctx)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Drop an in-flight reconnect so the overlay cannot trap the user. A new attachment epoch
+/// makes the pending SSH/preamble result stale; remote sessions stay on screen as offline, local
+/// ones leave the same way a failed reconnect does.
+pub(crate) fn abandon_session_reconnect(ctx: &mut Context<AppRoot>) -> Update {
+    let reconnecting = ctx.state.current().connection
+        == crate::state::ConnectionState::Reconnecting
+        && ctx
+            .state
+            .current()
+            .pending_session_attach
+            .as_ref()
+            .is_some_and(|pending| pending.reconnect);
+    if !reconnecting {
+        return Update::none();
+    }
+    let reconnect_epoch = ctx
+        .state
+        .current()
+        .pending_session_attach
+        .as_ref()
+        .map(|pending| pending.epoch)
+        .expect("reconnecting state checked above");
+    let was_remote = ctx.state.current().remote_target.is_some();
+    if was_remote {
+        crate::session::bootstrap::cancel_remote_attach(reconnect_epoch);
+        crate::update::cancel_attach_askpass(ctx, reconnect_epoch);
+    }
+    let epoch = ctx.state.mint_attachment_id();
+    ctx.state.runtime_epoch = epoch;
+    ctx.state.current_mut().epoch = epoch;
+    ctx.state.current_mut().pending_session_attach = None;
+    ctx.state.commands_dirty = true;
+    if was_remote {
+        ctx.state.current_mut().connection = crate::state::ConnectionState::Unreachable;
+        crate::ops::session::open_session_picker(ctx)
+    } else {
+        land_on_surviving_session(ctx)
+    }
+}
+
 /// Reconnect the current attachment without replacing its retained screens or window-manager state.
 /// The new id invalidates frames from the dead transport while preserving the attachment identity.
 pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {
+    begin_current_session_reconnect(ctx, true)
+}
+
+/// Explicitly adopt a replacement after the reconnect path proved the original remote server is
+/// gone. This is the one path allowed to seed a new server from retained panes.
+pub(crate) fn recreate_lost_remote_session(ctx: &mut Context<AppRoot>) -> Update {
+    if !ctx.state.current().remote_session_lost || ctx.state.current().remote_target.is_none() {
+        return Update::none();
+    }
+    begin_current_session_reconnect(ctx, false)
+}
+
+fn begin_current_session_reconnect(ctx: &mut Context<AppRoot>, recover_existing: bool) -> Update {
     let Some(name) = ctx.state.current().session_name.clone() else {
         return Update::none();
     };
@@ -205,7 +304,11 @@ pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {
                     false,
                     target,
                     remote_config,
-                    true,
+                    if recover_existing {
+                        crate::session::bootstrap::RemoteAttachMode::Recover
+                    } else {
+                        crate::session::bootstrap::RemoteAttachMode::Recreate
+                    },
                     link,
                 )
             });
@@ -534,14 +637,16 @@ fn begin_named_attach(
     remote_target: Option<crate::session::remote::RemoteTarget>,
     autostart: bool,
 ) -> Update {
-    // Attach-elsewhere. Retain the current attached session in the background so switching back is
-    // instant and its screens stay live; only tear it down when it is not actually attached (e.g.
-    // still mid-connect). The epoch advances below, so the retained session's remaining frames route
-    // to it as a background attachment rather than the new current one.
+    // Attach-elsewhere. Retain both live and offline sessions in the background so their screens
+    // stay scoped to their own identity. Reusing an offline attachment here would seed its panes
+    // into the new target's empty server. Only a session still mid-connect is released.
     let epoch = ctx.state.mint_attachment_id();
     let mut parked_epoch = None;
+    let retain_current = ctx.state.current().session_attached
+        || (ctx.state.current().session_name.is_some()
+            && ctx.state.current().pending_session_attach.is_none());
     let left =
-        if ctx.state.current().session_attached {
+        if retain_current {
             parked_epoch = Some(ctx.state.runtime_epoch);
             park_current_session(ctx);
             None
@@ -584,7 +689,7 @@ fn begin_named_attach(
                     false,
                     target,
                     remote_config,
-                    false,
+                    crate::session::bootstrap::RemoteAttachMode::Initial,
                     link,
                 );
             } else {
@@ -779,7 +884,7 @@ pub(crate) fn attach_startup_ephemeral(
                 target,
                 remote_config,
                 // Explicit request: fail fast rather than blocking the UI on a dead host.
-                false,
+                crate::session::bootstrap::RemoteAttachMode::Initial,
                 link,
             ),
             None => {

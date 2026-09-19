@@ -1,6 +1,7 @@
 use tui_lipan::prelude::*;
 
 use crate::actions::{execute_action, execute_palette_action};
+use crate::config::UserCommandAction;
 use crate::input::Action;
 use crate::ops::focus::{
     request_current_pane_focus, request_rename_focus, request_rename_session_focus,
@@ -64,9 +65,15 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     }
     let cycle_layout_in_palette = matches!(action, Action::ToggleLayout) && ctx.state.show_palette;
     let from_palette = ctx.state.show_palette;
-    if !cycle_layout_in_palette {
+    let handoff_palette = from_palette && command_palette_handoff_action(ctx, action);
+    if handoff_palette {
+        ctx.state.command_palette_handoff_epoch =
+            ctx.state.command_palette_handoff_epoch.wrapping_add(1);
+        ctx.state.command_palette_handoff = Some(ctx.state.command_palette_handoff_epoch);
+    } else if !cycle_layout_in_palette {
         ctx.state.show_palette = false;
         ctx.state.command_palette_sidebar_query = false;
+        ctx.state.command_palette_handoff = None;
     }
     let update = if from_palette {
         execute_palette_action(ctx, action)
@@ -100,9 +107,41 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     update
 }
 
+fn command_palette_handoff_action(ctx: &Context<AppRoot>, action: Action) -> bool {
+    let Action::RunNamedCommand(index) = action else {
+        return false;
+    };
+    let Some(command) = ctx.state.config.commands.get(index) else {
+        return false;
+    };
+    if !command.env.iter().any(|(key, _)| key == "ROZI_EXTENSION") {
+        return false;
+    }
+    matches!(
+        command.action,
+        UserCommandAction::Exec { .. } | UserCommandAction::ExecDirect { .. }
+    )
+}
+
+pub(super) fn command_palette_handoff_finished(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
+    if ctx.state.command_palette_handoff != Some(epoch) {
+        return Update::none();
+    }
+    ctx.state.command_palette_handoff = None;
+    if ctx.state.show_palette && !ctx.state.show_pick {
+        ctx.state.show_palette = false;
+        ctx.state.command_palette_sidebar_query = false;
+        ctx.state.commands_dirty = true;
+        request_current_pane_focus(ctx);
+        return Update::full();
+    }
+    Update::none()
+}
+
 pub(super) fn close_palette(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_palette = false;
     ctx.state.command_palette_sidebar_query = false;
+    ctx.state.command_palette_handoff = None;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()

@@ -145,6 +145,10 @@ pub struct State {
     /// Whether the command palette's trimmed query is exactly `sidebar`. This scopes the primary
     /// Sidebar toggle's result priority to that one broad query without disturbing empty-list order.
     pub command_palette_sidebar_query: bool,
+    /// A detached extension command selected from Commands may immediately open `rozi pick`.
+    /// Keep Commands visible until that picker arrives, or until the command finishes without one.
+    pub command_palette_handoff: Option<u64>,
+    pub command_palette_handoff_epoch: u64,
     /// The Keybindings overlay, present while it is open.
     pub keybindings: Option<KeybindingsState>,
     pub show_settings: bool,
@@ -426,6 +430,8 @@ impl State {
             workbar: WorkbarState::default(),
             show_palette: false,
             command_palette_sidebar_query: false,
+            command_palette_handoff: None,
+            command_palette_handoff_epoch: 0,
             keybindings: None,
             show_settings: false,
             settings_selected: None,

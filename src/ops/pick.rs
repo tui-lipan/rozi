@@ -53,7 +53,9 @@ pub(crate) fn open_pick_stream(
         let _ = ack.send(ControlResponse::error("a picker is already open"));
         return Update::none();
     }
-    if ctx.state.has_modal_overlay() {
+    let replacing_command_palette =
+        ctx.state.show_palette && ctx.state.command_palette_handoff.is_some();
+    if ctx.state.has_modal_overlay() && !replacing_command_palette {
         let _ = ack.send(ControlResponse::error("an overlay is open"));
         return Update::none();
     }
@@ -86,8 +88,10 @@ pub(crate) fn open_pick_stream(
         reply: sender,
     });
     ctx.state.show_pick = true;
+    ctx.state.command_palette_handoff = None;
     ctx.state.keybindings = None;
     ctx.state.show_palette = false;
+    ctx.state.command_palette_sidebar_query = false;
     ctx.state.show_theme_picker = false;
     ctx.state.show_layout_picker = false;
     ctx.state.search = None;
@@ -433,6 +437,45 @@ mod tests {
             let pick = backend.state().pick.as_ref().expect("pick state present");
             assert_eq!(pick.rows.len(), 1);
             assert_eq!(pick.rows[0].label, "main");
+        });
+    }
+
+    #[test]
+    fn pick_stream_replaces_command_palette_handoff() {
+        with_backend(|backend| {
+            backend.state_mut().show_palette = true;
+            backend.state_mut().command_palette_handoff = Some(7);
+
+            let (tx, _rx) = mpsc::sync_channel(1);
+            let (ack_tx, ack_rx) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::PickStreamOpen {
+                    id: 1,
+                    width: None,
+                    actions: Vec::new(),
+                    title: Some("Snippets".into()),
+                    placeholder: None,
+                    empty: None,
+                    extension: None,
+                    sender: tx,
+                    ack: ack_tx,
+                })
+                .expect("dispatch open");
+
+            let ack = ack_rx.recv().expect("ack received");
+            assert!(ack.ok);
+            assert!(backend.state().show_pick);
+            assert!(!backend.state().show_palette);
+            assert!(backend.state().command_palette_handoff.is_none());
+            assert_eq!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .expect("pick state present")
+                    .title,
+                "Snippets"
+            );
         });
     }
 

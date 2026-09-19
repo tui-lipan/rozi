@@ -32,6 +32,9 @@ pub enum Msg {
     Hangup,
     RunAction(Action),
     ClosePalette,
+    CommandPaletteHandoffFinished {
+        epoch: u64,
+    },
     CommandPaletteQueryChanged(String),
     CloseHelp,
     HelpQueryChanged(InputEvent),

@@ -149,6 +149,7 @@ fn exec_argv(
     let args = args.to_vec();
     let overflow_link = link.clone();
     let overflow_label = label.clone();
+    let command_palette_handoff = ctx.state.command_palette_handoff;
     if !crate::jobs::try_spawn(move || {
         let mut process = std::process::Command::new(program);
         process
@@ -174,12 +175,18 @@ fn exec_argv(
         if let Some(message) = failure {
             link.send(crate::Msg::UserCommandFailed { message });
         }
+        if let Some(epoch) = command_palette_handoff {
+            link.send(crate::Msg::CommandPaletteHandoffFinished { epoch });
+        }
     }) {
         overflow_link.send(crate::Msg::UserCommandFailed {
             message: format!(
                 "`{overflow_label}` was not started; too many detached commands are already running"
             ),
         });
+        if let Some(epoch) = command_palette_handoff {
+            overflow_link.send(crate::Msg::CommandPaletteHandoffFinished { epoch });
+        }
     }
     Update::none()
 }

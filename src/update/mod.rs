@@ -76,6 +76,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::Hangup => overlays::hangup(ctx),
         Msg::RunAction(action) => overlays::run_action(ctx, action),
         Msg::ClosePalette => overlays::close_palette(ctx),
+        Msg::CommandPaletteHandoffFinished { epoch } => {
+            overlays::command_palette_handoff_finished(ctx, epoch)
+        }
         Msg::CommandPaletteQueryChanged(query) => {
             overlays::command_palette_query_changed(ctx, query)
         }

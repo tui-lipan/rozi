@@ -1545,7 +1545,7 @@ fn the_global_pickers_scratch_key_stays_local_behind_a_remote_session() {
             }
 
             backend
-                .dispatch(Msg::SessionPickerEphemeral)
+                .update_level(Msg::SessionPickerEphemeral)
                 .expect("start the scratch session from the global picker");
 
             let state = backend.state();

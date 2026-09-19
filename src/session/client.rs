@@ -1720,20 +1720,11 @@ mod tests {
         );
         endpoint.remove_stale();
         let listener = endpoint.bind().unwrap().into_listener();
-        listener.set_nonblocking(true).unwrap();
 
         let server = thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
-                let mut stream = loop {
-                    match listener.accept() {
-                        Ok(stream) => break stream,
-                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(1));
-                        }
-                        Err(err) => panic!("accept failed: {err}"),
-                    }
-                };
+                let mut stream = listener.accept().expect("accept client");
                 let exchange = (|| -> io::Result<()> {
                     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
                     assert!(matches!(

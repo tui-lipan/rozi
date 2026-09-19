@@ -132,9 +132,10 @@ pub(crate) enum ParsedCli {
         fresh: bool,
         config_path: Option<String>,
     },
-    /// Hidden remote-side stdio proxy (`--remote-serve <NAME>`).
+    /// Hidden remote-side stdio proxy.
     RemoteServe {
         name: String,
+        autostart: bool,
     },
 }
 
@@ -320,7 +321,19 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "--remote-serve" => {
                 let name = require_value(&mut iter, "--remote-serve requires a session name")?;
                 reject_trailing_control_args(&mut iter, "--remote-serve")?;
-                return Ok(ParsedCli::RemoteServe { name });
+                return Ok(ParsedCli::RemoteServe {
+                    name,
+                    autostart: true,
+                });
+            }
+            "--remote-serve-existing" => {
+                let name =
+                    require_value(&mut iter, "--remote-serve-existing requires a session name")?;
+                reject_trailing_control_args(&mut iter, "--remote-serve-existing")?;
+                return Ok(ParsedCli::RemoteServe {
+                    name,
+                    autostart: false,
+                });
             }
             "--remote" => {
                 // Host is optional when `[remote] default_host` is set (resolved in app::run).
@@ -1795,7 +1808,21 @@ mod tests {
                 "dev".into(),
             ])
             .expect("parses"),
-            ParsedCli::RemoteServe { name } if name == "dev"
+            ParsedCli::RemoteServe {
+                name,
+                autostart: true
+            } if name == "dev"
+        ));
+        assert!(matches!(
+            parse_cli_args(vec![
+                "--remote-serve-existing".into(),
+                "dev".into(),
+            ])
+            .expect("parses"),
+            ParsedCli::RemoteServe {
+                name,
+                autostart: false
+            } if name == "dev"
         ));
 
         assert!(
@@ -1821,6 +1848,7 @@ mod tests {
             vec!["--server", "--pick"],
             vec!["--session", "dev", "--fresh-server", "--pick"],
             vec!["--remote-serve", "--pick"],
+            vec!["--remote-serve-existing", "--pick"],
             vec!["sessions", "kill", "--remote"],
             vec!["--profile", "--read-only"],
             vec!["--config", "--read-only"],

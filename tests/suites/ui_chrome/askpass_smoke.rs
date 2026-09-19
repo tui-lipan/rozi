@@ -22,6 +22,7 @@ fn askpass_backend(kind: AskpassKind, prompt: &str) -> TestBackend<AppRoot> {
         .dispatch(rozi::Msg::RemoteAskpassPrompt {
             id: 7,
             session: "ssh-1".to_string(),
+            attach_epoch: None,
             kind,
             prompt: prompt.to_string(),
         })
@@ -50,6 +51,7 @@ fn prompt_msg(id: u64, session: &str, prompt: &str) -> rozi::Msg {
     rozi::Msg::RemoteAskpassPrompt {
         id,
         session: session.to_string(),
+        attach_epoch: None,
         kind: AskpassKind::Secret,
         prompt: prompt.to_string(),
     }
@@ -486,6 +488,7 @@ fn remote_install_policy_and_abandoned_probes_do_not_open_a_modal() {
                 .dispatch(rozi::Msg::RemoteAskpassPrompt {
                     id: 100,
                     session: "install-policy".into(),
+                    attach_epoch: None,
                     kind: AskpassKind::Install { probe_epoch: None },
                     prompt: "Host: workbox".into(),
                 })
@@ -497,6 +500,7 @@ fn remote_install_policy_and_abandoned_probes_do_not_open_a_modal() {
             .dispatch(rozi::Msg::RemoteAskpassPrompt {
                 id: 101,
                 session: "abandoned-install".into(),
+                attach_epoch: None,
                 kind: AskpassKind::Install {
                     probe_epoch: Some(u64::MAX),
                 },

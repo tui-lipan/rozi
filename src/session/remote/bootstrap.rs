@@ -454,16 +454,6 @@ pub fn probe_remote(target: &RemoteTarget, config: &RemoteConfig) -> Result<Prob
     Ok(select_compatible(&probe_remote_report(target, config)?))
 }
 
-pub(crate) fn probe_remote_with_connect_timeout(
-    target: &RemoteTarget,
-    config: &RemoteConfig,
-    connect_timeout_secs: u64,
-) -> Result<ProbeResult, String> {
-    Ok(select_compatible(
-        &probe_remote_report_with_connect_timeout(target, config, connect_timeout_secs)?,
-    ))
-}
-
 /// Shell startup entry point. Non-interactive invocations never install implicitly.
 pub fn ensure_remote_binary(
     target: &RemoteTarget,

@@ -44,23 +44,6 @@ fn cached_matching(
         .map(|entry| entry.path.clone())
 }
 
-/// Probe for a compatible executable using `connect_timeout_secs` on each SSH hop. Does not
-/// install. Used by reconnect when no remembered path remains.
-pub(crate) fn resolve_with_connect_timeout(
-    target: &RemoteTarget,
-    config: &RemoteConfig,
-    connect_timeout_secs: u64,
-) -> Result<String, String> {
-    super::validate_remote_target(target)?;
-    if let Some(path) = last_known(target, config) {
-        return Ok(path);
-    }
-    match bootstrap::probe_remote_with_connect_timeout(target, config, connect_timeout_secs)? {
-        bootstrap::ProbeResult::Found { path, .. } => remember(target, config, path),
-        bootstrap::ProbeResult::Missing { detail } => Err(detail),
-    }
-}
-
 pub(super) fn remember(
     target: &RemoteTarget,
     config: &RemoteConfig,
@@ -145,19 +128,6 @@ mod tests {
         );
         invalidate(&target, &config);
         assert!(last_known(&target, &config).is_none());
-    }
-
-    #[test]
-    fn reconnect_resolve_uses_a_stale_path_without_probing() {
-        let target = RemoteTarget::Alias("reconnect-binary-cache-fixture".into());
-        let config = RemoteConfig::default();
-        remember(&target, &config, "/home/u/.local/bin/rozi".into()).unwrap();
-        expire(&target, &config);
-        assert_eq!(
-            resolve_with_connect_timeout(&target, &config, 1).as_deref(),
-            Ok("/home/u/.local/bin/rozi")
-        );
-        invalidate(&target, &config);
     }
 
     fn expire(target: &RemoteTarget, config: &RemoteConfig) {

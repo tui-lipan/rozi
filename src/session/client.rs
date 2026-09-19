@@ -127,6 +127,51 @@ pub struct SessionClient {
     cell: tui_lipan::TerminalCellSize,
 }
 
+struct HandshakeReader<'a> {
+    inner: &'a mut IpcConnection,
+    deadline: Instant,
+    cancel_epoch: Option<u64>,
+}
+
+impl std::io::Read for HandshakeReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self
+                .cancel_epoch
+                .is_some_and(crate::session::bootstrap::remote_attach_cancelled)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "reconnect cancelled",
+                ));
+            }
+            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "session handshake deadline elapsed",
+                ));
+            }
+            self.inner.set_read_timeout(Some(
+                remaining
+                    .min(Duration::from_millis(200))
+                    .max(Duration::from_millis(1)),
+            ))?;
+            match std::io::Read::read(self.inner, buf) {
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    continue;
+                }
+                result => return result,
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientRuntimeStats {
     pub inbound: Option<QueueMetrics>,
@@ -234,6 +279,8 @@ impl SessionClient {
             InboundTarget::Channel(inbound),
             read_only,
             true,
+            HEARTBEAT_POLL,
+            None,
         )
     }
 
@@ -251,6 +298,8 @@ impl SessionClient {
             InboundTarget::Mailbox(inbound),
             read_only,
             true,
+            HEARTBEAT_POLL,
+            None,
         )
     }
 
@@ -271,6 +320,32 @@ impl SessionClient {
             InboundTarget::Mailbox(inbound),
             read_only,
             shares_filesystem,
+            HEARTBEAT_POLL,
+            None,
+        )
+    }
+
+    /// Attach over a remote stream while limiting the handshake to the reconnect budget that
+    /// remains after SSH and the remote preamble.
+    pub(crate) fn from_stream_attached_mailbox_with_timeout(
+        stream: IpcConnection,
+        session: impl Into<String>,
+        inbound: Arc<InboundMailbox>,
+        read_only: bool,
+        shares_filesystem: bool,
+        handshake_timeout: Duration,
+        cancel_epoch: Option<u64>,
+    ) -> io::Result<(Self, ServerMessage)> {
+        Self::from_stream_attached_target(
+            stream,
+            session,
+            InboundTarget::Mailbox(inbound),
+            read_only,
+            shares_filesystem,
+            HEARTBEAT_POLL
+                .min(handshake_timeout)
+                .max(Duration::from_millis(1)),
+            cancel_epoch,
         )
     }
 
@@ -280,12 +355,19 @@ impl SessionClient {
         inbound: InboundTarget,
         read_only: bool,
         shares_filesystem: bool,
+        handshake_timeout: Duration,
+        cancel_epoch: Option<u64>,
     ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
         let server_pid = stream.peer_pid();
         let piped_buffer = stream.piped_buffer_stats_handle();
         let mut reader = stream.try_clone()?;
-        reader.set_read_timeout(Some(HEARTBEAT_POLL))?;
+        if cancel_epoch.is_some_and(crate::session::bootstrap::remote_attach_cancelled) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "reconnect cancelled",
+            ));
+        }
         protocol::write_frame(
             &mut stream,
             &protocol::attach_message(
@@ -295,10 +377,15 @@ impl SessionClient {
                 shares_filesystem,
             ),
         )?;
-        let attached = protocol::read_frame::<_, ServerMessage>(&mut reader)?;
+        let attached = protocol::read_frame::<_, ServerMessage>(&mut HandshakeReader {
+            inner: &mut reader,
+            deadline: Instant::now() + handshake_timeout,
+            cancel_epoch,
+        })?;
         // Keep the poll timeout after the handshake. A silent transport — sleep, a lost network,
         // or a half-open SSH pipe — never delivers EOF, so the reader has to wake on its own and
         // let the inbound watchdog expire the link.
+        reader.set_read_timeout(Some(HEARTBEAT_POLL))?;
         #[cfg(windows)]
         // A pending synchronous ReadFile on a duplicated named-pipe handle can hold up WriteFile on
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.

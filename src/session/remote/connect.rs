@@ -61,7 +61,7 @@ pub fn connect_remote(
     session: &str,
     config: &RemoteConfig,
 ) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
-    connect_remote_within(target, session, config, None)
+    connect_remote_within(target, session, config, None, None, false)
 }
 
 /// Like [`connect_remote`], but cap SSH `ConnectTimeout` and the preamble read to `budget` so a
@@ -71,6 +71,8 @@ pub(crate) fn connect_remote_within(
     session: &str,
     config: &RemoteConfig,
     budget: Option<Duration>,
+    cancel_epoch: Option<u64>,
+    recover_existing: bool,
 ) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
     if !crate::session::discovery::valid_attach_target(session) {
         return Err(RemoteConnectError::Message(
@@ -85,29 +87,67 @@ pub(crate) fn connect_remote_within(
         ));
     }
 
-    let remote_bin = resolve_attach_binary(target, config, budget)?;
+    let remote_bin = resolve_attach_binary(target, config, budget, cancel_epoch)?;
     validate_remote_executable_token(&remote_bin).map_err(RemoteConnectError::Message)?;
 
+    let proxy = spawn_remote_proxy(
+        &resolved,
+        session,
+        &remote_bin,
+        config,
+        budget,
+        cancel_epoch,
+        recover_existing,
+    )?;
+    let (conn, preamble) =
+        read_remote_preamble(proxy, target, &resolved, config, budget, cancel_epoch)?;
+    validate_remote_preamble(&preamble)?;
+    let _ = super::binary::remember(target, config, remote_bin);
+    Ok((conn, preamble))
+}
+
+struct SpawnedRemoteProxy {
+    connection: IpcConnection,
+    stderr_tail: Option<thread::JoinHandle<String>>,
+    started: Instant,
+}
+
+fn spawn_remote_proxy(
+    resolved: &ResolvedRemote,
+    session: &str,
+    remote_bin: &str,
+    config: &RemoteConfig,
+    budget: Option<Duration>,
+    cancel_epoch: Option<u64>,
+    recover_existing: bool,
+) -> Result<SpawnedRemoteProxy, RemoteConnectError> {
     if budget.is_some_and(|remaining| remaining.is_zero()) {
         return Err(RemoteConnectError::Message(
             "reconnect deadline elapsed".to_string(),
         ));
     }
 
-    let attempt_started = Instant::now();
+    let started = Instant::now();
     // Keepalive comes from `ssh_base_command` now: with connection multiplexing the master decides
     // it for every client riding on it, so it has to be set wherever the master might be opened.
     let mut command = match budget {
         Some(remaining) => ssh_base_command_with_connect_timeout(
-            &resolved,
+            resolved,
             config,
             capped_connect_timeout_secs(config, remaining),
         ),
-        None => ssh_base_command(&resolved, config),
+        None => ssh_base_command(resolved, config),
     };
-    append_ssh_destination(&mut command, &resolved);
-    command.arg(&remote_bin);
-    command.arg("--remote-serve");
+    if let Some(epoch) = cancel_epoch {
+        super::askpass::scope_attach(&mut command, epoch);
+    }
+    append_ssh_destination(&mut command, resolved);
+    command.arg(remote_bin);
+    command.arg(if recover_existing {
+        "--remote-serve-existing"
+    } else {
+        "--remote-serve"
+    });
     command.arg(session);
     command
         .stdin(Stdio::piped())
@@ -117,18 +157,44 @@ pub(crate) fn connect_remote_within(
     let mut child = command.spawn().map_err(|err| {
         RemoteConnectError::Message(format!("failed to spawn ssh to {}: {err}", resolved.host))
     })?;
-
     let stderr_tail = child.stderr.take().map(spawn_stderr_collector);
+    let connection = ipc::connection_from_child(child)?;
+    Ok(SpawnedRemoteProxy {
+        connection,
+        stderr_tail,
+        started,
+    })
+}
 
-    let mut conn = ipc::connection_from_child(child)?;
+fn read_remote_preamble(
+    proxy: SpawnedRemoteProxy,
+    target: &RemoteTarget,
+    resolved: &ResolvedRemote,
+    config: &RemoteConfig,
+    budget: Option<Duration>,
+    cancel_epoch: Option<u64>,
+) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
+    let SpawnedRemoteProxy {
+        mut connection,
+        stderr_tail,
+        started,
+    } = proxy;
     let preamble_wait = match budget {
         Some(remaining) => {
-            capped_preamble_timeout(config, remaining.saturating_sub(attempt_started.elapsed()))
+            capped_preamble_timeout(config, remaining.saturating_sub(started.elapsed()))
         }
         None => preamble_timeout(config),
     };
-    let _ = conn.set_read_timeout(Some(preamble_wait));
-    let preamble = match preamble::read_preamble(&mut conn) {
+    let preamble_deadline = Instant::now() + preamble_wait;
+    let poll = preamble_wait
+        .min(Duration::from_millis(200))
+        .max(Duration::from_millis(1));
+    let _ = connection.set_read_timeout(Some(poll));
+    let preamble = match preamble::read_preamble(&mut DeadlineReader {
+        inner: &mut connection,
+        deadline: preamble_deadline,
+        cancel_epoch,
+    }) {
         Ok(preamble) => preamble,
         Err(err) => {
             // A quiet or dropped SSH pipe is not evidence the remote binary disappeared.
@@ -136,12 +202,13 @@ pub(crate) fn connect_remote_within(
             if invalidate_binary_cache_after_preamble_failure(budget) {
                 super::binary::invalidate(target, config);
             }
-            // Kill the proxy before joining stderr. The collector reaches EOF only after the child
-            // exits, while the child is owned by this connection.
-            let _ = conn.shutdown(std::net::Shutdown::Both);
-            drop(conn);
+            // Kill the proxy, but never wait for its stderr collector here. An askpass helper can
+            // outlive the killed ssh process while it waits for the UI and keep the inherited
+            // stderr pipe open; joining it would let that helper outrun the reconnect deadline.
+            let _ = connection.shutdown(std::net::Shutdown::Both);
+            drop(connection);
             let detail = stderr_tail
-                .and_then(|handle| handle.join().ok())
+                .and_then(finished_stderr_tail)
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| format!(" ({})", s.trim()))
                 .unwrap_or_default();
@@ -151,38 +218,98 @@ pub(crate) fn connect_remote_within(
             )));
         }
     };
-    let _ = conn.set_read_timeout(None);
+    let _ = connection.set_read_timeout(None);
+    Ok((connection, preamble))
+}
+
+fn validate_remote_preamble(preamble: &RemotePreamble) -> Result<(), RemoteConnectError> {
     if let Err(message) = preamble.validate_for_client() {
-        if message.to_ascii_lowercase().contains("protocol")
-            || message.to_ascii_lowercase().contains("incompatible")
-        {
-            return Err(RemoteConnectError::ProtocolSkew(message));
-        }
-        return Err(RemoteConnectError::Message(message));
+        let lowered = message.to_ascii_lowercase();
+        return if lowered.contains("protocol") || lowered.contains("incompatible") {
+            Err(RemoteConnectError::ProtocolSkew(message))
+        } else {
+            Err(RemoteConnectError::Message(message))
+        };
     }
-    let _ = super::binary::remember(target, config, remote_bin);
-    Ok((conn, preamble))
+    Ok(())
+}
+
+struct DeadlineReader<'a> {
+    inner: &'a mut IpcConnection,
+    deadline: Instant,
+    cancel_epoch: Option<u64>,
+}
+
+impl Read for DeadlineReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self
+                .cancel_epoch
+                .is_some_and(crate::session::bootstrap::remote_attach_cancelled)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "reconnect cancelled",
+                ));
+            }
+            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "remote preamble deadline elapsed",
+                ));
+            }
+            self.inner.set_read_timeout(Some(
+                remaining
+                    .min(Duration::from_millis(200))
+                    .max(Duration::from_millis(1)),
+            ))?;
+            match self.inner.read(buf) {
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    continue;
+                }
+                result => return result,
+            }
+        }
+    }
 }
 
 fn resolve_attach_binary(
     target: &RemoteTarget,
     config: &RemoteConfig,
     budget: Option<Duration>,
+    cancel_epoch: Option<u64>,
 ) -> Result<String, RemoteConnectError> {
-    if let Some(remaining) = budget {
-        if remaining.is_zero() {
+    if budget.is_some() {
+        if cancel_epoch.is_some_and(crate::session::bootstrap::remote_attach_cancelled) {
+            return Err(RemoteConnectError::Message(
+                "reconnect cancelled".to_string(),
+            ));
+        }
+        if budget.is_some_and(|remaining| remaining.is_zero()) {
             return Err(RemoteConnectError::Message(
                 "reconnect deadline elapsed".to_string(),
             ));
         }
         // Reconnect uses the path that already worked. A dead transport is not a missing
-        // binary; probing would spend the retry window on unbudgeted SSH before attach.
-        return super::binary::resolve_with_connect_timeout(
-            target,
-            config,
-            capped_connect_timeout_secs(config, remaining),
-        )
-        .map_err(RemoteConnectError::Message);
+        // binary. Never fall back to a multi-hop probe here: it can outlive the reconnect budget,
+        // and an established attachment always remembered the path that launched its proxy.
+        if let Some(path) = super::binary::last_known(target, config) {
+            return Ok(path);
+        }
+        let resolved = ResolvedRemote::resolve(target, config);
+        if let Some(path) = resolved.binary_path {
+            validate_remote_executable_token(&path).map_err(RemoteConnectError::Message)?;
+            return Ok(path);
+        }
+        return Err(RemoteConnectError::Message(
+            "remote Rozi path is no longer known; reopen the host to probe it again".to_string(),
+        ));
     }
     if super::askpass::may_prompt() {
         super::ensure_remote_binary_in_ui(target, config, None)
@@ -297,6 +424,10 @@ pub(super) fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHan
     })
 }
 
+fn finished_stderr_tail(handle: thread::JoinHandle<String>) -> Option<String> {
+    handle.is_finished().then(|| handle.join().ok()).flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,5 +507,36 @@ mod tests {
             Duration::from_secs(30)
         )));
         assert!(invalidate_binary_cache_after_preamble_failure(None));
+    }
+
+    #[test]
+    fn preamble_reader_enforces_one_deadline_across_poll_timeouts() {
+        let (reader, writer) = std::io::pipe().unwrap();
+        let piped =
+            crate::platform::ipc::PipedConnection::from_reader_writer(std::io::sink(), reader);
+        let mut connection = IpcConnection::from_piped(piped);
+        let started = Instant::now();
+        let error = DeadlineReader {
+            inner: &mut connection,
+            deadline: started + Duration::from_millis(30),
+            cancel_epoch: None,
+        }
+        .read(&mut [0u8; 1])
+        .expect_err("a silent pipe must hit the shared preamble deadline");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        drop(writer);
+    }
+
+    #[test]
+    fn reconnect_failure_does_not_wait_for_an_inherited_stderr_pipe() {
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            release_rx.recv().unwrap();
+            "late stderr".to_string()
+        });
+
+        assert_eq!(finished_stderr_tail(handle), None);
+        release_tx.send(()).unwrap();
     }
 }

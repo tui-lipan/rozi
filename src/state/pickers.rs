@@ -505,6 +505,9 @@ pub struct AskpassPrompt {
     /// The ssh invocation asking. All three of one connection's retries share it; the next
     /// connection carries a different one.
     pub session: String,
+    /// Reconnect attachment that owns this prompt. Used to dismiss a prompt already on screen when
+    /// that attempt is cancelled or reaches its deadline.
+    pub attach_epoch: Option<u64>,
     pub kind: crate::session::remote::AskpassKind,
     /// Verbatim prompt text from ssh, multi-line for host-key verification.
     pub prompt: String,

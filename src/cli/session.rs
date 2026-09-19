@@ -12,8 +12,8 @@ pub(crate) fn run_server_cli(name: &str, fresh: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn run_remote_serve_cli(name: &str) -> Result<()> {
-    session::remote::run_remote_serve(name)?;
+pub(crate) fn run_remote_serve_cli(name: &str, autostart: bool) -> Result<()> {
+    session::remote::run_remote_serve(name, autostart)?;
     Ok(())
 }
 

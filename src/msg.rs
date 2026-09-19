@@ -338,6 +338,8 @@ pub enum Msg {
         /// Which ssh invocation is asking, so its three retries read as one conversation and the
         /// next connection starts a fresh one.
         session: String,
+        /// Reconnect attachment that owns this prompt. A stale epoch is refused automatically.
+        attach_epoch: Option<u64>,
         kind: session::remote::AskpassKind,
         prompt: String,
     },
@@ -497,6 +499,9 @@ pub enum Msg {
     /// Retry an in-place reconnect for the current remote session after the automatic window
     /// ended in `Unreachable`. The retained panes stay on screen.
     RetrySessionReconnect,
+    /// The original remote server is confirmed gone; explicitly seed a replacement from the
+    /// retained client state.
+    RecreateLostRemoteSession,
     /// Cancel an in-flight reconnect, leave the session offline, and open Sessions.
     AbandonSessionReconnect,
     DrainSessionFrames {
@@ -504,6 +509,10 @@ pub enum Msg {
         mailbox: std::sync::Arc<session::client::InboundMailbox>,
     },
     SessionAttachFailed {
+        epoch: u64,
+        message: String,
+    },
+    SessionLost {
         epoch: u64,
         message: String,
     },

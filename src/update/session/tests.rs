@@ -1665,6 +1665,88 @@ fn retained_remote_reconnect_failure_stays_offline_and_remote() {
 }
 
 #[test]
+fn lost_remote_session_requires_explicit_recreation() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
+            let epoch = backend.state().runtime_epoch;
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("dev".to_string());
+                state.current_mut().remote_host = Some("workbox".to_string());
+                state.current_mut().remote_target = Some(target);
+                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+                state.current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch,
+                        name: "dev".to_string(),
+                        client: None,
+                        autostart: false,
+                        read_only: false,
+                        reconnect: true,
+                        remote_host: Some("workbox".to_string()),
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+                state.askpass = Some(crate::state::AskpassState::new(
+                    crate::state::AskpassPrompt {
+                        id: u64::MAX - 9,
+                        session: "reconnect".to_string(),
+                        attach_epoch: Some(epoch),
+                        kind: crate::session::remote::AskpassKind::Secret,
+                        prompt: "Password:".to_string(),
+                        error: None,
+                    },
+                ));
+            }
+
+            backend
+                .dispatch(Msg::SessionLost {
+                    epoch,
+                    message: "the original remote session `dev` is gone".to_string(),
+                })
+                .expect("mark session lost");
+            assert!(backend.state().current().remote_session_lost);
+            assert_eq!(
+                backend.state().current().connection,
+                crate::state::ConnectionState::Unreachable
+            );
+            assert!(backend.state().current().pending_session_attach.is_none());
+            assert!(
+                backend.state().askpass.is_none(),
+                "a prompt owned by the lost attach must not outlive it"
+            );
+
+            backend
+                .dispatch(Msg::RetrySessionReconnect)
+                .expect("ordinary retry is refused for a lost session");
+            assert!(backend.state().current().pending_session_attach.is_none());
+
+            backend
+                .update_level(Msg::RecreateLostRemoteSession)
+                .expect("explicit recreation starts an attach");
+            assert!(
+                backend
+                    .state()
+                    .current()
+                    .pending_session_attach
+                    .as_ref()
+                    .is_some_and(|pending| pending.reconnect)
+            );
+            assert_eq!(
+                backend.state().current().connection,
+                crate::state::ConnectionState::Reconnecting
+            );
+        })
+        .expect("spawn lost-session test")
+        .join()
+        .expect("lost-session test completes");
+}
+
+#[test]
 fn retry_session_reconnect_is_a_noop_unless_the_session_is_unreachable() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -1700,6 +1782,7 @@ fn abandoning_a_remote_reconnect_stays_offline_and_opens_sessions() {
             let epoch_before;
             {
                 let state = backend.state_mut();
+                state.runtime_epoch = u64::MAX - 8;
                 state.show_session_picker = false;
                 state.session_picker = None;
                 state.current_mut().session_name = Some("dev".to_string());
@@ -1739,6 +1822,7 @@ fn abandoning_a_remote_reconnect_stays_offline_and_opens_sessions() {
                 state.runtime_epoch, epoch_before,
                 "in-flight attach results must be invalidated"
             );
+            crate::session::bootstrap::finish_cancelled_remote_attach(epoch_before);
         })
         .expect("spawn abandon reconnect test")
         .join()

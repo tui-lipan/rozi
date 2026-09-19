@@ -129,28 +129,11 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     let offline = ctx.state.current().connection == crate::state::ConnectionState::Unreachable
         && ctx.state.current().session_name.is_some()
         && ctx.state.current().pending_session_attach.is_none();
-    let picker_dialog_open = ctx.state.show_palette
-        || ctx.state.keybindings.is_some()
-        || ctx.state.show_settings
-        || ctx.state.extensions.is_some()
-        || ctx.state.show_theme_picker
-        || ctx.state.show_layout_picker
-        || ctx.state.show_pick
-        || ctx.state.rename.is_some()
-        || ctx.state.rename_session.is_some()
-        || ctx.state.save_profile_prompt.is_some()
-        || ctx.state.show_profile_picker
-        || ctx.state.show_session_picker
-        || ctx.state.remote_picker.is_some()
-        || ctx.state.agent_picker.is_some()
-        || ctx.state.collaboration.is_some()
-        || ctx.state.follow_prompt.is_some()
-        || ctx.state.askpass.is_some();
-    // Offline chrome yields to another overlay (Sessions, a password prompt) so those stay
-    // reachable. Reconnecting yields to an SSH password or host-key prompt: askpass must own
-    // Esc while it is up. Once it closes, the reconnect overlay returns.
+    let picker_dialog_open = ctx.state.has_modal_overlay();
+    // Offline and reconnect chrome yield to another overlay (Sessions, a password prompt) so those
+    // stay reachable. Once it closes, the connection overlay returns if it still applies.
     let show_offline = offline && !picker_dialog_open;
-    let show_reconnecting = reconnecting && ctx.state.askpass.is_none();
+    let show_reconnecting = reconnecting && !picker_dialog_open;
     let dialog_open = show_reconnecting || show_offline || picker_dialog_open;
     let dialog_dim_progress = ctx.transition::<f32>(
         "rozi-dialog-dim",
@@ -719,6 +702,7 @@ mod grouped_search_tests {
                     crate::state::AskpassPrompt {
                         id: 1,
                         session: "reconnect".into(),
+                        attach_epoch: Some(state.runtime_epoch),
                         kind: crate::session::remote::AskpassKind::Secret,
                         prompt: "user@workbox's password:".into(),
                         error: None,

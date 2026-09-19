@@ -1632,7 +1632,7 @@ fn a_scoped_launcher_starts_its_shell_on_the_host_it_names() {
             assert!(backend.state().is_launcher());
 
             backend
-                .dispatch(Msg::RunAction(Action::Spawn))
+                .update_level(Msg::RunAction(Action::Spawn))
                 .expect("start the launcher's shell");
 
             let state = backend.state();

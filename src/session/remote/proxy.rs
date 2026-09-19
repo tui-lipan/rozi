@@ -11,12 +11,14 @@ use crate::session::server;
 
 use super::preamble::{RemotePreamble, write_preamble};
 
-/// Connect to (or autostart) the named local session, emit a preamble, then pump bytes.
+/// Connect to the named local session, optionally autostarting it, emit a preamble, then pump
+/// bytes. Recovery uses `autostart = false` so a missing original is reported without creating an
+/// empty replacement.
 ///
 /// When the session socket closes, this process exits so the local ssh client's stdout pipe sees
 /// EOF (a blocked `stdin.read` on this side cannot otherwise notice). When stdin closes first,
 /// the socket is dropped and the stdout pump joins normally.
-pub fn run_remote_serve(name: &str) -> io::Result<()> {
+pub fn run_remote_serve(name: &str, autostart: bool) -> io::Result<()> {
     if !discovery::valid_attach_target(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -24,7 +26,26 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
         ));
     }
 
-    let (mut socket, server_started) = connect_or_autostart(name)?;
+    let endpoint = server::session_endpoint(name)?;
+    let (mut socket, server_started) = if autostart {
+        connect_or_autostart(name)?
+    } else {
+        match endpoint.connect() {
+            Ok(socket) => (socket, false),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                let mut stdout = io::stdout().lock();
+                write_preamble(&mut stdout, &RemotePreamble::missing())?;
+                stdout.flush()?;
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+    };
     {
         let mut stdout = io::stdout().lock();
         write_preamble(&mut stdout, &RemotePreamble::current(server_started))?;

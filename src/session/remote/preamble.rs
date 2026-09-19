@@ -36,6 +36,10 @@ pub struct RemotePreamble {
     /// True when this `--remote-serve` invocation started the session server (create_only identity).
     #[serde(default)]
     pub server_started: bool,
+    /// Existing-only recovery could not find the original server. The proxy exits after this
+    /// preamble instead of autostarting a replacement.
+    #[serde(default)]
+    pub session_missing: bool,
 }
 
 impl RemotePreamble {
@@ -49,6 +53,14 @@ impl RemotePreamble {
             protocol_max: PROTOCOL_VERSION,
             protocol_min: MIN_SUPPORTED_PROTOCOL,
             server_started,
+            session_missing: false,
+        }
+    }
+
+    pub fn missing() -> Self {
+        Self {
+            session_missing: true,
+            ..Self::current(false)
         }
     }
 
@@ -195,6 +207,17 @@ mod tests {
         write_preamble(&mut buf, &preamble).unwrap();
         let decoded = read_preamble(&mut &buf[..]).unwrap();
         assert_eq!(decoded, preamble);
+        decoded.validate_for_client().unwrap();
+    }
+
+    #[test]
+    fn missing_session_preamble_round_trips() {
+        let preamble = RemotePreamble::missing();
+        let mut buf = Vec::new();
+        write_preamble(&mut buf, &preamble).unwrap();
+        let decoded = read_preamble(&mut &buf[..]).unwrap();
+        assert!(decoded.session_missing);
+        assert!(!decoded.server_started);
         decoded.validate_for_client().unwrap();
     }
 

@@ -244,9 +244,11 @@ missed session heartbeats — Rozi shows the reconnecting overlay and retries in
 minutes. `Esc` cancels that wait and opens Sessions. An SSH password, passphrase, or host-key
 prompt covers the reconnect overlay while it is open; `Esc` then cancels that prompt, and the
 reconnect overlay returns when it closes. Reconnect reuses the remote binary that already worked
-instead of spending the window re-probing. Reconnect never starts a replacement server
-when the original is gone; the session stays offline instead. If the host is still down after that
-window, the session stays on screen as **offline**: `Enter` retries, `Esc` opens Sessions. Named
+instead of spending the window re-probing. Recovery never starts a replacement server: if the
+original is gone, the overlay says **session lost** and requires an explicit `Enter` to recreate it
+from the retained panes; `Esc` opens Sessions without recreating it. If the
+host is still down after the retry window, the session stays on screen as **offline**: `Enter`
+retries, `Esc` opens Sessions. Named
 remote servers keep running independently of the SSH connection. Temporary servers still follow
 their no-client recovery timer.
 

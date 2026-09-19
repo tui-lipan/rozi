@@ -48,6 +48,9 @@ const TOKEN_ENV: &str = "ROZI_ASKPASS_TOKEN";
 /// a repeated question means the last answer was rejected. A pid would say the same thing, but
 /// there is no cross-platform way to read one, and a nonce set before the spawn needs no OS.
 const SESSION_ENV: &str = "ROZI_ASKPASS_SESSION";
+/// Attachment epoch for a reconnect-owned ssh process. Lets the UI reject a prompt that arrives
+/// after Esc abandoned that reconnect.
+const ATTACH_EPOCH_ENV: &str = "ROZI_ASKPASS_ATTACH_EPOCH";
 /// OpenSSH sets this to `confirm` for a yes/no question and `none` for an informational message.
 /// It has existed since 8.4 but is empty for several prompts that still want a yes/no answer
 /// (host-key verification among them), so [`kind_for`] reads the prompt text as well.
@@ -97,6 +100,8 @@ impl AskpassKind {
 struct AskpassRequest {
     token: String,
     session: String,
+    #[serde(default)]
+    attach_epoch: Option<u64>,
     kind: AskpassKind,
     prompt: String,
 }
@@ -167,6 +172,7 @@ pub(crate) fn confirm_install(prompt: String, probe_epoch: Option<u64>) -> Resul
         endpoint: broker.endpoint.clone(),
         token: broker.token.clone(),
         session: format!("install-{}", fresh_token()),
+        attach_epoch: None,
         kind: AskpassKind::Install { probe_epoch },
         prompt,
     };
@@ -226,6 +232,7 @@ fn serve(mut conn: IpcConnection, link: CommandLink<Msg>) {
     link.send(Msg::RemoteAskpassPrompt {
         id,
         session: request.session,
+        attach_epoch: request.attach_epoch,
         kind: request.kind,
         prompt: request.prompt,
     });
@@ -296,6 +303,12 @@ pub(crate) fn configure(command: &mut Command) {
         .env(SESSION_ENV, fresh_token());
 }
 
+/// Scope prompts from one reconnect so a later epoch can reject them without putting a stale SSH
+/// dialog over the session picker.
+pub(crate) fn scope_attach(command: &mut Command, epoch: u64) {
+    command.env(ATTACH_EPOCH_ENV, epoch.to_string());
+}
+
 /// This binary re-executed by `ssh` as its askpass helper: the prompt arrives as the argument, the
 /// endpoint and token in the environment.
 ///
@@ -306,6 +319,7 @@ pub struct Helper {
     endpoint: IpcEndpoint,
     token: String,
     session: String,
+    attach_epoch: Option<u64>,
     kind: AskpassKind,
     prompt: String,
 }
@@ -320,6 +334,9 @@ pub fn helper_invocation() -> Option<Helper> {
         endpoint: IpcEndpoint::at_path(PathBuf::from(endpoint)),
         token,
         session: std::env::var(SESSION_ENV).unwrap_or_default(),
+        attach_epoch: std::env::var(ATTACH_EPOCH_ENV)
+            .ok()
+            .and_then(|epoch| epoch.parse().ok()),
         kind: kind_for(&prompt),
         prompt,
     })
@@ -358,6 +375,7 @@ impl Helper {
             &AskpassRequest {
                 token: self.token.clone(),
                 session: self.session.clone(),
+                attach_epoch: self.attach_epoch,
                 kind: self.kind,
                 prompt: self.prompt.clone(),
             },

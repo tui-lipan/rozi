@@ -277,12 +277,22 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
         .as_deref()
         .unwrap_or("session");
     let offline = ctx.state.current().connection == crate::state::ConnectionState::Unreachable;
+    let lost = ctx.state.current().remote_session_lost;
     let mut modal = styled_modal(ctx, &format!("Session · {name}"), 42)
         .auto_focus(false)
         .dismiss_on_escape(false);
     let actions = if offline {
         vec![
-            OverlayAction::new("enter", "reconnect", Msg::RetrySessionReconnect, true),
+            OverlayAction::new(
+                "enter",
+                if lost { "recreate" } else { "reconnect" },
+                if lost {
+                    Msg::RecreateLostRemoteSession
+                } else {
+                    Msg::RetrySessionReconnect
+                },
+                true,
+            ),
             OverlayAction::new(
                 "esc",
                 "sessions",
@@ -301,7 +311,10 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
     if offline {
         modal = modal.child(
             VStack::new()
-                .child(Text::new("offline").style(Style::new().fg(ctx.state.theme.status.warning)))
+                .child(
+                    Text::new(if lost { "session lost" } else { "offline" })
+                        .style(Style::new().fg(ctx.state.theme.status.warning)),
+                )
                 .child(overlay_hints(&ctx.state.theme, &actions)),
         );
     } else {
@@ -310,7 +323,7 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
                 .child(
                     Spinner::new()
                         .spinner_style(SpinnerStyle::Dots)
-                        .label("reconnecting")
+                        .label(if lost { "recreating" } else { "reconnecting" })
                         .style(Style::new().fg(ctx.state.theme.status.warning))
                         .label_style(fg_only(&ctx.state.theme.primary)),
                 )

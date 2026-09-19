@@ -321,13 +321,30 @@ fn install_attempt_is_current(state: &crate::state::State, probe_epoch: Option<u
         })
 }
 
+fn attach_attempt_is_current(state: &crate::state::State, attach_epoch: Option<u64>) -> bool {
+    attach_epoch.is_none_or(|epoch| {
+        state.runtime_epoch == epoch
+            && state
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .is_some_and(|pending| pending.epoch == epoch && pending.reconnect)
+            && !crate::session::bootstrap::remote_attach_cancelled(epoch)
+    })
+}
+
 pub(super) fn askpass_prompt(
     ctx: &mut Context<AppRoot>,
     id: u64,
     session: String,
+    attach_epoch: Option<u64>,
     kind: crate::session::remote::AskpassKind,
     prompt: String,
 ) -> Update {
+    if !attach_attempt_is_current(&ctx.state, attach_epoch) {
+        crate::session::remote::askpass::cancel(id);
+        return Update::none();
+    }
     if let crate::session::remote::AskpassKind::Install { probe_epoch } = kind {
         if !install_attempt_is_current(&ctx.state, probe_epoch) {
             crate::session::remote::askpass::cancel(id);
@@ -350,6 +367,7 @@ pub(super) fn askpass_prompt(
             .then(|| "Rejected - try again".to_string()),
         id,
         session,
+        attach_epoch,
         kind,
         prompt,
     };
@@ -362,6 +380,33 @@ pub(super) fn askpass_prompt(
         }
     }
     Update::full()
+}
+
+/// Cancel prompts that belong to an attach which can no longer accept their answers. This covers
+/// prompts already visible as well as queued ones; future arrivals are rejected by
+/// [`attach_attempt_is_current`].
+pub(crate) fn cancel_attach_askpass(ctx: &mut Context<AppRoot>, epoch: u64) {
+    let Some(askpass) = ctx.state.askpass.as_mut() else {
+        return;
+    };
+    let current_matches = askpass.current.attach_epoch == Some(epoch);
+    let mut cancelled = Vec::new();
+    askpass.queued.retain(|prompt| {
+        let matches = prompt.attach_epoch == Some(epoch);
+        if matches {
+            cancelled.push(prompt.id);
+        }
+        !matches
+    });
+    if current_matches {
+        cancelled.push(askpass.current.id);
+    }
+    for id in cancelled {
+        crate::session::remote::askpass::cancel(id);
+    }
+    if current_matches {
+        let _ = close_or_advance_askpass(ctx);
+    }
 }
 
 /// The helper stopped waiting. Only the prompt it names goes away; a queued one behind it is a
@@ -499,4 +544,38 @@ pub(super) fn follow_prompt_choose(ctx: &mut Context<AppRoot>, index: usize) -> 
         return Update::full();
     };
     crate::ops::session::resolve_follow_prompt(ctx, choice)
+}
+
+#[cfg(test)]
+mod askpass_scope_tests {
+    use super::attach_attempt_is_current;
+
+    #[test]
+    fn only_the_current_reconnect_may_raise_a_scoped_askpass_prompt() {
+        let mut state = crate::state::State::new(
+            crate::config::Config::default(),
+            tui_lipan::prelude::Theme::default(),
+        );
+        let epoch = state.runtime_epoch;
+        assert!(attach_attempt_is_current(&state, None));
+        assert!(!attach_attempt_is_current(&state, Some(epoch)));
+
+        state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+            epoch,
+            name: "dev".into(),
+            client: None,
+            autostart: false,
+            read_only: false,
+            reconnect: true,
+            remote_host: Some("workbox".into()),
+            intent: crate::state::AttachIntent::Plain,
+            left: None,
+            parked_epoch: None,
+        });
+        assert!(attach_attempt_is_current(&state, Some(epoch)));
+        assert!(!attach_attempt_is_current(
+            &state,
+            Some(epoch.wrapping_add(1))
+        ));
+    }
 }

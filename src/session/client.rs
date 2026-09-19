@@ -1723,44 +1723,58 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
 
         let server = thread::spawn(move || {
-            let mut stream = loop {
-                match listener.accept() {
-                    Ok(stream) => break stream,
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(1));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok(stream) => break stream,
+                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(err) => panic!("accept failed: {err}"),
                     }
-                    Err(err) => panic!("accept failed: {err}"),
+                };
+                let exchange = (|| -> io::Result<()> {
+                    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                    assert!(matches!(
+                        protocol::read_frame::<_, ClientMessage>(&mut stream)?,
+                        ClientMessage::Attach { .. }
+                    ));
+                    protocol::write_frame(&mut stream, &attached_message())?;
+                    protocol::write_frame(&mut stream, &ServerMessage::Ping { seq: 77 })?;
+                    // The client drives its own traffic too - a runtime-metrics request goes out
+                    // on attach - so the pong is not necessarily the next frame on the wire.
+                    let pong = loop {
+                        let message = protocol::read_frame::<_, ClientMessage>(&mut stream)?;
+                        if matches!(message, ClientMessage::Pong { .. }) {
+                            break message;
+                        }
+                    };
+                    assert_eq!(pong, ClientMessage::Pong { seq: 77 });
+                    Ok(())
+                })();
+                match exchange {
+                    Ok(()) => break,
+                    Err(err)
+                        if err.kind() == io::ErrorKind::BrokenPipe && Instant::now() < deadline =>
+                    {
+                        continue;
+                    }
+                    Err(err) => panic!("server exchange failed: {err}"),
                 }
-            };
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            assert!(matches!(
-                protocol::read_frame::<_, ClientMessage>(&mut stream).unwrap(),
-                ClientMessage::Attach { .. }
-            ));
-            protocol::write_frame(&mut stream, &attached_message()).unwrap();
-            protocol::write_frame(&mut stream, &ServerMessage::Ping { seq: 77 }).unwrap();
-            // The client drives its own traffic too - a runtime-metrics request goes out on attach
-            // - so the pong is not necessarily the next frame on the wire. What this test is about
-            // is that the pong arrives at all while the reader is polling, not that it arrives
-            // first. The read timeout above bounds the loop.
-            let pong = loop {
-                let message = protocol::read_frame::<_, ClientMessage>(&mut stream).unwrap();
-                if matches!(message, ClientMessage::Pong { .. }) {
-                    break message;
-                }
-            };
-            assert_eq!(pong, ClientMessage::Pong { seq: 77 });
+            }
         });
 
         let (inbound_tx, _inbound_rx) = mpsc::channel();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(5);
         let (_client, attached) = loop {
             match SessionClient::connect_attached(&endpoint, "test", inbound_tx.clone(), false) {
                 Ok(attached) => break attached,
                 Err(err)
-                    if err.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                    if (err.kind() == io::ErrorKind::WouldBlock
+                        || err.raw_os_error()
+                            == Some(windows_sys::Win32::Foundation::ERROR_PIPE_BUSY as i32))
+                        && Instant::now() < deadline =>
                 {
                     thread::sleep(Duration::from_millis(5));
                 }

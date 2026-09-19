@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.22 - 2026-09-19
+
 ### Fixed
 
 - A remote session whose SSH link goes quiet — laptop sleep, a dropped network, a half-open TCP

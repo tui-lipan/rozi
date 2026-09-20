@@ -110,6 +110,8 @@ pub enum Msg {
     PreviewTheme(usize),
     /// Index into [`config::theme_choices`]: commit the chosen theme.
     SelectTheme(usize),
+    /// The framework's resolved host palette changed; rebuild app-owned theme and pane palettes.
+    HostTerminalColorsChanged,
     ThemeTick,
     WorkbarTick,
     /// Advance the Agents sidebar's elapsed-time column. Self-rescheduling while the tab is showing

@@ -66,7 +66,8 @@ background_follows_terminal = true
 ```
 
 This keeps the chosen theme but replaces its backdrop with the host terminal's reported background.
-Rozi queries the color at startup. Restart after changing the host terminal theme.
+Rozi monitors the host colors while it runs. Changing the host terminal theme updates the
+foreground, background, and all 16 ANSI colors without restarting Rozi.
 
 Use **Background follows canvas** in Settings. Off, the sidebar keeps the elevated panel fill; on,
 it uses that canvas backdrop:

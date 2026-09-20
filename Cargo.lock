@@ -3631,9 +3631,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan"
-version = "0.11.6"
+version = "0.11.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afa2292872599dea9d6ac838cc34261977995691967c80e3423bac8c9d323a3e"
+checksum = "3491e60c0da975fab19bb51c0120fd6f5f7ce24e041dbe40317d49a809280c09"
 dependencies = [
  "alacritty_terminal",
  "arboard",
@@ -3672,9 +3672,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan-macro"
-version = "0.11.6"
+version = "0.11.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95620432661acef013ee63b48663210210a6239a432c27187aa84f2d6a0fd1f0"
+checksum = "27e93e5af02c21a2cf50867440d953bcc79b9dd607a12408dc62bf620a2b175c"
 dependencies = [
  "prettyplease",
  "proc-macro-crate",

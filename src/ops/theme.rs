@@ -80,6 +80,32 @@ pub(crate) fn reapply_active_theme(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
+pub(crate) fn host_terminal_colors_changed(ctx: &mut Context<AppRoot>) -> Update {
+    let generation = ctx.host_terminal_color_generation();
+    if generation <= ctx.state.host_terminal_color_generation {
+        return Update::none();
+    }
+    ctx.state.host_terminal_color_generation = generation;
+
+    let Some(colors) = ctx.host_terminal_colors() else {
+        return Update::none();
+    };
+    sync_system_theme_from_host_colors(&mut ctx.state, colors);
+    Update::full()
+}
+
+fn sync_system_theme_from_host_colors(state: &mut State, colors: HostTerminalColors) {
+    state.system_theme = Some(system_theme_from_host_colors(colors));
+    let resolved =
+        crate::config::resolve_theme(&state.config.theme.name, state.system_theme.as_ref());
+    state.theme = apply_backdrop_policy(
+        resolved.theme,
+        Some(colors.bg),
+        state.config.pane.background_follows_terminal,
+    );
+    apply_terminal_palette_to_state(state);
+}
+
 pub(crate) fn theme_tick(ctx: &mut Context<AppRoot>) -> Update {
     let Some(watcher) = ctx.state.theme_watcher.as_ref() else {
         return Update::none();
@@ -778,6 +804,38 @@ mod tests {
         assert_eq!(palette.foreground, Some(colors.fg));
         assert_eq!(palette.background, Some(pane_background));
         assert_eq!(palette.ansi, colors.ansi);
+    }
+
+    #[test]
+    fn live_system_palette_change_rebuilds_theme_and_pane_palette() {
+        let first = host_colors();
+        let mut second = first;
+        second.ansi[4] = Color::rgb(180, 80, 20);
+        let mut config = Config::default();
+        config.theme.name = "system".to_string();
+        let mut state = State::new(config, system_theme_from_host_colors(first));
+
+        sync_system_theme_from_host_colors(&mut state, first);
+        let first_theme = state.theme.clone();
+        sync_system_theme_from_host_colors(&mut state, second);
+
+        assert_ne!(state.theme, first_theme);
+        assert_eq!(
+            state.theme,
+            apply_backdrop_policy(
+                system_theme_from_host_colors(second),
+                Some(second.bg),
+                false
+            )
+        );
+        assert_eq!(
+            state.current().workspaces[0].panes[0]
+                .terminal
+                .last_palette
+                .expect("palette should be cached")
+                .ansi,
+            second.ansi
+        );
     }
 
     #[test]

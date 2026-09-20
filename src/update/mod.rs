@@ -166,6 +166,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::CloseThemePicker => overlays::close_theme_picker(ctx),
         Msg::PreviewTheme(index) => overlays::preview_theme(ctx, index),
         Msg::SelectTheme(index) => overlays::select_theme(ctx, index),
+        Msg::HostTerminalColorsChanged => crate::ops::theme::host_terminal_colors_changed(ctx),
         Msg::ThemeTick => overlays::theme_tick(ctx),
         Msg::ConfigFileChanged => overlays::config_file_changed(ctx),
         Msg::WorkbarTick => overlays::workbar_tick(ctx),

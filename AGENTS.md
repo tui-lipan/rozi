@@ -15,6 +15,9 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
   integration test that builds `AppRoot` calls `rozi::test_support::isolate_user_dirs()` first.
 - Do not run Cargo commands concurrently in this workspace; they only contend on build locks.
 - New OS-specific behavior belongs behind `src/platform/`. Existing exceptions are not precedent.
+- Reusable framework behavior and framework defects belong in the sibling `../tui-lipan`
+  repository. Do not add a Rozi-local workaround; use a local path override only for iteration,
+  then consume the released framework version.
 - Keep user-facing docs in sync with behavior, CLI, configuration, and workflow changes.
 - GitHub Releases is the only changelog. Do not recreate `CHANGELOG.md`; tagged releases generate
   their canonical notes under `.opencode/commands/changelog.md`.

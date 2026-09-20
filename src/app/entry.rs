@@ -269,6 +269,7 @@ pub fn run() -> Result<()> {
         .title("rozi")
         .theme(theme.clone())
         .terminal_bg(terminal_bg)
+        .live_host_terminal_colors(true)
         .toast_placement(ToastPlacement::BottomEnd)
         .toast_margin((1, 2, 1, 1))
         .clipboard_config(clipboard_config(&plan.config))

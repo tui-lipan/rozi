@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::time::Duration;
 
 use tui_lipan::prelude::*;
@@ -58,6 +59,7 @@ pub struct AppRoot {
     /// workers but must never reach GitHub, whatever `[updates]` says.
     update_checks: bool,
     event_hub: events::EventHub,
+    render_host_terminal_color_generation: Cell<u64>,
 }
 
 impl Default for AppRoot {
@@ -82,6 +84,7 @@ impl Default for AppRoot {
             startup_tasks: false,
             update_checks: false,
             event_hub: events::EventHub::default(),
+            render_host_terminal_color_generation: Cell::new(0),
         }
     }
 }
@@ -123,6 +126,7 @@ impl AppRoot {
             startup_tasks: true,
             update_checks: true,
             event_hub: events::EventHub::default(),
+            render_host_terminal_color_generation: Cell::new(0),
         }
     }
 
@@ -361,6 +365,12 @@ impl Component for AppRoot {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Element {
+        let host_color_generation = ctx.host_terminal_color_generation();
+        if host_color_generation > self.render_host_terminal_color_generation.get() {
+            self.render_host_terminal_color_generation
+                .set(host_color_generation);
+            ctx.link().send(Msg::HostTerminalColorsChanged);
+        }
         if ctx.devtools_visible() {
             ctx.set_devtools_metrics(|| {
                 crate::runtime_metrics::RuntimeMetrics::capture(ctx.state.current()).devtools_rows()

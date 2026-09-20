@@ -3,7 +3,8 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::geometry::{
-    clamp_float_rect, directional_score, lift_off_float_rect, workspace_tile_bounds,
+    clamp_float_rect, clamp_floating_rect, directional_score, lift_off_float_rect,
+    workspace_tile_bounds,
 };
 use crate::layout::tiling::{
     append_tiled_window, cell_split_ratio, flip_tree_split_for_focused, innermost_split_for,
@@ -13,7 +14,7 @@ use crate::layout::tiling::{
 };
 use crate::layout::{
     self, insert_tiled_pane_at_point, placement_for, workspace_target_rects,
-    workspace_target_rects_excluding,
+    workspace_target_rects_excluding, workspace_target_rects_with_float_bounds,
 };
 use crate::ops::focus::{
     active_pane_is_fullscreen, active_pane_mut, request_pane_focus, scrollable_scroll,
@@ -33,12 +34,20 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
         return;
     };
     let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let floating_bounds = ctx.state.floating_bounds(ctx.viewport());
+    let scratch = ctx.state.scratch_visible;
     let top_gap = ctx.state.layout_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let current_rect = {
         let workspace = ctx.state.active_workspace_ref();
         placement_for(
-            &workspace_target_rects(workspace, bounds, top_gap, tile_gap),
+            &workspace_target_rects_with_float_bounds(
+                workspace,
+                bounds,
+                floating_bounds,
+                top_gap,
+                tile_gap,
+            ),
             id,
         )
     };
@@ -49,15 +58,20 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
         pane.opening = false;
         pane.fullscreen = false;
         if pane.floating {
-            pane.floating_rect = clamp_float_rect(pane.floating_rect, bounds);
+            pane.floating_rect = clamp_floating_rect(pane.floating_rect, floating_bounds);
+            pane.floating_rect_initialized = true;
             insert_tiled_at = Some(crate::layout::geometry::rect_center(pane.floating_rect));
             pane.floating = false;
             ctx.state.animation = GeometryAnimation::TileFloat;
         } else {
-            pane.floating_rect = match current_rect {
-                Some(tile) => lift_off_float_rect(tile, pane.floating_rect, bounds),
-                None => clamp_float_rect(pane.floating_rect, bounds),
+            pane.floating_rect = match (scratch, pane.floating_rect_initialized, current_rect) {
+                (true, true, _) => clamp_floating_rect(pane.floating_rect, floating_bounds),
+                (_, _, Some(tile)) => {
+                    lift_off_float_rect(tile, pane.floating_rect, floating_bounds)
+                }
+                (_, _, None) => clamp_float_rect(pane.floating_rect, floating_bounds),
             };
+            pane.floating_rect_initialized = true;
             pane.floating = true;
             remove_from_tiling = true;
             ctx.state.animation = GeometryAnimation::TileFloat;
@@ -84,11 +98,18 @@ pub(crate) fn toggle_fullscreen(ctx: &mut Context<AppRoot>) -> Update {
         return Update::full();
     };
     let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let floating_bounds = ctx.state.floating_bounds(ctx.viewport());
     let top_gap = ctx.state.layout_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let placements = {
         let workspace = ctx.state.active_workspace_ref();
-        workspace_target_rects(workspace, bounds, top_gap, tile_gap)
+        workspace_target_rects_with_float_bounds(
+            workspace,
+            bounds,
+            floating_bounds,
+            top_gap,
+            tile_gap,
+        )
     };
 
     let mut toggled = false;
@@ -96,6 +117,7 @@ pub(crate) fn toggle_fullscreen(ctx: &mut Context<AppRoot>) -> Update {
         pane.opening = false;
         if !pane.fullscreen && pane.floating {
             pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
+            pane.floating_rect_initialized = true;
         }
         pane.fullscreen = !pane.fullscreen;
         toggled = true;
@@ -968,6 +990,166 @@ mod tests {
                     .tiled_ids()
                     .contains(&1)
             );
+        });
+    }
+
+    #[test]
+    fn first_scratch_float_lifts_off_from_its_tiled_position() {
+        in_test_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            let prepared = FloatRect {
+                x: 9.0,
+                y: 5.0,
+                w: 36.0,
+                h: 12.0,
+            };
+            {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                let mut pane = Pane::new(1, 100, prepared);
+                pane.opening = false;
+                state.scratch.panes.push(pane);
+                append_tiled_window(&mut state.scratch, 1);
+                state.scratch.focused_pane = Some(1);
+            }
+            let expected = {
+                let state = backend.state();
+                let dock = state.layout_bounds(TEST_VIEWPORT);
+                let canvas = state.floating_bounds(TEST_VIEWPORT);
+                let tile = placement_for(
+                    &workspace_target_rects_with_float_bounds(
+                        &state.scratch,
+                        dock,
+                        canvas,
+                        state.layout_top_gap(),
+                        state.tile_gap(),
+                    ),
+                    1,
+                )
+                .expect("scratch tile placement");
+                lift_off_float_rect(tile, prepared, canvas)
+            };
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .expect("float scratch pane");
+
+            let pane = &backend.state().scratch.panes[0];
+            assert!(pane.floating);
+            assert!(pane.floating_rect_initialized);
+            assert_eq!(pane.floating_rect, expected);
+            assert_ne!(pane.floating_rect, prepared);
+        });
+    }
+
+    #[test]
+    fn scratch_float_toggle_restores_independent_canvas_geometry() {
+        in_test_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            let floating_rect = FloatRect {
+                x: 28.0,
+                y: 4.0,
+                w: 36.0,
+                h: 12.0,
+            };
+            {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                state.scratch_height = Some(0.55);
+                let mut pane = Pane::new(1, 100, floating_rect);
+                pane.opening = false;
+                pane.floating_rect_initialized = true;
+                state.scratch.panes.push(pane);
+                append_tiled_window(&mut state.scratch, 1);
+                state.scratch.focused_pane = Some(1);
+            }
+            let docked_height = backend.state().scratch_height;
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .expect("float scratch pane");
+            assert!(backend.state().scratch.panes[0].floating);
+            assert_eq!(
+                backend.state().scratch.panes[0].floating_rect,
+                floating_rect
+            );
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .expect("dock scratch pane");
+            assert!(!backend.state().scratch.panes[0].floating);
+            assert_eq!(
+                backend.state().scratch.panes[0].floating_rect,
+                floating_rect
+            );
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .expect("restore floating scratch pane");
+            assert_eq!(
+                backend.state().scratch.panes[0].floating_rect,
+                floating_rect
+            );
+            assert_eq!(backend.state().scratch_height, docked_height);
+        });
+    }
+
+    #[test]
+    fn scratch_fullscreen_toggle_preserves_docked_and_floating_geometry() {
+        in_test_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            let floating_rect = FloatRect {
+                x: 24.0,
+                y: 3.0,
+                w: 38.0,
+                h: 13.0,
+            };
+            {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                state.scratch_height = Some(0.55);
+                let mut pane = Pane::new(1, 100, floating_rect);
+                pane.opening = false;
+                pane.floating_rect_initialized = true;
+                state.scratch.panes.push(pane);
+                append_tiled_window(&mut state.scratch, 1);
+                state.scratch.focused_pane = Some(1);
+            }
+            let docked_height = backend.state().scratch_height;
+            let tree = backend.state().scratch.tile_tree.clone();
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFullscreen))
+                .expect("fullscreen scratch pane");
+            assert!(backend.state().scratch.panes[0].fullscreen);
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFullscreen))
+                .expect("restore scratch pane");
+
+            let state = backend.state();
+            assert!(!state.scratch.panes[0].fullscreen);
+            assert_eq!(state.scratch.panes[0].floating_rect, floating_rect);
+            assert_eq!(state.scratch.tile_tree, tree);
+            assert_eq!(state.scratch_height, docked_height);
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .expect("float scratch pane");
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFullscreen))
+                .expect("fullscreen floating scratch pane");
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFullscreen))
+                .expect("restore floating scratch pane");
+
+            let state = backend.state();
+            assert!(state.scratch.panes[0].floating);
+            assert!(!state.scratch.panes[0].fullscreen);
+            assert_eq!(state.scratch.panes[0].floating_rect, floating_rect);
+            assert_eq!(state.scratch_height, docked_height);
         });
     }
 

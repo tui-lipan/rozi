@@ -998,6 +998,66 @@ fn spawning_into_the_scratchpad_parks_the_scrollable_anchor_on_the_new_pane() {
 }
 
 #[test]
+fn spawning_a_floating_scratch_pane_uses_the_client_canvas() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use crate::AppRoot;
+            use crate::state::Pane;
+            use tui_lipan::TestBackend;
+            use tui_lipan::prelude::{FloatRect, Rect};
+
+            let viewport = Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            };
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(viewport);
+            {
+                let state = backend.state_mut();
+                let mut pane = Pane::new(1, 100, FloatRect::default());
+                pane.opening = false;
+                state.scratch.panes.push(pane);
+                crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
+                state.scratch.focused_pane = Some(1);
+                state.scratch_visible = true;
+            }
+
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::SpawnFloat))
+                .expect("spawn floating scratch pane");
+
+            let id = backend
+                .state()
+                .scratch
+                .focused_pane
+                .expect("spawn takes focus");
+            let pane = backend
+                .state()
+                .scratch
+                .panes
+                .iter()
+                .find(|pane| pane.id == id)
+                .expect("spawned scratch pane");
+            let canvas = backend
+                .state()
+                .canvas_bounds_from_terminal_viewport(viewport);
+            let dock = crate::scratchpad::deployed_rect(backend.state(), viewport);
+            assert!(pane.floating);
+            assert!(pane.floating_rect.x >= canvas.x);
+            assert!(pane.floating_rect.y >= canvas.y);
+            assert!(pane.floating_rect.x + pane.floating_rect.w <= canvas.x + canvas.w);
+            assert!(pane.floating_rect.y + pane.floating_rect.h <= canvas.y + canvas.h);
+            assert!(pane.floating_rect.y < dock.y);
+        })
+        .expect("spawn floating scratch test thread")
+        .join()
+        .expect("floating scratch spawn test panicked");
+}
+
+#[test]
 fn spawn_float_rect_places_pointer_and_edges() {
     let bounds = FloatRect {
         x: 0.0,

@@ -48,9 +48,8 @@ pub use workspace::*;
 
 pub type PaneId = u32;
 
-/// Which workspace a layout edit applies to. The scratchpad is a client-local workspace laid out
-/// in the dropdown rect rather than an entry in the attachment's workspace list, so it cannot be
-/// named by index.
+/// Which pane tree a layout edit applies to. The scratchpad reuses [`Workspace`] as its client-local
+/// content model, but its presentation is an overlay rather than an attachment workspace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutTarget {
     Scratch,
@@ -230,8 +229,8 @@ pub struct State {
     /// which forwards it to the child and - with focus-follows-mouse on - hands that pane the focus
     /// the press was denied. Cleared by the next pane pointer report, which is that release.
     pub consumed_pointer_click: bool,
-    /// Client-local workspace rendered in the dropdown. It is deliberately outside every
-    /// attachment, so profiles and shared-layout commits cannot serialize it.
+    /// Pane-tree content for the client-local scratch overlay. It deliberately reuses `Workspace`
+    /// internally while remaining outside every attachment, profile, and shared-layout commit.
     pub scratch: Workspace,
     /// Private PTY host shared by every scratch pane owned by this UI client. It is deliberately
     /// independent of `attachment` and `background`, so changing sessions cannot drop it.
@@ -482,7 +481,7 @@ impl State {
             copy_feedback_epoch: 0,
             hint_mode: None,
             consumed_pointer_click: false,
-            scratch: Workspace::scratch(),
+            scratch: Workspace::new(0),
             scratch_runtime: None,
             next_scratch_pane_id: 1 << 31,
             next_scratch_pty_generation: 1,
@@ -807,8 +806,8 @@ impl State {
         }
     }
 
-    /// Which workspace layout edits apply to right now. A pointer gesture records this at its
-    /// start so a mid-gesture scratchpad toggle cannot redirect it onto the other workspace.
+    /// Which pane tree layout edits apply to right now. A pointer gesture records this at its
+    /// start so a mid-gesture scratchpad toggle cannot redirect it onto the other tree.
     pub fn layout_target(&self) -> LayoutTarget {
         if self.scratch_visible {
             LayoutTarget::Scratch
@@ -831,10 +830,8 @@ impl State {
         }
     }
 
-    /// Canvas-space rect the active workspace tiles inside: the scratchpad's deployed dropdown rect
-    /// while it is up, otherwise the whole pane canvas. Every layout computation - placement,
-    /// split resize, float clamping, drop targeting - reads its extent from here, which is what
-    /// makes the scratchpad an ordinary workspace laid out in a smaller box.
+    /// Canvas-space rect the active workspace tiles inside: the scratchpad's deployed dock rect
+    /// while it is up, otherwise the whole pane canvas.
     ///
     /// The *deployed* rect deliberately, not the sliding one: layout math must not follow the
     /// slide, or a drag started mid-animation would compute against a rect that is still moving.
@@ -843,6 +840,18 @@ impl State {
             crate::scratchpad::deployed_rect(self, viewport)
         } else {
             self.canvas_bounds_from_terminal_viewport(viewport)
+        }
+    }
+
+    /// Canvas-space rect floating panes move and resize inside.
+    ///
+    /// Scratch floats belong to the overlay surface, not its docked tile area, so they use the
+    /// whole client canvas. Ordinary workspace floats keep using the workspace layout bounds.
+    pub fn floating_bounds(&self, viewport: Rect) -> FloatRect {
+        if self.scratch_visible {
+            self.canvas_bounds_from_terminal_viewport(viewport)
+        } else {
+            self.layout_bounds(viewport)
         }
     }
 

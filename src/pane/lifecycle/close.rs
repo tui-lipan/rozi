@@ -107,9 +107,13 @@ fn close_scratch_pane(
     resolve_focus: bool,
 ) -> Option<u64> {
     let bounds = crate::scratchpad::deployed_rect(&ctx.state, ctx.viewport());
-    let placements = crate::layout::workspace_target_rects(
+    let floating_bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let placements = crate::layout::workspace_target_rects_with_float_bounds(
         &ctx.state.scratch,
         bounds,
+        floating_bounds,
         0.0,
         ctx.state.tile_gap(),
     );

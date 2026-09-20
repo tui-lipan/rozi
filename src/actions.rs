@@ -217,13 +217,6 @@ fn execute_action_inner(
     if is_blocked_by_scratchpad(&ctx.state, action) {
         return Update::none();
     }
-    // A terminal resize can change the dropdown bounds without a state update. Rendering clamps
-    // scratch floats immediately; normalize their stored geometry before any action performs
-    // focus or layout math so those paths see the same bounded mini-workspace the user sees.
-    if ctx.state.scratch_visible {
-        let viewport = ctx.viewport();
-        crate::scratchpad::constrain_floating_panes(&mut ctx.state, viewport);
-    }
     if closes_settings(action) {
         ctx.state.show_settings = false;
         ctx.state.settings_selected = None;
@@ -738,64 +731,6 @@ mod tests {
             .expect("spawn scratchpad action test thread")
             .join()
             .expect("scratchpad action test thread completes");
-    }
-
-    #[test]
-    fn scratch_actions_normalize_float_geometry_after_a_viewport_change() {
-        use tui_lipan::TestBackend;
-
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let large_viewport = Rect {
-                    x: 0,
-                    y: 0,
-                    w: 120,
-                    h: 40,
-                };
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(large_viewport);
-                {
-                    let state = backend.state_mut();
-                    state.scratch_visible = true;
-                    let dropdown = crate::scratchpad::deployed_rect(state, large_viewport);
-                    let mut pane = crate::state::Pane::new(
-                        42,
-                        100,
-                        FloatRect {
-                            x: dropdown.x + dropdown.w - 30.0,
-                            y: dropdown.y,
-                            w: 30.0,
-                            h: 8.0,
-                        },
-                    );
-                    pane.floating = true;
-                    pane.opening = false;
-                    state.scratch.panes.push(pane);
-                    state.scratch.focused_pane = Some(42);
-                }
-                let viewport = Rect {
-                    x: 0,
-                    y: 0,
-                    w: 80,
-                    h: 24,
-                };
-                backend.set_viewport(viewport);
-
-                backend
-                    .dispatch(crate::Msg::RunAction(Action::ToggleFullscreen))
-                    .expect("run scratch action");
-
-                let dropdown = crate::scratchpad::deployed_rect(backend.state(), viewport);
-                let rect = backend.state().scratch.panes[0].floating_rect;
-                assert!(rect.x >= dropdown.x);
-                assert!(rect.y >= dropdown.y);
-                assert!(rect.x + rect.w <= dropdown.x + dropdown.w);
-                assert!(rect.y + rect.h <= dropdown.y + dropdown.h);
-            })
-            .expect("spawn scratch normalization action test")
-            .join()
-            .expect("scratch normalization action test completes");
     }
 
     #[test]

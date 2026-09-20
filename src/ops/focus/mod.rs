@@ -5,8 +5,8 @@ use crate::layout::anim::GeometryAnimation;
 use crate::layout::geometry::{closest_pane_to_rect, directional_score, workspace_tile_bounds};
 use crate::layout::tiling;
 use crate::layout::{
-    placement_for, scrollable_viewport_anchor, workspace_target_rects,
-    workspace_target_rects_excluding_with_visible,
+    placement_for, scrollable_viewport_anchor, workspace_target_rects_excluding_with_visible,
+    workspace_target_rects_with_float_bounds,
 };
 use crate::state::{
     Direction, DirectionalFocusHint, LayoutKind, Pane, PaneId, ScrollableRevealEdge, State,
@@ -191,9 +191,15 @@ fn focus_in_direction_with_wrap(
         return focus_in_monocle_order(state, direction, wrap);
     }
     let bounds = state.layout_bounds(viewport);
+    let floating_bounds = state.floating_bounds(viewport);
     let workspace = state.active_workspace_ref();
-    let placements =
-        workspace_target_rects(workspace, bounds, state.layout_top_gap(), state.tile_gap());
+    let placements = workspace_target_rects_with_float_bounds(
+        workspace,
+        bounds,
+        floating_bounds,
+        state.layout_top_gap(),
+        state.tile_gap(),
+    );
     let candidates: Vec<_> = workspace
         .panes
         .iter()
@@ -1113,17 +1119,22 @@ pub(crate) fn focus_near_pane_in_workspace(
     closest_pane_to_rect(reference, &candidates)
 }
 
-/// The box `workspace` tiles inside, as a `(bounds, top_gap)` pair. Helpers here are handed a
-/// workspace rather than reading the active one, so the scratchpad is recognized by identity: it
-/// lays out in the dropdown rect, every other workspace in the whole canvas.
-fn workspace_layout_box(state: &State, workspace: &Workspace, viewport: Rect) -> (FloatRect, f32) {
+/// The boxes `workspace` tiles and floats inside, plus its tile top gap. Helpers here are handed a
+/// workspace rather than reading the active one, so the scratchpad is recognized by identity.
+fn workspace_layout_boxes(
+    state: &State,
+    workspace: &Workspace,
+    viewport: Rect,
+) -> (FloatRect, FloatRect, f32) {
+    let canvas = state.canvas_bounds_from_terminal_viewport(viewport);
     if std::ptr::eq(workspace, &state.scratch) {
-        (crate::scratchpad::deployed_rect(state, viewport), 0.0)
-    } else {
         (
-            state.canvas_bounds_from_terminal_viewport(viewport),
-            state.workspace_top_gap(),
+            crate::scratchpad::deployed_rect(state, viewport),
+            canvas,
+            0.0,
         )
+    } else {
+        (canvas, canvas, state.workspace_top_gap())
     }
 }
 
@@ -1132,8 +1143,14 @@ pub(crate) fn visible_pane_placements(
     workspace: &Workspace,
 ) -> Vec<(PaneId, FloatRect)> {
     if let Some(viewport) = state.last_viewport.get() {
-        let (bounds, top_gap) = workspace_layout_box(state, workspace, viewport);
-        let placements = workspace_target_rects(workspace, bounds, top_gap, state.tile_gap());
+        let (bounds, floating_bounds, top_gap) = workspace_layout_boxes(state, workspace, viewport);
+        let placements = workspace_target_rects_with_float_bounds(
+            workspace,
+            bounds,
+            floating_bounds,
+            top_gap,
+            state.tile_gap(),
+        );
         return workspace
             .panes
             .iter()
@@ -1160,8 +1177,14 @@ pub(crate) fn reference_pane_rect(
         return Some(rect);
     }
     if let Some(viewport) = state.last_viewport.get() {
-        let (bounds, top_gap) = workspace_layout_box(state, workspace, viewport);
-        let placements = workspace_target_rects(workspace, bounds, top_gap, state.tile_gap());
+        let (bounds, floating_bounds, top_gap) = workspace_layout_boxes(state, workspace, viewport);
+        let placements = workspace_target_rects_with_float_bounds(
+            workspace,
+            bounds,
+            floating_bounds,
+            top_gap,
+            state.tile_gap(),
+        );
         if let Some(rect) = placement_for(&placements, id) {
             return Some(rect);
         }
@@ -2657,6 +2680,59 @@ mod tests {
             .expect("spawn")
             .join()
             .expect("join");
+    }
+
+    /// Directional focus sees one scratch content model but two presentation boxes: docked tiles
+    /// below and floating panes across the client canvas.
+    #[test]
+    fn scratch_focus_geometry_combines_docked_tiles_and_canvas_floats() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.last_viewport.set(Some(viewport));
+        state.scratch_visible = true;
+        state
+            .scratch
+            .panes
+            .push(Pane::new(1, 100, FloatRect::default()));
+        append_tiled_window(&mut state.scratch, 1);
+        let mut floating = Pane::new(
+            2,
+            100,
+            FloatRect {
+                x: 30.0,
+                y: 3.0,
+                w: 30.0,
+                h: 8.0,
+            },
+        );
+        floating.floating = true;
+        state.scratch.panes.push(floating);
+        state.scratch.focused_pane = Some(1);
+
+        let placements = visible_pane_placements(&state, &state.scratch);
+        let tiled = placements
+            .iter()
+            .find(|(id, _)| *id == 1)
+            .expect("tiled placement")
+            .1;
+        let floating = placements
+            .iter()
+            .find(|(id, _)| *id == 2)
+            .expect("floating placement")
+            .1;
+        let dock = crate::scratchpad::deployed_rect(&state, viewport);
+
+        assert!(tiled.y >= dock.y);
+        assert!(floating.y < dock.y);
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Up, viewport),
+            Some(2)
+        );
     }
 
     /// Scrollable reveal has to read the workspace that is actually on top and measure it against

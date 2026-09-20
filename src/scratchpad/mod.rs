@@ -1,4 +1,4 @@
-//! Scratchpads: the drop-down panes that live outside the tiling tree.
+//! Scratchpads: client-local overlay panes with docked, floating, and fullscreen presentation.
 
 pub mod runtime;
 
@@ -7,7 +7,7 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::config::{SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::layout::anim::GeometryAnimation;
-use crate::layout::geometry::{clamp_float_rect, workspace_tile_bounds};
+use crate::layout::geometry::workspace_tile_bounds;
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
 use crate::pane::lifecycle::spawn_pane_in_scratch;
 use crate::state::PaneIdentity;
@@ -71,7 +71,7 @@ pub(crate) fn deploying_rect(
     }
 }
 
-/// The deployed dropdown rect for the current viewport: the box the scratch workspace tiles inside.
+/// The deployed dock rect for the current viewport: the box tiled scratch content uses.
 pub(crate) fn deployed_rect(state: &crate::state::State, viewport: Rect) -> FloatRect {
     scratch_rect(
         state.canvas_bounds_from_terminal_viewport(viewport),
@@ -84,13 +84,29 @@ pub(crate) fn deployed_rect(state: &crate::state::State, viewport: Rect) -> Floa
 /// Sampled every frame from `render` (even while closed) so the keyed transition is seeded at
 /// `0.0` from startup - that way the very first open still slides up instead of snapping in.
 pub(crate) fn scratch_progress(ctx: &Context<AppRoot>) -> f32 {
-    let target = if ctx.state.scratch_visible && !ctx.state.scratch.panes.is_empty() {
+    let target = if ctx.state.scratch_visible && has_docked_panes(&ctx.state) {
         1.0
     } else {
         0.0
     };
     ctx.transition::<f32>(
         "rozi-scratch-progress",
+        target,
+        crate::view::animation::scratch_transition_config(ctx),
+    )
+}
+
+/// Visibility progress for the scratch overlay itself, independent of whether it currently has a
+/// docked surface. Floating-only presentation still dims the workspace and keeps its outside-click
+/// catcher while the dock progress remains at zero.
+pub(crate) fn backdrop_progress(ctx: &Context<AppRoot>) -> f32 {
+    let target = if ctx.state.scratch_visible && !ctx.state.scratch.panes.is_empty() {
+        1.0
+    } else {
+        0.0
+    };
+    ctx.transition::<f32>(
+        "rozi-scratch-backdrop-progress",
         target,
         crate::view::animation::scratch_transition_config(ctx),
     )
@@ -166,8 +182,6 @@ pub(crate) fn toggle(ctx: &mut Context<AppRoot>) -> Update {
         return spawn_pane_in_scratch(ctx, None, identity).1;
     }
 
-    let viewport = ctx.viewport();
-    constrain_floating_panes(&mut ctx.state, viewport);
     // Focus only after the pane exists in state: `request_pane_focus` looks the pane up and no-ops
     // when it is missing, so requesting before the first-open insert (as this used to) silently
     // dropped focus on the initial toggle. `Context::request_focus` records the target key and the
@@ -190,16 +204,21 @@ pub(crate) fn contains(state: &crate::state::State, id: crate::state::PaneId) ->
     state.scratch.panes.iter().any(|pane| pane.id == id)
 }
 
-/// Normalize stored scratch-float geometry whenever the dropdown's stable bounds change.
-///
-/// Workspace floats may intentionally keep only a grab margin onscreen. A scratch float instead
-/// belongs to the dropdown layer and must remain wholly inside it; otherwise it overlaps the
-/// dimmed workspace and stops reading as part of the scratchpad.
-pub(crate) fn constrain_floating_panes(state: &mut crate::state::State, viewport: Rect) {
-    let bounds = deployed_rect(state, viewport);
-    for pane in state.scratch.panes.iter_mut().filter(|pane| pane.floating) {
-        pane.floating_rect = clamp_float_rect(pane.floating_rect, bounds);
-    }
+/// Whether the scratch overlay currently has a docked surface to draw.
+pub(crate) fn has_docked_panes(state: &crate::state::State) -> bool {
+    state
+        .scratch
+        .panes
+        .iter()
+        .any(|pane| !pane.floating && !pane.closing)
+}
+
+fn has_fullscreen_pane(state: &crate::state::State) -> bool {
+    state
+        .scratch
+        .panes
+        .iter()
+        .any(|pane| pane.fullscreen && !pane.closing)
 }
 
 pub(crate) fn after_pane_removed(ctx: &mut Context<AppRoot>) {
@@ -311,7 +330,6 @@ pub(crate) fn set_height_from(
         return false;
     }
     state.scratch_height = Some(fraction);
-    constrain_floating_panes(state, viewport);
     true
 }
 
@@ -347,7 +365,7 @@ pub(crate) fn scratch_backdrop(
     ctx: &Context<AppRoot>,
     progress: f32,
 ) -> Option<(FloatRect, Element)> {
-    if progress <= SCRATCH_ANIM_EPSILON {
+    if !ctx.state.scratch_visible && progress <= SCRATCH_ANIM_EPSILON {
         return None;
     }
     let bounds = ctx
@@ -378,7 +396,7 @@ pub(crate) fn scratch_shield(
     ctx: &Context<AppRoot>,
     progress: f32,
 ) -> Option<(FloatRect, Element)> {
-    if progress <= SCRATCH_ANIM_EPSILON || ctx.state.scratch.panes.is_empty() {
+    if progress <= SCRATCH_ANIM_EPSILON || !has_docked_panes(&ctx.state) {
         return None;
     }
     let rect = deploying_rect(
@@ -432,7 +450,8 @@ pub(crate) fn scratch_panes(
     progress: f32,
     viewport_changed: bool,
 ) -> Canvas {
-    if (progress <= SCRATCH_ANIM_EPSILON && !ctx.state.scratch_visible)
+    let pane_closing = ctx.state.scratch.panes.iter().any(|pane| pane.closing);
+    if (progress <= SCRATCH_ANIM_EPSILON && !ctx.state.scratch_visible && !pane_closing)
         || ctx.state.scratch.panes.is_empty()
     {
         ctx.state.last_scratch_rect.set(None);
@@ -446,20 +465,28 @@ pub(crate) fn scratch_panes(
     let deploying = deploying_rect(bounds, height_fraction, progress, top_gap);
     let placed = view::canvas_rect_to_root(deploying, ctx.state.content_top_offset()).to_rect();
     let scratch_moved = ctx.state.last_scratch_rect.replace(Some(placed)) != Some(placed);
+    let docked = has_docked_panes(&ctx.state);
+    let canvas = if docked {
+        wipe_merged_dropdown_underlay(ctx, canvas, placed)
+    } else {
+        canvas
+    };
     view::render_workspace_panes(
         ctx,
-        wipe_merged_dropdown_underlay(ctx, canvas, placed),
+        canvas,
         &view::WorkspaceLayer {
             workspace: &ctx.state.scratch,
             bounds: deploying,
+            floating_bounds: bounds,
             visible_bounds: None,
             // `deploying` already sits inside the tile area, so insetting again would double the
             // workbar gap.
             top_gap: 0.0,
-            // A fullscreen scratch pane fills the dropdown, not the terminal: it is still a layer
-            // above the workspace, and covering the whole screen would make the two layers
-            // indistinguishable.
-            fullscreen_bounds: view::canvas_rect_to_root(deploying, ctx.state.content_top_offset()),
+            // Fullscreen means the same thing here as in a workspace: cover the client content
+            // viewport. The remembered docked height remains untouched underneath it.
+            fullscreen_bounds: crate::layout::geometry::viewport_bounds(
+                ctx.state.content_viewport(ctx.viewport()),
+            ),
             // Scratch floats are already canvas-absolute; see `WorkspaceLayer::float_origin`.
             float_origin: (0.0, 0.0),
             scratch: true,
@@ -471,7 +498,7 @@ pub(crate) fn scratch_panes(
             // instead left that one row to a full geometry transition, so the dropdown hung a line
             // short of home and crawled the rest. A terminal resize snaps through the same test,
             // which the layer used to miss entirely by hardcoding this false.
-            viewport_changed: viewport_changed || scratch_moved,
+            viewport_changed: viewport_changed || (docked && scratch_moved),
         },
     )
 }
@@ -486,7 +513,7 @@ pub(crate) fn scratch_resize_strip(
     if progress < 1.0 - SCRATCH_ANIM_EPSILON || !ctx.state.scratch_visible {
         return None;
     }
-    (!ctx.state.scratch.panes.is_empty()).then_some(())?;
+    (has_docked_panes(&ctx.state) && !has_fullscreen_pane(&ctx.state)).then_some(())?;
     let deployed = deployed_rect(&ctx.state, ctx.viewport());
     // A separate title bar and a retained frame each contribute a top chrome row. Borderless
     // frames still reserve one row for compact headers, so every other combination needs one.
@@ -653,44 +680,29 @@ mod tests {
     }
 
     #[test]
-    fn constraining_scratch_floats_keeps_the_whole_pane_inside_the_dropdown() {
-        let mut state = state_with_scratch(&[1]);
-        let dropdown = deployed_rect(&state, VIEWPORT);
-        state.scratch.panes[0].floating = true;
-        state.scratch.panes[0].floating_rect = FloatRect {
-            x: dropdown.x - 40.0,
-            y: dropdown.y - 20.0,
-            w: 30.0,
-            h: 8.0,
-        };
-
-        constrain_floating_panes(&mut state, VIEWPORT);
-
-        assert_rect_inside(state.scratch.panes[0].floating_rect, dropdown);
-    }
-
-    #[test]
-    fn shrinking_the_dropdown_reclamps_stored_floating_panes() {
+    fn resizing_the_dock_does_not_change_floating_geometry() {
         let mut state = state_with_scratch(&[1]);
         state.scratch_height = Some(0.8);
         let tall = deployed_rect(&state, VIEWPORT);
         state.scratch.panes[0].floating = true;
         state.scratch.panes[0].floating_rect = FloatRect {
-            x: tall.x + 5.0,
-            y: tall.y,
+            x: 12.0,
+            y: 4.0,
             w: 30.0,
             h: 8.0,
         };
+        let floating = state.scratch.panes[0].floating_rect;
 
         assert!(set_height_from(&mut state, 0.8, -16.0, VIEWPORT));
 
         let short = deployed_rect(&state, VIEWPORT);
         assert!(short.y > tall.y);
-        assert_rect_inside(state.scratch.panes[0].floating_rect, short);
+        assert_eq!(state.scratch.panes[0].floating_rect, floating);
+        assert!(floating.y < short.y);
     }
 
     #[test]
-    fn rendering_contains_stale_floating_geometry_before_the_next_interaction() {
+    fn floating_scratch_panes_render_against_the_client_canvas() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
@@ -700,13 +712,12 @@ mod tests {
                 let generation = {
                     let state = backend.state_mut();
                     state.scratch_visible = true;
-                    let dropdown = deployed_rect(state, VIEWPORT);
                     let mut pane = crate::state::Pane::new(
                         pane_id,
                         100,
                         FloatRect {
-                            x: dropdown.x - 24.0,
-                            y: dropdown.y - 12.0,
+                            x: 20.0,
+                            y: 4.0,
                             w: 30.0,
                             h: 8.0,
                         },
@@ -722,6 +733,23 @@ mod tests {
                 backend.render();
 
                 let dropdown = deployed_rect(backend.state(), VIEWPORT);
+                let canvas = backend
+                    .state()
+                    .canvas_bounds_from_terminal_viewport(VIEWPORT);
+                assert!(
+                    backend
+                        .rect_of_key(&"rozi-scratch-resize-strip".into())
+                        .is_none(),
+                    "a floating-only scratch overlay has no dock edge to resize"
+                );
+                assert!(
+                    backend.rect_of_key(&"rozi-scratch-shield".into()).is_none(),
+                    "a floating-only scratch overlay has no dock surface"
+                );
+                assert!(
+                    backend.rect_of_key(&"rozi-scratch-scrim".into()).is_some(),
+                    "clicking outside a floating scratch pane still dismisses the overlay"
+                );
                 let rendered = backend
                     .rect_of_key(&view::pane_window_key(pane_id, generation).into())
                     .expect("floating scratch pane is rendered");
@@ -731,11 +759,110 @@ mod tests {
                     w: f32::from(rendered.w),
                     h: f32::from(rendered.h),
                 };
-                assert_rect_inside(rendered, dropdown);
+                assert_rect_inside(rendered, canvas);
+                assert!(
+                    rendered.y + rendered.h < dropdown.y,
+                    "{rendered:?} should float above docked bounds {dropdown:?}"
+                );
             })
-            .expect("spawn scratch render containment test")
+            .expect("spawn scratch floating render test")
             .join()
-            .expect("scratch render containment test panicked");
+            .expect("scratch floating render test panicked");
+    }
+
+    #[test]
+    fn fullscreen_scratch_pane_renders_across_the_client_viewport() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+                backend.set_viewport(VIEWPORT);
+                let pane_id = 1 << 31;
+                let generation = {
+                    let state = backend.state_mut();
+                    state.scratch_visible = true;
+                    state.scratch_height = Some(0.4);
+                    let mut pane = crate::state::Pane::new(pane_id, 100, FloatRect::default());
+                    pane.fullscreen = true;
+                    pane.opening = false;
+                    let generation = pane.pty_generation;
+                    state.scratch.panes.push(pane);
+                    crate::layout::tiling::append_tiled_window(&mut state.scratch, pane_id);
+                    state.scratch.focused_pane = Some(pane_id);
+                    generation
+                };
+
+                backend.render();
+
+                let expected = crate::layout::geometry::viewport_bounds(
+                    backend.state().content_viewport(VIEWPORT),
+                );
+                let rendered = backend
+                    .rect_of_key(&view::pane_window_key(pane_id, generation).into())
+                    .expect("fullscreen scratch pane is rendered");
+                let rendered = FloatRect {
+                    x: f32::from(rendered.x),
+                    y: f32::from(rendered.y),
+                    w: f32::from(rendered.w),
+                    h: f32::from(rendered.h),
+                };
+                assert!((rendered.x - expected.x).abs() <= 1.0);
+                assert!((rendered.y - expected.y).abs() <= 1.0);
+                assert!((rendered.w - expected.w).abs() <= 1.0);
+                assert!((rendered.h - expected.h).abs() <= 1.0);
+                assert!(rendered.h > deployed_rect(backend.state(), VIEWPORT).h);
+            })
+            .expect("spawn scratch fullscreen render test")
+            .join()
+            .expect("scratch fullscreen render test panicked");
+    }
+
+    #[test]
+    fn hiding_and_showing_preserves_docked_and_floating_geometry() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+                backend.set_viewport(VIEWPORT);
+                let floating_rect = FloatRect {
+                    x: 24.0,
+                    y: 5.0,
+                    w: 34.0,
+                    h: 10.0,
+                };
+                {
+                    let state = backend.state_mut();
+                    state.scratch_visible = true;
+                    state.scratch_height = Some(0.55);
+                    let mut pane = crate::state::Pane::new(1 << 31, 100, floating_rect);
+                    pane.floating = true;
+                    pane.opening = false;
+                    state.scratch.panes.push(pane);
+                    state.scratch.focused_pane = Some(1 << 31);
+                }
+
+                backend
+                    .dispatch(crate::Msg::RunAction(
+                        crate::input::Action::ToggleScratchpad,
+                    ))
+                    .expect("hide scratchpad");
+                assert!(!backend.state().scratch_visible);
+                backend
+                    .dispatch(crate::Msg::RunAction(
+                        crate::input::Action::ToggleScratchpad,
+                    ))
+                    .expect("show scratchpad");
+
+                assert!(backend.state().scratch_visible);
+                assert_eq!(backend.state().scratch_height, Some(0.55));
+                assert_eq!(
+                    backend.state().scratch.panes[0].floating_rect,
+                    floating_rect
+                );
+            })
+            .expect("spawn scratch hide/show test")
+            .join()
+            .expect("scratch hide/show test panicked");
     }
 
     /// Every layout computation reads its box from `layout_bounds`, so this is what makes the
@@ -746,6 +873,10 @@ mod tests {
         assert_eq!(
             state.layout_bounds(VIEWPORT),
             deployed_rect(&state, VIEWPORT)
+        );
+        assert_eq!(
+            state.floating_bounds(VIEWPORT),
+            state.canvas_bounds_from_terminal_viewport(VIEWPORT)
         );
         assert_eq!(state.layout_top_gap(), 0.0);
 
@@ -891,6 +1022,54 @@ mod tests {
             .join()
             .expect("closing pane test thread panicked");
     }
+
+    #[test]
+    fn a_floating_only_scratch_pane_stays_mounted_for_its_close_animation() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+                backend.set_viewport(VIEWPORT);
+                let pane_id = 1 << 31;
+                {
+                    let state = backend.state_mut();
+                    state.scratch_visible = true;
+                    let mut pane = crate::state::Pane::new(
+                        pane_id,
+                        100,
+                        FloatRect {
+                            x: 20.0,
+                            y: 6.0,
+                            w: 32.0,
+                            h: 10.0,
+                        },
+                    );
+                    pane.floating = true;
+                    pane.opening = false;
+                    pane.opening_animation = None;
+                    state.scratch.panes.push(pane);
+                    state.scratch.focused_pane = Some(pane_id);
+                }
+                backend.render();
+
+                backend
+                    .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                    .expect("close floating scratch pane");
+                backend.advance(std::time::Duration::from_millis(10));
+
+                assert!(!backend.state().scratch_visible);
+                assert!(
+                    backend
+                        .rect_of_key(&format!("rozi-scratch-pane-clip-{pane_id}").into())
+                        .is_some(),
+                    "the floating pane must remain mounted while its close animation runs"
+                );
+            })
+            .expect("spawn floating scratch close test")
+            .join()
+            .expect("floating scratch close test panicked");
+    }
+
     /// Closing a pane hands the keyboard to its nearest neighbour, exactly as in a workspace.
     /// The scratch path used to shortcut to `first_visible_pane`, so focus jumped to the top-left
     /// pane no matter which one had just closed.

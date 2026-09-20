@@ -193,8 +193,11 @@ output, then closes with `Enter`, `Esc`, or `Space`.
 The scratchpad opens with the backtick command key. Its panes live on a private server owned by the
 current UI client. They survive workspace changes and attached-session switches, but they are not
 shared, saved in profiles, or included in resurrection snapshots. They close when the client exits.
-Scratch panes support the usual tiling, floating, and fullscreen actions. Floating scratch panes
-remain wholly inside the dropdown; unlike workspace floats, they cannot be parked partly offscreen.
+Scratch panes support the usual tiling, floating, and fullscreen actions, but the scratchpad is an
+overlay rather than another persistent workspace. Tiled panes use the remembered dropdown height.
+Floating panes move and resize across the whole client canvas, independently of that height.
+Fullscreen panes cover the client viewport; leaving fullscreen restores the previous docked or
+floating geometry unchanged.
 See [Sessions](sessions.md#scratch-panes).
 
 ## Pane synchronization

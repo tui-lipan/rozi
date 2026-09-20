@@ -460,7 +460,7 @@ See [Remote sessions](remote.md).
 | --- | --- | --- | --- |
 | `command` | string | Normal shell | Command for the first scratch pane. |
 | `cwd` | path string | Focused local pane cwd, then configured `cwd` | `~` expands. Captured when the scratchpad is first created. |
-| `height` | float | `0.4` | Clamped to `0.1..=0.9` with a warning. |
+| `height` | float | `0.4` | Docked height. Clamped to `0.1..=0.9` with a warning; does not constrain floating or fullscreen scratch panes. |
 
 See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 

@@ -14,6 +14,9 @@ pub struct Pane {
     pub floating: bool,
     pub fullscreen: bool,
     pub floating_rect: FloatRect,
+    /// Whether `floating_rect` is user-visible floating geometry rather than only the default size
+    /// prepared for a tiled pane's first lift-off. Local presentation state; never serialized.
+    pub floating_rect_initialized: bool,
     /// Scrollable layout column width as a fraction of the tile viewport.
     pub scrollable_width: f32,
     pub opening: bool,
@@ -133,6 +136,7 @@ impl Pane {
             floating: false,
             fullscreen: false,
             floating_rect,
+            floating_rect_initialized: false,
             scrollable_width: DEFAULT_SCROLLABLE_WIDTH,
             opening: true,
             opening_animation: None,

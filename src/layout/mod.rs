@@ -12,18 +12,14 @@ pub mod tree_ser;
 use tui_lipan::prelude::FloatRect;
 
 use self::anim::SlideEdge;
-use self::geometry::{
-    clamp_float_rect, clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds,
-};
+use self::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
 pub use self::tiling::effective_tile_tree;
 use self::tiling::{
     PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
     allocate_monocle, allocate_rows, allocate_scrollable_with_visible, append_tiled_window,
     insert_leaf_around_target, ratio_at,
 };
-use crate::state::{
-    EVEN_SPLIT_RATIO, FloatBoundary, LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace,
-};
+use crate::state::{EVEN_SPLIT_RATIO, LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
 
 pub fn workspace_target_rects(
     workspace: &Workspace,
@@ -31,7 +27,29 @@ pub fn workspace_target_rects(
     top_gap: f32,
     tile_gap: TileGap,
 ) -> Vec<PanePlacement> {
-    workspace_target_rects_excluding(workspace, bounds, None, top_gap, tile_gap)
+    workspace_target_rects_with_float_bounds(workspace, bounds, bounds, top_gap, tile_gap)
+}
+
+/// Place tiled panes inside `bounds` and floating panes against `float_bounds`.
+///
+/// They differ for the scratch overlay: docked content keeps its remembered height while floating
+/// content uses the whole client canvas.
+pub fn workspace_target_rects_with_float_bounds(
+    workspace: &Workspace,
+    bounds: FloatRect,
+    float_bounds: FloatRect,
+    top_gap: f32,
+    tile_gap: TileGap,
+) -> Vec<PanePlacement> {
+    workspace_target_rects_excluding_with_visible_and_float_bounds(
+        workspace,
+        bounds,
+        float_bounds,
+        None,
+        None,
+        top_gap,
+        tile_gap,
+    )
 }
 
 /// Like [`workspace_target_rects`], but Scrollable scrolling is clamped to `visible_bounds`
@@ -76,6 +94,28 @@ pub fn workspace_target_rects_excluding(
 pub fn workspace_target_rects_excluding_with_visible(
     workspace: &Workspace,
     bounds: FloatRect,
+    visible_bounds: Option<FloatRect>,
+    exclude_tiled: Option<PaneId>,
+    top_gap: f32,
+    tile_gap: TileGap,
+) -> Vec<PanePlacement> {
+    workspace_target_rects_excluding_with_visible_and_float_bounds(
+        workspace,
+        bounds,
+        bounds,
+        visible_bounds,
+        exclude_tiled,
+        top_gap,
+        tile_gap,
+    )
+}
+
+/// Variant of [`workspace_target_rects_excluding_with_visible`] with independent float bounds.
+#[allow(clippy::too_many_arguments)]
+pub fn workspace_target_rects_excluding_with_visible_and_float_bounds(
+    workspace: &Workspace,
+    bounds: FloatRect,
+    float_bounds: FloatRect,
     visible_bounds: Option<FloatRect>,
     exclude_tiled: Option<PaneId>,
     top_gap: f32,
@@ -153,11 +193,10 @@ pub fn workspace_target_rects_excluding_with_visible(
         .iter()
         .filter(|pane| pane.floating && !pane.closing)
     {
-        let rect = match workspace.float_boundary {
-            FloatBoundary::VisibleMargin => clamp_floating_rect(pane.floating_rect, bounds),
-            FloatBoundary::Contained => clamp_float_rect(pane.floating_rect, bounds),
-        };
-        placements.push(PanePlacement { id: pane.id, rect });
+        placements.push(PanePlacement {
+            id: pane.id,
+            rect: clamp_floating_rect(pane.floating_rect, float_bounds),
+        });
     }
 
     placements
@@ -717,37 +756,59 @@ mod tests {
     }
 
     #[test]
-    fn floating_placements_follow_the_workspace_boundary_policy() {
-        let bounds = FloatRect {
+    fn floating_placements_use_independent_bounds() {
+        let docked = FloatRect {
             x: 0.0,
             y: 20.0,
             w: 100.0,
             h: 16.0,
         };
-        let escaped = FloatRect {
-            x: -40.0,
+        let canvas = FloatRect {
+            x: 0.0,
             y: 0.0,
-            w: 30.0,
-            h: 8.0,
+            w: 100.0,
+            h: 36.0,
         };
-        let placement_for = |workspace: &Workspace| {
-            workspace_target_rects(workspace, bounds, 0.0, crate::state::TileGap::DEFAULT)[0].rect
-        };
-
         let mut workspace = Workspace::new(0);
-        let mut pane = Pane::new(1, 100, escaped);
+        let mut pane = Pane::new(
+            1,
+            100,
+            FloatRect {
+                x: 20.0,
+                y: 4.0,
+                w: 30.0,
+                h: 8.0,
+            },
+        );
         pane.floating = true;
         workspace.panes.push(pane);
-        let partly_visible = placement_for(&workspace);
-        assert!(partly_visible.x < bounds.x);
-        assert!(partly_visible.y < bounds.y);
 
-        workspace.float_boundary = FloatBoundary::Contained;
-        let contained = placement_for(&workspace);
-        assert!(contained.x >= bounds.x);
-        assert!(contained.y >= bounds.y);
-        assert!(contained.x + contained.w <= bounds.x + bounds.w);
-        assert!(contained.y + contained.h <= bounds.y + bounds.h);
+        let placement = workspace_target_rects_with_float_bounds(
+            &workspace,
+            docked,
+            canvas,
+            0.0,
+            crate::state::TileGap::DEFAULT,
+        )[0]
+        .rect;
+
+        assert_eq!(
+            placement,
+            FloatRect {
+                x: 20.0,
+                y: 4.0,
+                w: 30.0,
+                h: 8.0,
+            }
+        );
+        assert!(
+            placement.y < docked.y,
+            "the float must be allowed above the docked surface"
+        );
+        assert!(
+            placement.y >= canvas.y,
+            "the float still belongs to the client canvas"
+        );
     }
 
     #[test]

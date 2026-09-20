@@ -5,8 +5,10 @@ use crate::layout::geometry::{
     clamp_float_rect, clamp_floating_rect, close_rect, close_rect_scaled,
 };
 use crate::layout::tiling::PanePlacement;
-use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding_with_visible};
-use crate::state::{ChromeSlot, FloatBoundary, PaneId};
+use crate::layout::{
+    ordered_panes, placement_for, workspace_target_rects_excluding_with_visible_and_float_bounds,
+};
+use crate::state::{ChromeSlot, PaneId};
 
 use super::animation;
 use super::canvas_rect_to_root;
@@ -16,8 +18,8 @@ use super::pane::{
     pane_frame_chrome, pane_has_tile_above, seam_title_element, tiled_resize_strips,
 };
 
-/// Everything that differs between the two workspace layers rozi draws: the attachment's active
-/// workspace filling the canvas, and the client-local scratchpad workspace filling the dropdown.
+/// Everything that differs between the two pane-tree layers rozi draws: the attachment's active
+/// workspace and the client-local scratch overlay.
 ///
 /// Both go through [`render_workspace_panes`] so tiling, dividers, merged seams, drag previews,
 /// and split-resize strips behave identically in the dropdown; only the box they lay out in, the
@@ -26,6 +28,9 @@ pub(crate) struct WorkspaceLayer<'a> {
     pub workspace: &'a crate::state::Workspace,
     /// Canvas-space rect the workspace tiles inside.
     pub bounds: FloatRect,
+    /// Canvas-space rect floating panes move inside. This is the whole client canvas for the
+    /// scratch overlay and the same as `bounds` for an ordinary workspace.
+    pub floating_bounds: FloatRect,
     /// Local canvas clamp for Scrollable, so follower letterbox overhang can still reveal clipped
     /// columns. `None` when the layer already lays out in local space.
     pub visible_bounds: Option<FloatRect>,
@@ -46,15 +51,6 @@ pub(crate) struct WorkspaceLayer<'a> {
 }
 
 impl WorkspaceLayer<'_> {
-    /// Keep the scratchpad visually self-contained. Ordinary workspace floats deliberately retain
-    /// the visible-margin overhang that lets users park them partly offscreen.
-    fn clamp_floating_rect(&self, rect: FloatRect, bounds: FloatRect) -> FloatRect {
-        match self.workspace.float_boundary {
-            FloatBoundary::VisibleMargin => clamp_floating_rect(rect, bounds),
-            FloatBoundary::Contained => clamp_float_rect(rect, bounds),
-        }
-    }
-
     fn pane_rect_key(&self, id: PaneId) -> String {
         if self.scratch {
             format!("rozi-scratch-pane-rect-{id}")
@@ -170,8 +166,8 @@ fn tiled_resize_strips_enabled(ctx: &Context<AppRoot>, layer: &WorkspaceLayer<'_
 
 /// Draw one workspace - panes, dividers, seam titles, and split-resize strips - into `canvas`.
 ///
-/// Shared by the workspace layer and the scratchpad so the dropdown is a real tiling workspace
-/// rather than a second, thinner implementation of one.
+/// Shared by the workspace and scratch layers so scratch content can reuse tiling machinery
+/// without inheriting workspace presentation geometry.
 pub(crate) fn render_workspace_panes(
     ctx: &Context<AppRoot>,
     mut canvas: Canvas,
@@ -190,9 +186,10 @@ pub(crate) fn render_workspace_panes(
     let moving_tiled = dragged
         .filter(|drag| !drag.floating)
         .map(|drag| drag.pane_id);
-    let placements = workspace_target_rects_excluding_with_visible(
+    let placements = workspace_target_rects_excluding_with_visible_and_float_bounds(
         workspace,
         bounds,
+        layer.floating_bounds,
         layer.visible_bounds,
         moving_tiled,
         top_gap,
@@ -229,13 +226,13 @@ pub(crate) fn render_workspace_panes(
             y: pane.floating_rect.y + layer.float_origin.1,
             ..pane.floating_rect
         };
-        let base_rect = placement_for(&placements, pane.id)
-            .unwrap_or_else(|| clamp_float_rect(floating_rect, bounds));
-        let base_rect = if pane.floating {
-            layer.clamp_floating_rect(base_rect, bounds)
-        } else {
-            base_rect
-        };
+        let base_rect = placement_for(&placements, pane.id).unwrap_or_else(|| {
+            if pane.floating {
+                clamp_floating_rect(floating_rect, layer.floating_bounds)
+            } else {
+                clamp_float_rect(floating_rect, bounds)
+            }
+        });
         let moving = dragged.filter(|drag| drag.pane_id == pane.id);
         // Sliding and paint-effect panes use their real destination for the whole animation. Slide
         // carries the pane in below; Portal and Scan repaint its cells in place.
@@ -284,11 +281,7 @@ pub(crate) fn render_workspace_panes(
             base_rect
         } else if pane.closing {
             // Preserve the legacy bare-flag close path for un-snapshotted panes.
-            let closing_rect = match layer.workspace.float_boundary {
-                FloatBoundary::VisibleMargin => floating_rect,
-                FloatBoundary::Contained => clamp_float_rect(floating_rect, bounds),
-            };
-            close_rect(closing_rect)
+            close_rect(floating_rect)
         } else if pane.opening
             && crate::layout::anim::geometry_animation_enabled(
                 &ctx.state,
@@ -300,7 +293,14 @@ pub(crate) fn render_workspace_panes(
         } else if let Some(drag) = moving
             && !pane.fullscreen
         {
-            layer.clamp_floating_rect(drag.rect, bounds)
+            clamp_floating_rect(
+                drag.rect,
+                if drag.floating {
+                    layer.floating_bounds
+                } else {
+                    bounds
+                },
+            )
         } else {
             base_rect
         };
@@ -963,6 +963,7 @@ pub(crate) fn workspace_pages(
             &WorkspaceLayer {
                 workspace,
                 bounds,
+                floating_bounds: bounds,
                 visible_bounds: Some(local_bounds),
                 top_gap: ctx.state.workspace_top_gap(),
                 fullscreen_bounds: root_bounds,

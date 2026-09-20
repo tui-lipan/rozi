@@ -111,7 +111,9 @@ pub(crate) fn spawn_floating_pane_at_cursor(ctx: &mut Context<AppRoot>) -> Updat
         let previous_focused = ctx.state.scratch.focused_pane;
         let previous_anchor = ctx.state.scratch.scrollable_anchor;
         let (id, update) = spawn_pane_in_scratch(ctx, previous_focused, identity);
-        let bounds = crate::scratchpad::deployed_rect(&ctx.state, ctx.viewport());
+        let bounds = ctx
+            .state
+            .canvas_bounds_from_terminal_viewport(ctx.viewport());
         if let Some(pane) = ctx
             .state
             .scratch
@@ -121,6 +123,7 @@ pub(crate) fn spawn_floating_pane_at_cursor(ctx: &mut Context<AppRoot>) -> Updat
         {
             pane.floating = true;
             pane.floating_rect = float.rect(bounds);
+            pane.floating_rect_initialized = true;
         }
         remove_tiled_window(&mut ctx.state.scratch, id);
         if ctx.state.scratch.scrollable_anchor == Some(id) {
@@ -152,9 +155,16 @@ pub(crate) fn spawn_pane_in_scratch(
     let initial_pane = ctx.state.scratch.panes.is_empty();
     let tile_gap = ctx.state.tile_gap();
     let split_width_multiplier = ctx.state.config.layout.split_width_multiplier;
-    let rect = crate::scratchpad::deployed_rect(&ctx.state, ctx.viewport());
     let id = ctx.state.next_scratch_pane_id;
     ctx.state.next_scratch_pane_id = id.saturating_add(1);
+    // Tiled placement comes from the scratch layout tree. Prepare the default floating size now;
+    // the first transition positions it around the pane's live tile, then later toggles restore
+    // the remembered rectangle exactly.
+    let rect = default_floating_rect(
+        ctx.state
+            .canvas_bounds_from_terminal_viewport(ctx.viewport()),
+        id,
+    );
     let generation = ctx.state.next_scratch_pty_generation;
     ctx.state.next_scratch_pty_generation = generation.saturating_add(1);
     let mut pane = Pane::new(id, ctx.state.config.scrollback, rect);
@@ -415,6 +425,7 @@ pub(crate) fn spawn_pane_in_workspace(
         }
         pane.floating = true;
         pane.floating_rect = float.rect(bounds);
+        pane.floating_rect_initialized = true;
     }
     pane.begin_open_animation(ctx.state.config.animations);
     let palette = TerminalColorPalette::from_theme(

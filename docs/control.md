@@ -25,8 +25,8 @@ rozi --session dev send-keys --target 3 'cargo test' Enter
 rozi --session dev split --workspace 9 --argv cargo watch -x test
 ```
 
-The two endpoints return the same `{ok, data, error}` document and the same tables, so a script
-reads one format either way.
+The two endpoints return the same `{ok, code, data, error}` document and the same tables, so a
+script reads one format either way. `code` appears on failures and is stable for automation.
 
 A session endpoint serves what a server can decide on its own. It does not gain a script any
 authority an attached client would not have: opening a pane still needs the layout-control lease to
@@ -66,6 +66,18 @@ still reaches its own session with `rozi --session <NAME>`.
 ## Commands
 
 Put `--socket PATH` before the command when selecting an endpoint explicitly.
+
+Run `rozi api describe` to inspect the control API version, session protocol version, and
+capabilities implemented by the installed binary. It prints JSON and does not connect to a UI or
+session:
+
+```json
+{
+  "api": 1,
+  "session_protocol": 7,
+  "capabilities": ["pane-control", "published-activity", "session-control"]
+}
+```
 
 `--session` column: whether the command also works against a session server with no UI attached.
 

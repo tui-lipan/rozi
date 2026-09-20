@@ -6,6 +6,7 @@
 //! Human-facing report formatting lives in [`output`] rather than in each subcommand, so a table
 //! rendered by `sessions list` and one rendered by `extensions list` cannot drift apart.
 
+pub(crate) mod api;
 pub(crate) mod args;
 pub(crate) mod control;
 pub(crate) mod extension;
@@ -15,6 +16,7 @@ pub(crate) mod session;
 pub(crate) mod skill;
 pub(crate) mod update;
 
+pub(crate) use api::run_api_describe_cli;
 pub(crate) use args::{
     CliArgs, ExtensionsCommand, ParsedCli, SessionCommand, SessionsCommand, parse_cli_args,
     print_extensions_check_help, print_extensions_help, print_extensions_install_help,

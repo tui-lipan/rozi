@@ -12,6 +12,35 @@ use crate::events::{EventHub, EventKind};
 use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcListener};
 use crate::state::PaneId;
 
+/// Version of the public control request and response API.
+pub const CONTROL_API_VERSION: u32 = 1;
+
+pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
+pub const SESSION_CONTROL_CAPABILITY: &str = "session-control";
+pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
+
+/// Features this binary exposes to control clients and extension authors.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ApiDescription {
+    pub api: u32,
+    pub session_protocol: u32,
+    pub capabilities: Vec<&'static str>,
+}
+
+impl ApiDescription {
+    pub fn current() -> Self {
+        Self {
+            api: CONTROL_API_VERSION,
+            session_protocol: crate::session::protocol::PROTOCOL_VERSION,
+            capabilities: vec![
+                PANE_CONTROL_CAPABILITY,
+                PUBLISHED_ACTIVITY_CAPABILITY,
+                SESSION_CONTROL_CAPABILITY,
+            ],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ControlRequest {
     #[serde(flatten)]
@@ -986,6 +1015,22 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ControlRequest>(r#"{"cmd":"metrics"}"#).unwrap(),
             request
+        );
+    }
+
+    #[test]
+    fn api_description_is_sorted_and_names_the_session_protocol() {
+        let description = ApiDescription::current();
+        assert_eq!(description.api, CONTROL_API_VERSION);
+        assert_eq!(
+            description.session_protocol,
+            crate::session::protocol::PROTOCOL_VERSION
+        );
+        assert!(
+            description
+                .capabilities
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
         );
     }
 

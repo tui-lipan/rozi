@@ -135,6 +135,7 @@ pub fn run() -> Result<()> {
             cli::print_version();
             return Ok(());
         }
+        cli::ParsedCli::ApiDescribe => return cli::run_api_describe_cli(),
         parsed => parsed,
     };
 
@@ -228,6 +229,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::Pick(_)
         | cli::ParsedCli::Help { .. }
         | cli::ParsedCli::Version
+        | cli::ParsedCli::ApiDescribe
         | cli::ParsedCli::Skill(_)
         | cli::ParsedCli::SkillHelp
         | cli::ParsedCli::SessionsHelp

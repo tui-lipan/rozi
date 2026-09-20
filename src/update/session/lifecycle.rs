@@ -181,6 +181,7 @@ pub(crate) fn lost(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -> U
 pub(crate) fn attached(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
+    session_instance: crate::session::protocol::SessionInstanceId,
     session: String,
     client_id: ClientId,
     panes: Vec<PaneMeta>,
@@ -215,6 +216,7 @@ pub(crate) fn attached(
     ctx.state.runtime_epoch = epoch;
     ctx.state.current_mut().session_client = Some(client);
     ctx.state.current_mut().session_name = Some(session.clone());
+    ctx.state.current_mut().session_instance = Some(session_instance);
     if let Some(host) = pending.remote_host {
         ctx.state.current_mut().remote_host = Some(host);
     }

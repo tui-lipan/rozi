@@ -100,11 +100,14 @@ The shape inside `data` depends on `cmd`. CLI JSON output preserves this envelop
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
 | Other one-shot commands | Absent on success. |
 
-A `list-panes` object has `session`, `id`, `title`, `workspace`, `command`, `argv`,
-`foreground_program`, `foreground_programs`, `foreground_arguments`, `cwd`, `status`, `reported_status`,
-`status_reason`, `agent`, and `agent_state`. Optional values are JSON null. Scratch panes use
-workspace `0`. `foreground_programs` contains the normalized basename-only process-group evidence
-used by split-aware navigation; it may contain more than one entry for wrappers and pipelines.
+A `list-panes` object has `session`, `id`, `reference`, `agent_ref`, `title`, `workspace`,
+`command`, `argv`, `foreground_program`, `foreground_programs`, `foreground_arguments`, `cwd`,
+`status`, `reported_status`, `status_reason`, `agent`, and `agent_state`. `reference` identifies one
+server instance, pane id, and PTY generation. `agent_ref` adds the semantic incarnation and is null
+when the pane has no detected agent. Optional values are JSON null. Scratch panes use workspace `0`
+and do not expose a reference. `foreground_programs` contains the normalized basename-only
+process-group evidence used by split-aware navigation; it may contain more than one entry for
+wrappers and pipelines.
 
 The metrics object has `sampled_at_unix_ms`, `client_inbound`, `client_outbound`, `piped_remote`,
 `orphan_output`, and `server`. Queue and byte-buffer objects report current, high-water, and

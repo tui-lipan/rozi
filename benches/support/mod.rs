@@ -132,6 +132,7 @@ pub fn attached_message() -> ServerMessage {
     let layout = large_layout();
     ServerMessage::Attached {
         capabilities: None,
+        session_instance: rozi::session::protocol::SessionInstanceId::generate(),
         created_from_profile: None,
         protocol_version: PROTOCOL_VERSION,
         effective_protocol: PROTOCOL_VERSION,
@@ -144,6 +145,7 @@ pub fn attached_message() -> ServerMessage {
             .map(|pane| PaneMeta {
                 pane_id: pane.pane_id,
                 generation: pane.generation,
+                agent_refs: Vec::new(),
                 cols: 200,
                 rows: 60,
                 pid: Some(10_000 + pane.pane_id),

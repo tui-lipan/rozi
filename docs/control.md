@@ -74,7 +74,7 @@ session:
 ```json
 {
   "api": 1,
-  "session_protocol": 7,
+  "session_protocol": 8,
   "capabilities": ["pane-control", "published-activity", "session-control"]
 }
 ```

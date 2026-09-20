@@ -577,7 +577,8 @@ impl SessionServer {
                 // learned about the command that just exited. A held agent state, a cached
                 // detection fingerprint, or a stale `detected_agent` would otherwise be attributed
                 // to the shell now sitting in its place - which is a different program.
-                pane.agent = AgentScratch::default();
+                pane.agent.clear_runtime_identity();
+                pane.agent.reset_detection();
                 pane.runtime.detected_agent = None;
                 pane.runtime.work_started_at = None;
             }
@@ -705,6 +706,11 @@ impl SessionServer {
             .map(|(pane_id, pane)| PaneMeta {
                 pane_id: *pane_id,
                 generation: pane.generation,
+                agent_refs: pane.agent.references(protocol::PaneRef {
+                    session_instance: self.instance_id.clone(),
+                    pane_id: *pane_id,
+                    generation: pane.generation,
+                }),
                 cols: pane.cols,
                 rows: pane.rows,
                 pid: pane.pty.as_ref().and_then(TerminalPty::pid),

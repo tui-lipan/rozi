@@ -27,6 +27,7 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.opening = false;
     pane.terminal_active = true;
     pane.pty_generation = meta.generation;
+    pane.agent_refs.clone_from(&meta.agent_refs);
     pane.terminal.cols = meta.cols.max(1);
     pane.terminal.rows = meta.rows.max(1);
     pane.terminal

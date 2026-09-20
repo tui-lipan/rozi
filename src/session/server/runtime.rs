@@ -62,7 +62,89 @@ pub(super) const STATE_SETTLE_GRACE: Duration = Duration::from_secs(2);
 /// the agent draws a prompt again, because that is positive idle evidence rather than silence.
 pub(super) const AGENT_HOLD_MAX: Duration = Duration::from_secs(15 * 60);
 
+impl AgentScratch {
+    fn sync_references(&mut self, runtime: &PaneRuntimeState) {
+        let occupants = runtime_occupants(runtime);
+        self.references.retain(|slot, tracked| {
+            occupants.iter().any(|(candidate_slot, identity)| {
+                candidate_slot == slot && *identity == tracked.identity
+            })
+        });
+        for (slot, identity) in occupants {
+            if self.references.contains_key(&slot) {
+                continue;
+            }
+            self.next_incarnation = self.next_incarnation.saturating_add(1).max(1);
+            self.references.insert(
+                slot.clone(),
+                TrackedAgentReference {
+                    identity: identity.to_string(),
+                    incarnation: self.next_incarnation,
+                },
+            );
+        }
+    }
+
+    pub(super) fn clear_runtime_identity(&mut self) {
+        self.references.clear();
+    }
+
+    pub(super) fn reset_detection(&mut self) {
+        let references = std::mem::take(&mut self.references);
+        let next_incarnation = self.next_incarnation;
+        *self = Self {
+            references,
+            next_incarnation,
+            ..Self::default()
+        };
+    }
+
+    pub(super) fn references(&self, pane: protocol::PaneRef) -> Vec<protocol::AgentRef> {
+        let mut references = self
+            .references
+            .iter()
+            .map(|(slot, tracked)| protocol::AgentRef {
+                pane: pane.clone(),
+                slot: slot.clone(),
+                incarnation: tracked.incarnation,
+            })
+            .collect::<Vec<_>>();
+        references.sort_by(|left, right| left.slot.cmp(&right.slot));
+        references
+    }
+}
+
+fn runtime_occupants(runtime: &PaneRuntimeState) -> Vec<(Option<String>, &str)> {
+    if !runtime.rows.is_empty() {
+        return runtime
+            .rows
+            .iter()
+            .map(|row| (Some(row.id.clone()), row.id.as_str()))
+            .collect();
+    }
+    runtime
+        .detected_agent
+        .as_ref()
+        .map(|agent| vec![(None, agent.agent.id.as_str())])
+        .unwrap_or_default()
+}
+
 impl SessionServer {
+    pub(super) fn agent_references(
+        &self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+    ) -> Vec<protocol::AgentRef> {
+        let Some(pane) = self.pane(owner, pane_id) else {
+            return Vec::new();
+        };
+        pane.agent.references(protocol::PaneRef {
+            session_instance: self.instance_id.clone(),
+            pane_id,
+            generation: pane.generation,
+        })
+    }
+
     pub(super) fn set_pane_status(
         &mut self,
         client_id: ClientId,
@@ -213,6 +295,7 @@ impl SessionServer {
         // A publisher that enumerates its own sessions is better informed than the scraper, which
         // can only see the one it draws. Drop anything the scraper was holding for this pane.
         pane.agent.hold = None;
+        pane.agent.sync_references(&pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         Ok(Some(pane.runtime.clone()))
     }
@@ -291,7 +374,8 @@ impl SessionServer {
         }
         self.settings.agents = agents;
         for pane in self.panes.values_mut() {
-            pane.agent = AgentScratch::default();
+            pane.agent.clear_runtime_identity();
+            pane.agent.reset_detection();
             pane.runtime.detected_agent = None;
         }
         let mut scan = LazyProcessScan::default();
@@ -359,6 +443,7 @@ impl SessionServer {
         // Cloned before the pane borrow: detection reads the session's whole agent catalog, which
         // lives on the server rather than the pane.
         let agents = self.settings.agents.clone();
+        let session_instance = self.instance_id.clone();
         let tracks_snapshot_foreground = owner.is_none()
             && self.settings.resurrect
             && self.settings.resurrect_foreground != crate::config::ForegroundRestore::Never;
@@ -384,11 +469,17 @@ impl SessionServer {
         if pane.runtime.detected_agent != next.detected_agent {
             pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
         }
+        pane.agent.sync_references(&next);
         pane.runtime = next.clone();
         let message = ServerMessage::PaneRuntimeChanged {
             pane_id,
             local: wire_local(owner),
             generation,
+            agent_refs: pane.agent.references(protocol::PaneRef {
+                session_instance,
+                pane_id,
+                generation,
+            }),
             state: next,
         };
         if let Some(owner) = owner {
@@ -1378,6 +1469,93 @@ mod tests {
             last_git_read: None,
             initial_cursor_report_primed: false,
         }
+    }
+
+    #[test]
+    fn agent_references_change_only_when_the_semantic_occupant_changes() {
+        let mut scratch = AgentScratch::default();
+        let runtime = |id: Option<&str>, state| PaneRuntimeState {
+            detected_agent: id.map(|id| DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new(id, id).into(),
+                state,
+            }),
+            ..PaneRuntimeState::default()
+        };
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 3,
+            generation: 7,
+        };
+
+        scratch.sync_references(&runtime(
+            Some("claude"),
+            protocol::DetectedAgentState::Working,
+        ));
+        let first = scratch.references(pane_ref.clone())[0].incarnation;
+        scratch.sync_references(&runtime(
+            Some("claude"),
+            protocol::DetectedAgentState::Blocked,
+        ));
+        assert_eq!(scratch.references(pane_ref.clone())[0].incarnation, first);
+
+        scratch.sync_references(&runtime(Some("codex"), protocol::DetectedAgentState::Idle));
+        let replacement = scratch.references(pane_ref.clone())[0].incarnation;
+        assert!(replacement > first);
+
+        scratch.sync_references(&PaneRuntimeState::default());
+        scratch.sync_references(&runtime(Some("codex"), protocol::DetectedAgentState::Idle));
+        assert!(scratch.references(pane_ref)[0].incarnation > replacement);
+    }
+
+    #[test]
+    fn published_slots_keep_independent_incarnations() {
+        let row = |id: &str| protocol::PublishedRow {
+            id: id.into(),
+            title: id.into(),
+            status: "working".into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+        };
+        let mut scratch = AgentScratch::default();
+        let mut runtime = PaneRuntimeState {
+            rows: vec![row("a"), row("b")],
+            ..PaneRuntimeState::default()
+        };
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 3,
+            generation: 7,
+        };
+        scratch.sync_references(&runtime);
+        let initial = scratch.references(pane_ref.clone());
+        let a = initial
+            .iter()
+            .find(|item| item.slot.as_deref() == Some("a"));
+        let b = initial
+            .iter()
+            .find(|item| item.slot.as_deref() == Some("b"));
+        let (a, b) = (a.unwrap().incarnation, b.unwrap().incarnation);
+
+        runtime.rows.remove(0);
+        scratch.sync_references(&runtime);
+        runtime.rows.push(row("a"));
+        scratch.sync_references(&runtime);
+        let next = scratch.references(pane_ref);
+        assert_eq!(
+            next.iter()
+                .find(|item| item.slot.as_deref() == Some("b"))
+                .unwrap()
+                .incarnation,
+            b
+        );
+        assert!(
+            next.iter()
+                .find(|item| item.slot.as_deref() == Some("a"))
+                .unwrap()
+                .incarnation
+                > a
+        );
     }
 
     struct StubInspector;

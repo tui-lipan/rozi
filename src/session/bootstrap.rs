@@ -690,6 +690,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
         },
         Frame::Control(message) => match message {
             ServerMessage::Attached {
+                session_instance,
                 session,
                 client_id,
                 panes,
@@ -703,6 +704,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 ..
             } => Msg::SessionAttached {
                 epoch,
+                session_instance,
                 session,
                 client_id,
                 panes,
@@ -886,12 +888,14 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 pane_id,
                 local,
                 generation,
+                agent_refs,
                 state,
             } => Msg::SessionPaneRuntimeChanged {
                 epoch,
                 pane_id,
                 local,
                 generation,
+                agent_refs,
                 state,
             },
         },

@@ -523,6 +523,7 @@ pub enum Msg {
     },
     SessionAttached {
         epoch: u64,
+        session_instance: session::protocol::SessionInstanceId,
         session: String,
         client_id: ClientId,
         panes: Vec<session::protocol::PaneMeta>,
@@ -661,6 +662,7 @@ pub enum Msg {
         pane_id: PaneId,
         local: bool,
         generation: u64,
+        agent_refs: Vec<crate::session::protocol::AgentRef>,
         state: crate::session::protocol::PaneRuntimeState,
     },
     /// A remote directory listing arrived; feeds the sidebar file tree's provided entry source.

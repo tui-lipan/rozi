@@ -34,6 +34,7 @@ pub struct Pane {
     pub closing_animation: Option<crate::layout::anim::PaneAnimationSnapshot>,
     pub logging: bool,
     pub activity: PaneActivity,
+    pub agent_refs: Vec<crate::session::protocol::AgentRef>,
     pub terminal: TerminalPane,
     /// This pane's element keys, built once here rather than formatted in every `view()`.
     ///
@@ -146,6 +147,7 @@ impl Pane {
             closing_animation: None,
             logging: false,
             activity: PaneActivity::default(),
+            agent_refs: Vec::new(),
             keys: PaneKeys::new(id),
             terminal: {
                 let mut terminal = TerminalPane::new(scrollback);

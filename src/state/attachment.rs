@@ -60,6 +60,7 @@ pub struct Attachment {
     pub next_pty_generation: u64,
     pub session_client: Option<crate::session::client::SessionClient>,
     pub session_name: Option<String>,
+    pub session_instance: Option<crate::session::protocol::SessionInstanceId>,
     /// When attached via `--remote`, the remote host alias/URL; `None` for local sessions.
     /// Local-filesystem features (file tree, profile path capture) must treat server cwds as
     /// remote when this is set, even if `cwd_host` is `None` (server-relative).
@@ -147,6 +148,7 @@ impl Attachment {
             next_pty_generation: 1,
             session_client: None,
             session_name: None,
+            session_instance: None,
             remote_host: None,
             remote_target: None,
             created_from_profile: None,
@@ -276,6 +278,7 @@ impl Attachment {
         self.connection = ConnectionState::Disconnected;
         self.session_attached = false;
         self.session_client = None;
+        self.session_instance = None;
         self.shared = None;
         self.remote_drag = None;
         self.remote_drag_snap.set(None);

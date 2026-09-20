@@ -1181,6 +1181,7 @@ fn try_enqueue_runtime_metrics_request(outbound: &ByteQueue<ClientOutbound>, pen
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::protocol::SessionInstanceId;
     #[cfg(unix)]
     use std::io::Read;
     #[cfg(unix)]
@@ -1189,6 +1190,7 @@ mod tests {
     fn attached_message() -> ServerMessage {
         ServerMessage::Attached {
             capabilities: None,
+            session_instance: SessionInstanceId::for_test("test"),
             protocol_version: PROTOCOL_VERSION,
             effective_protocol: PROTOCOL_VERSION,
             session: "test".to_string(),

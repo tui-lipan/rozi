@@ -508,6 +508,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
                     pane_id,
                     local: false,
                     generation,
+                    agent_refs: Vec::new(),
                     state: PaneRuntimeState {
                         sequence: 1,
                         status: Some(crate::session::protocol::PaneStatus {
@@ -1369,6 +1370,7 @@ fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes() {
     backend
         .update_level(Msg::SessionAttached {
             epoch: reconnect_epoch,
+            session_instance: crate::session::protocol::SessionInstanceId::for_test("reconnect"),
             session: "dev".to_string(),
             client_id: 1,
             panes: Vec::new(),
@@ -1470,6 +1472,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
+                    agent_refs: Vec::new(),
                     state: runtime.clone(),
                 })
                 .expect("dispatch status transition");
@@ -1495,6 +1498,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
+                    agent_refs: Vec::new(),
                     state: runtime,
                 })
                 .expect("dispatch duplicate status");
@@ -1506,6 +1510,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
+                    agent_refs: Vec::new(),
                     state: PaneRuntimeState {
                         status: None,
                         sequence: 0,
@@ -1554,6 +1559,7 @@ fn parked_runtime_updates_keep_background_metadata_current() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
+                    agent_refs: Vec::new(),
                     state: PaneRuntimeState {
                         cwd: Some("/remote/project".to_string()),
                         foreground_program: Some("cargo".to_string()),
@@ -2032,6 +2038,7 @@ fn attach_with_controller(controller: crate::layout::shared::ClientId, reconnect
             backend
                 .dispatch(Msg::SessionAttached {
                     epoch: 1,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
                     session: "dev".into(),
                     client_id: 2,
                     panes: Vec::new(),
@@ -2105,6 +2112,9 @@ fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
             backend
                 .dispatch(Msg::SessionAttached {
                     epoch: 1,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                        "ephemeral",
+                    ),
                     session: "eph-test".into(),
                     client_id: 1,
                     panes: Vec::new(),
@@ -2347,11 +2357,15 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
             backend
                 .dispatch(Msg::SessionAttached {
                     epoch: 2,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                        "shared",
+                    ),
                     session: "dev".into(),
                     client_id: 1,
                     panes: vec![crate::session::protocol::PaneMeta {
                         pane_id: 7,
                         generation: 1,
+                        agent_refs: Vec::new(),
                         cols: 80,
                         rows: 24,
                         pid: Some(42),
@@ -2552,6 +2566,7 @@ fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
             backend
                 .dispatch(Msg::SessionAttached {
                     epoch,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
                     session: "dev".to_string(),
                     client_id: 1,
                     panes: Vec::new(),

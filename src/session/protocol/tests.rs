@@ -146,6 +146,7 @@ fn pane_meta_from_older_peer_defaults_original_user() {
     let mut value = serde_json::to_value(PaneMeta {
         pane_id: 1,
         generation: 2,
+        agent_refs: Vec::new(),
         cols: 80,
         rows: 24,
         pid: Some(42),
@@ -843,6 +844,7 @@ fn attach_without_min_protocol_deserializes_as_legacy_exact() {
 fn attached_without_effective_protocol_deserializes_as_zero() {
     let value = serde_json::json!({
         "type": "attached",
+        "session_instance": "server-a",
         "protocol_version": 12,
         "session": "dev",
         "client_id": 1,

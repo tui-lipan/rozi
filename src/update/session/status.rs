@@ -137,6 +137,7 @@ pub(crate) fn pane_runtime_changed(
     pane_id: PaneId,
     local: bool,
     generation: u64,
+    agent_refs: Vec<crate::session::protocol::AgentRef>,
     state: PaneRuntimeState,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
@@ -153,6 +154,7 @@ pub(crate) fn pane_runtime_changed(
                 && pane.pty_generation == generation
                 && state.sequence > pane.terminal.runtime_sequence
             {
+                pane.agent_refs.clone_from(&agent_refs);
                 apply_pane_runtime_state(pane, state);
             }
             if at_prompt {
@@ -176,6 +178,7 @@ pub(crate) fn pane_runtime_changed(
         && state.sequence > pane.terminal.runtime_sequence
     {
         title = Some(pane.display_title(None));
+        pane.agent_refs = agent_refs;
         let applied = apply_pane_runtime_state(pane, state);
         reported_status = applied.current_status.clone();
         finished_rows = applied.finished_rows;

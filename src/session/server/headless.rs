@@ -57,6 +57,8 @@ const SERVER_LAYOUT_AUTHOR: ClientId = 0;
 struct SessionPaneInfo {
     session: String,
     id: PaneId,
+    reference: protocol::PaneRef,
+    agent_ref: Option<protocol::AgentRef>,
     title: String,
     /// One-based workspace from the shared layout, or `0` when the session has no layout document
     /// yet (nothing has placed the pane, so there is no workspace to name).
@@ -301,6 +303,20 @@ impl SessionServer {
             .map(|(id, pane)| SessionPaneInfo {
                 session: self.session_name.clone(),
                 id: *id,
+                reference: protocol::PaneRef {
+                    session_instance: self.instance_id.clone(),
+                    pane_id: *id,
+                    generation: pane.generation,
+                },
+                agent_ref: pane
+                    .agent
+                    .references(protocol::PaneRef {
+                        session_instance: self.instance_id.clone(),
+                        pane_id: *id,
+                        generation: pane.generation,
+                    })
+                    .into_iter()
+                    .find(|reference| reference.slot.is_none()),
                 title: pane
                     .effective_title()
                     .unwrap_or_else(|| format!("pane {id}")),
@@ -535,6 +551,7 @@ impl SessionServer {
                         pane_id: id,
                         local: false,
                         generation,
+                        agent_refs: self.agent_references(None, id),
                         state,
                     },
                 ));

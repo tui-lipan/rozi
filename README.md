@@ -5,7 +5,7 @@
 <h1 align="center">rozi</h1>
 
 <p align="center">
-  A modern tiling terminal multiplexer for Linux, macOS, and Windows.
+  A modern terminal workspace for local, remote, and agent-driven development.
 </p>
 
 <p align="center">
@@ -20,10 +20,19 @@
   <img src="assets/demo.gif" alt="A rozi session opening, splitting, resizing, and arranging terminal panes" width="860">
 </p>
 
-rozi arranges terminal panes with tiling layouts, floating panes, fullscreen panes, and nine
-workspaces. A prefix key controls panes without taking ordinary input away from the programs
-inside them. Named sessions keep running when the client detaches, so you can return to the same
-processes and scrollback later. Tiling behavior and keyboard flow take their cues from the
+rozi is a terminal multiplexer that tiles terminals like a window manager, keeps named sessions
+alive after you detach, and connects to sessions on other machines over SSH. It tracks coding-agent
+activity without treating agents differently from shells, editors, monitors, or any other terminal
+program. Its CLI, hooks, and extensions automate the same session runtime used by the interactive
+client.
+
+| Tiling workspace | Persistent sessions | Remote machines |
+| --- | --- | --- |
+| Dwindle, master, grid, scrolling, floating, and fullscreen layouts | Live processes and scrollback survive detach | Attach to saved hosts through SSH |
+| **Agent activity** | **Shared sessions** | **Automation and extensions** |
+| See which coding agents are working or need input | Follow another client or take layout control | Inspect, control, and extend rozi from the CLI |
+
+Tiling behavior and keyboard flow take their cues from the
 [Hyprland](https://hypr.land) window manager.
 
 ## Install

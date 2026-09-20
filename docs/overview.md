@@ -1,8 +1,13 @@
 # Overview
 
-rozi is a modern tiling terminal multiplexer. Its tiling and animations take their cues from the
-Hyprland window manager. It arranges live terminal panes across workspaces and gives you keyboard
-and mouse controls for focus, layout, floating, fullscreen, and resizing.
+rozi is a modern terminal workspace for local, remote, and agent-driven development. It remains a
+general-purpose terminal multiplexer: shells, editors, system monitors, test servers, and coding
+agents are all ordinary panes in the same session runtime.
+
+Its tiling and animations take their cues from the Hyprland window manager. It arranges live
+terminal panes across workspaces and gives you keyboard and mouse controls for focus, layout,
+floating, fullscreen, and resizing. The sidebar can also show coding-agent activity and work on
+connected machines.
 
 Every pane belongs to a session server. A client can display and control a session, then leave
 without stopping a named session. A bare `rozi` launch starts at the session picker and does not

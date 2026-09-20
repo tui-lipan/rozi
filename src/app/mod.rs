@@ -1042,16 +1042,22 @@ mod tests {
                 search.matches.push(crate::state::ScrollbackMatch {
                     offset: 0,
                     line: 1,
+                    end_line: 1,
                     start_col: 0,
                     end_col: 1,
+                    start_byte: 0,
+                    end_byte: 1,
                     text: std::sync::Arc::clone(&text),
                     pane: 1,
                 });
                 search.matches.push(crate::state::ScrollbackMatch {
                     offset: 0,
                     line: 1,
+                    end_line: 1,
                     start_col: 10,
                     end_col: 11,
+                    start_byte: 10,
+                    end_byte: 11,
                     text,
                     pane: 1,
                 });
@@ -1139,8 +1145,11 @@ mod tests {
                 search.matches.push(crate::state::ScrollbackMatch {
                     offset: 0,
                     line: 2,
+                    end_line: 2,
                     start_col: 0,
                     end_col: 6,
+                    start_byte: 0,
+                    end_byte: 6,
                     text: std::sync::Arc::from("needle result"),
                     pane: target,
                 });
@@ -1190,8 +1199,11 @@ mod tests {
                 search.matches.push(crate::state::ScrollbackMatch {
                     offset: 0,
                     line: 8,
+                    end_line: 8,
                     start_col: 0,
                     end_col: 6,
+                    start_byte: 0,
+                    end_byte: 6,
                     text: std::sync::Arc::from(format!(
                         "needle {}",
                         "a very long terminal line that must yield to metadata".repeat(3)

@@ -47,8 +47,6 @@ use std::sync::Arc;
 #[allow(clippy::useless_attribute)]
 use crate::control::{CaptureScrollback, CaptureScrollbackNamed};
 use tui_lipan::prelude::*;
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 /// Decoded Kitty graphics retained by one pane parser.
 ///
@@ -187,9 +185,14 @@ pub struct ProcessedOutput {
 pub struct TerminalSearchMatch {
     pub offset: usize,
     pub line: usize,
-    /// Display-column range in the visible terminal grid.
+    pub end_line: usize,
+    /// Display-column range endpoints in the visible terminal grid. For a match spanning soft
+    /// wraps, `start_col` belongs to `line` and `end_col` belongs to `end_line`.
     pub start_col: usize,
     pub end_col: usize,
+    /// UTF-8 byte range in `text`.
+    pub start_byte: usize,
+    pub end_byte: usize,
     pub text: Arc<str>,
 }
 
@@ -198,23 +201,11 @@ pub struct TerminalSearchResults {
     pub truncated: bool,
 }
 
-fn display_col_at(text: &str, byte_index: usize) -> usize {
-    text[..byte_index]
-        .graphemes(true)
-        .map(|grapheme| {
-            if grapheme.chars().all(char::is_control) {
-                0
-            } else {
-                UnicodeWidthStr::width(grapheme)
-            }
-        })
-        .sum()
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalSearchHighlight {
     pub line: usize,
-    /// Display-column range in the visible terminal grid.
+    pub end_line: usize,
+    /// Display-column range endpoints in the visible terminal grid.
     pub start_col: usize,
     pub end_col: usize,
 }
@@ -550,10 +541,10 @@ impl TerminalPane {
         let total = screen.total_text_lines();
         let mut matches = Vec::new();
         let mut truncated = false;
-        let _ = screen.try_for_each_text_line(start, end.min(total), |absolute, text| {
+        let _ = screen.try_for_each_logical_text_line(start, end.min(total), |line| {
+            let text = line.text();
             let haystack = text.to_ascii_lowercase();
             let mut search_from = 0usize;
-            let mut viewport = None;
             let mut shared_text = None;
             while search_from < haystack.len() {
                 let Some(relative_start) = haystack[search_from..].find(&needle) else {
@@ -561,14 +552,24 @@ impl TerminalPane {
                 };
                 let start = search_from + relative_start;
                 let end = start + needle.len();
-                let Some((offset, line)) =
-                    *viewport.get_or_insert_with(|| screen.absolute_line_to_viewport(absolute))
+                let (Some(start_position), Some(end_position)) =
+                    (line.start_position(start), line.end_position(end))
+                else {
+                    search_from = end;
+                    continue;
+                };
+                let Some((offset, viewport_line)) =
+                    screen.absolute_line_to_viewport(start_position.absolute_line)
                 else {
                     break;
                 };
-                let start_col = display_col_at(text, start);
-                let end_col = display_col_at(text, end);
-                if start_col < end_col {
+                let end_line = viewport_line
+                    + end_position
+                        .absolute_line
+                        .saturating_sub(start_position.absolute_line);
+                if start_position.absolute_line < end_position.absolute_line
+                    || start_position.column < end_position.column
+                {
                     if matches.len() == max_matches {
                         truncated = true;
                         return ControlFlow::Break(());
@@ -576,9 +577,12 @@ impl TerminalPane {
                     let text = Arc::clone(shared_text.get_or_insert_with(|| Arc::from(text)));
                     matches.push(TerminalSearchMatch {
                         offset,
-                        line,
-                        start_col,
-                        end_col,
+                        line: viewport_line,
+                        end_line,
+                        start_col: start_position.column,
+                        end_col: end_position.column,
+                        start_byte: start,
+                        end_byte: end,
                         text,
                     });
                 }
@@ -1365,6 +1369,22 @@ mod tests {
     }
 
     #[test]
+    fn search_joins_soft_wrapped_rows_and_maps_match_endpoints() {
+        let mut pane = TerminalPane::new(10);
+        pane.apply_server_resize(5, 4);
+        pane.process_server_output(b"abcdefgh");
+
+        let matches = pane.search_scrollback("efg");
+
+        assert_eq!(matches.len(), 1);
+        let matched = &matches[0];
+        assert_eq!(matched.text.as_ref(), "abcdefgh");
+        assert_eq!(matched.end_line, matched.line + 1);
+        assert_eq!((matched.start_col, matched.end_col), (4, 2));
+        assert_eq!((matched.start_byte, matched.end_byte), (4, 7));
+    }
+
+    #[test]
     fn search_folds_ascii_only_and_keeps_non_ascii_case_sensitive() {
         let mut pane = TerminalPane::new(10);
         pane.apply_server_resize(40, 2);
@@ -1389,15 +1409,7 @@ mod tests {
     }
 
     #[test]
-    fn search_columns_preserve_combining_wide_and_control_widths_without_allocating() {
-        let raw = "a\u{301}你\u{7}z";
-        let wide_end = raw.find('你').expect("wide character") + '你'.len_utf8();
-        let control_end = raw.find('\u{7}').expect("control") + 1;
-        assert_eq!(display_col_at(raw, "a\u{301}".len()), 1);
-        assert_eq!(display_col_at(raw, wide_end), 3);
-        assert_eq!(display_col_at(raw, control_end), 3);
-        assert_eq!(display_col_at(raw, raw.len()), 4);
-
+    fn search_columns_preserve_combining_wide_and_control_cell_widths() {
         let mut pane = TerminalPane::new(10);
         pane.apply_server_resize(40, 2);
         pane.process_server_output("a\u{301}你\u{7}needle\r\n".as_bytes());

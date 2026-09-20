@@ -1285,32 +1285,44 @@ fn terminal_decorations_for_pane(ctx: &Context<AppRoot>, pane: &Pane) -> Vec<Ter
         .as_ref()
         .filter(|hints| hints.target == pane.id)
     {
-        let snapshot = pane.terminal.snapshot();
-        let mut decorations = Vec::new();
-        for (index, matched) in hints.matches.iter().enumerate() {
-            let Some(label) = hints.labels.get(index) else {
-                continue;
-            };
-            if !label.starts_with(&hints.input) {
-                continue;
-            }
-            // One highlight per row: a match long enough to have been wrapped covers several.
-            for span in &matched.spans {
-                decorations.push(TerminalDecoration::highlight(
-                    span.row,
-                    span.start_col..span.end_col,
-                    ctx.state.theme.text_selection,
-                ));
-            }
-            let (row, col) = hint_label_placement(&snapshot, matched, label);
-            decorations.push(TerminalDecoration::overlay(
-                row,
-                col,
-                Span::new(label.as_str()).style(hint_label_style()),
+        return terminal_hint_decorations(ctx, pane, hints);
+    }
+    terminal_search_decorations(ctx, pane)
+}
+
+fn terminal_hint_decorations(
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    hints: &crate::state::HintModeState,
+) -> Vec<TerminalDecoration> {
+    let snapshot = pane.terminal.snapshot();
+    let mut decorations = Vec::new();
+    for (index, matched) in hints.matches.iter().enumerate() {
+        let Some(label) = hints.labels.get(index) else {
+            continue;
+        };
+        if !label.starts_with(&hints.input) {
+            continue;
+        }
+        // One highlight per row: a match long enough to have been wrapped covers several.
+        for span in &matched.spans {
+            decorations.push(TerminalDecoration::highlight(
+                span.row,
+                span.start_col..span.end_col,
+                ctx.state.theme.text_selection,
             ));
         }
-        return decorations;
+        let (row, col) = hint_label_placement(&snapshot, matched, label);
+        decorations.push(TerminalDecoration::overlay(
+            row,
+            col,
+            Span::new(label.as_str()).style(hint_label_style()),
+        ));
     }
+    decorations
+}
+
+fn terminal_search_decorations(ctx: &Context<AppRoot>, pane: &Pane) -> Vec<TerminalDecoration> {
     let Some(query) = search_highlight_query(ctx, pane.id) else {
         return Vec::new();
     };
@@ -1358,7 +1370,41 @@ fn terminal_decorations_for_pane(ctx: &Context<AppRoot>, pane: &Pane) -> Vec<Ter
             search_from = end;
         }
     }
+    append_multiline_active_search_decorations(&mut decorations, &snapshot, active);
     decorations
+}
+
+fn append_multiline_active_search_decorations(
+    decorations: &mut Vec<TerminalDecoration>,
+    snapshot: &TerminalRenderSnapshot,
+    active: Option<crate::pane::TerminalSearchHighlight>,
+) {
+    let Some(active) = active.filter(|active| active.end_line > active.line) else {
+        return;
+    };
+    for row in active.line..=active.end_line {
+        let row_width = snapshot
+            .color_lines
+            .get(row)
+            .map_or(0, |line| tui_lipan::utils::spans::line_width(line));
+        let start_col = if row == active.line {
+            active.start_col
+        } else {
+            0
+        };
+        let end_col = if row == active.end_line {
+            active.end_col
+        } else {
+            row_width
+        };
+        if start_col < end_col {
+            decorations.push(TerminalDecoration::highlight(
+                row,
+                start_col..end_col,
+                active_search_match_style(),
+            ));
+        }
+    }
 }
 
 fn search_highlight_query(ctx: &Context<AppRoot>, id: PaneId) -> Option<&str> {
@@ -1387,6 +1433,7 @@ fn active_search_highlight(
     }
     Some(crate::pane::TerminalSearchHighlight {
         line: matched.line,
+        end_line: matched.end_line,
         start_col: matched.start_col,
         end_col: matched.end_col,
     })

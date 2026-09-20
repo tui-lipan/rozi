@@ -88,7 +88,8 @@ Workspace-wide results are grouped by pane; all-pane results also name the works
 use display-order pane numbers rather than internal pane ids.
 
 ASCII letters match without case. Other text remains case-sensitive. New pane output restarts an
-open search so result positions remain valid.
+open search so result positions remain valid. Soft-wrapped terminal rows are rejoined before
+matching, so text split only by the pane width remains one searchable line and one result.
 
 Press the `u` command key for hint mode. It recognizes visible URLs, paths with optional line
 numbers, Git commit ids, and configured `[[hints]]` patterns. A lowercase label copies the target.

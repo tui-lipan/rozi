@@ -2,8 +2,6 @@ use super::*;
 
 use crate::state::{PaneId, ScrollbackMatch, SearchScope};
 use tui_lipan::style::RowStylePolicy;
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 pub(crate) fn search_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(search) = ctx.state.search.as_ref() else {
@@ -185,11 +183,11 @@ fn scrollback_search_item(
 ) -> ListItem {
     let label = item.label.as_ref();
     let leading = matched.text.len() - matched.text.trim_start().len();
-    let leading_width = display_width(&matched.text[..leading]);
-    let start = matched.start_col.saturating_sub(leading_width);
-    let end = matched.end_col.saturating_sub(leading_width);
-    let start_byte = byte_index_at_display_col(label, start);
-    let end_byte = byte_index_at_display_col(label, end).max(start_byte);
+    let start_byte = matched.start_byte.saturating_sub(leading).min(label.len());
+    let end_byte = matched
+        .end_byte
+        .saturating_sub(leading)
+        .clamp(start_byte, label.len());
     let spans = [
         Span::new(&label[..start_byte]).style(item_style),
         Span::new(&label[start_byte..end_byte])
@@ -209,34 +207,6 @@ fn scrollback_search_item(
             .primary_truncate_description_first(false);
     }
     rendered
-}
-
-fn display_width(value: &str) -> usize {
-    value
-        .graphemes(true)
-        .map(|grapheme| {
-            if grapheme.chars().all(char::is_control) {
-                0
-            } else {
-                UnicodeWidthStr::width(grapheme)
-            }
-        })
-        .sum()
-}
-
-fn byte_index_at_display_col(value: &str, target: usize) -> usize {
-    let mut column = 0;
-    for (byte, grapheme) in value.grapheme_indices(true) {
-        if column >= target {
-            return byte;
-        }
-        column += if grapheme.chars().all(char::is_control) {
-            0
-        } else {
-            UnicodeWidthStr::width(grapheme)
-        };
-    }
-    value.len()
 }
 
 fn scrollback_search_empty_text(search: &ScrollbackSearchState, query: &str) -> String {

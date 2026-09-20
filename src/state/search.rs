@@ -23,8 +23,11 @@ pub struct ScrollbackSearchScan {
 pub struct ScrollbackMatch {
     pub offset: usize,
     pub line: usize,
+    pub end_line: usize,
     pub start_col: usize,
     pub end_col: usize,
+    pub start_byte: usize,
+    pub end_byte: usize,
     pub text: Arc<str>,
     pub pane: PaneId,
 }
@@ -219,8 +222,11 @@ mod tests {
         ScrollbackMatch {
             offset: 0,
             line: 2,
+            end_line: 2,
             start_col,
             end_col: start_col + 3,
+            start_byte: start_col,
+            end_byte: start_col + 3,
             text,
             pane: 1,
         }

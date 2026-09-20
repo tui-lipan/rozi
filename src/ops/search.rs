@@ -290,8 +290,11 @@ fn scan_search_lines(
             matches.extend(result.matches.into_iter().map(|matched| ScrollbackMatch {
                 offset: matched.offset,
                 line: matched.line,
+                end_line: matched.end_line,
                 start_col: matched.start_col,
                 end_col: matched.end_col,
+                start_byte: matched.start_byte,
+                end_byte: matched.end_byte,
                 text: matched.text,
                 pane: pane_id,
             }));
@@ -1072,6 +1075,29 @@ mod tests {
     }
 
     #[test]
+    fn chunked_scan_returns_one_match_across_soft_wrapped_rows() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let pane = find_pane_mut(&mut state, 1).expect("initial pane");
+        pane.terminal.apply_server_resize(5, 4);
+        pane.terminal.process_server_output(b"abcdefgh");
+
+        let epoch = begin_scan(&mut state, 1, SearchScope::FocusedPane, "efg");
+        loop {
+            if matches!(
+                advance_search_scan(&mut state, epoch, 1),
+                SearchScanAdvance::Complete { .. }
+            ) {
+                break;
+            }
+        }
+
+        let search = state.search.as_ref().expect("completed search");
+        assert_eq!(search.matches.len(), 1);
+        assert_eq!(search.matches[0].text.as_ref(), "abcdefgh");
+        assert_eq!(search.matches[0].end_line, search.matches[0].line + 1);
+    }
+
+    #[test]
     fn capped_scan_keeps_the_newest_line_prefix_before_older_hits() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let pane = find_pane_mut(&mut state, 1).expect("initial pane");
@@ -1085,8 +1111,11 @@ mod tests {
             .map(|index| ScrollbackMatch {
                 offset: 0,
                 line: index,
+                end_line: index,
                 start_col: 0,
                 end_col: 1,
+                start_byte: 0,
+                end_byte: 1,
                 text: Arc::clone(&retained_text),
                 pane: 1,
             })
@@ -1455,16 +1484,22 @@ mod tests {
                     ScrollbackMatch {
                         offset: 0,
                         line: 0,
+                        end_line: 0,
                         start_col: 0,
                         end_col: 1,
+                        start_byte: 0,
+                        end_byte: 1,
                         text: Arc::from("a"),
                         pane: 4,
                     },
                     ScrollbackMatch {
                         offset: 0,
                         line: 0,
+                        end_line: 0,
                         start_col: 0,
                         end_col: 1,
+                        start_byte: 0,
+                        end_byte: 1,
                         text: Arc::from("b"),
                         pane: 10,
                     },

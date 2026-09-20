@@ -19,7 +19,9 @@
 use serde::Serialize;
 
 use super::*;
-use crate::control::{CaptureScrollback, ControlCommand, ControlRequest, ControlResponse};
+use crate::control::{
+    CaptureScrollback, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse,
+};
 use crate::layout::shared::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace, float_rect_to_frac,
 };
@@ -216,7 +218,7 @@ impl SessionServer {
             return ControlResponse::error(unverifiable_extension_provenance(provenance));
         }
         if let Some(reason) = session_control_unsupported(&request.command) {
-            return ControlResponse::error(reason);
+            return ControlResponse::error_with(ControlErrorCode::Unsupported, reason);
         }
         // `source_pane` is deliberately not read here, and the CLI does not send it to a session
         // endpoint either.
@@ -376,26 +378,32 @@ impl SessionServer {
             return if self.panes.contains_key(&id) {
                 Ok(id)
             } else {
-                Err(ControlResponse::error(format!("pane {id} not found")))
+                Err(ControlResponse::error_with(
+                    ControlErrorCode::PaneNotFound,
+                    format!("pane {id} not found"),
+                ))
             };
         }
         let mut ids: Vec<PaneId> = self.panes.keys().copied().collect();
         ids.sort_unstable();
         match ids.as_slice() {
             [only] => Ok(*only),
-            [] => Err(ControlResponse::error(format!(
-                "session `{}` has no panes",
-                self.session_name
-            ))),
-            many => Err(ControlResponse::error(format!(
-                "session `{}` has {} panes and no focused pane; pass --target (ids: {})",
-                self.session_name,
-                many.len(),
-                many.iter()
-                    .map(PaneId::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))),
+            [] => Err(ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("session `{}` has no panes", self.session_name),
+            )),
+            many => Err(ControlResponse::error_with(
+                ControlErrorCode::TargetRequired,
+                format!(
+                    "session `{}` has {} panes and no focused pane; pass --target (ids: {})",
+                    self.session_name,
+                    many.len(),
+                    many.iter()
+                        .map(PaneId::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )),
         }
     }
 
@@ -409,7 +417,10 @@ impl SessionServer {
             Err(response) => return response,
         };
         let Some(pane) = self.panes.get_mut(&id) else {
-            return ControlResponse::error(format!("pane {id} not found"));
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {id} not found"),
+            );
         };
         // Reading a snapshot does not change what a replay would contain, so this must not bump
         // `content_generation` and make every snapshot re-export the pane it just captured.
@@ -431,16 +442,25 @@ impl SessionServer {
         // presenter's guard against the audience. A headless caller is not the controller and has
         // no screen to notice it, so it is refused rather than quietly allowed through.
         if self.input_locked {
-            return ControlResponse::error(format!(
-                "session `{}` has input locked; unlock it from the attached client",
-                self.session_name
-            ));
+            return ControlResponse::error_with(
+                ControlErrorCode::InputLocked,
+                format!(
+                    "session `{}` has input locked; unlock it from the attached client",
+                    self.session_name
+                ),
+            );
         }
         let Some(pane) = self.panes.get(&id) else {
-            return ControlResponse::error(format!("pane {id} not found"));
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {id} not found"),
+            );
         };
         if pane.exited.is_some() || pane.pty.is_none() {
-            return ControlResponse::error(format!("pane {id} PTY is not running"));
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotRunning,
+                format!("pane {id} PTY is not running"),
+            );
         }
         let generation = pane.generation;
         self.handle_pane_input(None, id, generation, &bytes);
@@ -458,7 +478,10 @@ impl SessionServer {
             Err(response) => return response,
         };
         let Some(pane) = self.panes.get(&id) else {
-            return ControlResponse::error(format!("pane {id} not found"));
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {id} not found"),
+            );
         };
         // The server's own parser holds the child's key modes, so `C-c` and the arrow keys encode
         // against what the program actually enabled rather than a default.
@@ -499,7 +522,10 @@ impl SessionServer {
             Err(response) => return response,
         };
         let Some(generation) = self.panes.get(&id).map(|pane| pane.generation) else {
-            return ControlResponse::error(format!("pane {id} not found"));
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {id} not found"),
+            );
         };
         match self.apply_pane_status(None, id, generation, status, reason) {
             Ok(Some(state)) => {
@@ -530,7 +556,10 @@ impl SessionServer {
             Err(response) => return response,
         };
         let Some(pane) = self.panes.get(&id) else {
-            return ControlResponse::error(format!("pane {id} not found"));
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {id} not found"),
+            );
         };
         let generation = pane.generation;
         let enabled = enabled.unwrap_or(pane.log.is_none());

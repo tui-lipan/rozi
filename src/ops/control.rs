@@ -3,7 +3,9 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::actions::execute_action;
-use crate::control::{CaptureScrollback, ControlCommand, ControlEnvelope, ControlResponse};
+use crate::control::{
+    CaptureScrollback, ControlCommand, ControlEnvelope, ControlErrorCode, ControlResponse,
+};
 use crate::input::Action;
 use crate::input::send_keys::{SendKeysItem, parse_send_keys_arg};
 use crate::ops::focus::{
@@ -68,9 +70,10 @@ pub(crate) fn handle_control_request(
             !crate::config::provenance_is_active(&ctx.state.extension_generations, provenance)
         })
     {
-        let _ = envelope
-            .reply
-            .send(ControlResponse::error("extension generation is not active"));
+        let _ = envelope.reply.send(ControlResponse::error_with(
+            ControlErrorCode::ExtensionInactive,
+            "extension generation is not active",
+        ));
         return Update::none();
     }
     let response = match envelope.request.command {
@@ -189,7 +192,9 @@ pub(crate) fn handle_control_request(
                     }
                     ControlResponse::empty()
                 }
-                None => ControlResponse::error("pane not found"),
+                None => {
+                    ControlResponse::error_with(ControlErrorCode::PaneNotFound, "pane not found")
+                }
             }
         }
         ControlCommand::SetStatus {
@@ -289,17 +294,26 @@ fn set_status(
     reason: Option<String>,
 ) -> ControlResponse {
     let Some(id) = target else {
-        return ControlResponse::error("no target pane and no focused pane");
+        return ControlResponse::error_with(
+            ControlErrorCode::TargetRequired,
+            "no target pane and no focused pane",
+        );
     };
     let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, id).filter(|pane| !pane.closing)
     else {
-        return ControlResponse::error(format!("pane {id} not found"));
+        return ControlResponse::error_with(
+            ControlErrorCode::PaneNotFound,
+            format!("pane {id} not found"),
+        );
     };
     let generation = pane.pty_generation;
     let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     let scratch = crate::scratchpad::contains(&ctx.state, id);
     if !scratch && !ctx.state.current().session_attached {
-        return ControlResponse::error(format!("pane {id} session is not attached"));
+        return ControlResponse::error_with(
+            ControlErrorCode::SessionNotAttached,
+            format!("pane {id} session is not attached"),
+        );
     }
     if !scratch
         && ctx
@@ -309,10 +323,13 @@ fn set_status(
             .as_ref()
             .is_some_and(|shared| shared.read_only)
     {
-        return ControlResponse::error("attached read-only");
+        return ControlResponse::error_with(ControlErrorCode::ReadOnly, "attached read-only");
     }
     let Some(client) = ctx.state.pty_client_for_pane(id) else {
-        return ControlResponse::error(format!("pane {id} session is not connected"));
+        return ControlResponse::error_with(
+            ControlErrorCode::SessionNotConnected,
+            format!("pane {id} session is not connected"),
+        );
     };
     client.set_pane_status(id, generation, local, status, reason);
     ControlResponse::empty()
@@ -331,7 +348,10 @@ fn focus_target(ctx: &mut Context<AppRoot>, target: PaneId) -> ControlResponse {
         return ControlResponse::error("scratchpad is open");
     }
     if !focus_pane_anywhere(ctx, target) {
-        return ControlResponse::error(format!("pane {target} not found"));
+        return ControlResponse::error_with(
+            ControlErrorCode::PaneNotFound,
+            format!("pane {target} not found"),
+        );
     }
     ControlResponse::empty()
 }
@@ -361,23 +381,31 @@ fn control_input_target(
         return Err(ControlResponse::error(reason));
     }
     let Some(id) = target.or(ctx.state.focused_pane()) else {
-        return Err(ControlResponse::error("no target pane and no focused pane"));
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::TargetRequired,
+            "no target pane and no focused pane",
+        ));
     };
     let client = ctx.state.pty_client_for_pane(id);
     let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
-        return Err(ControlResponse::error(format!("pane {id} not found")));
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::PaneNotFound,
+            format!("pane {id} not found"),
+        ));
     };
     let ready = pane.terminal.accepts_input();
     if !ready && !pane.terminal.is_running() {
-        return Err(ControlResponse::error(format!(
-            "pane {id} PTY is not running"
-        )));
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::PaneNotRunning,
+            format!("pane {id} PTY is not running"),
+        ));
     }
     if ready && client.is_none() {
-        return Err(ControlResponse::error(format!(
-            "pane {id} session is not connected"
-        )));
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::SessionNotConnected,
+            format!("pane {id} session is not connected"),
+        ));
     }
     Ok(InputTarget {
         id,
@@ -481,7 +509,10 @@ fn run_action(
         && !ctx.state.scratch_visible
         && !ctx.state.is_controller()
     {
-        let _ = reply.send(ControlResponse::error("not controller"));
+        let _ = reply.send(ControlResponse::error_with(
+            ControlErrorCode::NotController,
+            "not controller",
+        ));
         return Update::full();
     }
     if crate::actions::is_blocked_by_scratchpad(&ctx.state, action) {
@@ -518,10 +549,16 @@ fn capture_pane(
     scrollback: Option<CaptureScrollback>,
 ) -> ControlResponse {
     let Some(id) = target.or(ctx.state.focused_pane()) else {
-        return ControlResponse::error("no target pane and no focused pane");
+        return ControlResponse::error_with(
+            ControlErrorCode::TargetRequired,
+            "no target pane and no focused pane",
+        );
     };
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
-        return ControlResponse::error(format!("pane {id} not found"));
+        return ControlResponse::error_with(
+            ControlErrorCode::PaneNotFound,
+            format!("pane {id} not found"),
+        );
     };
     let text = match pane
         .terminal
@@ -582,7 +619,7 @@ fn move_to_workspace_command(ctx: &mut Context<AppRoot>, index: usize) -> Contro
         return ControlResponse::error("scratchpad is open");
     }
     if !ctx.state.is_controller() {
-        return ControlResponse::error("not controller");
+        return ControlResponse::error_with(ControlErrorCode::NotController, "not controller");
     }
     let Some(response) = validate_workspace_index(index) else {
         move_focused_to_workspace(&mut ctx.state, index - 1);
@@ -628,7 +665,10 @@ fn prepare_new_pane(
         ));
     }
     if !scratch_source && !state.is_controller() {
-        return Err(ControlResponse::error("not controller"));
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::NotController,
+            "not controller",
+        ));
     }
     Ok(PreparedNewPane {
         workspace,

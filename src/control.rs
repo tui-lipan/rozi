@@ -217,6 +217,10 @@ impl NotifyLevel {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ControlResponse {
     pub ok: bool,
+    /// Stable failure category for scripts. Absent on successful replies and on replies from
+    /// older Rozi versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<ControlErrorCode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -227,6 +231,7 @@ impl ControlResponse {
     pub fn ok(data: impl Serialize) -> Self {
         Self {
             ok: true,
+            code: None,
             data: Some(serde_json::to_value(data).unwrap_or(serde_json::Value::Null)),
             error: None,
         }
@@ -234,17 +239,51 @@ impl ControlResponse {
     pub fn empty() -> Self {
         Self {
             ok: true,
+            code: None,
             data: None,
             error: None,
         }
     }
     pub fn error(message: impl Into<String>) -> Self {
+        Self::error_with(ControlErrorCode::RequestFailed, message)
+    }
+
+    pub fn error_with(code: ControlErrorCode, message: impl Into<String>) -> Self {
         Self {
             ok: false,
+            code: Some(code),
             data: None,
             error: Some(message.into()),
         }
     }
+}
+
+/// Machine-readable control failure categories.
+///
+/// Human text may gain context or be reworded. These kebab-case values are the contract scripts
+/// should branch on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ControlErrorCode {
+    InvalidRequest,
+    RequestTimeout,
+    MessageTooLarge,
+    ExtensionInactive,
+    UnknownEvent,
+    PaneNotFound,
+    TargetRequired,
+    PaneNotRunning,
+    SessionNotAttached,
+    SessionNotConnected,
+    InputLocked,
+    ReadOnly,
+    NotController,
+    Unsupported,
+    InvalidArgument,
+    SpawnFailed,
+    Conflict,
+    Unavailable,
+    RequestFailed,
 }
 
 #[derive(Clone, Debug)]
@@ -458,8 +497,11 @@ fn run_publish_stream(
             let _ = writeln!(
                 stream,
                 "{}",
-                serde_json::to_string(&ControlResponse::error("publish request timed out"))
-                    .unwrap()
+                serde_json::to_string(&ControlResponse::error_with(
+                    ControlErrorCode::RequestTimeout,
+                    "publish request timed out",
+                ))
+                .unwrap()
             );
             return;
         }
@@ -481,8 +523,11 @@ fn run_publish_stream(
                 let _ = writeln!(
                     stream,
                     "{}",
-                    serde_json::to_string(&ControlResponse::error(OVERSIZED_CONTROL_MESSAGE))
-                        .unwrap()
+                    serde_json::to_string(&ControlResponse::error_with(
+                        ControlErrorCode::MessageTooLarge,
+                        OVERSIZED_CONTROL_MESSAGE,
+                    ))
+                    .unwrap()
                 );
                 break;
             }
@@ -552,7 +597,9 @@ fn run_pick_stream(
 
     let ack_response = match ack_rx.recv_timeout(Duration::from_secs(10)) {
         Ok(res) => res,
-        Err(_) => ControlResponse::error("pick request timed out"),
+        Err(_) => {
+            ControlResponse::error_with(ControlErrorCode::RequestTimeout, "pick request timed out")
+        }
     };
 
     let _ = writeln!(stream, "{}", serde_json::to_string(&ack_response).unwrap());
@@ -576,8 +623,11 @@ fn run_pick_stream(
                 let _ = writeln!(
                     stream,
                     "{}",
-                    serde_json::to_string(&ControlResponse::error(OVERSIZED_CONTROL_MESSAGE))
-                        .unwrap()
+                    serde_json::to_string(&ControlResponse::error_with(
+                        ControlErrorCode::MessageTooLarge,
+                        OVERSIZED_CONTROL_MESSAGE,
+                    ))
+                    .unwrap()
                 );
                 break;
             }
@@ -634,7 +684,10 @@ fn authorize_extension_request(
     }
     write_control_response(
         stream,
-        &ControlResponse::error("extension generation is not active"),
+        &ControlResponse::error_with(
+            ControlErrorCode::ExtensionInactive,
+            "extension generation is not active",
+        ),
     );
     false
 }
@@ -651,7 +704,10 @@ fn run_subscription(
         let Some(kind) = EventKind::parse(id) else {
             write_control_response(
                 &mut stream,
-                &ControlResponse::error(format!("unknown event `{id}`")),
+                &ControlResponse::error_with(
+                    ControlErrorCode::UnknownEvent,
+                    format!("unknown event `{id}`"),
+                ),
             );
             return;
         };
@@ -677,7 +733,10 @@ fn run_subscription(
     {
         write_control_response(
             &mut stream,
-            &ControlResponse::error("extension generation is not active"),
+            &ControlResponse::error_with(
+                ControlErrorCode::ExtensionInactive,
+                "extension generation is not active",
+            ),
         );
         return;
     }
@@ -755,7 +814,15 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
         Ok(None) => return,
         Err(error) => {
             if error.kind() == io::ErrorKind::InvalidData {
-                write_control_response(&mut stream, &ControlResponse::error(error.to_string()));
+                let code = if is_oversized_control_line(&error) {
+                    ControlErrorCode::MessageTooLarge
+                } else {
+                    ControlErrorCode::InvalidRequest
+                };
+                write_control_response(
+                    &mut stream,
+                    &ControlResponse::error_with(code, error.to_string()),
+                );
             }
             return;
         }
@@ -765,7 +832,10 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
         Err(err) => {
             write_control_response(
                 &mut stream,
-                &ControlResponse::error(format!("invalid request: {err}")),
+                &ControlResponse::error_with(
+                    ControlErrorCode::InvalidRequest,
+                    format!("invalid request: {err}"),
+                ),
             );
             return;
         }
@@ -816,7 +886,12 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
     link.send(Msg::ControlRequest(ControlEnvelope { request, reply: tx }));
     let response = rx
         .recv_timeout(Duration::from_secs(10))
-        .unwrap_or_else(|_| ControlResponse::error("control request timed out"));
+        .unwrap_or_else(|_| {
+            ControlResponse::error_with(
+                ControlErrorCode::RequestTimeout,
+                "control request timed out",
+            )
+        });
     write_control_response(&mut stream, &response);
 }
 
@@ -912,6 +987,26 @@ mod tests {
             serde_json::from_str::<ControlRequest>(r#"{"cmd":"metrics"}"#).unwrap(),
             request
         );
+    }
+
+    #[test]
+    fn error_response_carries_a_stable_code_and_success_does_not() {
+        assert_eq!(
+            serde_json::to_string(&ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                "pane 3 not found",
+            ))
+            .unwrap(),
+            r#"{"ok":false,"code":"pane-not-found","error":"pane 3 not found"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ControlResponse::empty()).unwrap(),
+            r#"{"ok":true}"#
+        );
+
+        let old: ControlResponse =
+            serde_json::from_str(r#"{"ok":false,"error":"old server"}"#).unwrap();
+        assert_eq!(old.code, None);
     }
 
     #[test]

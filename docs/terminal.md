@@ -82,8 +82,10 @@ prompt jumps, and last-output copying. Press `/` to search the focused pane from
 The complete local key table is in [Keybindings](keybindings.md#copy-mode).
 
 Press the `/` command key outside copy mode to search retained history. `Tab` changes the scope
-among the focused pane, workspace, and all panes. `Ctrl+N` and `Ctrl+P` move among results. Search
+among the focused pane, workspace, and all panes. The arrow and paging keys navigate results. Search
 retains at most 2000 matches for navigation and marks the count with `+` only when more exist.
+Workspace-wide results are grouped by pane; all-pane results also name the workspace. These groups
+use display-order pane numbers rather than internal pane ids.
 
 ASCII letters match without case. Other text remains case-sensitive. New pane output restarts an
 open search so result positions remain valid.

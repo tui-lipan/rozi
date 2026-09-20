@@ -373,8 +373,8 @@ and `Ctrl+D` twice to delete. See [Profiles](profiles.md#use-the-profile-picker)
 the selected row or submits a prompt.
 
 - Layout picker: `Ctrl+F` saves the highlighted layout as the default.
-- Scrollback search: `Enter` selects a result, `Ctrl+N` and `Ctrl+P` move among results, `Tab`
-  changes scope, and `Esc` closes.
+- Scrollback search: the arrow and paging keys navigate results, `Enter` selects one, `Tab` changes
+  scope, and `Esc` closes.
 - Help: `Tab` and `Shift+Tab` cycle the tabs, and `Left`/`Right` or `h`/`l` do the same while the
   search field is not focused. The arrow and paging keys scroll the list. `/` searches the current
   help tab. `Enter` or `Esc` leaves the search field, and a second `Esc` closes help.

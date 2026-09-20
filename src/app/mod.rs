@@ -1023,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    fn scrollback_search_uses_footer_hints_and_highlights_matches() {
+    fn scrollback_search_uses_shared_navigation_and_highlights_matches() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
@@ -1036,14 +1036,23 @@ mod tests {
                 });
 
                 let mut search = crate::state::ScrollbackSearchState::new(1);
-                search.input.set_text("master");
-                search.input.set_cursor(6);
+                search.input.set_text("r");
+                search.input.set_cursor(1);
+                let text: std::sync::Arc<str> = std::sync::Arc::from("rozi master • prompt");
                 search.matches.push(crate::state::ScrollbackMatch {
                     offset: 0,
                     line: 1,
-                    start_col: 8,
-                    end_col: 14,
-                    text: std::sync::Arc::from("rozi master • prompt"),
+                    start_col: 0,
+                    end_col: 1,
+                    text: std::sync::Arc::clone(&text),
+                    pane: 1,
+                });
+                search.matches.push(crate::state::ScrollbackMatch {
+                    offset: 0,
+                    line: 1,
+                    start_col: 10,
+                    end_col: 11,
+                    text,
                     pane: 1,
                 });
                 search.rebuild_items();
@@ -1059,7 +1068,7 @@ mod tests {
                     .iter()
                     .find(|widget| {
                         widget.kind == UiWidgetKind::Frame
-                            && widget.title.as_deref() == Some("Search scrollback")
+                            && widget.title.as_deref() == Some("Search scrollback · pane")
                     })
                     .expect("scrollback search modal");
                 assert_eq!(modal.rect.w, 90);
@@ -1068,28 +1077,98 @@ mod tests {
                 let frame = backend.capture_frame();
                 let lines = frame.to_fixed_grid_lines();
                 let rendered = lines.join("\n");
-                assert!(rendered.contains("next Ctrl+N"), "{rendered}");
-                assert!(rendered.contains("previous Ctrl+P"), "{rendered}");
-                assert!(rendered.contains("pane Tab"), "{rendered}");
-                assert!(rendered.contains("1 / 1 matches (pane)"), "{rendered}");
+                assert!(!rendered.contains("next Ctrl+N"), "{rendered}");
+                assert!(!rendered.contains("previous Ctrl+P"), "{rendered}");
+                assert!(rendered.contains("change scope Tab"), "{rendered}");
+                assert!(rendered.contains("2/2"), "{rendered}");
                 assert!(!rendered.contains("scope:"), "{rendered}");
+                assert!(!rendered.contains("pane 1 · row"), "{rendered}");
 
-                let row = lines
+                let rows = lines
                     .iter()
-                    .position(|line| line.contains("rozi master"))
-                    .expect("matching result row") as u16;
-                let matched = lines[row as usize].find("master").expect("match column") as u16;
-                let plain = lines[row as usize].find("rozi").expect("plain column") as u16;
-                assert_ne!(
-                    frame.cell(matched, row).fg,
-                    frame.cell(plain, row).fg,
-                    "selected row must preserve the query-match foreground"
+                    .enumerate()
+                    .filter(|(_, line)| line.contains("rozi master"))
+                    .map(|(row, _)| row)
+                    .collect::<Vec<_>>();
+                assert_eq!(rows.len(), 2, "{rendered}");
+                let second_row = rows[1];
+                let label_byte = lines[second_row].find("rozi master").expect("result label");
+                let label = lines[second_row][..label_byte].chars().count();
+                let description_byte = lines[second_row].find("row 2").expect("description");
+                let description = lines[second_row][..description_byte].chars().count();
+                assert_ne!(frame.cell(label as u16, second_row as u16).fg, match_fg);
+                assert_eq!(
+                    frame.cell((label + 10) as u16, second_row as u16).fg,
+                    match_fg,
+                    "the exact second occurrence should be highlighted"
                 );
-                assert_eq!(frame.cell(matched, row).fg, match_fg);
+                assert_ne!(
+                    frame.cell(description as u16, second_row as u16).fg,
+                    match_fg,
+                    "metadata should not inherit query highlighting"
+                );
             })
             .expect("spawn snapshot test thread")
             .join()
             .expect("snapshot test thread completes");
+    }
+
+    #[test]
+    fn scrollback_search_groups_broader_scopes_by_visible_workspace_and_pane_identity() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 120,
+                    h: 24,
+                });
+                let target = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("focused pane");
+                let title = crate::pane::lifecycle::find_pane(backend.state(), target)
+                    .expect("target pane")
+                    .titlebar_title(false);
+                let mut search = crate::state::ScrollbackSearchState::new(target);
+                search.scope = crate::state::SearchScope::Workspace;
+                search.input.set_text("needle");
+                search.matches.push(crate::state::ScrollbackMatch {
+                    offset: 0,
+                    line: 2,
+                    start_col: 0,
+                    end_col: 6,
+                    text: std::sync::Arc::from("needle result"),
+                    pane: target,
+                });
+                search.rebuild_items();
+                backend.state_mut().search = Some(search);
+                backend.render();
+
+                let workspace = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                assert!(
+                    workspace.contains(&format!("Pane 1 · {title}")),
+                    "{workspace}"
+                );
+                assert!(workspace.contains("row 3 · col 1"), "{workspace}");
+                assert!(!workspace.contains("pane 1 · row"), "{workspace}");
+
+                backend.state_mut().current_mut().workspaces[0].name = Some("dev".to_string());
+                backend.state_mut().search.as_mut().expect("search").scope =
+                    crate::state::SearchScope::All;
+                backend.render();
+                let all = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                assert!(
+                    all.contains(&format!("Workspace 1:dev · Pane 1 · {title}")),
+                    "{all}"
+                );
+            })
+            .expect("spawn grouped search test")
+            .join()
+            .expect("grouped search test completes");
     }
 
     #[test]
@@ -1111,8 +1190,8 @@ mod tests {
                 search.matches.push(crate::state::ScrollbackMatch {
                     offset: 0,
                     line: 8,
-                    start_col: 12,
-                    end_col: 18,
+                    start_col: 0,
+                    end_col: 6,
                     text: std::sync::Arc::from(format!(
                         "needle {}",
                         "a very long terminal line that must yield to metadata".repeat(3)
@@ -1129,7 +1208,7 @@ mod tests {
                 let lines = frame.to_fixed_grid_lines();
                 let row_index = lines
                     .iter()
-                    .position(|line| line.contains("pane 1 · row 9 · col 13"))
+                    .position(|line| line.contains("row 9 · col 1"))
                     .unwrap_or_else(|| {
                         panic!("long result row with complete metadata: {lines:#?}")
                     });
@@ -1139,7 +1218,8 @@ mod tests {
                     "query prefix should remain visible: {row}"
                 );
                 assert!(row.contains('…'), "long label should be truncated: {row}");
-                let query_column = row.find("needle").expect("query prefix") as u16;
+                let query_byte = row.find("needle").expect("query prefix");
+                let query_column = row[..query_byte].chars().count() as u16;
                 assert_eq!(frame.cell(query_column, row_index as u16).fg, match_fg);
             })
             .expect("spawn metadata priority test")
@@ -1206,7 +1286,7 @@ mod tests {
                 let lines = backend.capture_frame().to_fixed_grid_lines();
                 let result_rows: Vec<_> = lines
                     .iter()
-                    .filter(|line| line.contains("pane 1 · row"))
+                    .filter(|line| line.contains("row ") && line.contains(" · col "))
                     .collect();
                 assert!(
                     result_rows.len() >= 3,
@@ -1227,15 +1307,15 @@ mod tests {
 
                 backend
                     .send_key(KeyEvent {
-                        code: KeyCode::Char('n'),
-                        mods: KeyMods::CTRL,
+                        code: KeyCode::Down,
+                        mods: KeyMods::NONE,
                     })
                     .expect("next scanned row");
                 assert_eq!(backend.state().search.as_ref().expect("search").current, 1);
                 backend
                     .send_key(KeyEvent {
-                        code: KeyCode::Char('p'),
-                        mods: KeyMods::CTRL,
+                        code: KeyCode::Up,
+                        mods: KeyMods::NONE,
                     })
                     .expect("previous scanned row");
                 assert_eq!(backend.state().search.as_ref().expect("search").current, 0);
@@ -1329,8 +1409,8 @@ mod tests {
                     .expect("select row past sync default");
                 backend
                     .send_key(KeyEvent {
-                        code: KeyCode::Char('n'),
-                        mods: KeyMods::CTRL,
+                        code: KeyCode::Down,
+                        mods: KeyMods::NONE,
                     })
                     .expect("next row");
                 assert_eq!(
@@ -1339,8 +1419,8 @@ mod tests {
                 );
                 backend
                     .send_key(KeyEvent {
-                        code: KeyCode::Char('p'),
-                        mods: KeyMods::CTRL,
+                        code: KeyCode::Up,
+                        mods: KeyMods::NONE,
                     })
                     .expect("previous row");
                 let expected = {

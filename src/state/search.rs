@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tui_lipan::prelude::{SearchItem, TextInput};
+use tui_lipan::prelude::{ItemDescription, SearchItem, TextInput};
 
 use super::PaneId;
 
@@ -66,6 +66,7 @@ pub struct ScrollbackSearchState {
     pub refresh_matches: Option<Vec<ScrollbackMatch>>,
     /// Stable palette rows rebuilt only when the search result set changes.
     pub items: Arc<[SearchItem<usize>]>,
+    description_width: usize,
     pub current: usize,
     pub truncated: bool,
     pub scan: Option<ScrollbackSearchScan>,
@@ -83,6 +84,7 @@ impl ScrollbackSearchState {
             matches: Vec::new(),
             refresh_matches: None,
             items: Arc::from([]),
+            description_width: 0,
             current: 0,
             truncated: false,
             scan: None,
@@ -124,8 +126,19 @@ impl ScrollbackSearchState {
             return;
         }
         let base = self.matches.len();
+        let description_width = matches
+            .iter()
+            .map(match_description)
+            .map(|description| description.chars().count())
+            .max()
+            .unwrap_or(0);
+        if description_width > self.description_width {
+            self.matches.append(&mut matches);
+            self.rebuild_items();
+            return;
+        }
         let mut items = self.items.iter().cloned().collect::<Vec<_>>();
-        items.extend(build_items(&matches, base));
+        items.extend(build_items(&matches, base, self.description_width));
         self.matches.append(&mut matches);
         self.items = items.into();
     }
@@ -146,11 +159,26 @@ impl ScrollbackSearchState {
     }
 
     pub fn rebuild_items(&mut self) {
-        self.items = build_items(&self.matches, 0).into();
+        self.description_width = self
+            .matches
+            .iter()
+            .map(match_description)
+            .map(|description| description.chars().count())
+            .max()
+            .unwrap_or(0);
+        self.items = build_items(&self.matches, 0, self.description_width).into();
     }
 }
 
-fn build_items(matches: &[ScrollbackMatch], base: usize) -> Vec<SearchItem<usize>> {
+fn match_description(matched: &ScrollbackMatch) -> String {
+    format!("row {} · col {}", matched.line + 1, matched.start_col + 1)
+}
+
+fn build_items(
+    matches: &[ScrollbackMatch],
+    base: usize,
+    description_width: usize,
+) -> Vec<SearchItem<usize>> {
     let mut previous_text: Option<Arc<str>> = None;
     let mut previous_label: Option<Arc<str>> = None;
     matches
@@ -175,12 +203,10 @@ fn build_items(matches: &[ScrollbackMatch], base: usize) -> Vec<SearchItem<usize
                 previous_label = Some(Arc::clone(&label));
                 label
             };
-            SearchItem::new(label, base + offset).description(format!(
-                "pane {} · row {} · col {}",
-                matched.pane,
-                matched.line + 1,
-                matched.start_col + 1
-            ))
+            let description = match_description(matched);
+            SearchItem::new(label, base + offset).description(
+                ItemDescription::new().right(format!("{description:<description_width$}")),
+            )
         })
         .collect()
 }
@@ -245,5 +271,46 @@ mod tests {
         assert_eq!(search.current, 1);
         assert_eq!(search.matches[search.current], selected);
         assert_eq!(search.items[search.current].value, search.current);
+    }
+
+    #[test]
+    fn result_descriptions_are_padded_to_the_same_width() {
+        let text: Arc<str> = Arc::from("hit");
+        let mut search = ScrollbackSearchState::new(1);
+        search.replace_results(
+            vec![
+                matched(Arc::clone(&text), 0),
+                matched(Arc::clone(&text), 40),
+            ],
+            false,
+        );
+
+        let descriptions = search
+            .items
+            .iter()
+            .map(|item| {
+                item.description
+                    .as_ref()
+                    .and_then(|description| description.right.as_deref())
+                    .expect("description")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(descriptions, ["row 3 · col 1 ", "row 3 · col 41"]);
+
+        search.append_results(vec![matched(text, 100)]);
+        let descriptions = search
+            .items
+            .iter()
+            .map(|item| {
+                item.description
+                    .as_ref()
+                    .and_then(|description| description.right.as_deref())
+                    .expect("description")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            descriptions,
+            ["row 3 · col 1  ", "row 3 · col 41 ", "row 3 · col 101"]
+        );
     }
 }

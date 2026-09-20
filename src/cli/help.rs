@@ -233,6 +233,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "metrics [--format text|json]",
                 "Show runtime resources; JSON when piped",
             ),
+            row(
+                "api describe",
+                "Describe API versions and capabilities as JSON",
+            ),
         ],
     },
     HelpSection {

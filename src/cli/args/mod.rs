@@ -110,6 +110,7 @@ pub(crate) enum ParsedCli {
         advanced: bool,
     },
     Version,
+    ApiDescribe,
     Skill(SkillCommand),
     SkillHelp,
     Sessions(SessionsCommand),
@@ -249,6 +250,17 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--version" | "-V" => return Ok(ParsedCli::Version),
+            "api" => {
+                let subcommand =
+                    require_value(&mut iter, "api requires a subcommand (expected `describe`)")?;
+                if subcommand != "describe" {
+                    return Err(format!(
+                        "unknown api subcommand `{subcommand}`; expected `describe`"
+                    ));
+                }
+                reject_trailing_control_args(&mut iter, "api describe")?;
+                return Ok(ParsedCli::ApiDescribe);
+            }
             "install" => {
                 reject_trailing_control_args(&mut iter, "install")?;
                 return Ok(ParsedCli::Install);
@@ -1040,6 +1052,12 @@ mod tests {
             parse_cli_args(vec!["-V".into()]).expect("parses"),
             ParsedCli::Version
         ));
+        assert!(matches!(
+            parse_cli_args(vec!["api".into(), "describe".into()]).expect("parses"),
+            ParsedCli::ApiDescribe
+        ));
+        assert!(parse_cli_args(vec!["api".into()]).is_err());
+        assert!(parse_cli_args(vec!["api".into(), "unknown".into()]).is_err());
     }
 
     #[test]

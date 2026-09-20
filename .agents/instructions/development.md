@@ -105,11 +105,11 @@ cross check --locked --all-targets --target x86_64-unknown-netbsd
 cross clippy --locked --all-targets --target x86_64-unknown-netbsd -- -D warnings
 ```
 
-`netbsd-native` boots a NetBSD VM and runs `cargo build` and the test suite against pkgsrc's Rust,
-because compiling was never the interesting half for a program built on ptys, signals, and Unix
-sockets. It runs on `master`, on tags, and on demand, and it is `continue-on-error`: nobody here
-has NetBSD hardware, so treat a failure as a bug report from that platform rather than as a gate on
-a change aimed at the other three. Do not read it twice and merge past it.
+`.github/workflows/netbsd.yml` boots a NetBSD VM and runs `cargo build` and the test suite against
+pkgsrc's Rust, because compiling was never the interesting half for a program built on ptys,
+signals, and Unix sockets. It runs weekly and on demand as a standalone non-required workflow:
+nobody here has NetBSD hardware, so treat a failure as a bug report from that platform rather than
+as a gate on a change aimed at the other three.
 `docs/platform-support.md` states the support level a user can rely on; keep the two in step.
 
 ## Benchmarks and profiling

@@ -34,8 +34,9 @@ build from source.
 
 NetBSD is community-supported, which is a narrower promise than the three platforms above:
 
-- Every push is cross-compiled for `x86_64-unknown-netbsd`, and pushes to `master` also build and
-  run the test suite in a NetBSD VM. Neither job blocks a merge.
+- Every push is cross-compiled for `x86_64-unknown-netbsd`. A separate weekly and manually
+  dispatched portability workflow builds and runs the test suite in a NetBSD 10.1 VM. Neither
+  check blocks a merge or release.
 - Nobody developing rozi runs NetBSD day to day, so a regression is likely to be found by a NetBSD
   user rather than by CI.
 - Nothing on the platform is special-cased. NetBSD gets whatever the Unix paths do, and where a

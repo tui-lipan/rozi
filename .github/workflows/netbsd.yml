@@ -1,0 +1,71 @@
+name: NetBSD portability
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netbsd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: NetBSD 10.1 native build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The continuous cross-check in `ci.yml` proves rozi still compiles for NetBSD. This slower
+      # periodic job exercises the ptys, signals, Unix sockets, and process lifecycle in a real VM.
+      # It stands alone so a failure is visible without blocking work on release platforms.
+      - name: Build and test in a NetBSD VM
+        uses: vmactions/netbsd-vm@20ee93a005c9fc78743e6e05269f4cb023b87413 # v1
+        with:
+          # Pinned rather than tracking the action's default, so a new NetBSD release changes this
+          # job in a commit instead of overnight. Bumping it is a one-line change.
+          release: "10.1"
+          # `target/` is built inside the VM and means nothing on the host; syncing it back would
+          # copy gigabytes to be thrown away.
+          copyback: false
+          # pkgsrc is where a NetBSD user gets rozi, so use its Rust rather than rustup. `-u`
+          # updates the package when the cached VM image already carries it; it is a modifier on
+          # the named package, not a standalone "update everything", and on its own it is an error.
+          #
+          # Python is here for the same reason it is on the release-platform runners: the extension
+          # suites launch the example extensions, and those are Python. GitHub's images ship it
+          # preinstalled, this VM does not. pkgsrc names the package after the version and installs
+          # `python3.13` rather than `python3`, so take the newest that installs and give it both
+          # names rozi looks for. `--version` last, so a missing interpreter fails here with an
+          # obvious reason rather than as eleven puzzling test failures twelve minutes later.
+          prepare: |
+            /usr/sbin/pkg_add -u rust
+            for candidate in python313 python312 python311; do
+              /usr/sbin/pkg_add -u "$candidate" && break
+            done
+            for version in 3.13 3.12 3.11; do
+              if [ -x "/usr/pkg/bin/python$version" ]; then
+                ln -sf "/usr/pkg/bin/python$version" /usr/pkg/bin/python3
+                ln -sf "/usr/pkg/bin/python$version" /usr/pkg/bin/python
+                break
+              fi
+            done
+            # git for the same reason: `extensions_cli` installs an extension from a git remote it
+            # builds on the fly, and NetBSD keeps git in pkgsrc rather than the base system.
+            /usr/sbin/pkg_add -u git-base || /usr/sbin/pkg_add -u git
+            /usr/pkg/bin/python3 --version
+            /usr/pkg/bin/git --version
+          # The harness's own waits are a safety net against a hang, not a speed assertion, and
+          # thirty seconds of it is ample on a runner and marginal inside qemu: one session test
+          # spent the whole budget waiting to be granted control and failed on the deadline rather
+          # than on anything it asserts. The slow machine raises it rather than every platform
+          # paying for this one.
+          run: |
+            export PATH=/usr/pkg/bin:$PATH
+            export ROZI_TEST_IO_TIMEOUT_SECS=120
+            cd $GITHUB_WORKSPACE
+            cargo --version
+            cargo build --locked
+            cargo test --locked --no-fail-fast

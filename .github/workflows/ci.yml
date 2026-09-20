@@ -75,7 +75,8 @@ jobs:
   #
   # A plain `cargo check --target` is not enough here: `ring` builds C, so this needs a NetBSD C
   # toolchain, and `cross` carries one in its image. Compilation only: a green tick here says the
-  # code still builds for NetBSD, nothing more. Whether it runs is the `netbsd-native` job below.
+  # code still builds for NetBSD, nothing more. Whether it runs is checked weekly by
+  # `netbsd.yml` against a real NetBSD VM.
   netbsd-cross:
     name: netbsd cross-check
     runs-on: ubuntu-latest
@@ -92,77 +93,6 @@ jobs:
         run: cross check --locked --all-targets --target x86_64-unknown-netbsd
       - name: Lint
         run: cross clippy --locked --all-targets --target x86_64-unknown-netbsd -- -D warnings
-
-  # The cross-check above proves rozi still compiles for NetBSD. It cannot say whether it runs,
-  # and rozi leans on ptys, signals and Unix sockets hard enough that compiling was never the
-  # interesting half. This job boots a real NetBSD VM and runs the test suite in it, which is as
-  # close to the pkgsrc build as CI gets without a NetBSD machine.
-  #
-  # It does not gate anything. NetBSD has no maintainer hardware and no promise of support behind
-  # it, so a failure here is a bug report from a platform nobody develops on, not a reason to hold
-  # a change to the three platforms that do ship binaries. Read it, do not merge past it twice.
-  #
-  # Branch pushes skip it: the VM boots and builds the whole dependency tree from scratch every
-  # time, with no cache carried between runs, and paying that on every push would slow the loop
-  # down for a platform none of it is aimed at.
-  netbsd-native:
-    name: netbsd native
-    runs-on: ubuntu-latest
-    if: >-
-      github.ref == 'refs/heads/master'
-      || startsWith(github.ref, 'refs/tags/v')
-      || github.event_name == 'workflow_dispatch'
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Build and test in a NetBSD VM
-        uses: vmactions/netbsd-vm@20ee93a005c9fc78743e6e05269f4cb023b87413 # v1
-        with:
-          # Pinned rather than tracking the action's default, so a new NetBSD release changes this
-          # job in a commit instead of overnight. Bumping it is a one-line change.
-          release: "10.1"
-          # `target/` is built inside the VM and means nothing on the host; syncing it back would
-          # copy gigabytes to be thrown away.
-          copyback: false
-          # pkgsrc is where a NetBSD user gets rozi, so use its Rust rather than rustup. `-u`
-          # updates the package when the cached VM image already carries it; it is a modifier on
-          # the named package, not a standalone "update everything", and on its own it is an error.
-          #
-          # Python is here for the same reason it is on the other three runners: the extension
-          # suites launch the example extensions, and those are Python. GitHub's images ship it
-          # preinstalled, this VM does not. pkgsrc names the package after the version and installs
-          # `python3.13` rather than `python3`, so take the newest that installs and give it both
-          # names rozi looks for. `--version` last, so a missing interpreter fails here with an
-          # obvious reason rather than as eleven puzzling test failures twelve minutes later.
-          prepare: |
-            /usr/sbin/pkg_add -u rust
-            for candidate in python313 python312 python311; do
-              /usr/sbin/pkg_add -u "$candidate" && break
-            done
-            for version in 3.13 3.12 3.11; do
-              if [ -x "/usr/pkg/bin/python$version" ]; then
-                ln -sf "/usr/pkg/bin/python$version" /usr/pkg/bin/python3
-                ln -sf "/usr/pkg/bin/python$version" /usr/pkg/bin/python
-                break
-              fi
-            done
-            # git for the same reason: `extensions_cli` installs an extension from a git remote it
-            # builds on the fly, and NetBSD keeps git in pkgsrc rather than the base system.
-            /usr/sbin/pkg_add -u git-base || /usr/sbin/pkg_add -u git
-            /usr/pkg/bin/python3 --version
-            /usr/pkg/bin/git --version
-          # The harness's own waits are a safety net against a hang, not a speed assertion, and
-          # thirty seconds of it is ample on a runner and marginal inside qemu: one session test
-          # spent the whole budget waiting to be granted control and failed on the deadline rather
-          # than on anything it asserts. The slow machine raises it rather than every platform
-          # paying for this one.
-          run: |
-            export PATH=/usr/pkg/bin:$PATH
-            export ROZI_TEST_IO_TIMEOUT_SECS=120
-            cd $GITHUB_WORKSPACE
-            cargo --version
-            cargo build --locked
-            cargo test --locked --no-fail-fast
 
   # The OpenCode plugin is the authoritative status source for a pane running OpenCode, and it
   # ships in this repository with its own tests. Linux only: it is platform-independent JavaScript,

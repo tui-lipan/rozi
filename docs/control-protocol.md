@@ -76,11 +76,19 @@ A success with no payload is:
 {"ok":true}
 ```
 
-An error has `ok: false` and `error`:
+An error has `ok: false`, a stable machine-readable `code`, and a human-readable `error`:
 
 ```json
-{"ok":false,"error":"pane 3 not found"}
+{"ok":false,"code":"pane-not-found","error":"pane 3 not found"}
 ```
+
+Scripts should branch on `code`; the message may gain context or change wording. Error codes are:
+`invalid-request`, `request-timeout`, `message-too-large`, `extension-inactive`, `unknown-event`,
+`pane-not-found`, `target-required`, `pane-not-running`, `session-not-attached`,
+`session-not-connected`, `input-locked`, `read-only`, `not-controller`, `unsupported`,
+`invalid-argument`, `spawn-failed`, `conflict`, `unavailable`, and `request-failed`.
+`request-failed` is the fallback for failures without a narrower category. Older servers may omit
+`code`, so clients that support version skew must still handle that shape.
 
 The shape inside `data` depends on `cmd`. CLI JSON output preserves this envelope.
 

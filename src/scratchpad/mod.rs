@@ -7,7 +7,7 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::config::{SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::layout::anim::GeometryAnimation;
-use crate::layout::geometry::workspace_tile_bounds;
+use crate::layout::geometry::{clamp_float_rect, workspace_tile_bounds};
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
 use crate::pane::lifecycle::spawn_pane_in_scratch;
 use crate::state::PaneIdentity;
@@ -166,6 +166,8 @@ pub(crate) fn toggle(ctx: &mut Context<AppRoot>) -> Update {
         return spawn_pane_in_scratch(ctx, None, identity).1;
     }
 
+    let viewport = ctx.viewport();
+    constrain_floating_panes(&mut ctx.state, viewport);
     // Focus only after the pane exists in state: `request_pane_focus` looks the pane up and no-ops
     // when it is missing, so requesting before the first-open insert (as this used to) silently
     // dropped focus on the initial toggle. `Context::request_focus` records the target key and the
@@ -186,6 +188,18 @@ pub(crate) fn scratch_height_fraction(state: &crate::state::State) -> f32 {
 
 pub(crate) fn contains(state: &crate::state::State, id: crate::state::PaneId) -> bool {
     state.scratch.panes.iter().any(|pane| pane.id == id)
+}
+
+/// Normalize stored scratch-float geometry whenever the dropdown's stable bounds change.
+///
+/// Workspace floats may intentionally keep only a grab margin onscreen. A scratch float instead
+/// belongs to the dropdown layer and must remain wholly inside it; otherwise it overlaps the
+/// dimmed workspace and stops reading as part of the scratchpad.
+pub(crate) fn constrain_floating_panes(state: &mut crate::state::State, viewport: Rect) {
+    let bounds = deployed_rect(state, viewport);
+    for pane in state.scratch.panes.iter_mut().filter(|pane| pane.floating) {
+        pane.floating_rect = clamp_float_rect(pane.floating_rect, bounds);
+    }
 }
 
 pub(crate) fn after_pane_removed(ctx: &mut Context<AppRoot>) {
@@ -297,6 +311,7 @@ pub(crate) fn set_height_from(
         return false;
     }
     state.scratch_height = Some(fraction);
+    constrain_floating_panes(state, viewport);
     true
 }
 
@@ -620,6 +635,107 @@ mod tests {
         state.scratch.focused_pane = panes.last().copied();
         state.scratch_visible = true;
         state
+    }
+
+    fn assert_rect_inside(rect: FloatRect, bounds: FloatRect) {
+        // Rendered rectangles land on terminal cells while layout bounds remain fractional.
+        let epsilon = 1.0;
+        assert!(rect.x >= bounds.x - epsilon, "{rect:?} left of {bounds:?}");
+        assert!(rect.y >= bounds.y - epsilon, "{rect:?} above {bounds:?}");
+        assert!(
+            rect.x + rect.w <= bounds.x + bounds.w + epsilon,
+            "{rect:?} right of {bounds:?}"
+        );
+        assert!(
+            rect.y + rect.h <= bounds.y + bounds.h + epsilon,
+            "{rect:?} below {bounds:?}"
+        );
+    }
+
+    #[test]
+    fn constraining_scratch_floats_keeps_the_whole_pane_inside_the_dropdown() {
+        let mut state = state_with_scratch(&[1]);
+        let dropdown = deployed_rect(&state, VIEWPORT);
+        state.scratch.panes[0].floating = true;
+        state.scratch.panes[0].floating_rect = FloatRect {
+            x: dropdown.x - 40.0,
+            y: dropdown.y - 20.0,
+            w: 30.0,
+            h: 8.0,
+        };
+
+        constrain_floating_panes(&mut state, VIEWPORT);
+
+        assert_rect_inside(state.scratch.panes[0].floating_rect, dropdown);
+    }
+
+    #[test]
+    fn shrinking_the_dropdown_reclamps_stored_floating_panes() {
+        let mut state = state_with_scratch(&[1]);
+        state.scratch_height = Some(0.8);
+        let tall = deployed_rect(&state, VIEWPORT);
+        state.scratch.panes[0].floating = true;
+        state.scratch.panes[0].floating_rect = FloatRect {
+            x: tall.x + 5.0,
+            y: tall.y,
+            w: 30.0,
+            h: 8.0,
+        };
+
+        assert!(set_height_from(&mut state, 0.8, -16.0, VIEWPORT));
+
+        let short = deployed_rect(&state, VIEWPORT);
+        assert!(short.y > tall.y);
+        assert_rect_inside(state.scratch.panes[0].floating_rect, short);
+    }
+
+    #[test]
+    fn rendering_contains_stale_floating_geometry_before_the_next_interaction() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+                backend.set_viewport(VIEWPORT);
+                let pane_id = 1 << 31;
+                let generation = {
+                    let state = backend.state_mut();
+                    state.scratch_visible = true;
+                    let dropdown = deployed_rect(state, VIEWPORT);
+                    let mut pane = crate::state::Pane::new(
+                        pane_id,
+                        100,
+                        FloatRect {
+                            x: dropdown.x - 24.0,
+                            y: dropdown.y - 12.0,
+                            w: 30.0,
+                            h: 8.0,
+                        },
+                    );
+                    pane.floating = true;
+                    pane.opening = false;
+                    let generation = pane.pty_generation;
+                    state.scratch.panes.push(pane);
+                    state.scratch.focused_pane = Some(pane_id);
+                    generation
+                };
+
+                backend.render();
+
+                let dropdown = deployed_rect(backend.state(), VIEWPORT);
+                let rendered = backend
+                    .rect_of_key(&view::pane_window_key(pane_id, generation).into())
+                    .expect("floating scratch pane is rendered");
+                let rendered = FloatRect {
+                    x: f32::from(rendered.x),
+                    y: f32::from(rendered.y) - f32::from(backend.state().content_top_offset()),
+                    w: f32::from(rendered.w),
+                    h: f32::from(rendered.h),
+                };
+                assert_rect_inside(rendered, dropdown);
+            })
+            .expect("spawn scratch render containment test")
+            .join()
+            .expect("scratch render containment test panicked");
     }
 
     /// Every layout computation reads its box from `layout_bounds`, so this is what makes the

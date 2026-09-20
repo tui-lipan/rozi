@@ -5,8 +5,8 @@ use crate::layout::anim::GeometryAnimation;
 #[cfg(test)]
 use crate::layout::anim::PaneAnimationStyle;
 use crate::layout::geometry::{
-    canvas_local_point_from_mouse, clamp_floating_rect, grabbed_edge_on_outer_border,
-    resize_float_rect_from_corner, workspace_tile_bounds,
+    canvas_local_point_from_mouse, clamp_float_rect, clamp_floating_rect,
+    grabbed_edge_on_outer_border, resize_float_rect_from_corner, workspace_tile_bounds,
 };
 use crate::layout::tiling::{
     SplitEdge, allocate_dwindle, move_tiled_window_around_target, resize_tiled_split_for_edge,
@@ -20,8 +20,8 @@ use crate::ops::focus::{
     scrollable_scroll, settle_scrollable_after_reorder, sync_scrollable_reveal,
 };
 use crate::state::{
-    self, Direction, EVEN_SPLIT_RATIO, LayoutKind, MoveSession, PaneId, ResizeCorner,
-    ResizeSession, State, TileGap, Workspace,
+    self, Direction, EVEN_SPLIT_RATIO, FloatBoundary, LayoutKind, MoveSession, PaneId,
+    ResizeCorner, ResizeSession, State, TileGap, Workspace,
 };
 
 use super::tiling::{
@@ -50,6 +50,16 @@ fn float_keyboard_delta(direction: Direction, bounds: FloatRect) -> (f32, f32) {
     }
 }
 
+/// Workspace floats may be parked partly offscreen as long as a grab margin remains visible.
+/// The scratchpad is a bounded dropdown, so allowing that same overhang makes a scratch pane
+/// escape into the dimmed workspace behind it. Keep scratch floats wholly inside their layer.
+fn clamp_active_float(rect: FloatRect, bounds: FloatRect, boundary: FloatBoundary) -> FloatRect {
+    match boundary {
+        FloatBoundary::VisibleMargin => clamp_floating_rect(rect, bounds),
+        FloatBoundary::Contained => clamp_float_rect(rect, bounds),
+    }
+}
+
 /// Translate the focused floating pane one step. Returns whether the focus was floating at all, so
 /// `super::tiling::reorder_focused_in_direction` can fall through to the tiled reorder when it was
 /// not.
@@ -58,6 +68,7 @@ pub(super) fn move_focused_float(ctx: &mut Context<AppRoot>, direction: Directio
         return false;
     };
     let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let boundary = ctx.state.active_workspace_ref().float_boundary;
     let (dx, dy) = float_keyboard_delta(direction, bounds);
     let Some(pane) = active_pane_mut(&mut ctx.state, id) else {
         return false;
@@ -65,14 +76,16 @@ pub(super) fn move_focused_float(ctx: &mut Context<AppRoot>, direction: Directio
     if !pane.floating || pane.fullscreen {
         return false;
     }
-    // Same clamp as the pointer drag, so a pane can be parked partly offscreen either way.
-    let moved = clamp_floating_rect(
+    // Same clamp as the pointer drag. Ordinary workspace panes retain their visible-margin
+    // overhang, while scratch panes remain inside the dropdown.
+    let moved = clamp_active_float(
         FloatRect {
             x: pane.floating_rect.x + dx,
             y: pane.floating_rect.y + dy,
             ..pane.floating_rect
         },
         bounds,
+        boundary,
     );
     if moved != pane.floating_rect {
         pane.floating_rect = moved;
@@ -205,6 +218,7 @@ pub(crate) fn move_pane(
         return Update::none();
     }
     let bounds = ctx.state.layout_bounds(ctx.viewport());
+    let boundary = ctx.state.active_workspace_ref().float_boundary;
     let mut persisted_floating_rect = None;
     if let Some(session) = ctx
         .state
@@ -214,7 +228,7 @@ pub(crate) fn move_pane(
     {
         session.drag_rect.x += f32::from(dx);
         session.drag_rect.y += f32::from(dy);
-        session.drag_rect = clamp_floating_rect(session.drag_rect, bounds);
+        session.drag_rect = clamp_active_float(session.drag_rect, bounds, boundary);
         session.pointer_x += i32::from(dx);
         session.pointer_y += i32::from(dy);
         if session.was_floating {
@@ -1536,6 +1550,103 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn floating_scratch_pane_cannot_be_dragged_outside_the_dropdown() {
+        in_test_stack(|| {
+            let viewport = Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            };
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(viewport);
+            {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                let dropdown = crate::scratchpad::deployed_rect(state, viewport);
+                let mut pane = Pane::new(
+                    1,
+                    100,
+                    FloatRect {
+                        x: dropdown.x + 10.0,
+                        y: dropdown.y + 1.0,
+                        w: 30.0,
+                        h: 8.0,
+                    },
+                );
+                pane.floating = true;
+                pane.opening = false;
+                state.scratch.panes.push(pane);
+                state.scratch.focused_pane = Some(1);
+            }
+            backend.render();
+            let dropdown = crate::scratchpad::deployed_rect(backend.state(), viewport);
+            let start = backend.state().scratch.panes[0].floating_rect;
+
+            backend
+                .dispatch(Msg::BeginMove(1, start, 0, 0, 30, 8, true))
+                .expect("begin floating scratch move");
+            backend
+                .dispatch(Msg::MovePane(1, -100, -100, true))
+                .expect("drag beyond top-left");
+            let top_left = backend.state().scratch.panes[0].floating_rect;
+            assert_eq!(top_left.x, dropdown.x);
+            assert_eq!(top_left.y, dropdown.y);
+
+            backend
+                .dispatch(Msg::MovePane(1, 200, 200, true))
+                .expect("drag beyond bottom-right");
+            let bottom_right = backend.state().scratch.panes[0].floating_rect;
+            assert_eq!(bottom_right.x + bottom_right.w, dropdown.x + dropdown.w);
+            assert_eq!(bottom_right.y + bottom_right.h, dropdown.y + dropdown.h);
+        });
+    }
+
+    #[test]
+    fn keyboard_movement_keeps_a_floating_scratch_pane_inside_the_dropdown() {
+        in_test_stack(|| {
+            let viewport = Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            };
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(viewport);
+            {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                let dropdown = crate::scratchpad::deployed_rect(state, viewport);
+                let mut pane = Pane::new(
+                    1,
+                    100,
+                    FloatRect {
+                        x: dropdown.x,
+                        y: dropdown.y,
+                        w: 30.0,
+                        h: 8.0,
+                    },
+                );
+                pane.floating = true;
+                pane.opening = false;
+                state.scratch.panes.push(pane);
+                state.scratch.focused_pane = Some(1);
+            }
+            backend.render();
+
+            for _ in 0..20 {
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::Move(Direction::Up)))
+                    .expect("move floating scratch pane up");
+            }
+
+            let dropdown = crate::scratchpad::deployed_rect(backend.state(), viewport);
+            assert_eq!(backend.state().scratch.panes[0].floating_rect.y, dropdown.y);
+        });
+    }
+
     /// A right-drag grabbing an upper corner of a top-edge scratch pane moves the dropdown's own
     /// border - there is no split above it - while the horizontal half still resizes the pane.
     #[test]

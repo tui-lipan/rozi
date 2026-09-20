@@ -482,7 +482,7 @@ impl State {
             copy_feedback_epoch: 0,
             hint_mode: None,
             consumed_pointer_click: false,
-            scratch: Workspace::new(0),
+            scratch: Workspace::scratch(),
             scratch_runtime: None,
             next_scratch_pane_id: 1 << 31,
             next_scratch_pty_generation: 1,

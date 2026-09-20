@@ -4,6 +4,16 @@ use super::{DEFAULT_RATIO, Direction, LayoutKind, MoveSwapHint, Pane, PaneId, Sp
 
 pub const WORKSPACE_COUNT: usize = 9;
 
+/// How floating panes may sit against a workspace's bounds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FloatBoundary {
+    /// Keep a grab margin visible while allowing the rest of the pane to overhang.
+    #[default]
+    VisibleMargin,
+    /// Keep the entire pane inside the workspace.
+    Contained,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DirectionalFocusHint {
     pub pane: PaneId,
@@ -32,6 +42,7 @@ pub struct Workspace {
     pub focused_pane: Option<PaneId>,
     pub synchronized: bool,
     pub layout_kind: LayoutKind,
+    pub float_boundary: FloatBoundary,
     pub start_axis: SplitAxis,
     pub split_ratios: Vec<f32>,
     pub last_move_swap: Option<MoveSwapHint>,
@@ -56,6 +67,7 @@ impl Workspace {
             focused_pane: None,
             synchronized: false,
             layout_kind: LayoutKind::Dwindle,
+            float_boundary: FloatBoundary::VisibleMargin,
             start_axis: if index.is_multiple_of(2) {
                 SplitAxis::Horizontal
             } else {
@@ -67,6 +79,13 @@ impl Workspace {
             scrollable_anchor: None,
             scrollable_reveal_edge: ScrollableRevealEdge::Left,
             name: None,
+        }
+    }
+
+    pub fn scratch() -> Self {
+        Self {
+            float_boundary: FloatBoundary::Contained,
+            ..Self::new(0)
         }
     }
 

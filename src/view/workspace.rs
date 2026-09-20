@@ -6,7 +6,7 @@ use crate::layout::geometry::{
 };
 use crate::layout::tiling::PanePlacement;
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding_with_visible};
-use crate::state::{ChromeSlot, PaneId};
+use crate::state::{ChromeSlot, FloatBoundary, PaneId};
 
 use super::animation;
 use super::canvas_rect_to_root;
@@ -46,6 +46,15 @@ pub(crate) struct WorkspaceLayer<'a> {
 }
 
 impl WorkspaceLayer<'_> {
+    /// Keep the scratchpad visually self-contained. Ordinary workspace floats deliberately retain
+    /// the visible-margin overhang that lets users park them partly offscreen.
+    fn clamp_floating_rect(&self, rect: FloatRect, bounds: FloatRect) -> FloatRect {
+        match self.workspace.float_boundary {
+            FloatBoundary::VisibleMargin => clamp_floating_rect(rect, bounds),
+            FloatBoundary::Contained => clamp_float_rect(rect, bounds),
+        }
+    }
+
     fn pane_rect_key(&self, id: PaneId) -> String {
         if self.scratch {
             format!("rozi-scratch-pane-rect-{id}")
@@ -222,6 +231,11 @@ pub(crate) fn render_workspace_panes(
         };
         let base_rect = placement_for(&placements, pane.id)
             .unwrap_or_else(|| clamp_float_rect(floating_rect, bounds));
+        let base_rect = if pane.floating {
+            layer.clamp_floating_rect(base_rect, bounds)
+        } else {
+            base_rect
+        };
         let moving = dragged.filter(|drag| drag.pane_id == pane.id);
         // Sliding and paint-effect panes use their real destination for the whole animation. Slide
         // carries the pane in below; Portal and Scan repaint its cells in place.
@@ -270,7 +284,11 @@ pub(crate) fn render_workspace_panes(
             base_rect
         } else if pane.closing {
             // Preserve the legacy bare-flag close path for un-snapshotted panes.
-            close_rect(floating_rect)
+            let closing_rect = match layer.workspace.float_boundary {
+                FloatBoundary::VisibleMargin => floating_rect,
+                FloatBoundary::Contained => clamp_float_rect(floating_rect, bounds),
+            };
+            close_rect(closing_rect)
         } else if pane.opening
             && crate::layout::anim::geometry_animation_enabled(
                 &ctx.state,
@@ -282,7 +300,7 @@ pub(crate) fn render_workspace_panes(
         } else if let Some(drag) = moving
             && !pane.fullscreen
         {
-            clamp_floating_rect(drag.rect, bounds)
+            layer.clamp_floating_rect(drag.rect, bounds)
         } else {
             base_rect
         };

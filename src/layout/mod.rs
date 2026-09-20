@@ -12,14 +12,18 @@ pub mod tree_ser;
 use tui_lipan::prelude::FloatRect;
 
 use self::anim::SlideEdge;
-use self::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
+use self::geometry::{
+    clamp_float_rect, clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds,
+};
 pub use self::tiling::effective_tile_tree;
 use self::tiling::{
     PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
     allocate_monocle, allocate_rows, allocate_scrollable_with_visible, append_tiled_window,
     insert_leaf_around_target, ratio_at,
 };
-use crate::state::{EVEN_SPLIT_RATIO, LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
+use crate::state::{
+    EVEN_SPLIT_RATIO, FloatBoundary, LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace,
+};
 
 pub fn workspace_target_rects(
     workspace: &Workspace,
@@ -149,10 +153,11 @@ pub fn workspace_target_rects_excluding_with_visible(
         .iter()
         .filter(|pane| pane.floating && !pane.closing)
     {
-        placements.push(PanePlacement {
-            id: pane.id,
-            rect: clamp_floating_rect(pane.floating_rect, bounds),
-        });
+        let rect = match workspace.float_boundary {
+            FloatBoundary::VisibleMargin => clamp_floating_rect(pane.floating_rect, bounds),
+            FloatBoundary::Contained => clamp_float_rect(pane.floating_rect, bounds),
+        };
+        placements.push(PanePlacement { id: pane.id, rect });
     }
 
     placements
@@ -709,6 +714,40 @@ mod tests {
         workspace.scrollable_anchor = Some(99);
         let fallback = scrollable_viewport_anchor(&workspace, &workspace.tiled_ids());
         assert_eq!(fallback, Some(1));
+    }
+
+    #[test]
+    fn floating_placements_follow_the_workspace_boundary_policy() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 20.0,
+            w: 100.0,
+            h: 16.0,
+        };
+        let escaped = FloatRect {
+            x: -40.0,
+            y: 0.0,
+            w: 30.0,
+            h: 8.0,
+        };
+        let placement_for = |workspace: &Workspace| {
+            workspace_target_rects(workspace, bounds, 0.0, crate::state::TileGap::DEFAULT)[0].rect
+        };
+
+        let mut workspace = Workspace::new(0);
+        let mut pane = Pane::new(1, 100, escaped);
+        pane.floating = true;
+        workspace.panes.push(pane);
+        let partly_visible = placement_for(&workspace);
+        assert!(partly_visible.x < bounds.x);
+        assert!(partly_visible.y < bounds.y);
+
+        workspace.float_boundary = FloatBoundary::Contained;
+        let contained = placement_for(&workspace);
+        assert!(contained.x >= bounds.x);
+        assert!(contained.y >= bounds.y);
+        assert!(contained.x + contained.w <= bounds.x + bounds.w);
+        assert!(contained.y + contained.h <= bounds.y + bounds.h);
     }
 
     #[test]

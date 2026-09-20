@@ -1,7 +1,17 @@
 # rozi documentation
 
+rozi is a terminal workspace for local, remote, and agent-driven development. Tile terminal panes,
+leave named sessions running, connect to other machines over SSH, see coding agents that need
+input, and automate the runtime from the CLI.
+
+| Workspace | Sessions | Remote |
+| --- | --- | --- |
+| Tiling, floating, fullscreen, and nine workspaces | Persistent and shared sessions | SSH sessions on saved hosts |
+| **Agents** | **Automation** | **Extensions** |
+| Activity and attention state | Headless control, hooks, and scripting | Commands, services, pickers, and activity rows |
+
 Start with [Getting started](getting-started.md) for a guided first session. The
-[documentation overview](overview.md) lists the rest of the guides.
+[documentation overview](overview.md) lists every guide.
 
 ## Start
 

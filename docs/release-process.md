@@ -100,7 +100,12 @@ an empty stable release before the signing workflow completes.
 
 The workflow performs these gates:
 
-1. In parallel with testing, the release-note job resolves the newest published, non-draft
+1. Before release-only work starts, the workflow proves the tagged commit is reachable from
+   `master` and that the exact tagged SHA already has a completed, successful master CI push run.
+   Normal CI does not run again for release tags; this check carries forward its formatting,
+   Clippy, native test, integration, dependency-policy, and NetBSD cross-check results without
+   repeating them.
+2. In parallel with testing, the release-note job resolves the newest published, non-draft
    `v`-tag other than the tag being built, resolves both tags to exact commits, and proves the
    previous release is an ancestor. It supplies every candidate commit's metadata and changed paths
    to the reviewed OpenCode command in `.opencode/commands/changelog.md`. Rosie writes notes from
@@ -108,27 +113,27 @@ The workflow performs these gates:
    not inspect diffs. Obvious isolated CI, test, documentation, and release-metadata commits are
    removed conservatively; all other commits remain evidence even when their prefix says
    `refactor`, `perf`, or `chore`.
-2. The generated Markdown is rejected unless it contains non-empty `Added`, `Changed`, `Fixed`,
+3. The generated Markdown is rejected unless it contains non-empty `Added`, `Changed`, `Fixed`,
    `Compatibility`, or `Security` sections in that order. The exact accepted bytes, range metadata,
    and structured agent input are uploaded once as the `release-notes` workflow artifact. A
    generation, permission, model, or validation failure stops the release; there is no fallback
    note style.
-3. `cargo test --locked` and `cargo check --locked --all-targets` run on Linux.
-4. Release archives build for Linux x86_64 and arm64, macOS x86_64 and arm64, and Windows x86_64.
+4. `cargo test --locked` and `cargo check --locked --all-targets` run on Linux.
+5. Release archives build for Linux x86_64 and arm64, macOS x86_64 and arm64, and Windows x86_64.
    Linux payloads build in pinned manylinux 2.28 containers, and the workflow rejects binaries whose
    ELF version requirements exceed `GLIBC_2.28`.
-5. Each payload reports the tag version and prints help.
-6. Each final archive is extracted and smoke-tested. Windows also tests launcher version selection,
+6. Each payload reports the tag version and prints help.
+7. Each final archive is extracted and smoke-tested. Windows also tests launcher version selection,
    argument and environment forwarding, working-directory forwarding, and exit-code propagation.
-7. The signing job starts only after note generation and packaging succeed. It confirms the tag
+8. The signing job starts only after note generation and packaging succeed. It confirms the tag
    version matches `Cargo.toml`, checks every expected archive,
    and runs `relswap trust-check` against the committed trust store before reading the private key.
-8. The workflow generates the manifest and checksums from final archive bytes, signs the exact
+9. The workflow generates the manifest and checksums from final archive bytes, signs the exact
    manifest bytes, and verifies every archive against `release-keys.json`.
-9. The GitHub publication job receives the verified bundle and the frozen release-note artifact.
+10. The GitHub publication job receives the verified bundle and the frozen release-note artifact.
    It has no signing secret. It attests each final archive's provenance, publishes the exact
    generated Markdown as the release body, and uploads the assets.
-10. After the signed GitHub release exists, a final protected job rechecks the tag and runs
+11. After the signed GitHub release exists, a final protected job rechecks the tag and runs
    `cargo publish --locked` with `CARGO_REGISTRY_TOKEN`.
 
 The `release` environment can require maintainer approval before signing. Review the tag, commit,
@@ -363,9 +368,10 @@ release — so no stable user is moved onto nightly by any of the paths that ins
 that way: an explicit opt-in such as `rozi update --channel nightly` is a separate decision, worth
 making only if people start using nightlies.
 
-`ci.yml` triggers on pull requests, pushes to master, and `v*` tags, deliberately not on the moving `nightly` tag. A
-nightly is built from a commit the matrix has already passed, so re-running it there would cost a
-second full matrix for no new fact.
+`ci.yml` triggers on pull requests and pushes to master, not on release or moving `nightly` tags.
+The Release workflow owns its tagged test and package matrix. A nightly is built from a commit the
+master matrix has already passed, so re-running normal CI for either tag would cost a second matrix
+for no new fact.
 
 ## Failed release and rollback response
 

@@ -57,11 +57,14 @@ cargo build --release --features windows-launcher --bin rozi-launcher
 
 CI is defined in `.github/workflows/ci.yml`. Dependency-resolving build, check, Clippy, and test
 commands use `--locked`; manifest and lockfile sources must agree. CI runs on Linux, macOS, and
-Windows, on every pull request, every push to master, and every `v*` tag. Pull requests use
-`cargo check --release`; master and tags perform optimized code generation. The release matrix
-lives in `.github/workflows/release.yml` and runs on tags, manual dispatches, and pull requests that
-change release infrastructure. `.github/workflows/security.yml` runs `cargo audit` weekly; the
-regular CI's cargo-deny job checks RustSec advisories on every change.
+Windows on every pull request and every push to master. Pull requests run `cargo check --release`
+on all three platforms; master performs the optimized release build on Linux only. Release tags do
+not trigger normal CI: `.github/workflows/release.yml` owns the exact tagged test and package matrix
+for every shipping platform. Before tag-only work starts, it proves the tagged SHA is reachable
+from `master` and has an exact-SHA successful master CI run. The workflow also runs on manual
+dispatches and pull requests that change release infrastructure. `.github/workflows/security.yml`
+runs `cargo audit` weekly; the regular CI's cargo-deny job checks RustSec advisories on every
+change.
 
 Tagged releases resolve the previous published `v` release and exact tagged commit in
 `scripts/release_notes.py`, then Rosie runs `.opencode/commands/changelog.md` with

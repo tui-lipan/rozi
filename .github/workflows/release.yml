@@ -48,8 +48,56 @@ env:
   MANIFEST_LIFETIME_DAYS: "365"
 
 jobs:
+  # Normal CI deliberately does not run again for a release tag. Prove instead that the exact
+  # tagged bytes already passed the full master workflow (formatting, Clippy, tests, integrations,
+  # cargo-deny, and the NetBSD cross-check) before spending time on release-only work.
+  release_source:
+    name: verify release source
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Explain non-release invocation
+        if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v')
+        run: echo "Exact master CI verification applies only to pushed release tags."
+
+      - name: Check out full history
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require exact tagged commit to have passed master CI
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/master || {
+            echo "tagged commit $GITHUB_SHA is not reachable from origin/master" >&2
+            exit 1
+          }
+          successful_run="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow ci.yml \
+            --branch master \
+            --commit "$GITHUB_SHA" \
+            --event push \
+            --limit 100 \
+            --json status,conclusion,url \
+            --jq 'map(select(.status == "completed" and .conclusion == "success")) | first | .url // empty')"
+          test -n "$successful_run" || {
+            echo "no successful master CI run exists for exact tagged commit $GITHUB_SHA" >&2
+            exit 1
+          }
+          echo "Exact tagged commit passed master CI: $successful_run"
+
   release_notes:
     name: generate release notes
+    needs: release_source
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:
@@ -117,13 +165,14 @@ jobs:
   # Every platform this release ships a binary for, not just the one that is cheapest to run.
   #
   # This gate used to be Ubuntu alone, while `package` below built and signed archives for five
-  # targets. `ci.yml` does run on the tag push, but the two workflows
-  # decide independently, so a red matrix on the exact commit being released did not stop
-  # publication: 0.0.16 shipped with `extensions install <git-url>` broken on Windows, and the
-  # Windows CI job for that tag had failed while this workflow published to crates.io. A release is
-  # the one moment worth paying the whole matrix for.
+  # targets. A separate `ci.yml` run on the tag did not protect publication because the workflows
+  # decided independently: 0.0.16 shipped with `extensions install <git-url>` broken on Windows
+  # while the tag's Windows CI job was red. The release workflow now owns the exact tagged matrix;
+  # normal CI has already passed on the release commit and deliberately does not run again on tags.
+  # A release is the one moment worth paying the whole matrix for.
   test:
     name: test ${{ matrix.os }}
+    needs: release_source
     runs-on: ${{ matrix.os }}
     strategy:
       # One platform's failure must not cancel the others: a release that is going to be fixed and

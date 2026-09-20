@@ -3,11 +3,11 @@ name: CI
 on:
   push:
     # Feature-branch pushes are covered by `pull_request`. Running both doubled the OS matrix
-    # on every PR update. Direct pushes to master and release tags still need their own run:
-    # nightly publication keys off a successful master CI, and a tag is worth checking on its
-    # own. The rolling `nightly` tag is excluded so `nightly.yml` does not pay a second matrix.
+    # on every PR update. Direct pushes to master still need their own run because nightly
+    # publication keys off a successful master CI. Release tags are covered by the stricter
+    # test-and-package matrix in `release.yml`; running this matrix too would prove the same commit
+    # twice before building every shipping target again.
     branches: [master]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -58,13 +58,15 @@ jobs:
       - name: Test (including native process integration)
         if: ${{ !cancelled() }}
         run: cargo test --locked --no-fail-fast
-      # Pull requests still check release-only cfg and profile behavior without paying for
-      # optimized code generation. Master and tags produce the real release binary.
+      # Pull requests still check release-only cfg and profile behavior on every primary platform
+      # without paying for optimized code generation. On master, one real optimized Linux build is
+      # enough to catch release-profile failures; `release.yml` builds every shipping target before
+      # publication. In particular, do not make Windows repeat its expensive MSVC ThinLTO link here.
       - name: Check release profile
         if: github.event_name == 'pull_request'
         run: cargo check --locked --release
       - name: Release build
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
         run: cargo build --locked --release
 
   # NetBSD ships no rozi binary and nothing in the matrix above runs there, but it is the one

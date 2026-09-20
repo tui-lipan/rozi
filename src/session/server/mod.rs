@@ -128,6 +128,8 @@ impl ServerIdleWait {
 }
 
 pub struct SessionServer {
+    /// Fencing token for this running server. Never persisted or restored.
+    instance_id: protocol::SessionInstanceId,
     panes: HashMap<PaneId, ServerPane>,
     /// Owner-scoped transient panes (scratch workspaces and popups). Kept out of attach seeds,
     /// layout/resurrection state, and every other client's address space.
@@ -1305,6 +1307,7 @@ impl SessionServer {
         let session_name = session_name.into();
         let events = Arc::new(ByteQueue::new(MAX_PTY_INGRESS_BYTES));
         Self {
+            instance_id: protocol::SessionInstanceId::generate(),
             panes: HashMap::new(),
             local_panes: HashMap::new(),
             next_generation: 1,
@@ -1341,6 +1344,10 @@ impl SessionServer {
             pending_listener: None,
             settings,
         }
+    }
+
+    pub fn instance_id(&self) -> &protocol::SessionInstanceId {
+        &self.instance_id
     }
 
     pub fn run_listener(&mut self, listener: IpcListener) -> io::Result<()> {

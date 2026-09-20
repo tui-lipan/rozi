@@ -19,8 +19,8 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
   repository. Do not add a Rozi-local workaround; use a local path override only for iteration,
   then consume the released framework version.
 - Keep user-facing docs in sync with behavior, CLI, configuration, and workflow changes.
-- GitHub Releases is the only changelog. Do not recreate `CHANGELOG.md`; tagged releases generate
-  their canonical notes under `.opencode/commands/changelog.md`.
+- GitHub Releases is the only changelog. Do not recreate `CHANGELOG.md`. The `/changelog` command
+  defines release-note structure; Rosie writes the prose from each PR Summary.
 - Prefer a clean breaking change over aliases or compatibility shims unless the user asks for
   compatibility or a protocol test intentionally covers version skew.
 - The repository is MPL-2.0. Contributions require a DCO sign-off.

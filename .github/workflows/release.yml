@@ -84,8 +84,8 @@ jobs:
             --metadata release-notes-range.json
 
       # OpenCode receives no GitHub, signing, or publication token. Its dedicated config permits
-      # reading source, `git show`, and writing release-notes.md; every other operation is denied.
-      - name: Inspect diffs and write user-facing notes
+      # reading release-notes-input.md and writing release-notes.md; every other operation is denied.
+      - name: Write user-facing notes
         env:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           OPENCODE_CONFIG: ${{ github.workspace }}/.opencode/release-notes.json

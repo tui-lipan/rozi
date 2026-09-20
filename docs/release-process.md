@@ -103,11 +103,11 @@ The workflow performs these gates:
 1. In parallel with testing, the release-note job resolves the newest published, non-draft
    `v`-tag other than the tag being built, resolves both tags to exact commits, and proves the
    previous release is an ancestor. It supplies every candidate commit's metadata and changed paths
-   to the reviewed OpenCode command in `.opencode/commands/changelog.md`. Rosie, the dedicated
-   release-note agent, uses `google/gemini-3.8-flash` and inspects each candidate's actual
-   `git show --stat` and `git show` output before writing an entry. Obvious isolated CI, test,
-   documentation, and release-metadata commits are removed conservatively; all other commits remain
-   evidence even when their prefix says `refactor`, `perf`, or `chore`.
+   to the reviewed OpenCode command in `.opencode/commands/changelog.md`. Rosie writes notes from
+   each candidate's subject, PR URL, and Summary using `google/gemini-3.5-flash-lite`. She does
+   not inspect diffs. Obvious isolated CI, test, documentation, and release-metadata commits are
+   removed conservatively; all other commits remain evidence even when their prefix says
+   `refactor`, `perf`, or `chore`.
 2. The generated Markdown is rejected unless it contains non-empty `Added`, `Changed`, `Fixed`,
    `Compatibility`, or `Security` sections in that order. The exact accepted bytes, range metadata,
    and structured agent input are uploaded once as the `release-notes` workflow artifact. A

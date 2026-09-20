@@ -10,12 +10,9 @@
   },
   "permission": {
     "*": "deny",
-    "read": "allow",
-    "glob": "allow",
-    "grep": "allow",
-    "bash": {
+    "read": {
       "*": "deny",
-      "git show *": "allow"
+      "release-notes-input.md": "allow"
     },
     "edit": {
       "*": "deny",

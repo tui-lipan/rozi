@@ -26,6 +26,13 @@ RELEASE_METADATA_PATHS = {
     "Cargo.toml",
     "docs/installation.md",
 }
+SUMMARY_MAX_CHARS = 4_000
+TRAILER_RE = re.compile(
+    r"^(Signed-off-by|Co-authored-by|Reviewed-by|Acked-by):",
+    re.IGNORECASE,
+)
+HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
+PR_TRAILER_RE = re.compile(r"\(#(\d+)\)\s*$")
 
 
 class ReleaseNotesError(RuntimeError):
@@ -36,6 +43,7 @@ class ReleaseNotesError(RuntimeError):
 class Commit:
     sha: str
     subject: str
+    summary: str
     paths: tuple[str, ...]
     included: bool
     exclusion_reason: str | None
@@ -133,6 +141,8 @@ def exclusion_reason(subject: str, paths: Sequence[str]) -> str | None:
         paths,
         lambda path: path.startswith(".github/")
         or path.startswith(".agents/")
+        or path.startswith(".opencode/")
+        or path.startswith("scripts/")
         or path == "docs/release-process.md",
     ):
         return "CI-only change"
@@ -156,6 +166,47 @@ def exclusion_reason(subject: str, paths: Sequence[str]) -> str | None:
     return None
 
 
+def commit_summary(body: str) -> str:
+    """Keep the PR Summary, or the preamble, and drop checklists and trailers."""
+    text = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+    lines = text.replace("\r\n", "\n").splitlines()
+    while lines and (
+        not lines[-1].strip()
+        or TRAILER_RE.match(lines[-1].strip())
+        or set(lines[-1].strip()) <= {"-"}
+    ):
+        lines.pop()
+
+    sections: list[tuple[str | None, list[str]]] = []
+    name: str | None = None
+    current: list[str] = []
+    for line in lines:
+        heading = HEADING_RE.match(line)
+        if heading is None:
+            current.append(line)
+            continue
+        sections.append((name, current))
+        name = heading.group(1).strip().lower()
+        current = []
+    sections.append((name, current))
+
+    chosen = next((content for title, content in sections if title == "summary"), None)
+    if chosen is None:
+        preamble = next((content for title, content in sections if title is None), [])
+        chosen = preamble
+    summary = "\n".join(chosen).strip()
+    if len(summary) > SUMMARY_MAX_CHARS:
+        summary = summary[:SUMMARY_MAX_CHARS].rsplit("\n", 1)[0].strip()
+    return summary
+
+
+def pull_request_url(repository: str, subject: str) -> str | None:
+    match = PR_TRAILER_RE.search(subject)
+    if match is None:
+        return None
+    return f"https://github.com/{repository}/pull/{match.group(1)}"
+
+
 def collect_commits(from_commit: str, to_commit: str) -> list[Commit]:
     shas = [
         sha
@@ -172,12 +223,14 @@ def collect_commits(from_commit: str, to_commit: str) -> list[Commit]:
     commits = []
     for sha in shas:
         subject = git("show", "-s", "--format=%s", sha).strip()
+        summary = commit_summary(git("show", "-s", "--format=%b", sha))
         paths = changed_paths(sha)
         reason = exclusion_reason(subject, paths)
         commits.append(
             Commit(
                 sha=sha,
                 subject=subject,
+                summary=summary,
                 paths=paths,
                 included=reason is None,
                 exclusion_reason=reason,
@@ -188,6 +241,7 @@ def collect_commits(from_commit: str, to_commit: str) -> list[Commit]:
 
 def write_input(
     path: Path,
+    repository: str,
     from_tag: str,
     from_commit: str,
     to_tag: str,
@@ -218,6 +272,12 @@ def write_input(
                 "",
                 f"Subject: {commit.subject}",
                 "",
+                f"PR: {pull_request_url(repository, commit.subject) or '(none)'}",
+                "",
+                "Summary:",
+                "",
+                commit.summary if commit.summary else "(none)",
+                "",
                 "Changed files:",
                 *[f"- `{changed}`" for changed in commit.paths],
                 "",
@@ -227,7 +287,7 @@ def write_input(
     lines.extend(["## Deterministically excluded commits", ""])
     if excluded:
         lines.extend(
-            f"- `{commit.sha}` — {commit.subject} ({commit.exclusion_reason})"
+            f"- `{commit.sha}` - {commit.subject} ({commit.exclusion_reason})"
             for commit in excluded
         )
     else:
@@ -338,6 +398,7 @@ def prepare(arguments: argparse.Namespace) -> None:
     metadata_path = Path(arguments.metadata)
     write_input(
         input_path,
+        arguments.repository,
         from_tag,
         from_commit,
         arguments.to_tag,

@@ -265,6 +265,7 @@ impl SessionServer {
                             pane_id,
                             local,
                             generation,
+                            agent_refs: self.agent_references(local.then_some(client_id), pane_id),
                             state,
                         },
                     )],
@@ -300,6 +301,7 @@ impl SessionServer {
                         pane_id,
                         local,
                         generation,
+                        agent_refs: self.agent_references(local.then_some(client_id), pane_id),
                         state,
                     },
                 )],
@@ -849,6 +851,7 @@ impl SessionServer {
         let clients = self.client_roster();
         let attached = ServerMessage::Attached {
             capabilities: Some(capabilities),
+            session_instance: self.instance_id.clone(),
             protocol_version: PROTOCOL_VERSION,
             effective_protocol: effective,
             session,

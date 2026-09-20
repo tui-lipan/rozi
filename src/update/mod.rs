@@ -522,6 +522,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SessionLost { epoch, message } => session::lost(ctx, epoch, message),
         Msg::SessionAttached {
             epoch,
+            session_instance,
             session: name,
             client_id,
             panes,
@@ -536,6 +537,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => session::attached(
             ctx,
             epoch,
+            session_instance,
             name,
             client_id,
             panes,
@@ -636,8 +638,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             pane_id,
             local,
             generation,
+            agent_refs,
             state,
-        } => session::pane_runtime_changed(ctx, epoch, pane_id, local, generation, state),
+        } => {
+            session::pane_runtime_changed(ctx, epoch, pane_id, local, generation, agent_refs, state)
+        }
         Msg::SessionSpawnResult {
             epoch,
             pane_id,

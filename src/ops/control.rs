@@ -21,6 +21,8 @@ struct PaneInfo {
     /// qualified with their host so two same-name sessions do not look interchangeable.
     session: String,
     id: PaneId,
+    reference: Option<crate::session::protocol::PaneRef>,
+    agent_ref: Option<crate::session::protocol::AgentRef>,
     title: String,
     workspace: usize,
     /// Initial launch intent, retained for automation and profile diagnostics.
@@ -226,11 +228,27 @@ fn runtime_metrics(ctx: &Context<AppRoot>) -> ControlResponse {
 
 impl PaneInfo {
     /// Scratch panes report workspace `0`; a tiled pane reports its one-based workspace number.
-    fn new(pane: &crate::state::Pane, workspace: usize, session: &str) -> Self {
+    fn new(
+        pane: &crate::state::Pane,
+        workspace: usize,
+        session: &str,
+        session_instance: Option<&crate::session::protocol::SessionInstanceId>,
+    ) -> Self {
         let detected = pane.terminal.detected_agent.as_ref();
         Self {
             session: session.to_string(),
             id: pane.id,
+            reference: session_instance.map(|session_instance| crate::session::protocol::PaneRef {
+                session_instance: session_instance.clone(),
+                pane_id: pane.id,
+                generation: pane.pty_generation,
+            }),
+            agent_ref: session_instance.and_then(|_| {
+                pane.agent_refs
+                    .iter()
+                    .find(|reference| reference.slot.is_none())
+                    .cloned()
+            }),
             title: pane.display_title(pane.terminal.title()),
             workspace,
             command: pane
@@ -276,13 +294,19 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
         .remote_host
         .as_deref()
         .map_or_else(|| name.to_string(), |host| format!("{name}@{host}"));
+    let session_instance = attachment.session_instance.as_ref();
     for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
-            panes.push(PaneInfo::new(pane, workspace_index + 1, &session));
+            panes.push(PaneInfo::new(
+                pane,
+                workspace_index + 1,
+                &session,
+                session_instance,
+            ));
         }
     }
     for pane in ctx.state.scratch.panes.iter().filter(|pane| !pane.closing) {
-        panes.push(PaneInfo::new(pane, 0, &session));
+        panes.push(PaneInfo::new(pane, 0, &session, None));
     }
     ControlResponse::ok(panes)
 }

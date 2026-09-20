@@ -348,6 +348,7 @@ pub enum ServerMessage {
     Attached {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capabilities: Option<super::Capabilities>,
+        session_instance: super::SessionInstanceId,
         /// Server's maximum supported protocol version.
         protocol_version: u32,
         /// Negotiated wire version for this connection. Missing (`0`) on pre-negotiation peers.
@@ -444,6 +445,8 @@ pub enum ServerMessage {
         pane_id: PaneId,
         local: bool,
         generation: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        agent_refs: Vec<super::AgentRef>,
         state: PaneRuntimeState,
     },
     Renamed {

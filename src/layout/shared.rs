@@ -1875,6 +1875,7 @@ mod reconciler_tests {
             backend
                 .dispatch(Msg::SessionAttached {
                     epoch: 1,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test("live"),
                     session: "live".into(),
                     client_id: 1,
                     panes: Vec::new(),

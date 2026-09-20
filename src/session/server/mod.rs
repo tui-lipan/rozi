@@ -356,6 +356,10 @@ pub struct AgentProbe {
 #[derive(Debug, Default)]
 pub struct AgentScratch {
     pub summary_changed_at: u64,
+    /// Exact semantic occupants currently present in this pane. Separate from detection caches so
+    /// a state transition does not change identity and a departed occupant cannot reuse its ref.
+    references: HashMap<Option<String>, TrackedAgentReference>,
+    next_incarnation: u64,
     /// Foreground identity at the last sweep, so an unchanged pane can skip the next one.
     ///
     /// Naming the agent sweeps every process on the host to find this pane's process-group
@@ -387,6 +391,12 @@ pub struct AgentScratch {
         crate::session::protocol::DetectedAgentState,
         std::time::Instant,
     )>,
+}
+
+#[derive(Debug)]
+struct TrackedAgentReference {
+    identity: String,
+    incarnation: u64,
 }
 
 /// One state read: the text it was taken from, and what the rules made of it.

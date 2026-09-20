@@ -66,6 +66,7 @@ fn pane_status_broadcasts_and_survives_detach_reattach() {
             local: false,
                     generation: PANE_GENERATION,
                     state,
+                    ..
                 }) if state.status.as_ref().is_some_and(|status| {
                     status.value == "blocked"
                         && status.reason.as_deref() == Some("needs approval")

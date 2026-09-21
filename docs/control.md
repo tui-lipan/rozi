@@ -75,7 +75,7 @@ session:
 {
   "api": 1,
   "session_protocol": 8,
-  "capabilities": ["pane-control", "published-activity", "session-control"]
+  "capabilities": ["agent-waits", "pane-control", "published-activity", "session-control"]
 }
 ```
 
@@ -84,6 +84,10 @@ session:
 | Command | Purpose | `--session` |
 | --- | --- | --- |
 | `list-panes [--format text\|json]` | List panes visible to this endpoint. | yes |
+| `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
+| `agents get --target ID` | Read one semantic agent record. | yes |
+| `agents read --target ID [--scrollback N\|full]` | Capture an agent's terminal. | yes |
+| `agents wait --target ID --until STATE [--timeout DURATION]` | Wait atomically for semantic state. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
 | `focus <PANE_ID>` | Focus a pane. | no |
 | `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. | yes |
@@ -331,9 +335,9 @@ rozi --session dev capture-pane --target "$pane" --scrollback full --format text
 The session must already exist. Start one with `rozi sessions new dev`, or leave a detached
 `rozi dev` running.
 
-There is no event stream against a session endpoint. `subscribe` reports UI events, which a server
-does not raise; poll `list-panes` for pane lifecycle, reported status, and detected agent state
-instead — all three are server-owned and current in every reply.
+There is no general event stream against a session endpoint. `subscribe` reports UI events, which a
+server does not raise. Agent state is the exception: `agents wait` registers a semantic predicate
+inside the server without polling or requiring an attached UI.
 
 ## Extensions and `--session`
 

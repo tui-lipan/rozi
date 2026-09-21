@@ -20,7 +20,8 @@ use serde::Serialize;
 
 use super::*;
 use crate::control::{
-    CaptureScrollback, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse,
+    AgentInfo, AgentTarget, CaptureScrollback, ControlCommand, ControlErrorCode, ControlRequest,
+    ControlResponse,
 };
 use crate::layout::shared::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace, float_rect_to_frac,
@@ -100,6 +101,9 @@ struct SessionNewPane {
 pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static str> {
     match command {
         ControlCommand::ListPanes
+        | ControlCommand::AgentsList
+        | ControlCommand::AgentGet { .. }
+        | ControlCommand::AgentRead { .. }
         | ControlCommand::Metrics
         | ControlCommand::SendText { .. }
         | ControlCommand::SendKeys { .. }
@@ -272,6 +276,16 @@ impl SessionServer {
         // a pane naming a pane in its own session says so with `--target "$ROZI_PANE"`.
         match request.command {
             ControlCommand::ListPanes => ControlResponse::ok(self.session_pane_report()),
+            ControlCommand::AgentsList => ControlResponse::ok(self.session_agent_report()),
+            ControlCommand::AgentGet { target } => self.session_agent_get(target),
+            ControlCommand::AgentRead { target, scrollback } => {
+                match self.resolve_agent_wait_target(target) {
+                    Ok(reference) => {
+                        self.session_capture_pane(Some(reference.pane.pane_id), scrollback)
+                    }
+                    Err(response) => response,
+                }
+            }
             // A headless sample is taken now rather than read from a client's cache, so it is
             // never stale; the wrapper keeps the document shape `rozi metrics` already renders.
             ControlCommand::Metrics => ControlResponse::ok(serde_json::json!({
@@ -391,6 +405,55 @@ impl SessionServer {
         // A HashMap iteration order would reshuffle the table between two identical calls.
         panes.sort_by_key(|pane| pane.id);
         panes
+    }
+
+    fn session_agent_report(&self) -> Vec<AgentInfo> {
+        let workspaces = self.layout_workspace_index();
+        let mut agents = Vec::new();
+        for (&pane_id, pane) in &self.panes {
+            if pane.exited.is_some() {
+                continue;
+            }
+            for runtime in self.agent_runtimes_for(pane_id, pane) {
+                agents.push(AgentInfo {
+                    session: self.session_name.clone(),
+                    pane: pane_id,
+                    workspace: workspaces.get(&pane_id).copied().unwrap_or(0),
+                    agent: runtime.identity.id,
+                    label: runtime.label,
+                    state: runtime.state,
+                    reason: runtime.reason,
+                    cwd: pane.runtime.cwd.clone(),
+                    native_session: None,
+                    reference: runtime.reference,
+                    source: runtime.source,
+                    changed_at: runtime.changed_at,
+                });
+            }
+        }
+        agents.sort_by(|left, right| {
+            left.pane
+                .cmp(&right.pane)
+                .then_with(|| left.reference.slot.cmp(&right.reference.slot))
+        });
+        agents
+    }
+
+    fn session_agent_get(&self, target: AgentTarget) -> ControlResponse {
+        let reference = match self.resolve_agent_wait_target(target) {
+            Ok(reference) => reference,
+            Err(response) => return response,
+        };
+        self.session_agent_report()
+            .into_iter()
+            .find(|agent| agent.reference == reference)
+            .map(ControlResponse::ok)
+            .unwrap_or_else(|| {
+                ControlResponse::error_with(
+                    ControlErrorCode::AgentGone,
+                    "agent is no longer present",
+                )
+            })
     }
 
     /// One-based workspace number per pane, read from the shared layout document.
@@ -962,6 +1025,17 @@ mod tests {
         server.panes.insert(id, pane);
     }
 
+    fn pane_with_agent(server: &mut SessionServer, id: PaneId) {
+        let mut pane = super::super::tests::test_pane(1);
+        pane.runtime.cwd = Some("/repo".into());
+        pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        pane.agent.sync_references(&pane.runtime);
+        server.panes.insert(id, pane);
+    }
+
     fn one_pane_layout(pane_id: PaneId) -> SharedLayout {
         SharedLayout {
             version: SHARED_LAYOUT_VERSION,
@@ -1025,6 +1099,27 @@ mod tests {
             messages.as_slice(),
             [(Target::Sender, ServerMessage::Error { code, .. })] if code == "protocol-mismatch"
         ));
+    }
+
+    #[test]
+    fn agent_list_and_get_return_the_same_exact_reference() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+
+        let (listed, _) = control(&mut server, ControlCommand::AgentsList);
+        let agents: Vec<AgentInfo> = serde_json::from_value(listed.data.unwrap()).unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].pane, 7);
+        assert_eq!(agents[0].state, protocol::AgentState::Idle);
+
+        let (got, _) = control(
+            &mut server,
+            ControlCommand::AgentGet {
+                target: AgentTarget::Ref(agents[0].reference.clone()),
+            },
+        );
+        let got: AgentInfo = serde_json::from_value(got.data.unwrap()).unwrap();
+        assert_eq!(got, agents[0]);
     }
 
     #[test]

@@ -93,6 +93,15 @@ impl CaptureScrollback {
 #[serde(tag = "cmd", rename_all = "kebab-case")]
 pub enum ControlCommand {
     ListPanes,
+    AgentsList,
+    AgentGet {
+        target: AgentTarget,
+    },
+    AgentRead {
+        target: AgentTarget,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scrollback: Option<CaptureScrollback>,
+    },
     Metrics,
     Focus {
         target: PaneId,
@@ -240,6 +249,27 @@ pub enum AgentWaitCondition {
     Done,
     Quiescent,
     Gone,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentInfo {
+    pub session: String,
+    pub pane: PaneId,
+    pub workspace: usize,
+    pub agent: String,
+    pub label: String,
+    pub state: crate::session::protocol::AgentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_session: Option<String>,
+    #[serde(rename = "ref")]
+    pub reference: crate::session::protocol::AgentRef,
+    pub source: crate::session::protocol::AgentAuthority,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_at: Option<u64>,
 }
 
 /// How prominent a [`ControlCommand::Notify`] toast is.

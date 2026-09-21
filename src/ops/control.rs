@@ -80,6 +80,15 @@ pub(crate) fn handle_control_request(
     }
     let response = match envelope.request.command {
         ControlCommand::ListPanes => list_panes(ctx),
+        ControlCommand::AgentsList => ControlResponse::ok(list_agents(ctx)),
+        ControlCommand::AgentGet { target } => match resolve_agent(ctx, &target) {
+            Ok(agent) => ControlResponse::ok(agent),
+            Err(response) => response,
+        },
+        ControlCommand::AgentRead { target, scrollback } => match resolve_agent(ctx, &target) {
+            Ok(agent) => capture_pane(ctx, Some(agent.pane), scrollback),
+            Err(response) => response,
+        },
         ControlCommand::Metrics => {
             let response = runtime_metrics(ctx);
             let _ = envelope.reply.send(response);
@@ -312,6 +321,87 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
         panes.push(PaneInfo::new(pane, 0, &session, None));
     }
     ControlResponse::ok(panes)
+}
+
+fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {
+    let attachment = ctx.state.current();
+    let name = attachment.session_name.as_deref().unwrap_or("local");
+    let session = attachment
+        .remote_host
+        .as_deref()
+        .map_or_else(|| name.to_string(), |host| format!("{name}@{host}"));
+    let mut agents = Vec::new();
+    for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
+        for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
+            for runtime in pane.agent_runtimes() {
+                agents.push(crate::control::AgentInfo {
+                    session: session.clone(),
+                    pane: pane.id,
+                    workspace: workspace_index + 1,
+                    agent: runtime.identity.id,
+                    label: runtime.label,
+                    state: runtime.state,
+                    reason: runtime.reason,
+                    cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
+                    native_session: None,
+                    reference: runtime.reference,
+                    source: runtime.source,
+                    changed_at: runtime.changed_at,
+                });
+            }
+        }
+    }
+    agents.sort_by(|left, right| {
+        left.pane
+            .cmp(&right.pane)
+            .then_with(|| left.reference.slot.cmp(&right.reference.slot))
+    });
+    agents
+}
+
+fn resolve_agent(
+    ctx: &Context<AppRoot>,
+    target: &crate::control::AgentTarget,
+) -> std::result::Result<crate::control::AgentInfo, ControlResponse> {
+    let agents = list_agents(ctx);
+    match target {
+        crate::control::AgentTarget::Pane(pane_id) => {
+            let mut matching = agents.into_iter().filter(|agent| agent.pane == *pane_id);
+            let Some(agent) = matching.next() else {
+                return Err(ControlResponse::error_with(
+                    ControlErrorCode::AgentGone,
+                    format!("pane {pane_id} has no agent"),
+                ));
+            };
+            if matching.next().is_some() {
+                return Err(ControlResponse::error_with(
+                    ControlErrorCode::TargetRequired,
+                    format!(
+                        "pane {pane_id} has multiple agent activities; use an exact agent reference"
+                    ),
+                ));
+            }
+            Ok(agent)
+        }
+        crate::control::AgentTarget::Ref(reference) => {
+            let current_instance = ctx.state.current().session_instance.as_ref();
+            if current_instance != Some(&reference.pane.session_instance) {
+                return Err(ControlResponse::error_with(
+                    ControlErrorCode::StaleReference,
+                    "agent reference belongs to a different session server instance",
+                ));
+            }
+            agents
+                .into_iter()
+                .find(|agent| agent.reference == *reference)
+                .ok_or_else(|| {
+                    ControlResponse::error_with(
+                        ControlErrorCode::AgentReplaced,
+                        "agent reference no longer names the current incarnation",
+                    )
+                })
+        }
+    }
 }
 
 fn set_status(

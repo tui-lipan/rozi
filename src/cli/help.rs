@@ -152,6 +152,29 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
         ],
     },
     HelpSection {
+        heading: "AGENTS",
+        advanced_only: false,
+        note: "Use --session <NAME> for detached sessions and semantic waits.",
+        rows: &[
+            row(
+                "agents list [--format text|json]",
+                "List semantic agent occupants",
+            ),
+            row(
+                "agents get --target <PANE> [--format text|json]",
+                "Show one agent record",
+            ),
+            row(
+                "agents read --target <PANE> [--scrollback <N|full>]",
+                "Read an agent's terminal",
+            ),
+            row(
+                "agents wait --target <PANE> --until <STATE>",
+                "Wait inside the session server",
+            ),
+        ],
+    },
+    HelpSection {
         heading: "SESSIONS",
         advanced_only: false,
         note: "",

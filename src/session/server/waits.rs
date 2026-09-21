@@ -128,7 +128,7 @@ impl SessionServer {
         self.agent_waits.remove(&client_id);
     }
 
-    fn resolve_agent_wait_target(
+    pub(super) fn resolve_agent_wait_target(
         &self,
         target: AgentTarget,
     ) -> std::result::Result<protocol::AgentRef, ControlResponse> {
@@ -236,7 +236,7 @@ impl SessionServer {
         }
     }
 
-    fn agent_runtimes_for(
+    pub(super) fn agent_runtimes_for(
         &self,
         pane_id: PaneId,
         pane: &ServerPane,

@@ -3,102 +3,292 @@ use super::*;
 const EXTENSIONS_WIDTH: u16 = 84;
 const EXTENSION_DETAIL_WIDTH: u16 = 76;
 
+/// The Extensions manager: installed extensions and the public index, one searchable tab each.
 pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
+    use crate::state::{ExtensionPickerRow, ExtensionsTab};
+
     let Some(state) = ctx.state.extensions.as_ref() else {
         return Text::new("").into();
     };
-    // One description per row, shared by the group entries and the row renderer so the text a
-    // query matches is the text the row shows.
-    let descriptions: Vec<String> = state
-        .entries
-        .iter()
-        .map(|entry| crate::ops::extensions_manager::extension_description(entry, state))
-        .collect();
-    let installed_ids = state
-        .entries
-        .iter()
-        .filter_map(|entry| entry.id.as_deref())
-        .collect::<std::collections::HashSet<_>>();
-    let catalog_descriptions: Vec<String> = state
-        .catalog_entries
-        .iter()
-        .map(crate::ops::extensions_manager::catalog_description)
-        .collect();
-    let mut groups = Vec::new();
-    groups.extend([
-        extension_group("Active", state, &descriptions, |status| {
-            status == crate::config::ExtensionStatus::Loaded
-        }),
-        extension_group("Disabled", state, &descriptions, |status| {
-            status == crate::config::ExtensionStatus::Disabled
-        }),
-        extension_group("Problems", state, &descriptions, |status| {
-            !matches!(
-                status,
-                crate::config::ExtensionStatus::Loaded | crate::config::ExtensionStatus::Disabled
-            )
-        }),
-    ]);
-    groups.push((
-        "Discover",
-        state
-            .catalog_entries
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| !installed_ids.contains(entry.id.as_str()))
-            .map(|(index, entry)| {
-                SearchEntry::item(
-                    entry.title.clone(),
-                    crate::state::ExtensionPickerRow::Catalog(index),
-                )
-                .description(picker_description(fit_description(
-                    &entry.title,
-                    &catalog_descriptions[index],
-                    EXTENSIONS_WIDTH,
-                )))
-            })
-            .collect(),
-    ));
-    let entries = search_entries_with_groups(groups);
-    let selected = state
-        .catalog_selected
-        .map(crate::state::ExtensionPickerRow::Catalog)
-        .unwrap_or(crate::state::ExtensionPickerRow::Installed(state.selected));
-    let selected_installed = state
-        .catalog_selected
-        .is_none()
-        .then(|| state.entries.get(state.selected))
-        .flatten();
-    let selected_catalog = state
-        .catalog_selected
-        .and_then(|index| state.catalog_entries.get(index));
-    let toggle = selected_installed.is_some_and(|entry| {
+    let theme = &ctx.state.theme;
+    let searching = !state.query.text().trim().is_empty();
+    let installed_groups = crate::ops::extensions_manager::installed_groups(state);
+    let installed_matches: usize = installed_groups.iter().map(|(_, rows)| rows.len()).sum();
+    let catalog_rows = crate::ops::extensions_manager::visible_catalog(state);
+    let armed_accent = theme.status.error;
+    let armed = state.pending_remove.as_deref();
+
+    let mut items = Vec::new();
+    let mut targets = Vec::new();
+    let (matches, total) = match state.tab {
+        ExtensionsTab::Installed => {
+            for (group_index, (title, rows)) in installed_groups.iter().enumerate() {
+                if group_index > 0 {
+                    items.push(ListItem::spacer());
+                    targets.push(None);
+                }
+                items.push(section_item(title, theme));
+                targets.push(None);
+                for index in rows {
+                    let entry = &state.entries[*index];
+                    items.push(if armed == Some(entry.path.as_str()) {
+                        super::palette::render_pending_confirm_item(
+                            entry.display_name(),
+                            armed_accent,
+                            "again to remove",
+                            true,
+                        )
+                    } else {
+                        installed_row(ctx, state, entry)
+                    });
+                    targets.push(Some(ExtensionPickerRow::Installed(*index)));
+                }
+            }
+            (installed_matches, state.entries.len())
+        }
+        ExtensionsTab::Discover => {
+            for index in &catalog_rows {
+                items.push(catalog_row(ctx, state, &state.catalog_entries[*index]));
+                targets.push(Some(ExtensionPickerRow::Catalog(*index)));
+            }
+            (catalog_rows.len(), state.catalog_entries.len())
+        }
+    };
+    let current = match state.tab {
+        ExtensionsTab::Installed => ExtensionPickerRow::Installed(state.selected),
+        ExtensionsTab::Discover => {
+            ExtensionPickerRow::Catalog(state.catalog_selected.unwrap_or(usize::MAX))
+        }
+    };
+    let selected_index = targets.iter().position(|target| *target == Some(current));
+    let selected_installed = match selected_index.and_then(|index| targets[index]) {
+        Some(ExtensionPickerRow::Installed(index)) => state.entries.get(index),
+        _ => None,
+    };
+    let selected_catalog = match selected_index.and_then(|index| targets[index]) {
+        Some(ExtensionPickerRow::Catalog(index)) => state.catalog_entries.get(index),
+        _ => None,
+    };
+    let row_armed = selected_installed.is_some_and(|entry| armed == Some(entry.path.as_str()));
+    let actions = match state.tab {
+        ExtensionsTab::Installed => installed_actions(ctx, state, selected_installed, row_armed),
+        ExtensionsTab::Discover => vec![
+            OverlayAction::new(
+                "enter",
+                "details",
+                Msg::ExtensionsToggleSelected,
+                selected_catalog.is_some(),
+            ),
+            OverlayAction::new(
+                "ctrl-i",
+                "install from source",
+                Msg::ExtensionsOpenInstall,
+                true,
+            ),
+            OverlayAction::new("ctrl-r", "refresh", Msg::ExtensionsReload, true),
+        ],
+    };
+
+    let targets: Arc<[Option<ExtensionPickerRow>]> = targets.into();
+    let select_targets = targets.clone();
+    let list_rows = list_rows(ctx, targets.len());
+    let page = isize::from(i16::try_from(list_rows.saturating_sub(1).max(1)).unwrap_or(i16::MAX));
+    let keys = key_handler(ctx, state.tab, targets, selected_index, page, &actions);
+    let search = Input::bound(&state.query)
+        .placeholder("Search extensions…")
+        .suffix(format!("{matches}/{total}"))
+        .style(fg_only(&theme.muted))
+        .focus_style(Style::new().fg(theme.border_active))
+        .placeholder_style(fg_only(&theme.muted))
+        .suffix_style(fg_only(&theme.primary))
+        .focus_suffix_style(fg_only(&theme.primary))
+        .selection_style(theme.text_selection)
+        .width(Length::Flex(1))
+        .height(Length::Px(1))
+        .border(false)
+        .padding((0, 1))
+        .on_change(ctx.link().callback(Msg::ExtensionsQueryChanged))
+        .key_interceptor(keys)
+        .key(extensions_key());
+    let tabs = super::palette::picker_tabs(
+        ctx,
+        &ExtensionsTab::ORDER.map(ExtensionsTab::label),
+        state.tab.index(),
+        ctx.link()
+            .callback(|event: TabsEvent| Msg::ExtensionsTabSelected(event.index)),
+    );
+    let (selection_left, selection_right) =
+        crate::view::picker_selection_cap_glyphs(&ctx.state.config);
+    let selection_style = picker_selection_style(theme, row_armed.then_some(armed_accent));
+    let list = List::new()
+        .items(items)
+        .selected(selected_index)
+        .border(false)
+        .selection_symbol(Some(selection_left))
+        .selection_symbol_right(Some(selection_right))
+        .selection_symbol_style(crate::view::picker_selection_cap_style(
+            theme,
+            if row_armed {
+                armed_accent
+            } else {
+                theme.border_active
+            },
+        ))
+        .unselected_symbol(Some(""))
+        .selection_full_width(true)
+        .selection_style(selection_style)
+        .unfocused_selection_style(selection_style)
+        .item_hover_style(Style::new().bg(theme.surface.element.elevate_by(0.08)))
+        .item_horizontal_padding((0, 1))
+        .header_horizontal_padding((0, 1))
+        .scroll_wheel(true)
+        .scrollbar(true)
+        .scrollbar_config(modal_scrollbar_config(theme))
+        .empty_text(empty_text(state, searching))
+        .empty_text_style(fg_only(&theme.muted))
+        .height(Length::Px(list_rows))
+        // Keyboard input stays in the search field; the list only takes clicks and the wheel.
+        .focusable(false)
+        .on_select(ctx.link().callback_opt(move |event: ListEvent| {
+            let row = (*select_targets.get(event.index)?)?;
+            Some(Msg::ExtensionsSelect(row))
+        }))
+        .on_activate(
+            ctx.link()
+                .callback(|_: ListEvent| Msg::ExtensionsToggleSelected),
+        );
+    let mut body = VStack::new()
+        .height(Length::Auto)
+        .child(search)
+        .child(super::palette::picker_divider(theme))
+        .child(tabs)
+        .child(Spacer::new().height(Length::Px(1)))
+        .child(list);
+    if let Some(status) = catalog_status(ctx, state) {
+        body = body.child(status);
+    }
+    body = body.child(overlay_hints(theme, &actions));
+    Modal::new()
+        .width(Length::Px(EXTENSIONS_WIDTH))
+        // Content-sized and capped, with the top edge pinned so filtering shrinks it downward. The
+        // reserve matches the install prompt's, which stacks one row below this frame.
+        .height(Length::Auto)
+        .max_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
+        .reserve_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
+        .border(false)
+        .padding(0)
+        .frame_style(Style::new().bg(theme.surface.element))
+        .on_close(ctx.link().callback(|_| Msg::CloseExtensions))
+        .child(super::palette::tabbed_picker_panel(
+            ctx,
+            "Extensions",
+            Length::Auto,
+            body.into(),
+        ))
+        .into()
+}
+
+fn empty_text(state: &crate::state::ExtensionsState, searching: bool) -> &'static str {
+    match state.tab {
+        _ if searching => "No matches",
+        crate::state::ExtensionsTab::Installed => "No extensions installed",
+        // The status row already reports a running fetch or a failed one.
+        crate::state::ExtensionsTab::Discover
+            if state.catalog_loading || state.catalog_error.is_some() =>
+        {
+            ""
+        }
+        crate::state::ExtensionsTab::Discover => "No extensions available",
+    }
+}
+
+fn section_item(title: &str, theme: &Theme) -> ListItem {
+    ListItem::header(title).style(fg_only(&theme.accent).bold())
+}
+
+fn installed_row(
+    ctx: &Context<AppRoot>,
+    state: &crate::state::ExtensionsState,
+    entry: &crate::config::ExtensionInfo,
+) -> ListItem {
+    let theme = &ctx.state.theme;
+    let problem = !matches!(
+        entry.status,
+        crate::config::ExtensionStatus::Loaded | crate::config::ExtensionStatus::Disabled
+    );
+    let style = fg_only(if problem {
+        &theme.muted
+    } else {
+        &theme.primary
+    });
+    let label = entry.display_name();
+    let description = crate::ops::extensions_manager::extension_description(entry, state);
+    let row = picker_row(
+        [Span::new(label).style(style)],
+        fit_description(label, &description, EXTENSIONS_WIDTH),
+        style,
+    );
+    let updating = entry
+        .id
+        .as_deref()
+        .is_some_and(|id| state.updating_id.as_deref() == Some(id));
+    if !updating {
+        return row;
+    }
+    row.description(crate::ops::extensions_manager::EXTENSION_UPDATING_LABEL)
+        .description_style(style)
+        .description_spinner(crate::view::session_status::picker_circle_spinner(
+            Style::new().fg(theme.status.info),
+        ))
+}
+
+fn catalog_row(
+    ctx: &Context<AppRoot>,
+    state: &crate::state::ExtensionsState,
+    entry: &crate::extension_catalog::CatalogEntry,
+) -> ListItem {
+    let theme = &ctx.state.theme;
+    let installed = crate::ops::extensions_manager::catalog_entry_installed(state, entry);
+    let style = fg_only(if installed || entry.incompatibility().is_some() {
+        &theme.muted
+    } else {
+        &theme.primary
+    });
+    let description = crate::ops::extensions_manager::catalog_description(entry, installed);
+    picker_row(
+        [Span::new(entry.title.as_str()).style(style)],
+        fit_description(&entry.title, &description, EXTENSIONS_WIDTH),
+        style,
+    )
+}
+
+fn installed_actions(
+    ctx: &Context<AppRoot>,
+    state: &crate::state::ExtensionsState,
+    selected: Option<&crate::config::ExtensionInfo>,
+    armed: bool,
+) -> Vec<OverlayAction> {
+    let toggle = selected.is_some_and(|entry| {
         matches!(
             entry.status,
             crate::config::ExtensionStatus::Loaded | crate::config::ExtensionStatus::Disabled
         )
     });
-    let manifest = selected_installed
-        .is_some_and(|entry| state.manifest_entries.contains(entry.path.as_str()));
+    let manifest =
+        selected.is_some_and(|entry| state.manifest_entries.contains(entry.path.as_str()));
     let removable = state.updating_id.is_none()
-        && selected_installed
-            .is_some_and(|entry| state.removable_entries.contains(entry.path.as_str()));
-    let updatable = selected_installed
+        && selected.is_some_and(|entry| state.removable_entries.contains(entry.path.as_str()));
+    let updatable = selected
         .and_then(|entry| entry.id.as_deref())
         .is_some_and(|id| {
             state.installation_kinds.get(id)
                 == Some(&crate::extension_installation::InstallKind::Git)
                 && state.updating_id.is_none()
         });
-    let armed = selected_installed
-        .filter(|entry| state.pending_remove.as_deref() == Some(entry.path.as_str()))
-        .map(|_| crate::state::ExtensionPickerRow::Installed(state.selected));
-    let actions = vec![
+    vec![
         OverlayAction::new(
             "enter",
-            if selected_catalog.is_some() {
-                "details"
-            } else if selected_installed
+            if selected
                 .is_some_and(|entry| entry.status == crate::config::ExtensionStatus::Disabled)
             {
                 "enable"
@@ -106,14 +296,13 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
                 "disable"
             },
             Msg::ExtensionsToggleSelected,
-            toggle || selected_catalog.is_some(),
-        )
-        .hint_only(),
+            toggle,
+        ),
         OverlayAction::new(
             "ctrl-d",
             "details",
             Msg::ExtensionsOpenDetail,
-            selected_installed.is_some() || selected_catalog.is_some(),
+            selected.is_some(),
         ),
         OverlayAction::new("ctrl-i", "install", Msg::ExtensionsOpenInstall, true),
         OverlayAction::new(
@@ -135,155 +324,71 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
         ),
         OverlayAction::new(
             "ctrl-k",
-            if armed.is_some() {
-                "confirm remove"
-            } else {
-                "remove"
-            },
+            if armed { "confirm remove" } else { "remove" },
             Msg::ExtensionsRemoveSelected,
             removable,
         )
-        .confirm_if(
-            armed.is_some(),
-            "again to remove",
-            ctx.state.theme.status.error,
-            true,
-        ),
-    ];
-    let item_style = fg_only(&ctx.state.theme.primary);
-    let muted_style = fg_only(&ctx.state.theme.muted);
-    let rows = state.entries.clone();
-    let catalog_rows = state.catalog_entries.clone();
-    let catalog_descriptions_for_render = catalog_descriptions.clone();
-    let updating_id = state.updating_id.clone();
-    let updating_style = Style::new().fg(ctx.state.theme.status.info);
-    let selected_index = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            SearchEntry::Item(item) => Some(item.value),
-            _ => None,
-        })
-        .position(|row| row == selected);
-
-    OverlayPalette::new(
-        "Extensions",
-        extensions_key(),
-        Msg::CloseExtensions,
-        EXTENSIONS_WIDTH,
-    )
-    .entries(entries)
-    .actions(actions)
-    .armed_row(armed)
-    .placeholder("Search extensions…")
-    // The status row already reports a running fetch or a failed one.
-    .empty_text(if state.catalog_loading {
-        ""
-    } else {
-        "No extensions available"
-    })
-    .status(catalog_status(ctx, state))
-    .initial_query(state.restore_query.clone())
-    .preserve_groups(true)
-    .selected(selected_index)
-    .render_item(Arc::new(
-        move |item: &SearchItem<crate::state::ExtensionPickerRow>, _highlight| {
-            let crate::state::ExtensionPickerRow::Installed(index) = item.value else {
-                let crate::state::ExtensionPickerRow::Catalog(index) = item.value else {
-                    unreachable!()
-                };
-                let entry = &catalog_rows[index];
-                let incompatible = entry.incompatibility().is_some();
-                return Some(picker_row(
-                    [Span::new(item.label.as_ref()).style(if incompatible {
-                        muted_style
-                    } else {
-                        item_style
-                    })],
-                    fit_description(
-                        item.label.as_ref(),
-                        &catalog_descriptions_for_render[index],
-                        EXTENSIONS_WIDTH,
-                    ),
-                    if incompatible {
-                        muted_style
-                    } else {
-                        item_style
-                    },
-                ));
-            };
-            let entry = &rows[index];
-            let problem = !matches!(
-                entry.status,
-                crate::config::ExtensionStatus::Loaded | crate::config::ExtensionStatus::Disabled
-            );
-            let label_style = if problem { muted_style } else { item_style };
-            let description_style = if problem { muted_style } else { item_style };
-            let updating = entry
-                .id
-                .as_deref()
-                .is_some_and(|id| updating_id.as_deref() == Some(id));
-            let row = picker_row(
-                [Span::new(item.label.as_ref()).style(label_style)],
-                fit_description(item.label.as_ref(), &descriptions[index], EXTENSIONS_WIDTH),
-                description_style,
-            );
-            Some(if updating {
-                row.description(crate::ops::extensions_manager::EXTENSION_UPDATING_LABEL)
-                    .description_style(description_style)
-                    .description_spinner(crate::view::session_status::picker_circle_spinner(
-                        updating_style,
-                    ))
-            } else {
-                row
-            })
-        },
-    ))
-    .on_query_change(
-        ctx.link()
-            .callback(|query: Arc<str>| Msg::ExtensionsQueryChanged(query.to_string())),
-    )
-    .on_select(
-        ctx.link()
-            .callback(|event: SearchEvent<crate::state::ExtensionPickerRow>| {
-                Msg::ExtensionsSelect(event.item.value)
-            }),
-    )
-    .on_activate(
-        ctx.link()
-            .callback(|_: SearchEvent<crate::state::ExtensionPickerRow>| {
-                Msg::ExtensionsToggleSelected
-            }),
-    )
-    .render(ctx)
+        .confirm_if(armed, "again to remove", ctx.state.theme.status.error, true),
+    ]
 }
 
-fn extension_group(
-    title: &'static str,
-    state: &crate::state::ExtensionsState,
-    descriptions: &[String],
-    include: impl Fn(crate::config::ExtensionStatus) -> bool,
-) -> (
-    &'static str,
-    Vec<SearchEntry<crate::state::ExtensionPickerRow>>,
-) {
-    let rows = state
-        .entries
+fn list_rows(ctx: &Context<AppRoot>, rows: usize) -> u16 {
+    // Frame border, search, divider, tabs, and spacer above; status, hints, and border below.
+    const CHROME_ROWS: u16 = 8;
+    let cap = (ctx.viewport().h * ACTION_PALETTE_MAX_HEIGHT_PERCENT / 100)
+        .saturating_sub(CHROME_ROWS)
+        .max(3);
+    u16::try_from(rows).unwrap_or(u16::MAX).clamp(1, cap)
+}
+
+/// Keys for the search field, which keeps focus: the arrows and Page keys move the selection,
+/// `Tab`, `Shift+Tab`, `Left`, and `Right` switch tabs, and the footer actions take their keys.
+fn key_handler(
+    ctx: &Context<AppRoot>,
+    tab: crate::state::ExtensionsTab,
+    targets: Arc<[Option<crate::state::ExtensionPickerRow>]>,
+    selected: Option<usize>,
+    page: isize,
+    actions: &[OverlayAction],
+) -> KeyHandler {
+    let actions = actions
         .iter()
-        .enumerate()
-        .filter(|(_, entry)| include(entry.status))
-        .map(|(index, entry)| {
-            SearchEntry::item(
-                entry.display_name().to_string(),
-                crate::state::ExtensionPickerRow::Installed(index),
-            )
-            .description(picker_description(fit_description(
-                entry.display_name(),
-                &descriptions[index],
-                EXTENSIONS_WIDTH,
-            )))
+        .filter(|action| action.enabled && action.intercept)
+        .map(|action| (action.key.clone(), action.msg.clone()))
+        .collect::<Vec<_>>();
+    let switch = move |steps: isize| Msg::ExtensionsTabSelected(tab.stepped(steps).index());
+    ctx.link().key_handler(move |key| {
+        let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key;
+        let navigation = match key.code {
+            KeyCode::Tab if plain && !key.mods.shift => Some(switch(1)),
+            KeyCode::BackTab | KeyCode::Tab if plain => Some(switch(-1)),
+            KeyCode::Left if plain && !key.mods.shift => Some(switch(-1)),
+            KeyCode::Right if plain && !key.mods.shift => Some(switch(1)),
+            code if plain && !key.mods.shift => {
+                let step = match code {
+                    KeyCode::Up => Some((-1, true)),
+                    KeyCode::Down => Some((1, true)),
+                    KeyCode::PageUp => Some((-page, false)),
+                    KeyCode::PageDown => Some((page, false)),
+                    KeyCode::Home => Some((isize::MIN, false)),
+                    KeyCode::End => Some((isize::MAX, false)),
+                    _ => None,
+                };
+                step.and_then(|(delta, wrap)| {
+                    let index =
+                        super::palette::stepped_selectable_row(&targets, selected, delta, wrap)?;
+                    targets[index].map(Msg::ExtensionsSelect)
+                })
+            }
+            _ => None,
+        };
+        navigation.or_else(|| {
+            actions
+                .iter()
+                .find(|(binding, _)| binding.matches_sequence(&[key]))
+                .map(|(_, msg)| msg.clone())
         })
-        .collect();
-    (title, rows)
+    })
 }
 
 /// The discovery status row: a spinner while the index is fetched, the failure when it could not
@@ -292,6 +397,9 @@ fn catalog_status(
     ctx: &Context<AppRoot>,
     state: &crate::state::ExtensionsState,
 ) -> Option<Element> {
+    if state.tab != crate::state::ExtensionsTab::Discover {
+        return None;
+    }
     let theme = &ctx.state.theme;
     let listed = !state.catalog_entries.is_empty();
     let content: Element = if state.catalog_loading {
@@ -396,6 +504,10 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     };
     let entry = &detail.entry;
     let compatible = entry.incompatibility().is_none();
+    let installed =
+        ctx.state.extensions.as_ref().is_some_and(|state| {
+            crate::ops::extensions_manager::catalog_entry_installed(state, entry)
+        });
     let installing = ctx.state.extension_catalog_install.as_deref();
     let actions = vec![OverlayAction::new(
         "enter",
@@ -405,10 +517,13 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
             "install"
         },
         Msg::ExtensionsSubmitCatalogInstall,
-        compatible && installing.is_none(),
+        compatible && !installed && installing.is_none(),
     )];
-    let sections =
-        crate::ops::extensions_manager::catalog_report_sections(entry, detail.error.as_deref());
+    let sections = crate::ops::extensions_manager::catalog_report_sections(
+        entry,
+        installed,
+        detail.error.as_deref(),
+    );
     let formatter = ExtensionReportFormatter::new(sections.clone(), &ctx.state.theme);
     let document = DocumentView::new(crate::config::report_text(&sections))
         .height(report_height(ctx, &formatter))
@@ -427,7 +542,11 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     let content = VStack::new()
         .child(document)
         .child(overlay_hints(&ctx.state.theme, &actions));
-    let title = format!("Install extension · {}", entry.title);
+    let title = if installed {
+        format!("Extensions · {}", entry.title)
+    } else {
+        format!("Install extension · {}", entry.title)
+    };
 
     action_palette_modal_with_width(ctx, &title, EXTENSION_DETAIL_WIDTH)
         .on_close(ctx.link().callback(|_| Msg::CloseExtensionDetail))

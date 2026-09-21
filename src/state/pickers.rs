@@ -1020,14 +1020,54 @@ pub struct PickPrompt {
     pub input: TextInput,
 }
 
+/// A tab of the Extensions manager.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ExtensionsTab {
+    #[default]
+    Installed,
+    Discover,
+}
+
+impl ExtensionsTab {
+    /// The tab strip's order, shared by the strip, the keyboard cycle, and `ExtensionsTabSelected`.
+    pub const ORDER: [Self; 2] = [Self::Installed, Self::Discover];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Installed => "Installed",
+            Self::Discover => "Discover",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        Self::ORDER
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or_default()
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        Self::ORDER.get(index).copied().unwrap_or_default()
+    }
+
+    /// The tab `steps` places along the strip, wrapping at both ends.
+    pub fn stepped(self, steps: isize) -> Self {
+        let count = Self::ORDER.len();
+        Self::from_index((self.index() + count.wrapping_add_signed(steps)) % count)
+    }
+}
+
 pub struct ExtensionsState {
+    pub tab: ExtensionsTab,
     pub entries: Vec<crate::config::ExtensionInfo>,
     pub merged: BTreeMap<String, crate::config::ExtensionSettings>,
+    /// Selected row of the Installed tab, as an index into `entries`.
     pub selected: usize,
-    /// Selected discovery result. `None` means `selected` names an installed row.
+    /// Selected row of the Discover tab, as an index into `catalog_entries`.
     pub catalog_selected: Option<usize>,
-    pub query: String,
-    pub restore_query: String,
+    /// Filters the active tab. Kept here rather than in the widget, so it survives the report and
+    /// prompts that replace the picker.
+    pub query: TextInput,
     /// Installation path awaiting a second Ctrl+K. The path survives rescans that reorder rows
     /// and distinguishes duplicate manifest ids.
     pub pending_remove: Option<String>,

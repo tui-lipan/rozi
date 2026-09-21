@@ -93,6 +93,14 @@ struct SessionNewPane {
     pty_ready: bool,
 }
 
+struct SessionAgentPrompt<'a> {
+    target: AgentTarget,
+    prompt: &'a str,
+    wait: Option<crate::control::AgentWaitCondition>,
+    timeout_ms: Option<u64>,
+    allow_working: bool,
+}
+
 /// Why a control command cannot be served by a session server.
 ///
 /// Spelled out per command rather than as one blanket "unsupported": a script that reaches for
@@ -111,7 +119,8 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::CapturePane { .. }
         | ControlCommand::PaneLogging { .. }
         | ControlCommand::SetStatus { .. }
-        | ControlCommand::AgentWait { .. } => None,
+        | ControlCommand::AgentWait { .. }
+        | ControlCommand::AgentPrompt { .. } => None,
         ControlCommand::Focus { .. } => Some(
             "focus is client-local; a session server has no focused pane to move (every headless command names its pane with --target instead)",
         ),
@@ -234,6 +243,43 @@ impl SessionServer {
                 )]
             });
         }
+        if let ControlCommand::AgentPrompt {
+            target,
+            prompt,
+            wait,
+            timeout_ms,
+            allow_working,
+        } = &request.command
+        {
+            let response = if let Some(provenance) = &request.extension {
+                Some(ControlResponse::error(unverifiable_extension_provenance(
+                    provenance,
+                )))
+            } else {
+                self.register_agent_prompt(
+                    client_id,
+                    SessionAgentPrompt {
+                        target: target.clone(),
+                        prompt,
+                        wait: *wait,
+                        timeout_ms: *timeout_ms,
+                        allow_working: *allow_working,
+                    },
+                    capabilities.clone(),
+                    effective,
+                )
+            };
+            return response.map_or_else(Vec::new, |response| {
+                vec![(
+                    Target::Sender,
+                    ServerMessage::SessionControlResult {
+                        capabilities: Some(capabilities),
+                        effective_protocol: effective,
+                        response,
+                    },
+                )]
+            });
+        }
         let mut broadcasts = Vec::new();
         let response = self.run_session_control(request, &mut broadcasts);
         let mut messages = vec![(
@@ -336,6 +382,9 @@ impl SessionServer {
                 self.session_pane_logging(target, enabled, broadcasts)
             }
             ControlCommand::AgentWait { .. } => unreachable!("agent waits are registered above"),
+            ControlCommand::AgentPrompt { .. } => {
+                unreachable!("agent prompts are submitted above")
+            }
             // Every remaining variant was refused above by `session_control_unsupported`.
             other => ControlResponse::error(
                 session_control_unsupported(&other).unwrap_or("unsupported control command"),
@@ -454,6 +503,73 @@ impl SessionServer {
                     "agent is no longer present",
                 )
             })
+    }
+
+    fn register_agent_prompt(
+        &mut self,
+        client_id: ClientId,
+        request: SessionAgentPrompt<'_>,
+        capabilities: protocol::Capabilities,
+        effective_protocol: u32,
+    ) -> Option<ControlResponse> {
+        if request.prompt.is_empty() {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "agent prompt cannot be empty",
+            ));
+        }
+        let reference = match self.resolve_agent_wait_target(request.target) {
+            Ok(reference) => reference,
+            Err(response) => return Some(response),
+        };
+        let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::AgentGone,
+                "agent pane is gone",
+            ));
+        };
+        let Some(runtime) = self
+            .agent_runtimes_for(reference.pane.pane_id, pane)
+            .into_iter()
+            .find(|runtime| runtime.reference == reference)
+        else {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::AgentReplaced,
+                "agent incarnation was replaced",
+            ));
+        };
+        if let Err(response) = validate_agent_prompt_state(runtime.state, request.allow_working) {
+            return Some(response);
+        }
+
+        if let Some(until) = request.wait
+            && let Err(response) = self.register_post_prompt_wait(
+                client_id,
+                reference.clone(),
+                until,
+                request.timeout_ms,
+                capabilities,
+                effective_protocol,
+            )
+        {
+            return Some(response);
+        }
+
+        let mut bytes = request.prompt.as_bytes().to_vec();
+        bytes.push(b'\r');
+        let response = self.session_send_bytes(Some(reference.pane.pane_id), bytes);
+        if !response.ok {
+            self.remove_agent_wait(client_id);
+            return Some(response);
+        }
+        if request.wait.is_some() {
+            None
+        } else {
+            Some(ControlResponse::ok(serde_json::json!({
+                "accepted": true,
+                "ref": reference,
+            })))
+        }
     }
 
     /// One-based workspace number per pane, read from the shared layout document.
@@ -973,6 +1089,23 @@ impl SessionServer {
     }
 }
 
+fn validate_agent_prompt_state(
+    state: protocol::AgentState,
+    allow_working: bool,
+) -> std::result::Result<(), ControlResponse> {
+    match state {
+        protocol::AgentState::Blocked => Err(ControlResponse::error_with(
+            ControlErrorCode::AgentBlocked,
+            "agent is blocked; refusing to type into a prompt or approval dialog",
+        )),
+        protocol::AgentState::Working if !allow_working => Err(ControlResponse::error_with(
+            ControlErrorCode::Conflict,
+            "agent is working; pass --allow-working to submit anyway",
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// What a headless `split` asked for.
 struct SessionSpawn {
     command: Option<String>,
@@ -1120,6 +1253,32 @@ mod tests {
         );
         let got: AgentInfo = serde_json::from_value(got.data.unwrap()).unwrap();
         assert_eq!(got, agents[0]);
+    }
+
+    #[test]
+    fn atomic_prompt_refuses_a_blocked_agent_before_writing() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        server.panes.get_mut(&7).unwrap().runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Blocked,
+        });
+        let response = server
+            .register_agent_prompt(
+                1,
+                SessionAgentPrompt {
+                    target: AgentTarget::Pane(7),
+                    prompt: "approve this",
+                    wait: None,
+                    timeout_ms: None,
+                    allow_working: false,
+                },
+                protocol::Capabilities::default(),
+                PROTOCOL_VERSION,
+            )
+            .unwrap();
+        assert_eq!(response.code, Some(ControlErrorCode::AgentBlocked));
+        assert!(server.agent_waits.is_empty());
     }
 
     #[test]

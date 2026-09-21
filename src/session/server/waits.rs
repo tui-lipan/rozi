@@ -7,6 +7,8 @@ pub(super) struct PendingAgentWait {
     reference: protocol::AgentRef,
     until: AgentWaitCondition,
     deadline: Option<Instant>,
+    require_transition: bool,
+    armed: bool,
     capabilities: protocol::Capabilities,
     effective_protocol: u32,
 }
@@ -54,6 +56,8 @@ impl SessionServer {
                         deadline: timeout_ms
                             .map(Duration::from_millis)
                             .and_then(|duration| Instant::now().checked_add(duration)),
+                        require_transition: false,
+                        armed: true,
                         capabilities,
                         effective_protocol,
                     },
@@ -65,8 +69,32 @@ impl SessionServer {
 
     pub(super) fn resolve_agent_waits(&mut self) {
         let mut completed = Vec::new();
-        for (&client_id, wait) in &self.agent_waits {
-            let evaluation = self.evaluate_agent_wait(&wait.reference, wait.until);
+        let waits = self
+            .agent_waits
+            .iter()
+            .map(|(&client_id, wait)| {
+                (
+                    client_id,
+                    wait.reference.clone(),
+                    wait.until,
+                    wait.require_transition,
+                    wait.armed,
+                )
+            })
+            .collect::<Vec<_>>();
+        for (client_id, reference, until, require_transition, armed) in waits {
+            let mut evaluation = self.evaluate_agent_wait(&reference, until);
+            if require_transition && !armed {
+                match evaluation {
+                    WaitEvaluation::Ready(_) => evaluation = WaitEvaluation::Pending,
+                    WaitEvaluation::Pending => {
+                        if let Some(wait) = self.agent_waits.get_mut(&client_id) {
+                            wait.armed = true;
+                        }
+                    }
+                    WaitEvaluation::Error(_, _) => {}
+                }
+            }
             if !matches!(evaluation, WaitEvaluation::Pending) {
                 completed.push((client_id, evaluation));
             }
@@ -126,6 +154,40 @@ impl SessionServer {
 
     pub(super) fn remove_agent_wait(&mut self, client_id: ClientId) {
         self.agent_waits.remove(&client_id);
+    }
+
+    pub(super) fn register_post_prompt_wait(
+        &mut self,
+        client_id: ClientId,
+        reference: protocol::AgentRef,
+        until: AgentWaitCondition,
+        timeout_ms: Option<u64>,
+        capabilities: protocol::Capabilities,
+        effective_protocol: u32,
+    ) -> std::result::Result<(), ControlResponse> {
+        let evaluation = self.evaluate_agent_wait(&reference, until);
+        let armed = match evaluation {
+            WaitEvaluation::Ready(_) => false,
+            WaitEvaluation::Pending => true,
+            WaitEvaluation::Error(code, message) => {
+                return Err(ControlResponse::error_with(code, message));
+            }
+        };
+        self.agent_waits.insert(
+            client_id,
+            PendingAgentWait {
+                reference,
+                until,
+                deadline: timeout_ms
+                    .map(Duration::from_millis)
+                    .and_then(|duration| Instant::now().checked_add(duration)),
+                require_transition: true,
+                armed,
+                capabilities,
+                effective_protocol,
+            },
+        );
+        Ok(())
     }
 
     pub(super) fn resolve_agent_wait_target(
@@ -350,5 +412,38 @@ mod tests {
             server.evaluate_agent_wait(&reference, AgentWaitCondition::Gone),
             WaitEvaluation::Ready(None)
         ));
+    }
+
+    #[test]
+    fn post_prompt_wait_requires_departure_before_the_same_state_completes() {
+        let mut server = server_with_agent(protocol::DetectedAgentState::Idle);
+        let reference = server
+            .resolve_agent_wait_target(AgentTarget::Pane(3))
+            .unwrap();
+        server
+            .register_post_prompt_wait(
+                1,
+                reference,
+                AgentWaitCondition::Idle,
+                None,
+                protocol::Capabilities::default(),
+                PROTOCOL_VERSION,
+            )
+            .unwrap();
+        assert!(!server.agent_waits[&1].armed);
+
+        server.panes.get_mut(&3).unwrap().runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Working,
+        });
+        server.resolve_agent_waits();
+        assert!(server.agent_waits[&1].armed);
+
+        server.panes.get_mut(&3).unwrap().runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        server.resolve_agent_waits();
+        assert!(server.agent_waits.is_empty());
     }
 }

@@ -145,6 +145,7 @@ rozi --session dev agents list
 rozi --session dev agents get --target 3
 rozi --session dev agents read --target 3 --scrollback 200
 rozi --session dev agents wait --target 3 --until quiescent --timeout 2m
+rozi --session dev agents prompt --target 3 --wait idle "Fix the failing test"
 ```
 
 `list` and `get` include an opaque `ref` in JSON output. Numeric pane ids are convenient for
@@ -156,6 +157,12 @@ The wait is registered atomically inside the named session server, so it works w
 attached and cannot miss a transition between reading the agent and subscribing. Failures
 distinguish a gone agent, a replacement incarnation, a stale server reference, and a timeout.
 Use `--format json` for the stable response and error-code contract.
+
+`agents prompt` resolves one exact incarnation, validates its state, installs any requested
+completion observation, and submits the text plus Enter as one server operation. A blocked agent is
+never typed into. A working agent is also refused unless `--allow-working` is explicit. This avoids
+typing into approval dialogs and closes the race where a fast run could finish between separate
+send and wait requests.
 
 ## Publish state instead of reading the screen
 

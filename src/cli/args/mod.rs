@@ -416,11 +416,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "agents" => {
                 let (command, output_format) = agents::parse_agents_args(iter.collect::<Vec<_>>())?;
                 let endpoint = control_endpoint(&cli, socket, &command)?;
-                if matches!(command, control::ControlCommand::AgentWait { .. })
-                    && !matches!(endpoint, ControlEndpoint::Session(_))
+                if matches!(
+                    command,
+                    control::ControlCommand::AgentWait { .. }
+                        | control::ControlCommand::AgentPrompt { .. }
+                ) && !matches!(endpoint, ControlEndpoint::Session(_))
                 {
                     return Err(
-                        "agents wait is server-owned; select a named session with --session"
+                        "agent waits and prompts are server-owned; select a named session with --session"
                             .to_string(),
                     );
                 }

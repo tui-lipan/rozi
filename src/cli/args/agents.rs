@@ -6,9 +6,9 @@ pub(super) fn parse_agents_args(
     args: Vec<String>,
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let mut iter = args.into_iter();
-    let subcommand = iter
-        .next()
-        .ok_or_else(|| "agents requires a subcommand (list, get, read, or wait)".to_string())?;
+    let subcommand = iter.next().ok_or_else(|| {
+        "agents requires a subcommand (list, get, read, wait, or prompt)".to_string()
+    })?;
     let args = iter.collect::<Vec<_>>();
     match subcommand.as_str() {
         "list" => {
@@ -23,10 +23,54 @@ pub(super) fn parse_agents_args(
         }
         "read" => parse_read(args),
         "wait" => parse_wait(args),
+        "prompt" => parse_prompt(args),
         other => Err(format!(
-            "unknown agents subcommand `{other}`; expected list, get, read, or wait"
+            "unknown agents subcommand `{other}`; expected list, get, read, wait, or prompt"
         )),
     }
+}
+
+fn parse_prompt(
+    args: Vec<String>,
+) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
+    let mut target = None;
+    let mut prompt = None;
+    let mut wait = None;
+    let mut timeout_ms = None;
+    let mut allow_working = false;
+    let mut format = None;
+    let mut iter = args.into_iter();
+    while let Some(argument) = iter.next() {
+        match argument.as_str() {
+            "--target" | "--ref" => set_target(&mut target, &argument, &mut iter)?,
+            "--wait" => {
+                let value = next_value(&mut iter, "--wait requires a condition")?;
+                if wait.replace(parse_condition(&value)?).is_some() {
+                    return Err("agents prompt --wait specified more than once".into());
+                }
+            }
+            "--timeout" => {
+                let value = next_value(&mut iter, "--timeout requires a duration")?;
+                if timeout_ms.replace(parse_timeout(&value)?).is_some() {
+                    return Err("agents prompt --timeout specified more than once".into());
+                }
+            }
+            "--allow-working" => allow_working = true,
+            "--format" => set_format(&mut format, &mut iter, "agents prompt")?,
+            value if prompt.is_none() => prompt = Some(value.to_string()),
+            other => return Err(format!("unexpected agents prompt argument `{other}`")),
+        }
+    }
+    Ok((
+        ControlCommand::AgentPrompt {
+            target: require_target(target, "agents prompt")?,
+            prompt: prompt.ok_or_else(|| "agents prompt requires prompt text".to_string())?,
+            wait,
+            timeout_ms,
+            allow_working,
+        },
+        format,
+    ))
 }
 
 fn parse_read(
@@ -249,6 +293,31 @@ mod tests {
                 target: AgentTarget::Pane(3),
                 until: AgentWaitCondition::Quiescent,
                 timeout_ms: Some(30_000),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_atomic_prompt_wait() {
+        let (command, _) = parse_agents_args(vec![
+            "prompt".into(),
+            "--target".into(),
+            "3".into(),
+            "--wait".into(),
+            "idle".into(),
+            "--timeout".into(),
+            "45s".into(),
+            "fix the test".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            command,
+            ControlCommand::AgentPrompt {
+                target: AgentTarget::Pane(3),
+                prompt: "fix the test".into(),
+                wait: Some(AgentWaitCondition::Idle),
+                timeout_ms: Some(45_000),
+                allow_working: false,
             }
         );
     }

@@ -204,6 +204,16 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u64>,
     },
+    AgentPrompt {
+        target: AgentTarget,
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait: Option<AgentWaitCondition>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
+        #[serde(default)]
+        allow_working: bool,
+    },
     /// Raise a toast from a script.
     ///
     /// The automation surface can act but not report: a command that closes its own picker, or
@@ -369,6 +379,7 @@ pub enum ControlErrorCode {
     Conflict,
     Unavailable,
     AgentGone,
+    AgentBlocked,
     AgentReplaced,
     StaleReference,
     Timeout,

@@ -285,6 +285,17 @@ pub(super) fn format_extensions_text(
                 .map(|api| api.to_string())
                 .unwrap_or_else(|| "—".to_string()),
         );
+        // Discovery metadata: shown only when declared, so an extension that says nothing about
+        // where it runs does not grow three em dashes explaining that.
+        if let Some(min_rozi) = extension.min_rozi.as_deref() {
+            field("min rozi", min_rozi);
+        }
+        if !extension.platforms.is_empty() {
+            field("platforms", &extension.platforms.join(", "));
+        }
+        if let Some(homepage) = extension.homepage.as_deref() {
+            field("homepage", homepage);
+        }
         if !extension.commands.is_empty() {
             out.push_str("  commands\n");
             for id in &extension.commands {

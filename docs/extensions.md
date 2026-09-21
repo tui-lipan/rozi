@@ -189,6 +189,42 @@ api = 1
 `id` is required, must match `[a-z0-9_-]+`, and must not use a reserved ID. `api = 1` is required.
 `title`, `description`, and `version` are optional metadata.
 
+### Say where the extension runs
+
+Three more optional fields describe the extension to whoever is deciding whether to install it, and
+keep Rozi from half-loading one that cannot work:
+
+```toml
+[extension]
+id = "my-extension"
+api = 1
+min_rozi = "0.0.25"
+platforms = ["linux", "macos"]
+homepage = "https://github.com/you/rozi-my-extension"
+```
+
+| Field | Meaning |
+| --- | --- |
+| `min_rozi` | Oldest Rozi this extension works with. Unlike `api`, which either matches or does not, this means "anything from here up". |
+| `platforms` | Operating systems it runs on, named as Rust names them: `linux`, `macos`, `windows`, `freebsd`, `netbsd`. Omit for all of them. |
+| `homepage` | Where to read more. Rozi never fetches it; it is shown, not followed. |
+
+An extension that declares a `min_rozi` newer than the running Rozi, or a `platforms` list this
+machine is not in, loads as **incompatible** with the reason stated — the same outcome a mismatched
+`api` already produces. Nothing runs, and `rozi extensions check` says why.
+
+A platform name Rozi does not recognize, a `min_rozi` that is not a version, and a `homepage` that
+is not an `http(s)` URL are each reported as manifest mistakes rather than as reasons the extension
+cannot run here. A typo should not quietly exclude an extension from every machine.
+
+`rozi extensions check --verbose` prints these fields when they are declared, and
+`--format json` includes them, which is what an index reads.
+
+These fields are additive but not backward-compatible: a Rozi released before them rejects a
+manifest that uses one, reporting an unknown field rather than an incompatibility. For an extension
+declaring `min_rozi`, that is the right outcome by a less helpful route. If you want an extension to
+stay readable by older Rozi versions, leave all three out.
+
 The schema is [`schemas/extension.schema.json`](../schemas/extension.schema.json).
 
 ### Navigation targets

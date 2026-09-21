@@ -1527,6 +1527,23 @@ mod tests {
             .runtime
             .work_started_at
             .expect("working integration starts the run clock");
+        server.panes.get_mut(&7).unwrap().agent.summary_changed_at = 11;
+        let (heartbeat, _) = control(
+            &mut server,
+            ControlCommand::AgentReport {
+                target: Some(7),
+                agent: "claude".into(),
+                integration: "hook-b".into(),
+                state: protocol::AgentState::Working,
+                reason: Some("still working".into()),
+                native_session: None,
+                seq: 2,
+            },
+        );
+        assert!(heartbeat.ok, "{heartbeat:?}");
+        assert_eq!(server.panes[&7].agent.summary_changed_at, 11);
+        assert_eq!(server.panes[&7].runtime.work_started_at, Some(started));
+
         server.panes.get_mut(&7).unwrap().agent.summary_changed_at = 0;
         let (blocked, _) = control(
             &mut server,
@@ -1537,7 +1554,7 @@ mod tests {
                 state: protocol::AgentState::Blocked,
                 reason: Some("x".repeat(protocol::PANE_STATUS_REASON_MAX_LEN + 10)),
                 native_session: None,
-                seq: 2,
+                seq: 3,
             },
         );
         assert!(blocked.ok, "{blocked:?}");
@@ -1585,7 +1602,7 @@ mod tests {
                 ControlCommand::AgentRelease {
                     target: Some(7),
                     integration: "hook-b".into(),
-                    seq: 3,
+                    seq: 4,
                 },
             )
             .0

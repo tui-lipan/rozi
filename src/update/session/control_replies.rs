@@ -9,10 +9,19 @@ use crate::state::PaneId;
 
 pub(crate) fn agent_report_result(
     ctx: &mut Context<AppRoot>,
-    _epoch: u64,
+    epoch: u64,
     request_id: u64,
     response: crate::control::ControlResponse,
 ) -> Update {
+    let Some(pending) = ctx.state.pending_agent_report_replies.get(&request_id) else {
+        return Update::none();
+    };
+    if pending
+        .origin_epoch
+        .is_some_and(|origin_epoch| origin_epoch != epoch)
+    {
+        return Update::none();
+    }
     if let Some(pending) = ctx.state.pending_agent_report_replies.remove(&request_id) {
         let _ = pending.reply.send(response);
     }

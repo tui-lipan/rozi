@@ -65,6 +65,8 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
 - Run hooks when pane, focus, workspace, session, or profile events occur.
 - Build extensions with static navigation targets plus out-of-process commands, services, pickers,
   activity rows, and notifications.
+- Discover public `rozi-extension` repositories in-app and install their exact indexed commits after
+  reviewing source, compatibility, and contribution counts.
 
 See [Scripting](scripting.md), [Control CLI](control.md), [Hooks](hooks.md), and
 [Automation recipes](recipes.md).

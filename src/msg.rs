@@ -71,7 +71,7 @@ pub enum Msg {
     SettingsChoiceCancel,
     CloseExtensions,
     ExtensionsQueryChanged(String),
-    ExtensionsSelect(usize),
+    ExtensionsSelect(crate::state::ExtensionPickerRow),
     ExtensionsToggleSelected,
     ExtensionsOpenDetail,
     ExtensionsReload,
@@ -88,6 +88,15 @@ pub enum Msg {
     ExtensionsCloseInstall,
     ExtensionsSubmitInstall,
     ExtensionsInstallFinished(std::result::Result<String, String>),
+    ExtensionsCatalogLoaded {
+        epoch: u64,
+        result: std::result::Result<Vec<crate::extension_catalog::CatalogEntry>, String>,
+    },
+    ExtensionsSubmitCatalogInstall,
+    ExtensionsCatalogInstallFinished {
+        id: String,
+        result: std::result::Result<String, String>,
+    },
     ExtensionsUpdateSelected,
     ExtensionsUpdateFinished {
         id: String,

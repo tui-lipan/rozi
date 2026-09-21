@@ -257,7 +257,7 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                     .expect("type unmatched extension query");
             }
             let empty = frame(&mut backend);
-            assert!(empty.contains("No extensions installed"), "{empty}");
+            assert!(empty.contains("No extensions available"), "{empty}");
             assert_eq!(
                 backend
                     .state()
@@ -306,7 +306,9 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .position(|entry| entry.id.as_deref() == Some("fixture-direct"))
                 .expect("loaded fixture");
             backend
-                .dispatch(rozi::Msg::ExtensionsSelect(loaded))
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Installed(loaded),
+                ))
                 .expect("select loaded fixture");
             backend
                 .dispatch(rozi::Msg::ExtensionsToggleSelected)
@@ -473,7 +475,9 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .position(|entry| entry.id.as_deref() == Some("future-api"))
                 .expect("problem fixture");
             backend
-                .dispatch(rozi::Msg::ExtensionsSelect(problem))
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Installed(problem),
+                ))
                 .expect("select problem fixture");
             let before = std::fs::read_to_string(rozi::config::config_path()).unwrap();
             backend
@@ -514,7 +518,9 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                     )
                 });
             backend
-                .dispatch(rozi::Msg::ExtensionsSelect(duplicate_row))
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Installed(duplicate_row),
+                ))
                 .expect("select duplicate fixture");
             backend
                 .dispatch(rozi::Msg::ExtensionsRemoveSelected)
@@ -533,4 +539,135 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
         .expect("spawn extensions smoke thread")
         .join()
         .expect("extensions smoke completes");
+}
+
+#[test]
+fn extensions_manager_browses_catalog_entries_without_hiding_installed_management() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 45,
+            });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("open extensions");
+            let epoch = backend
+                .state()
+                .extensions
+                .as_ref()
+                .expect("extensions state")
+                .catalog_epoch;
+            let entries = serde_json::from_value(serde_json::json!([{
+                "repository": "tui-lipan/vim-rozi-navigator",
+                "source": "https://github.com/tui-lipan/vim-rozi-navigator.git",
+                "commit": "5b5c8b9323e260a7c10a63d792274ca155d51e26",
+                "manifest_path": "extension.toml",
+                "id": "vim-rozi-navigator",
+                "title": "Vim and Neovim navigator",
+                "description": "Split-aware navigation policy for the Vim and Neovim editor plugin",
+                "version": "0.2.1",
+                "api": 1,
+                "min_rozi": "0.0.16",
+                "platforms": [],
+                "homepage": "https://github.com/tui-lipan/vim-rozi-navigator",
+                "stars": 0,
+                "updated_at": "2026-09-21T00:00:00Z",
+                "commands": 0,
+                "services": 0,
+                "agents": 0,
+                "sidebar_tabs": 0,
+                "navigation_targets": 1,
+                "suggested_keybindings": 4
+            }]))
+            .expect("catalog fixture");
+            backend
+                .dispatch(rozi::Msg::ExtensionsCatalogLoaded {
+                    epoch,
+                    result: Ok(entries),
+                })
+                .expect("load catalog");
+            assert_eq!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .expect("extensions state")
+                    .catalog_entries
+                    .len(),
+                1
+            );
+
+            let catalog = frame(&mut backend);
+            if backend
+                .state()
+                .extensions
+                .as_ref()
+                .is_some_and(|state| !state.entries.is_empty())
+            {
+                assert!(
+                    catalog.contains("Active") || catalog.contains("Problems"),
+                    "{catalog}"
+                );
+            }
+
+            backend
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Catalog(0),
+                ))
+                .expect("select catalog extension");
+            let selected_catalog = frame(&mut backend);
+            assert!(selected_catalog.contains("Discover"), "{selected_catalog}");
+            assert!(
+                selected_catalog.contains("Vim and Neovim navigator"),
+                "{selected_catalog}"
+            );
+            assert!(
+                selected_catalog.contains("tui-lipan/vim-rozi-navigator"),
+                "{selected_catalog}"
+            );
+            backend
+                .dispatch(rozi::Msg::ExtensionsToggleSelected)
+                .expect("open catalog detail");
+            let detail = frame(&mut backend);
+            assert!(
+                detail.contains("Install extension · Vim and Neovim navigator"),
+                "{detail}"
+            );
+            assert!(detail.contains("Not audited"), "{detail}");
+            assert!(detail.contains("External tools may require"), "{detail}");
+            assert!(detail.contains("install Enter"), "{detail}");
+
+            backend
+                .dispatch(rozi::Msg::CloseExtensionDetail)
+                .expect("close catalog detail");
+            let epoch = backend
+                .state()
+                .extensions
+                .as_ref()
+                .expect("extensions state")
+                .catalog_epoch;
+            backend
+                .dispatch(rozi::Msg::ExtensionsCatalogLoaded {
+                    epoch,
+                    result: Err("offline".to_string()),
+                })
+                .expect("show catalog failure");
+            assert_eq!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .and_then(|state| state.catalog_error.as_deref()),
+                Some("offline")
+            );
+        })
+        .expect("spawn catalog smoke thread")
+        .join()
+        .expect("catalog smoke completes");
 }

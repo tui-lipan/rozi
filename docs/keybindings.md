@@ -383,11 +383,12 @@ the selected row or submits a prompt.
   label; `Enter` opens a compact picker for those settings; the highlight previews,
   `Enter` saves, and `Esc` restores. `Shift+Enter` cycles the live value. Theme and Terminal
   padding keep their own editors. Settings has no footer hint pills.
-- Extensions: `Enter` enables or disables the selected extension, `Ctrl+D` opens details,
-  `Ctrl+I` opens the install prompt, `Ctrl+U` updates a Git-managed installation, `Ctrl+R` reloads,
-  `Ctrl+O` opens the manifest, `Ctrl+Y` copies the report, and `Ctrl+K` twice removes the
-  installation. Details are read-only; use the arrow and paging keys to scroll, `Ctrl+U` to update,
-  `Ctrl+Y` to copy the report, and `Ctrl+O` to open the manifest.
+- Extensions: on an installed row, `Enter` enables or disables it; on a **Discover** row, `Enter`
+  opens its installation report. `Ctrl+D` opens either kind of detail. `Ctrl+I` opens the manual
+  install prompt, `Ctrl+U` updates a Git-managed installation, `Ctrl+R` reloads and retries
+  discovery, `Ctrl+O` opens an installed manifest, `Ctrl+Y` copies an installed report, and
+  `Ctrl+K` twice removes an installation. Use the arrow and paging keys to scroll details. A
+  discovery report requires a second `Enter` before Rozi installs its exact indexed commit.
 - Collaborators: `Enter` grants control, `Ctrl+D` declines a request, `Ctrl+K` twice removes a
   client, and `Esc` closes.
 - Rename prompts: `Enter` submits. An empty pane or workspace name clears it.

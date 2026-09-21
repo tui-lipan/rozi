@@ -195,13 +195,26 @@ fn integration_has_strong_replacement_evidence(
     integration: &protocol::AgentIntegrationReport,
     runtime: &PaneRuntimeState,
 ) -> bool {
-    match runtime.detected_agent.as_ref() {
-        Some(detected) => detected.agent.id != integration.identity.id,
-        None => matches!(
-            runtime.command_phase,
-            PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. }
-        ),
+    if matches!(
+        runtime.command_phase,
+        PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. }
+    ) {
+        return true;
     }
+    runtime
+        .detected_agent
+        .as_ref()
+        .is_some_and(|detected| detected.agent.id != integration.identity.id)
+}
+
+fn agent_summary_semantics(
+    runtime: &PaneRuntimeState,
+    references: &[protocol::AgentRef],
+) -> Vec<(String, protocol::AgentState)> {
+    protocol::effective_agent_runtimes(runtime, references)
+        .into_iter()
+        .map(|agent| (agent.identity.id, agent.state))
+        .collect()
 }
 
 type IntegrationPayload = (protocol::AgentState, Option<String>, Option<String>);
@@ -545,6 +558,13 @@ impl SessionServer {
         let previous_runtime = pane.runtime.clone();
         let previous = previous_runtime.integration.clone();
         validate_integration_update(pane, &integration, report.as_ref(), seq, pane_id)?;
+        let pane_ref = protocol::PaneRef {
+            session_instance: session_instance.clone(),
+            pane_id,
+            generation,
+        };
+        let previous_summary =
+            agent_summary_semantics(&previous_runtime, &pane.agent.references(pane_ref.clone()));
 
         if let Some((state, reason, native_session)) = report {
             pane.runtime.integration = Some(Box::new(build_integration_report(
@@ -573,8 +593,12 @@ impl SessionServer {
             pane.runtime.detected_agent.as_ref(),
             pane.runtime.integration.as_deref(),
         );
-        pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
         pane.agent.sync_references(&pane.runtime);
+        let current_summary =
+            agent_summary_semantics(&pane.runtime, &pane.agent.references(pane_ref));
+        if current_summary != previous_summary {
+            pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
+        }
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
         self.resolve_agent_waits();
@@ -759,23 +783,28 @@ impl SessionServer {
         if next == pane.runtime {
             return;
         }
+        let pane_ref = protocol::PaneRef {
+            session_instance,
+            pane_id,
+            generation,
+        };
+        let previous_summary =
+            agent_summary_semantics(&pane.runtime, &pane.agent.references(pane_ref.clone()));
         let snapshot_foreground_changed = tracks_snapshot_foreground
             && pane.launch.is_none()
             && resurrection_foreground_changed(&pane.runtime, &next);
-        if pane.runtime.detected_agent != next.detected_agent {
+        pane.agent.sync_references(&next);
+        let current_summary =
+            agent_summary_semantics(&next, &pane.agent.references(pane_ref.clone()));
+        if current_summary != previous_summary {
             pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
         }
-        pane.agent.sync_references(&next);
         pane.runtime = next.clone();
         let message = ServerMessage::PaneRuntimeChanged {
             pane_id,
             local: wire_local(owner),
             generation,
-            agent_refs: pane.agent.references(protocol::PaneRef {
-                session_instance,
-                pane_id,
-                generation,
-            }),
+            agent_refs: pane.agent.references(pane_ref),
             state: next,
         };
         if let Some(owner) = owner {
@@ -1883,6 +1912,20 @@ mod tests {
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
+        assert!(integration_has_strong_replacement_evidence(
+            &integration,
+            &runtime
+        ));
+        let references = vec![integration.reference.clone()];
+        runtime.integration = Some(Box::new(integration.clone()));
+        let claimed = agent_summary_semantics(&runtime, &references);
+        runtime.integration = None;
+        let retired = agent_summary_semantics(&runtime, &references);
+        assert_ne!(
+            claimed, retired,
+            "retirement to sticky idle detection is summary-visible"
+        );
+        runtime.command_phase = PaneCommandPhase::Executing;
         assert!(!integration_has_strong_replacement_evidence(
             &integration,
             &runtime

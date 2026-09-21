@@ -2513,6 +2513,46 @@ fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change() {
     assert!(backend.state().pending_agent_report_replies.is_empty());
 }
 
+#[test]
+fn attached_agent_acknowledgement_rejects_another_epoch() {
+    let mut backend = TestBackend::new(crate::AppRoot::default());
+    let (reply, response) = std::sync::mpsc::channel();
+    backend.state_mut().pending_agent_report_replies.insert(
+        23,
+        crate::state::PendingAgentReportReply {
+            origin_epoch: Some(4),
+            reply,
+        },
+    );
+
+    backend
+        .dispatch(Msg::SessionAgentReportResult {
+            epoch: 9,
+            request_id: 23,
+            response: crate::control::ControlResponse::empty(),
+        })
+        .expect("dispatch stale acknowledgement");
+    assert_eq!(
+        response.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    );
+    assert!(
+        backend
+            .state()
+            .pending_agent_report_replies
+            .contains_key(&23)
+    );
+
+    backend
+        .dispatch(Msg::SessionAgentReportResult {
+            epoch: 4,
+            request_id: 23,
+            response: crate::control::ControlResponse::empty(),
+        })
+        .expect("dispatch owning acknowledgement");
+    assert!(response.recv().expect("pending reply").ok);
+}
+
 /// The update popup runs the updater and stays open. Success leaves the old build running, so it
 /// earns a toast naming the step that is left; failure brings **Update rozi** back to retry.
 #[test]

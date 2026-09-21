@@ -122,7 +122,7 @@ pub struct ServerRuntimeMetrics {
     pub resurrection: ResurrectionMetrics,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedServerRuntimeMetrics {
     #[serde(flatten)]
     pub sample: ServerRuntimeMetrics,

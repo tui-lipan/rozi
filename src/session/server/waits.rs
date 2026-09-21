@@ -1,7 +1,7 @@
-use serde::Serialize;
-
 use super::*;
-use crate::control::{AgentTarget, AgentWaitCondition, ControlErrorCode, ControlResponse};
+use crate::control::{
+    AgentTarget, AgentWaitCondition, AgentWaitResult, ControlErrorCode, ControlResponse,
+};
 
 pub(super) struct PendingAgentWait {
     reference: protocol::AgentRef,
@@ -11,12 +11,6 @@ pub(super) struct PendingAgentWait {
     armed: bool,
     capabilities: protocol::Capabilities,
     effective_protocol: u32,
-}
-
-#[derive(Serialize)]
-struct AgentWaitResult {
-    condition: AgentWaitCondition,
-    agent: Option<protocol::AgentRuntime>,
 }
 
 enum WaitEvaluation {

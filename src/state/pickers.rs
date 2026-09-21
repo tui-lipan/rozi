@@ -1036,6 +1036,8 @@ pub struct ExtensionsState {
     pub catalog_entries: Vec<crate::extension_catalog::CatalogEntry>,
     pub catalog_error: Option<String>,
     pub catalog_epoch: u64,
+    /// A fetch of the index is running. `catalog_entries` may meanwhile hold the cached index.
+    pub catalog_loading: bool,
     pub catalog_detail: Option<CatalogExtensionDetailState>,
     pub(crate) installation_kinds: BTreeMap<String, crate::extension_installation::InstallKind>,
     pub(crate) available_updates: BTreeSet<String>,

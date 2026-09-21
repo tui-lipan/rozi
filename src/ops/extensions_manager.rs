@@ -165,7 +165,8 @@ pub(crate) fn toggle_selected(ctx: &mut Context<AppRoot>) -> Update {
 
 pub(crate) fn reload(ctx: &mut Context<AppRoot>) -> Update {
     start_catalog_load(ctx);
-    crate::ops::config::reload_extensions(ctx)
+    // The rescanned rows and the discovery spinner are the confirmation. Problems still toast.
+    crate::ops::config::reload_extensions_quiet(ctx)
 }
 
 pub(crate) fn open_install(ctx: &mut Context<AppRoot>) -> Update {

@@ -582,6 +582,9 @@ impl SessionServer {
                 pane.agent.clear_runtime_identity();
                 pane.agent.reset_detection();
                 pane.runtime.detected_agent = None;
+                if let Some(integration) = pane.runtime.integration.take() {
+                    pane.agent.retire_integration(integration.integration);
+                }
                 pane.runtime.work_started_at = None;
             }
             Err(_) => pane.exited = Some(code),

@@ -741,12 +741,14 @@ impl TerminalPane {
     /// and the "unseen finish" edge detector so they never disagree on what "working" means. See
     /// [`Self::is_blocked`] and [`Self::is_working`] for reported-only status predicates.
     pub fn agent_status(&self) -> Option<String> {
-        let detected = self.detected_agent.as_ref()?;
-        let value = crate::session::protocol::effective_agent_status(
+        if let Some(integration) = &self.agent_integration {
+            return Some(integration.state.as_str().to_string());
+        }
+        crate::session::protocol::effective_agent_status(
             self.reported_status.as_ref(),
-            Some(detected),
-        )?;
-        Some(value.to_string())
+            self.detected_agent.as_ref(),
+        )
+        .map(str::to_string)
     }
 
     /// Whether this pane's agent is waiting on the user.
@@ -754,11 +756,7 @@ impl TerminalPane {
     /// Uses the shared reported/detected authority rule from [`Self::agent_status`].
     /// Unlike `agent_status`, a reported-only pane can be blocked.
     pub fn is_blocked(&self) -> bool {
-        crate::session::protocol::effective_agent_status(
-            self.reported_status.as_ref(),
-            self.detected_agent.as_ref(),
-        )
-        .is_some_and(|status| {
+        self.agent_status().is_some_and(|status| {
             status
                 .trim()
                 .eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED)
@@ -768,11 +766,7 @@ impl TerminalPane {
     /// Whether this pane's agent is actively working, under the same shared authority rule as
     /// [`Self::is_blocked`].
     pub fn is_working(&self) -> bool {
-        crate::session::protocol::effective_agent_status(
-            self.reported_status.as_ref(),
-            self.detected_agent.as_ref(),
-        )
-        .is_some_and(|status| {
+        self.agent_status().is_some_and(|status| {
             status
                 .trim()
                 .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
@@ -1202,6 +1196,39 @@ mod tests {
 
         pane.detected_agent = None;
         pane.reported_status.as_mut().unwrap().value = "BLOCKED".into();
+        assert!(pane.is_blocked());
+        assert!(!pane.is_working());
+    }
+
+    #[test]
+    fn integration_state_is_authoritative_for_live_alerts() {
+        let mut pane = TerminalPane::new(100);
+        pane.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: crate::session::protocol::DetectedAgentState::Idle,
+        });
+        pane.agent_integration = Some(Box::new(crate::session::protocol::AgentIntegrationReport {
+            integration: "hook-a".into(),
+            identity: crate::session::protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: crate::session::protocol::AgentRef {
+                pane: crate::session::protocol::PaneRef {
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                        "server",
+                    ),
+                    pane_id: 3,
+                    generation: 7,
+                },
+                slot: None,
+                incarnation: 1,
+            },
+            state: crate::session::protocol::AgentState::Blocked,
+            reason: None,
+            native_session: None,
+            seq: 1,
+            reported_at_unix_ms: 42,
+        }));
+
+        assert_eq!(pane.agent_status().as_deref(), Some("blocked"));
         assert!(pane.is_blocked());
         assert!(!pane.is_working());
     }

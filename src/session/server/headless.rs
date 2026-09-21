@@ -1523,6 +1523,24 @@ mod tests {
             },
         );
         assert!(next.ok, "{next:?}");
+        let started = server.panes[&7]
+            .runtime
+            .work_started_at
+            .expect("working integration starts the run clock");
+        let (blocked, _) = control(
+            &mut server,
+            ControlCommand::AgentReport {
+                target: Some(7),
+                agent: "claude".into(),
+                integration: "hook-b".into(),
+                state: protocol::AgentState::Blocked,
+                reason: Some("approval".into()),
+                native_session: None,
+                seq: 2,
+            },
+        );
+        assert!(blocked.ok, "{blocked:?}");
+        assert_eq!(server.panes[&7].runtime.work_started_at, Some(started));
 
         let (delayed, _) = control(
             &mut server,
@@ -1546,6 +1564,19 @@ mod tests {
                 .integration,
             "hook-b"
         );
+        assert!(
+            control(
+                &mut server,
+                ControlCommand::AgentRelease {
+                    target: Some(7),
+                    integration: "hook-b".into(),
+                    seq: 3,
+                },
+            )
+            .0
+            .ok
+        );
+        assert_eq!(server.panes[&7].runtime.work_started_at, None);
     }
 
     #[test]

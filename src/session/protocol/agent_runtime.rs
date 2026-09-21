@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AgentIdentity, AgentRef, PaneRuntimeState, PaneStatus, PublishedRow, detected_agent_status,
-    pane_status,
+    AgentIdentity, AgentIntegrationReport, AgentRef, DetectedAgent, PaneRuntimeState, PaneStatus,
+    PublishedRow, detected_agent_status, pane_status,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +179,16 @@ pub fn effective_agent_state(
         (None, None) => return None,
     };
     Some(AgentState::from_status(status))
+}
+
+pub fn effective_semantic_agent_state(
+    integration: Option<&AgentIntegrationReport>,
+    reported: Option<&PaneStatus>,
+    detected: Option<&DetectedAgent>,
+) -> Option<AgentState> {
+    integration
+        .map(|integration| integration.state)
+        .or_else(|| effective_agent_state(reported, detected.map(detected_agent_status)))
 }
 
 #[cfg(test)]

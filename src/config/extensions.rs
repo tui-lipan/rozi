@@ -90,6 +90,11 @@ pub struct ExtensionInfo {
     pub description: Option<String>,
     pub version: Option<String>,
     pub api: Option<u32>,
+    /// Oldest Rozi this extension declares support for, if it declares one.
+    pub min_rozi: Option<String>,
+    /// Operating systems this extension declares support for. Empty means all of them.
+    pub platforms: Vec<String>,
+    pub homepage: Option<String>,
     pub path: String,
     pub manifest_path: String,
     pub enabled: bool,
@@ -375,6 +380,9 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         description: None,
         version: None,
         api: None,
+        min_rozi: None,
+        platforms: Vec::new(),
+        homepage: None,
         path,
         manifest_path,
         enabled: false,
@@ -455,8 +463,21 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     info.description = clean_optional(manifest.extension.description);
     info.version = clean_optional(manifest.extension.version);
     info.api = manifest.extension.api;
+    info.min_rozi = clean_optional(manifest.extension.min_rozi);
+    info.homepage = clean_optional(manifest.extension.homepage);
+    info.platforms = manifest
+        .extension
+        .platforms
+        .into_iter()
+        .map(|platform| platform.trim().to_ascii_lowercase())
+        .filter(|platform| !platform.is_empty())
+        .collect();
+    validate_homepage(info.homepage.as_deref(), &mut info.errors);
+    validate_platform_names(&info.platforms, &mut info.errors);
 
     let id_valid = validate_extension_id(info.id.as_deref(), &mut info.errors);
+    // Checked in declaration order so the most specific reason wins: an extension for a different
+    // operating system is not also "too new", and neither is worth reporting as the other.
     let compatibility_error = match info.api {
         None => {
             info.errors
@@ -467,7 +488,9 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             "requires extension API {api}, rozi supports API {EXTENSION_API_VERSION}"
         )),
         Some(_) => None,
-    };
+    }
+    .or_else(|| unsupported_platform(&info.platforms))
+    .or_else(|| rozi_too_old(info.min_rozi.as_deref(), &mut info.errors));
 
     let mut commands = Vec::new();
     let mut services = Vec::new();
@@ -686,6 +709,79 @@ fn diagnostic_extension_env(env: &[(String, String)]) -> BTreeMap<String, String
     values
 }
 
+/// Operating-system names `extension.platforms` accepts, spelled as Rust's
+/// [`std::env::consts::OS`] spells them so the comparison is a plain string match and the manifest
+/// and the runtime cannot disagree about what "macos" means.
+const KNOWN_PLATFORMS: [&str; 5] = ["linux", "macos", "windows", "freebsd", "netbsd"];
+
+/// Reject a platform name nothing will ever match. Getting this wrong is silent otherwise: an
+/// extension declaring `darwin` or `win32` simply never loads anywhere, and says nothing about why.
+fn validate_platform_names(platforms: &[String], errors: &mut Vec<String>) {
+    for platform in platforms {
+        if !KNOWN_PLATFORMS.contains(&platform.as_str()) {
+            errors.push(format!(
+                "unknown `extension.platforms` entry `{platform}` (expected one of {})",
+                KNOWN_PLATFORMS.join(", ")
+            ));
+        }
+    }
+}
+
+/// Discovery metadata, so it is checked for being a link rather than for reachability. Rozi never
+/// opens it; an index and a picker show it to a person who decides.
+fn validate_homepage(homepage: Option<&str>, errors: &mut Vec<String>) {
+    let Some(homepage) = homepage else {
+        return;
+    };
+    if !homepage.starts_with("https://") && !homepage.starts_with("http://") {
+        errors.push(format!(
+            "`extension.homepage` must be an http(s) URL, got `{homepage}`"
+        ));
+    }
+}
+
+/// `None` when this extension declared no platforms, or declared this one.
+///
+/// Names Rozi does not recognize are ignored here rather than counted as "somewhere else": an
+/// extension that wrote `darwin` did not choose to exclude this machine, it made a typo, and
+/// [`validate_platform_names`] has already said so in words that name the fix. Reporting it as an
+/// incompatibility instead would advise running it on a platform that does not exist.
+fn unsupported_platform(platforms: &[String]) -> Option<String> {
+    let current = std::env::consts::OS;
+    let declared = platforms
+        .iter()
+        .filter(|platform| KNOWN_PLATFORMS.contains(&platform.as_str()))
+        .collect::<Vec<_>>();
+    if declared.is_empty() || declared.iter().any(|platform| *platform == current) {
+        return None;
+    }
+    let names = declared
+        .iter()
+        .map(|platform| platform.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("supports {names} but this is {current}"))
+}
+
+/// `None` when this rozi is new enough, or when the extension said nothing about it.
+///
+/// A `min_rozi` that is not a version is a manifest mistake rather than an incompatibility, so it
+/// is reported as one and does not block loading: refusing to run an extension because its
+/// *metadata* is malformed would be a worse failure than ignoring the field.
+fn rozi_too_old(min_rozi: Option<&str>, errors: &mut Vec<String>) -> Option<String> {
+    let declared = min_rozi?;
+    let Ok(minimum) = declared.parse::<semver::Version>() else {
+        errors.push(format!(
+            "`extension.min_rozi` must be a version like `0.0.25`, got `{declared}`"
+        ));
+        return None;
+    };
+    let current = env!("CARGO_PKG_VERSION")
+        .parse::<semver::Version>()
+        .expect("rozi's own version is valid semver");
+    (current < minimum).then(|| format!("needs rozi {minimum} or newer, this is {current}"))
+}
+
 fn read_partial_metadata(value: &toml::Value, info: &mut ExtensionInfo) {
     let Some(extension) = value.get("extension").and_then(toml::Value::as_table) else {
         return;
@@ -710,6 +806,25 @@ fn read_partial_metadata(value: &toml::Value, info: &mut ExtensionInfo) {
         .get("api")
         .and_then(toml::Value::as_integer)
         .and_then(|api| u32::try_from(api).ok());
+    info.min_rozi = extension
+        .get("min_rozi")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string);
+    info.homepage = extension
+        .get("homepage")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string);
+    info.platforms = extension
+        .get("platforms")
+        .and_then(toml::Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(|platform| platform.trim().to_ascii_lowercase())
+                .collect()
+        })
+        .unwrap_or_default();
 }
 
 fn clean_optional(value: Option<String>) -> Option<String> {
@@ -748,6 +863,109 @@ mod tests {
         format!(
             "[extension]\nid = \"{id}\"\ntitle = \"Git tools\"\nversion = \"0.1.0\"\napi = {api}\n"
         )
+    }
+
+    /// Discovery metadata is carried through so an index - or the extensions picker - can show
+    /// where an extension runs and where to read about it without cloning the repository first.
+    #[test]
+    fn discovery_metadata_is_read_from_the_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "git-tools",
+            &format!(
+                "{}min_rozi = \"0.0.1\"\nplatforms = [\"Linux\", \"macos\", \"windows\"]\n\
+                 homepage = \"https://example.invalid/git-tools\"\n",
+                manifest("git-tools", "1")
+            ),
+        );
+
+        let scan = scan_extensions_in(temp.path());
+        let entry = &scan.entries()[0];
+
+        assert_eq!(entry.status, ExtensionStatus::Loaded, "{:?}", entry.errors);
+        assert_eq!(entry.min_rozi.as_deref(), Some("0.0.1"));
+        assert_eq!(entry.platforms, ["linux", "macos", "windows"]);
+        assert_eq!(
+            entry.homepage.as_deref(),
+            Some("https://example.invalid/git-tools")
+        );
+    }
+
+    /// An extension that cannot work here says so rather than half-loading. Both reasons produce
+    /// `Incompatible`, the same status a mismatched extension API already produces, so nothing
+    /// downstream has to learn a new outcome.
+    #[test]
+    fn an_extension_that_cannot_run_here_is_incompatible() {
+        let temp = tempfile::tempdir().unwrap();
+        let elsewhere = if std::env::consts::OS == "linux" {
+            "windows"
+        } else {
+            "linux"
+        };
+        write_manifest(
+            temp.path(),
+            "elsewhere",
+            &format!(
+                "{}platforms = [\"{elsewhere}\"]\n",
+                manifest("elsewhere", "1")
+            ),
+        );
+        write_manifest(
+            temp.path(),
+            "from-the-future",
+            &format!(
+                "{}min_rozi = \"99.0.0\"\n",
+                manifest("from-the-future", "1")
+            ),
+        );
+
+        let scan = scan_extensions_in(temp.path());
+        let entries = scan.entries();
+        let reason = |id: &str| {
+            let entry = entries
+                .iter()
+                .find(|entry| entry.id.as_deref() == Some(id))
+                .expect("extension scanned");
+            assert_eq!(entry.status, ExtensionStatus::Incompatible);
+            entry.errors.first().cloned().unwrap_or_default()
+        };
+
+        assert!(
+            reason("elsewhere").contains(elsewhere),
+            "{}",
+            reason("elsewhere")
+        );
+        assert!(
+            reason("from-the-future").contains("99.0.0"),
+            "{}",
+            reason("from-the-future")
+        );
+    }
+
+    /// A platform name nothing matches, or a homepage that is not a link, is a mistake in the
+    /// manifest rather than a reason the extension cannot run - so it is reported and the
+    /// extension is not quietly excluded from every machine.
+    #[test]
+    fn unusable_discovery_metadata_is_reported_as_a_manifest_mistake() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "typos",
+            &format!(
+                "{}platforms = [\"darwin\"]\nmin_rozi = \"soon\"\nhomepage = \"example.invalid\"\n",
+                manifest("typos", "1")
+            ),
+        );
+
+        let entries = scan_extensions_in(temp.path());
+        let entry = &entries.entries()[0];
+
+        assert_eq!(entry.status, ExtensionStatus::Invalid);
+        let errors = entry.errors.join("\n");
+        assert!(errors.contains("darwin"), "{errors}");
+        assert!(errors.contains("min_rozi"), "{errors}");
+        assert!(errors.contains("homepage"), "{errors}");
     }
 
     #[test]
@@ -1688,7 +1906,16 @@ mod tests {
         );
         assert_eq!(
             keys(&properties["extension"]["properties"]),
-            ["api", "description", "id", "title", "version"]
+            [
+                "api",
+                "description",
+                "homepage",
+                "id",
+                "min_rozi",
+                "platforms",
+                "title",
+                "version"
+            ]
         );
         assert_eq!(
             keys(&properties["commands"]["items"]["properties"]),

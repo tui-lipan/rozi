@@ -31,6 +31,22 @@
         },
         "version": {
           "type": "string"
+        },
+        "min_rozi": {
+          "description": "Oldest Rozi this extension works with, as a semver version. An older Rozi reports the extension as incompatible instead of loading it.",
+          "type": "string"
+        },
+        "platforms": {
+          "description": "Operating systems this extension runs on. Omit for all of them.",
+          "type": "array",
+          "items": {
+            "enum": ["linux", "macos", "windows", "freebsd", "netbsd"]
+          }
+        },
+        "homepage": {
+          "description": "Where to read more about this extension. Rozi never fetches it.",
+          "type": "string",
+          "pattern": "^https?://"
         }
       }
     },

@@ -81,6 +81,17 @@ pub(super) struct ExtensionMetadataFile {
     pub(super) description: Option<String>,
     pub(super) version: Option<String>,
     pub(super) api: Option<u32>,
+    /// Oldest Rozi this extension works with, as a semver version. Unlike `api`, which is a single
+    /// number that either matches or does not, this expresses "anything from here up" - the usual
+    /// shape of a dependency on a feature that was added once and stayed.
+    pub(super) min_rozi: Option<String>,
+    /// Operating systems this extension runs on, named as Rust names them (`linux`, `macos`,
+    /// `windows`, `freebsd`, `netbsd`). Empty means every platform, which is the common case and
+    /// stays the default.
+    #[serde(default)]
+    pub(super) platforms: Vec<String>,
+    /// Where to read more. Discovery metadata only: Rozi never fetches it.
+    pub(super) homepage: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

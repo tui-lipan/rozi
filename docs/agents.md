@@ -136,6 +136,27 @@ agent label and state. Reloading config re-runs detection, but only the controll
 updates a shared running server. Restart a long-lived server after rebuilding Rozi with changed
 built-in definitions.
 
+## Inspect and wait for agents
+
+The `agents` commands expose the same effective state used by the sidebar:
+
+```bash
+rozi --session dev agents list
+rozi --session dev agents get --target 3
+rozi --session dev agents read --target 3 --scrollback 200
+rozi --session dev agents wait --target 3 --until quiescent --timeout 2m
+```
+
+`list` and `get` include an opaque `ref` in JSON output. Numeric pane ids are convenient for
+interactive use; automation can pass that exact object back with `--ref '<json>'` to fence the
+operation to one agent incarnation.
+
+Wait predicates are `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), and `gone`.
+The wait is registered atomically inside the named session server, so it works while no UI is
+attached and cannot miss a transition between reading the agent and subscribing. Failures
+distinguish a gone agent, a replacement incarnation, a stale server reference, and a timeout.
+Use `--format json` for the stable response and error-code contract.
+
 ## Publish state instead of reading the screen
 
 Screen matching only sees the view currently drawn in one terminal. It cannot reliably represent a

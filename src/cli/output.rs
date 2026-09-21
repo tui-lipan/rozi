@@ -505,6 +505,11 @@ pub(super) fn format_control_text(
     let data = response.get("data");
     match command {
         control::ControlCommand::ListPanes => format_panes_text(data, styles),
+        control::ControlCommand::AgentsList | control::ControlCommand::AgentGet { .. } => {
+            format_agents_text(data, styles)
+        }
+        control::ControlCommand::AgentRead { .. } => format_capture_text(data),
+        control::ControlCommand::AgentWait { .. } => format_agent_wait_text(data, styles),
         control::ControlCommand::Metrics => format_metrics_text(data, styles),
         control::ControlCommand::CapturePane { .. } => format_capture_text(data),
         control::ControlCommand::NewPane { .. } => {
@@ -531,6 +536,59 @@ pub(super) fn format_control_text(
         }
         _ => format!("{}\n", styles.paint("OK", OutputTone::Success)),
     }
+}
+
+fn format_agents_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let agents: Vec<&serde_json::Value> = match data {
+        Some(serde_json::Value::Array(agents)) => agents.iter().collect(),
+        Some(agent @ serde_json::Value::Object(_)) => vec![agent],
+        _ => Vec::new(),
+    };
+    if agents.is_empty() {
+        return "No agents found.\n".to_string();
+    }
+    let rows = agents
+        .into_iter()
+        .map(|agent| {
+            let text = |field: &str| {
+                agent
+                    .get(field)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("—")
+                    .to_string()
+            };
+            vec![
+                TableCell::plain(text("label")),
+                TableCell::plain(text("state")),
+                TableCell::plain(
+                    agent
+                        .get("pane")
+                        .and_then(serde_json::Value::as_u64)
+                        .map_or_else(|| "—".to_string(), |value| value.to_string()),
+                ),
+                TableCell::plain(
+                    agent
+                        .get("workspace")
+                        .and_then(serde_json::Value::as_u64)
+                        .map_or_else(|| "—".to_string(), |value| value.to_string()),
+                ),
+                TableCell::plain(text("cwd")),
+            ]
+        })
+        .collect::<Vec<_>>();
+    format_table(
+        &["AGENT", "STATE", "PANE", "WORKSPACE", "CWD"],
+        &rows,
+        styles,
+    )
+}
+
+fn format_agent_wait_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let condition = data
+        .and_then(|data| data.get("condition"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("ready");
+    format!("{}\n", styles.paint(condition, OutputTone::Success))
 }
 
 pub(super) fn style_first_line(text: String, tone: OutputTone, styles: OutputStyles) -> String {

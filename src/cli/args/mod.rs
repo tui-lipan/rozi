@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use crate::{control, session};
 
+mod agents;
 mod extensions;
 mod sessions;
 mod skill;
@@ -237,7 +238,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     let help_index = args.iter().position(|arg| arg == "--help" || arg == "-h");
     let namespace_index = args
         .iter()
-        .position(|arg| matches!(arg.as_str(), "sessions" | "extensions" | "skill"));
+        .position(|arg| matches!(arg.as_str(), "agents" | "sessions" | "extensions" | "skill"));
     if help_index.is_some_and(|help| namespace_index.is_none_or(|namespace| help < namespace)) {
         return Ok(ParsedCli::Help {
             advanced: args.iter().any(|arg| arg == "--advanced"),
@@ -411,6 +412,23 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 if socket.replace(PathBuf::from(path)).is_some() {
                     return Err("--socket specified more than once".to_string());
                 }
+            }
+            "agents" => {
+                let (command, output_format) = agents::parse_agents_args(iter.collect::<Vec<_>>())?;
+                let endpoint = control_endpoint(&cli, socket, &command)?;
+                if matches!(command, control::ControlCommand::AgentWait { .. })
+                    && !matches!(endpoint, ControlEndpoint::Session(_))
+                {
+                    return Err(
+                        "agents wait is server-owned; select a named session with --session"
+                            .to_string(),
+                    );
+                }
+                return Ok(ParsedCli::Control(ControlCli {
+                    endpoint,
+                    request: control_request(command),
+                    output_format,
+                }));
             }
             "list-panes" => {
                 let output_format = parse_output_format(&mut iter, "list-panes")?;

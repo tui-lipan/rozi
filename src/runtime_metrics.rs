@@ -9,6 +9,7 @@ use crate::state::{Attachment, ORPHAN_OUTPUT_GLOBAL_CAP, ORPHAN_OUTPUT_KEY_CAP};
 pub const SERVER_METRICS_STALE_AFTER: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ByteBufferMetrics {
     pub current_bytes: u64,
     pub high_water_bytes: u64,
@@ -26,6 +27,7 @@ impl ByteBufferMetrics {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct QueueMetrics {
     #[serde(flatten)]
     pub bytes: ByteBufferMetrics,
@@ -33,6 +35,7 @@ pub struct QueueMetrics {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ServerOutboxMetrics {
     #[serde(flatten)]
     pub bytes: ByteBufferMetrics,
@@ -40,6 +43,7 @@ pub struct ServerOutboxMetrics {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AttachSeedMetrics {
     pub active_clients: u64,
     /// Encoded baseline replay currently waiting in socket outboxes.
@@ -62,6 +66,7 @@ pub struct AttachSeedMetrics {
 
 /// Clients that fell too far behind to take a pane's output, had it shed, and caught up by replay.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ClientResyncMetrics {
     pub active_clients: u64,
     pub started: u64,
@@ -82,6 +87,7 @@ pub struct ClientResyncMetrics {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct OrphanOutputMetrics {
     #[serde(flatten)]
     pub bytes: ByteBufferMetrics,
@@ -90,6 +96,7 @@ pub struct OrphanOutputMetrics {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ResurrectionMetrics {
     pub attempts: u64,
     pub successes: u64,
@@ -113,6 +120,7 @@ pub struct ResurrectionMetrics {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ServerRuntimeMetrics {
     pub sampled_at_unix_ms: u64,
     pub pty_ingress: QueueMetrics,
@@ -123,6 +131,7 @@ pub struct ServerRuntimeMetrics {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct CachedServerRuntimeMetrics {
     #[serde(flatten)]
     pub sample: ServerRuntimeMetrics,
@@ -131,6 +140,7 @@ pub struct CachedServerRuntimeMetrics {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct RuntimeMetrics {
     pub sampled_at_unix_ms: u64,
     pub client_inbound: Option<QueueMetrics>,

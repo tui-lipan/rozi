@@ -122,6 +122,7 @@ pub struct PaneStatus {
 /// declared in `config.toml` or shipped by an extension produces one of these exactly as a built-in
 /// does. Nothing downstream may branch on a known set of ids - the sidebar renders `label`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentIdentity {
     /// Stable definition id, such as `claude` or `git-tools.mycoolagent`.
     pub id: String,
@@ -166,6 +167,7 @@ pub(crate) fn detected_agent_status(detected: &DetectedAgent) -> &'static str {
 
 /// One logical agent or activity inside a pane that publishes several.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PublishedRow {
     /// Publisher-chosen identity, opaque to rozi and stable across updates.
     ///

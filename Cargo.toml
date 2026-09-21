@@ -60,6 +60,10 @@ unicode-segmentation = "1.13.3"
 getrandom = "0.4.3"
 url = "2.5.8"
 tempfile = "3.27.0"
+# Generates `docs/schema/rozi-control-v1.schema.json` from the control API types. Optional so a
+# normal build never compiles it: the schema is a checked-in artifact, not something rozi produces
+# at runtime. See the `schema-gen` feature.
+schemars = { version = "1.2.2", features = ["semver1"], optional = true }
 
 [features]
 # Headless PNG/JSON capture for visual review. Opt-in so release builds do not
@@ -76,10 +80,22 @@ ui-snapshot = ["tui-lipan/ui-snapshot-png"]
 # CI's check and lint steps, which keep type-checking it on all three hosts.
 windows-launcher = []
 
+# Regenerates the checked-in control API JSON Schema from the types that actually serialize the
+# wire format, so documentation cannot drift from the API. Gated because the production binary has
+# no use for it - the schema ships as a file, not as something rozi computes - and a plain
+# `cargo build` should not compile `schemars_derive`. CI runs the generator and fails on a diff.
+schema-gen = ["dep:schemars"]
+
 [[bin]]
 name = "rozi-launcher"
 path = "src/bin/rozi-launcher.rs"
 required-features = ["windows-launcher"]
+test = false
+
+[[bin]]
+name = "rozi-api-schema"
+path = "src/bin/rozi-api-schema.rs"
+required-features = ["schema-gen"]
 test = false
 
 [dev-dependencies]

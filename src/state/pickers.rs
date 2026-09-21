@@ -930,6 +930,7 @@ pub struct PickRow {
 /// cursor and push a fresh list, or open a prompt and create one. They are declared up front so the
 /// footer can advertise them the way every built-in picker advertises its own chords.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PickAction {
     /// Returned to the caller as `action`.
     pub id: String,
@@ -959,6 +960,7 @@ pub struct PickAction {
 /// caller stays valid.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum PickPromptSpec {
     Title(String),
     Fields(PickPromptFields),
@@ -966,6 +968,7 @@ pub enum PickPromptSpec {
 
 /// Object form of [`PickPromptSpec`].
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PickPromptFields {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

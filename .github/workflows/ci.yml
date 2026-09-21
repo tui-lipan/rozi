@@ -58,6 +58,15 @@ jobs:
       - name: Test (including native process integration)
         if: ${{ !cancelled() }}
         run: cargo test --locked --no-fail-fast
+      # The published control API schema is generated from the types that serialize the wire
+      # format, so it can only be trusted if regenerating it is a no-op. One platform is enough:
+      # the document does not vary by host.
+      - name: Check the control API schema is current
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: |
+          cargo test --locked --features schema-gen --lib api_schema
+          cargo run --locked --features schema-gen --bin rozi-api-schema
+          git diff --exit-code docs/schema/
       # Pull requests still check release-only cfg and profile behavior on every primary platform
       # without paying for optimized code generation. On master, one real optimized Linux build is
       # enough to catch release-profile failures; `release.yml` builds every shipping target before

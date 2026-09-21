@@ -8,6 +8,7 @@ use crate::state::PaneId;
 /// fences references from one server instance away from every later server with the same name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SessionInstanceId(String);
 
 impl SessionInstanceId {
@@ -30,6 +31,7 @@ impl SessionInstanceId {
 
 /// Exact identity of one PTY incarnation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneRef {
     pub session_instance: SessionInstanceId,
     pub pane_id: PaneId,
@@ -38,6 +40,7 @@ pub struct PaneRef {
 
 /// Exact identity of one semantic agent or published activity.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentRef {
     pub pane: PaneRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]

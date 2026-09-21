@@ -7,6 +7,7 @@ use super::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum AgentState {
     Working,
     Blocked,
@@ -44,6 +45,7 @@ impl AgentState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum AgentAuthority {
     Reported,
     Published,
@@ -52,6 +54,7 @@ pub enum AgentAuthority {
 
 /// One automation-facing semantic occupant of a pane.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentRuntime {
     pub reference: AgentRef,
     pub identity: AgentIdentity,

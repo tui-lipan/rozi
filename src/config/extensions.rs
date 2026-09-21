@@ -476,9 +476,10 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     validate_platform_names(&info.platforms, &mut info.errors);
 
     let id_valid = validate_extension_id(info.id.as_deref(), &mut info.errors);
-    // Checked in declaration order so the most specific reason wins: an extension for a different
-    // operating system is not also "too new", and neither is worth reporting as the other.
-    let compatibility_error = match info.api {
+    // A manifest written for another extension API is unreadable rather than merely wrong: every
+    // other check below applies API 1's rules to a document that does not claim to follow them, so
+    // whatever they find says nothing.
+    let api_error = match info.api {
         None => {
             info.errors
                 .push("missing required field `extension.api`".to_string());
@@ -488,9 +489,12 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             "requires extension API {api}, rozi supports API {EXTENSION_API_VERSION}"
         )),
         Some(_) => None,
-    }
-    .or_else(|| unsupported_platform(&info.platforms))
-    .or_else(|| rozi_too_old(info.min_rozi.as_deref(), &mut info.errors));
+    };
+    // Facts about *this machine*, as opposed to facts about the manifest. The platform reason wins
+    // over the version one because an extension for another operating system is not also "too new",
+    // and neither is worth reporting as the other.
+    let environment_error = unsupported_platform(&info.platforms)
+        .or_else(|| rozi_too_old(info.min_rozi.as_deref(), &mut info.errors));
 
     let mut commands = Vec::new();
     let mut services = Vec::new();
@@ -597,17 +601,26 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     }
 
     let mut agents = agents;
-    if let Some(error) = compatibility_error {
-        info.status = ExtensionStatus::Incompatible;
-        info.errors.insert(0, error);
-        commands.clear();
-        services.clear();
-        agents.clear();
-        sidebar_tabs.clear();
-        navigation_targets.clear();
-        suggested_keybindings.clear();
+    // Three outcomes, in the order their reasons outrank each other.
+    //
+    // An unreadable API dialect comes first, because nothing checked below was checked against the
+    // right rules. Then the manifest's own mistakes, because a wrong manifest is a fact about the
+    // extension while being unable to run here is only a fact about this machine - and the two
+    // coincide: `platforms = ["windows", "darwin"]` on Linux is both at once, and calling that an
+    // incompatibility would advise running it on a platform that does not exist instead of naming
+    // the typo. Only then the environment.
+    let refusal = if let Some(error) = api_error {
+        Some((ExtensionStatus::Incompatible, Some(error)))
     } else if !info.errors.is_empty() {
-        info.status = ExtensionStatus::Invalid;
+        Some((ExtensionStatus::Invalid, None))
+    } else {
+        environment_error.map(|error| (ExtensionStatus::Incompatible, Some(error)))
+    };
+    if let Some((status, error)) = refusal {
+        info.status = status;
+        if let Some(error) = error {
+            info.errors.insert(0, error);
+        }
         commands.clear();
         services.clear();
         agents.clear();
@@ -729,11 +742,18 @@ fn validate_platform_names(platforms: &[String], errors: &mut Vec<String>) {
 
 /// Discovery metadata, so it is checked for being a link rather than for reachability. Rozi never
 /// opens it; an index and a picker show it to a person who decides.
+///
+/// Parsed rather than prefix-matched: `https://` passes a `starts_with` test while naming nothing,
+/// and a field whose only job is to be shown to someone has to at least be a URL.
 fn validate_homepage(homepage: Option<&str>, errors: &mut Vec<String>) {
     let Some(homepage) = homepage else {
         return;
     };
-    if !homepage.starts_with("https://") && !homepage.starts_with("http://") {
+    let usable = url::Url::parse(homepage).is_ok_and(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.host_str().is_some_and(|host| !host.is_empty())
+    });
+    if !usable {
         errors.push(format!(
             "`extension.homepage` must be an http(s) URL, got `{homepage}`"
         ));
@@ -966,6 +986,72 @@ mod tests {
         assert!(errors.contains("darwin"), "{errors}");
         assert!(errors.contains("min_rozi"), "{errors}");
         assert!(errors.contains("homepage"), "{errors}");
+    }
+
+    /// A manifest can be wrong *and* unable to run here at once. The wrongness is the fact about
+    /// the extension, so it wins: reporting only the incompatibility would tell the author their
+    /// extension runs on a platform that does not exist, which is the thing they got wrong.
+    #[test]
+    fn a_wrong_manifest_outranks_being_unable_to_run_here() {
+        let temp = tempfile::tempdir().unwrap();
+        let elsewhere = if std::env::consts::OS == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
+        write_manifest(
+            temp.path(),
+            "both",
+            &format!(
+                "{}platforms = [\"{elsewhere}\", \"darwin\"]\n",
+                manifest("both", "1")
+            ),
+        );
+
+        let entries = scan_extensions_in(temp.path());
+        let entry = &entries.entries()[0];
+
+        assert_eq!(entry.status, ExtensionStatus::Invalid);
+        assert!(
+            entry.errors.iter().any(|error| error.contains("darwin")),
+            "{:?}",
+            entry.errors
+        );
+    }
+
+    /// `homepage` exists to be shown to a person deciding whether to install something, so it has
+    /// to name somewhere. A scheme on its own passes a `starts_with` check and names nothing.
+    #[test]
+    fn a_homepage_has_to_name_a_host() {
+        for homepage in ["https://", "http://", "not a url", "ftp://example.invalid"] {
+            let temp = tempfile::tempdir().unwrap();
+            write_manifest(
+                temp.path(),
+                "linkless",
+                &format!("{}homepage = \"{homepage}\"\n", manifest("linkless", "1")),
+            );
+
+            let entries = scan_extensions_in(temp.path());
+            assert_eq!(
+                entries.entries()[0].status,
+                ExtensionStatus::Invalid,
+                "accepted {homepage:?}"
+            );
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "linked",
+            &format!(
+                "{}homepage = \"https://example.invalid/a\"\n",
+                manifest("linked", "1")
+            ),
+        );
+        assert_eq!(
+            scan_extensions_in(temp.path()).entries()[0].status,
+            ExtensionStatus::Loaded
+        );
     }
 
     #[test]

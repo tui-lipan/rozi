@@ -364,6 +364,23 @@ pub struct PaneInfo {
     pub agent_state: Option<String>,
 }
 
+/// The whole `data` value of a `list-panes` reply.
+///
+/// A named type for the array rather than for its element alone, because `ControlResponse::data`
+/// is untyped on the wire and the schema is where a consumer finds out what a given command's
+/// `data` is. Without this, the published schema describes one pane and leaves the shape actually
+/// returned - a list of them - unnamed.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneListPayload(pub Vec<PaneInfo>);
+
+/// The whole `data` value of an `agents list` reply. See [`PaneListPayload`].
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentListPayload(pub Vec<AgentInfo>);
+
 /// One pane's captured screen, as `capture-pane` and `agents read` report it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]

@@ -49,7 +49,7 @@ const SERVER_LAYOUT_AUTHOR: ClientId = 0;
 /// come from somewhere else than a client's do - this side reads the authoritative server runtime
 /// state directly rather than the copy a client keeps - but the shapes are shared, so a script
 /// parses one document whichever endpoint answered it.
-use crate::control::{NewPaneAccepted, PaneCapture, PaneInfo};
+use crate::control::{AgentListPayload, NewPaneAccepted, PaneCapture, PaneInfo, PaneListPayload};
 
 struct SessionAgentPrompt<'a> {
     target: AgentTarget,
@@ -281,8 +281,12 @@ impl SessionServer {
         // could later match a *different* session that took the old name. Until that is designed,
         // a pane naming a pane in its own session says so with `--target "$ROZI_PANE"`.
         match request.command {
-            ControlCommand::ListPanes => ControlResponse::ok(self.session_pane_report()),
-            ControlCommand::AgentsList => ControlResponse::ok(self.session_agent_report()),
+            ControlCommand::ListPanes => {
+                ControlResponse::ok(PaneListPayload(self.session_pane_report()))
+            }
+            ControlCommand::AgentsList => {
+                ControlResponse::ok(AgentListPayload(self.session_agent_report()))
+            }
             ControlCommand::AgentGet { target } => self.session_agent_get(target),
             ControlCommand::AgentRead { target, scrollback } => {
                 match self.resolve_agent_wait_target(target) {

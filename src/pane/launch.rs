@@ -124,15 +124,92 @@ pub fn replayable_foreground_command(
     )
 }
 
-/// Quote `word` so an interactive shell reads it as one literal argument, since the captured
-/// command is replayed by typing it at a prompt. Only reached for inspector-reported paths and
-/// arguments, which exist on Unix alone - a Windows pane has neither.
-pub fn shell_quote(word: &str) -> String {
-    let plain = |ch: char| ch.is_ascii_alphanumeric() || "_-./:@%+=".contains(ch);
-    if !word.is_empty() && word.chars().all(plain) {
+/// How a shell reads a quoted word.
+///
+/// These families are not cosmetic variations of one another. `cmd.exe` gives single quotes no
+/// meaning at all, so a POSIX-quoted line typed there is a *different command* rather than an ugly
+/// one; PowerShell doubles an embedded apostrophe where POSIX closes, escapes, and reopens; and
+/// fish treats backslash as an escape inside single quotes where POSIX leaves it alone. Anything
+/// rendered for a human to press Enter on has to know which of these it is writing for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromptQuoting {
+    /// `sh`, `bash`, `zsh`, `dash`, `ksh`: `'…'` is literal, and an embedded `'` closes, escapes,
+    /// and reopens.
+    Posix,
+    /// `fish`: `'…'` is literal too, but `\` and `'` are the two escapes inside it, so a backslash
+    /// has to be doubled where POSIX leaves it alone.
+    Fish,
+    /// PowerShell: `'…'` is literal and an embedded `'` is doubled.
+    PowerShell,
+    /// `cmd.exe`: single quotes mean nothing. `"…"` groups, and an embedded `"` is doubled.
+    Cmd,
+}
+
+impl PromptQuoting {
+    /// Pick the rules from the shell a pane is actually running.
+    ///
+    /// An unrecognized program falls back to what an unknown shell on that platform is
+    /// overwhelmingly likely to be, which is the safer guess than assuming POSIX everywhere: on
+    /// Windows a wrong POSIX guess silently changes the command, while on Unix a wrong `cmd` guess
+    /// would do the same in reverse.
+    pub fn of(shell: Option<&str>) -> Self {
+        let name = shell.map(crate::platform::command::normalized_program_name);
+        match name.as_deref() {
+            Some("fish") => Self::Fish,
+            Some("powershell" | "pwsh") => Self::PowerShell,
+            Some("cmd") => Self::Cmd,
+            Some("sh" | "bash" | "zsh" | "dash" | "ksh" | "ash" | "busybox") => Self::Posix,
+            _ if cfg!(windows) => Self::Cmd,
+            _ => Self::Posix,
+        }
+    }
+
+    /// Characters that need no quoting in any of these shells.
+    fn is_plain(self, ch: char) -> bool {
+        if ch.is_ascii_alphanumeric() {
+            return true;
+        }
+        match self {
+            // `%` expands inside quotes as well as outside, so quoting cannot rescue it; leaving
+            // it bare at least keeps the line readable, and `hold` never submits one unseen.
+            Self::Cmd => "_-./:\\".contains(ch),
+            _ => "_-./:@%+=".contains(ch),
+        }
+    }
+}
+
+/// Quote `word` so a prompt running `quoting`'s shell reads it as one literal argument.
+///
+/// Best effort on `cmd.exe` alone, where `%VAR%` and `!VAR!` expand inside double quotes and the
+/// interactive prompt offers no escape for either. That is survivable because the only caller that
+/// can reach `cmd` is the held-command path, which writes the line and waits for a person to read
+/// it before pressing Enter.
+pub fn quote_for_prompt(word: &str, quoting: PromptQuoting) -> String {
+    if !word.is_empty() && word.chars().all(|ch| quoting.is_plain(ch)) {
         return word.to_string();
     }
-    format!("'{}'", word.replace('\'', r"'\''"))
+    match quoting {
+        PromptQuoting::Posix => format!("'{}'", word.replace('\'', r"'\''")),
+        PromptQuoting::Fish => format!("'{}'", word.replace('\\', r"\\").replace('\'', r"\'")),
+        PromptQuoting::PowerShell => format!("'{}'", word.replace('\'', "''")),
+        PromptQuoting::Cmd => format!("\"{}\"", word.replace('"', "\"\"")),
+    }
+}
+
+/// Render `argv` as one line the shell behind `quoting` reads back as exactly those arguments.
+pub fn prompt_line(argv: &[String], quoting: PromptQuoting) -> String {
+    argv.iter()
+        .map(|argument| quote_for_prompt(argument, quoting))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// POSIX quoting, for the capture path.
+///
+/// Kept separate from [`quote_for_prompt`] only by name: the inspector-reported paths and
+/// arguments this quotes exist on Unix alone, so the shell behind them is a POSIX one.
+pub fn shell_quote(word: &str) -> String {
+    quote_for_prompt(word, PromptQuoting::Posix)
 }
 
 /// Program names that mean "this pane is sitting in a shell", not "this pane is running something".
@@ -201,5 +278,103 @@ mod tests {
             PaneLaunch::direct(vec!["ssh".into(), "--".into(), "host with spaces".into()]).unwrap();
 
         assert_eq!(launch.display(), "ssh -- host with spaces");
+    }
+
+    /// The three cases a held resume line actually meets: an executable path with spaces, an
+    /// opaque session reference with spaces, and one carrying the quote character each family
+    /// escapes differently. A line quoted for the wrong family is a different command, not an
+    /// ugly one, so each is pinned rather than described.
+    #[test]
+    fn each_shell_family_quotes_the_way_that_shell_reads() {
+        let cases = [
+            (
+                PromptQuoting::Posix,
+                r"'/opt/Program Files/claude' --resume 'it'\''s here'",
+            ),
+            (
+                PromptQuoting::Fish,
+                r"'/opt/Program Files/claude' --resume 'it\'s here'",
+            ),
+            (
+                PromptQuoting::PowerShell,
+                "'/opt/Program Files/claude' --resume 'it''s here'",
+            ),
+            (
+                PromptQuoting::Cmd,
+                "\"/opt/Program Files/claude\" --resume \"it's here\"",
+            ),
+        ];
+
+        for (quoting, expected) in cases {
+            let argv = [
+                "/opt/Program Files/claude".to_string(),
+                "--resume".to_string(),
+                "it's here".to_string(),
+            ];
+            assert_eq!(prompt_line(&argv, quoting), expected, "{quoting:?}");
+        }
+    }
+
+    /// A double quote is inert in a POSIX single-quoted word and is the grouping character in
+    /// `cmd`, so it is the one character the two families disagree about in the other direction.
+    #[test]
+    fn a_double_quote_survives_cmds_own_grouping() {
+        assert_eq!(
+            quote_for_prompt(r#"say "hi""#, PromptQuoting::Cmd),
+            r#""say ""hi""""#
+        );
+        assert_eq!(
+            quote_for_prompt(r#"say "hi""#, PromptQuoting::Posix),
+            r#"'say "hi"'"#
+        );
+    }
+
+    /// A backslash is an ordinary character inside POSIX single quotes and an escape inside fish's,
+    /// which is exactly what a Windows path dragged onto a fish prompt would run into.
+    #[test]
+    fn fish_doubles_a_backslash_where_posix_leaves_it_alone() {
+        let path = r"C:\Program Files\claude.exe";
+
+        assert_eq!(
+            quote_for_prompt(path, PromptQuoting::Fish),
+            r"'C:\\Program Files\\claude.exe'"
+        );
+        assert_eq!(
+            quote_for_prompt(path, PromptQuoting::Posix),
+            r"'C:\Program Files\claude.exe'"
+        );
+    }
+
+    /// The shell a pane runs decides the rules, and an unknown program falls back to what an
+    /// unknown shell on this platform is likely to be - not to POSIX everywhere, which is what
+    /// silently mis-quoted a Windows prompt.
+    #[test]
+    fn quoting_follows_the_shell_the_pane_runs() {
+        assert_eq!(PromptQuoting::of(Some("/bin/zsh")), PromptQuoting::Posix);
+        assert_eq!(
+            PromptQuoting::of(Some("/usr/bin/fish")),
+            PromptQuoting::Fish
+        );
+        assert_eq!(PromptQuoting::of(Some("cmd.exe")), PromptQuoting::Cmd);
+        // A configured Windows shell is usually a full path, and only Windows' own path rules
+        // split it into a basename.
+        #[cfg(windows)]
+        assert_eq!(
+            PromptQuoting::of(Some(r"C:\Windows\System32\cmd.exe")),
+            PromptQuoting::Cmd
+        );
+        assert_eq!(
+            PromptQuoting::of(Some("PowerShell.EXE")),
+            PromptQuoting::PowerShell
+        );
+        assert_eq!(PromptQuoting::of(Some("pwsh")), PromptQuoting::PowerShell);
+
+        let fallback = if cfg!(windows) {
+            PromptQuoting::Cmd
+        } else {
+            PromptQuoting::Posix
+        };
+        assert_eq!(PromptQuoting::of(None), fallback);
+        assert_eq!(PromptQuoting::of(Some("some-new-shell")), fallback);
     }
 }

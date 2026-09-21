@@ -4213,6 +4213,66 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
     );
 }
 
+/// The other way a resume fails, and the more likely one: the snapshot is older than the machine,
+/// and the command its agent definition names is not there any more. Nothing can be spawned at
+/// all, so there is no exit status to report and no process to hold the pane open - and the pane
+/// must still come back as a usable terminal rather than as an exited husk.
+#[test]
+fn a_resume_command_that_cannot_start_still_leaves_a_working_shell() {
+    let mut server = SessionServer::new_named("dev");
+    let (_client, _stream) = attach_client(&mut server);
+
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        // The pane was created to run the agent. Falling back to *this* would open a fresh
+        // conversation, which is the one thing a failed resume must not do.
+        launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
+        agent_resume: Some(AgentResumeLaunch {
+            label: "Claude Code".to_string(),
+            launch: crate::pane::launch::PaneLaunch::direct(vec![
+                "/nonexistent/rozi-test/claude".to_string(),
+                "--resume".to_string(),
+                "opaque-session-123".to_string(),
+            ])
+            .expect("resume argv"),
+        }),
+        cwd: None,
+        title: None,
+        cols: 80,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+
+    assert!(
+        matches!(result, ServerMessage::SpawnResult { ok: true, .. }),
+        "the pane exists: the shell started even though the resume command did not"
+    );
+    let pane = server.panes.get_mut(&1).expect("pane retained");
+    assert!(pane.pty.is_some(), "no shell was left to use");
+    assert_eq!(pane.exited, None, "the pane must not come back exited");
+    assert!(
+        pane.agent_resume.is_none(),
+        "nothing was resumed, so nothing is waiting to report a resume failure later"
+    );
+    assert_eq!(
+        pane.launch,
+        Some(crate::pane::launch::PaneLaunch::shell("true")),
+        "the pane still remembers how it was created, for its next snapshot"
+    );
+    let text = pane.screen_without_change().snapshot();
+    assert!(
+        text.contains("Claude Code resume failed"),
+        "the failure was not named; screen was:\n{text}"
+    );
+}
+
 /// A native agent resume that fails must not look like a restore that quietly did nothing: the
 /// pane stays, the agent's own output stays above it, the failure is named, and the shell
 /// underneath is usable. The pane's own `keep_open` is false here - the hold comes from the resume.

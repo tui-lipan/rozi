@@ -38,7 +38,9 @@ pub(crate) fn handle_control_request(
     }
     let response = match envelope.request.command {
         ControlCommand::ListPanes => list_panes(ctx),
-        ControlCommand::AgentsList => ControlResponse::ok(list_agents(ctx)),
+        ControlCommand::AgentsList => {
+            ControlResponse::ok(crate::control::AgentListPayload(list_agents(ctx)))
+        }
         ControlCommand::AgentGet { target } => match resolve_agent(ctx, &target) {
             Ok(agent) => ControlResponse::ok(agent),
             Err(response) => response,
@@ -323,7 +325,7 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
     for pane in ctx.state.scratch.panes.iter().filter(|pane| !pane.closing) {
         panes.push(PaneInfo::new(pane, 0, &session, None));
     }
-    ControlResponse::ok(panes)
+    ControlResponse::ok(crate::control::PaneListPayload(panes))
 }
 
 fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {

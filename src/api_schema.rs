@@ -31,7 +31,11 @@ pub fn bundle() -> Value {
     // The `data` payloads of the public commands. `ControlResponse::data` is untyped on the wire -
     // one envelope carries all of them - so the schema names each payload here instead, and a
     // consumer picks the one for the command it sent.
+    // Both the element and the whole `data` value: `list-panes` and `agents list` return arrays,
+    // and a consumer needs a definition naming the thing it actually received.
+    add::<crate::control::PaneListPayload>(&mut generator, &mut roots);
     add::<crate::control::PaneInfo>(&mut generator, &mut roots);
+    add::<crate::control::AgentListPayload>(&mut generator, &mut roots);
     add::<crate::control::PaneCapture>(&mut generator, &mut roots);
     add::<crate::control::NewPaneAccepted>(&mut generator, &mut roots);
     add::<crate::control::PaneLoggingState>(&mut generator, &mut roots);

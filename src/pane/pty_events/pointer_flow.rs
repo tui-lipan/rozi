@@ -46,6 +46,41 @@ fn is_motion_report(bytes: &[u8]) -> bool {
     any && code & 0x20 != 0
 }
 
+/// Whether an outgoing mouse report is a button *press*: not motion, not a wheel notch, and not a
+/// release.
+///
+/// Covers every encoding `tui-lipan` forwards. SGR marks a release with a lowercase `m`; the legacy
+/// `CSI M` spellings carry the button code offset by 32 and can only mark a release as button 3.
+pub(crate) fn is_press_report(bytes: &[u8]) -> bool {
+    let code = if let Some(rest) = bytes.strip_prefix(b"\x1b[<") {
+        if rest.last() != Some(&b'M') {
+            return false;
+        }
+        let digits = rest.iter().take_while(|byte| byte.is_ascii_digit());
+        let mut code: u32 = 0;
+        let mut any = false;
+        for digit in digits {
+            any = true;
+            code = code
+                .saturating_mul(10)
+                .saturating_add(u32::from(digit - b'0'));
+        }
+        if !any {
+            return false;
+        }
+        code
+    } else if let Some(&raw) = bytes.strip_prefix(b"\x1b[M").and_then(<[u8]>::first) {
+        let code = u32::from(raw.saturating_sub(32));
+        if code & 0x03 == 0x03 {
+            return false;
+        }
+        code
+    } else {
+        return false;
+    };
+    code & 0x60 == 0
+}
+
 /// What a cadence wakeup found for a pane whose motion was held.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Paced {
@@ -157,6 +192,34 @@ mod tests {
             "x10 encoding reports no motion"
         );
         assert!(!is_motion_report(b""), "nothing at all");
+    }
+
+    #[test]
+    fn presses_are_recognised_in_every_forwarded_encoding() {
+        assert!(is_press_report(b"\x1b[<0;10;20M"), "sgr left press");
+        assert!(is_press_report(b"\x1b[<2;10;20M"), "sgr right press");
+        assert!(is_press_report(b"\x1b[<16;10;20M"), "sgr ctrl+left press");
+        assert!(!is_press_report(b"\x1b[<0;10;20m"), "sgr release");
+        assert!(!is_press_report(b"\x1b[<32;10;20M"), "sgr drag");
+        assert!(!is_press_report(b"\x1b[<35;10;20M"), "sgr bare move");
+        assert!(!is_press_report(b"\x1b[<64;10;20M"), "sgr wheel up");
+        assert!(
+            is_press_report(&[0x1b, b'[', b'M', 32, 42, 52]),
+            "x10 press"
+        );
+        assert!(
+            !is_press_report(&[0x1b, b'[', b'M', 35, 42, 52]),
+            "x10 release"
+        );
+        assert!(
+            !is_press_report(&[0x1b, b'[', b'M', 64, 42, 52]),
+            "x10 drag"
+        );
+        assert!(
+            !is_press_report(&[0x1b, b'[', b'M', 96, 42, 52]),
+            "x10 wheel"
+        );
+        assert!(!is_press_report(b""), "nothing at all");
     }
 
     #[test]

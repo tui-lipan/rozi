@@ -261,6 +261,50 @@ fn focus_reports_do_not_mark_a_session_as_worked_in() {
         .expect("test thread panicked");
 }
 
+/// A child running mouse tracking keeps the press on an already-focused pane for itself, so the
+/// click never reaches `Msg::FocusPane`. The forwarded press has to answer the mark instead; the
+/// pointer merely passing over, or the release, must not.
+#[test]
+fn a_press_forwarded_to_a_mouse_tracking_child_answers_the_mark() {
+    use crate::Msg;
+    use crate::session::client::SessionClient;
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, _rx) = SessionClient::test_channel();
+            backend.state_mut().current_mut().session_client = Some(client);
+            let id = backend.state().focused_pane().expect("fresh pane focus");
+            let marked = |backend: &TestBackend<AppRoot>| {
+                let pane = &backend.state().current().workspaces[0].panes[0];
+                pane.activity.bell || pane.terminal.finished_unseen
+            };
+            {
+                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                pane.activity.bell = true;
+                pane.terminal.finished_unseen = true;
+            }
+            backend.render();
+
+            for report in [&b"\x1b[<35;4;4M"[..], b"\x1b[<64;4;4M", b"\x1b[<0;4;4m"] {
+                backend
+                    .dispatch(Msg::PaneMouse(id, report.to_vec()))
+                    .expect("dispatch pointer report");
+                assert!(marked(&backend), "{report:?} is not a click");
+            }
+
+            backend
+                .dispatch(Msg::PaneMouse(id, b"\x1b[<0;4;4M".to_vec()))
+                .expect("dispatch press");
+            assert!(!marked(&backend), "a click on the pane answers its mark");
+        })
+        .expect("spawn test thread")
+        .join()
+        .expect("test thread panicked");
+}
+
 #[test]
 fn terminal_keyboard_and_paste_input_return_scrolled_pane_to_live_view() {
     use crate::Msg;

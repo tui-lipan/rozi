@@ -165,8 +165,15 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     if std::mem::take(&mut ctx.state.consumed_pointer_click) {
         return Update::none();
     }
+    // Clicking a pane answers its mark. Without mouse tracking that happens on the way through
+    // `Msg::FocusPane`, but a child that tracks the mouse keeps the press of an already-focused
+    // pane for itself, so the forwarded report is the only sign of it. Motion, the wheel and the
+    // release are not a click and answer nothing.
+    let acknowledged = crate::pane::pty_events::pointer_flow::is_press_report(&bytes)
+        && crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     // Forwarded activity also means the pointer is over this pane, so re-apply the hover policy.
     let hover = crate::ops::focus::hover_focus_pane(ctx, id);
+    let hover = if acknowledged { Update::full() } else { hover };
     if let Some(blocked) = input_blocked(ctx) {
         // Pointer motion arrives continuously; a renewed rejection draws nothing new, so fall back
         // to whatever focus already asked for.

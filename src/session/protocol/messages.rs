@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::layout::shared::{ClientId, SharedLayout};
 use crate::runtime_metrics::ServerRuntimeMetrics;
 use crate::session::protocol::pane_runtime::{
-    AgentIntegrationReport, PaneMeta, PaneRuntimeState, PublishedRow, WirePalette,
+    PaneMeta, PaneRuntimeState, PublishedRow, WirePalette,
 };
 use crate::state::PaneId;
 
@@ -179,10 +179,15 @@ pub enum ClientMessage {
         reason: Option<String>,
     },
     ReportAgent {
+        request_id: u64,
         pane_id: PaneId,
         local: bool,
         generation: u64,
-        report: Option<AgentIntegrationReport>,
+        agent: Option<String>,
+        integration: String,
+        state: Option<super::AgentState>,
+        reason: Option<String>,
+        native_session: Option<String>,
         seq: u64,
     },
     /// Replace the pane's published rows. An empty list withdraws them, and the pane falls
@@ -400,6 +405,11 @@ pub enum ServerMessage {
         /// Negotiated wire version for this request. Missing (`0`) on pre-negotiation peers.
         #[serde(default)]
         effective_protocol: u32,
+        response: crate::control::ControlResponse,
+    },
+    /// Acknowledges an integration report sent over an attached client connection.
+    AgentReportResult {
+        request_id: u64,
         response: crate::control::ControlResponse,
     },
     SessionOriginSet {

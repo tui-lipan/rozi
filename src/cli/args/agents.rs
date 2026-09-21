@@ -37,6 +37,8 @@ fn parse_report(
     args: Vec<String>,
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let mut target = None;
+    let mut agent = None;
+    let mut integration = None;
     let mut state = None;
     let mut reason = None;
     let mut native_session = None;
@@ -56,6 +58,10 @@ fn parse_report(
                 let value = next_value(&mut iter, "--state requires a state")?;
                 state = Some(parse_report_state(&value)?);
             }
+            "--agent" => agent = Some(next_value(&mut iter, "--agent requires an id")?),
+            "--integration" => {
+                integration = Some(next_value(&mut iter, "--integration requires a token")?)
+            }
             "--reason" => reason = Some(next_value(&mut iter, "--reason requires text")?),
             "--native-session" => {
                 native_session = Some(next_value(&mut iter, "--native-session requires a value")?)
@@ -73,7 +79,10 @@ fn parse_report(
     }
     Ok((
         ControlCommand::AgentReport {
-            target: target.or_else(pane_from_environment),
+            target,
+            agent: agent.ok_or_else(|| "agents report requires --agent".to_string())?,
+            integration: integration
+                .ok_or_else(|| "agents report requires --integration".to_string())?,
             state: state.ok_or_else(|| "agents report requires --state".to_string())?,
             reason,
             native_session,
@@ -87,6 +96,7 @@ fn parse_release(
     args: Vec<String>,
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let mut target = None;
+    let mut integration = None;
     let mut seq = None;
     let mut iter = args.into_iter();
     while let Some(flag) = iter.next() {
@@ -105,12 +115,17 @@ fn parse_release(
                         .map_err(|_| "--seq requires an unsigned integer".to_string())?,
                 )
             }
+            "--integration" => {
+                integration = Some(next_value(&mut iter, "--integration requires a token")?)
+            }
             other => return Err(format!("unexpected agents release argument `{other}`")),
         }
     }
     Ok((
         ControlCommand::AgentRelease {
-            target: target.or_else(pane_from_environment),
+            target,
+            integration: integration
+                .ok_or_else(|| "agents release requires --integration".to_string())?,
             seq: seq.ok_or_else(|| "agents release requires --seq".to_string())?,
         },
         None,
@@ -127,12 +142,6 @@ fn parse_report_state(
         "done" => Ok(crate::session::protocol::AgentState::Done),
         _ => Err(format!("unknown agent state `{value}`")),
     }
-}
-
-fn pane_from_environment() -> Option<crate::state::PaneId> {
-    std::env::var("ROZI_PANE")
-        .ok()
-        .and_then(|value| value.parse().ok())
 }
 
 fn parse_prompt(
@@ -433,6 +442,10 @@ mod tests {
             "report".into(),
             "--target".into(),
             "3".into(),
+            "--agent".into(),
+            "claude".into(),
+            "--integration".into(),
+            "hook-abc".into(),
             "--state".into(),
             "working".into(),
             "--native-session".into(),
@@ -445,6 +458,8 @@ mod tests {
             command,
             ControlCommand::AgentReport {
                 target: Some(3),
+                agent: "claude".into(),
+                integration: "hook-abc".into(),
                 state: crate::session::protocol::AgentState::Working,
                 reason: None,
                 native_session: Some("opaque-123".into()),

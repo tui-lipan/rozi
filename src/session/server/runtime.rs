@@ -62,8 +62,30 @@ pub(super) const STATE_SETTLE_GRACE: Duration = Duration::from_secs(2);
 /// the agent draws a prompt again, because that is positive idle evidence rather than silence.
 pub(super) const AGENT_HOLD_MAX: Duration = Duration::from_secs(15 * 60);
 
+pub(super) fn integration_error_code(code: &str) -> crate::control::ControlErrorCode {
+    match code {
+        "conflict" => crate::control::ControlErrorCode::Conflict,
+        "invalid-argument" => crate::control::ControlErrorCode::InvalidArgument,
+        "pane-not-found" => crate::control::ControlErrorCode::PaneNotFound,
+        "stale-generation" => crate::control::ControlErrorCode::StaleReference,
+        _ => crate::control::ControlErrorCode::RequestFailed,
+    }
+}
+
 impl AgentScratch {
     pub(super) fn sync_references(&mut self, runtime: &PaneRuntimeState) {
+        if let Some(integration) = &runtime.integration {
+            self.references.clear();
+            self.next_incarnation = self.next_incarnation.max(integration.reference.incarnation);
+            self.references.insert(
+                None,
+                TrackedAgentReference {
+                    identity: integration.identity.id.clone(),
+                    incarnation: integration.reference.incarnation,
+                },
+            );
+            return;
+        }
         let occupants = runtime_occupants(runtime);
         self.references.retain(|slot, tracked| {
             occupants.iter().any(|(candidate_slot, identity)| {
@@ -89,12 +111,46 @@ impl AgentScratch {
         self.references.clear();
     }
 
+    fn ensure_reference(
+        &mut self,
+        pane: protocol::PaneRef,
+        slot: Option<String>,
+        identity: &str,
+    ) -> protocol::AgentRef {
+        let replace = self
+            .references
+            .get(&slot)
+            .is_none_or(|tracked| tracked.identity != identity);
+        if replace {
+            self.next_incarnation = self.next_incarnation.saturating_add(1).max(1);
+            self.references.insert(
+                slot.clone(),
+                TrackedAgentReference {
+                    identity: identity.to_string(),
+                    incarnation: self.next_incarnation,
+                },
+            );
+        }
+        let tracked = &self.references[&slot];
+        protocol::AgentRef {
+            pane,
+            slot,
+            incarnation: tracked.incarnation,
+        }
+    }
+
+    fn retire_integration(&mut self, integration: String) {
+        self.retired_integrations.insert(integration);
+    }
+
     pub(super) fn reset_detection(&mut self) {
         let references = std::mem::take(&mut self.references);
         let next_incarnation = self.next_incarnation;
+        let retired_integrations = std::mem::take(&mut self.retired_integrations);
         *self = Self {
             references,
             next_incarnation,
+            retired_integrations,
             ..Self::default()
         };
     }
@@ -115,15 +171,6 @@ impl AgentScratch {
 }
 
 fn runtime_occupants(runtime: &PaneRuntimeState) -> Vec<(Option<String>, &str)> {
-    if runtime.integration.is_some() {
-        return vec![(
-            None,
-            runtime
-                .detected_agent
-                .as_ref()
-                .map_or("reported", |agent| agent.agent.id.as_str()),
-        )];
-    }
     if !runtime.rows.is_empty() {
         return runtime
             .rows
@@ -142,6 +189,136 @@ fn runtime_occupants(runtime: &PaneRuntimeState) -> Vec<(Option<String>, &str)> 
                 .map(|_| vec![(None, "reported")])
                 .unwrap_or_default()
         })
+}
+
+type IntegrationPayload = (protocol::AgentState, Option<String>, Option<String>);
+type IntegrationResult<T> = std::result::Result<T, (&'static str, String)>;
+
+pub(super) struct AgentIntegrationUpdate {
+    pub agent: Option<String>,
+    pub integration: String,
+    pub state: Option<protocol::AgentState>,
+    pub reason: Option<String>,
+    pub native_session: Option<String>,
+    pub seq: u64,
+}
+
+fn validate_integration_update(
+    pane: &ServerPane,
+    integration: &str,
+    report: Option<&IntegrationPayload>,
+    seq: u64,
+    pane_id: PaneId,
+) -> IntegrationResult<()> {
+    if integration.is_empty()
+        || integration.len() > 256
+        || integration.chars().any(char::is_control)
+    {
+        return Err((
+            "invalid-argument",
+            "integration token must be 1-256 characters without control characters".to_string(),
+        ));
+    }
+    if pane.agent.retired_integrations.contains(integration) {
+        return Err((
+            "conflict",
+            "integration token belongs to a retired agent incarnation".to_string(),
+        ));
+    }
+    validate_native_session(report.and_then(|(_, _, native_session)| native_session.as_deref()))?;
+    match pane.runtime.integration.as_ref() {
+        Some(previous) if previous.integration != integration => Err((
+            "conflict",
+            format!(
+                "integration `{}` still owns pane {pane_id}; release it before claiming a new incarnation",
+                previous.integration
+            ),
+        )),
+        Some(previous) if seq <= previous.seq => Err((
+            "conflict",
+            format!("agent report sequence {seq} is not newer than the current sequence"),
+        )),
+        None if report.is_none() => Err((
+            "conflict",
+            "integration is not the current owner of this pane".to_string(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn validate_native_session(native_session: Option<&str>) -> IntegrationResult<()> {
+    if native_session.is_some_and(|value| {
+        value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
+    }) {
+        Err((
+            "invalid-argument",
+            "native session reference must be 1-4096 characters without control characters"
+                .to_string(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_integration_report(
+    session_instance: protocol::SessionInstanceId,
+    pane_id: PaneId,
+    generation: u64,
+    pane: &mut ServerPane,
+    agent: Option<&str>,
+    integration: String,
+    state: protocol::AgentState,
+    reason: Option<String>,
+    native_session: Option<String>,
+    seq: u64,
+    previous: Option<&protocol::AgentIntegrationReport>,
+) -> IntegrationResult<protocol::AgentIntegrationReport> {
+    let agent = agent.ok_or_else(|| {
+        (
+            "invalid-argument",
+            "agent report requires an agent identity".to_string(),
+        )
+    })?;
+    let identity = pane
+        .runtime
+        .detected_agent
+        .as_ref()
+        .filter(|detected| detected.agent.id == agent)
+        .map(|detected| detected.agent.as_ref().clone())
+        .ok_or_else(|| {
+            (
+                "conflict",
+                format!("agent `{agent}` is not the currently detected agent in pane {pane_id}"),
+            )
+        })?;
+    let reference = previous.map_or_else(
+        || {
+            pane.agent.ensure_reference(
+                protocol::PaneRef {
+                    session_instance,
+                    pane_id,
+                    generation,
+                },
+                None,
+                &identity.id,
+            )
+        },
+        |previous| previous.reference.clone(),
+    );
+    let reason = reason
+        .map(|reason| tui_lipan::utils::sanitize_display_text(&reason).into_owned())
+        .filter(|reason| !reason.is_empty());
+    Ok(protocol::AgentIntegrationReport {
+        integration,
+        identity,
+        reference,
+        state,
+        reason,
+        native_session,
+        seq,
+        reported_at_unix_ms: crate::runtime_metrics::unix_time_millis(),
+    })
 }
 
 impl SessionServer {
@@ -299,6 +476,11 @@ impl SessionServer {
         if pane.exited.is_some() {
             return Err(("pane-exited", format!("pane {pane_id} has exited")));
         }
+        if pane.runtime.integration.is_some() {
+            // Integration authority invalidates the previous published-slot snapshot. Do not
+            // retain concurrent publisher updates behind it and resurrect them on release.
+            return Ok(None);
+        }
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -325,9 +507,9 @@ impl SessionServer {
         owner: Option<ClientId>,
         pane_id: PaneId,
         generation: u64,
-        report: Option<protocol::AgentIntegrationReport>,
-        seq: u64,
+        update: AgentIntegrationUpdate,
     ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
+        let session_instance = self.instance_id.clone();
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
         };
@@ -337,38 +519,39 @@ impl SessionServer {
                 format!("pane {pane_id} generation does not match"),
             ));
         }
-        if pane
-            .runtime
-            .integration_seq
-            .is_some_and(|current| seq <= current)
-        {
-            return Err((
-                "conflict",
-                format!("agent report sequence {seq} is not newer than the current sequence"),
-            ));
+        let AgentIntegrationUpdate {
+            agent,
+            integration,
+            state,
+            reason,
+            native_session,
+            seq,
+        } = update;
+        let report = state.map(|state| (state, reason, native_session));
+        let previous = pane.runtime.integration.clone();
+        validate_integration_update(pane, &integration, report.as_ref(), seq, pane_id)?;
+
+        if let Some((state, reason, native_session)) = report {
+            pane.runtime.integration = Some(Box::new(build_integration_report(
+                session_instance,
+                pane_id,
+                generation,
+                pane,
+                agent.as_deref(),
+                integration,
+                state,
+                reason,
+                native_session,
+                seq,
+                previous.as_deref(),
+            )?));
+            // Pane-level integration owns the same semantic slot as published activity. Keeping
+            // the old rows would resurrect stale logical agents as soon as this claim releases.
+            pane.runtime.rows.clear();
+        } else {
+            pane.agent.retire_integration(integration);
+            pane.runtime.integration = None;
         }
-        if report
-            .as_ref()
-            .and_then(|report| report.native_session.as_deref())
-            .is_some_and(|value| {
-                value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
-            })
-        {
-            return Err((
-                "invalid-argument",
-                "native session reference must be 1-4096 characters without control characters"
-                    .to_string(),
-            ));
-        }
-        pane.runtime.integration = report.map(|mut report| {
-            report.reason = report
-                .reason
-                .map(|reason| tui_lipan::utils::sanitize_display_text(&reason).into_owned())
-                .filter(|reason| !reason.is_empty());
-            report.seq = seq;
-            report
-        });
-        pane.runtime.integration_seq = Some(seq);
         pane.agent.sync_references(&pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
@@ -531,12 +714,20 @@ impl SessionServer {
             return;
         }
         let inspector = PlatformProcessInspector::default();
-        let next = compute_runtime_state(
+        let mut next = compute_runtime_state(
             pane,
             &inspector,
             detect_agent.then(|| agents.as_ref()),
             scan,
         );
+        let integration_replaced = next.integration.as_ref().is_some_and(|integration| {
+            next.detected_agent
+                .as_ref()
+                .is_none_or(|detected| detected.agent.id != integration.identity.id)
+        });
+        if integration_replaced && let Some(integration) = next.integration.take() {
+            pane.agent.retire_integration(integration.integration);
+        }
         if next == pane.runtime {
             return;
         }
@@ -564,7 +755,7 @@ impl SessionServer {
         } else {
             self.broadcast_control(&message);
         }
-        if snapshot_foreground_changed {
+        if snapshot_foreground_changed || integration_replaced {
             // PTY output normally dirties a snapshot first, but the process inspector can learn
             // the command or its argv after that output has already been persisted. Keep the
             // metadata change dirty so a later detach or shutdown cannot retain the earlier,
@@ -785,7 +976,6 @@ fn compute_runtime_state(
         // Owned by `report_pane_rows`, which is the only writer; a recompute carries them.
         rows: pane.runtime.rows.clone(),
         integration: pane.runtime.integration.clone(),
-        integration_seq: pane.runtime.integration_seq,
         sequence: pane.runtime.sequence,
     };
     let changed = runtime_state_changed(&candidate, &pane.runtime);
@@ -1585,6 +1775,39 @@ mod tests {
         scratch.sync_references(&PaneRuntimeState::default());
         scratch.sync_references(&runtime(Some("codex"), protocol::DetectedAgentState::Idle));
         assert!(scratch.references(pane_ref)[0].incarnation > replacement);
+    }
+
+    #[test]
+    fn integration_claim_restores_its_bound_reference_after_detection_reset() {
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 3,
+            generation: 7,
+        };
+        let reference = protocol::AgentRef {
+            pane: pane_ref.clone(),
+            slot: None,
+            incarnation: 9,
+        };
+        let runtime = PaneRuntimeState {
+            integration: Some(Box::new(protocol::AgentIntegrationReport {
+                integration: "hook-a".into(),
+                identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+                reference: reference.clone(),
+                state: protocol::AgentState::Working,
+                reason: None,
+                native_session: None,
+                seq: 1,
+                reported_at_unix_ms: 42,
+            })),
+            ..PaneRuntimeState::default()
+        };
+        let mut scratch = AgentScratch::default();
+        scratch.sync_references(&runtime);
+        scratch.clear_runtime_identity();
+        scratch.sync_references(&runtime);
+
+        assert_eq!(scratch.references(pane_ref), vec![reference]);
     }
 
     #[test]

@@ -126,7 +126,8 @@ pub(crate) fn message_for_frame(
         | crate::Msg::SessionExited { local: true, .. }
         | crate::Msg::SessionSpawnResult { local: true, .. }
         | crate::Msg::SessionPaneLoggingChanged { local: true, .. }
-        | crate::Msg::SessionPaneRuntimeChanged { local: true, .. } => Some(message),
+        | crate::Msg::SessionPaneRuntimeChanged { local: true, .. }
+        | crate::Msg::SessionAgentReportResult { .. } => Some(message),
         crate::Msg::SessionError { message, .. } => {
             Some(crate::Msg::ScratchRuntimeFailed(message.clone()))
         }

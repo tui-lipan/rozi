@@ -665,6 +665,11 @@ pub enum Msg {
         agent_refs: Vec<crate::session::protocol::AgentRef>,
         state: crate::session::protocol::PaneRuntimeState,
     },
+    SessionAgentReportResult {
+        epoch: u64,
+        request_id: u64,
+        response: crate::control::ControlResponse,
+    },
     /// A remote directory listing arrived; feeds the sidebar file tree's provided entry source.
     SessionDirectoryListing {
         epoch: u64,

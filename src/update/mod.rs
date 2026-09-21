@@ -643,6 +643,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => {
             session::pane_runtime_changed(ctx, epoch, pane_id, local, generation, agent_refs, state)
         }
+        Msg::SessionAgentReportResult {
+            epoch,
+            request_id,
+            response,
+        } => session::agent_report_result(ctx, epoch, request_id, response),
         Msg::SessionSpawnResult {
             epoch,
             pane_id,

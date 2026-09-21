@@ -328,9 +328,12 @@ impl SessionServer {
             ControlCommand::AgentGet { target } => self.session_agent_get(target),
             ControlCommand::AgentRead { target, scrollback } => {
                 match self.resolve_agent_wait_target(target) {
-                    Ok(reference) => {
-                        self.session_capture_pane(Some(reference.pane.pane_id), scrollback)
-                    }
+                    Ok(reference) => match self.validate_agent_input_reference(&reference) {
+                        Ok(()) => {
+                            self.session_capture_pane(Some(reference.pane.pane_id), scrollback)
+                        }
+                        Err(response) => response,
+                    },
                     Err(response) => response,
                 }
             }
@@ -389,19 +392,25 @@ impl SessionServer {
             }
             ControlCommand::AgentReport {
                 target,
+                agent,
+                integration,
                 state,
                 reason,
                 native_session,
                 seq,
             } => self.session_agent_report_update(
                 target,
+                Some(agent),
+                integration,
                 Some((state, reason, native_session)),
                 seq,
                 broadcasts,
             ),
-            ControlCommand::AgentRelease { target, seq } => {
-                self.session_agent_report_update(target, None, seq, broadcasts)
-            }
+            ControlCommand::AgentRelease {
+                target,
+                integration,
+                seq,
+            } => self.session_agent_report_update(target, None, integration, None, seq, broadcasts),
             // Every remaining variant was refused above by `session_control_unsupported`.
             other => ControlResponse::error(
                 session_control_unsupported(&other).unwrap_or("unsupported control command"),
@@ -497,7 +506,6 @@ impl SessionServer {
                         .and_then(|report| report.native_session.clone()),
                     reference: runtime.reference,
                     source: runtime.source,
-                    changed_at: runtime.changed_at,
                 });
             }
         }
@@ -543,6 +551,9 @@ impl SessionServer {
             Ok(reference) => reference,
             Err(response) => return Some(response),
         };
+        if let Err(response) = self.validate_agent_input_reference(&reference) {
+            return Some(response);
+        }
         let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
             return Some(ControlResponse::error_with(
                 ControlErrorCode::AgentGone,
@@ -590,6 +601,30 @@ impl SessionServer {
                 "accepted": true,
                 "ref": reference,
             })))
+        }
+    }
+
+    fn validate_agent_input_reference(
+        &self,
+        reference: &protocol::AgentRef,
+    ) -> std::result::Result<(), ControlResponse> {
+        let Some(slot) = reference.slot.as_deref() else {
+            return Ok(());
+        };
+        let active = self
+            .panes
+            .get(&reference.pane.pane_id)
+            .and_then(|pane| pane.runtime.rows.iter().find(|row| row.id == slot))
+            .is_some_and(|row| row.active);
+        if active {
+            Ok(())
+        } else {
+            Err(ControlResponse::error_with(
+                ControlErrorCode::Conflict,
+                format!(
+                    "published agent slot `{slot}` is not active; read and prompt only target the visible activity"
+                ),
+            ))
         }
     }
 
@@ -792,6 +827,8 @@ impl SessionServer {
     fn session_agent_report_update(
         &mut self,
         target: Option<PaneId>,
+        agent: Option<String>,
+        integration: String,
         report: Option<(protocol::AgentState, Option<String>, Option<String>)>,
         seq: u64,
         broadcasts: &mut Vec<(Target, ServerMessage)>,
@@ -806,17 +843,22 @@ impl SessionServer {
                 format!("pane {id} not found"),
             );
         };
-        let report =
-            report.map(
-                |(state, reason, native_session)| protocol::AgentIntegrationReport {
-                    state,
-                    reason,
-                    native_session,
-                    seq,
-                    reported_at: crate::runtime_metrics::unix_time_millis(),
-                },
-            );
-        match self.apply_agent_integration(None, id, generation, report, seq) {
+        let (state, reason, native_session) = report.map_or((None, None, None), |report| {
+            (Some(report.0), report.1, report.2)
+        });
+        match self.apply_agent_integration(
+            None,
+            id,
+            generation,
+            runtime::AgentIntegrationUpdate {
+                agent,
+                integration,
+                state,
+                reason,
+                native_session,
+                seq,
+            },
+        ) {
             Ok(Some(state)) => {
                 broadcasts.push((
                     Target::Broadcast,
@@ -831,15 +873,9 @@ impl SessionServer {
                 ControlResponse::empty()
             }
             Ok(None) => ControlResponse::empty(),
-            Err((code, message)) => ControlResponse::error_with(
-                match code {
-                    "conflict" => ControlErrorCode::Conflict,
-                    "invalid-argument" => ControlErrorCode::InvalidArgument,
-                    "pane-not-found" => ControlErrorCode::PaneNotFound,
-                    _ => ControlErrorCode::RequestFailed,
-                },
-                message,
-            ),
+            Err((code, message)) => {
+                ControlResponse::error_with(runtime::integration_error_code(code), message)
+            }
         }
     }
 
@@ -1331,6 +1367,57 @@ mod tests {
     }
 
     #[test]
+    fn published_slot_input_requires_the_active_activity() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let pane = server.panes.get_mut(&7).unwrap();
+        pane.runtime.rows = vec![
+            protocol::PublishedRow {
+                id: "visible".into(),
+                title: "Visible".into(),
+                status: "idle".into(),
+                reason: None,
+                active: true,
+                work_started_at: None,
+            },
+            protocol::PublishedRow {
+                id: "hidden".into(),
+                title: "Hidden".into(),
+                status: "working".into(),
+                reason: None,
+                active: false,
+                work_started_at: None,
+            },
+        ];
+        pane.agent.sync_references(&pane.runtime);
+        let agents = server.session_agent_report();
+        let visible = &agents
+            .iter()
+            .find(|agent| agent.reference.slot.as_deref() == Some("visible"))
+            .unwrap()
+            .reference;
+        let hidden = &agents
+            .iter()
+            .find(|agent| agent.reference.slot.as_deref() == Some("hidden"))
+            .unwrap()
+            .reference;
+
+        assert!(server.validate_agent_input_reference(visible).is_ok());
+        assert_eq!(
+            server
+                .validate_agent_input_reference(hidden)
+                .unwrap_err()
+                .code,
+            Some(ControlErrorCode::Conflict)
+        );
+        assert!(
+            server
+                .session_agent_get(AgentTarget::Ref(hidden.clone()))
+                .ok
+        );
+    }
+
+    #[test]
     fn atomic_prompt_refuses_a_blocked_agent_before_writing() {
         let mut server = SessionServer::new_named("dev");
         pane_with_agent(&mut server, 7);
@@ -1360,10 +1447,24 @@ mod tests {
     fn integration_reports_and_releases_are_sequence_fenced() {
         let mut server = SessionServer::new_named("dev");
         pane_with_agent(&mut server, 7);
+        {
+            let pane = server.panes.get_mut(&7).unwrap();
+            pane.runtime.rows.push(protocol::PublishedRow {
+                id: "old-session".into(),
+                title: "Old session".into(),
+                status: "working".into(),
+                reason: None,
+                active: true,
+                work_started_at: None,
+            });
+            pane.agent.sync_references(&pane.runtime);
+        }
         let (accepted, _) = control(
             &mut server,
             ControlCommand::AgentReport {
                 target: Some(7),
+                agent: "claude".into(),
+                integration: "hook-a".into(),
                 state: protocol::AgentState::Idle,
                 reason: Some("ready".into()),
                 native_session: Some("native-123".into()),
@@ -1371,12 +1472,18 @@ mod tests {
             },
         );
         assert!(accepted.ok);
-        assert_eq!(server.panes[&7].runtime.integration_seq, Some(13));
+        let bound = server.panes[&7].runtime.integration.as_ref().unwrap();
+        assert_eq!(bound.identity.id, "claude");
+        assert!(bound.reference.incarnation > 0);
+        assert_eq!(bound.seq, 13);
+        assert!(server.panes[&7].runtime.rows.is_empty());
 
         let (stale, _) = control(
             &mut server,
             ControlCommand::AgentReport {
                 target: Some(7),
+                agent: "claude".into(),
+                integration: "hook-a".into(),
                 state: protocol::AgentState::Blocked,
                 reason: None,
                 native_session: None,
@@ -1394,6 +1501,7 @@ mod tests {
                 &mut server,
                 ControlCommand::AgentRelease {
                     target: Some(7),
+                    integration: "hook-a".into(),
                     seq: 14,
                 },
             )
@@ -1401,7 +1509,43 @@ mod tests {
             .ok
         );
         assert!(server.panes[&7].runtime.integration.is_none());
-        assert_eq!(server.panes[&7].runtime.integration_seq, Some(14));
+
+        let (next, _) = control(
+            &mut server,
+            ControlCommand::AgentReport {
+                target: Some(7),
+                agent: "claude".into(),
+                integration: "hook-b".into(),
+                state: protocol::AgentState::Working,
+                reason: None,
+                native_session: None,
+                seq: 1,
+            },
+        );
+        assert!(next.ok, "{next:?}");
+
+        let (delayed, _) = control(
+            &mut server,
+            ControlCommand::AgentReport {
+                target: Some(7),
+                agent: "claude".into(),
+                integration: "hook-a".into(),
+                state: protocol::AgentState::Working,
+                reason: None,
+                native_session: None,
+                seq: 15,
+            },
+        );
+        assert_eq!(delayed.code, Some(ControlErrorCode::Conflict));
+        assert_eq!(
+            server.panes[&7]
+                .runtime
+                .integration
+                .as_ref()
+                .unwrap()
+                .integration,
+            "hook-b"
+        );
     }
 
     #[test]

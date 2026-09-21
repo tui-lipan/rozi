@@ -217,6 +217,8 @@ pub enum ControlCommand {
     AgentReport {
         #[serde(default)]
         target: Option<PaneId>,
+        agent: String,
+        integration: String,
         state: crate::session::protocol::AgentState,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
@@ -227,6 +229,7 @@ pub enum ControlCommand {
     AgentRelease {
         #[serde(default)]
         target: Option<PaneId>,
+        integration: String,
         seq: u64,
     },
     /// Raise a toast from a script.
@@ -293,8 +296,6 @@ pub struct AgentInfo {
     #[serde(rename = "ref")]
     pub reference: crate::session::protocol::AgentRef,
     pub source: crate::session::protocol::AgentAuthority,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub changed_at: Option<u64>,
 }
 
 /// How prominent a [`ControlCommand::Notify`] toast is.

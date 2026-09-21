@@ -117,7 +117,7 @@ pub struct TerminalPane {
     /// `status`, which tracks whether the client-side terminal parser is ready or exited.
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
     pub detected_agent: Option<crate::session::protocol::DetectedAgent>,
-    pub agent_integration: Option<crate::session::protocol::AgentIntegrationReport>,
+    pub agent_integration: Option<Box<crate::session::protocol::AgentIntegrationReport>>,
     /// Set when this agent pane's effective status transitions from `working` to a quiescent state
     /// (finished), and cleared once it is attended (its host window and the pane are both focused).
     /// Drives the sidebar's "unseen finish" pulse so a completed run does not blend into panes that

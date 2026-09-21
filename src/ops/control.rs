@@ -86,7 +86,10 @@ pub(crate) fn handle_control_request(
             Err(response) => response,
         },
         ControlCommand::AgentRead { target, scrollback } => match resolve_agent(ctx, &target) {
-            Ok(agent) => capture_pane(ctx, Some(agent.pane), scrollback),
+            Ok(agent) => match validate_agent_input_reference(ctx, &agent.reference) {
+                Ok(()) => capture_pane(ctx, Some(agent.pane), scrollback),
+                Err(response) => response,
+            },
             Err(response) => response,
         },
         ControlCommand::Metrics => {
@@ -230,24 +233,41 @@ pub(crate) fn handle_control_request(
         ),
         ControlCommand::AgentReport {
             target,
+            agent,
+            integration,
             state,
             reason,
             native_session,
             seq,
-        } => report_agent(
-            ctx,
-            target.or(envelope.request.source_pane),
-            Some(crate::session::protocol::AgentIntegrationReport {
-                state,
+        } => {
+            return report_agent(
+                ctx,
+                target.or(envelope.request.source_pane),
+                Some(agent),
+                integration,
+                Some(state),
                 reason,
                 native_session,
                 seq,
-                reported_at: crate::runtime_metrics::unix_time_millis(),
-            }),
+                envelope.reply,
+            );
+        }
+        ControlCommand::AgentRelease {
+            target,
+            integration,
             seq,
-        ),
-        ControlCommand::AgentRelease { target, seq } => {
-            report_agent(ctx, target.or(envelope.request.source_pane), None, seq)
+        } => {
+            return report_agent(
+                ctx,
+                target.or(envelope.request.source_pane),
+                None,
+                integration,
+                None,
+                None,
+                None,
+                seq,
+                envelope.reply,
+            );
         }
     };
     let _ = envelope.reply.send(response);
@@ -375,7 +395,6 @@ fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {
                         .and_then(|report| report.native_session.clone()),
                     reference: runtime.reference,
                     source: runtime.source,
-                    changed_at: runtime.changed_at,
                 });
             }
         }
@@ -433,39 +452,93 @@ fn resolve_agent(
     }
 }
 
-fn report_agent(
+fn validate_agent_input_reference(
     ctx: &Context<AppRoot>,
+    reference: &crate::session::protocol::AgentRef,
+) -> std::result::Result<(), ControlResponse> {
+    let Some(slot) = reference.slot.as_deref() else {
+        return Ok(());
+    };
+    let active = crate::pane::lifecycle::find_pane(&ctx.state, reference.pane.pane_id)
+        .and_then(|pane| {
+            pane.terminal
+                .published_rows
+                .iter()
+                .find(|row| row.id == slot)
+        })
+        .is_some_and(|row| row.active);
+    if active {
+        Ok(())
+    } else {
+        Err(ControlResponse::error_with(
+            ControlErrorCode::Conflict,
+            format!(
+                "published agent slot `{slot}` is not active; read only targets the visible activity"
+            ),
+        ))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn report_agent(
+    ctx: &mut Context<AppRoot>,
     target: Option<PaneId>,
-    report: Option<crate::session::protocol::AgentIntegrationReport>,
+    agent: Option<String>,
+    integration: String,
+    state: Option<crate::session::protocol::AgentState>,
+    reason: Option<String>,
+    native_session: Option<String>,
     seq: u64,
-) -> ControlResponse {
+    reply: std::sync::mpsc::Sender<ControlResponse>,
+) -> Update {
     let Some(id) = target else {
-        return ControlResponse::error_with(
+        let _ = reply.send(ControlResponse::error_with(
             ControlErrorCode::TargetRequired,
             "agents report requires --target or ROZI_PANE",
-        );
+        ));
+        return Update::none();
     };
     let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, id).filter(|pane| !pane.closing)
     else {
-        return ControlResponse::error_with(
+        let _ = reply.send(ControlResponse::error_with(
             ControlErrorCode::PaneNotFound,
             format!("pane {id} not found"),
-        );
+        ));
+        return Update::none();
     };
+    let pane_id = pane.id;
+    let generation = pane.pty_generation;
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, pane.id);
     let Some(client) = ctx.state.pty_client_for_pane(pane.id) else {
-        return ControlResponse::error_with(
+        let _ = reply.send(ControlResponse::error_with(
             ControlErrorCode::SessionNotConnected,
             format!("pane {id} has no session server"),
-        );
+        ));
+        return Update::none();
     };
+    let request_id = ctx.state.next_agent_report_request_id;
+    ctx.state.next_agent_report_request_id = ctx
+        .state
+        .next_agent_report_request_id
+        .wrapping_add(1)
+        .max(1);
+    let epoch = ctx.state.runtime_epoch;
+    ctx.state
+        .pending_agent_report_replies
+        .insert((epoch, request_id), reply);
     client.report_agent(
-        pane.id,
-        pane.pty_generation,
-        crate::pane::lifecycle::pane_is_local(&ctx.state, pane.id),
-        report,
+        request_id,
+        pane_id,
+        generation,
+        local,
+        agent,
+        integration,
+        state,
+        reason,
+        native_session,
         seq,
     );
-    ControlResponse::empty()
+    Update::none()
 }
 
 fn set_status(

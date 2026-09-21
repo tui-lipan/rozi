@@ -365,6 +365,9 @@ pub struct AgentScratch {
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
     references: HashMap<Option<String>, TrackedAgentReference>,
     next_incarnation: u64,
+    /// Integration ownership tokens that have already relinquished this pane. Retained for the
+    /// pane lifetime so a delayed hook from an old process cannot reclaim authority.
+    retired_integrations: HashSet<String>,
     /// Foreground identity at the last sweep, so an unchanged pane can skip the next one.
     ///
     /// Naming the agent sweeps every process on the host to find this pane's process-group

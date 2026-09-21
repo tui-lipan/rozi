@@ -675,17 +675,27 @@ impl SessionClient {
 
     pub fn report_agent(
         &self,
+        request_id: u64,
         pane_id: PaneId,
         generation: u64,
         local: bool,
-        report: Option<protocol::AgentIntegrationReport>,
+        agent: Option<String>,
+        integration: String,
+        state: Option<protocol::AgentState>,
+        reason: Option<String>,
+        native_session: Option<String>,
         seq: u64,
     ) {
         self.send_control(ClientMessage::ReportAgent {
+            request_id,
             pane_id,
             local,
             generation,
-            report,
+            agent,
+            integration,
+            state,
+            reason,
+            native_session,
             seq,
         });
     }

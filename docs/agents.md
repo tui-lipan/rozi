@@ -217,6 +217,11 @@ the agent's detection rules continue to work.
 An override of a built-in agent inherits its resume capability when `resume` is omitted. Set
 `resume = false` on the `[[agents]]` entry to disable native resume for that override.
 
+A snapshot stores only the fact - this agent, this conversation reference - never the command. The
+argv is resolved from the definition loaded when the session is restored, so changing `argv` here
+also changes how an existing snapshot reopens. See
+[Sessions](sessions.md#reopen-an-agent-conversation) for what restore does with it.
+
 ## Test a definition
 
 Save the config file and inspect:

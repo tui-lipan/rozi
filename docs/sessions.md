@@ -374,8 +374,33 @@ so starting the server with `never` also stops an existing snapshot from replayi
 `never` omits commands from later snapshots as well. Changing the setting for a running server
 takes effect after that server restarts.
 
+### Reopen an agent conversation
+
+An agent that reports a native session reference (`rozi agents report --native-session`) and whose
+definition declares `[agents.resume]` comes back in its own conversation rather than as a fresh one.
+
+The snapshot stores a fact - this agent, this reference - and no command. How to reopen it is
+resolved from the agent definition loaded at restore, so an agent whose resume flags changed
+resumes the current way, and an agent that no longer declares resume support restores as an
+ordinary pane. The reference is passed as one whole process argument; no shell parses it.
+
+A pane restores in this order: a reopenable conversation, then a command it was observed running,
+then its own launch intent, then a plain shell. Only one pane reopens a given conversation.
+
+`resurrect_foreground` governs this too:
+
+| Value | Restoring a pane with a reported conversation |
+| --- | --- |
+| `auto` (default) | Runs the resume command as the pane's first process. |
+| `hold` | Types the resume command at the shell's prompt and leaves it there. |
+| `never` | Writes no conversation reference to the snapshot at all. |
+
+If the resume command fails, the pane keeps the agent's own error on screen, names the failure, and
+leaves a usable shell below it. Rozi never starts a fresh conversation in place of one it could not
+reopen - that would look like a restore that worked.
+
 Set `[session] resurrect_agents = false` to keep explicit native agent session references out of
-snapshots. It defaults to `true`; only references reported by a live agent integration are
+snapshots entirely. It defaults to `true`; only references reported by a live agent integration are
 eligible, never values scraped from terminal output.
 
 Use `Ctrl+K` twice on a restorable row to forget the snapshot. Explicit

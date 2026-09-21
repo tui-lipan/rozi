@@ -1024,6 +1024,7 @@ impl SessionServer {
             owner: None,
             generation,
             launch,
+            agent_resume: None,
             cwd: spawn.cwd,
             title: spawn.title,
             cols,

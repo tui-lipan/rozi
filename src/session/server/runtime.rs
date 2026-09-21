@@ -1782,6 +1782,7 @@ mod tests {
             title: None,
             cwd: Some("/launch/dir".to_string()),
             launch: None,
+            agent_resume: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),

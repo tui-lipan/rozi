@@ -149,8 +149,14 @@ impl SessionServer {
         if let Some(seed) = seed {
             recover_restored_screen(&mut screen, seed);
         }
+        // A native agent resume runs in place of the pane's launch intent without becoming it, so
+        // the pane still remembers - and still snapshots - how it was originally created.
         let mut config = pty_config(
-            request.launch.as_ref(),
+            request
+                .agent_resume
+                .as_ref()
+                .map(|resume| &resume.launch)
+                .or(request.launch.as_ref()),
             &request.shell,
             &request.command_shell,
         )
@@ -163,6 +169,7 @@ impl SessionServer {
         for (key, value) in &request.env {
             config = config.env(key.clone(), value.clone());
         }
+        let agent_resume = request.agent_resume.map(|resume| resume.label);
         let events = Arc::clone(&self.events);
         match TerminalPty::spawn(config, move |event| {
             let event = ServerEvent::Pty(owner, id, generation, event);
@@ -180,6 +187,7 @@ impl SessionServer {
                         title: request.title,
                         cwd: effective_cwd,
                         launch: request.launch,
+                        agent_resume,
                         keep_open: request.keep_open,
                         command_completed: false,
                         palette: request.palette,
@@ -225,6 +233,9 @@ impl SessionServer {
                             title: request.title,
                             cwd: request.cwd,
                             launch: request.launch,
+                            // The PTY never started, so there is no resumed process to hold the
+                            // pane open for; the husk reports the spawn failure instead.
+                            agent_resume: None,
                             keep_open: request.keep_open,
                             command_completed: false,
                             palette: request.palette,
@@ -415,8 +426,14 @@ impl SessionServer {
                         // live shell with the command's output above it, while a plain shell pane
                         // has nothing to hold open and falls through to the client, which decides
                         // whether to retain the exited husk. The two never both apply.
-                        let keep_open =
-                            pane.keep_open && pane.launch.is_some() && !pane.command_completed;
+                        //
+                        // A pane relaunched into a native agent conversation is held whatever its
+                        // own setting says: a resume that failed must leave its error on screen
+                        // above a usable shell, not close the pane as though the restore had
+                        // nothing to do.
+                        let keep_open = !pane.command_completed
+                            && (pane.agent_resume.is_some()
+                                || (pane.keep_open && pane.launch.is_some()));
                         if keep_open {
                             let outbound = if id == crate::state::POPUP_PANE_ID {
                                 self.retain_completed_popup(owner, id, generation, code)
@@ -538,8 +555,20 @@ impl SessionServer {
         generation: u64,
         code: i32,
     ) -> Option<ServerOutbound> {
+        // Taken, not read: the resume attempt is over either way, and the pane below is an ordinary
+        // shell from here on.
+        let resume = self
+            .pane_mut(owner, id)
+            .and_then(|pane| pane.agent_resume.take());
         // Dim, bracketed, and prefixed so it cannot be mistaken for output of the command itself.
-        let banner = format!("\r\n\x1b[2m[rozi] command exited with status {code}\x1b[0m\r\n");
+        // A failed native resume says so plainly rather than reading as a command that happened to
+        // exit, because the pane it leaves behind looks like a restore that quietly did nothing.
+        let banner = match resume {
+            Some(label) if code != 0 => {
+                format!("\r\n\x1b[2m[rozi] {label} resume failed · exited {code}\x1b[0m\r\n")
+            }
+            _ => format!("\r\n\x1b[2m[rozi] command exited with status {code}\x1b[0m\r\n"),
+        };
         let mut bytes = Vec::with_capacity(SHELL_MODE_RECOVERY.len() + banner.len());
         bytes.extend_from_slice(SHELL_MODE_RECOVERY);
         bytes.extend_from_slice(banner.as_bytes());

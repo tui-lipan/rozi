@@ -17,6 +17,12 @@ const SNAPSHOT_VERSION: u32 = 3;
 /// How long shutdown waits for an in-flight durable write before abandoning it.
 const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
+/// Longest opaque native agent session reference a snapshot is allowed to hand back to a process.
+///
+/// Rozi never interprets the value, but it did arrive from outside, so it is bounded rather than
+/// trusted to be sane.
+const MAX_NATIVE_SESSION: usize = 256;
+
 /// How long a restored pane's captured command waits for that pane's shell to report a prompt
 /// before being typed anyway. Only reached by a pane with no shell integration to report one, so
 /// the value is a bound on the wait rather than the wait itself: long enough that a slow `rc` file
@@ -290,6 +296,30 @@ struct SnapshotAgentResume {
     reported_at: u64,
 }
 
+/// What a restored pane does beyond coming back with its scrollback, in the one precedence order:
+/// a native agent conversation outranks a replayed foreground command, which outranks leaving the
+/// pane to whatever its own launch intent starts.
+enum RestoreAction {
+    /// Exec the agent's resume command as this pane's first process.
+    ResumeAgent(AgentResumeLaunch),
+    /// Type a line at the restored shell's prompt: a foreground command the pane was observed
+    /// running, or a resume command `hold` declined to run unasked.
+    Type(String),
+    /// Nothing to add.
+    Nothing,
+}
+
+/// Render an argv as a line an interactive shell reads back as exactly those arguments.
+///
+/// Only reached under `hold`, where the point is that a human sees the command before running it.
+/// `auto` execs the argv directly and no shell is involved.
+fn shell_line(argv: &[String]) -> String {
+    argv.iter()
+        .map(|argument| crate::pane::launch::shell_quote(argument))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl SessionServer {
     pub(super) fn snapshot_path(&self) -> io::Result<PathBuf> {
         if !crate::session::discovery::valid_attach_target(&self.session_name) {
@@ -521,6 +551,10 @@ impl SessionServer {
         let (mut exported, mut reused, mut exported_bytes) = (0_u32, 0_u32, 0_u64);
         let record_foreground =
             self.settings.resurrect_foreground != crate::config::ForegroundRestore::Never;
+        // `never` is an instruction not to keep what a pane was doing, and a reported conversation
+        // reference is exactly that - so it also keeps opaque agent session ids out of the state
+        // directory, which is the privacy half of the setting.
+        let record_agents = self.settings.resurrect_agents && record_foreground;
         let shells = self.shell_basenames();
         for (&pane_id, pane) in &mut self.panes {
             // The popup slot is a transient client-local overlay; resurrecting it would
@@ -530,18 +564,18 @@ impl SessionServer {
             }
             // A pane running its own launch command has nothing to add: restoring `launch` already
             // starts it. Only a shell that someone typed into is telling the snapshot something it
-            // does not otherwise know.
-            let foreground = (record_foreground && pane.launch.is_none())
-                .then(|| observed_foreground_command(pane, &shells))
-                .flatten();
+            // does not otherwise know - and a pane still running the resume command a restore
+            // started for it is in the same position, with no shell in it at all.
+            let foreground =
+                (record_foreground && pane.launch.is_none() && pane.agent_resume.is_none())
+                    .then(|| observed_foreground_command(pane, &shells))
+                    .flatten();
             panes.push(SnapshotPane {
                 pane_id,
                 generation: pane.generation,
                 launch: pane.launch.clone(),
                 foreground,
-                agent_resume: self
-                    .settings
-                    .resurrect_agents
+                agent_resume: record_agents
                     .then(|| {
                         pane.runtime.integration.as_ref().and_then(|report| {
                             Some(SnapshotAgentResume {
@@ -634,17 +668,24 @@ impl SessionServer {
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok());
         let mut restored = 0;
+        let mut resumed = std::collections::HashSet::new();
         for saved in meta.panes {
             let generation = self.next_generation;
             self.next_generation += 1;
             let replay = fs::read(path.join("panes").join(format!("{}.replay", saved.pane_id)))
                 .unwrap_or_default();
+            let (agent_resume, typed) = match self.restore_action(&saved, &mut resumed) {
+                RestoreAction::ResumeAgent(resume) => (Some(resume), None),
+                RestoreAction::Type(line) => (None, Some(line)),
+                RestoreAction::Nothing => (None, None),
+            };
             let result = self.spawn_pane_inner(
                 SpawnRequest {
                     owner: None,
                     pane_id: saved.pane_id,
                     generation,
                     launch: saved.launch,
+                    agent_resume,
                     cwd: saved.cwd,
                     title: saved.title,
                     cols: saved.cols,
@@ -663,8 +704,8 @@ impl SessionServer {
             );
             if matches!(result, ServerMessage::SpawnResult { ok: true, .. }) {
                 restored += 1;
-                if let Some(command) = saved.foreground.as_deref() {
-                    self.replay_foreground_command(saved.pane_id, generation, command);
+                if let Some(line) = typed.as_deref() {
+                    self.replay_foreground_command(saved.pane_id, generation, line);
                 }
             }
             if let Some(layout) = &mut layout {
@@ -690,6 +731,74 @@ impl SessionServer {
         self.forget_persisted_replays();
         self.last_snapshot = Instant::now();
         Ok(restored)
+    }
+
+    /// Decide what a restored pane does beyond coming back, in the fixed precedence
+    /// [`RestoreAction`] documents.
+    ///
+    /// `resumed` accumulates the conversations already claimed by an earlier pane in this restore.
+    fn restore_action(
+        &self,
+        saved: &SnapshotPane,
+        resumed: &mut std::collections::HashSet<(String, String)>,
+    ) -> RestoreAction {
+        if let Some(resume) = self.resolve_agent_resume(saved.agent_resume.as_ref(), resumed) {
+            // `hold` means nothing runs that the user did not ask for, and reopening a conversation
+            // is no exception: the command is left at the prompt for them to run or delete.
+            return if self.settings.resurrect_foreground == crate::config::ForegroundRestore::Hold {
+                // Always `Some`: a resume launch is direct argv by construction.
+                RestoreAction::Type(shell_line(resume.launch.argv().unwrap_or_default()))
+            } else {
+                RestoreAction::ResumeAgent(resume)
+            };
+        }
+        match saved.foreground.clone() {
+            Some(command) => RestoreAction::Type(command),
+            None => RestoreAction::Nothing,
+        }
+    }
+
+    /// Turn a snapshot's native agent session fact into a way to reopen that conversation, or
+    /// `None` when anything it depended on no longer holds.
+    ///
+    /// The snapshot recorded a fact - this agent reported this conversation - and deliberately no
+    /// recipe for reopening it. The recipe comes from the agent definition *this* Rozi has loaded,
+    /// so an agent whose resume flags have changed since resumes the current way, and an agent that
+    /// no longer declares a resume capability at all restores as an ordinary pane rather than with
+    /// a command nobody can run any more.
+    fn resolve_agent_resume(
+        &self,
+        saved: Option<&SnapshotAgentResume>,
+        resumed: &mut std::collections::HashSet<(String, String)>,
+    ) -> Option<AgentResumeLaunch> {
+        if !self.settings.resurrect_agents
+            // Read as the setting stands *now*, so starting a server with `never` also defuses a
+            // snapshot taken while it was on.
+            || self.settings.resurrect_foreground == crate::config::ForegroundRestore::Never
+        {
+            return None;
+        }
+        let saved = saved?;
+        if saved.session.is_empty()
+            || saved.session.len() > MAX_NATIVE_SESSION
+            // A reference is echoed by whatever agent receives it. Control characters are not part
+            // of any conversation id and a terminal would act on them.
+            || saved.session.chars().any(char::is_control)
+        {
+            return None;
+        }
+        let definition = self.settings.agents.by_id(&saved.agent)?;
+        let argv = definition.resume_command(&saved.session)?;
+        let launch = crate::pane::launch::PaneLaunch::direct(argv).ok()?;
+        // One conversation, one pane. Two panes reopening the same agent session would leave both
+        // writing into one history, and neither of them is the one the user was talking to.
+        if !resumed.insert((saved.agent.clone(), saved.session.clone())) {
+            return None;
+        }
+        Some(AgentResumeLaunch {
+            label: definition.label().to_string(),
+            launch,
+        })
     }
 
     /// Queue a captured foreground command to be typed into a freshly restored pane.
@@ -1493,6 +1602,233 @@ mod tests {
         assert!(private_job.meta.panes[0].agent_resume.is_none());
     }
 
+    /// A snapshot pane carrying a native agent session fact, and whatever else the test needs.
+    fn saved_pane(agent: &str, session: &str, foreground: Option<&str>) -> SnapshotPane {
+        SnapshotPane {
+            pane_id: 1,
+            generation: 1,
+            launch: None,
+            foreground: foreground.map(str::to_string),
+            agent_resume: Some(SnapshotAgentResume {
+                agent: agent.to_string(),
+                session: session.to_string(),
+                reported_at: 42,
+            }),
+            cwd: None,
+            keep_open: false,
+            title: None,
+            palette: WirePalette {
+                foreground: None,
+                background: None,
+                ansi: [tui_lipan::prelude::Color::Black; 16],
+            },
+            cols: 80,
+            rows: 24,
+        }
+    }
+
+    fn restore_server(mode: crate::config::ForegroundRestore, agents: bool) -> SessionServer {
+        SessionServer::new_named_with_settings(
+            "restore-action",
+            ServerSettings {
+                resurrect: true,
+                resurrect_foreground: mode,
+                resurrect_agents: agents,
+                ..ServerSettings::default()
+            },
+        )
+    }
+
+    fn action(
+        server: &SessionServer,
+        saved: &SnapshotPane,
+        resumed: &mut std::collections::HashSet<(String, String)>,
+    ) -> RestoreAction {
+        server.restore_action(saved, resumed)
+    }
+
+    /// The whole point of item 13: the stored fact plus the *current* definition's recipe, run as
+    /// the pane's own process. The conversation reference is one argv element, so nothing parses it.
+    #[test]
+    fn a_reported_conversation_is_relaunched_with_the_current_resume_recipe() {
+        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let saved = saved_pane("claude", "opaque-session-123", Some("claude"));
+
+        match action(&server, &saved, &mut std::collections::HashSet::new()) {
+            RestoreAction::ResumeAgent(resume) => {
+                assert_eq!(resume.label, "Claude Code");
+                assert_eq!(
+                    resume.launch.argv(),
+                    Some(
+                        ["claude", "--resume", "opaque-session-123"]
+                            .map(String::from)
+                            .as_slice()
+                    ),
+                    "the reference must arrive as one whole process argument"
+                );
+            }
+            _ => panic!("a resumable conversation must outrank the observed foreground command"),
+        }
+    }
+
+    /// `hold` is an instruction that nothing runs unasked. Reopening a conversation is something
+    /// running, so it waits at the prompt like any other held command.
+    #[test]
+    fn hold_leaves_the_resume_command_at_the_prompt() {
+        let server = restore_server(crate::config::ForegroundRestore::Hold, true);
+        let saved = saved_pane("claude", "needs quoting", None);
+
+        match action(&server, &saved, &mut std::collections::HashSet::new()) {
+            RestoreAction::Type(line) => {
+                assert_eq!(line, "claude --resume 'needs quoting'");
+            }
+            _ => panic!("`hold` must not start the agent itself"),
+        }
+    }
+
+    /// The snapshot stored a fact, not a recipe. An agent that no longer declares how to resume -
+    /// or is no longer declared at all - restores as the ordinary pane it otherwise is.
+    #[test]
+    fn an_agent_without_a_resume_capability_restores_normally() {
+        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+
+        for saved in [
+            saved_pane("gone-from-the-catalog", "abc", Some("nvim")),
+            // Built in, detectable, and declares no `[agents.resume]`.
+            saved_pane("aider", "abc", Some("nvim")),
+        ] {
+            match action(&server, &saved, &mut std::collections::HashSet::new()) {
+                RestoreAction::Type(line) => assert_eq!(line, "nvim"),
+                _ => panic!("nothing can resume `{}`", saved.agent_resume.unwrap().agent),
+            }
+        }
+    }
+
+    /// Two panes cannot both be the conversation. Resuming it twice would leave two agents writing
+    /// into one history, and neither of them the one the user was talking to.
+    #[test]
+    fn one_conversation_is_resumed_once() {
+        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let mut resumed = std::collections::HashSet::new();
+        let first = saved_pane("claude", "shared-session", None);
+        let mut second = saved_pane("claude", "shared-session", None);
+        second.pane_id = 2;
+
+        assert!(matches!(
+            action(&server, &first, &mut resumed),
+            RestoreAction::ResumeAgent(_)
+        ));
+        assert!(matches!(
+            action(&server, &second, &mut resumed),
+            RestoreAction::Nothing
+        ));
+    }
+
+    /// Both halves of the policy are read as they stand *now*, so turning either off also defuses a
+    /// snapshot written while it was on.
+    #[test]
+    fn policy_declines_to_reopen_a_stored_conversation() {
+        let mut resumed = std::collections::HashSet::new();
+        let saved = saved_pane("claude", "opaque-session-123", None);
+
+        for server in [
+            restore_server(crate::config::ForegroundRestore::Never, true),
+            restore_server(crate::config::ForegroundRestore::Auto, false),
+        ] {
+            assert!(matches!(
+                action(&server, &saved, &mut resumed),
+                RestoreAction::Nothing
+            ));
+        }
+    }
+
+    /// Rozi never reads the reference, but it does hand it to a process that will echo it. A value
+    /// carrying terminal control bytes is not a conversation id.
+    #[test]
+    fn an_implausible_conversation_reference_is_refused() {
+        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+
+        for session in ["", "abc\u{1b}[2J", &"x".repeat(MAX_NATIVE_SESSION + 1)] {
+            let saved = saved_pane("claude", session, None);
+            assert!(
+                matches!(
+                    action(&server, &saved, &mut std::collections::HashSet::new()),
+                    RestoreAction::Nothing
+                ),
+                "accepted {session:?}"
+            );
+        }
+    }
+
+    /// `never` is a privacy setting as much as a restore setting: an opaque conversation id is
+    /// exactly the kind of thing a user who set it does not want left in the state directory.
+    #[test]
+    fn never_writes_no_conversation_reference_to_the_snapshot() {
+        let mut server = SessionServer::new_named_with_settings(
+            "native-never",
+            ServerSettings {
+                resurrect: true,
+                resurrect_foreground: crate::config::ForegroundRestore::Never,
+                ..ServerSettings::default()
+            },
+        );
+        server
+            .panes
+            .insert(1, reporting_agent_pane(&server.instance_id));
+
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+
+        assert!(job.meta.panes[0].agent_resume.is_none());
+    }
+
+    /// A pane still running the resume command a restore started for it has no shell in it, so
+    /// there is no typed command to record - and recording one would run the conversation twice.
+    #[test]
+    fn a_resumed_pane_records_no_foreground_command() {
+        let mut server = SessionServer::new_named_with_settings(
+            "resumed",
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = reporting_agent_pane(&server.instance_id);
+        pane.agent_resume = Some("Claude Code".to_string());
+        server.panes.insert(1, pane);
+
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+
+        assert_eq!(job.meta.panes[0].foreground, None);
+        assert!(
+            job.meta.panes[0].agent_resume.is_some(),
+            "the conversation reference is still a fact worth keeping"
+        );
+    }
+
+    /// A pane running Claude with a live integration reporting a native conversation.
+    fn reporting_agent_pane(instance: &protocol::SessionInstanceId) -> ServerPane {
+        let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
+        pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            integration: "hook-abc".into(),
+            identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: protocol::AgentRef {
+                pane: protocol::PaneRef {
+                    session_instance: instance.clone(),
+                    pane_id: 1,
+                    generation: pane.generation,
+                },
+                slot: None,
+                incarnation: 1,
+            },
+            state: protocol::AgentState::Idle,
+            reason: None,
+            native_session: Some("opaque-session-123".into()),
+            seq: 7,
+            reported_at_unix_ms: 42,
+        }));
+        pane
+    }
+
     /// A command is typed only once the restored shell says it is reading the terminal. Writing it
     /// at spawn races the shell's own startup, and under `auto` a half-consumed line would submit
     /// something other than what was captured.
@@ -1570,6 +1906,7 @@ mod tests {
             title: None,
             cwd: None,
             launch: None,
+            agent_resume: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),

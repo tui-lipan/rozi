@@ -388,7 +388,9 @@ the selected row or submits a prompt.
   report; on a **Discover** row, `Enter` opens its installation report. `Ctrl+I` opens the manual
   install prompt, `Ctrl+U` updates a Git-managed installation, and `Ctrl+R` rescans installed
   manifests on **Installed** or refetches the index on **Discover**. `Ctrl+O` opens an installed
-  manifest, `Ctrl+Y` copies an installed report, and `Ctrl+K` twice removes an installation. Use the arrow and paging keys to scroll details. A
+  manifest, `Ctrl+Y` copies an installed report, and `Ctrl+K` twice removes an installation. Use
+  the arrow and paging keys to scroll details. `Ctrl+L` opens a report's link in your browser: a
+  discovery entry's source at its indexed commit, or an installed extension's homepage. A
   discovery report requires a second `Enter` before Rozi installs its exact indexed commit.
 - Collaborators: `Enter` grants control, `Ctrl+D` declines a request, `Ctrl+K` twice removes a
   client, and `Esc` closes.

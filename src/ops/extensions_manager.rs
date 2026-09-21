@@ -621,6 +621,46 @@ pub(crate) fn open_manifest(ctx: &mut Context<AppRoot>) -> Update {
     )
 }
 
+/// Opens the open report's web link: a discovery entry's source at the exact indexed commit, or an
+/// installed extension's declared homepage.
+pub(crate) fn open_link(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(url) = report_link(&ctx.state) else {
+        return Update::none();
+    };
+    match tui_lipan::utils::open_url(&url) {
+        Ok(()) => Update::none(),
+        Err(error) => {
+            notify_error(ctx, "Could not open link", error.to_string());
+            Update::full()
+        }
+    }
+}
+
+/// The web link the open report offers, if any.
+pub(crate) fn report_link(state: &crate::state::State) -> Option<String> {
+    let extensions = state.extensions.as_ref()?;
+    if let Some(detail) = extensions.catalog_detail.as_ref() {
+        return Some(catalog_source_url(&detail.entry));
+    }
+    let detail = extensions.detail.as_ref()?;
+    extensions
+        .entries
+        .iter()
+        .find(|entry| entry.path == detail.path)?
+        .homepage
+        .clone()
+}
+
+/// The repository at the commit Rozi would install, not its moving default branch, so the source
+/// a user inspects is the source they get. The index only admits canonical GitHub repositories
+/// and full commit ids, so this is always a well-formed GitHub URL.
+pub(crate) fn catalog_source_url(entry: &crate::extension_catalog::CatalogEntry) -> String {
+    format!(
+        "https://github.com/{}/tree/{}",
+        entry.repository, entry.commit
+    )
+}
+
 pub(crate) fn copy_report(ctx: &mut Context<AppRoot>) -> Update {
     let sections = if let Some(detail) = ctx
         .state
@@ -1427,8 +1467,41 @@ fn notify_error(ctx: &mut Context<AppRoot>, title: &str, detail: impl Into<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::installation_kind_label;
+    use super::{catalog_source_url, installation_kind_label};
     use crate::extension_installation::InstallKind;
+
+    #[test]
+    fn catalog_source_links_the_indexed_commit() {
+        let entry: crate::extension_catalog::CatalogEntry =
+            serde_json::from_value(serde_json::json!({
+                "repository": "tui-lipan/vim-rozi-navigator",
+                "source": "https://github.com/tui-lipan/vim-rozi-navigator.git",
+                "commit": "5b5c8b9323e260a7c10a63d792274ca155d51e26",
+                "manifest_path": "extension.toml",
+                "id": "vim-rozi-navigator",
+                "title": "Vim and Neovim navigator",
+                "description": "Split-aware navigation",
+                "version": "0.2.1",
+                "api": 1,
+                "min_rozi": null,
+                "platforms": [],
+                "homepage": null,
+                "stars": 0,
+                "updated_at": "2026-09-21T00:00:00Z",
+                "commands": 0,
+                "services": 0,
+                "agents": 0,
+                "sidebar_tabs": 0,
+                "navigation_targets": 0,
+                "suggested_keybindings": 0
+            }))
+            .unwrap();
+        assert_eq!(
+            catalog_source_url(&entry),
+            "https://github.com/tui-lipan/vim-rozi-navigator/tree/\
+             5b5c8b9323e260a7c10a63d792274ca155d51e26"
+        );
+    }
 
     #[test]
     fn installation_kinds_have_compact_distinct_picker_labels() {

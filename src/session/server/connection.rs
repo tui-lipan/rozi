@@ -281,33 +281,77 @@ impl SessionServer {
                 }
             }
             ClientMessage::ReportAgent {
+                request_id,
                 pane_id,
                 local,
                 generation,
-                report,
+                agent,
+                integration,
+                state,
+                reason,
+                native_session,
                 seq,
             } => {
                 if self.client_read_only(client_id) {
-                    return Vec::new();
+                    return vec![(
+                        Target::Sender,
+                        ServerMessage::AgentReportResult {
+                            request_id,
+                            response: control::ControlResponse::error_with(
+                                control::ControlErrorCode::ReadOnly,
+                                "read-only client",
+                            ),
+                        },
+                    )];
                 }
                 let owner = local.then_some(client_id);
-                match self.apply_agent_integration(owner, pane_id, generation, report, seq) {
-                    Ok(Some(state)) => vec![(
-                        owner.map_or(Target::Broadcast, Target::Client),
-                        ServerMessage::PaneRuntimeChanged {
-                            pane_id,
-                            local,
-                            generation,
-                            agent_refs: self.agent_references(owner, pane_id),
-                            state,
+                match self.apply_agent_integration(
+                    owner,
+                    pane_id,
+                    generation,
+                    runtime::AgentIntegrationUpdate {
+                        agent,
+                        integration,
+                        state,
+                        reason,
+                        native_session,
+                        seq,
+                    },
+                ) {
+                    Ok(Some(state)) => vec![
+                        (
+                            owner.map_or(Target::Broadcast, Target::Client),
+                            ServerMessage::PaneRuntimeChanged {
+                                pane_id,
+                                local,
+                                generation,
+                                agent_refs: self.agent_references(owner, pane_id),
+                                state,
+                            },
+                        ),
+                        (
+                            Target::Sender,
+                            ServerMessage::AgentReportResult {
+                                request_id,
+                                response: control::ControlResponse::empty(),
+                            },
+                        ),
+                    ],
+                    Ok(None) => vec![(
+                        Target::Sender,
+                        ServerMessage::AgentReportResult {
+                            request_id,
+                            response: control::ControlResponse::empty(),
                         },
                     )],
-                    Ok(None) => Vec::new(),
                     Err((code, message)) => vec![(
                         Target::Sender,
-                        ServerMessage::Error {
-                            code: code.to_string(),
-                            message,
+                        ServerMessage::AgentReportResult {
+                            request_id,
+                            response: control::ControlResponse::error_with(
+                                runtime::integration_error_code(code),
+                                message,
+                            ),
                         },
                     )],
                 }

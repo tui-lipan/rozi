@@ -427,6 +427,18 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                             .to_string(),
                     );
                 }
+                if matches!(endpoint, ControlEndpoint::Session(_))
+                    && matches!(
+                        command,
+                        control::ControlCommand::AgentReport { target: None, .. }
+                            | control::ControlCommand::AgentRelease { target: None, .. }
+                    )
+                {
+                    return Err(
+                        "agents report/release with --session requires --target; inherited ROZI_PANE belongs to a different namespace"
+                            .to_string(),
+                    );
+                }
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint,
                     request: control_request(command),
@@ -1130,6 +1142,43 @@ mod tests {
         let retired =
             expect_run(parse_cli_args(vec!["--session".into(), "attach".into()]).expect("parses"));
         assert_eq!(retired.attach_session.as_deref(), Some("attach"));
+    }
+
+    #[test]
+    fn session_agent_reports_require_an_explicit_pane_namespace() {
+        let error = parse_cli_args(vec![
+            "--session".into(),
+            "dev".into(),
+            "agents".into(),
+            "report".into(),
+            "--agent".into(),
+            "claude".into(),
+            "--integration".into(),
+            "hook-a".into(),
+            "--state".into(),
+            "working".into(),
+            "--seq".into(),
+            "1".into(),
+        ])
+        .expect_err("session report without target must fail");
+        assert!(error.contains("requires --target"), "{error}");
+
+        let parsed = parse_cli_args(vec![
+            "agents".into(),
+            "release".into(),
+            "--integration".into(),
+            "hook-a".into(),
+            "--seq".into(),
+            "2".into(),
+        ])
+        .expect("UI report may resolve its source pane");
+        let ParsedCli::Control(control) = parsed else {
+            panic!("expected control command");
+        };
+        assert!(matches!(
+            control.request.command,
+            control::ControlCommand::AgentRelease { target: None, .. }
+        ));
     }
 
     #[test]

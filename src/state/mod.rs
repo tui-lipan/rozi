@@ -300,6 +300,10 @@ pub struct State {
     /// Control-socket reply held while [`Self::pending_session_action`] waits for attach, so
     /// `new-pane` / `popup` can answer with the real pane id after the session is up.
     pub pending_control_reply: Option<std::sync::mpsc::Sender<crate::control::ControlResponse>>,
+    /// Acknowledged integration reports awaiting the owning session server's decision.
+    pub pending_agent_report_replies:
+        HashMap<(u64, u64), std::sync::mpsc::Sender<crate::control::ControlResponse>>,
+    pub next_agent_report_request_id: u64,
     /// Control-socket `new-pane` replies held until the pane's PTY actually reports ready, so the
     /// answer states readiness instead of mere acceptance. Keyed by
     /// `(epoch, local, pane id, generation)` so a client-local pane and a shared pane that share a
@@ -505,6 +509,8 @@ impl State {
             launcher_scope: None,
             pending_session_action: None,
             pending_control_reply: None,
+            pending_agent_report_replies: HashMap::new(),
+            next_agent_report_request_id: 1,
             pending_spawn_replies: HashMap::new(),
             pending_control_input: HashMap::new(),
             pending_destructive: None,

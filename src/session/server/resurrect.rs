@@ -545,9 +545,9 @@ impl SessionServer {
                     .then(|| {
                         pane.runtime.integration.as_ref().and_then(|report| {
                             Some(SnapshotAgentResume {
-                                agent: pane.runtime.detected_agent.as_ref()?.agent.id.clone(),
+                                agent: report.identity.id.clone(),
                                 session: report.native_session.clone()?,
-                                reported_at: report.reported_at,
+                                reported_at: report.reported_at_unix_ms,
                             })
                         })
                     })
@@ -1453,13 +1453,24 @@ mod tests {
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
-        pane.runtime.integration = Some(protocol::AgentIntegrationReport {
+        pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            integration: "hook-abc".into(),
+            identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: protocol::AgentRef {
+                pane: protocol::PaneRef {
+                    session_instance: server.instance_id.clone(),
+                    pane_id: 1,
+                    generation: pane.generation,
+                },
+                slot: None,
+                incarnation: 1,
+            },
             state: protocol::AgentState::Idle,
             reason: None,
             native_session: Some("opaque-session-123".into()),
             seq: 7,
-            reported_at: 42,
-        });
+            reported_at_unix_ms: 42,
+        }));
         server.panes.insert(1, pane);
 
         let job = server.capture_snapshot(Instant::now()).expect("capture");

@@ -730,6 +730,14 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                     message: String::new(),
                 }
             }
+            ServerMessage::AgentReportResult {
+                request_id,
+                response,
+            } => Msg::SessionAgentReportResult {
+                epoch,
+                request_id,
+                response,
+            },
             ServerMessage::SessionOriginSet {
                 created_from_profile,
             } => Msg::SessionOriginSet {

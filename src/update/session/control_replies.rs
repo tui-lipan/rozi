@@ -7,6 +7,22 @@ use crate::pane::lifecycle::{
 };
 use crate::state::PaneId;
 
+pub(crate) fn agent_report_result(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    request_id: u64,
+    response: crate::control::ControlResponse,
+) -> Update {
+    if let Some(reply) = ctx
+        .state
+        .pending_agent_report_replies
+        .remove(&(epoch, request_id))
+    {
+        let _ = reply.send(response);
+    }
+    Update::none()
+}
+
 pub(crate) fn layout_committed(
     ctx: &mut Context<AppRoot>,
     epoch: u64,

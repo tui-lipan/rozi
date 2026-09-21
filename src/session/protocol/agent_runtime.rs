@@ -60,8 +60,6 @@ pub struct AgentRuntime {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub source: AgentAuthority,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub changed_at: Option<u64>,
 }
 
 /// Resolve detection, explicit status, and published rows into the records automation should use.
@@ -70,26 +68,13 @@ pub fn effective_agent_runtimes(
     references: &[AgentRef],
 ) -> Vec<AgentRuntime> {
     if let Some(report) = &runtime.integration {
-        let Some(reference) = references
-            .iter()
-            .find(|reference| reference.slot.is_none())
-            .cloned()
-        else {
-            return Vec::new();
-        };
-        let identity = runtime
-            .detected_agent
-            .as_ref()
-            .map(|detected| detected.agent.as_ref().clone())
-            .unwrap_or_else(|| AgentIdentity::new("reported", "Agent"));
         return vec![AgentRuntime {
-            reference,
-            label: identity.label.clone(),
-            identity,
+            reference: report.reference.clone(),
+            label: report.identity.label.clone(),
+            identity: report.identity.clone(),
             state: report.state,
             reason: report.reason.clone(),
             source: AgentAuthority::Reported,
-            changed_at: Some(report.reported_at),
         }];
     }
     if !runtime.rows.is_empty() {
@@ -106,7 +91,7 @@ pub fn effective_agent_runtimes(
     else {
         return Vec::new();
     };
-    let Some((status, reason, source, changed_at)) = effective_single_status(runtime) else {
+    let Some((status, reason, source)) = effective_single_status(runtime) else {
         return Vec::new();
     };
     let identity = runtime
@@ -121,41 +106,29 @@ pub fn effective_agent_runtimes(
         state: AgentState::from_status(status),
         reason,
         source,
-        changed_at,
     }]
 }
 
 fn effective_single_status(
     runtime: &PaneRuntimeState,
-) -> Option<(&str, Option<String>, AgentAuthority, Option<u64>)> {
+) -> Option<(&str, Option<String>, AgentAuthority)> {
     let detected = runtime.detected_agent.as_ref();
     let reported = runtime.status.as_ref();
     let detected_status = detected.map(detected_agent_status);
     if detected_status == Some(pane_status::BLOCKED)
         && reported.is_some_and(|status| super::status_is_quiescent(Some(&status.value)))
     {
-        return Some((
-            pane_status::BLOCKED,
-            None,
-            AgentAuthority::Detected,
-            runtime.work_started_at,
-        ));
+        return Some((pane_status::BLOCKED, None, AgentAuthority::Detected));
     }
     match reported {
         Some(status) => Some((
             status.value.as_str(),
             status.reason.clone(),
             AgentAuthority::Reported,
-            Some(status.set_at),
         )),
-        None => detected_status.map(|detected_status| {
-            (
-                detected_status,
-                None,
-                AgentAuthority::Detected,
-                runtime.work_started_at,
-            )
-        }),
+        None => {
+            detected_status.map(|detected_status| (detected_status, None, AgentAuthority::Detected))
+        }
     }
 }
 
@@ -180,7 +153,6 @@ fn published_runtime(
         state: AgentState::from_status(&row.status),
         reason: row.reason.clone(),
         source: AgentAuthority::Published,
-        changed_at: row.work_started_at,
     })
 }
 
@@ -290,13 +262,16 @@ mod tests {
                 active: true,
                 work_started_at: None,
             }],
-            integration: Some(super::super::AgentIntegrationReport {
+            integration: Some(Box::new(super::super::AgentIntegrationReport {
+                integration: "hook-abc".into(),
+                identity: AgentIdentity::new("claude", "Claude Code"),
+                reference: reference(None, 2),
                 state: AgentState::Blocked,
                 reason: Some("approval".into()),
                 native_session: Some("abc".into()),
                 seq: 4,
-                reported_at: 10,
-            }),
+                reported_at_unix_ms: 10,
+            })),
             ..PaneRuntimeState::default()
         };
 

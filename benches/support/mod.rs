@@ -171,7 +171,6 @@ pub fn attached_message() -> ServerMessage {
                     work_started_at: None,
                     rows: Vec::new(),
                     integration: None,
-                    integration_seq: None,
                     sequence: u64::from(pane.pane_id),
                 },
             })

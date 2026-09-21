@@ -333,9 +333,7 @@ pub struct PaneRuntimeState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rows: Vec<PublishedRow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub integration: Option<AgentIntegrationReport>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub integration_seq: Option<u64>,
+    pub integration: Option<Box<AgentIntegrationReport>>,
     /// Monotonic per-pane counter, bumped only when some other field in this struct actually
     /// changed. [`super::ServerMessage::PaneRuntimeChanged`] carries this so a client that received
     /// updates out of order (should not happen on a single ordered connection, but is cheap
@@ -345,11 +343,14 @@ pub struct PaneRuntimeState {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentIntegrationReport {
+    pub integration: String,
+    pub identity: AgentIdentity,
+    pub reference: super::AgentRef,
     pub state: super::AgentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_session: Option<String>,
     pub seq: u64,
-    pub reported_at: u64,
+    pub reported_at_unix_ms: u64,
 }

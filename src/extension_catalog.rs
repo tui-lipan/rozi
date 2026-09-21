@@ -11,6 +11,7 @@ use crate::config::EXTENSION_API_VERSION;
 
 const INDEX_SCHEMA_VERSION: u32 = 1;
 const INDEX_URL: &str = "https://tui-lipan.github.io/rozi-extension-index/v1/index.json";
+/// Keep equal to `MAX_INDEX_BYTES` in the index generator, which sheds entries to stay under it.
 const MAX_INDEX_BYTES: usize = 1024 * 1024;
 const KNOWN_PLATFORMS: [&str; 5] = ["linux", "macos", "windows", "freebsd", "netbsd"];
 
@@ -86,6 +87,23 @@ impl CatalogEntry {
         ] {
             if value.trim().is_empty() {
                 return Err(format!("catalog entry has an empty `{name}`"));
+            }
+        }
+        // Longest accepted value, in characters. Keep equal to `MAX_FIELD_CHARS` in the index
+        // generator, so a record it publishes is one Rozi accepts.
+        for (name, value, limit) in [
+            ("id", Some(self.id.as_str()), 64),
+            ("title", Some(self.title.as_str()), 80),
+            ("description", Some(self.description.as_str()), 280),
+            ("version", Some(self.version.as_str()), 64),
+            ("min_rozi", self.min_rozi.as_deref(), 64),
+            ("homepage", self.homepage.as_deref(), 256),
+        ] {
+            if value.is_some_and(|value| value.chars().count() > limit) {
+                return Err(format!(
+                    "catalog entry `{}` has a `{name}` longer than {limit} characters",
+                    self.repository
+                ));
             }
         }
         if self.manifest_path != "extension.toml" {
@@ -300,6 +318,28 @@ mod tests {
         let entries = parse(&text).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].repository, "tui-lipan/vim-rozi-navigator");
+    }
+
+    #[test]
+    fn skips_records_over_the_generator_field_limits() {
+        let document: serde_json::Value = serde_json::from_str(VALID).unwrap();
+        let good = document["extensions"][0].clone();
+        let mut at_limit = good.clone();
+        at_limit["repository"] = "someone/at-limit".into();
+        at_limit["source"] = "https://github.com/someone/at-limit.git".into();
+        at_limit["description"] = "é".repeat(280).into();
+        let mut over_limit = good.clone();
+        over_limit["description"] = "d".repeat(281).into();
+        let text = serde_json::json!({
+            "schema_version": 1,
+            "generated_at": "2026-09-21T00:00:00Z",
+            "extensions": [over_limit, at_limit],
+        })
+        .to_string();
+
+        let entries = parse(&text).unwrap();
+        assert_eq!(entries.len(), 1, "limits count characters, not bytes");
+        assert_eq!(entries[0].repository, "someone/at-limit");
     }
 
     #[test]

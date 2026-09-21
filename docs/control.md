@@ -88,6 +88,7 @@ session:
 | `agents get --target ID` | Read one semantic agent record. | yes |
 | `agents read --target ID [--scrollback N\|full]` | Capture an agent's terminal. | yes |
 | `agents wait --target ID --until STATE [--timeout DURATION]` | Wait atomically for semantic state. | yes |
+| `agents prompt --target ID [--wait STATE] TEXT` | Validate, submit, and optionally wait atomically. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
 | `focus <PANE_ID>` | Focus a pane. | no |
 | `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. | yes |

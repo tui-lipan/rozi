@@ -510,6 +510,16 @@ pub(super) fn format_control_text(
         }
         control::ControlCommand::AgentRead { .. } => format_capture_text(data),
         control::ControlCommand::AgentWait { .. } => format_agent_wait_text(data, styles),
+        control::ControlCommand::AgentPrompt { .. } => {
+            if data.is_some_and(|data| data.get("condition").is_some()) {
+                format_agent_wait_text(data, styles)
+            } else {
+                format!(
+                    "{}\n",
+                    styles.paint("Prompt submitted", OutputTone::Success)
+                )
+            }
+        }
         control::ControlCommand::Metrics => format_metrics_text(data, styles),
         control::ControlCommand::CapturePane { .. } => format_capture_text(data),
         control::ControlCommand::NewPane { .. } => {

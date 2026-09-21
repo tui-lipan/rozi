@@ -224,6 +224,10 @@ pub(crate) fn handle_control_request(
             ControlErrorCode::Unsupported,
             "agent wait is server-owned; select a named session with --session",
         ),
+        ControlCommand::AgentPrompt { .. } => ControlResponse::error_with(
+            ControlErrorCode::Unsupported,
+            "agent prompt is server-owned; select a named session with --session",
+        ),
     };
     let _ = envelope.reply.send(response);
     Update::full()

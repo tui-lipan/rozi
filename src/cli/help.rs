@@ -172,6 +172,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "agents wait --target <PANE> --until <STATE>",
                 "Wait inside the session server",
             ),
+            row(
+                "agents prompt --target <PANE> [--wait <STATE>] <TEXT>",
+                "Safely submit a prompt",
+            ),
         ],
     },
     HelpSection {

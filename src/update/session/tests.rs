@@ -2353,19 +2353,38 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                 active: true,
                 work_started_at: None,
             });
+            let session_instance = crate::session::protocol::SessionInstanceId::for_test("shared");
+            let agent_ref = crate::session::protocol::AgentRef {
+                pane: crate::session::protocol::PaneRef {
+                    session_instance: session_instance.clone(),
+                    pane_id: 7,
+                    generation: 1,
+                },
+                slot: None,
+                incarnation: 4,
+            };
+            runtime.integration =
+                Some(Box::new(crate::session::protocol::AgentIntegrationReport {
+                    integration: "hook-before-attach".into(),
+                    identity: crate::session::protocol::AgentIdentity::new("claude", "Claude Code"),
+                    reference: agent_ref.clone(),
+                    state: crate::session::protocol::AgentState::Blocked,
+                    reason: Some("approval".into()),
+                    native_session: Some("native-123".into()),
+                    seq: 8,
+                    reported_at_unix_ms: 42,
+                }));
 
             backend
                 .dispatch(Msg::SessionAttached {
                     epoch: 2,
-                    session_instance: crate::session::protocol::SessionInstanceId::for_test(
-                        "shared",
-                    ),
+                    session_instance,
                     session: "dev".into(),
                     client_id: 1,
                     panes: vec![crate::session::protocol::PaneMeta {
                         pane_id: 7,
                         generation: 1,
-                        agent_refs: Vec::new(),
+                        agent_refs: vec![agent_ref],
                         cols: 80,
                         rows: 24,
                         pid: Some(42),
@@ -2390,6 +2409,14 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                 .expect("shared pane");
             assert_eq!(shared.terminal.title.as_deref(), Some("shared-title"));
             assert_eq!(shared.terminal.published_rows[0].id, "shared-row");
+            assert_eq!(
+                shared
+                    .terminal
+                    .agent_integration
+                    .as_ref()
+                    .map(|integration| integration.state),
+                Some(crate::session::protocol::AgentState::Blocked)
+            );
             let scratch = crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
                 .expect("scratch pane");
             assert_eq!(scratch.terminal.title.as_deref(), Some("scratch-title"));

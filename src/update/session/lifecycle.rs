@@ -30,16 +30,19 @@ pub(crate) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String)
     let pending = ctx
         .state
         .pending_agent_report_replies
-        .keys()
-        .filter(|(pending_epoch, _)| *pending_epoch == epoch)
-        .copied()
+        .iter()
+        .filter_map(|(&request_id, pending)| {
+            (pending.origin_epoch == Some(epoch)).then_some(request_id)
+        })
         .collect::<Vec<_>>();
-    for key in pending {
-        if let Some(reply) = ctx.state.pending_agent_report_replies.remove(&key) {
-            let _ = reply.send(crate::control::ControlResponse::error_with(
-                crate::control::ControlErrorCode::SessionNotConnected,
-                "session disconnected before acknowledging agent report",
-            ));
+    for request_id in pending {
+        if let Some(pending) = ctx.state.pending_agent_report_replies.remove(&request_id) {
+            let _ = pending
+                .reply
+                .send(crate::control::ControlResponse::error_with(
+                    crate::control::ControlErrorCode::SessionNotConnected,
+                    "session disconnected before acknowledging agent report",
+                ));
         }
     }
     if epoch != ctx.state.runtime_epoch {

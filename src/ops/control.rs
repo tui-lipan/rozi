@@ -509,6 +509,7 @@ fn report_agent(
     let pane_id = pane.id;
     let generation = pane.pty_generation;
     let local = crate::pane::lifecycle::pane_is_local(&ctx.state, pane.id);
+    let scratch = crate::scratchpad::contains(&ctx.state, pane.id);
     let Some(client) = ctx.state.pty_client_for_pane(pane.id) else {
         let _ = reply.send(ControlResponse::error_with(
             ControlErrorCode::SessionNotConnected,
@@ -522,10 +523,13 @@ fn report_agent(
         .next_agent_report_request_id
         .wrapping_add(1)
         .max(1);
-    let epoch = ctx.state.runtime_epoch;
-    ctx.state
-        .pending_agent_report_replies
-        .insert((epoch, request_id), reply);
+    ctx.state.pending_agent_report_replies.insert(
+        request_id,
+        crate::state::PendingAgentReportReply {
+            origin_epoch: (!scratch).then_some(ctx.state.runtime_epoch),
+            reply,
+        },
+    );
     client.report_agent(
         request_id,
         pane_id,

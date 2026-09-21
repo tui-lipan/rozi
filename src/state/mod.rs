@@ -301,8 +301,7 @@ pub struct State {
     /// `new-pane` / `popup` can answer with the real pane id after the session is up.
     pub pending_control_reply: Option<std::sync::mpsc::Sender<crate::control::ControlResponse>>,
     /// Acknowledged integration reports awaiting the owning session server's decision.
-    pub pending_agent_report_replies:
-        HashMap<(u64, u64), std::sync::mpsc::Sender<crate::control::ControlResponse>>,
+    pub pending_agent_report_replies: HashMap<u64, PendingAgentReportReply>,
     pub next_agent_report_request_id: u64,
     /// Control-socket `new-pane` replies held until the pane's PTY actually reports ready, so the
     /// answer states readiness instead of mere acceptance. Keyed by
@@ -341,6 +340,13 @@ pub struct State {
     /// PREFIX mode. Recording what the registry actually believes lets the gate correct itself
     /// whichever overlay opened, including one written after this.
     pub commands_gate: bool,
+}
+
+pub struct PendingAgentReportReply {
+    /// `None` identifies the process-wide scratch runtime, whose inbound frames are deliberately
+    /// retagged with whichever attachment epoch is current when they are drained.
+    pub origin_epoch: Option<u64>,
+    pub reply: std::sync::mpsc::Sender<crate::control::ControlResponse>,
 }
 
 /// The default single-pane attachment a fresh launch, a fresh ephemeral session, or a killed

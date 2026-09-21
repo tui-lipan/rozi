@@ -2488,6 +2488,31 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
         .expect("popup teardown test thread panicked");
 }
 
+#[test]
+fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change() {
+    let mut backend = TestBackend::new(crate::AppRoot::default());
+    let (reply, response) = std::sync::mpsc::channel();
+    backend.state_mut().pending_agent_report_replies.insert(
+        17,
+        crate::state::PendingAgentReportReply {
+            origin_epoch: None,
+            reply,
+        },
+    );
+    backend.state_mut().runtime_epoch = 9;
+
+    backend
+        .dispatch(Msg::SessionAgentReportResult {
+            epoch: 9,
+            request_id: 17,
+            response: crate::control::ControlResponse::empty(),
+        })
+        .expect("dispatch acknowledgement");
+
+    assert!(response.recv().expect("pending reply").ok);
+    assert!(backend.state().pending_agent_report_replies.is_empty());
+}
+
 /// The update popup runs the updater and stays open. Success leaves the old build running, so it
 /// earns a toast naming the step that is left; failure brings **Update rozi** back to retry.
 #[test]

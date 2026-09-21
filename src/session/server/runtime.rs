@@ -320,8 +320,8 @@ fn build_integration_report(
         |previous| previous.reference.clone(),
     );
     let reason = reason
-        .map(|reason| tui_lipan::utils::sanitize_display_text(&reason).into_owned())
-        .filter(|reason| !reason.is_empty());
+        .as_deref()
+        .and_then(|reason| clean_text(reason, PANE_STATUS_REASON_MAX_LEN));
     Ok(protocol::AgentIntegrationReport {
         integration,
         identity,
@@ -573,6 +573,7 @@ impl SessionServer {
             pane.runtime.detected_agent.as_ref(),
             pane.runtime.integration.as_deref(),
         );
+        pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
         pane.agent.sync_references(&pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();

@@ -257,13 +257,13 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                     .expect("type unmatched extension query");
             }
             let empty = frame(&mut backend);
-            assert!(empty.contains("No extensions available"), "{empty}");
+            assert!(empty.contains("No matches"), "{empty}");
             assert_eq!(
                 backend
                     .state()
                     .extensions
                     .as_ref()
-                    .map(|state| state.query.as_str()),
+                    .map(|state| state.query.text()),
                 Some("no-match")
             );
             backend
@@ -764,7 +764,8 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
             load_catalog(&mut backend, serde_json::json!([second]));
             assert_eq!(
                 reviewed(&backend),
-                (Some("someone/first".to_string()), None)
+                (Some("someone/first".to_string()), Some(0)),
+                "the open report keeps its entry while the selection falls back to a visible row"
             );
             let detail = frame(&mut backend);
             assert!(
@@ -843,6 +844,11 @@ fn catalog_loading_shows_a_spinner_and_keeps_listed_rows_offline() {
             backend
                 .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
                 .expect("open extensions");
+            backend
+                .dispatch(rozi::Msg::ExtensionsTabSelected(
+                    rozi::state::ExtensionsTab::Discover.index(),
+                ))
+                .expect("switch to Discover");
             let loading = |backend: &mut TestBackend<AppRoot>, value: bool| {
                 backend
                     .state_mut()
@@ -898,4 +904,142 @@ fn catalog_loading_shows_a_spinner_and_keeps_listed_rows_offline() {
         .expect("spawn catalog loading thread")
         .join()
         .expect("catalog loading completes");
+}
+
+fn installed_info(id: &str) -> rozi::config::ExtensionInfo {
+    rozi::config::ExtensionInfo {
+        id: Some(id.to_string()),
+        title: None,
+        description: None,
+        version: Some("0.1.0".to_string()),
+        api: Some(1),
+        min_rozi: None,
+        platforms: Vec::new(),
+        homepage: None,
+        path: format!("/nonexistent/{id}"),
+        manifest_path: format!("/nonexistent/{id}/extension.toml"),
+        enabled: true,
+        status: rozi::config::ExtensionStatus::Loaded,
+        commands: Vec::new(),
+        services: Vec::new(),
+        agents: Vec::new(),
+        sidebar_tabs: Vec::new(),
+        navigation_targets: Vec::new(),
+        suggested_keybindings: Vec::new(),
+        settings: Default::default(),
+        command_details: Vec::new(),
+        service_details: Vec::new(),
+        command_paths: Default::default(),
+        service_paths: Default::default(),
+        errors: Vec::new(),
+    }
+}
+
+fn press(backend: &mut TestBackend<AppRoot>, code: KeyCode) {
+    backend
+        .send_key(KeyEvent {
+            code,
+            mods: KeyMods::NONE,
+        })
+        .expect("send key");
+}
+
+/// Installed extensions and the public index each get a tab. Discover keeps installed entries
+/// listed with a badge, and a search filters the active tab.
+#[test]
+fn extensions_manager_splits_installed_and_discover_tabs() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            // The isolated directories are shared by every test in this process, so this test
+            // leaves the extensions directory alone and injects its installed row instead.
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 45,
+            });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("open extensions");
+            let tab = |backend: &TestBackend<AppRoot>| {
+                backend.state().extensions.as_ref().expect("extensions").tab
+            };
+            assert_eq!(tab(&backend), rozi::state::ExtensionsTab::Installed);
+            backend
+                .state_mut()
+                .extensions
+                .as_mut()
+                .expect("extensions")
+                .entries
+                .push(installed_info("catalog-owned"));
+            let installed = frame(&mut backend);
+            assert!(
+                installed.contains("Installed") && installed.contains("Discover"),
+                "{installed}"
+            );
+            assert!(installed.contains("catalog-owned"), "{installed}");
+            assert!(installed.contains("reload"), "{installed}");
+
+            press(&mut backend, KeyCode::Tab);
+            assert_eq!(tab(&backend), rozi::state::ExtensionsTab::Discover);
+            load_catalog(
+                &mut backend,
+                serde_json::json!([
+                    catalog_entry("someone/owned", "catalog-owned", "Owned fixture"),
+                    catalog_entry("someone/fresh", "catalog-fresh", "Fresh fixture"),
+                ]),
+            );
+            let discover = frame(&mut backend);
+            assert!(
+                discover.contains("installed · 0.1.0 · someone/owned"),
+                "an installed entry stays listed, badged:\n{discover}"
+            );
+            assert!(discover.contains("Fresh fixture"), "{discover}");
+            assert!(discover.contains("refresh"), "{discover}");
+            assert!(!discover.contains("reload"), "{discover}");
+
+            for character in "fresh".chars() {
+                press(&mut backend, KeyCode::Char(character));
+            }
+            let searching = frame(&mut backend);
+            assert!(
+                searching.contains("1/2") && searching.contains("Installed   Discover"),
+                "the search field counts the active tab's matches; tab labels stay plain:\n{searching}"
+            );
+            assert!(!searching.contains("Owned fixture"), "{searching}");
+            press(&mut backend, KeyCode::Enter);
+            let fresh = frame(&mut backend);
+            assert!(
+                fresh.contains("Install extension · Fresh fixture")
+                    && fresh.contains("install Enter"),
+                "{fresh}"
+            );
+            backend
+                .dispatch(rozi::Msg::CloseExtensionDetail)
+                .expect("close fresh report");
+            for _ in 0.."fresh".len() {
+                press(&mut backend, KeyCode::Backspace);
+            }
+
+            press(&mut backend, KeyCode::Up);
+            press(&mut backend, KeyCode::Enter);
+            let owned = frame(&mut backend);
+            assert!(owned.contains("Extensions · Owned fixture"), "{owned}");
+            assert!(
+                !owned.contains("install Enter"),
+                "an installed entry cannot be installed again:\n{owned}"
+            );
+            backend
+                .dispatch(rozi::Msg::CloseExtensionDetail)
+                .expect("close owned report");
+
+            press(&mut backend, KeyCode::Left);
+            assert_eq!(tab(&backend), rozi::state::ExtensionsTab::Installed);
+        })
+        .expect("spawn tabs thread")
+        .join()
+        .expect("tabs smoke completes");
 }

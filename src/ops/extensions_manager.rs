@@ -11,6 +11,7 @@ use crate::config::{
 };
 use crate::state::{
     CatalogExtensionDetailState, ExtensionDetailState, ExtensionPickerRow, ExtensionsState,
+    ExtensionsTab,
 };
 
 pub(crate) const EXTENSION_UPDATING_LABEL: &str = "updating…";
@@ -31,9 +32,6 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     let update_check_epoch = next_update_check_epoch();
     let catalog_epoch = next_catalog_epoch();
     let git_ids = git_installation_ids(&scan.installation_kinds);
-    // The cached index lists immediately, so the network only decides whether rows change.
-    let cached = crate::extension_catalog::cached();
-    let refresh_catalog = !cached.as_ref().is_some_and(|cached| cached.fresh);
     ctx.state.show_palette = false;
     ctx.state.keybindings = None;
     ctx.state.show_settings = false;
@@ -43,16 +41,16 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     }
     ctx.state.pane_padding_editor = None;
     ctx.state.extensions = Some(ExtensionsState {
+        tab: ExtensionsTab::Installed,
         entries: scan.entries,
         merged: scan.merged,
         selected: 0,
         catalog_selected: None,
-        query: String::new(),
-        restore_query: String::new(),
+        query: TextInput::new(""),
         pending_remove: None,
         detail: None,
         install_prompt: None,
-        catalog_entries: cached.map(|cached| cached.entries).unwrap_or_default(),
+        catalog_entries: Vec::new(),
         catalog_error: None,
         catalog_epoch,
         catalog_loading: false,
@@ -67,9 +65,9 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.commands_dirty = true;
     crate::ops::focus::request_extensions_focus(ctx);
     request_update_checks(ctx, update_check_epoch, git_ids);
-    if refresh_catalog {
-        start_catalog_load(ctx);
-    }
+    // Loaded with the picker rather than the tab, so Discover is ready when it is first shown.
+    load_catalog(ctx);
+    normalize_selection(ctx);
     Update::full()
 }
 
@@ -79,28 +77,46 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::overlay_return::finish(ctx)
 }
 
-pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
+pub(crate) fn tab_selected(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
-    state.query = query;
-    Update::none()
+    let tab = ExtensionsTab::from_index(index);
+    if state.tab == tab {
+        return Update::none();
+    }
+    state.tab = tab;
+    state.pending_remove = None;
+    normalize_selection(ctx);
+    Update::full()
+}
+
+pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return Update::none();
+    };
+    event.apply_to(&mut state.query);
+    normalize_selection(ctx);
+    Update::full()
 }
 
 pub(crate) fn select(ctx: &mut Context<AppRoot>, row: ExtensionPickerRow) -> Update {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
+    // A row is only ever chosen from the tab showing it.
     let changed = match row {
         ExtensionPickerRow::Installed(index) => {
-            let changed = state.catalog_selected.is_some() || state.selected != index;
+            let changed = state.tab != ExtensionsTab::Installed || state.selected != index;
+            state.tab = ExtensionsTab::Installed;
             state.selected = index.min(state.entries.len().saturating_sub(1));
-            state.catalog_selected = None;
             changed
         }
         ExtensionPickerRow::Catalog(index) => {
             let index = index.min(state.catalog_entries.len().saturating_sub(1));
-            let changed = state.catalog_selected != Some(index);
+            let changed =
+                state.tab != ExtensionsTab::Discover || state.catalog_selected != Some(index);
+            state.tab = ExtensionsTab::Discover;
             state.catalog_selected = Some(index);
             changed
         }
@@ -116,7 +132,7 @@ pub(crate) fn toggle_selected(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .extensions
         .as_ref()
-        .is_some_and(|state| state.catalog_selected.is_some())
+        .is_some_and(|state| state.tab == ExtensionsTab::Discover)
     {
         return open_detail(ctx);
     }
@@ -163,9 +179,16 @@ pub(crate) fn toggle_selected(ctx: &mut Context<AppRoot>) -> Update {
     update
 }
 
+/// Ctrl+R reloads what the active tab shows: the index on Discover, installed manifests on
+/// Installed. The spinner or the rescanned rows are the confirmation; problems still toast.
 pub(crate) fn reload(ctx: &mut Context<AppRoot>) -> Update {
-    start_catalog_load(ctx);
-    // The rescanned rows and the discovery spinner are the confirmation. Problems still toast.
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return Update::none();
+    };
+    if state.tab == ExtensionsTab::Discover {
+        start_catalog_load(ctx);
+        return Update::full();
+    }
     crate::ops::config::reload_extensions_quiet(ctx)
 }
 
@@ -173,7 +196,6 @@ pub(crate) fn open_install(ctx: &mut Context<AppRoot>) -> Update {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
-    state.restore_query = state.query.clone();
     state.install_prompt = Some(crate::state::ExtensionInstallPromptState {
         input: TextInput::new(""),
         error: None,
@@ -320,7 +342,7 @@ pub(crate) fn install_finished(
             // The prompt closes onto the new row, selected, with its version, source, and
             // keybinding counts in the description. Only the conflicts need a toast.
             let update = crate::ops::config::reload_extensions_quiet(ctx);
-            select_by_id(ctx, &id);
+            show_installed(ctx, &id);
             warn_about_key_conflicts(ctx, &id);
             update
         }
@@ -379,6 +401,7 @@ pub(crate) fn catalog_loaded(
             state.catalog_error = Some(error);
         }
     }
+    normalize_selection(ctx);
     Update::full()
 }
 
@@ -397,6 +420,23 @@ pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
     if detail.entry.incompatibility().is_some() {
         return Update::none();
     }
+    let entry = detail.entry.clone();
+    if ctx
+        .state
+        .extensions
+        .as_ref()
+        .is_some_and(|state| catalog_entry_installed(state, &entry))
+    {
+        return Update::none();
+    }
+    let Some(detail) = ctx
+        .state
+        .extensions
+        .as_mut()
+        .and_then(|state| state.catalog_detail.as_mut())
+    else {
+        return Update::none();
+    };
     detail.error = None;
     let entry = detail.entry.clone();
     let repository = entry.repository.clone();
@@ -439,12 +479,15 @@ pub(crate) fn catalog_install_finished(
         Ok(installed_id) => {
             if detail_open && let Some(state) = ctx.state.extensions.as_mut() {
                 state.catalog_detail = None;
-                state.catalog_selected = None;
                 crate::ops::focus::request_extensions_focus(ctx);
             }
             let update = crate::ops::config::reload_extensions_quiet(ctx);
             if ctx.state.extensions.is_some() {
-                select_by_id(ctx, &installed_id);
+                // The user waiting on the report is taken to the new row. Anyone who moved on
+                // stays where they are; the toast below tells them.
+                if detail_open {
+                    show_installed(ctx, &installed_id);
+                }
                 warn_about_key_conflicts(ctx, &installed_id);
             }
             if !detail_open {
@@ -664,19 +707,18 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
-    if let Some(index) = ctx
+    if ctx
         .state
         .extensions
         .as_ref()
-        .and_then(|state| state.catalog_selected)
+        .is_some_and(|state| state.tab == ExtensionsTab::Discover)
     {
+        let Some(entry) = selected_catalog_entry(&ctx.state).cloned() else {
+            return Update::none();
+        };
         let Some(state) = ctx.state.extensions.as_mut() else {
             return Update::none();
         };
-        let Some(entry) = state.catalog_entries.get(index).cloned() else {
-            return Update::none();
-        };
-        state.restore_query = state.query.clone();
         state.catalog_detail = Some(CatalogExtensionDetailState { entry, error: None });
         crate::ops::focus::request_extension_detail_focus(ctx);
         return Update::full();
@@ -690,7 +732,6 @@ pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
-    state.restore_query = state.query.clone();
     state.detail = Some(ExtensionDetailState { path, sections });
     crate::ops::focus::request_extension_detail_focus(ctx);
     Update::full()
@@ -760,6 +801,7 @@ fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
             sections: crate::config::report_sections(entry, &merged),
         })
     });
+    normalize_selection(ctx);
 }
 
 fn scan(ctx: &mut Context<AppRoot>) -> ManagerScan {
@@ -835,6 +877,21 @@ fn next_catalog_epoch() -> u64 {
     NEXT_CATALOG_EPOCH.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Lists the cached index at once, then fetches unless that copy is fresh.
+fn load_catalog(ctx: &mut Context<AppRoot>) {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return;
+    };
+    let cached = crate::extension_catalog::cached();
+    let refresh = !cached.as_ref().is_some_and(|cached| cached.fresh);
+    if let Some(cached) = cached {
+        state.catalog_entries = cached.entries;
+    }
+    if refresh {
+        start_catalog_load(ctx);
+    }
+}
+
 fn start_catalog_load(ctx: &mut Context<AppRoot>) {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return;
@@ -906,8 +963,129 @@ fn select_by_id(ctx: &mut Context<AppRoot>, id: &str) {
         .position(|entry| entry.id.as_deref() == Some(id))
     {
         state.selected = index;
-        state.catalog_selected = None;
     }
+}
+
+/// Lands on a newly installed extension: the Installed tab, unfiltered, with its row selected.
+fn show_installed(ctx: &mut Context<AppRoot>, id: &str) {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return;
+    };
+    state.tab = ExtensionsTab::Installed;
+    state.query = TextInput::new("");
+    select_by_id(ctx, id);
+    normalize_selection(ctx);
+}
+
+/// Installed rows visible under the query, by group in display order. Empty groups are left out.
+pub(crate) fn installed_groups(state: &ExtensionsState) -> Vec<(&'static str, Vec<usize>)> {
+    let visible = matching(
+        state.query.text(),
+        state
+            .entries
+            .iter()
+            .map(|entry| (entry.display_name(), extension_description(entry, state))),
+    );
+    [
+        ("Active", ExtensionStatus::Loaded),
+        ("Disabled", ExtensionStatus::Disabled),
+    ]
+    .into_iter()
+    .map(|(title, status)| (title, Some(status)))
+    .chain([("Problems", None)])
+    .map(|(title, status)| {
+        let rows = (0..state.entries.len())
+            .filter(|index| visible[*index])
+            .filter(|index| {
+                let entry_status = state.entries[*index].status;
+                match status {
+                    Some(status) => entry_status == status,
+                    None => !matches!(
+                        entry_status,
+                        ExtensionStatus::Loaded | ExtensionStatus::Disabled
+                    ),
+                }
+            })
+            .collect::<Vec<_>>();
+        (title, rows)
+    })
+    .filter(|(_, rows)| !rows.is_empty())
+    .collect()
+}
+
+/// Discovery rows visible under the query, in index order.
+pub(crate) fn visible_catalog(state: &ExtensionsState) -> Vec<usize> {
+    let visible = matching(
+        state.query.text(),
+        state.catalog_entries.iter().map(|entry| {
+            // The id and the extension's own description are searchable without being shown.
+            let description = format!(
+                "{} {} {}",
+                catalog_description(entry, catalog_entry_installed(state, entry)),
+                entry.id,
+                entry.description
+            );
+            (entry.title.as_str(), description)
+        }),
+    );
+    (0..state.catalog_entries.len())
+        .filter(|index| visible[*index])
+        .collect()
+}
+
+/// Whether each row matches `query`, matched the way every Rozi picker matches.
+fn matching<'a>(query: &str, rows: impl Iterator<Item = (&'a str, String)>) -> Vec<bool> {
+    let items: Vec<_> = rows
+        .map(|(label, description)| {
+            SearchItem::new(label, ()).description(ItemDescription::new().right(description))
+        })
+        .collect();
+    let mut visible = vec![query.trim().is_empty(); items.len()];
+    if query.trim().is_empty() {
+        return visible;
+    }
+    for index in tui_lipan::rank_search_palette_indices_with_mode(
+        &items,
+        query,
+        SearchMatchMode::Hybrid,
+        |_, _, score| score as f64,
+    ) {
+        visible[index] = true;
+    }
+    visible
+}
+
+/// Keeps each tab's selection on a visible row, falling back to its first one.
+fn normalize_selection(ctx: &mut Context<AppRoot>) {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return;
+    };
+    let installed: Vec<usize> = installed_groups(state)
+        .into_iter()
+        .flat_map(|(_, rows)| rows)
+        .collect();
+    if !installed.contains(&state.selected)
+        && let Some(first) = installed.first()
+    {
+        state.selected = *first;
+    }
+    let catalog = visible_catalog(state);
+    if !state
+        .catalog_selected
+        .is_some_and(|index| catalog.contains(&index))
+    {
+        state.catalog_selected = catalog.first().copied();
+    }
+}
+
+pub(crate) fn catalog_entry_installed(
+    state: &ExtensionsState,
+    entry: &crate::extension_catalog::CatalogEntry,
+) -> bool {
+    state
+        .entries
+        .iter()
+        .any(|installed| installed.id.as_deref() == Some(entry.id.as_str()))
 }
 
 /// The right-aligned picker description for one row.
@@ -960,8 +1138,15 @@ pub(crate) fn extension_description(entry: &ExtensionInfo, state: &ExtensionsSta
     parts.join(" · ")
 }
 
-pub(crate) fn catalog_description(entry: &crate::extension_catalog::CatalogEntry) -> String {
-    let mut parts = vec![entry.version.clone(), entry.repository.clone()];
+pub(crate) fn catalog_description(
+    entry: &crate::extension_catalog::CatalogEntry,
+    installed: bool,
+) -> String {
+    let mut parts = Vec::new();
+    if installed {
+        parts.push("installed".to_string());
+    }
+    parts.extend([entry.version.clone(), entry.repository.clone()]);
     if let Some(reason) = entry.incompatibility() {
         parts.push(reason);
     }
@@ -970,6 +1155,7 @@ pub(crate) fn catalog_description(entry: &crate::extension_catalog::CatalogEntry
 
 pub(crate) fn catalog_report_sections(
     entry: &crate::extension_catalog::CatalogEntry,
+    installed: bool,
     error: Option<&str>,
 ) -> Vec<ReportSection> {
     let row = |label: &str, value: String, tone| ReportRow {
@@ -986,9 +1172,10 @@ pub(crate) fn catalog_report_sections(
     let mut sections = vec![
         ReportSection {
             title: "Overview",
-            rows: vec![
-                row("Version", entry.version.clone(), ReportTone::Plain),
-                row(
+            rows: [
+                installed.then(|| row("Installed", "yes".to_string(), ReportTone::Success)),
+                Some(row("Version", entry.version.clone(), ReportTone::Plain)),
+                Some(row(
                     "Compatibility",
                     entry
                         .incompatibility()
@@ -998,10 +1185,17 @@ pub(crate) fn catalog_report_sections(
                     } else {
                         ReportTone::Success
                     },
-                ),
-                row("Platforms", platforms, ReportTone::Plain),
-                row("Description", entry.description.clone(), ReportTone::Muted),
-            ],
+                )),
+                Some(row("Platforms", platforms, ReportTone::Plain)),
+                Some(row(
+                    "Description",
+                    entry.description.clone(),
+                    ReportTone::Muted,
+                )),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
         },
         ReportSection {
             title: "Source",
@@ -1080,28 +1274,30 @@ fn suggested_keybindings(
         .count()
 }
 
+/// The selected installed extension, when the Installed tab shows it.
 fn selected_entry(state: &crate::state::State) -> Option<&ExtensionInfo> {
     let extensions = state.extensions.as_ref()?;
-    if extensions.catalog_selected.is_some() {
+    if extensions.tab != ExtensionsTab::Installed {
         return None;
     }
-    let entry = extensions.entries.get(extensions.selected)?;
-    extension_matches_query(entry, extensions).then_some(entry)
+    installed_groups(extensions)
+        .iter()
+        .any(|(_, rows)| rows.contains(&extensions.selected))
+        .then(|| extensions.entries.get(extensions.selected))?
 }
 
-fn extension_matches_query(entry: &ExtensionInfo, extensions: &ExtensionsState) -> bool {
-    if extensions.query.trim().is_empty() {
-        return true;
+/// The selected discovery entry, when the Discover tab shows it.
+fn selected_catalog_entry(
+    state: &crate::state::State,
+) -> Option<&crate::extension_catalog::CatalogEntry> {
+    let extensions = state.extensions.as_ref()?;
+    if extensions.tab != ExtensionsTab::Discover {
+        return None;
     }
-    let items = [SearchItem::new(entry.display_name(), ())
-        .description(ItemDescription::new().right(extension_description(entry, extensions)))];
-    !tui_lipan::rank_search_palette_indices_with_mode(
-        &items,
-        &extensions.query,
-        SearchMatchMode::Hybrid,
-        |_, _, score| score as f64,
-    )
-    .is_empty()
+    let index = extensions.catalog_selected?;
+    visible_catalog(extensions)
+        .contains(&index)
+        .then(|| extensions.catalog_entries.get(index))?
 }
 
 fn merged_for(state: &crate::state::State, entry: &ExtensionInfo) -> ExtensionSettings {

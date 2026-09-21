@@ -123,6 +123,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ExtensionsQueryChanged(query) => {
             crate::ops::extensions_manager::query_changed(ctx, query)
         }
+        Msg::ExtensionsTabSelected(index) => {
+            crate::ops::extensions_manager::tab_selected(ctx, index)
+        }
         Msg::ExtensionsSelect(row) => crate::ops::extensions_manager::select(ctx, row),
         Msg::ExtensionsToggleSelected => crate::ops::extensions_manager::toggle_selected(ctx),
         Msg::ExtensionsOpenDetail => crate::ops::extensions_manager::open_detail(ctx),

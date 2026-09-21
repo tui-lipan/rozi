@@ -269,7 +269,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         root = root.child(settings_choice_overlay(ctx));
     }
     // The report replaces the picker rather than stacking on it, like every other nested dialog
-    // (see `ops::overlay_return`). The picker is rebuilt from `restore_query` on the way back.
+    // (see `ops::overlay_return`). Its query lives in state, so the way back finds it unchanged.
     if ctx
         .state
         .extensions

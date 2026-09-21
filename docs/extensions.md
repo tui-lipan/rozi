@@ -63,24 +63,26 @@ data. Users do not need to create or edit it.
 
 ## Discover public extensions
 
-The **Discover** group in **Extensions…** reads a public index of GitHub repositories carrying the
+The **Discover** tab of **Extensions…** reads a public index of GitHub repositories carrying the
 `rozi-extension` topic. The index records metadata from each repository's root `extension.toml` at
 an exact default-branch commit. It hosts no packages and makes no claim that an entry is audited,
 reviewed, safe, or endorsed.
 
-`Enter` or `Ctrl+D` on a discovery row opens the installation report. It names the repository and
+Extensions you already have stay listed, marked `installed`, and their report says so instead of
+offering to install them again. `Enter` on any other discovery row opens the installation report. It names the repository and
 commit, compatibility, contribution counts, and the trust warning. A second `Enter` installs that
 exact indexed commit and validates the complete extension before moving it into Rozi's private data
 directory. Later `Ctrl+U` updates the managed checkout from its original Git remote as usual.
 Closing the report or the manager does not cancel an installation: when it finishes, Rozi loads the
 extension and reports the result. One discovery installation runs at a time.
 
-Discovery loads in the background, so installed-extension management remains available while the
-network request is running or offline. Rozi keeps the last index it fetched in its cache directory
-and lists it immediately. An index up to ten minutes old is used as is, and an older one is
+Rozi reads the index when **Extensions…** opens, so **Discover** is ready by the time you switch
+to it. It loads in the background, keeping the manager responsive while the request runs or
+offline. Rozi keeps the last index it fetched in its cache directory and lists it
+immediately. An index up to ten minutes old is used as is, and an older one is
 refreshed in the background. A spinner above the hints shows a fetch in progress. If the fetch fails,
-the listed entries stay and the row reports the failure. `Ctrl+R` always refetches discovery, as
-well as rescanning installed manifests. The manual `Ctrl+I` source prompt remains available for repositories not in the index.
+the listed entries stay and the row reports the failure. `Ctrl+R` on this tab always refetches the
+index. The manual `Ctrl+I` source prompt remains available for repositories not in the index.
 An index entry Rozi cannot validate is left out of **Discover**. Only an unreadable index or an
 unsupported schema version makes discovery unavailable.
 
@@ -99,10 +101,11 @@ The generated index and its schema are public at
 
 ## List and inspect installed extensions
 
-Open the command palette and choose **Extensions…**. The overlay groups installed extensions by
-status and lists public entries under **Discover**. On an installed row, `Enter` enables
-or disables the extension and `Ctrl+D` opens its full report. On a discovery row, either key opens
-the installation report. For installed extensions,
+Open the command palette and choose **Extensions…**. The **Installed** tab groups installed
+extensions by status, and the **Discover** tab lists the public index. `Tab`, `Shift+Tab`, `←`, and
+`→` switch tabs while the search field keeps focus. A search filters the active tab.
+
+On an installed row, `Enter` enables or disables the extension and `Ctrl+D` opens its full report.
 `Ctrl+I` opens a source prompt, `Ctrl+U` updates a selected Git-managed extension, `Ctrl+R` rescans
 extension manifests, `Ctrl+O` opens `extension.toml`, and `Ctrl+Y` copies the report. Linked
 checkouts show `linked`; Git installs whose remote HEAD changed show `update available`.

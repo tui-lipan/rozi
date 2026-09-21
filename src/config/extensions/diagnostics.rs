@@ -86,6 +86,10 @@ pub(crate) fn report_sections(
             info_row("Manifest", info.manifest_path.clone()),
         ],
     }];
+    // Optional and rarely set, so it only takes a row when the manifest declares it.
+    if let Some(homepage) = info.homepage.clone() {
+        sections[0].rows.insert(4, info_row("Homepage", homepage));
+    }
 
     push_section(
         &mut sections,
@@ -439,5 +443,31 @@ mod tests {
         ));
         assert!(text.contains("manifest env: TOKEN (values redacted)"));
         assert!(text.ends_with("Errors\n  Error: one problem\n"));
+    }
+
+    #[test]
+    fn homepage_takes_a_row_only_when_declared() {
+        let overview = |info: &ExtensionInfo| {
+            report_sections(info, &info.settings)[0]
+                .rows
+                .iter()
+                .map(|row| (row.label.clone(), row.value.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            !overview(&info())
+                .iter()
+                .any(|(label, _)| label == "Homepage")
+        );
+        let mut with_homepage = info();
+        with_homepage.homepage = Some("https://example.org/tasks".to_string());
+        assert_eq!(
+            overview(&with_homepage)[4],
+            (
+                "Homepage".to_string(),
+                "https://example.org/tasks".to_string()
+            ),
+            "after the identifying rows, before the paths"
+        );
     }
 }

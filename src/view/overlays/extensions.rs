@@ -463,6 +463,12 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
             Msg::ExtensionsOpenManifest,
             state.manifest_entries.contains(entry.path.as_str()),
         ),
+        OverlayAction::new(
+            "ctrl-l",
+            "open homepage",
+            Msg::ExtensionsOpenLink,
+            entry.homepage.is_some(),
+        ),
     ];
     let formatter = ExtensionReportFormatter::new(detail.sections.clone(), &ctx.state.theme);
     let document = DocumentView::new(crate::config::report_text(&detail.sections))
@@ -509,16 +515,19 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
             crate::ops::extensions_manager::catalog_entry_installed(state, entry)
         });
     let installing = ctx.state.extension_catalog_install.as_deref();
-    let actions = vec![OverlayAction::new(
-        "enter",
-        if installing == Some(entry.repository.as_str()) {
-            "installing"
-        } else {
-            "install"
-        },
-        Msg::ExtensionsSubmitCatalogInstall,
-        compatible && !installed && installing.is_none(),
-    )];
+    let actions = vec![
+        OverlayAction::new(
+            "enter",
+            if installing == Some(entry.repository.as_str()) {
+                "installing"
+            } else {
+                "install"
+            },
+            Msg::ExtensionsSubmitCatalogInstall,
+            compatible && !installed && installing.is_none(),
+        ),
+        OverlayAction::new("ctrl-l", "open source", Msg::ExtensionsOpenLink, true),
+    ];
     let sections = crate::ops::extensions_manager::catalog_report_sections(
         entry,
         installed,

@@ -78,6 +78,7 @@ pub enum Msg {
     ExtensionsReload,
     ExtensionsOpenManifest,
     ExtensionsCopyReport,
+    ExtensionsOpenLink,
     ExtensionsRemoveSelected,
     ExtensionsOpenInstall,
     ExtensionsInstallSourceChanged(InputEvent),

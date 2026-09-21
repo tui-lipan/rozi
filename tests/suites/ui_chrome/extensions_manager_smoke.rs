@@ -389,6 +389,10 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             }
             assert!(detail.contains("suppressed"), "{detail}");
             assert!(detail.contains("copy report"), "{detail}");
+            assert!(
+                !detail.contains("open homepage"),
+                "no homepage declared, so no link to open:\n{detail}"
+            );
             assert!(!detail.contains("Ctrl+U"), "{detail}");
             assert!(!detail.contains("Search report"), "{detail}");
             // The launch line carries the extension's absolute directory, and a deep enough one
@@ -1014,7 +1018,8 @@ fn extensions_manager_splits_installed_and_discover_tabs() {
             let fresh = frame(&mut backend);
             assert!(
                 fresh.contains("Install extension · Fresh fixture")
-                    && fresh.contains("install Enter"),
+                    && fresh.contains("install Enter")
+                    && fresh.contains("open source Ctrl+L"),
                 "{fresh}"
             );
             backend

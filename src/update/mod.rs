@@ -132,6 +132,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ExtensionsReload => crate::ops::extensions_manager::reload(ctx),
         Msg::ExtensionsOpenManifest => crate::ops::extensions_manager::open_manifest(ctx),
         Msg::ExtensionsCopyReport => crate::ops::extensions_manager::copy_report(ctx),
+        Msg::ExtensionsOpenLink => crate::ops::extensions_manager::open_link(ctx),
         Msg::ExtensionsRemoveSelected => crate::ops::extensions_manager::remove_selected(ctx),
         Msg::ExtensionsOpenInstall => crate::ops::extensions_manager::open_install(ctx),
         Msg::ExtensionsInstallSourceChanged(event) => {

@@ -72,7 +72,7 @@ impl SessionServer {
 
     pub(super) fn spawn_pane_inner(
         &mut self,
-        request: SpawnRequest,
+        mut request: SpawnRequest,
         seed: Option<&[u8]>,
         retain_on_failure: bool,
     ) -> ServerMessage {
@@ -149,33 +149,57 @@ impl SessionServer {
         if let Some(seed) = seed {
             recover_restored_screen(&mut screen, seed);
         }
+        let effective_cwd = effective_spawn_cwd(request.cwd.as_deref());
+        // Built per attempt rather than once, because a native agent resume that cannot start gets
+        // a second one - the interactive shell - from the same directory and environment.
+        let build_config = |launch: Option<&crate::pane::launch::PaneLaunch>| {
+            let mut config = pty_config(launch, &request.shell, &request.command_shell)
+                .size(cols.max(1), rows.max(1))
+                .cell_size(cell);
+            if let Some(cwd) = effective_cwd.as_ref() {
+                config = config.cwd(cwd.clone());
+            }
+            for (key, value) in &request.env {
+                config = config.env(key.clone(), value.clone());
+            }
+            config
+        };
+        let queue = Arc::clone(&self.events);
+        let start = |config| {
+            let events = Arc::clone(&queue);
+            TerminalPty::spawn(config, move |event| {
+                let event = ServerEvent::Pty(owner, id, generation, event);
+                let bytes = event.payload_bytes();
+                let _ = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
+            })
+        };
+
         // A native agent resume runs in place of the pane's launch intent without becoming it, so
         // the pane still remembers - and still snapshots - how it was originally created.
-        let mut config = pty_config(
-            request
-                .agent_resume
+        let resume = request.agent_resume.take();
+        let mut agent_resume = resume.as_ref().map(|resume| resume.label.clone());
+        let mut spawned = start(build_config(
+            resume
                 .as_ref()
                 .map(|resume| &resume.launch)
                 .or(request.launch.as_ref()),
-            &request.shell,
-            &request.command_shell,
-        )
-        .size(cols.max(1), rows.max(1))
-        .cell_size(cell);
-        let effective_cwd = effective_spawn_cwd(request.cwd.as_deref());
-        if let Some(cwd) = effective_cwd.as_ref() {
-            config = config.cwd(cwd.clone());
+        ));
+        if let (Err(error), Some(resume)) = (&spawned, resume.as_ref()) {
+            // A resume command that cannot start at all is the ordinary shape of an outdated
+            // snapshot: the agent was renamed, uninstalled, or moved since it was written. The
+            // pane still has to come back as a working terminal with the failure above it. An
+            // exited husk would read as a restore that silently did nothing, and falling back to
+            // the pane's *launch* intent would open a fresh conversation in place of the one that
+            // could not be reopened - the one outcome this must never produce.
+            let banner = format!(
+                "\r\n\x1b[2m[rozi] {} resume failed · {error}\x1b[0m\r\n",
+                resume.label
+            );
+            screen.process_bytes(banner.as_bytes());
+            agent_resume = None;
+            spawned = start(build_config(None));
         }
-        for (key, value) in &request.env {
-            config = config.env(key.clone(), value.clone());
-        }
-        let agent_resume = request.agent_resume.map(|resume| resume.label);
-        let events = Arc::clone(&self.events);
-        match TerminalPty::spawn(config, move |event| {
-            let event = ServerEvent::Pty(owner, id, generation, event);
-            let bytes = event.payload_bytes();
-            let _ = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
-        }) {
+        match spawned {
             Ok(pty) => {
                 let pid = pty.pid();
                 screen.resize(rows.max(1), cols.max(1));
@@ -233,8 +257,8 @@ impl SessionServer {
                             title: request.title,
                             cwd: request.cwd,
                             launch: request.launch,
-                            // The PTY never started, so there is no resumed process to hold the
-                            // pane open for; the husk reports the spawn failure instead.
+                            // Reached only when the interactive shell could not start either, so
+                            // there is nothing left to hold the pane open for.
                             agent_resume: None,
                             keep_open: request.keep_open,
                             command_completed: false,

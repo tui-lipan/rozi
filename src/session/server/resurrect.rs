@@ -309,17 +309,6 @@ enum RestoreAction {
     Nothing,
 }
 
-/// Render an argv as a line an interactive shell reads back as exactly those arguments.
-///
-/// Only reached under `hold`, where the point is that a human sees the command before running it.
-/// `auto` execs the argv directly and no shell is involved.
-fn shell_line(argv: &[String]) -> String {
-    argv.iter()
-        .map(|argument| crate::pane::launch::shell_quote(argument))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 impl SessionServer {
     pub(super) fn snapshot_path(&self) -> io::Result<PathBuf> {
         if !crate::session::discovery::valid_attach_target(&self.session_name) {
@@ -746,8 +735,17 @@ impl SessionServer {
             // `hold` means nothing runs that the user did not ask for, and reopening a conversation
             // is no exception: the command is left at the prompt for them to run or delete.
             return if self.settings.resurrect_foreground == crate::config::ForegroundRestore::Hold {
+                // Rendered for the shell this session actually restores panes with, not for a
+                // POSIX one: `auto` execs direct argv and never involves a shell, so `hold` is the
+                // only path where quoting exists at all - and the only one that can be wrong.
+                let quoting = crate::pane::launch::PromptQuoting::of(
+                    self.settings.shell.first().map(String::as_str),
+                );
                 // Always `Some`: a resume launch is direct argv by construction.
-                RestoreAction::Type(shell_line(resume.launch.argv().unwrap_or_default()))
+                RestoreAction::Type(crate::pane::launch::prompt_line(
+                    resume.launch.argv().unwrap_or_default(),
+                    quoting,
+                ))
             } else {
                 RestoreAction::ResumeAgent(resume)
             };
@@ -1675,7 +1673,8 @@ mod tests {
     /// running, so it waits at the prompt like any other held command.
     #[test]
     fn hold_leaves_the_resume_command_at_the_prompt() {
-        let server = restore_server(crate::config::ForegroundRestore::Hold, true);
+        let mut server = restore_server(crate::config::ForegroundRestore::Hold, true);
+        server.settings.shell = vec!["/bin/bash".to_string()];
         let saved = saved_pane("claude", "needs quoting", None);
 
         match action(&server, &saved, &mut std::collections::HashSet::new()) {
@@ -1684,6 +1683,27 @@ mod tests {
             }
             _ => panic!("`hold` must not start the agent itself"),
         }
+    }
+
+    /// The held line is typed into whatever shell the session restores panes with, and the quoting
+    /// families disagree about what a quote character even is. Rendering every one of them the
+    /// POSIX way would hand `cmd.exe` a command with two stray apostrophes in it.
+    #[test]
+    fn a_held_resume_line_is_quoted_for_the_shell_that_will_read_it() {
+        let saved = saved_pane("claude", "it's here", None);
+        let line = |shell: &str| {
+            let mut server = restore_server(crate::config::ForegroundRestore::Hold, true);
+            server.settings.shell = vec![shell.to_string()];
+            match action(&server, &saved, &mut std::collections::HashSet::new()) {
+                RestoreAction::Type(line) => line,
+                _ => panic!("`hold` must not start the agent itself"),
+            }
+        };
+
+        assert_eq!(line("/bin/zsh"), r"claude --resume 'it'\''s here'");
+        assert_eq!(line("fish"), r"claude --resume 'it\'s here'");
+        assert_eq!(line("pwsh"), "claude --resume 'it''s here'");
+        assert_eq!(line("cmd.exe"), "claude --resume \"it's here\"");
     }
 
     /// The snapshot stored a fact, not a recipe. An agent that no longer declares how to resume -

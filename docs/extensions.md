@@ -214,8 +214,18 @@ machine is not in, loads as **incompatible** with the reason stated — the same
 `api` already produces. Nothing runs, and `rozi extensions check` says why.
 
 A platform name Rozi does not recognize, a `min_rozi` that is not a version, and a `homepage` that
-is not an `http(s)` URL are each reported as manifest mistakes rather than as reasons the extension
-cannot run here. A typo should not quietly exclude an extension from every machine.
+is not an `http(s)` URL are each reported as manifest mistakes — **invalid**, not incompatible. A
+typo should not quietly exclude an extension from every machine while suggesting it runs somewhere
+else.
+
+When more than one of these applies, the most specific reason wins:
+
+1. **A mismatched `api`** — the manifest is written in a dialect Rozi cannot read, so nothing else
+   it says has been checked against the right rules.
+2. **Anything wrong with the manifest**, including the discovery fields above. A wrong manifest is a
+   fact about the extension.
+3. **`min_rozi` or `platforms` excluding this machine** — a fact about where you are running it,
+   which only matters once the manifest itself is sound.
 
 `rozi extensions check --verbose` prints these fields when they are declared, and
 `--format json` includes them, which is what an index reads.

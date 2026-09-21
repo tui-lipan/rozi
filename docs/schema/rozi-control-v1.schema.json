@@ -87,6 +87,13 @@
       ],
       "type": "object"
     },
+    "AgentListPayload": {
+      "description": "The whole `data` value of an `agents list` reply. See [`PaneListPayload`].",
+      "items": {
+        "$ref": "#/$defs/AgentInfo"
+      },
+      "type": "array"
+    },
     "AgentPromptAccepted": {
       "description": "What `agents prompt` answers with when it was asked not to wait.",
       "properties": {
@@ -2190,6 +2197,13 @@
         "status"
       ],
       "type": "object"
+    },
+    "PaneListPayload": {
+      "description": "The whole `data` value of a `list-panes` reply.\n\nA named type for the array rather than for its element alone, because `ControlResponse::data`\nis untyped on the wire and the schema is where a consumer finds out what a given command's\n`data` is. Without this, the published schema describes one pane and leaves the shape actually\nreturned - a list of them - unnamed.",
+      "items": {
+        "$ref": "#/$defs/PaneInfo"
+      },
+      "type": "array"
     },
     "PaneLoggingState": {
       "description": "What `pane-logging` answers with.",

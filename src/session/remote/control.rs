@@ -95,13 +95,32 @@ pub fn forward_control(
     parse_response(&output.stdout)
 }
 
+/// Find the answer in whatever else the remote login put on stdout.
+///
+/// A shell profile that prints a message of the day, a banner, or a `logout` line shares this
+/// stdout with the answer, and neither end controls what a host's `/etc/profile` does. Rozi's own
+/// host probe is already deliberately tolerant of that; this has to be too, or a forwarded command
+/// fails on a perfectly working machine for a reason that has nothing to do with the command.
+///
+/// Searched from the end, because the answer is the last thing this process writes and a banner is
+/// among the first. Being a parseable [`ControlResponse`] is the test: every line is tried, so
+/// output on either side of the answer is skipped rather than mistaken for it.
 fn parse_response(stdout: &[u8]) -> Result<ControlResponse, String> {
-    let line = stdout
+    let mut lines = stdout
         .split(|byte| *byte == b'\n')
-        .find(|line| !line.iter().all(u8::is_ascii_whitespace))
-        .ok_or_else(|| "the remote rozi answered with nothing".to_string())?;
-    serde_json::from_slice(line)
-        .map_err(|err| format!("could not read the remote rozi's answer: {err}"))
+        .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
+        .peekable();
+    if lines.peek().is_none() {
+        return Err("the remote rozi answered with nothing".to_string());
+    }
+    lines
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .find_map(|line| serde_json::from_slice(line).ok())
+        .ok_or_else(|| {
+            "could not read the remote rozi's answer: no control response in its output".to_string()
+        })
 }
 
 /// Turn a failed forwarding attempt into one line worth reading.
@@ -191,19 +210,38 @@ mod tests {
         );
     }
 
-    /// ssh and the remote shell both write to the same stderr, so the answer can arrive behind a
-    /// banner or a warning. The first non-blank line is the one to read.
+    /// A host whose `/etc/profile` prints a message of the day shares this stdout with the answer.
+    /// Neither end gets to decide that, so reading only the first line made every forwarded command
+    /// fail on an otherwise working machine.
     #[test]
     fn the_answer_is_found_past_whatever_the_login_printed() {
         let response = ControlResponse::ok(serde_json::json!({"panes": []}));
-        let mut stdout = b"\n  \n".to_vec();
-        stdout.extend_from_slice(&serde_json::to_vec(&response).expect("response encodes"));
-        stdout.push(b'\n');
+        let encoded = serde_json::to_vec(&response).expect("response encodes");
 
-        assert!(parse_response(&stdout).expect("answer found").ok);
+        let mut stdout =
+            b"Welcome to workbox!\n  \n* 3 packages can be updated.\nLast login: Tue\n".to_vec();
+        stdout.extend_from_slice(&encoded);
+        // Some logins have something to say on the way out, too.
+        stdout.extend_from_slice(b"\nlogout\n");
+
+        assert!(
+            parse_response(&stdout)
+                .expect("answer found past the banner")
+                .ok,
+            "the answer was lost among the login's own output"
+        );
+    }
+
+    #[test]
+    fn output_with_no_answer_in_it_says_so() {
         assert_eq!(
             parse_response(b"   \n\n"),
             Err("the remote rozi answered with nothing".to_string())
+        );
+        assert!(
+            parse_response(b"Welcome to workbox!\nLast login: Tue\n")
+                .expect_err("a banner alone is not an answer")
+                .contains("no control response")
         );
     }
 

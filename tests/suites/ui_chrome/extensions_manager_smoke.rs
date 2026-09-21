@@ -671,3 +671,156 @@ fn extensions_manager_browses_catalog_entries_without_hiding_installed_managemen
         .join()
         .expect("catalog smoke completes");
 }
+
+fn catalog_entry(repository: &str, id: &str, title: &str) -> serde_json::Value {
+    serde_json::json!({
+        "repository": repository,
+        "source": format!("https://github.com/{repository}.git"),
+        "commit": "5b5c8b9323e260a7c10a63d792274ca155d51e26",
+        "manifest_path": "extension.toml",
+        "id": id,
+        "title": title,
+        "description": "Catalog lifecycle fixture",
+        "version": "0.1.0",
+        "api": 1,
+        "min_rozi": null,
+        "platforms": [],
+        "homepage": null,
+        "stars": 0,
+        "updated_at": "2026-09-21T00:00:00Z",
+        "commands": 0,
+        "services": 0,
+        "agents": 0,
+        "sidebar_tabs": 0,
+        "navigation_targets": 0,
+        "suggested_keybindings": 0
+    })
+}
+
+fn load_catalog(backend: &mut TestBackend<AppRoot>, entries: serde_json::Value) {
+    let epoch = backend
+        .state()
+        .extensions
+        .as_ref()
+        .expect("extensions state")
+        .catalog_epoch;
+    backend
+        .dispatch(rozi::Msg::ExtensionsCatalogLoaded {
+            epoch,
+            result: Ok(serde_json::from_value(entries).expect("catalog fixture")),
+        })
+        .expect("load catalog");
+}
+
+/// A refresh may reorder or drop discovery rows under an open report, and the user may leave the
+/// report or the whole manager before an installation finishes. Neither may retarget the report or
+/// lose a completed installation.
+#[test]
+fn catalog_install_survives_refreshes_and_closed_dialogs() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            // The isolated directories are shared by every test in this process, so this test
+            // leaves the extensions directory alone and uses ids no other test installs.
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 45,
+            });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("open extensions");
+            let first = catalog_entry("someone/first", "catalog-first", "First fixture");
+            let second = catalog_entry("someone/second", "catalog-second", "Second fixture");
+            load_catalog(&mut backend, serde_json::json!([first, second]));
+            backend
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Catalog(0),
+                ))
+                .expect("select first catalog entry");
+            backend
+                .dispatch(rozi::Msg::ExtensionsToggleSelected)
+                .expect("open catalog detail");
+
+            let reviewed = |backend: &TestBackend<AppRoot>| {
+                let state = backend.state().extensions.as_ref().expect("extensions");
+                (
+                    state
+                        .catalog_detail
+                        .as_ref()
+                        .map(|detail| detail.entry.repository().to_string()),
+                    state.catalog_selected,
+                )
+            };
+            load_catalog(&mut backend, serde_json::json!([second, first]));
+            assert_eq!(
+                reviewed(&backend),
+                (Some("someone/first".to_string()), Some(1)),
+                "a reorder keeps the report and moves the selection with its repository"
+            );
+            load_catalog(&mut backend, serde_json::json!([second]));
+            assert_eq!(
+                reviewed(&backend),
+                (Some("someone/first".to_string()), None)
+            );
+            let detail = frame(&mut backend);
+            assert!(
+                detail.contains("Install extension · First fixture"),
+                "{detail}"
+            );
+
+            backend.state_mut().extension_catalog_install = Some("someone/first".to_string());
+            let installing = frame(&mut backend);
+            assert!(installing.contains("installing"), "{installing}");
+            backend
+                .dispatch(rozi::Msg::CloseExtensionDetail)
+                .expect("leave the report while installing");
+
+            backend
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Catalog(0),
+                ))
+                .expect("select second catalog entry");
+            backend
+                .dispatch(rozi::Msg::ExtensionsToggleSelected)
+                .expect("open second catalog detail");
+            let blocked = frame(&mut backend);
+            assert!(
+                blocked.contains("Install extension · Second fixture")
+                    && !blocked.contains("install Enter"),
+                "a second installation cannot start while one is running:\n{blocked}"
+            );
+
+            backend
+                .dispatch(rozi::Msg::ExtensionsCatalogInstallFinished {
+                    repository: "someone/first".to_string(),
+                    result: Ok("catalog-first".to_string()),
+                })
+                .expect("finish installation");
+            assert_eq!(backend.state().extension_catalog_install, None);
+            let unblocked = frame(&mut backend);
+            assert!(
+                unblocked.contains("Install extension · Second fixture")
+                    && unblocked.contains("install Enter"),
+                "another entry's report stays open and becomes installable:\n{unblocked}"
+            );
+
+            backend.state_mut().extension_catalog_install = Some("someone/second".to_string());
+            backend
+                .dispatch(rozi::Msg::CloseExtensions)
+                .expect("close the manager while installing");
+            backend
+                .dispatch(rozi::Msg::ExtensionsCatalogInstallFinished {
+                    repository: "someone/second".to_string(),
+                    result: Err("clone failed".to_string()),
+                })
+                .expect("finish installation with the manager closed");
+            assert_eq!(backend.state().extension_catalog_install, None);
+        })
+        .expect("spawn catalog lifecycle thread")
+        .join()
+        .expect("catalog lifecycle completes");
+}

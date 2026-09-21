@@ -1051,9 +1051,10 @@ pub enum ExtensionPickerRow {
     Catalog(usize),
 }
 
+/// A snapshot of the discovery entry being reviewed. A refresh may reorder or drop catalog rows
+/// while the report is open, so the report never refers back to them by position.
 pub struct CatalogExtensionDetailState {
-    pub index: usize,
-    pub installing: bool,
+    pub entry: crate::extension_catalog::CatalogEntry,
     pub error: Option<String>,
 }
 

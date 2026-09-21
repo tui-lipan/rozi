@@ -94,7 +94,7 @@ pub enum Msg {
     },
     ExtensionsSubmitCatalogInstall,
     ExtensionsCatalogInstallFinished {
-        id: String,
+        repository: String,
         result: std::result::Result<String, String>,
     },
     ExtensionsUpdateSelected,

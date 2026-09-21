@@ -41,6 +41,11 @@ pub struct CatalogEntry {
 }
 
 impl CatalogEntry {
+    /// The `owner/name` GitHub repository, which identifies an entry across index refreshes.
+    pub fn repository(&self) -> &str {
+        &self.repository
+    }
+
     pub(crate) fn incompatibility(&self) -> Option<String> {
         if self.api != EXTENSION_API_VERSION {
             return Some(format!(
@@ -161,7 +166,8 @@ impl CatalogEntry {
 struct CatalogDocument {
     schema_version: u32,
     generated_at: String,
-    extensions: Vec<CatalogEntry>,
+    /// Kept raw so each record is parsed on its own: one bad record must not hide the rest.
+    extensions: Vec<serde_json::Value>,
 }
 
 pub(crate) fn fetch() -> Result<Vec<CatalogEntry>, String> {
@@ -184,10 +190,16 @@ fn fetch_with(downloader: &impl Downloader) -> Result<Vec<CatalogEntry>, String>
     if document.generated_at.trim().is_empty() {
         return Err("Extension index has no generation time".to_string());
     }
-    for entry in &document.extensions {
-        entry.validate()?;
-    }
-    Ok(document.extensions)
+    // The document is Rozi's to get right, so a malformed one fails discovery above. Each record
+    // describes a third-party repository anyone can opt in, so one that is malformed, invalid, or
+    // a repeat of an earlier repository is dropped on its own.
+    let mut repositories = HashSet::new();
+    Ok(document
+        .extensions
+        .into_iter()
+        .filter_map(|value| serde_json::from_value::<CatalogEntry>(value).ok())
+        .filter(|entry| entry.validate().is_ok() && repositories.insert(entry.repository.clone()))
+        .collect())
 }
 
 #[cfg(test)]
@@ -254,12 +266,47 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_schema_and_unpinned_sources() {
+    fn rejects_unknown_schema_and_skips_unpinned_sources() {
         let schema = VALID.replacen("\"schema_version\": 1", "\"schema_version\": 2", 1);
         assert!(parse(&schema).unwrap_err().contains("schema 2"));
 
         let moving = VALID.replacen("5b5c8b9323e260a7c10a63d792274ca155d51e26", "master", 1);
-        assert!(parse(&moving).unwrap_err().contains("invalid commit"));
+        assert!(parse(&moving).unwrap().is_empty());
+    }
+
+    /// Anyone can opt a repository in with a topic, so one bad record must not take discovery
+    /// offline for every client.
+    #[test]
+    fn one_bad_record_does_not_hide_the_rest() {
+        let document: serde_json::Value = serde_json::from_str(VALID).unwrap();
+        let good = document["extensions"][0].clone();
+        let mut empty_host = good.clone();
+        empty_host["repository"] = "someone/bad-homepage".into();
+        empty_host["source"] = "https://github.com/someone/bad-homepage.git".into();
+        empty_host["homepage"] = "https://".into();
+        let mut mistyped = good.clone();
+        mistyped["repository"] = "someone/mistyped".into();
+        mistyped["stars"] = "many".into();
+        let mut unknown = good.clone();
+        unknown["repository"] = "someone/unknown-field".into();
+        unknown["surprise"] = true.into();
+        let text = serde_json::json!({
+            "schema_version": 1,
+            "generated_at": "2026-09-21T00:00:00Z",
+            "extensions": [empty_host, mistyped, good.clone(), unknown, good],
+        })
+        .to_string();
+
+        let entries = parse(&text).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].repository, "tui-lipan/vim-rozi-navigator");
+    }
+
+    #[test]
+    fn a_malformed_document_still_fails_discovery() {
+        assert!(parse("{\"schema_version\": 1}").is_err());
+        let no_list = VALID.replacen("\"extensions\": [", "\"extension\": [", 1);
+        assert!(parse(&no_list).is_err());
     }
 
     #[test]

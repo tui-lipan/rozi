@@ -170,6 +170,10 @@ pub struct State {
     pub show_pick: bool,
     pub pick: Option<PickState>,
     pub extensions: Option<ExtensionsState>,
+    /// Repository of the discovery installation in flight. It lives outside the manager because
+    /// the install commits to disk whether or not the manager or its detail is still open, and a
+    /// reopened manager must not start a second one.
+    pub extension_catalog_install: Option<String>,
     pub next_pick_id: u64,
     pub theme: Theme,
     pub system_theme: Option<Theme>,
@@ -459,6 +463,7 @@ impl State {
             show_pick: false,
             pick: None,
             extensions: None,
+            extension_catalog_install: None,
             next_pick_id: 1,
             theme,
             system_theme: None,

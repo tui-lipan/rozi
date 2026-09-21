@@ -151,8 +151,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ExtensionsSubmitCatalogInstall => {
             crate::ops::extensions_manager::submit_catalog_install(ctx)
         }
-        Msg::ExtensionsCatalogInstallFinished { id, result } => {
-            crate::ops::extensions_manager::catalog_install_finished(ctx, id, result)
+        Msg::ExtensionsCatalogInstallFinished { repository, result } => {
+            crate::ops::extensions_manager::catalog_install_finished(ctx, repository, result)
         }
         Msg::ExtensionsUpdateSelected => crate::ops::extensions_manager::update_selected(ctx),
         Msg::ExtensionsUpdateFinished { id, result } => {

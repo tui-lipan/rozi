@@ -34,6 +34,7 @@ pub use pane_log::PaneLog;
 pub(crate) use resurrect::list_snapshot_names_by_recency;
 mod runtime;
 mod shutdown;
+mod waits;
 pub(crate) use shutdown::{shutdown_named_session, shutdown_named_session_if_present};
 
 const DEFAULT_COLS: u16 = 120;
@@ -144,6 +145,7 @@ pub struct SessionServer {
     input_locked: bool,
     allow_takeover: bool,
     clients: Vec<ClientConn>,
+    agent_waits: HashMap<ClientId, waits::PendingAgentWait>,
     next_client_id: ClientId,
     max_backlog: usize,
     events: Arc<ByteQueue<ServerEvent>>,
@@ -1329,6 +1331,7 @@ impl SessionServer {
             input_locked: false,
             allow_takeover: settings.allow_takeover,
             clients: Vec::new(),
+            agent_waits: HashMap::new(),
             next_client_id: 1,
             max_backlog: DEFAULT_MAX_BACKLOG,
             events,
@@ -1435,6 +1438,7 @@ impl SessionServer {
         activity |= self.pump_clients();
         self.retry_browse_requests();
         self.poll_pane_runtime();
+        self.expire_agent_waits();
         self.flush_pending_foreground();
         self.adopt_pending_listener(listener);
         if let Err(err) = self.drain_snapshot_results() {

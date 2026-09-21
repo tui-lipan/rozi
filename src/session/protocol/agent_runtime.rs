@@ -152,8 +152,8 @@ fn published_runtime(
         .unwrap_or_else(|| AgentIdentity::new(&row.id, display_row_label(row)));
     Some(AgentRuntime {
         reference,
+        label: identity.label.clone(),
         identity,
-        label: display_row_label(row).to_string(),
         state: AgentState::from_status(&row.status),
         reason: row.reason.clone(),
         source: AgentAuthority::Published,

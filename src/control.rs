@@ -15,6 +15,7 @@ use crate::state::PaneId;
 /// Version of the public control request and response API.
 pub const CONTROL_API_VERSION: u32 = 1;
 
+pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
 pub const SESSION_CONTROL_CAPABILITY: &str = "session-control";
 pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
@@ -33,6 +34,7 @@ impl ApiDescription {
             api: CONTROL_API_VERSION,
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
             capabilities: vec![
+                AGENT_WAITS_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
@@ -187,6 +189,12 @@ pub enum ControlCommand {
         #[serde(default)]
         reason: Option<String>,
     },
+    AgentWait {
+        target: AgentTarget,
+        until: AgentWaitCondition,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
+    },
     /// Raise a toast from a script.
     ///
     /// The automation surface can act but not report: a command that closes its own picker, or
@@ -214,6 +222,24 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         actions: Vec<crate::state::PickAction>,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum AgentTarget {
+    Pane(PaneId),
+    Ref(crate::session::protocol::AgentRef),
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentWaitCondition {
+    Working,
+    Blocked,
+    Idle,
+    Done,
+    Quiescent,
+    Gone,
 }
 
 /// How prominent a [`ControlCommand::Notify`] toast is.
@@ -312,6 +338,10 @@ pub enum ControlErrorCode {
     SpawnFailed,
     Conflict,
     Unavailable,
+    AgentGone,
+    AgentReplaced,
+    StaleReference,
+    Timeout,
     RequestFailed,
 }
 

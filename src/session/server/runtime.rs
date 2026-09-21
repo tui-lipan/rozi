@@ -63,7 +63,7 @@ pub(super) const STATE_SETTLE_GRACE: Duration = Duration::from_secs(2);
 pub(super) const AGENT_HOLD_MAX: Duration = Duration::from_secs(15 * 60);
 
 impl AgentScratch {
-    fn sync_references(&mut self, runtime: &PaneRuntimeState) {
+    pub(super) fn sync_references(&mut self, runtime: &PaneRuntimeState) {
         let occupants = runtime_occupants(runtime);
         self.references.retain(|slot, tracked| {
             occupants.iter().any(|(candidate_slot, identity)| {
@@ -253,7 +253,9 @@ impl SessionServer {
             pane.runtime.detected_agent.as_ref(),
         );
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
-        Ok(Some(pane.runtime.clone()))
+        let state = pane.runtime.clone();
+        self.resolve_agent_waits();
+        Ok(Some(state))
     }
 
     /// Replace a pane's published rows. An empty list withdraws them and lets screen
@@ -304,7 +306,9 @@ impl SessionServer {
         pane.agent.hold = None;
         pane.agent.sync_references(&pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
-        Ok(Some(pane.runtime.clone()))
+        let state = pane.runtime.clone();
+        self.resolve_agent_waits();
+        Ok(Some(state))
     }
 
     /// Re-read agent definitions from this server's config and re-detect every pane against them.
@@ -501,6 +505,7 @@ impl SessionServer {
             // command-less snapshot.
             self.mark_dirty();
         }
+        self.resolve_agent_waits();
     }
 }
 

@@ -1,5 +1,8 @@
 use rozi::config::SidebarTab;
-use rozi::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState, PaneStatus};
+use rozi::session::protocol::{
+    AgentIdentity, AgentRef, DetectedAgent, DetectedAgentState, PaneRef, PaneStatus,
+    SessionInstanceId,
+};
 
 /// One detected agent's public identity, as a definition in the built-in catalog declares it.
 fn agent(id: &str, label: &str) -> AgentIdentity {
@@ -41,8 +44,21 @@ fn agent_pane(
         reason: reason.map(str::to_string),
         set_at,
     });
+    pane.agent_refs = vec![agent_ref(id, None, 1)];
     pane.terminal.cwd = cwd.map(str::to_string);
     pane
+}
+
+fn agent_ref(pane_id: PaneId, slot: Option<&str>, incarnation: u64) -> AgentRef {
+    AgentRef {
+        pane: PaneRef {
+            session_instance: SessionInstanceId::generate(),
+            pane_id,
+            generation: 0,
+        },
+        slot: slot.map(str::to_string),
+        incarnation,
+    }
 }
 
 fn published_row(
@@ -365,6 +381,11 @@ fn published_slots_render_one_numbered_row_each() {
                     // it: the reason is all this row has to say until a title arrives.
                     published_row("ses_e", "", "blocked", Some("answer required"), false),
                 ];
+                publisher.agent_refs = ["ses_a", "ses_b", "ses_c", "ses_d", "ses_e"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, slot)| agent_ref(publisher.id, Some(slot), index as u64 + 1))
+                    .collect();
                 state.current_mut().workspaces[0].panes = vec![publisher];
             }
             backend.render();
@@ -445,6 +466,11 @@ fn published_rows_render_without_detected_agent() {
                     published_row("build", "Cargo Watch", "working", Some("compiling"), true),
                     published_row("test", "", "blocked", Some("test failure"), false),
                 ];
+                publisher.agent_refs = ["build", "test"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, slot)| agent_ref(publisher.id, Some(slot), index as u64 + 1))
+                    .collect();
                 state.current_mut().workspaces[0].panes = vec![publisher];
             }
             backend.render();

@@ -170,8 +170,10 @@ impl PromptQuoting {
             return true;
         }
         match self {
-            // `%` expands inside quotes as well as outside, so quoting cannot rescue it; leaving
-            // it bare at least keeps the line readable, and `hold` never submits one unseen.
+            // `\` is plain because a Windows path is mostly backslashes and `cmd` gives them no
+            // special meaning. `%` and `!` are deliberately *absent*: quoting cannot stop either
+            // from expanding, but excluding them at least sends the word through the quoted branch
+            // so it stays one argument, and `hold` never submits a line unseen.
             Self::Cmd => "_-./:\\".contains(ch),
             _ => "_-./:@%+=".contains(ch),
         }
@@ -196,12 +198,22 @@ pub fn quote_for_prompt(word: &str, quoting: PromptQuoting) -> String {
     }
 }
 
-/// Render `argv` as one line the shell behind `quoting` reads back as exactly those arguments.
+/// Render `argv` as one line the shell behind `quoting` runs as exactly that command.
+///
+/// Quoting each word is not sufficient on PowerShell: a quoted word in command position is a
+/// *string expression*, so a line starting `'C:\Program Files\claude'` prints the path instead of
+/// running it. The call operator is what makes it an invocation, and it is harmless on a bare name,
+/// so it is always emitted rather than only when the program needed quoting.
 pub fn prompt_line(argv: &[String], quoting: PromptQuoting) -> String {
-    argv.iter()
+    let line = argv
+        .iter()
         .map(|argument| quote_for_prompt(argument, quoting))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    match quoting {
+        PromptQuoting::PowerShell => format!("& {line}"),
+        _ => line,
+    }
 }
 
 /// POSIX quoting, for the capture path.
@@ -295,9 +307,11 @@ mod tests {
                 PromptQuoting::Fish,
                 r"'/opt/Program Files/claude' --resume 'it\'s here'",
             ),
+            // The call operator, without which PowerShell evaluates the quoted path as a string
+            // and prints it instead of running anything.
             (
                 PromptQuoting::PowerShell,
-                "'/opt/Program Files/claude' --resume 'it''s here'",
+                "& '/opt/Program Files/claude' --resume 'it''s here'",
             ),
             (
                 PromptQuoting::Cmd,
@@ -317,6 +331,9 @@ mod tests {
 
     /// A double quote is inert in a POSIX single-quoted word and is the grouping character in
     /// `cmd`, so it is the one character the two families disagree about in the other direction.
+    ///
+    /// The second pair has no space in it, which is the case that would slip through if `"` were
+    /// ever treated as needing no quoting: cmd's parsing state would change mid-word.
     #[test]
     fn a_double_quote_survives_cmds_own_grouping() {
         assert_eq!(
@@ -326,6 +343,35 @@ mod tests {
         assert_eq!(
             quote_for_prompt(r#"say "hi""#, PromptQuoting::Posix),
             r#"'say "hi"'"#
+        );
+
+        assert_eq!(
+            quote_for_prompt(r#"abc"def"#, PromptQuoting::Cmd),
+            r#""abc""def""#
+        );
+        assert_eq!(
+            quote_for_prompt(r#"abc"def"#, PromptQuoting::Posix),
+            r#"'abc"def'"#
+        );
+    }
+
+    /// `%` and `!` cannot be escaped at an interactive `cmd` prompt, so the most that can be done
+    /// is keep them inside the quoted word rather than letting them end it. Pinned because the
+    /// tempting simplification - treating them as ordinary characters - splits the argument.
+    #[test]
+    fn cmd_still_groups_a_word_it_cannot_fully_escape() {
+        assert_eq!(
+            quote_for_prompt("50%-done", PromptQuoting::Cmd),
+            r#""50%-done""#
+        );
+        assert_eq!(
+            quote_for_prompt("bang!ref", PromptQuoting::Cmd),
+            r#""bang!ref""#
+        );
+        // A plain Windows path needs no quoting at all: backslash means nothing to `cmd`.
+        assert_eq!(
+            quote_for_prompt(r"C:\Users\me\claude.exe", PromptQuoting::Cmd),
+            r"C:\Users\me\claude.exe"
         );
     }
 

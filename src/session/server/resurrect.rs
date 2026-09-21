@@ -1702,7 +1702,8 @@ mod tests {
 
         assert_eq!(line("/bin/zsh"), r"claude --resume 'it'\''s here'");
         assert_eq!(line("fish"), r"claude --resume 'it\'s here'");
-        assert_eq!(line("pwsh"), "claude --resume 'it''s here'");
+        // PowerShell needs the call operator, or the line is an expression rather than a command.
+        assert_eq!(line("pwsh"), "& claude --resume 'it''s here'");
         assert_eq!(line("cmd.exe"), "claude --resume \"it's here\"");
     }
 

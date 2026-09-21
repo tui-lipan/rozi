@@ -199,6 +199,9 @@ pub struct AgentDefinition {
     /// Whether the shared base rules apply when none of this agent's own rules match.
     pub base: bool,
     pub states: Vec<AgentStateRule>,
+    /// Argument vector used to resume an explicitly reported native session. The opaque session
+    /// value replaces one whole `{session}` element; no shell parses it.
+    pub resume_argv: Option<Vec<String>>,
 }
 
 impl AgentDefinition {
@@ -210,6 +213,20 @@ impl AgentDefinition {
     /// What the sidebar shows. Defaults to the id when a definition omits it.
     pub fn label(&self) -> &str {
         &self.identity.label
+    }
+
+    pub fn resume_command(&self, session: &str) -> Option<Vec<String>> {
+        self.resume_argv.as_ref().map(|argv| {
+            argv.iter()
+                .map(|argument| {
+                    if argument == "{session}" {
+                        session.to_string()
+                    } else {
+                        argument.clone()
+                    }
+                })
+                .collect()
+        })
     }
 
     /// Whether `value` names this agent's executable.
@@ -325,6 +342,7 @@ mod tests {
             paths: Vec::new(),
             base: true,
             states,
+            resume_argv: None,
         }
     }
 

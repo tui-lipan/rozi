@@ -123,7 +123,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ExtensionsQueryChanged(query) => {
             crate::ops::extensions_manager::query_changed(ctx, query)
         }
-        Msg::ExtensionsSelect(index) => crate::ops::extensions_manager::select(ctx, index),
+        Msg::ExtensionsSelect(row) => crate::ops::extensions_manager::select(ctx, row),
         Msg::ExtensionsToggleSelected => crate::ops::extensions_manager::toggle_selected(ctx),
         Msg::ExtensionsOpenDetail => crate::ops::extensions_manager::open_detail(ctx),
         Msg::ExtensionsReload => crate::ops::extensions_manager::reload(ctx),
@@ -144,6 +144,15 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ExtensionsSubmitInstall => crate::ops::extensions_manager::submit_install(ctx),
         Msg::ExtensionsInstallFinished(result) => {
             crate::ops::extensions_manager::install_finished(ctx, result)
+        }
+        Msg::ExtensionsCatalogLoaded { epoch, result } => {
+            crate::ops::extensions_manager::catalog_loaded(ctx, epoch, result)
+        }
+        Msg::ExtensionsSubmitCatalogInstall => {
+            crate::ops::extensions_manager::submit_catalog_install(ctx)
+        }
+        Msg::ExtensionsCatalogInstallFinished { id, result } => {
+            crate::ops::extensions_manager::catalog_install_finished(ctx, id, result)
         }
         Msg::ExtensionsUpdateSelected => crate::ops::extensions_manager::update_selected(ctx),
         Msg::ExtensionsUpdateFinished { id, result } => {

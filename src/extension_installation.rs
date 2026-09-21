@@ -19,6 +19,7 @@ static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 pub(crate) enum InstallRequest {
     Source(String),
     Link(PathBuf),
+    Catalog { source: String, commit: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,7 +65,10 @@ enum InstallationSource {
 
 enum ResolvedSource {
     Local(PathBuf),
-    Git(String),
+    Git {
+        remote: String,
+        expected_commit: Option<String>,
+    },
     Link(PathBuf),
 }
 
@@ -82,7 +86,7 @@ pub(crate) fn install(request: InstallRequest) -> Result<InstalledExtension, Str
     let source = resolve_source(request)?;
     let source_path = match &source {
         ResolvedSource::Local(path) | ResolvedSource::Link(path) => Some(path.as_path()),
-        ResolvedSource::Git(_) => None,
+        ResolvedSource::Git { .. } => None,
     };
     let source_id = source_path.map(validate_candidate).transpose()?;
     let user = crate::config::read_user_extension_config()?;
@@ -104,9 +108,17 @@ pub(crate) fn install(request: InstallRequest) -> Result<InstalledExtension, Str
         ResolvedSource::Local(path) => {
             install_local(&root, &control, &records, &path, &user.disabled)
         }
-        ResolvedSource::Git(remote) => {
-            install_git(&root, &control, &records, &remote, &user.disabled)
-        }
+        ResolvedSource::Git {
+            remote,
+            expected_commit,
+        } => install_git(
+            &root,
+            &control,
+            &records,
+            &remote,
+            expected_commit.as_deref(),
+            &user.disabled,
+        ),
         ResolvedSource::Link(path) => {
             let id = source_id.expect("linked source was validated");
             install_link(&root, &records, &path, &id, &user.disabled)
@@ -299,10 +311,15 @@ fn install_git(
     control: &Path,
     records: &Path,
     remote: &str,
+    expected_commit: Option<&str>,
     disabled: &[String],
 ) -> Result<InstalledExtension, String> {
     let staging = staging_path(control)?;
-    if let Err(error) = clone_git(remote, &staging) {
+    let cloned = match expected_commit {
+        Some(commit) => clone_git_at_commit(remote, &staging, commit),
+        None => clone_git(remote, &staging),
+    };
+    if let Err(error) = cloned {
         cleanup_staging(&staging);
         return Err(error);
     }
@@ -428,6 +445,18 @@ fn complete_install(
 
 fn resolve_source(request: InstallRequest) -> Result<ResolvedSource, String> {
     match request {
+        InstallRequest::Catalog { source, commit } => {
+            if !is_git_url(&source) {
+                return Err(format!(
+                    "Invalid catalog extension source `{source}`: expected an HTTPS or SSH Git URL"
+                ));
+            }
+            let commit = validate_catalog_commit(&commit)?;
+            Ok(ResolvedSource::Git {
+                remote: source,
+                expected_commit: Some(commit),
+            })
+        }
         InstallRequest::Link(path) => {
             canonical_directory(&path, "Linked extension source").map(ResolvedSource::Link)
         }
@@ -449,7 +478,10 @@ fn resolve_source(request: InstallRequest) -> Result<ResolvedSource, String> {
                     ) =>
                 {
                     if is_git_url(&source) {
-                        Ok(ResolvedSource::Git(source))
+                        Ok(ResolvedSource::Git {
+                            remote: source,
+                            expected_commit: None,
+                        })
                     } else {
                         Err(format!(
                             "Invalid extension source `{source}`: expected an existing local directory, an HTTPS Git URL, or an SSH Git URL"
@@ -613,6 +645,45 @@ fn clone_git(remote: &str, destination: &Path) -> Result<(), String> {
     }
 }
 
+fn clone_git_at_commit(remote: &str, destination: &Path, commit: &str) -> Result<(), String> {
+    let mut clone = Command::new("git");
+    clone
+        .arg("clone")
+        .arg("--no-checkout")
+        .arg("--")
+        .arg(remote)
+        .arg(destination);
+    let output = non_interactive_git(&mut clone)
+        .output()
+        .map_err(|error| format!("Could not run `git clone`: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Could not clone Git extension from `{remote}`: {}",
+            command_failure(&output)
+        ));
+    }
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(destination)
+        .args(["checkout", "--detach", "--force", commit, "--"])
+        .output()
+        .map_err(|error| format!("Could not check out catalog extension commit: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Could not check out catalog extension commit `{commit}`: {}",
+            command_failure(&output)
+        ));
+    }
+    let actual = git_revision(destination)?;
+    if actual != commit {
+        return Err(format!(
+            "Catalog extension commit changed from `{commit}` to `{actual}` during installation"
+        ));
+    }
+    Ok(())
+}
+
 fn remote_head(remote: &str) -> Result<String, String> {
     let mut command = Command::new("git");
     command
@@ -694,6 +765,18 @@ fn validate_git_revision(revision: &str, label: &str) -> Result<String, String> 
         Err(format!(
             "Git returned an invalid {label} revision `{revision}`"
         ))
+    }
+}
+
+fn validate_catalog_commit(commit: &str) -> Result<String, String> {
+    if commit.len() == 40
+        && commit
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        Ok(commit.to_string())
+    } else {
+        Err(format!("Invalid catalog extension commit `{commit}`"))
     }
 }
 
@@ -908,6 +991,15 @@ fn remove_record(root: &Path, id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn git(repository: &Path, arguments: &[&str]) -> std::process::Output {
+        Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(arguments)
+            .output()
+            .unwrap()
+    }
+
     #[test]
     fn git_source_detection_accepts_https_and_ssh_forms_only() {
         for source in [
@@ -940,5 +1032,64 @@ mod tests {
         let text = toml::to_string(&record).unwrap();
         let decoded: InstallationRecord = toml::from_str(&text).unwrap();
         assert_eq!(decoded, record);
+    }
+
+    #[test]
+    fn catalog_commits_are_exact_lowercase_object_ids() {
+        let valid = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(validate_catalog_commit(valid).unwrap(), valid);
+        for invalid in [
+            "main",
+            "HEAD",
+            "0123456",
+            "A123456789abcdef0123456789abcdef01234567",
+        ] {
+            assert!(
+                validate_catalog_commit(invalid).is_err(),
+                "accepted {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_clone_checks_out_the_indexed_commit() {
+        let source = tempfile::tempdir().unwrap();
+        assert!(git(source.path(), &["init", "--quiet"]).status.success());
+        assert!(
+            git(source.path(), &["config", "user.name", "Rozi test"])
+                .status
+                .success()
+        );
+        assert!(
+            git(
+                source.path(),
+                &["config", "user.email", "test@example.invalid"]
+            )
+            .status
+            .success()
+        );
+        fs::write(source.path().join("value"), "first").unwrap();
+        assert!(git(source.path(), &["add", "value"]).status.success());
+        assert!(
+            git(source.path(), &["commit", "--quiet", "-m", "first"])
+                .status
+                .success()
+        );
+        let first = git_revision(source.path()).unwrap();
+        fs::write(source.path().join("value"), "second").unwrap();
+        assert!(
+            git(source.path(), &["commit", "--quiet", "-am", "second"])
+                .status
+                .success()
+        );
+
+        let parent = tempfile::tempdir().unwrap();
+        let destination = parent.path().join("clone");
+        clone_git_at_commit(source.path().to_str().unwrap(), &destination, &first).unwrap();
+        assert_eq!(git_revision(&destination).unwrap(), first);
+        assert_eq!(
+            fs::read_to_string(destination.join("value")).unwrap(),
+            "first"
+        );
     }
 }

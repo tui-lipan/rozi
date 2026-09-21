@@ -5,12 +5,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::config::{ExtensionInfo, ExtensionSettings, ExtensionStatus};
-use crate::state::{ExtensionDetailState, ExtensionsState};
+use crate::config::{
+    ExtensionInfo, ExtensionSettings, ExtensionStatus, ReportKind, ReportRow, ReportSection,
+    ReportTone,
+};
+use crate::state::{
+    CatalogExtensionDetailState, ExtensionDetailState, ExtensionPickerRow, ExtensionsState,
+};
 
 pub(crate) const EXTENSION_UPDATING_LABEL: &str = "updating…";
 
 static NEXT_UPDATE_CHECK_EPOCH: AtomicU64 = AtomicU64::new(1);
+static NEXT_CATALOG_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 struct ManagerScan {
     entries: Vec<ExtensionInfo>,
@@ -23,6 +29,7 @@ struct ManagerScan {
 pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     let scan = scan(ctx);
     let update_check_epoch = next_update_check_epoch();
+    let catalog_epoch = next_catalog_epoch();
     let git_ids = git_installation_ids(&scan.installation_kinds);
     ctx.state.show_palette = false;
     ctx.state.keybindings = None;
@@ -36,11 +43,16 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
         entries: scan.entries,
         merged: scan.merged,
         selected: 0,
+        catalog_selected: None,
         query: String::new(),
         restore_query: String::new(),
         pending_remove: None,
         detail: None,
         install_prompt: None,
+        catalog_entries: Vec::new(),
+        catalog_error: None,
+        catalog_epoch,
+        catalog_detail: None,
         installation_kinds: scan.installation_kinds,
         available_updates: BTreeSet::new(),
         update_check_epoch,
@@ -51,6 +63,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.commands_dirty = true;
     crate::ops::focus::request_extensions_focus(ctx);
     request_update_checks(ctx, update_check_epoch, git_ids);
+    request_catalog(ctx, catalog_epoch);
     Update::full()
 }
 
@@ -68,12 +81,24 @@ pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update
     Update::none()
 }
 
-pub(crate) fn select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+pub(crate) fn select(ctx: &mut Context<AppRoot>, row: ExtensionPickerRow) -> Update {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
-    let changed = state.selected != index;
-    state.selected = index.min(state.entries.len().saturating_sub(1));
+    let changed = match row {
+        ExtensionPickerRow::Installed(index) => {
+            let changed = state.catalog_selected.is_some() || state.selected != index;
+            state.selected = index.min(state.entries.len().saturating_sub(1));
+            state.catalog_selected = None;
+            changed
+        }
+        ExtensionPickerRow::Catalog(index) => {
+            let index = index.min(state.catalog_entries.len().saturating_sub(1));
+            let changed = state.catalog_selected != Some(index);
+            state.catalog_selected = Some(index);
+            changed
+        }
+    };
     if changed {
         state.pending_remove = None;
     }
@@ -81,6 +106,14 @@ pub(crate) fn select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
 }
 
 pub(crate) fn toggle_selected(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx
+        .state
+        .extensions
+        .as_ref()
+        .is_some_and(|state| state.catalog_selected.is_some())
+    {
+        return open_detail(ctx);
+    }
     let Some(entry) = selected_entry(&ctx.state).cloned() else {
         return Update::none();
     };
@@ -125,6 +158,7 @@ pub(crate) fn toggle_selected(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn reload(ctx: &mut Context<AppRoot>) -> Update {
+    start_catalog_load(ctx);
     crate::ops::config::reload_extensions(ctx)
 }
 
@@ -299,6 +333,114 @@ pub(crate) fn install_finished(
                 notify_error(ctx, "Extension not installed", error);
                 Update::full()
             }
+        }
+    }
+}
+
+pub(crate) fn catalog_loaded(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    result: std::result::Result<Vec<crate::extension_catalog::CatalogEntry>, String>,
+) -> Update {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return Update::none();
+    };
+    if state.catalog_epoch != epoch {
+        return Update::none();
+    }
+    match result {
+        Ok(entries) => {
+            state.catalog_entries = entries;
+            state.catalog_error = None;
+        }
+        Err(error) => {
+            state.catalog_entries.clear();
+            state.catalog_error = Some(error);
+            state.catalog_selected = None;
+            state.catalog_detail = None;
+        }
+    }
+    Update::full()
+}
+
+pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
+    let Some((index, entry)) = ctx.state.extensions.as_ref().and_then(|state| {
+        let detail = state.catalog_detail.as_ref()?;
+        Some((
+            detail.index,
+            state.catalog_entries.get(detail.index)?.clone(),
+        ))
+    }) else {
+        return Update::none();
+    };
+    if entry.incompatibility().is_some() {
+        return Update::none();
+    }
+    let Some(detail) = ctx
+        .state
+        .extensions
+        .as_mut()
+        .and_then(|state| state.catalog_detail.as_mut())
+    else {
+        return Update::none();
+    };
+    if detail.index != index || detail.installing {
+        return Update::none();
+    }
+    detail.installing = true;
+    detail.error = None;
+    let id = entry.id.clone();
+    Update::with_command(Command::spawn(move |link| {
+        std::thread::spawn(move || {
+            let result = crate::extension_installation::install(
+                crate::extension_installation::InstallRequest::Catalog {
+                    source: entry.source,
+                    commit: entry.commit,
+                },
+            )
+            .map(|installed| installed.id);
+            link.send(crate::Msg::ExtensionsCatalogInstallFinished { id, result });
+        });
+    }))
+}
+
+pub(crate) fn catalog_install_finished(
+    ctx: &mut Context<AppRoot>,
+    id: String,
+    result: std::result::Result<String, String>,
+) -> Update {
+    let matches_open_detail = ctx.state.extensions.as_ref().is_some_and(|state| {
+        state
+            .catalog_detail
+            .as_ref()
+            .and_then(|detail| state.catalog_entries.get(detail.index))
+            .is_some_and(|entry| entry.id == id)
+    });
+    if !matches_open_detail {
+        return Update::none();
+    }
+    match result {
+        Ok(installed_id) => {
+            if let Some(state) = ctx.state.extensions.as_mut() {
+                state.catalog_detail = None;
+                state.catalog_selected = None;
+            }
+            let update = crate::ops::config::reload_extensions_quiet(ctx);
+            select_by_id(ctx, &installed_id);
+            warn_about_key_conflicts(ctx, &installed_id);
+            update
+        }
+        Err(error) => {
+            if let Some(detail) = ctx
+                .state
+                .extensions
+                .as_mut()
+                .and_then(|state| state.catalog_detail.as_mut())
+            {
+                detail.installing = false;
+                detail.error = Some(error);
+            }
+            Update::full()
         }
     }
 }
@@ -497,6 +639,27 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
+    if let Some(index) = ctx
+        .state
+        .extensions
+        .as_ref()
+        .and_then(|state| state.catalog_selected)
+    {
+        let Some(state) = ctx.state.extensions.as_mut() else {
+            return Update::none();
+        };
+        if index >= state.catalog_entries.len() {
+            return Update::none();
+        }
+        state.restore_query = state.query.clone();
+        state.catalog_detail = Some(CatalogExtensionDetailState {
+            index,
+            installing: false,
+            error: None,
+        });
+        crate::ops::focus::request_extension_detail_focus(ctx);
+        return Update::full();
+    }
     let Some(entry) = selected_entry(&ctx.state).cloned() else {
         return Update::none();
     };
@@ -517,6 +680,7 @@ pub(crate) fn close_detail(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     };
     state.detail = None;
+    state.catalog_detail = None;
     crate::ops::focus::request_extensions_focus(ctx);
     Update::full()
 }
@@ -646,6 +810,33 @@ fn next_update_check_epoch() -> u64 {
     NEXT_UPDATE_CHECK_EPOCH.fetch_add(1, Ordering::Relaxed)
 }
 
+fn next_catalog_epoch() -> u64 {
+    NEXT_CATALOG_EPOCH.fetch_add(1, Ordering::Relaxed)
+}
+
+fn start_catalog_load(ctx: &mut Context<AppRoot>) {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return;
+    };
+    let epoch = next_catalog_epoch();
+    state.catalog_epoch = epoch;
+    state.catalog_error = None;
+    request_catalog(ctx, epoch);
+}
+
+fn request_catalog(ctx: &Context<AppRoot>, epoch: u64) {
+    if crate::platform::paths::user_dirs_are_isolated() {
+        return;
+    }
+    let Some(link) = ctx.state.command_link.clone() else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let result = crate::extension_catalog::fetch();
+        link.send(crate::Msg::ExtensionsCatalogLoaded { epoch, result });
+    });
+}
+
 fn git_installation_ids(
     kinds: &BTreeMap<String, crate::extension_installation::InstallKind>,
 ) -> Vec<String> {
@@ -689,6 +880,7 @@ fn select_by_id(ctx: &mut Context<AppRoot>, id: &str) {
         .position(|entry| entry.id.as_deref() == Some(id))
     {
         state.selected = index;
+        state.catalog_selected = None;
     }
 }
 
@@ -742,6 +934,104 @@ pub(crate) fn extension_description(entry: &ExtensionInfo, state: &ExtensionsSta
     parts.join(" · ")
 }
 
+pub(crate) fn catalog_description(entry: &crate::extension_catalog::CatalogEntry) -> String {
+    let mut parts = vec![entry.version.clone(), entry.repository.clone()];
+    if let Some(reason) = entry.incompatibility() {
+        parts.push(reason);
+    }
+    parts.join(" · ")
+}
+
+pub(crate) fn catalog_report_sections(
+    entry: &crate::extension_catalog::CatalogEntry,
+    error: Option<&str>,
+) -> Vec<ReportSection> {
+    let row = |label: &str, value: String, tone| ReportRow {
+        label: label.to_string(),
+        value,
+        tone,
+        kind: ReportKind::Info,
+    };
+    let platforms = if entry.platforms.is_empty() {
+        "all".to_string()
+    } else {
+        entry.platforms.join(", ")
+    };
+    let mut sections = vec![
+        ReportSection {
+            title: "Overview",
+            rows: vec![
+                row("Version", entry.version.clone(), ReportTone::Plain),
+                row(
+                    "Compatibility",
+                    entry
+                        .incompatibility()
+                        .unwrap_or_else(|| "compatible".to_string()),
+                    if entry.incompatibility().is_some() {
+                        ReportTone::Warning
+                    } else {
+                        ReportTone::Success
+                    },
+                ),
+                row("Platforms", platforms, ReportTone::Plain),
+                row("Description", entry.description.clone(), ReportTone::Muted),
+            ],
+        },
+        ReportSection {
+            title: "Source",
+            rows: vec![
+                row("Repository", entry.repository.clone(), ReportTone::Accent),
+                row("Commit", entry.commit.clone(), ReportTone::Plain),
+            ],
+        },
+        ReportSection {
+            title: "Contributions",
+            rows: vec![
+                row("Commands", entry.commands.to_string(), ReportTone::Plain),
+                row("Services", entry.services.to_string(), ReportTone::Plain),
+                row("Agents", entry.agents.to_string(), ReportTone::Plain),
+                row(
+                    "Sidebar tabs",
+                    entry.sidebar_tabs.to_string(),
+                    ReportTone::Plain,
+                ),
+                row(
+                    "Navigation targets",
+                    entry.navigation_targets.to_string(),
+                    ReportTone::Plain,
+                ),
+                row(
+                    "Suggested keys",
+                    entry.suggested_keybindings.to_string(),
+                    ReportTone::Plain,
+                ),
+            ],
+        },
+        ReportSection {
+            title: "Trust",
+            rows: vec![
+                row(
+                    "Review",
+                    "Not audited; inspect source before installing".to_string(),
+                    ReportTone::Warning,
+                ),
+                row(
+                    "Setup",
+                    "External tools may require separate setup".to_string(),
+                    ReportTone::Muted,
+                ),
+            ],
+        },
+    ];
+    if let Some(error) = error {
+        sections.push(ReportSection {
+            title: "Installation failed",
+            rows: vec![row("Error", error.to_string(), ReportTone::Error)],
+        });
+    }
+    sections
+}
+
 fn installation_kind_label(
     kind: Option<&crate::extension_installation::InstallKind>,
 ) -> &'static str {
@@ -766,6 +1056,9 @@ fn suggested_keybindings(
 
 fn selected_entry(state: &crate::state::State) -> Option<&ExtensionInfo> {
     let extensions = state.extensions.as_ref()?;
+    if extensions.catalog_selected.is_some() {
+        return None;
+    }
     let entry = extensions.entries.get(extensions.selected)?;
     extension_matches_query(entry, extensions).then_some(entry)
 }

@@ -18,6 +18,7 @@ pub mod config;
 /// cannot be named only inside this crate.
 pub mod control;
 pub mod events;
+mod extension_catalog;
 mod extension_installation;
 pub mod input;
 mod jobs;

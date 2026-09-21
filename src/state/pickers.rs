@@ -1024,6 +1024,8 @@ pub struct ExtensionsState {
     pub entries: Vec<crate::config::ExtensionInfo>,
     pub merged: BTreeMap<String, crate::config::ExtensionSettings>,
     pub selected: usize,
+    /// Selected discovery result. `None` means `selected` names an installed row.
+    pub catalog_selected: Option<usize>,
     pub query: String,
     pub restore_query: String,
     /// Installation path awaiting a second Ctrl+K. The path survives rescans that reorder rows
@@ -1031,12 +1033,28 @@ pub struct ExtensionsState {
     pub pending_remove: Option<String>,
     pub detail: Option<ExtensionDetailState>,
     pub install_prompt: Option<ExtensionInstallPromptState>,
+    pub catalog_entries: Vec<crate::extension_catalog::CatalogEntry>,
+    pub catalog_error: Option<String>,
+    pub catalog_epoch: u64,
+    pub catalog_detail: Option<CatalogExtensionDetailState>,
     pub(crate) installation_kinds: BTreeMap<String, crate::extension_installation::InstallKind>,
     pub(crate) available_updates: BTreeSet<String>,
     pub update_check_epoch: u64,
     pub(crate) updating_id: Option<String>,
     pub(crate) manifest_entries: BTreeSet<String>,
     pub(crate) removable_entries: BTreeSet<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExtensionPickerRow {
+    Installed(usize),
+    Catalog(usize),
+}
+
+pub struct CatalogExtensionDetailState {
+    pub index: usize,
+    pub installing: bool,
+    pub error: Option<String>,
 }
 
 pub struct ExtensionInstallPromptState {

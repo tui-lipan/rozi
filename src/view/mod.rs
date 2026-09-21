@@ -274,7 +274,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         .state
         .extensions
         .as_ref()
-        .is_some_and(|state| state.detail.is_none())
+        .is_some_and(|state| state.detail.is_none() && state.catalog_detail.is_none())
     {
         root = root.child(extensions_overlay(ctx));
     }
@@ -282,8 +282,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         .state
         .extensions
         .as_ref()
-        .and_then(|state| state.detail.as_ref())
-        .is_some()
+        .is_some_and(|state| state.detail.is_some() || state.catalog_detail.is_some())
     {
         root = root.child(extension_detail_overlay(ctx));
     }

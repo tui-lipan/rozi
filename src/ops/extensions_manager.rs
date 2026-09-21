@@ -327,20 +327,14 @@ pub(crate) fn install_finished(
     ctx: &mut Context<AppRoot>,
     result: std::result::Result<String, String>,
 ) -> Update {
-    if !ctx
+    let Some(install) = ctx
         .state
         .extension_install
-        .as_ref()
-        .is_some_and(|install| install.repository.is_none())
-    {
+        .take_if(|install| install.repository.is_none())
+    else {
         return Update::none();
-    }
-    let hidden = ctx
-        .state
-        .extension_install
-        .take()
-        .is_some_and(|install| install.hidden);
-    let waiting = !hidden
+    };
+    let waiting = !install.hidden
         && ctx
             .state
             .extensions
@@ -552,21 +546,14 @@ pub(crate) fn catalog_install_finished(
     repository: String,
     result: std::result::Result<String, String>,
 ) -> Update {
-    if ctx
+    let Some(install) = ctx
         .state
         .extension_install
-        .as_ref()
-        .and_then(|install| install.repository.as_deref())
-        != Some(repository.as_str())
-    {
+        .take_if(|install| install.repository.as_deref() == Some(repository.as_str()))
+    else {
         return Update::none();
-    }
-    let hidden = ctx
-        .state
-        .extension_install
-        .take()
-        .is_some_and(|install| install.hidden);
-    let waiting = !hidden
+    };
+    let waiting = !install.hidden
         && ctx.state.extensions.as_ref().is_some_and(|state| {
             state
                 .catalog_detail

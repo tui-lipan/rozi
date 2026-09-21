@@ -423,8 +423,8 @@ their own deliberate selection path.
 | --- | --- | --- | --- |
 | `autosave` | bool | `false` | Saves and restores local layout intent, not live PTYs. |
 | `resurrect` | bool | `true` | Saves named-session layout, command, scrollback, and restart intent. |
-| `resurrect_foreground` | string | `"auto"` | What a restore does with a command a pane was observed running: `"auto"` runs it again, `"hold"` leaves it at the prompt unsubmitted, `"never"` restores the shell alone and records no command. |
-| `resurrect_agents` | boolean | `true` | Persist explicit native agent session references in named-session snapshots. Set `false` to keep those opaque references out of state storage. |
+| `resurrect_foreground` | string | `"auto"` | What a restore does with a command a pane was observed running, or an agent conversation it reported: `"auto"` runs it again, `"hold"` leaves it at the prompt unsubmitted, `"never"` restores the shell alone and records neither. |
+| `resurrect_agents` | boolean | `true` | Persist explicit native agent session references in named-session snapshots, and reopen those conversations on restore. Set `false` to keep those opaque references out of state storage. |
 | `startup` | string | `"picker"` | `"picker"`, `"ephemeral"`, `"last"`, or `"profile"`. |
 | `path` | path string | State directory `session.toml` | Autosave file. `~` expands. The default is written `0600` in rozi's own state directory; a path you name here keeps ordinary permissions. |
 | `allow_takeover` | bool | `true` | Lets a writable follower take layout control immediately. |

@@ -20,6 +20,7 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         title: None,
         cwd: None,
         launch: None,
+        agent_resume: None,
         keep_open: false,
         command_completed: false,
         cell: tui_lipan::TerminalCellSize::default(),
@@ -3438,6 +3439,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             title: None,
             cwd: None,
             launch: None,
+            agent_resume: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),
@@ -3588,6 +3590,7 @@ fn duplicate_spawn_is_rejected() {
             title: None,
             cwd: None,
             launch: None,
+            agent_resume: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),
@@ -3615,6 +3618,7 @@ fn duplicate_spawn_is_rejected() {
         pane_id: 1,
         generation: 3,
         launch: None,
+        agent_resume: None,
         cwd: None,
         title: None,
         cols: 20,
@@ -3642,6 +3646,7 @@ fn exited_pane_can_be_respawned() {
             title: None,
             cwd: None,
             launch: None,
+            agent_resume: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),
@@ -3670,6 +3675,7 @@ fn exited_pane_can_be_respawned() {
         pane_id: 1,
         generation: 3,
         launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
+        agent_resume: None,
         cwd: None,
         title: None,
         cols: 20,
@@ -3702,6 +3708,7 @@ fn attach_reports_layout_and_panes() {
         title: Some("editor".into()),
         cwd: Some("/repo".into()),
         launch: None,
+        agent_resume: None,
         keep_open: false,
         command_completed: false,
         cell: tui_lipan::TerminalCellSize::default(),
@@ -3896,6 +3903,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             title: None,
             cwd: None,
             launch: None,
+            agent_resume: None,
             keep_open: false,
             command_completed: false,
             cell: tui_lipan::TerminalCellSize::default(),
@@ -3973,6 +3981,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 } else {
                     crate::pane::launch::PaneLaunch::shell("true")
                 }),
+                agent_resume: None,
                 keep_open: false,
                 command_completed: false,
                 cell: tui_lipan::TerminalCellSize::default(),
@@ -4064,6 +4073,7 @@ fn structured_argv_reaches_the_child_without_shell_interpretation() {
         launch: Some(crate::pane::launch::PaneLaunch::Direct {
             argv: vec!["printf".into(), "%s".into(), literal.into()],
         }),
+        agent_resume: None,
         cwd: None,
         title: None,
         cols: 80,
@@ -4125,6 +4135,7 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
         launch: Some(crate::pane::launch::PaneLaunch::shell(
             "printf 'hello from the command\\n'; exit 3",
         )),
+        agent_resume: None,
         cwd: None,
         title: None,
         cols: 40,
@@ -4202,6 +4213,82 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
     );
 }
 
+/// A native agent resume that fails must not look like a restore that quietly did nothing: the
+/// pane stays, the agent's own output stays above it, the failure is named, and the shell
+/// underneath is usable. The pane's own `keep_open` is false here - the hold comes from the resume.
+#[test]
+fn a_failed_agent_resume_names_the_failure_and_leaves_a_usable_shell() {
+    let mut server = SessionServer::new_named("dev");
+    let (_client, _stream) = attach_client(&mut server);
+
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        launch: None,
+        agent_resume: Some(AgentResumeLaunch {
+            label: "Claude Code".to_string(),
+            launch: crate::pane::launch::PaneLaunch::direct(vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "printf 'no conversation with that id\\n' >&2; exit 1".to_string(),
+            ])
+            .expect("resume argv"),
+        }),
+        cwd: None,
+        title: None,
+        // Wide enough that the notice is not wrapped away from the phrase asserted below.
+        cols: 80,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        while let Some(event) = server.events.try_pop() {
+            if let Some(outbound) = server.handle_event(event) {
+                server.broadcast_outbound(&outbound);
+            }
+        }
+        let pane = server.panes.get_mut(&1).expect("pane still exists");
+        if pane.command_completed
+            && pane
+                .screen_without_change()
+                .snapshot()
+                .contains("resume failed")
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let pane = server.panes.get_mut(&1).expect("pane still exists");
+    assert_eq!(pane.exited, None, "the pane must survive a failed resume");
+    assert!(pane.pty.is_some(), "no shell was left to use");
+    assert!(
+        pane.agent_resume.is_none(),
+        "the resume attempt is over; the pane is an ordinary shell now"
+    );
+    let text = pane.screen_without_change().snapshot();
+    assert!(
+        text.contains("no conversation with that id"),
+        "the agent's own error was lost; screen was:\n{text}"
+    );
+    assert!(
+        text.contains("Claude Code resume failed · exited 1"),
+        "the failure was not named; screen was:\n{text}"
+    );
+}
+
 #[test]
 fn keep_open_recovers_terminal_modes_before_starting_the_shell() {
     let mut server = SessionServer::new_named("dev");
@@ -4214,6 +4301,7 @@ fn keep_open_recovers_terminal_modes_before_starting_the_shell() {
         launch: Some(crate::pane::launch::PaneLaunch::shell(
             "printf 'primary marker\\n\\033[?1049h\\033[?1003h\\033[?1006h\\033[?1004h\\033[?2004h\\033[?1h\\033=stale app'; exit 3",
         )),
+        agent_resume: None,
         cwd: None,
         title: None,
         cols: 40,
@@ -4289,6 +4377,7 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
         launch: Some(crate::pane::launch::PaneLaunch::shell(
             "printf 'popup result\\n'; exit 3",
         )),
+        agent_resume: None,
         cwd: None,
         title: None,
         cols: 40,

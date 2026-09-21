@@ -279,6 +279,14 @@ pub struct ServerPane {
     /// what the pane was spawned with, before any live OSC report or process-inspector fallback.
     pub cwd: Option<String>,
     pub launch: Option<crate::pane::launch::PaneLaunch>,
+    /// The agent whose conversation resurrection relaunched this pane into, while that process is
+    /// still the one running.
+    ///
+    /// Deliberately *not* folded into `launch`. A resume command is a recipe resolved from the
+    /// agent definition this Rozi has loaded, not a fact about how the pane was created, so it
+    /// must never be written back into a snapshot as launch intent. It is cleared the moment the
+    /// resumed process exits, after which the pane is an ordinary shell again.
+    pub agent_resume: Option<String>,
     pub keep_open: bool,
     /// Set once a `keep_open` pane's command has finished and its PTY has been replaced by the
     /// interactive shell (see [`SessionServer::replace_with_keep_open_shell`]). Without it, the
@@ -1626,11 +1634,25 @@ fn wire_local(owner: Option<ClientId>) -> bool {
     owner.is_some()
 }
 
+/// A native agent conversation a pane is being relaunched into, instead of whatever its `launch`
+/// would have started.
+///
+/// The conversation reference occupies one whole element of `launch`'s argv, so it reaches the
+/// agent as a single process argument and no shell ever parses it.
+pub(super) struct AgentResumeLaunch {
+    /// The agent's display label, for the notice shown if the resume command fails.
+    pub(super) label: String,
+    pub(super) launch: crate::pane::launch::PaneLaunch,
+}
+
 struct SpawnRequest {
     pane_id: PaneId,
     owner: Option<ClientId>,
     generation: u64,
     launch: Option<crate::pane::launch::PaneLaunch>,
+    /// Runs in place of `launch` without replacing it. Only resurrection sets this; see
+    /// [`AgentResumeLaunch`].
+    agent_resume: Option<AgentResumeLaunch>,
     cwd: Option<String>,
     title: Option<String>,
     cols: u16,

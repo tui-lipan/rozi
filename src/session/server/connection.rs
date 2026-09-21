@@ -444,6 +444,7 @@ impl SessionServer {
                     owner: local.then_some(client_id),
                     generation,
                     launch,
+                    agent_resume: None,
                     cwd,
                     title,
                     cols,

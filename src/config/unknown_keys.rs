@@ -70,6 +70,7 @@ const SESSION_KEYS: &[&str] = &[
     "startup",
     "resurrect",
     "resurrect_foreground",
+    "resurrect_agents",
     "allow_takeover",
 ];
 

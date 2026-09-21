@@ -374,6 +374,10 @@ so starting the server with `never` also stops an existing snapshot from replayi
 `never` omits commands from later snapshots as well. Changing the setting for a running server
 takes effect after that server restarts.
 
+Set `[session] resurrect_agents = false` to keep explicit native agent session references out of
+snapshots. It defaults to `true`; only references reported by a live agent integration are
+eligible, never values scraped from terminal output.
+
 Use `Ctrl+K` twice on a restorable row to forget the snapshot. Explicit
 `rozi sessions new <name>` also starts fresh rather than restoring an old snapshot with that name.
 

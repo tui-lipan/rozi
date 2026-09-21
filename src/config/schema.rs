@@ -423,6 +423,8 @@ pub struct SessionConfig {
     /// What resurrection does with a command a pane was observed running at its prompt, rather
     /// than launched with. See [`ForegroundRestore`].
     pub resurrect_foreground: ForegroundRestore,
+    /// Persist explicit native agent session references in resurrection snapshots.
+    pub resurrect_agents: bool,
     /// Let a writable follower take layout control immediately instead of waiting for the current
     /// controller to grant its request.
     ///
@@ -443,6 +445,7 @@ impl Default for SessionConfig {
             startup: SessionStartup::default(),
             resurrect: true,
             resurrect_foreground: ForegroundRestore::default(),
+            resurrect_agents: true,
             allow_takeover: true,
         }
     }

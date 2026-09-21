@@ -385,6 +385,7 @@ struct SessionFileConfig {
     startup: Option<String>,
     resurrect: Option<bool>,
     resurrect_foreground: Option<String>,
+    resurrect_agents: Option<bool>,
     allow_takeover: Option<bool>,
 }
 
@@ -783,6 +784,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(resurrect) = parsed.session.resurrect {
         config.session.resurrect = resurrect;
+    }
+    if let Some(resurrect_agents) = parsed.session.resurrect_agents {
+        config.session.resurrect_agents = resurrect_agents;
     }
     if let Some(allow_takeover) = parsed.session.allow_takeover {
         config.session.allow_takeover = allow_takeover;
@@ -1576,6 +1580,15 @@ mod file_tests {
                 .resurrect_foreground,
             crate::session::server::ServerSettings::default().resurrect_foreground
         );
+    }
+
+    #[test]
+    fn session_can_disable_native_agent_snapshot_facts() {
+        let loaded = load_config_from_text(
+            "[session]\nresurrect_agents = false",
+            Path::new("config.toml"),
+        );
+        assert!(!loaded.config.session.resurrect_agents);
     }
 
     /// Takeover is on unless a config turns it off, and the server's own settings default agrees —

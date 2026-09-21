@@ -234,7 +234,10 @@ impl PaneInfo {
         session: &str,
         session_instance: Option<&crate::session::protocol::SessionInstanceId>,
     ) -> Self {
-        let detected = pane.terminal.detected_agent.as_ref();
+        let runtime = pane
+            .agent_runtimes()
+            .into_iter()
+            .find(|runtime| runtime.reference.slot.is_none());
         Self {
             session: session.to_string(),
             id: pane.id,
@@ -243,12 +246,8 @@ impl PaneInfo {
                 pane_id: pane.id,
                 generation: pane.pty_generation,
             }),
-            agent_ref: session_instance.and_then(|_| {
-                pane.agent_refs
-                    .iter()
-                    .find(|reference| reference.slot.is_none())
-                    .cloned()
-            }),
+            agent_ref: session_instance
+                .and_then(|_| runtime.as_ref().map(|runtime| runtime.reference.clone())),
             title: pane.display_title(pane.terminal.title()),
             workspace,
             command: pane
@@ -278,10 +277,10 @@ impl PaneInfo {
                 .reported_status
                 .as_ref()
                 .and_then(|status| status.reason.clone()),
-            agent: detected.map(|detected| detected.agent.id.clone()),
-            agent_state: detected.map(|detected| {
-                crate::session::protocol::detected_agent_status(detected).to_string()
-            }),
+            agent: runtime.as_ref().map(|runtime| runtime.identity.id.clone()),
+            agent_state: runtime
+                .as_ref()
+                .map(|runtime| runtime.state.as_str().to_string()),
         }
     }
 }

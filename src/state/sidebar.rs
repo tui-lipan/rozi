@@ -445,11 +445,8 @@ impl State {
         let mut rows = Vec::new();
         for (workspace, workspace_state) in self.current().workspaces.iter().enumerate() {
             for (pane_index, pane) in workspace_state.panes.iter().enumerate() {
-                if pane.id == crate::state::POPUP_PANE_ID
-                    || pane.closing
-                    || (pane.terminal.published_rows.is_empty()
-                        && pane.terminal.detected_agent.is_none())
-                {
+                let runtimes = pane.agent_runtimes();
+                if pane.id == crate::state::POPUP_PANE_ID || pane.closing || runtimes.is_empty() {
                     continue;
                 }
                 let cwd = pane
@@ -459,39 +456,30 @@ impl State {
                     .filter(|cwd| !cwd.trim().is_empty());
                 let path = pane.terminal.project_root.clone().or_else(|| cwd.clone());
                 let host = cwd.as_ref().and_then(|_| pane.terminal.cwd_host.clone());
-                if pane.terminal.published_rows.is_empty() {
+                for (slot, runtime) in runtimes.into_iter().enumerate() {
+                    let row_id = runtime.reference.slot.as_deref();
+                    let finished = row_id.map_or(pane.terminal.finished_unseen, |row_id| {
+                        pane.terminal
+                            .published_row_ui
+                            .get(row_id)
+                            .is_some_and(|ui| ui.finished_unseen)
+                    });
+                    let target = match runtime.reference.slot {
+                        Some(row_id) => RowTarget::PublishedRow {
+                            pane_id: pane.id,
+                            row_id,
+                        },
+                        None => RowTarget::Pane(pane.id),
+                    };
                     rows.push(ActivityItem {
-                        target: RowTarget::Pane(pane.id),
-                        host,
-                        path,
-                        rank: rank(
-                            pane.terminal.agent_status().as_deref(),
-                            pane.terminal.finished_unseen,
-                        ),
+                        target,
+                        host: host.clone(),
+                        path: path.clone(),
+                        rank: rank(Some(runtime.state.as_str()), finished),
                         workspace,
                         pane: pane_index,
-                        slot: 0,
+                        slot,
                     });
-                } else {
-                    for (slot, published) in pane.terminal.published_rows.iter().enumerate() {
-                        let finished = pane
-                            .terminal
-                            .published_row_ui
-                            .get(&published.id)
-                            .is_some_and(|ui| ui.finished_unseen);
-                        rows.push(ActivityItem {
-                            target: RowTarget::PublishedRow {
-                                pane_id: pane.id,
-                                row_id: published.id.clone(),
-                            },
-                            host: host.clone(),
-                            path: path.clone(),
-                            rank: rank(Some(&published.status), finished),
-                            workspace,
-                            pane: pane_index,
-                            slot,
-                        });
-                    }
                 }
             }
         }

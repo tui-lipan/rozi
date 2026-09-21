@@ -14,6 +14,7 @@
 //! negotiation machinery stays regardless: the day a range is worth supporting is the day it has to
 //! already be on the wire.
 
+pub mod agent_runtime;
 pub mod agent_summary;
 pub mod capabilities;
 pub mod constants;
@@ -23,6 +24,7 @@ pub mod messages;
 pub mod negotiation;
 pub mod pane_runtime;
 
+pub use agent_runtime::*;
 pub use agent_summary::*;
 pub use capabilities::*;
 pub use constants::*;

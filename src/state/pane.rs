@@ -157,6 +157,19 @@ impl Pane {
         }
     }
 
+    pub fn agent_runtimes(&self) -> Vec<crate::session::protocol::AgentRuntime> {
+        crate::session::protocol::effective_agent_runtimes(
+            &crate::session::protocol::PaneRuntimeState {
+                status: self.terminal.reported_status.clone(),
+                detected_agent: self.terminal.detected_agent.clone(),
+                work_started_at: self.terminal.work_started_at,
+                rows: self.terminal.published_rows.clone(),
+                ..crate::session::protocol::PaneRuntimeState::default()
+            },
+            &self.agent_refs,
+        )
+    }
+
     pub(crate) fn begin_open_animation(
         &mut self,
         animations: crate::layout::anim::WindowAnimationConfig,

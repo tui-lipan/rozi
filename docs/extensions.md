@@ -88,6 +88,9 @@ To opt a public repository into discovery:
 3. Add `min_rozi`, `platforms`, and `homepage` when they clarify compatibility.
 4. Add the `rozi-extension` GitHub topic.
 
+The index keeps each entry short: `id`, `version`, and `min_rozi` up to 64 characters, `title` up
+to 80, `description` up to 280, and `homepage` up to 256. A repository over a limit is left out.
+
 The generated index and its schema are public at
 [`tui-lipan/rozi-extension-index`](https://github.com/tui-lipan/rozi-extension-index).
 

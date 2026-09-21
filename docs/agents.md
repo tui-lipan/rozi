@@ -164,6 +164,18 @@ never typed into. A working agent is also refused unless `--allow-working` is ex
 typing into approval dialogs and closes the race where a fast run could finish between separate
 send and wait requests.
 
+Agent hooks can report state that screen detection cannot see:
+
+```bash
+rozi --session dev agents report --state working --native-session abc123 --seq 42
+rozi --session dev agents release --seq 43
+```
+
+`--target` defaults to `ROZI_PANE`. Sequence numbers must increase monotonically; stale reports and
+releases fail with `conflict`, so an asynchronously delivered older hook cannot overwrite newer
+state. A live integration report has authority over published rows and screen detection. Releasing
+it returns the pane to those fallback sources.
+
 ## Publish state instead of reading the screen
 
 Screen matching only sees the view currently drawn in one terminal. It cannot reliably represent a

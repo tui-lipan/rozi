@@ -115,6 +115,7 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.last_exit_status = state.last_exit_status;
     pane.terminal.reported_status = state.status;
     pane.terminal.detected_agent = state.detected_agent;
+    pane.terminal.agent_integration = state.integration;
     pane.terminal.work_started_at = state.work_started_at;
     let finished_rows = pane.terminal.apply_rows(state.rows);
     let edges = update_agent_status_edge(

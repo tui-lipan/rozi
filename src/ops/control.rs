@@ -228,6 +228,27 @@ pub(crate) fn handle_control_request(
             ControlErrorCode::Unsupported,
             "agent prompt is server-owned; select a named session with --session",
         ),
+        ControlCommand::AgentReport {
+            target,
+            state,
+            reason,
+            native_session,
+            seq,
+        } => report_agent(
+            ctx,
+            target.or(envelope.request.source_pane),
+            Some(crate::session::protocol::AgentIntegrationReport {
+                state,
+                reason,
+                native_session,
+                seq,
+                reported_at: crate::runtime_metrics::unix_time_millis(),
+            }),
+            seq,
+        ),
+        ControlCommand::AgentRelease { target, seq } => {
+            report_agent(ctx, target.or(envelope.request.source_pane), None, seq)
+        }
     };
     let _ = envelope.reply.send(response);
     Update::full()
@@ -347,7 +368,11 @@ fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {
                     state: runtime.state,
                     reason: runtime.reason,
                     cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
-                    native_session: None,
+                    native_session: pane
+                        .terminal
+                        .agent_integration
+                        .as_ref()
+                        .and_then(|report| report.native_session.clone()),
                     reference: runtime.reference,
                     source: runtime.source,
                     changed_at: runtime.changed_at,
@@ -406,6 +431,41 @@ fn resolve_agent(
                 })
         }
     }
+}
+
+fn report_agent(
+    ctx: &Context<AppRoot>,
+    target: Option<PaneId>,
+    report: Option<crate::session::protocol::AgentIntegrationReport>,
+    seq: u64,
+) -> ControlResponse {
+    let Some(id) = target else {
+        return ControlResponse::error_with(
+            ControlErrorCode::TargetRequired,
+            "agents report requires --target or ROZI_PANE",
+        );
+    };
+    let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, id).filter(|pane| !pane.closing)
+    else {
+        return ControlResponse::error_with(
+            ControlErrorCode::PaneNotFound,
+            format!("pane {id} not found"),
+        );
+    };
+    let Some(client) = ctx.state.pty_client_for_pane(pane.id) else {
+        return ControlResponse::error_with(
+            ControlErrorCode::SessionNotConnected,
+            format!("pane {id} has no session server"),
+        );
+    };
+    client.report_agent(
+        pane.id,
+        pane.pty_generation,
+        crate::pane::lifecycle::pane_is_local(&ctx.state, pane.id),
+        report,
+        seq,
+    );
+    ControlResponse::empty()
 }
 
 fn set_status(

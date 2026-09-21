@@ -164,6 +164,7 @@ impl Pane {
                 detected_agent: self.terminal.detected_agent.clone(),
                 work_started_at: self.terminal.work_started_at,
                 rows: self.terminal.published_rows.clone(),
+                integration: self.terminal.agent_integration.clone(),
                 ..crate::session::protocol::PaneRuntimeState::default()
             },
             &self.agent_refs,

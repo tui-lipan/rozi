@@ -214,6 +214,21 @@ pub enum ControlCommand {
         #[serde(default)]
         allow_working: bool,
     },
+    AgentReport {
+        #[serde(default)]
+        target: Option<PaneId>,
+        state: crate::session::protocol::AgentState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native_session: Option<String>,
+        seq: u64,
+    },
+    AgentRelease {
+        #[serde(default)]
+        target: Option<PaneId>,
+        seq: u64,
+    },
     /// Raise a toast from a script.
     ///
     /// The automation surface can act but not report: a command that closes its own picker, or

@@ -69,6 +69,29 @@ pub fn effective_agent_runtimes(
     runtime: &PaneRuntimeState,
     references: &[AgentRef],
 ) -> Vec<AgentRuntime> {
+    if let Some(report) = &runtime.integration {
+        let Some(reference) = references
+            .iter()
+            .find(|reference| reference.slot.is_none())
+            .cloned()
+        else {
+            return Vec::new();
+        };
+        let identity = runtime
+            .detected_agent
+            .as_ref()
+            .map(|detected| detected.agent.as_ref().clone())
+            .unwrap_or_else(|| AgentIdentity::new("reported", "Agent"));
+        return vec![AgentRuntime {
+            reference,
+            label: identity.label.clone(),
+            identity,
+            state: report.state,
+            reason: report.reason.clone(),
+            source: AgentAuthority::Reported,
+            changed_at: Some(report.reported_at),
+        }];
+    }
     if !runtime.rows.is_empty() {
         return runtime
             .rows
@@ -254,5 +277,32 @@ mod tests {
         assert_eq!(projected[0].state, AgentState::Working);
         assert_eq!(projected[1].state, AgentState::Done);
         assert_eq!(projected[1].reason.as_deref(), Some("complete"));
+    }
+
+    #[test]
+    fn integration_report_has_authority_over_published_rows() {
+        let runtime = PaneRuntimeState {
+            rows: vec![PublishedRow {
+                id: "background".into(),
+                title: "Background".into(),
+                status: "working".into(),
+                reason: None,
+                active: true,
+                work_started_at: None,
+            }],
+            integration: Some(super::super::AgentIntegrationReport {
+                state: AgentState::Blocked,
+                reason: Some("approval".into()),
+                native_session: Some("abc".into()),
+                seq: 4,
+                reported_at: 10,
+            }),
+            ..PaneRuntimeState::default()
+        };
+
+        let projected = effective_agent_runtimes(&runtime, &[reference(None, 2)]);
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].state, AgentState::Blocked);
+        assert_eq!(projected[0].source, AgentAuthority::Reported);
     }
 }

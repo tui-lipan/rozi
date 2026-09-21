@@ -115,6 +115,15 @@ impl AgentScratch {
 }
 
 fn runtime_occupants(runtime: &PaneRuntimeState) -> Vec<(Option<String>, &str)> {
+    if runtime.integration.is_some() {
+        return vec![(
+            None,
+            runtime
+                .detected_agent
+                .as_ref()
+                .map_or("reported", |agent| agent.agent.id.as_str()),
+        )];
+    }
     if !runtime.rows.is_empty() {
         return runtime
             .rows
@@ -308,6 +317,63 @@ impl SessionServer {
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
         self.resolve_agent_waits();
+        Ok(Some(state))
+    }
+
+    pub(super) fn apply_agent_integration(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        report: Option<protocol::AgentIntegrationReport>,
+        seq: u64,
+    ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
+        let Some(pane) = self.pane_mut(owner, pane_id) else {
+            return Err(("pane-not-found", format!("pane {pane_id} not found")));
+        };
+        if pane.generation != generation {
+            return Err((
+                "stale-generation",
+                format!("pane {pane_id} generation does not match"),
+            ));
+        }
+        if pane
+            .runtime
+            .integration_seq
+            .is_some_and(|current| seq <= current)
+        {
+            return Err((
+                "conflict",
+                format!("agent report sequence {seq} is not newer than the current sequence"),
+            ));
+        }
+        if report
+            .as_ref()
+            .and_then(|report| report.native_session.as_deref())
+            .is_some_and(|value| {
+                value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
+            })
+        {
+            return Err((
+                "invalid-argument",
+                "native session reference must be 1-4096 characters without control characters"
+                    .to_string(),
+            ));
+        }
+        pane.runtime.integration = report.map(|mut report| {
+            report.reason = report
+                .reason
+                .map(|reason| tui_lipan::utils::sanitize_display_text(&reason).into_owned())
+                .filter(|reason| !reason.is_empty());
+            report.seq = seq;
+            report
+        });
+        pane.runtime.integration_seq = Some(seq);
+        pane.agent.sync_references(&pane.runtime);
+        pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
+        let state = pane.runtime.clone();
+        self.resolve_agent_waits();
+        self.mark_dirty();
         Ok(Some(state))
     }
 
@@ -718,6 +784,8 @@ fn compute_runtime_state(
         work_started_at,
         // Owned by `report_pane_rows`, which is the only writer; a recompute carries them.
         rows: pane.runtime.rows.clone(),
+        integration: pane.runtime.integration.clone(),
+        integration_seq: pane.runtime.integration_seq,
         sequence: pane.runtime.sequence,
     };
     let changed = runtime_state_changed(&candidate, &pane.runtime);

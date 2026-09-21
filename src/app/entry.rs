@@ -196,6 +196,9 @@ pub fn run() -> Result<()> {
         cli::ParsedCli::RemoteServe { name, autostart } => {
             return cli::run_remote_serve_cli(&name, autostart);
         }
+        cli::ParsedCli::RemoteControl { name } => {
+            return cli::run_remote_control_cli(&name);
+        }
         cli::ParsedCli::Sessions(command) => match command {
             cli::SessionsCommand::Watch { config_path } => {
                 apply_config_path(config_path);

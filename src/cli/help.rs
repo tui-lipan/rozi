@@ -336,7 +336,9 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "    --remote [HOST]",
                 "Attach over SSH to a host alias or ssh://",
             ),
-            row("", "URL; omit HOST for `[remote] default_host`"),
+            row("", "URL; omit HOST for `[remote] default_host`."),
+            row("", "With --session, runs a control command on"),
+            row("", "that host instead"),
             row("    --config <PATH>", "Load an alternate config.toml"),
             advanced_row(
                 "    --socket <PATH>",

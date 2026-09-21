@@ -72,6 +72,20 @@ pub(crate) enum ControlEndpoint {
     Ui(Option<PathBuf>),
     /// The named session server, reached with no UI in the picture (`--session <NAME>`).
     Session(String),
+    /// A named session server on another host, reached over the SSH transport `--remote` attach
+    /// already uses (`--remote <HOST> --session <NAME>`).
+    Remote { target: String, session: String },
+}
+
+impl ControlEndpoint {
+    /// Whether this endpoint is a session server, wherever it runs.
+    ///
+    /// The commands a session owns - waits, prompts, integration reports - are owned by it just as
+    /// much when it is a hop away, so the checks that gate them cannot be a test for `Session`
+    /// alone.
+    pub(crate) fn is_session(&self) -> bool {
+        matches!(self, Self::Session(_) | Self::Remote { .. })
+    }
 }
 
 /// `rozi publish`: the stdio bridge a program uses to publish the activity rows running inside its
@@ -139,6 +153,10 @@ pub(crate) enum ParsedCli {
     RemoteServe {
         name: String,
         autostart: bool,
+    },
+    /// Hidden remote-side control runner: one JSON request in, one JSON response out.
+    RemoteControl {
+        name: String,
     },
 }
 
@@ -356,6 +374,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     autostart: true,
                 });
             }
+            "--remote-control" => {
+                let name = require_value(&mut iter, "--remote-control requires a session name")?;
+                reject_trailing_control_args(&mut iter, "--remote-control")?;
+                return Ok(ParsedCli::RemoteControl { name });
+            }
             "--remote-serve-existing" => {
                 let name =
                     require_value(&mut iter, "--remote-serve-existing requires a session name")?;
@@ -420,14 +443,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     command,
                     control::ControlCommand::AgentWait { .. }
                         | control::ControlCommand::AgentPrompt { .. }
-                ) && !matches!(endpoint, ControlEndpoint::Session(_))
+                ) && !endpoint.is_session()
                 {
                     return Err(
                         "agent waits and prompts are server-owned; select a named session with --session"
                             .to_string(),
                     );
                 }
-                if matches!(endpoint, ControlEndpoint::Session(_))
+                if endpoint.is_session()
                     && matches!(
                         command,
                         control::ControlCommand::AgentReport { target: None, .. }
@@ -970,21 +993,23 @@ pub(super) fn parse_output_format(
 
 /// Decide which endpoint a control command talks to, rejecting launch-only options.
 ///
-/// A control command never loads config and never attaches anything, so the launch options are
-/// rejected rather than ignored: accepting them silently let `rozi --remote box list-panes` answer
-/// from the *local* rozi while the caller believed it had reached another host.
+/// A control command never attaches anything, so the launch options are rejected rather than
+/// ignored: accepting them silently would let a command answer from a rozi other than the one the
+/// caller believed it had reached.
 ///
 /// `--session <NAME>` is the one target that does apply. It selects the named session server
 /// instead of a UI, for the commands a server can answer on its own; the rest say what they would
 /// have needed a UI for, rather than reporting the session as unreachable.
+///
+/// `--remote <HOST>` qualifies that target rather than replacing it: with a session it names that
+/// session on that host, and the same commands are served there. Without one there is nothing to
+/// reach - a control command addresses a session server, and the far host's UI is not one.
 pub(super) fn control_endpoint(
     cli: &CliArgs,
     socket: Option<PathBuf>,
     command: &control::ControlCommand,
 ) -> std::result::Result<ControlEndpoint, String> {
-    let offender = if cli.remote.is_some() {
-        "--remote"
-    } else if cli.config_path.is_some() {
+    let offender = if cli.config_path.is_some() {
         "--config"
     } else if cli.read_only {
         "--read-only"
@@ -996,16 +1021,15 @@ pub(super) fn control_endpoint(
         ""
     };
     if !offender.is_empty() {
-        let hint = if offender == "--remote" {
-            " (use `sessions list --remote` or `sessions kill --remote` to reach another host)"
-        } else {
-            ""
-        };
-        return Err(format!(
-            "{offender} does not apply to control commands{hint}"
-        ));
+        return Err(format!("{offender} does not apply to control commands"));
     }
     let Some(session) = cli.attach_session.as_deref() else {
+        if cli.remote.is_some() {
+            return Err(
+                "--remote needs --session <NAME>: a control command reaches a named session on that host, not its UI"
+                    .to_string(),
+            );
+        }
         return Ok(ControlEndpoint::Ui(socket));
     };
     if !cli.session_flag_target {
@@ -1019,7 +1043,13 @@ pub(super) fn control_endpoint(
     if let Some(reason) = crate::session::server::session_control_unsupported(command) {
         return Err(reason.to_string());
     }
-    Ok(ControlEndpoint::Session(session.to_string()))
+    Ok(match cli.remote.clone() {
+        Some(target) => ControlEndpoint::Remote {
+            target,
+            session: session.to_string(),
+        },
+        None => ControlEndpoint::Session(session.to_string()),
+    })
 }
 
 /// The endpoint for a control command that is always a bidirectional UI stream (`publish`,
@@ -1036,9 +1066,10 @@ pub(super) fn ui_stream_socket(
         ControlEndpoint::Ui(socket) => Ok(socket),
         // `session_control_unsupported` refuses all three against a session, so this cannot be
         // reached; spelled out rather than unwrapped so a later addition cannot slip past it.
-        ControlEndpoint::Session(_) => {
+        endpoint if endpoint.is_session() => {
             Err("this command needs a running rozi, not a session server".to_string())
         }
+        _ => unreachable!("every endpoint is a UI or a session"),
     }
 }
 
@@ -1303,10 +1334,12 @@ mod tests {
     /// `rozi --remote box --session dev list-panes` cannot look like it reached another host.
     #[test]
     fn launch_options_are_still_rejected_alongside_a_session_target() {
+        // `--remote` is absent deliberately: with a session target it names which host that
+        // session is on, which is a target, not a launch option.
         for args in [
-            vec!["--remote", "box", "--session", "dev", "list-panes"],
             vec!["--config", "/tmp/c.toml", "--session", "dev", "list-panes"],
             vec!["--read-only", "--session", "dev", "list-panes"],
+            vec!["--profile", "work", "--session", "dev", "list-panes"],
         ] {
             let error = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect())
                 .expect_err("launch options do not apply to control commands");
@@ -2078,15 +2111,18 @@ mod tests {
 
     #[test]
     fn cli_control_commands_reject_launch_only_flags() {
-        // A control command talks to the local UI endpoint, so silently dropping `--remote` would
-        // answer from this machine while the caller believed it had reached another host.
         for args in [
-            vec!["--remote", "workbox", "list-panes"],
             vec!["--config", "/tmp/other.toml", "list-panes"],
             vec!["--read-only", "list-panes"],
             vec!["--pick", "metrics"],
+            // `--remote` qualifies a session target; on its own it names nothing a control command
+            // can address, and answering from this machine instead would be the wrong host.
+            vec!["--remote", "workbox", "list-panes"],
             vec!["--remote", "workbox", "publish"],
             vec!["--remote", "workbox", "capture-pane"],
+            // A UI command has no session server to reach, here or anywhere.
+            vec!["--remote", "workbox", "--session", "dev", "publish"],
+            vec!["--remote", "workbox", "--session", "dev", "focus", "3"],
         ] {
             let parsed = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect());
             assert!(parsed.is_err(), "silently ignored a launch flag: {args:?}");
@@ -2098,9 +2134,70 @@ mod tests {
                 "list-panes".into()
             ])
             .expect_err("rejected")
-            .contains("sessions list --remote"),
-            "the remote rejection should point at the command that does reach a host"
+            .contains("--session"),
+            "the remote rejection should say what it was missing"
         );
+    }
+
+    /// The same command, the same endpoint kind, one hop away. What `--remote` changes is which
+    /// machine's session answers - not which commands are allowed or how the answer is read.
+    #[test]
+    fn remote_plus_session_reaches_that_session_on_that_host() {
+        let parsed = parse_cli_args(
+            ["--remote", "workbox", "--session", "dev", "list-panes"]
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect(),
+        )
+        .expect("a remote session is a valid control target");
+
+        let ParsedCli::Control(control) = parsed else {
+            panic!("expected a control command");
+        };
+        assert_eq!(
+            control.endpoint,
+            ControlEndpoint::Remote {
+                target: "workbox".to_string(),
+                session: "dev".to_string(),
+            }
+        );
+        assert!(control.endpoint.is_session());
+    }
+
+    /// Waits and prompts are server-owned, and a remote session server owns them just as much as a
+    /// local one. Gating them on `Session` alone would have refused the whole point of forwarding.
+    #[test]
+    fn a_remote_session_may_be_waited_on_and_prompted() {
+        for args in [
+            vec![
+                "--remote",
+                "workbox",
+                "--session",
+                "dev",
+                "agents",
+                "wait",
+                "--target",
+                "3",
+                "--until",
+                "idle",
+            ],
+            vec![
+                "--remote",
+                "workbox",
+                "--session",
+                "dev",
+                "agents",
+                "prompt",
+                "--target",
+                "3",
+                "run the tests",
+            ],
+        ] {
+            assert!(
+                parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect()).is_ok(),
+                "refused {args:?}"
+            );
+        }
     }
 
     #[test]

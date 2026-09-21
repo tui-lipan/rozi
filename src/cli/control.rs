@@ -357,6 +357,37 @@ fn ask_session_endpoint(
     }
 }
 
+/// Run one control command against a session on another host, over the SSH transport `--remote`
+/// attach already uses.
+///
+/// The response is rendered here rather than on the far side, so `rozi --remote box --session dev
+/// list-panes` prints what `rozi --session dev list-panes` prints, and exits the same way.
+fn ask_remote_endpoint(
+    target: &str,
+    session: &str,
+    mut request: control::ControlRequest,
+) -> Result<serde_json::Value> {
+    // Same reason as the local session endpoint: `ROZI_PANE` names a pane in the namespace the
+    // caller is sitting in, which is not the one being addressed - and here it is not even the
+    // same machine.
+    request.source_pane = None;
+    let parsed = match crate::session::remote::parse_remote_target(target) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    };
+    let config = crate::config::load_config().config.remote;
+    match crate::session::remote::control::forward_control(&parsed, session, &request, &config) {
+        Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    }
+}
+
 pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     use std::io::IsTerminal;
 
@@ -364,6 +395,9 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
         ControlEndpoint::Ui(socket) => ask_ui_endpoint(socket, &command.request)?,
         ControlEndpoint::Session(session) => {
             ask_session_endpoint(&session, command.request.clone())?
+        }
+        ControlEndpoint::Remote { target, session } => {
+            ask_remote_endpoint(&target, &session, command.request.clone())?
         }
     };
     let line = serde_json::to_string(&value).unwrap_or_default();

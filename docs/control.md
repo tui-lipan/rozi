@@ -107,9 +107,31 @@ session:
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. | no |
 
-Control commands reject launch-only options: `--remote`, `--config`, `--read-only`, `--profile`,
-and `--pick`. `--session <NAME>` is the one target they accept, and only a local one — reaching a
-session on another machine still means running `rozi` there, over `ssh`.
+Control commands reject launch-only options: `--config`, `--read-only`, `--profile`, and `--pick`.
+
+`--session <NAME>` is the target they accept, and `--remote <HOST>` says which machine that session
+is on:
+
+```bash
+rozi --remote workbox --session dev list-panes
+rozi --remote workbox --session dev agents prompt --target 3 --wait idle "run the tests"
+```
+
+Every command a local session answers, a remote one answers the same way, with the same output and
+the same exit code. The request is forwarded, not the command line, and the answer is rendered
+locally — so a remote command in a terminal prints the same table a local one does.
+
+This reuses the SSH transport `--remote` attach already uses: saved hosts, connection multiplexing,
+the discovered remote binary, and the same askpass rules. There is no daemon, no network port, and
+no account. `--remote` without `--session` is refused, because a control command addresses a session
+server and the far host's UI is not one.
+
+Waits are not cut short by the hop. `agents wait` and `agents prompt --wait` are served by the
+remote session server and run to their own deadline.
+
+The far host needs a rozi that understands forwarding; an older one is reported as version skew
+rather than as a broken command. Check with `rozi api describe` there, which lists
+`remote-control` among its capabilities.
 
 A `no` command refused against a session says what it needed a UI for. Focus, the active workspace,
 toasts, pickers, and actions are client-local by design: a session server has no screen to move

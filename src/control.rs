@@ -19,6 +19,10 @@ pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
 pub const SESSION_CONTROL_CAPABILITY: &str = "session-control";
 pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
+/// This binary can both forward a control command to a session on another host and serve one
+/// forwarded to it. Advertised by `api describe`, so a caller can check the far host's rozi before
+/// relying on it.
+pub const REMOTE_CONTROL_CAPABILITY: &str = "remote-control";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -37,6 +41,7 @@ impl ApiDescription {
                 AGENT_WAITS_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
+                REMOTE_CONTROL_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
             ],
         }

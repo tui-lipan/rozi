@@ -234,7 +234,7 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                             index.saturating_add(1)
                                         )
                                     } else if published_row.title.trim().is_empty() {
-                                        runtime.label.clone()
+                                        pane.display_title(pane.terminal.title())
                                     } else {
                                         published_row.title.clone()
                                     },
@@ -973,7 +973,7 @@ mod tests {
         let rows = agent_rows(&state);
         assert_eq!(rows.len(), 2);
         // "blocked" sorts before "working"
-        assert_eq!(rows[0].title, "test");
+        assert_eq!(rows[0].title, "shell");
         assert_eq!(rows[0].status.as_deref(), Some("blocked"));
         assert_eq!(rows[0].activity.as_deref(), Some("assertion failed"));
 

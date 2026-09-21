@@ -1527,6 +1527,7 @@ mod tests {
             .runtime
             .work_started_at
             .expect("working integration starts the run clock");
+        server.panes.get_mut(&7).unwrap().agent.summary_changed_at = 0;
         let (blocked, _) = control(
             &mut server,
             ControlCommand::AgentReport {
@@ -1534,13 +1535,27 @@ mod tests {
                 agent: "claude".into(),
                 integration: "hook-b".into(),
                 state: protocol::AgentState::Blocked,
-                reason: Some("approval".into()),
+                reason: Some("x".repeat(protocol::PANE_STATUS_REASON_MAX_LEN + 10)),
                 native_session: None,
                 seq: 2,
             },
         );
         assert!(blocked.ok, "{blocked:?}");
         assert_eq!(server.panes[&7].runtime.work_started_at, Some(started));
+        assert_eq!(
+            server.panes[&7]
+                .runtime
+                .integration
+                .as_ref()
+                .unwrap()
+                .reason
+                .as_ref()
+                .unwrap()
+                .chars()
+                .count(),
+            protocol::PANE_STATUS_REASON_MAX_LEN
+        );
+        assert!(server.panes[&7].agent.summary_changed_at > 0);
 
         let (delayed, _) = control(
             &mut server,

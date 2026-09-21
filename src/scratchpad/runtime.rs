@@ -139,6 +139,22 @@ pub(crate) fn failed(ctx: &mut Context<AppRoot>, message: String) -> Update {
     if ctx.state.scratch_runtime.take().is_none() {
         return Update::none();
     }
+    let pending = ctx
+        .state
+        .pending_agent_report_replies
+        .iter()
+        .filter_map(|(&request_id, pending)| pending.origin_epoch.is_none().then_some(request_id))
+        .collect::<Vec<_>>();
+    for request_id in pending {
+        if let Some(pending) = ctx.state.pending_agent_report_replies.remove(&request_id) {
+            let _ = pending
+                .reply
+                .send(crate::control::ControlResponse::error_with(
+                    crate::control::ControlErrorCode::SessionNotConnected,
+                    "scratch runtime disconnected before acknowledging agent report",
+                ));
+        }
+    }
     for pane in &mut ctx.state.scratch.panes {
         pane.terminal.status = ManagedTerminalStatus::Error("scratch runtime disconnected".into());
     }

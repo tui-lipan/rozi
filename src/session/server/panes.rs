@@ -198,6 +198,13 @@ impl SessionServer {
             screen.process_bytes(banner.as_bytes());
             agent_resume = None;
             spawned = start(build_config(None));
+            // The pane is a shell now, and resurrection has to agree. Keeping the launch intent
+            // would leave `claude` in the next snapshot with no conversation beside it, and the
+            // restore after that would fall through to it and open a *fresh* conversation - the
+            // same substitution this whole path exists to prevent, one server lifetime later.
+            if spawned.is_ok() {
+                request.launch = None;
+            }
         }
         match spawned {
             Ok(pty) => {
@@ -587,6 +594,7 @@ impl SessionServer {
         // Dim, bracketed, and prefixed so it cannot be mistaken for output of the command itself.
         // A failed native resume says so plainly rather than reading as a command that happened to
         // exit, because the pane it leaves behind looks like a restore that quietly did nothing.
+        let resume_failed = resume.is_some() && code != 0;
         let banner = match resume {
             Some(label) if code != 0 => {
                 format!("\r\n\x1b[2m[rozi] {label} resume failed · exited {code}\x1b[0m\r\n")
@@ -639,6 +647,14 @@ impl SessionServer {
                     pane.agent.retire_integration(integration.integration);
                 }
                 pane.runtime.work_started_at = None;
+                // A resume that started and then failed leaves the same pane a resume that never
+                // started does: a shell. Its launch intent has to go with it, or the next snapshot
+                // records the agent with no conversation beside it and the restore after that
+                // opens a fresh one. A command that merely exited keeps its intent, which is the
+                // ordinary keep-open contract - only a *failed conversation resume* is special.
+                if resume_failed {
+                    pane.launch = None;
+                }
             }
             Err(_) => pane.exited = Some(code),
         }

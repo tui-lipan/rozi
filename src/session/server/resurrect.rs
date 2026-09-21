@@ -1850,6 +1850,48 @@ mod tests {
         pane
     }
 
+    /// The cycle after a failed resume, which is where the guarantee was quietly breaking.
+    ///
+    /// A pane created to run an agent keeps that launch intent, so once the resume failed and the
+    /// pane fell back to a shell, the next snapshot recorded `claude` with no conversation beside
+    /// it - and the restore after *that* fell through restore precedence to the launch intent and
+    /// opened a fresh conversation. One server lifetime later than the failure, but the same
+    /// substitution the failure path exists to prevent.
+    ///
+    /// This covers the second half of that chain - a pane in the post-fallback state snapshots as
+    /// a shell and restores as one. That the fallback actually puts a pane into this state is
+    /// pinned next door, where a real PTY can fail to spawn
+    /// (`a_resume_command_that_cannot_start_still_leaves_a_working_shell`).
+    #[test]
+    fn a_pane_that_fell_back_to_a_shell_snapshots_as_a_shell() {
+        let mut server = SessionServer::new_named_with_settings(
+            "fell-back",
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        // What the pane looks like once the fallback has run: a shell, with the agent's launch
+        // intent cleared and no integration left to report a conversation.
+        let mut pane = running("bash", &[], protocol::PaneCommandPhase::Prompt);
+        pane.launch = None;
+        pane.agent_resume = None;
+        server.panes.insert(1, pane);
+
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        let saved = &job.meta.panes[0];
+
+        assert_eq!(
+            saved.launch, None,
+            "a fresh conversation is one restore away"
+        );
+        assert!(saved.agent_resume.is_none());
+        assert!(matches!(
+            server.restore_action(saved, &mut std::collections::HashSet::new()),
+            RestoreAction::Nothing
+        ));
+    }
+
     /// A command is typed only once the restored shell says it is reading the terminal. Writing it
     /// at spawn races the shell's own startup, and under `auto` a half-consumed line would submit
     /// something other than what was captured.

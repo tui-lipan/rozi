@@ -4262,9 +4262,9 @@ fn a_resume_command_that_cannot_start_still_leaves_a_working_shell() {
         "nothing was resumed, so nothing is waiting to report a resume failure later"
     );
     assert_eq!(
-        pane.launch,
-        Some(crate::pane::launch::PaneLaunch::shell("true")),
-        "the pane still remembers how it was created, for its next snapshot"
+        pane.launch, None,
+        "the pane is a shell now, and its next snapshot must not carry a launch intent that \
+         would open a fresh conversation on the restore after this one"
     );
     let text = pane.screen_without_change().snapshot();
     assert!(
@@ -4285,7 +4285,9 @@ fn a_failed_agent_resume_names_the_failure_and_leaves_a_usable_shell() {
         owner: None,
         pane_id: 1,
         generation: 1,
-        launch: None,
+        // The pane was created to run the agent, so its launch intent is the thing that must not
+        // outlive a failed resume into the next snapshot.
+        launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
         agent_resume: Some(AgentResumeLaunch {
             label: "Claude Code".to_string(),
             launch: crate::pane::launch::PaneLaunch::direct(vec![
@@ -4347,6 +4349,64 @@ fn a_failed_agent_resume_names_the_failure_and_leaves_a_usable_shell() {
         text.contains("Claude Code resume failed · exited 1"),
         "the failure was not named; screen was:\n{text}"
     );
+    assert_eq!(
+        pane.launch, None,
+        "a resume that started and then failed leaves the same shell one that never started \
+         does, so its launch intent must not survive into the next snapshot either"
+    );
+}
+
+/// A command that merely exits keeps its launch intent: a pane created to run something restores
+/// by running it again, which is the ordinary keep-open contract. Only a *failed conversation
+/// resume* is special, and conflating the two would stop every keep-open pane coming back.
+#[test]
+fn an_ordinary_keep_open_command_keeps_its_launch_intent() {
+    let mut server = SessionServer::new_named("dev");
+    let (_client, _stream) = attach_client(&mut server);
+
+    let launch = crate::pane::launch::PaneLaunch::shell("exit 3");
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        launch: Some(launch.clone()),
+        agent_resume: None,
+        cwd: None,
+        title: None,
+        cols: 80,
+        rows: 10,
+        keep_open: true,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        while let Some(event) = server.events.try_pop() {
+            if let Some(outbound) = server.handle_event(event) {
+                server.broadcast_outbound(&outbound);
+            }
+        }
+        if server
+            .panes
+            .get(&1)
+            .is_some_and(|pane| pane.command_completed)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let pane = server.panes.get(&1).expect("pane still exists");
+    assert!(pane.command_completed, "the keep-open swap never ran");
+    assert_eq!(pane.launch, Some(launch));
 }
 
 #[test]

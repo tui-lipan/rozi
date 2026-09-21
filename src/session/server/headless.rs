@@ -300,65 +300,58 @@ impl SessionServer {
         let mut panes: Vec<SessionPaneInfo> = self
             .panes
             .iter()
-            .map(|(id, pane)| SessionPaneInfo {
-                session: self.session_name.clone(),
-                id: *id,
-                reference: protocol::PaneRef {
+            .map(|(id, pane)| {
+                let reference = protocol::PaneRef {
                     session_instance: self.instance_id.clone(),
                     pane_id: *id,
                     generation: pane.generation,
-                },
-                agent_ref: pane
-                    .agent
-                    .references(protocol::PaneRef {
-                        session_instance: self.instance_id.clone(),
-                        pane_id: *id,
-                        generation: pane.generation,
-                    })
+                };
+                let references = pane.agent.references(reference.clone());
+                let runtime = protocol::effective_agent_runtimes(&pane.runtime, &references)
                     .into_iter()
-                    .find(|reference| reference.slot.is_none()),
-                title: pane
-                    .effective_title()
-                    .unwrap_or_else(|| format!("pane {id}")),
-                workspace: workspaces.get(id).copied().unwrap_or(0),
-                command: pane
-                    .launch
-                    .as_ref()
-                    .and_then(crate::pane::launch::PaneLaunch::shell_command)
-                    .map(str::to_string),
-                argv: pane
-                    .launch
-                    .as_ref()
-                    .and_then(crate::pane::launch::PaneLaunch::argv)
-                    .map(<[String]>::to_vec),
-                foreground_program: pane.runtime.foreground_program.clone(),
-                foreground_programs: pane.runtime.foreground_programs.to_vec(),
-                foreground_arguments: pane.runtime.foreground_arguments.clone(),
-                cwd: pane.runtime.cwd.clone().or_else(|| pane.cwd.clone()),
-                status: match pane.exited {
-                    None => "ready".to_string(),
-                    Some(code) => format!("exited ({code})"),
-                },
-                reported_status: pane
-                    .runtime
-                    .status
-                    .as_ref()
-                    .map(|status| status.value.clone()),
-                status_reason: pane
-                    .runtime
-                    .status
-                    .as_ref()
-                    .and_then(|status| status.reason.clone()),
-                agent: pane
-                    .runtime
-                    .detected_agent
-                    .as_ref()
-                    .map(|detected| detected.agent.id.clone()),
-                agent_state: pane
-                    .runtime
-                    .detected_agent
-                    .as_ref()
-                    .map(|detected| protocol::detected_agent_status(detected).to_string()),
+                    .find(|runtime| runtime.reference.slot.is_none());
+                SessionPaneInfo {
+                    session: self.session_name.clone(),
+                    id: *id,
+                    reference,
+                    agent_ref: runtime.as_ref().map(|runtime| runtime.reference.clone()),
+                    title: pane
+                        .effective_title()
+                        .unwrap_or_else(|| format!("pane {id}")),
+                    workspace: workspaces.get(id).copied().unwrap_or(0),
+                    command: pane
+                        .launch
+                        .as_ref()
+                        .and_then(crate::pane::launch::PaneLaunch::shell_command)
+                        .map(str::to_string),
+                    argv: pane
+                        .launch
+                        .as_ref()
+                        .and_then(crate::pane::launch::PaneLaunch::argv)
+                        .map(<[String]>::to_vec),
+                    foreground_program: pane.runtime.foreground_program.clone(),
+                    foreground_programs: pane.runtime.foreground_programs.to_vec(),
+                    foreground_arguments: pane.runtime.foreground_arguments.clone(),
+                    cwd: pane.runtime.cwd.clone().or_else(|| pane.cwd.clone()),
+                    status: match pane.exited {
+                        None => "ready".to_string(),
+                        Some(code) => format!("exited ({code})"),
+                    },
+                    reported_status: pane
+                        .runtime
+                        .status
+                        .as_ref()
+                        .map(|status| status.value.clone()),
+                    status_reason: pane
+                        .runtime
+                        .status
+                        .as_ref()
+                        .and_then(|status| status.reason.clone()),
+                    agent: runtime.as_ref().map(|runtime| runtime.identity.id.clone()),
+                    agent_state: runtime
+                        .as_ref()
+                        .map(|runtime| runtime.state.as_str().to_string()),
+                }
             })
             .collect();
         // A HashMap iteration order would reshuffle the table between two identical calls.

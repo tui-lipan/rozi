@@ -126,7 +126,13 @@ fn runtime_occupants(runtime: &PaneRuntimeState) -> Vec<(Option<String>, &str)> 
         .detected_agent
         .as_ref()
         .map(|agent| vec![(None, agent.agent.id.as_str())])
-        .unwrap_or_default()
+        .unwrap_or_else(|| {
+            runtime
+                .status
+                .as_ref()
+                .map(|_| vec![(None, "reported")])
+                .unwrap_or_default()
+        })
 }
 
 impl SessionServer {
@@ -240,6 +246,7 @@ impl SessionServer {
             reason,
             set_at,
         });
+        pane.agent.sync_references(&pane.runtime);
         pane.runtime.work_started_at = next_work_started_at(
             &previous_runtime,
             pane.runtime.status.as_ref(),

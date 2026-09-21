@@ -22,42 +22,23 @@ impl SessionServer {
             if pane.exited.is_some() {
                 continue;
             }
-            let detected = pane.runtime.detected_agent.as_ref();
-            let identity = detected.map(|detected| detected.agent.as_ref());
-            // A pane with no detected program but a reported status is an agent that named itself
-            // through the status API rather than by being recognized on screen.
-            let summary = protocol::AgentSummary {
-                session: self.session_name.clone(),
-                pane: *id,
+            let pane_ref = protocol::PaneRef {
+                session_instance: self.instance_id.clone(),
+                pane_id: *id,
                 generation: pane.generation,
-                row: None,
-                agent: identity
-                    .map_or("reported", |agent| agent.id.as_str())
-                    .into(),
-                label: identity
-                    .map_or("Agent", |agent| agent.label.as_str())
-                    .into(),
-                state: String::new(),
-                changed_at: pane.agent.summary_changed_at,
             };
-            if !pane.runtime.rows.is_empty() {
-                for (index, row) in pane.runtime.rows.iter().enumerate() {
-                    summaries.push(protocol::AgentSummary {
-                        row: Some(row.id.clone()),
-                        // The same name the Agents tab gives a published row: the program, plus
-                        // its position among that pane's runs. The row's own title is what it is
-                        // *doing*, which is activity rather than identity and has no field here.
-                        label: format!("{} #{}", summary.label, index.saturating_add(1)),
-                        state: row.status.clone(),
-                        ..summary.clone()
-                    });
-                }
-            } else if let Some(state) =
-                protocol::effective_agent_status(pane.runtime.status.as_ref(), detected)
+            for runtime in
+                protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.references(pane_ref))
             {
                 summaries.push(protocol::AgentSummary {
-                    state: state.into(),
-                    ..summary
+                    session: self.session_name.clone(),
+                    pane: *id,
+                    generation: pane.generation,
+                    row: runtime.reference.slot,
+                    agent: runtime.identity.id,
+                    label: runtime.label,
+                    state: runtime.state.as_str().into(),
+                    changed_at: pane.agent.summary_changed_at,
                 });
             }
         }

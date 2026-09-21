@@ -113,6 +113,10 @@ pub fn run() -> Result<()> {
             cli::print_sessions_help();
             return Ok(());
         }
+        cli::ParsedCli::AgentsHelp => {
+            cli::print_agents_help();
+            return Ok(());
+        }
         cli::ParsedCli::SkillHelp => {
             cli::print_skill_help();
             return Ok(());
@@ -236,6 +240,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::Skill(_)
         | cli::ParsedCli::SkillHelp
         | cli::ParsedCli::SessionsHelp
+        | cli::ParsedCli::AgentsHelp
         | cli::ParsedCli::Extensions(_)
         | cli::ParsedCli::ExtensionsHelp
         | cli::ParsedCli::ExtensionsCheckHelp

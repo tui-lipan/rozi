@@ -149,6 +149,10 @@ rozi --session dev agents wait --target 3 --until quiescent --timeout 2m
 rozi --session dev agents prompt --target 3 --wait idle "Fix the failing test"
 ```
 
+`rozi agents --help` lists every subcommand and flag, including the integration `report` and
+`release` commands that `rozi --help` keeps under `--advanced`. A help flag anywhere after `agents`
+prints that help instead of running the command, so it is never submitted as prompt text.
+
 `list` and `get` include an opaque `ref` in JSON output. Numeric pane ids are convenient for
 interactive use; automation can pass that exact object back with `--ref '<json>'` to fence the
 operation to one agent incarnation.

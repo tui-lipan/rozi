@@ -19,8 +19,9 @@ pub(crate) mod update;
 pub(crate) use api::run_api_describe_cli;
 pub(crate) use args::{
     CliArgs, ExtensionsCommand, ParsedCli, SessionCommand, SessionsCommand, parse_cli_args,
-    print_extensions_check_help, print_extensions_help, print_extensions_install_help,
-    print_extensions_remove_help, print_extensions_update_help, print_sessions_help,
+    print_agents_help, print_extensions_check_help, print_extensions_help,
+    print_extensions_install_help, print_extensions_remove_help, print_extensions_update_help,
+    print_sessions_help,
 };
 pub(crate) use control::{run_control_cli, run_pick_cli, run_publish_cli, run_subscribe_cli};
 pub(crate) use extension::{

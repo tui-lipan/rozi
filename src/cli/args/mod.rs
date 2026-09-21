@@ -13,6 +13,9 @@ mod sessions;
 mod skill;
 
 #[cfg(test)]
+pub(super) use agents::HELP_SECTIONS as AGENTS_HELP_SECTIONS;
+pub(crate) use agents::print_help as print_agents_help;
+#[cfg(test)]
 pub(super) use extensions::HELP_SECTIONS as EXTENSIONS_HELP_SECTIONS;
 pub(crate) use extensions::print_check_help as print_extensions_check_help;
 pub(crate) use extensions::print_help as print_extensions_help;
@@ -128,6 +131,7 @@ pub(crate) enum ParsedCli {
     ApiDescribe,
     Skill(SkillCommand),
     SkillHelp,
+    AgentsHelp,
     Sessions(SessionsCommand),
     Extensions(ExtensionsCommand),
     SessionsHelp,
@@ -437,7 +441,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
             }
             "agents" => {
-                let (command, output_format) = agents::parse_agents_args(iter.collect::<Vec<_>>())?;
+                let args = iter.collect::<Vec<_>>();
+                if agents::wants_help(&args) {
+                    return Ok(ParsedCli::AgentsHelp);
+                }
+                let (command, output_format) = agents::parse_agents_args(args)?;
                 let endpoint = control_endpoint(&cli, socket, &command)?;
                 if matches!(
                     command,

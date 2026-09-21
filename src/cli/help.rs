@@ -152,41 +152,6 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
         ],
     },
     HelpSection {
-        heading: "AGENTS",
-        advanced_only: false,
-        note: "Use --session <NAME> for detached sessions and semantic waits.",
-        rows: &[
-            row(
-                "agents list [--format text|json]",
-                "List semantic agent occupants",
-            ),
-            row(
-                "agents get --target <PANE> [--format text|json]",
-                "Show one agent record",
-            ),
-            row(
-                "agents read --target <PANE> [--scrollback <N|full>]",
-                "Read an agent's terminal",
-            ),
-            row(
-                "agents wait --target <PANE> --until <STATE>",
-                "Wait inside the session server",
-            ),
-            row(
-                "agents prompt --target <PANE> [--wait <STATE>] <TEXT>",
-                "Safely submit a prompt",
-            ),
-            row(
-                "agents report --agent <ID> --integration <TOKEN> --state <STATE> --seq <N>",
-                "Report integration state",
-            ),
-            row(
-                "agents release --integration <TOKEN> --seq <N>",
-                "Release integration state",
-            ),
-        ],
-    },
-    HelpSection {
         heading: "SESSIONS",
         advanced_only: false,
         note: "",
@@ -293,8 +258,38 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
         heading: "AGENTS",
         advanced_only: false,
-        note: "",
-        rows: &[row("skill [COMMAND]", "Manage the Rozi agent skill")],
+        note: "Waits and prompts need --session <NAME>; they run in the session server.",
+        rows: &[
+            row(
+                "agents list [--format text|json]",
+                "List semantic agent occupants",
+            ),
+            row(
+                "agents get --target <PANE> [--format text|json]",
+                "Show one agent record",
+            ),
+            row(
+                "agents read --target <PANE> [--scrollback <N|full>]",
+                "Read an agent's terminal",
+            ),
+            row(
+                "agents wait --target <PANE> --until <STATE>",
+                "Wait until an agent reaches a state",
+            ),
+            row(
+                "agents prompt --target <PANE> [--wait <STATE>] <TEXT>",
+                "Safely submit a prompt",
+            ),
+            advanced_row(
+                "agents report --agent <ID> --integration <TOKEN> --state <STATE> --seq <N>",
+                "Report integration state",
+            ),
+            advanced_row(
+                "agents release --integration <TOKEN> --seq <N>",
+                "Release integration state",
+            ),
+            row("skill [COMMAND]", "Manage the Rozi agent skill"),
+        ],
     },
     HelpSection {
         heading: "INSTALLATION",
@@ -508,7 +503,8 @@ pub(crate) fn print_version() {
 mod tests {
     use super::*;
     use crate::cli::args::{
-        EXTENSIONS_HELP_SECTIONS, ParsedCli, SESSIONS_HELP_SECTIONS, parse_cli_args,
+        AGENTS_HELP_SECTIONS, EXTENSIONS_HELP_SECTIONS, ParsedCli, SESSIONS_HELP_SECTIONS,
+        parse_cli_args,
     };
     use crate::cli::skill::SKILL_HELP_SECTIONS;
 
@@ -551,6 +547,7 @@ mod tests {
             );
         }
         for (name, sections) in [
+            ("agents", AGENTS_HELP_SECTIONS),
             ("sessions", SESSIONS_HELP_SECTIONS),
             ("extensions", EXTENSIONS_HELP_SECTIONS),
         ] {
@@ -567,6 +564,20 @@ mod tests {
                     line.chars().count()
                 );
             }
+        }
+    }
+
+    #[test]
+    fn cli_help_headings_are_unique() {
+        // A second section under an existing heading reads as a duplicated group, and the
+        // order check below cannot see it because `find` matches either copy.
+        let mut seen = std::collections::HashSet::new();
+        for section in HELP_SECTIONS {
+            assert!(
+                seen.insert(section.heading),
+                "{} appears more than once in help",
+                section.heading
+            );
         }
     }
 

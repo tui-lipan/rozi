@@ -1,6 +1,80 @@
 use crate::control::{AgentTarget, AgentWaitCondition, CaptureScrollback, ControlCommand};
 
 use super::{ListFormat, parse_list_format};
+use crate::cli::help::{HelpSection, HelpStyles, append_help_sections, row};
+
+pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        heading: "USAGE",
+        advanced_only: false,
+        note: "",
+        rows: &[row(
+            "rozi [--session <NAME>] agents <COMMAND> [OPTIONS]",
+            "",
+        )],
+    },
+    HelpSection {
+        heading: "COMMANDS",
+        advanced_only: false,
+        note: "Waits and prompts need --session <NAME>; they run in the session server.",
+        rows: &[
+            row("list [--format text|json]", "List semantic agent occupants"),
+            row("get <TARGET> [--format text|json]", "Show one agent record"),
+            row(
+                "read <TARGET> [--scrollback <N|full>]",
+                "Read an agent's terminal",
+            ),
+            row(
+                "wait <TARGET> --until <STATE> [--timeout <DUR>]",
+                "Wait until an agent reaches a state",
+            ),
+            row(
+                "prompt <TARGET> [--wait <STATE>] [--timeout <DUR>] [--allow-working] <TEXT>",
+                "Safely submit a prompt",
+            ),
+            row(
+                "report --agent <ID> --integration <TOKEN> --state <STATE> --seq <N>",
+                "Report integration state",
+            ),
+            row(
+                "release --integration <TOKEN> --seq <N> [--target <PANE>]",
+                "Release integration state",
+            ),
+        ],
+    },
+    HelpSection {
+        heading: "OPTIONS",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row("    --target <PANE>", "TARGET: an agent by pane id"),
+            row("    --ref <JSON>", "TARGET: an agent by AgentRef JSON"),
+            row("    --until <STATE>", "working, blocked, idle, done,"),
+            row("", "quiescent, or gone"),
+            row("    --wait <STATE>", "The same states as --until"),
+            row("    --state <STATE>", "working, blocked, idle, or done"),
+            row("    --reason <TEXT>", "Why the agent is in this state"),
+            row("    --native-session <ID>", "The agent's own session id"),
+            row("    --format text|json", "Output format"),
+            row("-h, --help", "Print help"),
+        ],
+    },
+];
+
+pub(crate) fn print_help() {
+    let styles = HelpStyles::detect();
+    let mut out = styles.title_line("rozi agents", "inspect and drive coding agents");
+    append_help_sections(&mut out, HELP_SECTIONS, &styles, true);
+    println!("{out}");
+}
+
+/// Whether `rozi agents ...` asked for help rather than a command.
+///
+/// Any help flag wins, even where a prompt's text would otherwise go, so a mistyped
+/// `agents prompt --help` shows help instead of submitting `--help` to an agent.
+pub(super) fn wants_help(args: &[String]) -> bool {
+    args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help")
+}
 
 pub(super) fn parse_agents_args(
     args: Vec<String>,
@@ -384,7 +458,29 @@ fn reject_rest(rest: Vec<String>, command: &str) -> std::result::Result<(), Stri
 
 #[cfg(test)]
 mod tests {
+    use super::super::{ParsedCli, parse_cli_args};
     use super::*;
+
+    #[test]
+    fn agents_namespace_owns_its_help() {
+        for args in [
+            vec!["agents"],
+            vec!["agents", "--help"],
+            vec!["agents", "-h"],
+            vec!["agents", "wait", "--help"],
+            vec!["--session", "dev", "agents", "--help"],
+            // Never submitted to the agent as prompt text.
+            vec!["agents", "prompt", "--target", "3", "--help"],
+        ] {
+            assert!(
+                matches!(
+                    parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect()),
+                    Ok(ParsedCli::AgentsHelp)
+                ),
+                "{args:?} should print agents help"
+            );
+        }
+    }
 
     #[test]
     fn parses_wait_with_a_semantic_deadline() {

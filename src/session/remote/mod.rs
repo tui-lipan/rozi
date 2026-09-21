@@ -8,6 +8,7 @@ pub mod askpass;
 pub(crate) mod binary;
 mod bootstrap;
 mod connect;
+pub mod control;
 pub(crate) mod monitor;
 mod preamble;
 mod proxy;

@@ -17,6 +17,27 @@ pub(crate) fn run_remote_serve_cli(name: &str, autostart: bool) -> Result<()> {
     Ok(())
 }
 
+/// `--remote-control <NAME>`: run one forwarded control request against a local session.
+///
+/// Whether the command succeeded is in the response this prints, not in the exit status. A
+/// non-zero exit means the session could not be reached at all, which the forwarding side reports
+/// as a failed command rather than a refused one.
+pub(crate) fn run_remote_control_cli(name: &str) -> Result<()> {
+    match session::remote::control::run_remote_control(name) {
+        Ok(response) => {
+            println!(
+                "{}",
+                serde_json::to_string(&response).map_err(std::io::Error::other)?
+            );
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(session::remote::control::UNREACHABLE_EXIT);
+        }
+    }
+}
+
 pub(super) fn format_sessions_text(
     rows: &[session::discovery::DiscoveredSession],
     styles: OutputStyles,

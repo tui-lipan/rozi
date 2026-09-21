@@ -75,8 +75,11 @@ It names the repository and commit, compatibility, contribution counts, and the 
 install, even if the default branch has moved since the index was built. A second `Enter` installs
 that exact indexed commit and validates the complete extension before moving it into Rozi's private
 data directory. Later `Ctrl+U` updates the managed checkout from its original Git remote as usual.
-Closing the report or the manager does not cancel an installation: when it finishes, Rozi loads the
-extension and reports the result. One discovery installation runs at a time.
+While it installs, a progress modal with a spinner takes the report's place, naming the extension,
+repository, and commit. `Esc` hides it without cancelling: when the installation finishes, Rozi
+loads the extension and reports the result, even if the manager was closed. Reopening that entry's
+report shows the progress again. One installation runs at a time, from the report or the install
+prompt.
 
 Rozi reads the index when **Extensions…** opens, so **Discover** is ready by the time you switch to
 it. It loads in the background, keeping the manager responsive while the request runs or offline.
@@ -113,9 +116,10 @@ manifest declares a `homepage`, the report lists it and `Ctrl+L` opens it in you
 checkouts show `linked`; Git installs whose remote HEAD changed show `update available`.
 
 The install prompt accepts the same local paths and Git HTTPS/SSH URLs as
-`rozi extensions install <SOURCE>`. Use the CLI's `--link` option when the checkout must remain
-user-owned. The detail view is read-only and wraps long command, path, and diagnostic lines; it
-also exposes `Ctrl+U` for Git-managed installations.
+`rozi extensions install <SOURCE>`, and shows the same progress modal while it installs. Use the
+CLI's `--link` option when the checkout must remain user-owned. The detail view is read-only and
+wraps long command, path, and diagnostic lines; it also exposes `Ctrl+U` for Git-managed
+installations.
 
 Use the CLI when a script or external tool needs the same information:
 

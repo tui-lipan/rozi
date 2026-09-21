@@ -45,7 +45,9 @@ mod settings;
 pub(crate) use agents::agent_picker_overlay;
 pub(crate) use commands::palette_overlay;
 pub(crate) use confirm::{DIALOG_AFFIRM, DIALOG_REFUSE};
-pub(crate) use extensions::{extension_detail_overlay, extensions_overlay};
+pub(crate) use extensions::{
+    extension_detail_overlay, extension_install_progress_overlay, extensions_overlay,
+};
 pub(crate) use help::{help_overlay, keybinding_editor_dialog_overlay, neighbor_keybinding_id};
 pub(crate) use layout::layout_picker_overlay;
 pub(crate) use pick::{pick_overlay, pick_prompt_overlay};

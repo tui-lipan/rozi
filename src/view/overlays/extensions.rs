@@ -2,6 +2,7 @@ use super::*;
 
 const EXTENSIONS_WIDTH: u16 = 84;
 const EXTENSION_DETAIL_WIDTH: u16 = 76;
+const EXTENSION_PROGRESS_WIDTH: u16 = 60;
 
 /// The Extensions manager: installed extensions and the public index, one searchable tab each.
 pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
@@ -434,6 +435,65 @@ fn catalog_status(
     )
 }
 
+/// Shown in place of the report or prompt that started an installation, until it finishes or the
+/// user hides it with `Esc`.
+pub(crate) fn extension_install_progress_overlay(ctx: &Context<AppRoot>) -> Element {
+    let Some(install) = crate::ops::extensions_manager::visible_install(&ctx.state) else {
+        return Text::new("").into();
+    };
+    let theme = &ctx.state.theme;
+    let actions = vec![OverlayAction::new(
+        "esc",
+        "hide",
+        Msg::ExtensionsHideInstall,
+        true,
+    )];
+    let mut body = VStack::new()
+        .height(Length::Auto)
+        .padding((1, 1, 0, 1))
+        .child(
+            HStack::new()
+                .height(Length::Px(1))
+                .gap(1)
+                .child(
+                    Spinner::new()
+                        .spinner_style(SpinnerStyle::Dots)
+                        .style(Style::new().fg(theme.status.info)),
+                )
+                .child(
+                    Text::new(install.label.clone())
+                        .overflow(Overflow::Ellipsis)
+                        .width(Length::Flex(1))
+                        .style(fg_only(&theme.primary).bold()),
+                ),
+        );
+    if let Some(detail) = install.detail.as_deref() {
+        // Indented past the spinner so it reads as belonging to the label.
+        body = body.child(
+            HStack::new()
+                .height(Length::Px(1))
+                .padding((0, 0, 0, 2))
+                .child(
+                    Text::new(detail.to_string())
+                        .overflow(Overflow::Ellipsis)
+                        .width(Length::Flex(1))
+                        .style(fg_only(&theme.muted)),
+                ),
+        );
+    }
+    let content = VStack::new()
+        .height(Length::Auto)
+        .child(body)
+        .child(Spacer::new().height(Length::Px(1)))
+        .child(overlay_hints(theme, &actions));
+    styled_modal(ctx, "Installing extension", EXTENSION_PROGRESS_WIDTH)
+        .height(Length::Auto)
+        .padding(0)
+        .on_close(ctx.link().callback(|_| Msg::ExtensionsHideInstall))
+        .child(content)
+        .key(crate::view::widget_keys::extension_install_progress_key())
+}
+
 pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     if ctx
         .state
@@ -514,17 +574,15 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
         ctx.state.extensions.as_ref().is_some_and(|state| {
             crate::ops::extensions_manager::catalog_entry_installed(state, entry)
         });
-    let installing = ctx.state.extension_catalog_install.as_deref();
+    // The report is replaced by the progress modal while its own installation runs, so an install
+    // already in flight here is always someone else's.
+    let busy = ctx.state.extension_install.is_some();
     let actions = vec![
         OverlayAction::new(
             "enter",
-            if installing == Some(entry.repository.as_str()) {
-                "installing"
-            } else {
-                "install"
-            },
+            "install",
             Msg::ExtensionsSubmitCatalogInstall,
-            compatible && !installed && installing.is_none(),
+            compatible && !installed && !busy,
         ),
         OverlayAction::new("ctrl-l", "open source", Msg::ExtensionsOpenLink, true),
     ];

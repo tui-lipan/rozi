@@ -1,9 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, mpsc};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum EventKind {
     PaneSpawned,
     PaneExited,
@@ -72,6 +74,19 @@ impl EventKind {
     }
 }
 
+/// One `subscribe` event as it goes out on the wire.
+///
+/// `data` is deliberately a flat map of strings rather than a per-kind payload type. The fields an
+/// event carries grow over time and a subscriber is expected to read the ones it knows and ignore
+/// the rest, so the schema describes the envelope and the closed vocabulary of event names without
+/// freezing each kind's field list.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct WireEvent {
+    pub event: EventKind,
+    pub data: std::collections::BTreeMap<String, String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Event {
     pub kind: EventKind,
@@ -84,19 +99,13 @@ impl Event {
     }
 
     fn json(&self) -> String {
-        #[derive(Serialize)]
-        struct WireEvent<'a> {
-            event: &'static str,
-            data: HashMap<&'static str, &'a str>,
-        }
-        let data = self
-            .fields
-            .iter()
-            .map(|(key, value)| (*key, value.as_str()))
-            .collect();
         serde_json::to_string(&WireEvent {
-            event: self.kind.id(),
-            data,
+            event: self.kind,
+            data: self
+                .fields
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), value.clone()))
+                .collect(),
         })
         .expect("event fields serialize")
     }

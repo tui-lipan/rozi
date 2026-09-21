@@ -13,6 +13,7 @@ pub const GENERATION_ENV: &str = "ROZI_EXTENSION_GENERATION";
 /// retired runtime definition, but another process running as the same user is inside Rozi's trust
 /// boundary and may be able to observe it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ExtensionProvenance {
     pub id: String,
     pub generation: String,

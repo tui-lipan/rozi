@@ -4,6 +4,9 @@
 
 mod actions;
 pub mod agent_detection;
+/// Control API schema generation. Only compiled for the generator; see `src/api_schema.rs`.
+#[cfg(feature = "schema-gen")]
+pub mod api_schema;
 pub mod app;
 pub mod cli;
 mod commands;

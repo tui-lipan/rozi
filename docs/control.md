@@ -67,17 +67,28 @@ still reaches its own session with `rozi --session <NAME>`.
 
 Put `--socket PATH` before the command when selecting an endpoint explicitly.
 
-Run `rozi api describe` to inspect the control API version, session protocol version, and
-capabilities implemented by the installed binary. It prints JSON and does not connect to a UI or
-session:
+Run `rozi api describe` to inspect the control API version, schema version, session protocol
+version, and capabilities implemented by the installed binary. It prints JSON and does not connect
+to a UI or session:
 
 ```json
 {
   "api": 1,
+  "schema": 1,
   "session_protocol": 9,
-  "capabilities": ["agent-waits", "pane-control", "published-activity", "session-control"]
+  "capabilities": [
+    "agent-waits",
+    "pane-control",
+    "published-activity",
+    "remote-control",
+    "session-control"
+  ]
 }
 ```
+
+`schema` names the version of [the JSON Schema](#json-schema) below. It is its own number: the
+session protocol bumps when two rozi binaries change how they frame messages to each other, which
+does not affect the JSON anything else reads.
 
 `--session` column: whether the command also works against a session server with no UI attached.
 
@@ -149,6 +160,34 @@ keeps the JSON response. Errors go to stderr in human mode.
 attachment and client-local scratch panes, not every named session; from `--session` it includes
 every pane in that session, including panes whose process has exited, which report
 `exited (<CODE>)` instead of `ready`. Use `rozi sessions list` to discover session servers.
+
+## JSON Schema
+
+Every shape on this page is described by
+[`docs/schema/rozi-control-v1.schema.json`](https://github.com/tui-lipan/rozi/blob/master/docs/schema/rozi-control-v1.schema.json):
+requests, the response envelope, error codes, each command's `data` payload, published activity
+rows, agent records and references, and the event envelope.
+
+The file is generated from the Rust types that serialize the wire format, and CI fails if
+regenerating it produces a diff — so it cannot describe an API Rozi no longer has. Regenerate it
+with:
+
+```bash
+cargo run --features schema-gen --bin rozi-api-schema
+```
+
+Two conventions worth knowing when you validate against it:
+
+- **Objects accept unknown properties.** Responses gain fields; a client validating against an
+  older copy of the schema keeps working. Do not reject a document for carrying something you do
+  not recognize.
+- **Enumerations are closed.** Error codes, agent states, wait conditions, and event names are
+  fixed vocabularies, which is what makes validating against them useful. A new value there is an
+  API change and moves the schema version.
+
+`ControlResponse.data` is untyped in the envelope, because one envelope carries every command's
+answer. The schema names each payload separately — `PaneInfo`, `AgentInfo`, `PaneCapture`,
+`AgentWaitResult`, and the rest — so pick the one for the command you sent.
 
 ## Target selection
 

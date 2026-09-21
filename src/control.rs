@@ -15,6 +15,14 @@ use crate::state::PaneId;
 /// Version of the public control request and response API.
 pub const CONTROL_API_VERSION: u32 = 1;
 
+/// Version of the published JSON Schema describing that API.
+///
+/// Deliberately its own number, separate from [`CONTROL_API_VERSION`] and from the session
+/// protocol version. The session wire protocol bumps when two rozi binaries change how they frame
+/// messages to each other, which is nobody else's concern; this one tracks the compatibility of
+/// the JSON third-party software reads and writes.
+pub const API_SCHEMA_VERSION: u32 = 1;
+
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
 pub const SESSION_CONTROL_CAPABILITY: &str = "session-control";
@@ -26,8 +34,12 @@ pub const REMOTE_CONTROL_CAPABILITY: &str = "remote-control";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ApiDescription {
     pub api: u32,
+    /// Version of the JSON Schema this binary's API is described by, published at
+    /// `docs/schema/rozi-control-v1.schema.json`.
+    pub schema: u32,
     pub session_protocol: u32,
     pub capabilities: Vec<&'static str>,
 }
@@ -36,6 +48,7 @@ impl ApiDescription {
     pub fn current() -> Self {
         Self {
             api: CONTROL_API_VERSION,
+            schema: API_SCHEMA_VERSION,
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
             capabilities: vec![
                 AGENT_WAITS_CAPABILITY,
@@ -49,6 +62,7 @@ impl ApiDescription {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ControlRequest {
     #[serde(flatten)]
     pub command: ControlCommand,
@@ -62,6 +76,7 @@ pub struct ControlRequest {
 /// How many scrollback lines `capture-pane` should include when not using the visible grid.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum CaptureScrollback {
     /// Trailing line count from the retained scrollback + live grid.
     Lines(usize),
@@ -73,6 +88,7 @@ pub enum CaptureScrollback {
 /// validation lives in the type instead of string compares at each call site.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum CaptureScrollbackNamed {
     Full,
     #[serde(alias = "last_output")]
@@ -96,6 +112,7 @@ impl CaptureScrollback {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "cmd", rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum ControlCommand {
     ListPanes,
     AgentsList,
@@ -268,6 +285,7 @@ pub enum ControlCommand {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum AgentTarget {
     Pane(PaneId),
     Ref(crate::session::protocol::AgentRef),
@@ -275,6 +293,7 @@ pub enum AgentTarget {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum AgentWaitCondition {
     Working,
     Blocked,
@@ -285,6 +304,7 @@ pub enum AgentWaitCondition {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentInfo {
     pub session: String,
     pub pane: PaneId,
@@ -310,6 +330,7 @@ pub struct AgentInfo {
 /// parses is the contract, not either implementation - so there is one type describing it rather
 /// than two that have to be kept in step by hand.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneInfo {
     /// Session that answered. A remote one is qualified with its host, so two same-name sessions
     /// do not look interchangeable.
@@ -345,6 +366,7 @@ pub struct PaneInfo {
 
 /// One pane's captured screen, as `capture-pane` and `agents read` report it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneCapture {
     pub id: PaneId,
     pub text: String,
@@ -355,6 +377,7 @@ pub struct PaneCapture {
 
 /// What `split` answers with once the pane exists.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct NewPaneAccepted {
     pub id: PaneId,
     pub accepted: bool,
@@ -363,6 +386,7 @@ pub struct NewPaneAccepted {
 
 /// What `pane-logging` answers with.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneLoggingState {
     pub id: PaneId,
     pub enabled: bool,
@@ -372,6 +396,7 @@ pub struct PaneLoggingState {
 
 /// What `agents prompt` answers with when it was asked not to wait.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentPromptAccepted {
     pub accepted: bool,
     #[serde(rename = "ref")]
@@ -383,6 +408,7 @@ pub struct AgentPromptAccepted {
 /// `agent` is absent when the condition that resolved the wait is the agent no longer being there
 /// (`gone`), which is the one outcome with nothing left to describe.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentWaitResult {
     pub condition: AgentWaitCondition,
     pub agent: Option<crate::session::protocol::AgentRuntime>,
@@ -395,6 +421,7 @@ pub struct AgentWaitResult {
 /// queues, no piped remote, and no orphan-output buffer to describe, so it reports the half of the
 /// picture it actually owns rather than padding the other half with nulls.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SessionMetricsReport {
     pub sampled_at_unix_ms: u64,
     pub server: crate::runtime_metrics::CachedServerRuntimeMetrics,
@@ -403,6 +430,7 @@ pub struct SessionMetricsReport {
 /// How prominent a [`ControlCommand::Notify`] toast is.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum NotifyLevel {
     #[default]
     Info,
@@ -428,6 +456,7 @@ impl NotifyLevel {
 /// [`ClientMessage::SessionControl`](crate::session::protocol::ClientMessage::SessionControl)
 /// reply carries one of these, and the CLI reads it back as the same type the UI produced.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ControlResponse {
     pub ok: bool,
     /// Stable failure category for scripts. Absent on successful replies and on replies from
@@ -477,6 +506,7 @@ impl ControlResponse {
 /// should branch on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum ControlErrorCode {
     InvalidRequest,
     RequestTimeout,

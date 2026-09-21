@@ -1,0 +1,2605 @@
+{
+  "$defs": {
+    "AgentAuthority": {
+      "enum": [
+        "reported",
+        "published",
+        "detected"
+      ],
+      "type": "string"
+    },
+    "AgentIdentity": {
+      "description": "Who a detected agent is.\n\nOpen rather than an enum of the tools Rozi happens to know: `id` and `label` both come from the\n[`AgentDefinition`](crate::agent_detection::AgentDefinition) that matched, and a definition\ndeclared in `config.toml` or shipped by an extension produces one of these exactly as a built-in\ndoes. Nothing downstream may branch on a known set of ids - the sidebar renders `label`.",
+      "properties": {
+        "id": {
+          "description": "Stable definition id, such as `claude` or `git-tools.mycoolagent`.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Display name, as the definition declared it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "AgentInfo": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "native_session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pane": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ref": {
+          "$ref": "#/$defs/AgentRef"
+        },
+        "session": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/AgentAuthority"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentState"
+        },
+        "workspace": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "pane",
+        "workspace",
+        "agent",
+        "label",
+        "state",
+        "ref",
+        "source"
+      ],
+      "type": "object"
+    },
+    "AgentPromptAccepted": {
+      "description": "What `agents prompt` answers with when it was asked not to wait.",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "ref": {
+          "$ref": "#/$defs/AgentRef"
+        }
+      },
+      "required": [
+        "accepted",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "AgentRef": {
+      "description": "Exact identity of one semantic agent or published activity.",
+      "properties": {
+        "incarnation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pane": {
+          "$ref": "#/$defs/PaneRef"
+        },
+        "slot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "pane",
+        "incarnation"
+      ],
+      "type": "object"
+    },
+    "AgentRuntime": {
+      "description": "One automation-facing semantic occupant of a pane.",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/AgentIdentity"
+        },
+        "label": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reference": {
+          "$ref": "#/$defs/AgentRef"
+        },
+        "source": {
+          "$ref": "#/$defs/AgentAuthority"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentState"
+        }
+      },
+      "required": [
+        "reference",
+        "identity",
+        "label",
+        "state",
+        "source"
+      ],
+      "type": "object"
+    },
+    "AgentState": {
+      "enum": [
+        "working",
+        "blocked",
+        "idle",
+        "done"
+      ],
+      "type": "string"
+    },
+    "AgentTarget": {
+      "anyOf": [
+        {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "$ref": "#/$defs/AgentRef"
+        }
+      ]
+    },
+    "AgentWaitCondition": {
+      "enum": [
+        "working",
+        "blocked",
+        "idle",
+        "done",
+        "quiescent",
+        "gone"
+      ],
+      "type": "string"
+    },
+    "AgentWaitResult": {
+      "description": "What a resolved `agents wait` - or an `agents prompt --wait` - answers with.\n\n`agent` is absent when the condition that resolved the wait is the agent no longer being there\n(`gone`), which is the one outcome with nothing left to describe.",
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRuntime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "condition": {
+          "$ref": "#/$defs/AgentWaitCondition"
+        }
+      },
+      "required": [
+        "condition"
+      ],
+      "type": "object"
+    },
+    "ApiDescription": {
+      "description": "Features this binary exposes to control clients and extension authors.",
+      "properties": {
+        "api": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "description": "Version of the JSON Schema this binary's API is described by, published at\n`docs/schema/rozi-control-v1.schema.json`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session_protocol": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "api",
+        "schema",
+        "session_protocol",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "AttachSeedMetrics": {
+      "properties": {
+        "active_clients": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "disconnected": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_disconnect_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_duration_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "live_catch_up_bytes": {
+          "description": "Post-baseline output/control retained in memory or queued behind replay.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "live_catch_up_limit_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_duration_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "panes_remaining": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "peak_live_catch_up_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "peak_queued_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued_bytes": {
+          "description": "Encoded baseline replay currently waiting in socket outboxes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replay_bytes_total": {
+          "description": "Replay payload exported across this server process's lifetime.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "send_window_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active_clients",
+        "queued_bytes",
+        "peak_queued_bytes",
+        "send_window_bytes",
+        "live_catch_up_bytes",
+        "peak_live_catch_up_bytes",
+        "live_catch_up_limit_bytes",
+        "panes_remaining",
+        "replay_bytes_total",
+        "completed",
+        "disconnected",
+        "last_duration_us",
+        "max_duration_us"
+      ],
+      "type": "object"
+    },
+    "ByteBufferMetrics": {
+      "properties": {
+        "capacity_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "current_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "high_water_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "current_bytes",
+        "high_water_bytes",
+        "capacity_bytes"
+      ],
+      "type": "object"
+    },
+    "CachedServerRuntimeMetrics": {
+      "properties": {
+        "age_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "attach_seed": {
+          "$ref": "#/$defs/AttachSeedMetrics"
+        },
+        "client_outboxes": {
+          "$ref": "#/$defs/ServerOutboxMetrics"
+        },
+        "client_resync": {
+          "$ref": "#/$defs/ClientResyncMetrics"
+        },
+        "pty_ingress": {
+          "$ref": "#/$defs/QueueMetrics"
+        },
+        "resurrection": {
+          "$ref": "#/$defs/ResurrectionMetrics"
+        },
+        "sampled_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sampled_at_unix_ms",
+        "pty_ingress",
+        "client_outboxes",
+        "attach_seed",
+        "client_resync",
+        "resurrection",
+        "age_ms",
+        "stale"
+      ],
+      "type": "object"
+    },
+    "CaptureScrollback": {
+      "anyOf": [
+        {
+          "description": "Trailing line count from the retained scrollback + live grid.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "$ref": "#/$defs/CaptureScrollbackNamed",
+          "description": "Named capture modes (`\"full\"`, `\"last-output\"`)."
+        }
+      ],
+      "description": "How many scrollback lines `capture-pane` should include when not using the visible grid."
+    },
+    "CaptureScrollbackNamed": {
+      "description": "Named `capture-pane` scrollback modes. Serde maps these to kebab-case strings so\nvalidation lives in the type instead of string compares at each call site.",
+      "enum": [
+        "full",
+        "last-output"
+      ],
+      "type": "string"
+    },
+    "ClientResyncMetrics": {
+      "description": "Clients that fell too far behind to take a pane's output, had it shed, and caught up by replay.",
+      "properties": {
+        "active_clients": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exports": {
+          "description": "Pane screens exported for resyncs. A pane that falls behind again mid-resync is exported\nagain, so this outgrowing `started` is what a flood that never lets a client catch up looks\nlike.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_export_us": {
+          "description": "Time the server loop spent exporting one pane screen for any replay. Every client waits on\nthis, which is what a slow client's resyncs can cost a healthy one.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_export_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requeued_panes": {
+          "description": "Panes put back in a replay queue because the client fell behind them again before their\nreplay finished, during an attach or a resync.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shed_bytes": {
+          "description": "Encoded pane output dropped instead of delivered, across this server process's lifetime.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active_clients",
+        "started",
+        "completed",
+        "exports",
+        "requeued_panes",
+        "shed_bytes",
+        "last_export_us",
+        "max_export_us"
+      ],
+      "type": "object"
+    },
+    "ControlCommand": {
+      "oneOf": [
+        {
+          "properties": {
+            "cmd": {
+              "const": "list-panes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agents-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agent-get",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agent-read",
+              "type": "string"
+            },
+            "scrollback": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureScrollback"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "metrics",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "focus",
+              "type": "string"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "send-text",
+              "type": "string"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Send named keys and/or literal text chunks to a pane (tmux-style key names).",
+          "properties": {
+            "cmd": {
+              "const": "send-keys",
+              "type": "string"
+            },
+            "keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "literal": {
+              "default": false,
+              "description": "When true, every entry in `keys` is forwarded as literal UTF-8 (no key-name parsing).",
+              "type": "boolean"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "argv": {
+              "description": "Direct executable and arguments. Mutually exclusive with `command`.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "new-pane",
+              "type": "string"
+            },
+            "command": {
+              "description": "Shell command line interpreted by the configured command runner.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "focus": {
+              "default": false,
+              "description": "Move focus (and the active workspace) to the new pane. Defaults to `false`: the control\nendpoint is an automation surface, and a pane spawned by an agent must not pull the\ncursor out from under whoever is typing. Overrides a matched `[[rules]]` `focus`; the\nrule still decides workspace, float, and fullscreen.",
+              "type": "boolean"
+            },
+            "keep_open": {
+              "default": false,
+              "type": "boolean"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace": {
+              "description": "One-based workspace to spawn into, instead of the caller's. Overrides a matched\n`[[rules]]` workspace, which is a default for panes a person opens.\n\nWhat this is for: a script that opens panes into the workspace someone is working in\nre-tiles their layout on every spawn. Naming a workspace of its own keeps the spawn\nentirely out of the way, and gives each pane the same geometry as the last.",
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Run any keybindable `Action` by its stable id (see `Action::id`/`Action::from_id`).",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "run-action",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Capture pane text. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).",
+          "properties": {
+            "cmd": {
+              "const": "capture-pane",
+              "type": "string"
+            },
+            "scrollback": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureScrollback"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.",
+          "properties": {
+            "cmd": {
+              "const": "switch-workspace",
+              "type": "string"
+            },
+            "index": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Move the focused pane to another workspace. `index` is 1-based (1-9).",
+          "properties": {
+            "cmd": {
+              "const": "move-to-workspace",
+              "type": "string"
+            },
+            "index": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "popup",
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "height": {
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "keep_open": {
+              "default": null,
+              "description": "Hold the popup open after the command exits, matching the `[keys]` `popup` default; set\n`false` for a program that owns the popup for its whole life.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "width": {
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Publish the logical agents or activities running inside the calling pane, and receive\nactivations for them. Unlike every other command this connection stays open in both\ndirections; closing it withdraws the pane's rows. Reached through `rozi publish`.",
+          "properties": {
+            "cmd": {
+              "const": "publish",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "subscribe",
+              "type": "string"
+            },
+            "events": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "pane-logging",
+              "type": "string"
+            },
+            "enabled": {
+              "default": null,
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "set-status",
+              "type": "string"
+            },
+            "reason": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agent-wait",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "until": {
+              "$ref": "#/$defs/AgentWaitCondition"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "until"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "allow_working": {
+              "default": false,
+              "type": "boolean"
+            },
+            "cmd": {
+              "const": "agent-prompt",
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentWaitCondition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "prompt"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "agent-report",
+              "type": "string"
+            },
+            "integration": {
+              "type": "string"
+            },
+            "native_session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "$ref": "#/$defs/AgentState"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "agent",
+            "integration",
+            "state",
+            "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agent-release",
+              "type": "string"
+            },
+            "integration": {
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "integration",
+            "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Raise a toast from a script.\n\nThe automation surface can act but not report: a command that closes its own picker, or\nruns under `[keys] exec` with no pane, finishes invisibly. This is the \"useful off-screen\nresult\" toasts are reserved for - not a receipt for something already on screen.",
+          "properties": {
+            "cmd": {
+              "const": "notify",
+              "type": "string"
+            },
+            "level": {
+              "$ref": "#/$defs/NotifyLevel",
+              "default": "info"
+            },
+            "message": {
+              "type": "string"
+            },
+            "title": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "actions": {
+              "description": "Extra chords offered beside select and cancel, advertised in the footer.",
+              "items": {
+                "$ref": "#/$defs/PickAction"
+              },
+              "type": "array"
+            },
+            "cmd": {
+              "const": "pick",
+              "type": "string"
+            },
+            "empty": {
+              "description": "Copy shown when the row list is empty and the filter is empty.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "placeholder": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "width": {
+              "description": "Modal width in columns, clamped to a readable range. Omitted uses the shared default.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ControlErrorCode": {
+      "description": "Machine-readable control failure categories.\n\nHuman text may gain context or be reworded. These kebab-case values are the contract scripts\nshould branch on.",
+      "enum": [
+        "invalid-request",
+        "request-timeout",
+        "message-too-large",
+        "extension-inactive",
+        "unknown-event",
+        "pane-not-found",
+        "target-required",
+        "pane-not-running",
+        "session-not-attached",
+        "session-not-connected",
+        "input-locked",
+        "read-only",
+        "not-controller",
+        "unsupported",
+        "invalid-argument",
+        "spawn-failed",
+        "conflict",
+        "unavailable",
+        "agent-gone",
+        "agent-blocked",
+        "agent-replaced",
+        "stale-reference",
+        "timeout",
+        "request-failed"
+      ],
+      "type": "string"
+    },
+    "ControlRequest": {
+      "oneOf": [
+        {
+          "properties": {
+            "cmd": {
+              "const": "list-panes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agents-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agent-get",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agent-read",
+              "type": "string"
+            },
+            "scrollback": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureScrollback"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "metrics",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "focus",
+              "type": "string"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "send-text",
+              "type": "string"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Send named keys and/or literal text chunks to a pane (tmux-style key names).",
+          "properties": {
+            "cmd": {
+              "const": "send-keys",
+              "type": "string"
+            },
+            "keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "literal": {
+              "default": false,
+              "description": "When true, every entry in `keys` is forwarded as literal UTF-8 (no key-name parsing).",
+              "type": "boolean"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "argv": {
+              "description": "Direct executable and arguments. Mutually exclusive with `command`.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "new-pane",
+              "type": "string"
+            },
+            "command": {
+              "description": "Shell command line interpreted by the configured command runner.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "focus": {
+              "default": false,
+              "description": "Move focus (and the active workspace) to the new pane. Defaults to `false`: the control\nendpoint is an automation surface, and a pane spawned by an agent must not pull the\ncursor out from under whoever is typing. Overrides a matched `[[rules]]` `focus`; the\nrule still decides workspace, float, and fullscreen.",
+              "type": "boolean"
+            },
+            "keep_open": {
+              "default": false,
+              "type": "boolean"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace": {
+              "description": "One-based workspace to spawn into, instead of the caller's. Overrides a matched\n`[[rules]]` workspace, which is a default for panes a person opens.\n\nWhat this is for: a script that opens panes into the workspace someone is working in\nre-tiles their layout on every spawn. Naming a workspace of its own keeps the spawn\nentirely out of the way, and gives each pane the same geometry as the last.",
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Run any keybindable `Action` by its stable id (see `Action::id`/`Action::from_id`).",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "run-action",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Capture pane text. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).",
+          "properties": {
+            "cmd": {
+              "const": "capture-pane",
+              "type": "string"
+            },
+            "scrollback": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureScrollback"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.",
+          "properties": {
+            "cmd": {
+              "const": "switch-workspace",
+              "type": "string"
+            },
+            "index": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Move the focused pane to another workspace. `index` is 1-based (1-9).",
+          "properties": {
+            "cmd": {
+              "const": "move-to-workspace",
+              "type": "string"
+            },
+            "index": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "popup",
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "height": {
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "keep_open": {
+              "default": null,
+              "description": "Hold the popup open after the command exits, matching the `[keys]` `popup` default; set\n`false` for a program that owns the popup for its whole life.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "width": {
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Publish the logical agents or activities running inside the calling pane, and receive\nactivations for them. Unlike every other command this connection stays open in both\ndirections; closing it withdraws the pane's rows. Reached through `rozi publish`.",
+          "properties": {
+            "cmd": {
+              "const": "publish",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "subscribe",
+              "type": "string"
+            },
+            "events": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "pane-logging",
+              "type": "string"
+            },
+            "enabled": {
+              "default": null,
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "set-status",
+              "type": "string"
+            },
+            "reason": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agent-wait",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "until": {
+              "$ref": "#/$defs/AgentWaitCondition"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "until"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "allow_working": {
+              "default": false,
+              "type": "boolean"
+            },
+            "cmd": {
+              "const": "agent-prompt",
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentWaitCondition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "prompt"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "agent-report",
+              "type": "string"
+            },
+            "integration": {
+              "type": "string"
+            },
+            "native_session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "$ref": "#/$defs/AgentState"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "agent",
+            "integration",
+            "state",
+            "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "agent-release",
+              "type": "string"
+            },
+            "integration": {
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "integration",
+            "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Raise a toast from a script.\n\nThe automation surface can act but not report: a command that closes its own picker, or\nruns under `[keys] exec` with no pane, finishes invisibly. This is the \"useful off-screen\nresult\" toasts are reserved for - not a receipt for something already on screen.",
+          "properties": {
+            "cmd": {
+              "const": "notify",
+              "type": "string"
+            },
+            "level": {
+              "$ref": "#/$defs/NotifyLevel",
+              "default": "info"
+            },
+            "message": {
+              "type": "string"
+            },
+            "title": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "actions": {
+              "description": "Extra chords offered beside select and cancel, advertised in the footer.",
+              "items": {
+                "$ref": "#/$defs/PickAction"
+              },
+              "type": "array"
+            },
+            "cmd": {
+              "const": "pick",
+              "type": "string"
+            },
+            "empty": {
+              "description": "Copy shown when the row list is empty and the filter is empty.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "placeholder": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "width": {
+              "description": "Modal width in columns, clamped to a readable range. Omitted uses the shared default.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "extension": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExtensionProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Automatically attached by the CLI when launched from an extension process."
+        },
+        "source_pane": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ControlResponse": {
+      "description": "The answer to one control request, in the `{ok, data, error}` shape every control surface\nspeaks.\n\n`Deserialize` because this crosses the session wire as well as the UI endpoint: a headless\n[`ClientMessage::SessionControl`](crate::session::protocol::ClientMessage::SessionControl)\nreply carries one of these, and the CLI reads it back as the same type the UI produced.",
+      "properties": {
+        "code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ControlErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Stable failure category for scripts. Absent on successful replies and on replies from\nolder Rozi versions."
+        },
+        "data": true,
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "EventKind": {
+      "enum": [
+        "pane-spawned",
+        "pane-exited",
+        "pane-status-changed",
+        "bell",
+        "focus-changed",
+        "workspace-switched",
+        "session-attached",
+        "session-detached",
+        "session-renamed",
+        "session-created",
+        "controller-changed",
+        "client-joined",
+        "client-left",
+        "profile-loaded",
+        "profile-applied",
+        "profile-saved",
+        "config-reloaded"
+      ],
+      "type": "string"
+    },
+    "ExtensionProvenance": {
+      "description": "Provenance carried automatically by the CLI for a process launched by an extension.\n\nThe opaque generation is a fencing token, not authentication: it rejects processes from a\nretired runtime definition, but another process running as the same user is inside Rozi's trust\nboundary and may be able to observe it.",
+      "properties": {
+        "generation": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "NewPaneAccepted": {
+      "description": "What `split` answers with once the pane exists.",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pty_ready": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "accepted",
+        "pty_ready"
+      ],
+      "type": "object"
+    },
+    "NotifyLevel": {
+      "description": "How prominent a [`ControlCommand::Notify`] toast is.",
+      "enum": [
+        "info",
+        "error"
+      ],
+      "type": "string"
+    },
+    "OrphanOutputMetrics": {
+      "properties": {
+        "capacity_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "capacity_keys": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "current_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "high_water_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keys": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "current_bytes",
+        "high_water_bytes",
+        "capacity_bytes",
+        "keys",
+        "capacity_keys"
+      ],
+      "type": "object"
+    },
+    "PaneCapture": {
+      "description": "One pane's captured screen, as `capture-pane` and `agents read` report it.",
+      "properties": {
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "title": {
+          "description": "The terminal title, which several detection rules match instead of the screen. A capture\nwithout it cannot stand in for what the detector saw.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "PaneInfo": {
+      "description": "One pane as `list-panes` reports it.\n\nBoth control surfaces fill this same type. A UI endpoint reads it out of the client's `State`\nand a session server reads it out of its own authoritative runtime, but the document a script\nparses is the contract, not either implementation - so there is one type describing it rather\nthan two that have to be kept in step by hand.",
+      "properties": {
+        "agent": {
+          "description": "The agent detection recognized behind this pane, by definition id, and what it reads the\npane as doing. Both absent when no definition matched. This is detection's own answer, not\nthe pane's `reported_status` - a script capturing screens to test the rules against needs\nto see what the rules currently say about the screen it just took.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agent_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent_state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "command": {
+          "description": "Initial launch intent, retained for automation and profile diagnostics.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "foreground_arguments": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "foreground_program": {
+          "description": "Live foreground process: what the pane is running now, rather than what launched it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "foreground_programs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PaneRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent only from a UI endpoint that has no session behind it."
+        },
+        "reported_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "description": "Session that answered. A remote one is qualified with its host, so two same-name sessions\ndo not look interchangeable.",
+          "type": "string"
+        },
+        "status": {
+          "description": "Lifecycle text in the vocabulary a client's terminal reports: `ready`, or `exited (N)` for\na pane whose process is gone but whose screen is still readable.",
+          "type": "string"
+        },
+        "status_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "workspace": {
+          "description": "One-based workspace, or `0` when the session has no layout document yet - nothing has\nplaced the pane, so there is no workspace to name.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "id",
+        "title",
+        "workspace",
+        "foreground_programs",
+        "foreground_arguments",
+        "status"
+      ],
+      "type": "object"
+    },
+    "PaneLoggingState": {
+      "description": "What `pane-logging` answers with.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "description": "Where the log is being written, absent once logging is off.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "PaneRef": {
+      "description": "Exact identity of one PTY incarnation.",
+      "properties": {
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pane_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session_instance": {
+          "$ref": "#/$defs/SessionInstanceId"
+        }
+      },
+      "required": [
+        "session_instance",
+        "pane_id",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "PickAction": {
+      "description": "One extra key the caller offers alongside select and cancel.\n\nActions are what turn a picker from a menu into a working surface: delete the branch under the\ncursor and push a fresh list, or open a prompt and create one. They are declared up front so the\nfooter can advertise them the way every built-in picker advertises its own chords.",
+      "properties": {
+        "close": {
+          "default": false,
+          "description": "Whether firing it ends the picker. Default `false`: the caller usually wants to push an\nupdated row set and keep going.",
+          "type": "boolean"
+        },
+        "confirm": {
+          "default": false,
+          "description": "Require a second press to fire, the way the session and profile pickers arm a kill or a\ndelete. The armed row is struck through in the error colour with an `again to <label>` cue,\nand moving the highlight disarms it.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "Returned to the caller as `action`.",
+          "type": "string"
+        },
+        "key": {
+          "description": "Chord that fires it, in the same spelling `[keys]` uses (`ctrl-n`).",
+          "type": "string"
+        },
+        "label": {
+          "description": "Footer text, e.g. `new branch`.",
+          "type": "string"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PickPromptSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When set, the key opens a text prompt and the entered text rides back as `input`.\nA string is the title. An object may also set placeholder, a seed value, and masking.\nCancelling the prompt returns to the picker without reporting anything."
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "label"
+      ],
+      "type": "object"
+    },
+    "PickPromptFields": {
+      "description": "Object form of [`PickPromptSpec`].",
+      "properties": {
+        "masked": {
+          "description": "Hide typed characters on screen. The submitted `input` is still plaintext on the stream.",
+          "type": "boolean"
+        },
+        "placeholder": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    },
+    "PickPromptSpec": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/PickPromptFields"
+        }
+      ],
+      "description": "How a pick action describes the stacked text prompt.\n\nThe string form is the title. The object form is additive: every existing `\"prompt\":\"Title\"`\ncaller stays valid."
+    },
+    "PublishedRow": {
+      "description": "One logical agent or activity inside a pane that publishes several.",
+      "properties": {
+        "active": {
+          "default": false,
+          "description": "The row the publisher is currently displaying; at most one is true.\n\nThis is what lets a finish on a *background* row raise an alert even while the pane is\nfocused - looking at the pane only ever acknowledges the row on screen.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "Publisher-chosen identity, opaque to rozi and stable across updates.\n\nNever a position: tabs are reordered and closed, and an index-keyed run clock would hand\none tab's elapsed time to whichever tab slid into its place.",
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Same vocabulary and same sanitization as [`PaneStatus::value`].",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "work_started_at": {
+          "description": "Server-owned run start, mirroring [`PaneRuntimeState::work_started_at`] per row. Whatever\na publisher sends here is overwritten.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "status"
+      ],
+      "type": "object"
+    },
+    "QueueMetrics": {
+      "properties": {
+        "capacity_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "current_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "high_water_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued_items": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "current_bytes",
+        "high_water_bytes",
+        "capacity_bytes",
+        "queued_items"
+      ],
+      "type": "object"
+    },
+    "ResurrectionMetrics": {
+      "properties": {
+        "attempts": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failures": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_blocking_us": {
+          "description": "The part of an attempt the server loop itself is blocked for: capturing pane replay bytes\nand metadata, before the durable write is handed to the snapshot worker. This is the figure\nthat bounds input latency during a snapshot; `last_duration_us` no longer does.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_duration_us": {
+          "description": "Complete attempt duration: the server-thread export plus the worker's write, sync, and\nrename. Comparable with the synchronous measurements recorded before snapshots moved off\nthe server loop.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_exported_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_exported_panes": {
+          "description": "How the last capture split between re-exporting changed panes and reusing the replay files\nunchanged ones already had. A snapshot that blocks for a long time is explained by these:\ncost tracks exported panes and their bytes, not the session's pane count.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_reused_panes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_blocking_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_duration_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "successes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attempts",
+        "successes",
+        "failures",
+        "last_duration_us",
+        "max_duration_us",
+        "last_blocking_us",
+        "max_blocking_us",
+        "last_exported_panes",
+        "last_reused_panes",
+        "last_exported_bytes"
+      ],
+      "type": "object"
+    },
+    "RuntimeMetrics": {
+      "properties": {
+        "client_inbound": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "client_outbound": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "orphan_output": {
+          "$ref": "#/$defs/OrphanOutputMetrics"
+        },
+        "piped_remote": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteBufferMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sampled_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "server": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CachedServerRuntimeMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sampled_at_unix_ms",
+        "orphan_output"
+      ],
+      "type": "object"
+    },
+    "ServerOutboxMetrics": {
+      "properties": {
+        "capacity_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "clients": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "current_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "high_water_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "current_bytes",
+        "high_water_bytes",
+        "capacity_bytes",
+        "clients"
+      ],
+      "type": "object"
+    },
+    "SessionInstanceId": {
+      "description": "Opaque identity of one running session-server process.\n\nNames can be reused and pane generations restart after a server dies. This non-persistent token\nfences references from one server instance away from every later server with the same name.",
+      "type": "string"
+    },
+    "SessionMetricsReport": {
+      "description": "What `metrics` answers with from a session server.\n\nDeliberately not the same document a UI endpoint returns\n([`RuntimeMetrics`](crate::runtime_metrics::RuntimeMetrics)): a session server has no client\nqueues, no piped remote, and no orphan-output buffer to describe, so it reports the half of the\npicture it actually owns rather than padding the other half with nulls.",
+      "properties": {
+        "sampled_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "server": {
+          "$ref": "#/$defs/CachedServerRuntimeMetrics"
+        }
+      },
+      "required": [
+        "sampled_at_unix_ms",
+        "server"
+      ],
+      "type": "object"
+    },
+    "WireEvent": {
+      "description": "One `subscribe` event as it goes out on the wire.\n\n`data` is deliberately a flat map of strings rather than a per-kind payload type. The fields an\nevent carries grow over time and a subscriber is expected to read the ones it knows and ignore\nthe rest, so the schema describes the envelope and the closed vocabulary of event names without\nfreezing each kind's field list.",
+      "properties": {
+        "data": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "event": {
+          "$ref": "#/$defs/EventKind"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://rozi.tui-lipan.dev/schema/rozi-control-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
+  "title": "Rozi control API",
+  "x-rozi-api-version": 1,
+  "x-rozi-schema-version": 1
+}

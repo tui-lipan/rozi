@@ -303,6 +303,103 @@ pub struct AgentInfo {
     pub source: crate::session::protocol::AgentAuthority,
 }
 
+/// One pane as `list-panes` reports it.
+///
+/// Both control surfaces fill this same type. A UI endpoint reads it out of the client's `State`
+/// and a session server reads it out of its own authoritative runtime, but the document a script
+/// parses is the contract, not either implementation - so there is one type describing it rather
+/// than two that have to be kept in step by hand.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PaneInfo {
+    /// Session that answered. A remote one is qualified with its host, so two same-name sessions
+    /// do not look interchangeable.
+    pub session: String,
+    pub id: PaneId,
+    /// Absent only from a UI endpoint that has no session behind it.
+    pub reference: Option<crate::session::protocol::PaneRef>,
+    pub agent_ref: Option<crate::session::protocol::AgentRef>,
+    pub title: String,
+    /// One-based workspace, or `0` when the session has no layout document yet - nothing has
+    /// placed the pane, so there is no workspace to name.
+    pub workspace: usize,
+    /// Initial launch intent, retained for automation and profile diagnostics.
+    pub command: Option<String>,
+    pub argv: Option<Vec<String>>,
+    /// Live foreground process: what the pane is running now, rather than what launched it.
+    pub foreground_program: Option<String>,
+    pub foreground_programs: Vec<String>,
+    pub foreground_arguments: Vec<String>,
+    pub cwd: Option<String>,
+    /// Lifecycle text in the vocabulary a client's terminal reports: `ready`, or `exited (N)` for
+    /// a pane whose process is gone but whose screen is still readable.
+    pub status: String,
+    pub reported_status: Option<String>,
+    pub status_reason: Option<String>,
+    /// The agent detection recognized behind this pane, by definition id, and what it reads the
+    /// pane as doing. Both absent when no definition matched. This is detection's own answer, not
+    /// the pane's `reported_status` - a script capturing screens to test the rules against needs
+    /// to see what the rules currently say about the screen it just took.
+    pub agent: Option<String>,
+    pub agent_state: Option<String>,
+}
+
+/// One pane's captured screen, as `capture-pane` and `agents read` report it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PaneCapture {
+    pub id: PaneId,
+    pub text: String,
+    /// The terminal title, which several detection rules match instead of the screen. A capture
+    /// without it cannot stand in for what the detector saw.
+    pub title: Option<String>,
+}
+
+/// What `split` answers with once the pane exists.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct NewPaneAccepted {
+    pub id: PaneId,
+    pub accepted: bool,
+    pub pty_ready: bool,
+}
+
+/// What `pane-logging` answers with.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PaneLoggingState {
+    pub id: PaneId,
+    pub enabled: bool,
+    /// Where the log is being written, absent once logging is off.
+    pub path: Option<String>,
+}
+
+/// What `agents prompt` answers with when it was asked not to wait.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AgentPromptAccepted {
+    pub accepted: bool,
+    #[serde(rename = "ref")]
+    pub reference: crate::session::protocol::AgentRef,
+}
+
+/// What a resolved `agents wait` - or an `agents prompt --wait` - answers with.
+///
+/// `agent` is absent when the condition that resolved the wait is the agent no longer being there
+/// (`gone`), which is the one outcome with nothing left to describe.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AgentWaitResult {
+    pub condition: AgentWaitCondition,
+    pub agent: Option<crate::session::protocol::AgentRuntime>,
+}
+
+/// What `metrics` answers with from a session server.
+///
+/// Deliberately not the same document a UI endpoint returns
+/// ([`RuntimeMetrics`](crate::runtime_metrics::RuntimeMetrics)): a session server has no client
+/// queues, no piped remote, and no orphan-output buffer to describe, so it reports the half of the
+/// picture it actually owns rather than padding the other half with nulls.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SessionMetricsReport {
+    pub sampled_at_unix_ms: u64,
+    pub server: crate::runtime_metrics::CachedServerRuntimeMetrics,
+}
+
 /// How prominent a [`ControlCommand::Notify`] toast is.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -1107,6 +1204,64 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ControlRequest>(r#"{"cmd":"metrics"}"#).unwrap(),
             request
+        );
+    }
+
+    /// `list-panes` is one document whichever endpoint answered it. Both surfaces now fill this
+    /// type, so the field set is pinned here rather than drifting apart in two modules - renaming
+    /// or dropping one of these is an API change, not an implementation detail.
+    #[test]
+    fn a_pane_record_has_one_field_set() {
+        let pane = PaneInfo {
+            session: "dev".to_string(),
+            id: 3,
+            reference: None,
+            agent_ref: None,
+            title: "pane 3".to_string(),
+            workspace: 1,
+            command: None,
+            argv: None,
+            foreground_program: None,
+            foreground_programs: Vec::new(),
+            foreground_arguments: Vec::new(),
+            cwd: None,
+            status: "ready".to_string(),
+            reported_status: None,
+            status_reason: None,
+            agent: None,
+            agent_state: None,
+        };
+
+        let value = serde_json::to_value(&pane).expect("a pane record serializes");
+        let mut keys = value
+            .as_object()
+            .expect("a pane record is an object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+
+        assert_eq!(
+            keys,
+            [
+                "agent",
+                "agent_ref",
+                "agent_state",
+                "argv",
+                "command",
+                "cwd",
+                "foreground_arguments",
+                "foreground_program",
+                "foreground_programs",
+                "id",
+                "reference",
+                "reported_status",
+                "session",
+                "status",
+                "status_reason",
+                "title",
+                "workspace",
+            ]
         );
     }
 

@@ -1,4 +1,3 @@
-use serde::Serialize;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
@@ -15,50 +14,9 @@ use crate::pane::lifecycle::{find_pane_mut, spawn_interactive_pane_with_focus};
 use crate::pane::pty_events::terminal_key_event_bytes;
 use crate::state::{PaneId, PaneIdentity};
 
-#[derive(Serialize)]
-struct PaneInfo {
-    /// Session shown by the UI whose control endpoint answered this request. Remote sessions are
-    /// qualified with their host so two same-name sessions do not look interchangeable.
-    session: String,
-    id: PaneId,
-    reference: Option<crate::session::protocol::PaneRef>,
-    agent_ref: Option<crate::session::protocol::AgentRef>,
-    title: String,
-    workspace: usize,
-    /// Initial launch intent, retained for automation and profile diagnostics.
-    command: Option<String>,
-    argv: Option<Vec<String>>,
-    /// Live foreground process, which is what the pane is running now rather than what launched it.
-    foreground_program: Option<String>,
-    foreground_programs: Vec<String>,
-    foreground_arguments: Vec<String>,
-    cwd: Option<String>,
-    status: String,
-    reported_status: Option<String>,
-    status_reason: Option<String>,
-    /// The agent detection recognized behind this pane, by definition id, and what it reads the
-    /// pane as doing. Both absent when no definition matched. This is detection's own answer, not
-    /// the pane's `reported_status` - a script capturing screens to test the rules against needs to
-    /// see what the rules currently say about the screen it just took.
-    agent: Option<String>,
-    agent_state: Option<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct NewPaneAccepted {
-    pub id: PaneId,
-    pub accepted: bool,
-    pub pty_ready: bool,
-}
-
-#[derive(Serialize)]
-struct PaneCapture {
-    id: PaneId,
-    text: String,
-    /// The terminal title, which several detection rules match instead of the screen. A capture
-    /// without it cannot stand in for what the detector saw.
-    title: Option<String>,
-}
+/// The documents this endpoint answers with are the CLI's contract, not this module's, so their
+/// shapes live in [`crate::control`] and both control surfaces fill the same types.
+use crate::control::{NewPaneAccepted, PaneCapture, PaneInfo};
 
 pub(crate) fn handle_control_request(
     ctx: &mut Context<AppRoot>,

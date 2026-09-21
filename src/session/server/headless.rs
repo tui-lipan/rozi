@@ -16,8 +16,6 @@
 //!   client-local by design (see `architecture.md`'s runtime invariants). A session server has no
 //!   answer for them, so they are refused by name rather than silently accepted or faked.
 
-use serde::Serialize;
-
 use super::*;
 use crate::control::{
     AgentInfo, AgentTarget, CaptureScrollback, ControlCommand, ControlErrorCode, ControlRequest,
@@ -47,51 +45,11 @@ const HEADLESS_DEFAULT_WORKSPACE: usize = 0;
 /// echo of its own commit.
 const SERVER_LAYOUT_AUTHOR: ClientId = 0;
 
-/// One pane as `list-panes` reports it.
-///
-/// Field-for-field the shape `src/ops/control.rs` produces from a client's `State`, so
-/// `rozi list-panes` renders one table and a script parses one document whichever endpoint
-/// answered. The values come from different places — this side reads the authoritative server
-/// runtime state directly instead of the copy a client keeps — but the contract is the CLI's, not
-/// either implementation's.
-#[derive(Serialize)]
-struct SessionPaneInfo {
-    session: String,
-    id: PaneId,
-    reference: protocol::PaneRef,
-    agent_ref: Option<protocol::AgentRef>,
-    title: String,
-    /// One-based workspace from the shared layout, or `0` when the session has no layout document
-    /// yet (nothing has placed the pane, so there is no workspace to name).
-    workspace: usize,
-    command: Option<String>,
-    argv: Option<Vec<String>>,
-    foreground_program: Option<String>,
-    foreground_programs: Vec<String>,
-    foreground_arguments: Vec<String>,
-    cwd: Option<String>,
-    /// Lifecycle text in the same vocabulary a client's terminal reports: `ready`, or
-    /// `exited (N)` for a pane whose process is gone but whose screen is still readable.
-    status: String,
-    reported_status: Option<String>,
-    status_reason: Option<String>,
-    agent: Option<String>,
-    agent_state: Option<String>,
-}
-
-#[derive(Serialize)]
-struct SessionPaneCapture {
-    id: PaneId,
-    text: String,
-    title: Option<String>,
-}
-
-#[derive(Serialize)]
-struct SessionNewPane {
-    id: PaneId,
-    accepted: bool,
-    pty_ready: bool,
-}
+/// The documents this endpoint answers with are the CLI's contract, not this module's. The values
+/// come from somewhere else than a client's do - this side reads the authoritative server runtime
+/// state directly rather than the copy a client keeps - but the shapes are shared, so a script
+/// parses one document whichever endpoint answered it.
+use crate::control::{NewPaneAccepted, PaneCapture, PaneInfo};
 
 struct SessionAgentPrompt<'a> {
     target: AgentTarget,
@@ -339,14 +297,14 @@ impl SessionServer {
             }
             // A headless sample is taken now rather than read from a client's cache, so it is
             // never stale; the wrapper keeps the document shape `rozi metrics` already renders.
-            ControlCommand::Metrics => ControlResponse::ok(serde_json::json!({
-                "sampled_at_unix_ms": crate::runtime_metrics::unix_time_millis(),
-                "server": crate::runtime_metrics::CachedServerRuntimeMetrics {
+            ControlCommand::Metrics => ControlResponse::ok(crate::control::SessionMetricsReport {
+                sampled_at_unix_ms: crate::runtime_metrics::unix_time_millis(),
+                server: crate::runtime_metrics::CachedServerRuntimeMetrics {
                     sample: self.runtime_metrics(),
                     age_ms: 0,
                     stale: false,
                 },
-            })),
+            }),
             ControlCommand::CapturePane { target, scrollback } => {
                 self.session_capture_pane(target, scrollback)
             }
@@ -418,9 +376,9 @@ impl SessionServer {
         }
     }
 
-    fn session_pane_report(&self) -> Vec<SessionPaneInfo> {
+    fn session_pane_report(&self) -> Vec<PaneInfo> {
         let workspaces = self.layout_workspace_index();
-        let mut panes: Vec<SessionPaneInfo> = self
+        let mut panes: Vec<PaneInfo> = self
             .panes
             .iter()
             .map(|(id, pane)| {
@@ -433,10 +391,10 @@ impl SessionServer {
                 let runtime = protocol::effective_agent_runtimes(&pane.runtime, &references)
                     .into_iter()
                     .find(|runtime| runtime.reference.slot.is_none());
-                SessionPaneInfo {
+                PaneInfo {
                     session: self.session_name.clone(),
                     id: *id,
-                    reference,
+                    reference: Some(reference),
                     agent_ref: runtime.as_ref().map(|runtime| runtime.reference.clone()),
                     title: pane
                         .effective_title()
@@ -597,10 +555,10 @@ impl SessionServer {
         if request.wait.is_some() {
             None
         } else {
-            Some(ControlResponse::ok(serde_json::json!({
-                "accepted": true,
-                "ref": reference,
-            })))
+            Some(ControlResponse::ok(crate::control::AgentPromptAccepted {
+                accepted: true,
+                reference,
+            }))
         }
     }
 
@@ -708,7 +666,7 @@ impl SessionServer {
             Err(error) => return ControlResponse::error(error),
         };
         let title = pane.screen().title();
-        ControlResponse::ok(SessionPaneCapture { id, text, title })
+        ControlResponse::ok(PaneCapture { id, text, title })
     }
 
     fn session_send_bytes(&mut self, target: Option<PaneId>, bytes: Vec<u8>) -> ControlResponse {
@@ -904,11 +862,12 @@ impl SessionServer {
                 path,
                 error: None,
                 ..
-            } => serde_json::json!({
-                "id": id,
-                "enabled": enabled,
-                "path": path,
-            }),
+            } => serde_json::to_value(crate::control::PaneLoggingState {
+                id,
+                enabled: *enabled,
+                path: path.clone(),
+            })
+            .unwrap_or(serde_json::Value::Null),
             ServerMessage::PaneLoggingChanged {
                 error: Some(error), ..
             } => return ControlResponse::error(error.clone()),
@@ -1067,7 +1026,7 @@ impl SessionServer {
             },
         ));
 
-        ControlResponse::ok(SessionNewPane {
+        ControlResponse::ok(NewPaneAccepted {
             id: pane_id,
             accepted: true,
             pty_ready,

@@ -25,12 +25,6 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
         .map(crate::ops::extensions_manager::catalog_description)
         .collect();
     let mut groups = Vec::new();
-    if let Some(error) = state.catalog_error.as_deref() {
-        groups.push((
-            "Discovery unavailable",
-            vec![SearchEntry::header(format!("{error} · Ctrl+R to retry"))],
-        ));
-    }
     groups.extend([
         extension_group("Active", state, &descriptions, |status| {
             status == crate::config::ExtensionStatus::Loaded
@@ -181,11 +175,13 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     .actions(actions)
     .armed_row(armed)
     .placeholder("Search extensions…")
-    .empty_text(if state.catalog_error.is_some() {
-        "Discovery unavailable"
+    // The status row already reports a running fetch or a failed one.
+    .empty_text(if state.catalog_loading {
+        ""
     } else {
         "No extensions available"
     })
+    .status(catalog_status(ctx, state))
     .initial_query(state.restore_query.clone())
     .preserve_groups(true)
     .selected(selected_index)
@@ -288,6 +284,46 @@ fn extension_group(
         })
         .collect();
     (title, rows)
+}
+
+/// The discovery status row: a spinner while the index is fetched, the failure when it could not
+/// be. A group cannot carry either, since the palette hides a group with no selectable rows.
+fn catalog_status(
+    ctx: &Context<AppRoot>,
+    state: &crate::state::ExtensionsState,
+) -> Option<Element> {
+    let theme = &ctx.state.theme;
+    let listed = !state.catalog_entries.is_empty();
+    let content: Element = if state.catalog_loading {
+        Spinner::new()
+            .spinner_style(SpinnerStyle::Dots)
+            .label(if listed {
+                "refreshing index"
+            } else {
+                "loading index"
+            })
+            .style(Style::new().fg(theme.status.info))
+            .label_style(fg_only(&theme.muted))
+            .into()
+    } else {
+        let error = state.catalog_error.as_deref()?;
+        let label = if listed {
+            "index not refreshed"
+        } else {
+            "discovery unavailable"
+        };
+        Text::new(format!("{label} · {error}"))
+            .overflow(Overflow::Ellipsis)
+            .style(Style::new().fg(theme.status.warning))
+            .into()
+    };
+    Some(
+        HStack::new()
+            .height(Length::Px(1))
+            .padding((0, 1, 0, 1))
+            .child(content)
+            .into(),
+    )
 }
 
 pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {

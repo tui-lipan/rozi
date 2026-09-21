@@ -201,6 +201,7 @@ pub(crate) struct OverlayPalette<'a, T> {
     render_item: Option<OverlayItemRenderer<T>>,
     item_gutter: Option<OverlayGutterRenderer<T>>,
     fallback_interceptor: Option<KeyHandler>,
+    status: Option<Element>,
 }
 
 impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
@@ -230,7 +231,14 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             render_item: None,
             item_gutter: None,
             fallback_interceptor: None,
+            status: None,
         }
+    }
+
+    /// A row between the list and the hints for background work the list is waiting on.
+    pub(crate) fn status(mut self, status: Option<Element>) -> Self {
+        self.status = status;
+        self
     }
 
     pub(crate) fn placeholder(mut self, placeholder: impl Into<Cow<'a, str>>) -> Self {
@@ -329,6 +337,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             render_item,
             item_gutter,
             fallback_interceptor,
+            status,
         } = self;
 
         let confirm = armed_row.as_ref().and_then(|_| {
@@ -385,6 +394,9 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         palette = palette.input_key_interceptor(interceptor);
 
         let mut body = VStack::new().height(Length::Auto).child(palette);
+        if let Some(status) = status {
+            body = body.child(status);
+        }
         if actions.iter().any(OverlayAction::shows_hint) {
             body = body.child(overlay_hints(&ctx.state.theme, &actions));
         }

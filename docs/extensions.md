@@ -76,8 +76,11 @@ Closing the report or the manager does not cancel an installation: when it finis
 extension and reports the result. One discovery installation runs at a time.
 
 Discovery loads in the background, so installed-extension management remains available while the
-network request is running or offline. `Ctrl+R` retries discovery as well as rescanning installed
-manifests. The manual `Ctrl+I` source prompt remains available for repositories not in the index.
+network request is running or offline. Rozi keeps the last index it fetched in its cache directory
+and lists it immediately. An index up to ten minutes old is used as is, and an older one is
+refreshed in the background. A spinner above the hints shows a fetch in progress. If the fetch fails,
+the listed entries stay and the row reports the failure. `Ctrl+R` always refetches discovery, as
+well as rescanning installed manifests. The manual `Ctrl+I` source prompt remains available for repositories not in the index.
 An index entry Rozi cannot validate is left out of **Discover**. Only an unreadable index or an
 unsupported schema version makes discovery unavailable.
 

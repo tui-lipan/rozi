@@ -824,3 +824,78 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
         .join()
         .expect("catalog lifecycle completes");
 }
+
+/// Discovery shows its progress rather than popping rows in, and a failed refresh keeps the rows it
+/// already listed.
+#[test]
+fn catalog_loading_shows_a_spinner_and_keeps_listed_rows_offline() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 45,
+            });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("open extensions");
+            let loading = |backend: &mut TestBackend<AppRoot>, value: bool| {
+                backend
+                    .state_mut()
+                    .extensions
+                    .as_mut()
+                    .expect("extensions")
+                    .catalog_loading = value;
+            };
+
+            loading(&mut backend, true);
+            let first = frame(&mut backend);
+            assert!(first.contains("loading index"), "{first}");
+
+            load_catalog(
+                &mut backend,
+                serde_json::json!([catalog_entry(
+                    "someone/listed",
+                    "catalog-listed",
+                    "Listed fixture"
+                )]),
+            );
+            let loaded = frame(&mut backend);
+            assert!(loaded.contains("Listed fixture"), "{loaded}");
+            assert!(!loaded.contains("loading index"), "{loaded}");
+
+            loading(&mut backend, true);
+            let refreshing = frame(&mut backend);
+            assert!(
+                refreshing.contains("refreshing index") && refreshing.contains("Listed fixture"),
+                "listed rows stay while a refresh runs:\n{refreshing}"
+            );
+
+            let epoch = backend
+                .state()
+                .extensions
+                .as_ref()
+                .expect("extensions")
+                .catalog_epoch;
+            backend
+                .dispatch(rozi::Msg::ExtensionsCatalogLoaded {
+                    epoch,
+                    result: Err("offline".to_string()),
+                })
+                .expect("fail the refresh");
+            let offline = frame(&mut backend);
+            assert!(
+                offline.contains("index not refreshed · offline"),
+                "{offline}"
+            );
+            assert!(offline.contains("Listed fixture"), "{offline}");
+            assert!(!offline.contains("refreshing index"), "{offline}");
+        })
+        .expect("spawn catalog loading thread")
+        .join()
+        .expect("catalog loading completes");
+}

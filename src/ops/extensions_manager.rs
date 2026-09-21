@@ -31,6 +31,9 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     let update_check_epoch = next_update_check_epoch();
     let catalog_epoch = next_catalog_epoch();
     let git_ids = git_installation_ids(&scan.installation_kinds);
+    // The cached index lists immediately, so the network only decides whether rows change.
+    let cached = crate::extension_catalog::cached();
+    let refresh_catalog = !cached.as_ref().is_some_and(|cached| cached.fresh);
     ctx.state.show_palette = false;
     ctx.state.keybindings = None;
     ctx.state.show_settings = false;
@@ -49,9 +52,10 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
         pending_remove: None,
         detail: None,
         install_prompt: None,
-        catalog_entries: Vec::new(),
+        catalog_entries: cached.map(|cached| cached.entries).unwrap_or_default(),
         catalog_error: None,
         catalog_epoch,
+        catalog_loading: false,
         catalog_detail: None,
         installation_kinds: scan.installation_kinds,
         available_updates: BTreeSet::new(),
@@ -63,7 +67,9 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.commands_dirty = true;
     crate::ops::focus::request_extensions_focus(ctx);
     request_update_checks(ctx, update_check_epoch, git_ids);
-    request_catalog(ctx, catalog_epoch);
+    if refresh_catalog {
+        start_catalog_load(ctx);
+    }
     Update::full()
 }
 
@@ -348,6 +354,7 @@ pub(crate) fn catalog_loaded(
     if state.catalog_epoch != epoch {
         return Update::none();
     }
+    state.catalog_loading = false;
     match result {
         Ok(entries) => {
             // Rows are addressed by position, and a refresh may reorder or drop them, so the
@@ -367,9 +374,8 @@ pub(crate) fn catalog_loaded(
             });
         }
         Err(error) => {
-            state.catalog_entries.clear();
+            // Rows already listed, from the cache or an earlier fetch, stay usable offline.
             state.catalog_error = Some(error);
-            state.catalog_selected = None;
         }
     }
     Update::full()
@@ -835,20 +841,25 @@ fn start_catalog_load(ctx: &mut Context<AppRoot>) {
     let epoch = next_catalog_epoch();
     state.catalog_epoch = epoch;
     state.catalog_error = None;
-    request_catalog(ctx, epoch);
+    let loading = request_catalog(ctx, epoch);
+    if let Some(state) = ctx.state.extensions.as_mut() {
+        state.catalog_loading = loading;
+    }
 }
 
-fn request_catalog(ctx: &Context<AppRoot>, epoch: u64) {
+/// Starts a background fetch, reporting whether one is now running.
+fn request_catalog(ctx: &Context<AppRoot>, epoch: u64) -> bool {
     if crate::platform::paths::user_dirs_are_isolated() {
-        return;
+        return false;
     }
     let Some(link) = ctx.state.command_link.clone() else {
-        return;
+        return false;
     };
     std::thread::spawn(move || {
         let result = crate::extension_catalog::fetch();
         link.send(crate::Msg::ExtensionsCatalogLoaded { epoch, result });
     });
+    true
 }
 
 fn git_installation_ids(

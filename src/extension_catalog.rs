@@ -1,6 +1,8 @@
 //! Bounded fetch and validation for the public extension discovery index.
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use relswap::{Downloader, UreqDownloader};
 use semver::Version;
@@ -13,6 +15,9 @@ const INDEX_SCHEMA_VERSION: u32 = 1;
 const INDEX_URL: &str = "https://tui-lipan.github.io/rozi-extension-index/v1/index.json";
 /// Keep equal to `MAX_INDEX_BYTES` in the index generator, which sheds entries to stay under it.
 const MAX_INDEX_BYTES: usize = 1024 * 1024;
+/// How long a cached index is shown without asking the network, matching the index host's
+/// `Cache-Control: max-age`. The index is rebuilt daily, so this only spares repeated opens.
+const CACHE_FRESH_FOR: Duration = Duration::from_secs(10 * 60);
 const KNOWN_PLATFORMS: [&str; 5] = ["linux", "macos", "windows", "freebsd", "netbsd"];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -188,16 +193,65 @@ struct CatalogDocument {
     extensions: Vec<serde_json::Value>,
 }
 
-pub(crate) fn fetch() -> Result<Vec<CatalogEntry>, String> {
-    fetch_with(&UreqDownloader::new())
+/// The last index Rozi fetched, read back from the cache directory.
+pub(crate) struct CachedCatalog {
+    pub(crate) entries: Vec<CatalogEntry>,
+    /// Young enough to show without refreshing.
+    pub(crate) fresh: bool,
 }
 
-fn fetch_with(downloader: &impl Downloader) -> Result<Vec<CatalogEntry>, String> {
+/// Fetches the index and, on success, keeps its bytes for [`cached`].
+pub(crate) fn fetch() -> Result<Vec<CatalogEntry>, String> {
+    let bytes = download(&UreqDownloader::new())?;
+    let entries = parse(&bytes)?;
+    // A cache that cannot be written only costs the next open its head start.
+    let _ = store(&cache_path(), &bytes);
+    Ok(entries)
+}
+
+/// The cached index, so the manager can list it before any network round trip. The bytes are
+/// validated exactly like a fresh download, since the cache is only a copy of one.
+pub(crate) fn cached() -> Option<CachedCatalog> {
+    load(&cache_path(), SystemTime::now())
+}
+
+fn cache_path() -> PathBuf {
+    crate::platform::paths::cache_dir(&crate::platform::paths::PlatformEnv::from_process())
+        .join("extension-index-v1.json")
+}
+
+fn store(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    crate::platform::persist::replace_file(path, bytes)
+}
+
+fn load(path: &Path, now: SystemTime) -> Option<CachedCatalog> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if metadata.len() > MAX_INDEX_BYTES as u64 {
+        return None;
+    }
+    let entries = parse(&std::fs::read(path).ok()?).ok()?;
+    // A modification time in the future is a clock change, not freshness.
+    let fresh = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| now.duration_since(modified).ok())
+        .is_some_and(|age| age < CACHE_FRESH_FOR);
+    Some(CachedCatalog { entries, fresh })
+}
+
+fn download(downloader: &impl Downloader) -> Result<Vec<u8>, String> {
     let url = Url::parse(INDEX_URL).expect("extension index URL is valid");
-    let response = downloader
+    downloader
         .fetch(&url, MAX_INDEX_BYTES)
-        .map_err(|error| format!("Could not fetch extension index: {error}"))?;
-    let document: CatalogDocument = serde_json::from_slice(&response.bytes)
+        .map(|response| response.bytes)
+        .map_err(|error| format!("Could not fetch extension index: {error}"))
+}
+
+fn parse(bytes: &[u8]) -> Result<Vec<CatalogEntry>, String> {
+    let document: CatalogDocument = serde_json::from_slice(bytes)
         .map_err(|error| format!("Could not read extension index: {error}"))?;
     if document.schema_version != INDEX_SCHEMA_VERSION {
         return Err(format!(
@@ -270,9 +324,10 @@ mod tests {
     }
 
     fn parse(text: &str) -> Result<Vec<CatalogEntry>, String> {
-        fetch_with(&FakeDownloader {
+        let bytes = download(&FakeDownloader {
             bytes: text.as_bytes().to_vec(),
-        })
+        })?;
+        super::parse(&bytes)
     }
 
     #[test]
@@ -340,6 +395,29 @@ mod tests {
         let entries = parse(&text).unwrap();
         assert_eq!(entries.len(), 1, "limits count characters, not bytes");
         assert_eq!(entries[0].repository, "someone/at-limit");
+    }
+
+    #[test]
+    fn cached_index_is_revalidated_and_ages_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache/extension-index-v1.json");
+        assert!(load(&path, SystemTime::now()).is_none());
+
+        store(&path, VALID.as_bytes()).unwrap();
+        let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let cached = load(&path, written + Duration::from_secs(60)).unwrap();
+        assert_eq!(cached.entries.len(), 1);
+        assert!(cached.fresh);
+        assert!(!load(&path, written + CACHE_FRESH_FOR).unwrap().fresh);
+        assert!(
+            !load(&path, written - Duration::from_secs(60))
+                .unwrap()
+                .fresh,
+            "a clock that moved backwards does not make the cache fresh"
+        );
+
+        std::fs::write(&path, b"{ not json").unwrap();
+        assert!(load(&path, written).is_none(), "a corrupt cache is ignored");
     }
 
     #[test]

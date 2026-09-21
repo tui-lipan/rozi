@@ -37,23 +37,17 @@ pub(super) enum PromptCaption<'a> {
     /// Something the user needs to know before answering — a rejected password, a name that will
     /// not do. Stated in the warning colour; the chrome stays as it was.
     Note(&'a str),
-    /// Work is in progress. The label is paired with a real animated spinner.
-    Busy(&'a str),
 }
 
 impl<'a> PromptCaption<'a> {
     pub(super) fn text(self) -> &'a str {
         match self {
-            Self::Armed(text) | Self::Note(text) | Self::Busy(text) => text,
+            Self::Armed(text) | Self::Note(text) => text,
         }
     }
 
     fn arms_chrome(self) -> bool {
         matches!(self, Self::Armed(_))
-    }
-
-    fn is_busy(self) -> bool {
-        matches!(self, Self::Busy(_))
     }
 }
 
@@ -93,8 +87,6 @@ pub(super) fn prompt_highlight_row(theme: &Theme, highlight: &str) -> Element {
 pub(super) fn prompt_caption_accent(theme: &Theme, caption: PromptCaption<'_>) -> Color {
     if caption.arms_chrome() {
         theme.status.error
-    } else if caption.is_busy() {
-        theme.status.info
     } else {
         theme.status.warning
     }
@@ -196,7 +188,6 @@ pub(super) fn prompt_overlay(
         parent_reserve_percent,
     } = chrome;
     let theme = &ctx.state.theme;
-    let busy = caption.is_some_and(PromptCaption::is_busy);
     let scroll_up = caption_document
         .as_ref()
         .map(|document| document.scroll_up.clone());
@@ -250,38 +241,29 @@ pub(super) fn prompt_overlay(
     body = body.child(input.key(input_key));
     if let Some(caption) = caption {
         let accent = prompt_caption_accent(theme, caption);
-        let caption_content: Element = if caption.is_busy() {
-            Spinner::new()
-                .spinner_style(SpinnerStyle::Dots)
-                .label(caption.text())
-                .style(Style::new().fg(accent))
-                .label_style(fg_only(&theme.primary))
-                .into()
-        } else {
-            match caption_document {
-                Some(document) => DocumentView::new(caption.text())
-                    .wrap(true)
-                    .line_numbers(false)
-                    .border(false)
-                    .height(Length::Auto)
-                    .padding((0, 0, 0, 0))
-                    .scroll_offset(document.scroll_offset)
-                    .scrollbar(true)
-                    .scrollbar_config(modal_scrollbar_config(theme))
-                    .focusable(false)
-                    .tab_stop(false)
-                    .style(Style::new().fg(accent).italic())
-                    .focus_content_style(Style::new().fg(accent).italic())
-                    .selection_style(theme.text_selection)
-                    .on_scroll(document.on_scroll)
-                    .key(document.key)
-                    .max_height(Length::Px(document.max_height)),
-                None => Text::new(caption.text())
-                    .overflow(Overflow::Wrap)
-                    .width(Length::Flex(1))
-                    .style(Style::new().fg(accent).italic())
-                    .into(),
-            }
+        let caption_content: Element = match caption_document {
+            Some(document) => DocumentView::new(caption.text())
+                .wrap(true)
+                .line_numbers(false)
+                .border(false)
+                .height(Length::Auto)
+                .padding((0, 0, 0, 0))
+                .scroll_offset(document.scroll_offset)
+                .scrollbar(true)
+                .scrollbar_config(modal_scrollbar_config(theme))
+                .focusable(false)
+                .tab_stop(false)
+                .style(Style::new().fg(accent).italic())
+                .focus_content_style(Style::new().fg(accent).italic())
+                .selection_style(theme.text_selection)
+                .on_scroll(document.on_scroll)
+                .key(document.key)
+                .max_height(Length::Px(document.max_height)),
+            None => Text::new(caption.text())
+                .overflow(Overflow::Wrap)
+                .width(Length::Flex(1))
+                .style(Style::new().fg(accent).italic())
+                .into(),
         };
         body = body.child(
             HStack::new()
@@ -290,13 +272,11 @@ pub(super) fn prompt_overlay(
                 .child(caption_content),
         );
     }
-    if !busy {
-        body = body.child(prompt_hints(
-            ctx,
-            submit_hints,
-            always_cancel_hint || ctx.state.overlay_return.is_none(),
-        ));
-    }
+    body = body.child(prompt_hints(
+        ctx,
+        submit_hints,
+        always_cancel_hint || ctx.state.overlay_return.is_none(),
+    ));
 
     let mut modal = match parent_reserve_percent {
         Some(parent) => nested_action_palette_modal(ctx, title, parent),
@@ -334,11 +314,7 @@ pub(crate) fn extension_install_prompt_overlay(ctx: &Context<AppRoot>) -> Elemen
     else {
         return Text::new("").into();
     };
-    let caption = if prompt.installing {
-        Some(PromptCaption::Busy("Installing"))
-    } else {
-        prompt.error.as_deref().map(PromptCaption::Note)
-    };
+    let caption = prompt.error.as_deref().map(PromptCaption::Note);
     let caption_document = prompt.error.as_ref().map(|_| PromptDocument {
         key: extension_install_error_key(),
         max_height: 6,

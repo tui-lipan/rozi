@@ -155,6 +155,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ExtensionsSubmitCatalogInstall => {
             crate::ops::extensions_manager::submit_catalog_install(ctx)
         }
+        Msg::ExtensionsHideInstall => crate::ops::extensions_manager::hide_install(ctx),
         Msg::ExtensionsCatalogInstallFinished { repository, result } => {
             crate::ops::extensions_manager::catalog_install_finished(ctx, repository, result)
         }

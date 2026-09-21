@@ -201,7 +201,6 @@ pub(crate) fn open_install(ctx: &mut Context<AppRoot>) -> Update {
         error: None,
         error_scroll_offset: 0,
         error_scroll_max: None,
-        installing: false,
     });
     crate::ops::focus::request_extension_install_focus(ctx);
     Update::full()
@@ -216,9 +215,6 @@ pub(crate) fn install_source_changed(ctx: &mut Context<AppRoot>, event: InputEve
     else {
         return Update::none();
     };
-    if prompt.installing {
-        return Update::none();
-    }
     event.apply_to(&mut prompt.input);
     prompt.error = None;
     prompt.error_scroll_offset = 0;
@@ -280,19 +276,13 @@ pub(crate) fn close_install(ctx: &mut Context<AppRoot>) -> Update {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
-    if state
-        .install_prompt
-        .as_ref()
-        .is_some_and(|prompt| prompt.installing)
-    {
-        return Update::none();
-    }
     state.install_prompt = None;
     crate::ops::focus::request_extensions_focus(ctx);
     Update::full()
 }
 
 pub(crate) fn submit_install(ctx: &mut Context<AppRoot>) -> Update {
+    let busy = ctx.state.extension_install.is_some();
     let Some(prompt) = ctx
         .state
         .extensions
@@ -301,20 +291,26 @@ pub(crate) fn submit_install(ctx: &mut Context<AppRoot>) -> Update {
     else {
         return Update::none();
     };
-    if prompt.installing {
-        return Update::none();
-    }
     let source = prompt.input.text().trim().to_string();
-    if source.is_empty() {
-        prompt.error = Some("Enter a local path or Git URL".to_string());
-        prompt.error_scroll_offset = 0;
-        prompt.error_scroll_max = None;
-        return Update::full();
-    }
-    prompt.error = None;
+    let rejection = if busy {
+        Some("Another extension is still installing")
+    } else if source.is_empty() {
+        Some("Enter a local path or Git URL")
+    } else {
+        None
+    };
+    prompt.error = rejection.map(str::to_string);
     prompt.error_scroll_offset = 0;
     prompt.error_scroll_max = None;
-    prompt.installing = true;
+    if rejection.is_some() {
+        return Update::full();
+    }
+    ctx.state.extension_install = Some(crate::state::ExtensionInstall {
+        repository: None,
+        label: source.clone(),
+        detail: None,
+        hidden: false,
+    });
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
             let result = crate::extension_installation::install(
@@ -326,44 +322,130 @@ pub(crate) fn submit_install(ctx: &mut Context<AppRoot>) -> Update {
     }))
 }
 
+/// Finishes an installation from the install prompt whatever became of the UI that started it.
 pub(crate) fn install_finished(
     ctx: &mut Context<AppRoot>,
     result: std::result::Result<String, String>,
 ) -> Update {
-    let Some(state) = ctx.state.extensions.as_mut() else {
+    if !ctx
+        .state
+        .extension_install
+        .as_ref()
+        .is_some_and(|install| install.repository.is_none())
+    {
         return Update::none();
-    };
-    if let Some(prompt) = state.install_prompt.as_mut() {
-        prompt.installing = false;
     }
+    let hidden = ctx
+        .state
+        .extension_install
+        .take()
+        .is_some_and(|install| install.hidden);
+    let waiting = !hidden
+        && ctx
+            .state
+            .extensions
+            .as_ref()
+            .is_some_and(|state| state.install_prompt.is_some());
+    finish_install(ctx, waiting, result, |ctx, error| {
+        let Some(prompt) = ctx
+            .state
+            .extensions
+            .as_mut()
+            .and_then(|state| state.install_prompt.as_mut())
+        else {
+            return;
+        };
+        prompt.error = Some(error);
+        prompt.error_scroll_offset = 0;
+        prompt.error_scroll_max = None;
+        crate::ops::focus::request_extension_install_focus(ctx);
+    })
+}
+
+/// The presentation shared by both installation paths. The installation is already on disk, so a
+/// success always reloads extensions, even when the manager closed meanwhile. A user still
+/// `waiting` on the progress modal is taken to the new row, or shown the failure where they
+/// started; anyone who moved on is told in a toast.
+fn finish_install(
+    ctx: &mut Context<AppRoot>,
+    waiting: bool,
+    result: std::result::Result<String, String>,
+    show_error: impl FnOnce(&mut Context<AppRoot>, String),
+) -> Update {
     match result {
         Ok(id) => {
-            state.install_prompt = None;
-            // The prompt closes onto the new row, selected, with its version, source, and
-            // keybinding counts in the description. Only the conflicts need a toast.
+            if waiting && let Some(state) = ctx.state.extensions.as_mut() {
+                state.install_prompt = None;
+                state.catalog_detail = None;
+                crate::ops::focus::request_extensions_focus(ctx);
+            }
             let update = crate::ops::config::reload_extensions_quiet(ctx);
-            show_installed(ctx, &id);
-            warn_about_key_conflicts(ctx, &id);
+            if ctx.state.extensions.is_some() {
+                if waiting {
+                    show_installed(ctx, &id);
+                }
+                warn_about_key_conflicts(ctx, &id);
+            }
+            if !waiting {
+                // The new row alone may go unseen by someone who moved on.
+                notify_info(ctx, &format!("Installed {id}"));
+            }
             update
         }
+        Err(error) if waiting => {
+            show_error(ctx, error);
+            Update::full()
+        }
         Err(error) => {
-            if let Some(prompt) = ctx
-                .state
-                .extensions
-                .as_mut()
-                .and_then(|state| state.install_prompt.as_mut())
-            {
-                prompt.error = Some(error);
-                prompt.error_scroll_offset = 0;
-                prompt.error_scroll_max = None;
-                crate::ops::focus::request_extension_install_focus(ctx);
-                Update::full()
-            } else {
-                notify_error(ctx, "Extension not installed", error);
-                Update::full()
-            }
+            notify_error(ctx, "Extension not installed", error);
+            Update::full()
         }
     }
+}
+
+/// The installation whose progress modal is showing: not hidden, and its report or prompt still
+/// open in the manager.
+pub(crate) fn visible_install(
+    state: &crate::state::State,
+) -> Option<&crate::state::ExtensionInstall> {
+    let install = state
+        .extension_install
+        .as_ref()
+        .filter(|install| !install.hidden)?;
+    let extensions = state.extensions.as_ref()?;
+    let origin_open = match install.repository.as_deref() {
+        Some(repository) => extensions
+            .catalog_detail
+            .as_ref()
+            .is_some_and(|detail| detail.entry.repository == repository),
+        None => extensions.install_prompt.is_some(),
+    };
+    origin_open.then_some(install)
+}
+
+/// Hides the progress modal and the dialog under it. The installation continues.
+pub(crate) fn hide_install(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(install) = ctx.state.extension_install.as_mut() else {
+        return Update::none();
+    };
+    install.hidden = true;
+    let repository = install.repository.clone();
+    if let Some(state) = ctx.state.extensions.as_mut() {
+        match repository {
+            Some(repository) => {
+                if state
+                    .catalog_detail
+                    .as_ref()
+                    .is_some_and(|detail| detail.entry.repository == repository)
+                {
+                    state.catalog_detail = None;
+                }
+            }
+            None => state.install_prompt = None,
+        }
+        crate::ops::focus::request_extensions_focus(ctx);
+    }
+    Update::full()
 }
 
 pub(crate) fn catalog_loaded(
@@ -406,7 +488,7 @@ pub(crate) fn catalog_loaded(
 }
 
 pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
-    if ctx.state.extension_catalog_install.is_some() {
+    if ctx.state.extension_install.is_some() {
         return Update::none();
     }
     let Some(detail) = ctx
@@ -440,7 +522,12 @@ pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
     detail.error = None;
     let entry = detail.entry.clone();
     let repository = entry.repository.clone();
-    ctx.state.extension_catalog_install = Some(repository.clone());
+    ctx.state.extension_install = Some(crate::state::ExtensionInstall {
+        repository: Some(repository.clone()),
+        label: entry.title.clone(),
+        detail: Some(format!("{repository} · {}", &entry.commit[..12])),
+        hidden: false,
+    });
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
             let result = crate::extension_installation::install(
@@ -465,52 +552,37 @@ pub(crate) fn catalog_install_finished(
     repository: String,
     result: std::result::Result<String, String>,
 ) -> Update {
-    if ctx.state.extension_catalog_install.as_deref() != Some(repository.as_str()) {
+    if ctx
+        .state
+        .extension_install
+        .as_ref()
+        .and_then(|install| install.repository.as_deref())
+        != Some(repository.as_str())
+    {
         return Update::none();
     }
-    ctx.state.extension_catalog_install = None;
-    let detail_open = ctx.state.extensions.as_ref().is_some_and(|state| {
-        state
-            .catalog_detail
-            .as_ref()
-            .is_some_and(|detail| detail.entry.repository == repository)
-    });
-    match result {
-        Ok(installed_id) => {
-            if detail_open && let Some(state) = ctx.state.extensions.as_mut() {
-                state.catalog_detail = None;
-                crate::ops::focus::request_extensions_focus(ctx);
-            }
-            let update = crate::ops::config::reload_extensions_quiet(ctx);
-            if ctx.state.extensions.is_some() {
-                // The user waiting on the report is taken to the new row. Anyone who moved on
-                // stays where they are; the toast below tells them.
-                if detail_open {
-                    show_installed(ctx, &installed_id);
-                }
-                warn_about_key_conflicts(ctx, &installed_id);
-            }
-            if !detail_open {
-                // The user moved on before this finished, so the new row alone may go unseen.
-                notify_info(ctx, &format!("Installed {installed_id}"));
-            }
-            update
+    let hidden = ctx
+        .state
+        .extension_install
+        .take()
+        .is_some_and(|install| install.hidden);
+    let waiting = !hidden
+        && ctx.state.extensions.as_ref().is_some_and(|state| {
+            state
+                .catalog_detail
+                .as_ref()
+                .is_some_and(|detail| detail.entry.repository == repository)
+        });
+    finish_install(ctx, waiting, result, |ctx, error| {
+        if let Some(detail) = ctx
+            .state
+            .extensions
+            .as_mut()
+            .and_then(|state| state.catalog_detail.as_mut())
+        {
+            detail.error = Some(error);
         }
-        Err(error) => {
-            if detail_open
-                && let Some(detail) = ctx
-                    .state
-                    .extensions
-                    .as_mut()
-                    .and_then(|state| state.catalog_detail.as_mut())
-            {
-                detail.error = Some(error);
-            } else {
-                notify_error(ctx, "Extension not installed", error);
-            }
-            Update::full()
-        }
-    }
+    })
 }
 
 pub(crate) fn update_selected(ctx: &mut Context<AppRoot>) -> Update {
@@ -756,6 +828,11 @@ pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
         let Some(entry) = selected_catalog_entry(&ctx.state).cloned() else {
             return Update::none();
         };
+        if let Some(install) = ctx.state.extension_install.as_mut()
+            && install.repository.as_deref() == Some(entry.repository.as_str())
+        {
+            install.hidden = false;
+        }
         let Some(state) = ctx.state.extensions.as_mut() else {
             return Update::none();
         };

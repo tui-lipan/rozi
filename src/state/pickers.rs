@@ -1105,7 +1105,19 @@ pub struct ExtensionInstallPromptState {
     pub error: Option<String>,
     pub error_scroll_offset: usize,
     pub error_scroll_max: Option<usize>,
-    pub installing: bool,
+}
+
+/// An extension installation in flight, from a discovery report or the install prompt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionInstall {
+    /// The discovery repository being installed, or `None` for a source typed into the prompt.
+    pub repository: Option<String>,
+    /// What the progress modal names: the entry's title, or the typed source.
+    pub label: String,
+    /// A line under the label, such as the repository and commit being installed.
+    pub detail: Option<String>,
+    /// The user hid the progress modal. The installation continues and reports when it is done.
+    pub hidden: bool,
 }
 
 pub struct ExtensionDetailState {

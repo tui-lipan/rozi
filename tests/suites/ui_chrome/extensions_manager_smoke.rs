@@ -175,6 +175,16 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .map(|line| format!("Installation failure detail {line:02}"))
                 .collect::<Vec<_>>()
                 .join("\n");
+            backend.state_mut().extension_install = Some(rozi::state::ExtensionInstall {
+                repository: None,
+                label: "./missing".to_string(),
+                detail: None,
+                hidden: false,
+            });
+            assert!(
+                frame(&mut backend).contains("Installing extension"),
+                "the prompt's installation shows progress in its place"
+            );
             backend
                 .dispatch(rozi::Msg::ExtensionsInstallFinished(Err(
                     install_error.clone()
@@ -701,6 +711,15 @@ fn catalog_entry(repository: &str, id: &str, title: &str) -> serde_json::Value {
     })
 }
 
+fn installing(repository: &str, label: &str) -> rozi::state::ExtensionInstall {
+    rozi::state::ExtensionInstall {
+        repository: Some(repository.to_string()),
+        label: label.to_string(),
+        detail: Some(format!("{repository} · 5b5c8b9323e2")),
+        hidden: false,
+    }
+}
+
 fn load_catalog(backend: &mut TestBackend<AppRoot>, entries: serde_json::Value) {
     let epoch = backend
         .state()
@@ -777,12 +796,35 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
                 "{detail}"
             );
 
-            backend.state_mut().extension_catalog_install = Some("someone/first".to_string());
-            let installing = frame(&mut backend);
-            assert!(installing.contains("installing"), "{installing}");
-            backend
-                .dispatch(rozi::Msg::CloseExtensionDetail)
-                .expect("leave the report while installing");
+            backend.state_mut().extension_install =
+                Some(installing("someone/first", "First fixture"));
+            let progress = frame(&mut backend);
+            assert!(
+                progress.contains("Installing extension")
+                    && progress.contains("First fixture")
+                    && progress.contains("someone/first · 5b5c8b9323e2")
+                    && progress.contains("hide Esc"),
+                "{progress}"
+            );
+            assert!(
+                !progress.contains("Install extension · First fixture"),
+                "the progress modal takes the report's place:\n{progress}"
+            );
+            press(&mut backend, KeyCode::Esc);
+            let hidden = backend
+                .state()
+                .extension_install
+                .as_ref()
+                .expect("still installing");
+            assert!(hidden.hidden, "Esc hides the modal without cancelling");
+            assert!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .is_some_and(|state| state.catalog_detail.is_none()),
+                "and closes the report under it"
+            );
 
             backend
                 .dispatch(rozi::Msg::ExtensionsSelect(
@@ -805,7 +847,7 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
                     result: Ok("catalog-first".to_string()),
                 })
                 .expect("finish installation");
-            assert_eq!(backend.state().extension_catalog_install, None);
+            assert_eq!(backend.state().extension_install, None);
             let unblocked = frame(&mut backend);
             assert!(
                 unblocked.contains("Install extension · Second fixture")
@@ -813,7 +855,24 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
                 "another entry's report stays open and becomes installable:\n{unblocked}"
             );
 
-            backend.state_mut().extension_catalog_install = Some("someone/second".to_string());
+            let mut hidden = installing("someone/second", "Second fixture");
+            hidden.hidden = true;
+            backend.state_mut().extension_install = Some(hidden);
+            backend
+                .dispatch(rozi::Msg::CloseExtensionDetail)
+                .expect("close second report");
+            backend
+                .dispatch(rozi::Msg::ExtensionsToggleSelected)
+                .expect("reopen the installing entry's report");
+            assert!(
+                backend
+                    .state()
+                    .extension_install
+                    .as_ref()
+                    .is_some_and(|install| !install.hidden),
+                "reopening the report of the entry being installed shows its progress again"
+            );
+            assert!(frame(&mut backend).contains("Installing extension"));
             backend
                 .dispatch(rozi::Msg::CloseExtensions)
                 .expect("close the manager while installing");
@@ -823,7 +882,7 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
                     result: Err("clone failed".to_string()),
                 })
                 .expect("finish installation with the manager closed");
-            assert_eq!(backend.state().extension_catalog_install, None);
+            assert_eq!(backend.state().extension_install, None);
         })
         .expect("spawn catalog lifecycle thread")
         .join()

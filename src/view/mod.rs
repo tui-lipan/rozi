@@ -39,12 +39,12 @@ pub(crate) use overlays::{DIALOG_AFFIRM, neighbor_keybinding_id, settings_query_
 
 use overlays::{
     agent_picker_overlay, askpass_overlay, collaboration_overlay, extension_detail_overlay,
-    extension_install_prompt_overlay, extensions_overlay, follow_prompt_overlay, help_overlay,
-    keybinding_editor_dialog_overlay, layout_picker_overlay, palette_overlay, pane_padding_overlay,
-    pick_overlay, pick_prompt_overlay, profile_picker_overlay, reconnecting_overlay,
-    remote_picker_overlay, rename_overlay, rename_session_overlay, save_profile_overlay,
-    search_overlay, session_picker_overlay, settings_choice_overlay, settings_overlay,
-    theme_picker_overlay,
+    extension_install_progress_overlay, extension_install_prompt_overlay, extensions_overlay,
+    follow_prompt_overlay, help_overlay, keybinding_editor_dialog_overlay, layout_picker_overlay,
+    palette_overlay, pane_padding_overlay, pick_overlay, pick_prompt_overlay,
+    profile_picker_overlay, reconnecting_overlay, remote_picker_overlay, rename_overlay,
+    rename_session_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
+    settings_choice_overlay, settings_overlay, theme_picker_overlay,
 };
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
 
@@ -278,22 +278,29 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     {
         root = root.child(extensions_overlay(ctx));
     }
-    if ctx
-        .state
-        .extensions
-        .as_ref()
-        .is_some_and(|state| state.detail.is_some() || state.catalog_detail.is_some())
+    // A running installation's progress takes the place of the report or prompt that started it.
+    let installing = crate::ops::extensions_manager::visible_install(&ctx.state).is_some();
+    if !installing
+        && ctx
+            .state
+            .extensions
+            .as_ref()
+            .is_some_and(|state| state.detail.is_some() || state.catalog_detail.is_some())
     {
         root = root.child(extension_detail_overlay(ctx));
     }
-    if ctx
-        .state
-        .extensions
-        .as_ref()
-        .and_then(|state| state.install_prompt.as_ref())
-        .is_some()
+    if !installing
+        && ctx
+            .state
+            .extensions
+            .as_ref()
+            .and_then(|state| state.install_prompt.as_ref())
+            .is_some()
     {
         root = root.child(extension_install_prompt_overlay(ctx));
+    }
+    if installing {
+        root = root.child(extension_install_progress_overlay(ctx));
     }
     if let Some(keybindings) = ctx.state.keybindings.as_ref() {
         root = root.child(help_overlay(ctx, keybindings));

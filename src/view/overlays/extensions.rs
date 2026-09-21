@@ -350,22 +350,26 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
 }
 
 fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
-    let Some((entry, detail)) = ctx.state.extensions.as_ref().and_then(|state| {
-        let detail = state.catalog_detail.as_ref()?;
-        Some((state.catalog_entries.get(detail.index)?, detail))
-    }) else {
+    let Some(detail) = ctx
+        .state
+        .extensions
+        .as_ref()
+        .and_then(|state| state.catalog_detail.as_ref())
+    else {
         return Text::new("").into();
     };
+    let entry = &detail.entry;
     let compatible = entry.incompatibility().is_none();
+    let installing = ctx.state.extension_catalog_install.as_deref();
     let actions = vec![OverlayAction::new(
         "enter",
-        if detail.installing {
+        if installing == Some(entry.repository.as_str()) {
             "installing"
         } else {
             "install"
         },
         Msg::ExtensionsSubmitCatalogInstall,
-        compatible && !detail.installing,
+        compatible && installing.is_none(),
     )];
     let sections =
         crate::ops::extensions_manager::catalog_report_sections(entry, detail.error.as_deref());

@@ -350,30 +350,33 @@ pub(crate) fn catalog_loaded(
     }
     match result {
         Ok(entries) => {
+            // Rows are addressed by position, and a refresh may reorder or drop them, so the
+            // selection follows its repository rather than its old index. An open report holds its
+            // own snapshot and is unaffected.
+            let selected = state
+                .catalog_selected
+                .and_then(|index| state.catalog_entries.get(index))
+                .map(|entry| entry.repository.clone());
             state.catalog_entries = entries;
             state.catalog_error = None;
+            state.catalog_selected = selected.and_then(|repository| {
+                state
+                    .catalog_entries
+                    .iter()
+                    .position(|entry| entry.repository == repository)
+            });
         }
         Err(error) => {
             state.catalog_entries.clear();
             state.catalog_error = Some(error);
             state.catalog_selected = None;
-            state.catalog_detail = None;
         }
     }
     Update::full()
 }
 
 pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
-    let Some((index, entry)) = ctx.state.extensions.as_ref().and_then(|state| {
-        let detail = state.catalog_detail.as_ref()?;
-        Some((
-            detail.index,
-            state.catalog_entries.get(detail.index)?.clone(),
-        ))
-    }) else {
-        return Update::none();
-    };
-    if entry.incompatibility().is_some() {
+    if ctx.state.extension_catalog_install.is_some() {
         return Update::none();
     }
     let Some(detail) = ctx
@@ -384,12 +387,13 @@ pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
     else {
         return Update::none();
     };
-    if detail.index != index || detail.installing {
+    if detail.entry.incompatibility().is_some() {
         return Update::none();
     }
-    detail.installing = true;
     detail.error = None;
-    let id = entry.id.clone();
+    let entry = detail.entry.clone();
+    let repository = entry.repository.clone();
+    ctx.state.extension_catalog_install = Some(repository.clone());
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
             let result = crate::extension_installation::install(
@@ -399,46 +403,60 @@ pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
                 },
             )
             .map(|installed| installed.id);
-            link.send(crate::Msg::ExtensionsCatalogInstallFinished { id, result });
+            link.send(crate::Msg::ExtensionsCatalogInstallFinished { repository, result });
         });
     }))
 }
 
+/// Finishes a discovery installation whatever became of the UI that started it.
+///
+/// The installation is already on disk when this runs, so a success always reloads extensions,
+/// even when the user closed the report or the whole manager meanwhile. Only the presentation
+/// depends on what is still open.
 pub(crate) fn catalog_install_finished(
     ctx: &mut Context<AppRoot>,
-    id: String,
+    repository: String,
     result: std::result::Result<String, String>,
 ) -> Update {
-    let matches_open_detail = ctx.state.extensions.as_ref().is_some_and(|state| {
+    if ctx.state.extension_catalog_install.as_deref() != Some(repository.as_str()) {
+        return Update::none();
+    }
+    ctx.state.extension_catalog_install = None;
+    let detail_open = ctx.state.extensions.as_ref().is_some_and(|state| {
         state
             .catalog_detail
             .as_ref()
-            .and_then(|detail| state.catalog_entries.get(detail.index))
-            .is_some_and(|entry| entry.id == id)
+            .is_some_and(|detail| detail.entry.repository == repository)
     });
-    if !matches_open_detail {
-        return Update::none();
-    }
     match result {
         Ok(installed_id) => {
-            if let Some(state) = ctx.state.extensions.as_mut() {
+            if detail_open && let Some(state) = ctx.state.extensions.as_mut() {
                 state.catalog_detail = None;
                 state.catalog_selected = None;
+                crate::ops::focus::request_extensions_focus(ctx);
             }
             let update = crate::ops::config::reload_extensions_quiet(ctx);
-            select_by_id(ctx, &installed_id);
-            warn_about_key_conflicts(ctx, &installed_id);
+            if ctx.state.extensions.is_some() {
+                select_by_id(ctx, &installed_id);
+                warn_about_key_conflicts(ctx, &installed_id);
+            }
+            if !detail_open {
+                // The user moved on before this finished, so the new row alone may go unseen.
+                notify_info(ctx, &format!("Installed {installed_id}"));
+            }
             update
         }
         Err(error) => {
-            if let Some(detail) = ctx
-                .state
-                .extensions
-                .as_mut()
-                .and_then(|state| state.catalog_detail.as_mut())
+            if detail_open
+                && let Some(detail) = ctx
+                    .state
+                    .extensions
+                    .as_mut()
+                    .and_then(|state| state.catalog_detail.as_mut())
             {
-                detail.installing = false;
                 detail.error = Some(error);
+            } else {
+                notify_error(ctx, "Extension not installed", error);
             }
             Update::full()
         }
@@ -648,15 +666,11 @@ pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
         let Some(state) = ctx.state.extensions.as_mut() else {
             return Update::none();
         };
-        if index >= state.catalog_entries.len() {
+        let Some(entry) = state.catalog_entries.get(index).cloned() else {
             return Update::none();
-        }
+        };
         state.restore_query = state.query.clone();
-        state.catalog_detail = Some(CatalogExtensionDetailState {
-            index,
-            installing: false,
-            error: None,
-        });
+        state.catalog_detail = Some(CatalogExtensionDetailState { entry, error: None });
         crate::ops::focus::request_extension_detail_focus(ctx);
         return Update::full();
     }

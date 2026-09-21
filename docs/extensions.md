@@ -72,10 +72,14 @@ reviewed, safe, or endorsed.
 commit, compatibility, contribution counts, and the trust warning. A second `Enter` installs that
 exact indexed commit and validates the complete extension before moving it into Rozi's private data
 directory. Later `Ctrl+U` updates the managed checkout from its original Git remote as usual.
+Closing the report or the manager does not cancel an installation: when it finishes, Rozi loads the
+extension and reports the result. One discovery installation runs at a time.
 
 Discovery loads in the background, so installed-extension management remains available while the
 network request is running or offline. `Ctrl+R` retries discovery as well as rescanning installed
 manifests. The manual `Ctrl+I` source prompt remains available for repositories not in the index.
+An index entry Rozi cannot validate is left out of **Discover**. Only an unreadable index or an
+unsupported schema version makes discovery unavailable.
 
 To opt a public repository into discovery:
 

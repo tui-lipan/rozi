@@ -25,6 +25,12 @@ use crate::session::protocol::{self, ClientMessage, ServerMessage};
 /// take a few pump iterations to reach the request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long a wait's answer may lag the deadline the caller set.
+///
+/// The server resolves an expired wait on a pump iteration and sends `timeout` itself, so this is
+/// only there to let that answer win the race against the socket giving up on it.
+const WAIT_REPLY_SLACK: Duration = REQUEST_TIMEOUT;
+
 /// Why a headless control request did not produce an answer.
 #[derive(Debug)]
 pub enum SessionControlError {
@@ -86,12 +92,38 @@ pub fn run_session_control(
     exchange(name, &mut stream, request)
 }
 
+/// How long to wait for the server's answer, which is a different question per command.
+///
+/// An ordinary command is served from the server's next pump iteration, so anything slower than
+/// [`REQUEST_TIMEOUT`] is a wedged server rather than a busy one.
+///
+/// A wait is the opposite: taking a long time is the whole point of it. The server holds the
+/// request open until its condition resolves or its own deadline expires, so the socket has to
+/// outlast that deadline - and a wait given no deadline waits as long as the caller does. Holding
+/// every wait to the short budget instead turned each one longer than five seconds into a
+/// transport failure rather than the answer it was about to get.
+fn reply_timeout(command: &crate::control::ControlCommand) -> Option<Duration> {
+    use crate::control::ControlCommand;
+
+    let deadline_ms = match command {
+        ControlCommand::AgentWait { timeout_ms, .. } => *timeout_ms,
+        ControlCommand::AgentPrompt {
+            wait: Some(_),
+            timeout_ms,
+            ..
+        } => *timeout_ms,
+        _ => return Some(REQUEST_TIMEOUT),
+    };
+    // `None` here, and on overflow, means "no read timeout": an unbounded wait, as asked for.
+    deadline_ms.and_then(|ms| Duration::from_millis(ms).checked_add(WAIT_REPLY_SLACK))
+}
+
 fn exchange(
     name: &str,
     stream: &mut IpcConnection,
     request: ControlRequest,
 ) -> std::result::Result<ControlResponse, SessionControlError> {
-    let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
+    let _ = stream.set_read_timeout(reply_timeout(&request.command));
     let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
     protocol::write_frame(
         stream,
@@ -134,6 +166,51 @@ fn message_kind(message: &ServerMessage) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A wait that outlives the ordinary request budget must still be waited for. Holding it to
+    /// [`REQUEST_TIMEOUT`] reported `Resource temporarily unavailable` a few seconds in, while the
+    /// server was still perfectly willing to answer.
+    #[test]
+    fn a_wait_outlasts_its_own_deadline_and_an_ordinary_command_does_not() {
+        use crate::control::{AgentTarget, AgentWaitCondition, ControlCommand};
+
+        let target = || AgentTarget::Pane(3);
+        let wait = |timeout_ms| ControlCommand::AgentWait {
+            target: target(),
+            until: AgentWaitCondition::Idle,
+            timeout_ms,
+        };
+        let prompt = |wait, timeout_ms| ControlCommand::AgentPrompt {
+            target: target(),
+            prompt: "go".to_string(),
+            wait,
+            timeout_ms,
+            allow_working: false,
+        };
+
+        assert_eq!(
+            reply_timeout(&wait(Some(300_000))),
+            Some(Duration::from_secs(300) + WAIT_REPLY_SLACK)
+        );
+        assert_eq!(
+            reply_timeout(&prompt(Some(AgentWaitCondition::Idle), Some(300_000))),
+            Some(Duration::from_secs(300) + WAIT_REPLY_SLACK)
+        );
+        assert_eq!(
+            reply_timeout(&wait(None)),
+            None,
+            "a wait with no deadline waits as long as the caller does"
+        );
+        assert_eq!(
+            reply_timeout(&prompt(None, None)),
+            Some(REQUEST_TIMEOUT),
+            "a prompt that does not wait is an ordinary command"
+        );
+        assert_eq!(
+            reply_timeout(&ControlCommand::ListPanes),
+            Some(REQUEST_TIMEOUT)
+        );
+    }
 
     #[test]
     fn a_hostile_session_name_is_refused_before_any_endpoint_is_touched() {

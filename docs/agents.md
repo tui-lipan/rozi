@@ -27,6 +27,7 @@ that distinguishes working, blocked, idle, or unknown views.
 | `match.names` | one match field | Executable basenames. |
 | `match.paths` | one match field | Substrings found in executable paths or argument tokens. |
 | `states` | no | Screen or title rules. |
+| `resume.argv` | no | Native resume argv; `{session}` must be one whole element. |
 
 Names are matched without a directory, without case, and without these launcher suffixes:
 `.exe`, `.cmd`, `.bat`, `.ps1`, `.js`, `.mjs`, and `.py`.
@@ -186,6 +187,24 @@ pane publishes rows, Rozi uses those values instead of screen detection. A publi
 bring its corresponding in-program activity into view when selected.
 
 See [Control](control.md#published-activity) for fields and lifecycle.
+
+## Declare native resume support
+
+An agent that reports `--native-session` can declare how resurrection resumes that opaque session:
+
+```toml
+[[agents]]
+id = "mycoolagent"
+match = { names = ["mca"] }
+
+[agents.resume]
+argv = ["mca", "--resume", "{session}"]
+```
+
+`{session}` must appear exactly once and occupy the entire argument. Rozi substitutes it directly
+into the argument vector; it never builds a shell command, so spaces and shell metacharacters in an
+opaque reference remain data. Invalid resume declarations are ignored with a config warning while
+the agent's detection rules continue to work.
 
 ## Test a definition
 

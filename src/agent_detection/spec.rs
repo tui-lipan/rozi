@@ -32,6 +32,13 @@ pub struct AgentSpec {
     pub base: Option<bool>,
     pub r#match: AgentMatchSpec,
     pub states: Vec<AgentStateSpec>,
+    pub resume: Option<AgentResumeSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentResumeSpec {
+    pub argv: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
@@ -166,6 +173,9 @@ pub fn build_definitions(
             .into_iter()
             .filter_map(|state| build_state_rule(state, &noun, &id, warnings))
             .collect();
+        let resume_argv = spec
+            .resume
+            .and_then(|resume| validate_resume_argv(resume.argv, &noun, &id, warnings));
 
         let label = spec
             .label
@@ -178,9 +188,39 @@ pub fn build_definitions(
             paths,
             base: spec.base.unwrap_or(true),
             states,
+            resume_argv,
         });
     }
     built
+}
+
+fn validate_resume_argv(
+    argv: Vec<String>,
+    noun: &str,
+    id: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Vec<String>> {
+    let placeholders = argv
+        .iter()
+        .enumerate()
+        .filter_map(|(index, argument)| (argument == "{session}").then_some(index))
+        .collect::<Vec<_>>();
+    let embedded = argv
+        .iter()
+        .any(|argument| argument != "{session}" && argument.contains("{session}"));
+    if argv.is_empty()
+        || placeholders.len() != 1
+        || placeholders[0] == 0
+        || embedded
+        || argv.iter().any(|argument| argument.is_empty())
+    {
+        warnings.push(format!(
+            "Ignored {noun} `{id}` resume capability: `argv` must be non-empty and contain `{{session}}` exactly once as a whole non-program argument"
+        ));
+        None
+    } else {
+        Some(argv)
+    }
 }
 
 /// Validate the shared base rules. Same rule grammar, no owning agent.
@@ -335,6 +375,46 @@ mod tests {
     }
 
     #[test]
+    fn resume_session_is_one_opaque_argv_element() {
+        let (built, warnings) = build(
+            r#"
+            [[agents]]
+            id = "claude"
+            match = { names = ["claude"] }
+            [agents.resume]
+            argv = ["claude", "--resume", "{session}"]
+            "#,
+            AgentOrigin::Config,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            built[0].resume_command("a value; $(not shell)"),
+            Some(vec![
+                "claude".to_string(),
+                "--resume".to_string(),
+                "a value; $(not shell)".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn embedded_resume_placeholder_is_rejected_without_losing_detection() {
+        let (built, warnings) = build(
+            r#"
+            [[agents]]
+            id = "unsafe"
+            match = { names = ["unsafe"] }
+            [agents.resume]
+            argv = ["unsafe", "--resume={session}"]
+            "#,
+            AgentOrigin::Config,
+        );
+        assert_eq!(built.len(), 1);
+        assert!(built[0].resume_argv.is_none());
+        assert!(warnings.iter().any(|warning| warning.contains("whole")));
+    }
+
+    #[test]
     fn extension_agents_are_namespaced_and_cannot_displace_a_builtin() {
         let (built, warnings) = build(
             r#"
@@ -357,6 +437,7 @@ mod tests {
             paths: vec!["@anthropic-ai/claude-code".into()],
             base: true,
             states: Vec::new(),
+            resume_argv: Some(vec!["claude".into(), "--resume".into(), "{session}".into()]),
         }];
         let built = build_definitions(
             parse(
@@ -377,6 +458,7 @@ mod tests {
         assert_eq!(built[0].names, vec!["claude".to_string()]);
         assert_eq!(built[0].label(), "Claude");
         assert_eq!(built[0].states.len(), 1);
+        assert!(built[0].resume_argv.is_none());
     }
 
     #[test]

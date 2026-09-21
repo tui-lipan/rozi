@@ -273,12 +273,21 @@ struct SnapshotPane {
     /// [`ForegroundRestore::Never`](crate::config::ForegroundRestore::Never) declined to record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     foreground: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agent_resume: Option<SnapshotAgentResume>,
     cwd: Option<String>,
     keep_open: bool,
     title: Option<String>,
     palette: WirePalette,
     cols: u16,
     rows: u16,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SnapshotAgentResume {
+    agent: String,
+    session: String,
+    reported_at: u64,
 }
 
 impl SessionServer {
@@ -530,6 +539,19 @@ impl SessionServer {
                 generation: pane.generation,
                 launch: pane.launch.clone(),
                 foreground,
+                agent_resume: self
+                    .settings
+                    .resurrect_agents
+                    .then(|| {
+                        pane.runtime.integration.as_ref().and_then(|report| {
+                            Some(SnapshotAgentResume {
+                                agent: pane.runtime.detected_agent.as_ref()?.agent.id.clone(),
+                                session: report.native_session.clone()?,
+                                reported_at: report.reported_at,
+                            })
+                        })
+                    })
+                    .flatten(),
                 cwd: pane.spawnable_cwd(),
                 keep_open: pane.keep_open,
                 title: pane.effective_title(),
@@ -1421,6 +1443,37 @@ mod tests {
         assert_eq!(job.meta.panes[0].foreground, None);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_records_only_explicit_native_agent_session_facts() {
+        let mut server = SessionServer::new_named("native-agent");
+        let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
+        pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        pane.runtime.integration = Some(protocol::AgentIntegrationReport {
+            state: protocol::AgentState::Idle,
+            reason: None,
+            native_session: Some("opaque-session-123".into()),
+            seq: 7,
+            reported_at: 42,
+        });
+        server.panes.insert(1, pane);
+
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        let resume = job.meta.panes[0]
+            .agent_resume
+            .as_ref()
+            .expect("native session fact");
+        assert_eq!(resume.agent, "claude");
+        assert_eq!(resume.session, "opaque-session-123");
+        assert_eq!(resume.reported_at, 42);
+
+        server.settings.resurrect_agents = false;
+        let private_job = server.capture_snapshot(Instant::now()).expect("capture");
+        assert!(private_job.meta.panes[0].agent_resume.is_none());
     }
 
     /// A command is typed only once the restored shell says it is reading the terminal. Writing it

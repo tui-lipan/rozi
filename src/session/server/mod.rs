@@ -208,6 +208,8 @@ pub struct ServerSettings {
     /// [`Never`](crate::config::ForegroundRestore::Never), and restore decides between running the
     /// captured command and leaving it pending at the prompt.
     pub resurrect_foreground: crate::config::ForegroundRestore,
+    /// Whether snapshots may retain explicit native agent session references.
+    pub resurrect_agents: bool,
     pub snapshot_dir: Option<PathBuf>,
     pub snapshot_interval: Duration,
     /// Maximum time an attached client may go without a heartbeat pong.
@@ -256,6 +258,7 @@ impl Default for ServerSettings {
             log_max_bytes: crate::config::DEFAULT_LOG_MAX_BYTES,
             resurrect: false,
             resurrect_foreground: crate::config::ForegroundRestore::default(),
+            resurrect_agents: true,
             snapshot_dir: None,
             snapshot_interval: Duration::from_secs(30),
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT,
@@ -1832,6 +1835,7 @@ pub fn run_named_session_mode_with_nonce(
             log_max_bytes: loaded.config.logging.max_bytes,
             resurrect: !client_scratch && loaded.config.session.resurrect,
             resurrect_foreground: loaded.config.session.resurrect_foreground,
+            resurrect_agents: loaded.config.session.resurrect_agents,
             allow_takeover: !client_scratch && loaded.config.session.allow_takeover,
             scrollback: loaded.config.scrollback,
             shell,

@@ -27,16 +27,22 @@ impl SessionServer {
                 pane_id: *id,
                 generation: pane.generation,
             };
-            for runtime in
-                protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.references(pane_ref))
-            {
+            let runtimes =
+                protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.references(pane_ref));
+            let multiple = runtimes.len() > 1;
+            for (index, runtime) in runtimes.into_iter().enumerate() {
+                let label = if multiple {
+                    format!("{} #{}", runtime.label, index + 1)
+                } else {
+                    runtime.label
+                };
                 summaries.push(protocol::AgentSummary {
                     session: self.session_name.clone(),
                     pane: *id,
                     generation: pane.generation,
                     row: runtime.reference.slot,
                     agent: runtime.identity.id,
-                    label: runtime.label,
+                    label,
                     state: runtime.state.as_str().into(),
                     changed_at: pane.agent.summary_changed_at,
                 });

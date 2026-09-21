@@ -381,6 +381,7 @@ impl SessionServer {
         promotion_reason: ControllerChangeReason,
     ) {
         self.clear_browse_requests(id);
+        self.remove_agent_wait(id);
         if self.origin_seed_client == Some(id) {
             self.origin_seed_client = None;
         }

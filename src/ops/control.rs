@@ -211,6 +211,10 @@ pub(crate) fn handle_control_request(
             status,
             reason,
         ),
+        ControlCommand::AgentWait { .. } => ControlResponse::error_with(
+            ControlErrorCode::Unsupported,
+            "agent wait is server-owned; select a named session with --session",
+        ),
     };
     let _ = envelope.reply.send(response);
     Update::full()

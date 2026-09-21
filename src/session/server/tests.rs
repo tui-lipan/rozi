@@ -2164,6 +2164,7 @@ fn query_carries_agent_summaries_only_for_a_client_that_asked_for_them() {
         reason: Some("waiting".into()),
         set_at: 0,
     });
+    pane.agent.sync_references(&pane.runtime);
     server.panes.insert(1, pane);
 
     let summaries = |responses: &[(Target, ServerMessage)]| match responses {
@@ -2225,6 +2226,7 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
             work_started_at: None,
         },
     ];
+    pane.agent.sync_references(&pane.runtime);
     server.panes.insert(1, pane);
 
     let summaries = server.agent_summaries();

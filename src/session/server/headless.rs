@@ -106,7 +106,8 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::NewPane { .. }
         | ControlCommand::CapturePane { .. }
         | ControlCommand::PaneLogging { .. }
-        | ControlCommand::SetStatus { .. } => None,
+        | ControlCommand::SetStatus { .. }
+        | ControlCommand::AgentWait { .. } => None,
         ControlCommand::Focus { .. } => Some(
             "focus is client-local; a session server has no focused pane to move (every headless command names its pane with --target instead)",
         ),
@@ -161,6 +162,7 @@ impl SessionServer {
     /// also watching sees a headless spawn or status change exactly as it sees a client's.
     pub(super) fn handle_session_control(
         &mut self,
+        client_id: ClientId,
         session: String,
         protocol_version: u32,
         min_protocol_version: u32,
@@ -197,6 +199,37 @@ impl SessionServer {
             )];
         }
         let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());
+        if let ControlCommand::AgentWait {
+            target,
+            until,
+            timeout_ms,
+        } = &request.command
+        {
+            let response = if let Some(provenance) = &request.extension {
+                Some(ControlResponse::error(unverifiable_extension_provenance(
+                    provenance,
+                )))
+            } else {
+                self.register_agent_wait(
+                    client_id,
+                    target.clone(),
+                    *until,
+                    *timeout_ms,
+                    capabilities.clone(),
+                    effective,
+                )
+            };
+            return response.map_or_else(Vec::new, |response| {
+                vec![(
+                    Target::Sender,
+                    ServerMessage::SessionControlResult {
+                        capabilities: Some(capabilities),
+                        effective_protocol: effective,
+                        response,
+                    },
+                )]
+            });
+        }
         let mut broadcasts = Vec::new();
         let response = self.run_session_control(request, &mut broadcasts);
         let mut messages = vec![(
@@ -288,6 +321,7 @@ impl SessionServer {
             ControlCommand::PaneLogging { target, enabled } => {
                 self.session_pane_logging(target, enabled, broadcasts)
             }
+            ControlCommand::AgentWait { .. } => unreachable!("agent waits are registered above"),
             // Every remaining variant was refused above by `session_control_unsupported`.
             other => ControlResponse::error(
                 session_control_unsupported(&other).unwrap_or("unsupported control command"),
@@ -908,6 +942,7 @@ mod tests {
         command: ControlCommand,
     ) -> (ControlResponse, Vec<(Target, ServerMessage)>) {
         let mut messages = server.handle_session_control(
+            1,
             server.session_name.clone(),
             PROTOCOL_VERSION,
             protocol::MIN_SUPPORTED_PROTOCOL,
@@ -962,6 +997,7 @@ mod tests {
     fn a_headless_request_for_another_session_is_refused_before_anything_runs() {
         let mut server = SessionServer::new_named("dev");
         let messages = server.handle_session_control(
+            1,
             "other".to_string(),
             PROTOCOL_VERSION,
             protocol::MIN_SUPPORTED_PROTOCOL,
@@ -978,6 +1014,7 @@ mod tests {
     fn a_headless_request_from_an_incompatible_build_is_refused_at_the_handshake() {
         let mut server = SessionServer::new_named("dev");
         let messages = server.handle_session_control(
+            1,
             "dev".to_string(),
             PROTOCOL_VERSION.saturating_sub(1),
             PROTOCOL_VERSION.saturating_sub(1),
@@ -1225,6 +1262,7 @@ mod tests {
 
         // The caller is inside pane 3 of some *other* session. `dev` has a pane 3 too.
         let messages = server.handle_session_control(
+            1,
             "dev".to_string(),
             PROTOCOL_VERSION,
             protocol::MIN_SUPPORTED_PROTOCOL,
@@ -1339,6 +1377,7 @@ mod tests {
             },
         ] {
             let messages = server.handle_session_control(
+                1,
                 "dev".to_string(),
                 PROTOCOL_VERSION,
                 protocol::MIN_SUPPORTED_PROTOCOL,

@@ -124,7 +124,7 @@ impl SessionServer {
                         self.set_close_after_flush(id);
                     }
                 }
-                if is_query {
+                if is_query && !self.agent_waits.contains_key(&id) {
                     self.set_close_after_flush(id);
                 }
                 if detach {
@@ -213,6 +213,7 @@ impl SessionServer {
                     self.reload_spawn_policy();
                 }
                 self.handle_session_control(
+                    client_id,
                     session,
                     protocol_version,
                     min_protocol_version,
@@ -468,6 +469,7 @@ impl SessionServer {
                         self.mark_dirty();
                     }
                 }
+                self.resolve_agent_waits();
                 Vec::new()
             }
             ClientMessage::SetPalette {

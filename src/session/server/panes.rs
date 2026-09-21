@@ -434,6 +434,7 @@ impl SessionServer {
                             self.mark_dirty();
                         }
                         self.sync_pane_runtime(owner, id, generation);
+                        self.resolve_agent_waits();
                         let outbound = ServerOutbound::control(ServerMessage::Exited {
                             pane_id: id,
                             local: wire_local(owner),
@@ -495,6 +496,7 @@ impl SessionServer {
             self.mark_dirty();
         }
         self.sync_pane_runtime(owner, id, generation);
+        self.resolve_agent_waits();
         self.send_outbound(
             owner,
             &ServerOutbound::PaneOutput {

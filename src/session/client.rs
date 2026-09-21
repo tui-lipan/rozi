@@ -673,6 +673,23 @@ impl SessionClient {
         });
     }
 
+    pub fn report_agent(
+        &self,
+        pane_id: PaneId,
+        generation: u64,
+        local: bool,
+        report: Option<protocol::AgentIntegrationReport>,
+        seq: u64,
+    ) {
+        self.send_control(ClientMessage::ReportAgent {
+            pane_id,
+            local,
+            generation,
+            report,
+            seq,
+        });
+    }
+
     /// Ask the session server to re-read its agent definitions after a config reload.
     ///
     /// Detection is server-side, so a reload that changed `[[agents]]` or an extension's agents

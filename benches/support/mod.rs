@@ -170,6 +170,8 @@ pub fn attached_message() -> ServerMessage {
                     detected_agent: None,
                     work_started_at: None,
                     rows: Vec::new(),
+                    integration: None,
+                    integration_seq: None,
                     sequence: u64::from(pane.pane_id),
                 },
             })

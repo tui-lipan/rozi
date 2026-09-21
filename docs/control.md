@@ -89,6 +89,8 @@ session:
 | `agents read --target ID [--scrollback N\|full]` | Capture an agent's terminal. | yes |
 | `agents wait --target ID --until STATE [--timeout DURATION]` | Wait atomically for semantic state. | yes |
 | `agents prompt --target ID [--wait STATE] TEXT` | Validate, submit, and optionally wait atomically. | yes |
+| `agents report --state STATE --seq N` | Publish sequence-fenced native agent state. | yes |
+| `agents release --seq N` | Release integration authority. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
 | `focus <PANE_ID>` | Focus a pane. | no |
 | `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. | yes |

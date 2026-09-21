@@ -120,7 +120,9 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::PaneLogging { .. }
         | ControlCommand::SetStatus { .. }
         | ControlCommand::AgentWait { .. }
-        | ControlCommand::AgentPrompt { .. } => None,
+        | ControlCommand::AgentPrompt { .. }
+        | ControlCommand::AgentReport { .. }
+        | ControlCommand::AgentRelease { .. } => None,
         ControlCommand::Focus { .. } => Some(
             "focus is client-local; a session server has no focused pane to move (every headless command names its pane with --target instead)",
         ),
@@ -385,6 +387,21 @@ impl SessionServer {
             ControlCommand::AgentPrompt { .. } => {
                 unreachable!("agent prompts are submitted above")
             }
+            ControlCommand::AgentReport {
+                target,
+                state,
+                reason,
+                native_session,
+                seq,
+            } => self.session_agent_report_update(
+                target,
+                Some((state, reason, native_session)),
+                seq,
+                broadcasts,
+            ),
+            ControlCommand::AgentRelease { target, seq } => {
+                self.session_agent_report_update(target, None, seq, broadcasts)
+            }
             // Every remaining variant was refused above by `session_control_unsupported`.
             other => ControlResponse::error(
                 session_control_unsupported(&other).unwrap_or("unsupported control command"),
@@ -473,7 +490,11 @@ impl SessionServer {
                     state: runtime.state,
                     reason: runtime.reason,
                     cwd: pane.runtime.cwd.clone(),
-                    native_session: None,
+                    native_session: pane
+                        .runtime
+                        .integration
+                        .as_ref()
+                        .and_then(|report| report.native_session.clone()),
                     reference: runtime.reference,
                     source: runtime.source,
                     changed_at: runtime.changed_at,
@@ -765,6 +786,60 @@ impl SessionServer {
             }
             Ok(None) => ControlResponse::empty(),
             Err((_, message)) => ControlResponse::error(message),
+        }
+    }
+
+    fn session_agent_report_update(
+        &mut self,
+        target: Option<PaneId>,
+        report: Option<(protocol::AgentState, Option<String>, Option<String>)>,
+        seq: u64,
+        broadcasts: &mut Vec<(Target, ServerMessage)>,
+    ) -> ControlResponse {
+        let id = match self.session_target_pane(target) {
+            Ok(id) => id,
+            Err(response) => return response,
+        };
+        let Some(generation) = self.panes.get(&id).map(|pane| pane.generation) else {
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {id} not found"),
+            );
+        };
+        let report =
+            report.map(
+                |(state, reason, native_session)| protocol::AgentIntegrationReport {
+                    state,
+                    reason,
+                    native_session,
+                    seq,
+                    reported_at: crate::runtime_metrics::unix_time_millis(),
+                },
+            );
+        match self.apply_agent_integration(None, id, generation, report, seq) {
+            Ok(Some(state)) => {
+                broadcasts.push((
+                    Target::Broadcast,
+                    ServerMessage::PaneRuntimeChanged {
+                        pane_id: id,
+                        local: false,
+                        generation,
+                        agent_refs: self.agent_references(None, id),
+                        state,
+                    },
+                ));
+                ControlResponse::empty()
+            }
+            Ok(None) => ControlResponse::empty(),
+            Err((code, message)) => ControlResponse::error_with(
+                match code {
+                    "conflict" => ControlErrorCode::Conflict,
+                    "invalid-argument" => ControlErrorCode::InvalidArgument,
+                    "pane-not-found" => ControlErrorCode::PaneNotFound,
+                    _ => ControlErrorCode::RequestFailed,
+                },
+                message,
+            ),
         }
     }
 
@@ -1279,6 +1354,54 @@ mod tests {
             .unwrap();
         assert_eq!(response.code, Some(ControlErrorCode::AgentBlocked));
         assert!(server.agent_waits.is_empty());
+    }
+
+    #[test]
+    fn integration_reports_and_releases_are_sequence_fenced() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let (accepted, _) = control(
+            &mut server,
+            ControlCommand::AgentReport {
+                target: Some(7),
+                state: protocol::AgentState::Idle,
+                reason: Some("ready".into()),
+                native_session: Some("native-123".into()),
+                seq: 13,
+            },
+        );
+        assert!(accepted.ok);
+        assert_eq!(server.panes[&7].runtime.integration_seq, Some(13));
+
+        let (stale, _) = control(
+            &mut server,
+            ControlCommand::AgentReport {
+                target: Some(7),
+                state: protocol::AgentState::Blocked,
+                reason: None,
+                native_session: None,
+                seq: 12,
+            },
+        );
+        assert_eq!(stale.code, Some(ControlErrorCode::Conflict));
+        assert_eq!(
+            server.panes[&7].runtime.integration.as_ref().unwrap().state,
+            protocol::AgentState::Idle
+        );
+
+        assert!(
+            control(
+                &mut server,
+                ControlCommand::AgentRelease {
+                    target: Some(7),
+                    seq: 14,
+                },
+            )
+            .0
+            .ok
+        );
+        assert!(server.panes[&7].runtime.integration.is_none());
+        assert_eq!(server.panes[&7].runtime.integration_seq, Some(14));
     }
 
     #[test]

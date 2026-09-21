@@ -176,6 +176,11 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "agents prompt --target <PANE> [--wait <STATE>] <TEXT>",
                 "Safely submit a prompt",
             ),
+            row(
+                "agents report --state <STATE> --seq <N>",
+                "Report integration state",
+            ),
+            row("agents release --seq <N>", "Release integration state"),
         ],
     },
     HelpSection {

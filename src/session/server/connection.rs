@@ -280,6 +280,38 @@ impl SessionServer {
                     )],
                 }
             }
+            ClientMessage::ReportAgent {
+                pane_id,
+                local,
+                generation,
+                report,
+                seq,
+            } => {
+                if self.client_read_only(client_id) {
+                    return Vec::new();
+                }
+                let owner = local.then_some(client_id);
+                match self.apply_agent_integration(owner, pane_id, generation, report, seq) {
+                    Ok(Some(state)) => vec![(
+                        owner.map_or(Target::Broadcast, Target::Client),
+                        ServerMessage::PaneRuntimeChanged {
+                            pane_id,
+                            local,
+                            generation,
+                            agent_refs: self.agent_references(owner, pane_id),
+                            state,
+                        },
+                    )],
+                    Ok(None) => Vec::new(),
+                    Err((code, message)) => vec![(
+                        Target::Sender,
+                        ServerMessage::Error {
+                            code: code.to_string(),
+                            message,
+                        },
+                    )],
+                }
+            }
             ClientMessage::ReloadAgents => {
                 if self.is_controller(client_id) && !self.client_read_only(client_id) {
                     self.reload_agent_definitions();

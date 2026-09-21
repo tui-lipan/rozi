@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::layout::shared::{ClientId, SharedLayout};
 use crate::runtime_metrics::ServerRuntimeMetrics;
 use crate::session::protocol::pane_runtime::{
-    PaneMeta, PaneRuntimeState, PublishedRow, WirePalette,
+    AgentIntegrationReport, PaneMeta, PaneRuntimeState, PublishedRow, WirePalette,
 };
 use crate::state::PaneId;
 
@@ -177,6 +177,13 @@ pub enum ClientMessage {
         generation: u64,
         status: Option<String>,
         reason: Option<String>,
+    },
+    ReportAgent {
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        report: Option<AgentIntegrationReport>,
+        seq: u64,
     },
     /// Replace the pane's published rows. An empty list withdraws them, and the pane falls
     /// back to screen detection.

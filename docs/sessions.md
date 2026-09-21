@@ -399,6 +399,13 @@ If the resume command fails, the pane keeps the agent's own error on screen, nam
 leaves a usable shell below it. Rozi never starts a fresh conversation in place of one it could not
 reopen - that would look like a restore that worked.
 
+That holds for later restores too, not just the one that failed. A pane that falls back to a shell
+becomes a shell as far as resurrection is concerned: it stops carrying the launch intent that
+created it, so the next snapshot records a shell and the restore after that brings one back. Without
+that, a pane created to run an agent would come back running the agent again once the conversation
+reference was gone - a fresh conversation, one server lifetime later. A pane whose command merely
+exited is unaffected and still restores by running it again.
+
 Set `[session] resurrect_agents = false` to keep explicit native agent session references out of
 snapshots entirely. It defaults to `true`; only references reported by a live agent integration are
 eligible, never values scraped from terminal output.

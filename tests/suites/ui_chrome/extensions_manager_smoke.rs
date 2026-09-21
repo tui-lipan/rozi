@@ -60,7 +60,9 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             copy_fixture("invalid/incompatible-api", &extensions.join("a-future-api"));
             copy_fixture("valid/direct-command", &extensions.join("z-direct"));
             let manifest = extensions.join("z-direct/extension.toml");
-            let mut text = std::fs::read_to_string(&manifest).expect("read copied manifest");
+            let mut text = std::fs::read_to_string(&manifest)
+                .expect("read copied manifest")
+                .replacen("[extension]\n", "[extension]\nversion = \"0.2.1\"\n", 1);
             text.push_str(
                 "\n[settings]\nrunner = \"auto\"\n\
                  [[suggested_keybindings]]\n\
@@ -92,24 +94,57 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             // uses the staleness guard the message already carries: the real answer is discarded
             // as stale whenever it arrives, and this stops depending on the order.
             let epoch = u64::MAX;
+            {
+                let state = backend
+                    .state_mut()
+                    .extensions
+                    .as_mut()
+                    .expect("extensions state");
+                state.update_check_epoch = epoch;
+                state.update_checks.insert(
+                    "fixture-direct".to_string(),
+                    rozi::state::ExtensionUpdateCheck::Checking,
+                );
+            }
+            let checking = frame(&mut backend);
+            assert!(checking.contains("Installed · checking…"), "{checking}");
             backend
-                .state_mut()
-                .extensions
-                .as_mut()
-                .expect("extensions state")
-                .update_check_epoch = epoch;
-            backend
-                .dispatch(rozi::Msg::ExtensionsUpdatesChecked {
+                .dispatch(rozi::Msg::ExtensionUpdateChecked {
                     epoch,
-                    available: vec!["fixture-direct".to_string()],
+                    id: "fixture-direct".to_string(),
+                    check: rozi::state::ExtensionUpdateCheck::Available {
+                        revision: "89abcdef0123456789abcdef0123456789abcdef".to_string(),
+                        version: Some("0.2.2".to_string()),
+                    },
                 })
                 .expect("mark fixture update available");
             let list = frame(&mut backend);
             assert!(list.contains("Active"), "{list}");
             assert!(list.contains("fixture-direct"), "{list}");
-            assert!(list.contains("git"), "{list}");
+            assert!(list.contains("Installed · 1 update"), "{list}");
+            assert!(list.contains("0.2.1 → 0.2.2 · git"), "{list}");
+            let (original, fixture) = {
+                let state = backend.state().extensions.as_ref().unwrap();
+                let fixture = state
+                    .entries
+                    .iter()
+                    .position(|entry| entry.id.as_deref() == Some("fixture-direct"))
+                    .unwrap();
+                (state.selected, fixture)
+            };
+            backend
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Installed(fixture),
+                ))
+                .expect("select the Git fixture");
+            let selected = frame(&mut backend);
+            assert!(selected.contains("update Ctrl+U"), "{selected}");
+            backend
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Installed(original),
+                ))
+                .expect("restore the selection");
             assert!(list.contains("manual"), "{list}");
-            assert!(list.contains("update available"), "{list}");
             assert!(list.contains("1 key active"), "{list}");
             assert!(list.contains("install"), "{list}");
             assert!(!list.contains("copy report"), "{list}");

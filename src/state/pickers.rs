@@ -1080,11 +1080,26 @@ pub struct ExtensionsState {
     pub catalog_loading: bool,
     pub catalog_detail: Option<CatalogExtensionDetailState>,
     pub(crate) installation_kinds: BTreeMap<String, crate::extension_installation::InstallKind>,
-    pub(crate) available_updates: BTreeSet<String>,
+    /// Background update checks of Git installations, by extension id. An id without an entry
+    /// has not been checked since the picker opened.
+    pub update_checks: BTreeMap<String, ExtensionUpdateCheck>,
     pub update_check_epoch: u64,
     pub(crate) updating_id: Option<String>,
     pub(crate) manifest_entries: BTreeSet<String>,
     pub(crate) removable_entries: BTreeSet<String>,
+}
+
+/// Where one Git installation's update check stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExtensionUpdateCheck {
+    Checking,
+    Current,
+    Available {
+        revision: String,
+        /// The version the remote manifest declares, when it declares a usable one.
+        version: Option<String>,
+    },
+    Failed(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -163,8 +163,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ExtensionsUpdateFinished { id, result } => {
             crate::ops::extensions_manager::update_finished(ctx, id, result)
         }
-        Msg::ExtensionsUpdatesChecked { epoch, available } => {
-            crate::ops::extensions_manager::updates_checked(ctx, epoch, available)
+        Msg::ExtensionUpdateChecked { epoch, id, check } => {
+            crate::ops::extensions_manager::update_checked(ctx, epoch, id, check)
         }
         Msg::CloseExtensionDetail => crate::ops::extensions_manager::close_detail(ctx),
         Msg::ClosePanePaddingEditor => overlays::close_pane_padding_editor(ctx),

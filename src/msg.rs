@@ -105,9 +105,10 @@ pub enum Msg {
         id: String,
         result: std::result::Result<bool, String>,
     },
-    ExtensionsUpdatesChecked {
+    ExtensionUpdateChecked {
         epoch: u64,
-        available: Vec<String>,
+        id: String,
+        check: crate::state::ExtensionUpdateCheck,
     },
     CloseExtensionDetail,
     ClosePanePaddingEditor,

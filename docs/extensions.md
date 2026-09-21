@@ -110,10 +110,11 @@ extensions by status, and the **Discover** tab lists the public index. `Tab`, `S
 `→` switch tabs while the search field keeps focus. A search filters the active tab.
 
 On an installed row, `Enter` enables or disables the extension and `Ctrl+D` opens its full report.
-`Ctrl+I` opens a source prompt, `Ctrl+U` updates a selected Git-managed extension, `Ctrl+R` rescans
-extension manifests, `Ctrl+O` opens `extension.toml`, and `Ctrl+Y` copies the report. When the
-manifest declares a `homepage`, the report lists it and `Ctrl+L` opens it in your browser. Linked
-checkouts show `linked`; Git installs whose remote HEAD changed show `update available`.
+`Ctrl+I` opens a source prompt, `Ctrl+U` checks or updates a selected Git-managed extension,
+`Ctrl+R` rescans extension manifests, `Ctrl+O` opens `extension.toml`, and `Ctrl+Y` copies the
+report. When the manifest declares a `homepage`, the report lists it and `Ctrl+L` opens it in your
+browser. Linked checkouts show `linked`; a Git install with an update shows both versions, such as
+`0.2.1 → 0.2.2 · git`.
 
 The install prompt accepts the same local paths and Git HTTPS/SSH URLs as
 `rozi extensions install <SOURCE>`, and shows the same progress modal while it installs. Use the
@@ -193,10 +194,16 @@ The command clones the recorded remote into staging, validates it, and replaces 
 only when the new extension is valid. It refuses to replace a managed checkout with local changes.
 Copied local extensions and linked development checkouts do not expose update actions.
 
-The Extensions picker checks Git remotes in the background and marks changed installations with
-`update available`. `Ctrl+U` runs the same update operation as the CLI. An explicit CLI reload is
-required because Rozi does not watch extension directories; picker updates reload the current
-client after a successful replacement.
+The Extensions picker checks Git remotes in the background whenever it opens or reloads. The
+**Installed** tab reads `checking…` while checks run and then counts the updates found. A changed
+installation's row shows `installed → latest`, taking the latest version from the remote
+`extension.toml`, or a short commit when the remote moved without changing its version. The
+report's **Update** row shows the same result, or the error when a remote could not be checked.
+
+On a row with a known update, `Ctrl+U` runs the same update operation as the CLI. On any other
+Git-managed row it checks that remote again. An explicit CLI reload is required because Rozi does
+not watch extension directories; picker updates reload the current client after a successful
+replacement.
 
 ## Create an extension
 

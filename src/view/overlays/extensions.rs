@@ -111,9 +111,13 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
         .on_change(ctx.link().callback(Msg::ExtensionsQueryChanged))
         .key_interceptor(keys)
         .key(extensions_key());
+    let tab_labels = ExtensionsTab::ORDER.map(|tab| match tab {
+        ExtensionsTab::Installed => crate::ops::extensions_manager::installed_tab_label(state),
+        _ => tab.label().to_string(),
+    });
     let tabs = super::palette::picker_tabs(
         ctx,
-        &ExtensionsTab::ORDER.map(ExtensionsTab::label),
+        &tab_labels.each_ref().map(String::as_str),
         state.tab.index(),
         ctx.link()
             .callback(|event: TabsEvent| Msg::ExtensionsTabSelected(event.index)),
@@ -279,13 +283,21 @@ fn installed_actions(
         selected.is_some_and(|entry| state.manifest_entries.contains(entry.path.as_str()));
     let removable = state.updating_id.is_none()
         && selected.is_some_and(|entry| state.removable_entries.contains(entry.path.as_str()));
-    let updatable = selected
-        .and_then(|entry| entry.id.as_deref())
-        .is_some_and(|id| {
-            state.installation_kinds.get(id)
-                == Some(&crate::extension_installation::InstallKind::Git)
-                && state.updating_id.is_none()
-        });
+    let selected_id = selected.and_then(|entry| entry.id.as_deref());
+    let git = selected_id.is_some_and(|id| {
+        state.installation_kinds.get(id) == Some(&crate::extension_installation::InstallKind::Git)
+    });
+    let check = selected_id.and_then(|id| state.update_checks.get(id));
+    let checking = matches!(check, Some(crate::state::ExtensionUpdateCheck::Checking));
+    let updatable = git && state.updating_id.is_none() && !checking;
+    let update_label = if matches!(
+        check,
+        Some(crate::state::ExtensionUpdateCheck::Available { .. })
+    ) {
+        "update"
+    } else {
+        "check"
+    };
     vec![
         OverlayAction::new(
             "enter",
@@ -308,11 +320,7 @@ fn installed_actions(
         OverlayAction::new("ctrl-i", "install", Msg::ExtensionsOpenInstall, true),
         OverlayAction::new(
             "ctrl-u",
-            if state.updating_id.is_some() {
-                "updating"
-            } else {
-                "update"
-            },
+            update_label,
             Msg::ExtensionsUpdateSelected,
             updatable,
         ),

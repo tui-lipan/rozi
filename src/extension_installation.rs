@@ -42,6 +42,17 @@ pub(crate) struct UpdatedExtension {
     pub(crate) changed: bool,
 }
 
+/// What a Git installation's remote offers beyond the installed revision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheck {
+    Current,
+    Available {
+        revision: String,
+        /// `[extension].version` of the remote manifest, when it declares a usable one.
+        version: Option<String>,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RemovedExtension {
     pub(crate) id: String,
@@ -138,7 +149,10 @@ pub(crate) fn forget_installation_record(id: &str) -> Result<(), String> {
     remove_record(&crate::config::extensions_dir_path(), id)
 }
 
-pub(crate) fn update_available(id: &str) -> Result<bool, String> {
+/// Compares a Git installation with its remote HEAD. A moved HEAD is fetched shallowly, without a
+/// checkout, only to read the version its manifest now declares.
+pub(crate) fn check_update(id: &str) -> Result<UpdateCheck, String> {
+    crate::config::validate_extension_installation_id(id)?;
     let root = crate::config::extensions_dir_path();
     let record = required_git_record(&root, id)?;
     let InstallationSource::Git { remote, revision } = record.source else {
@@ -150,7 +164,17 @@ pub(crate) fn update_available(id: &str) -> Result<bool, String> {
             "Extension `{id}` no longer matches its recorded installed revision"
         ));
     }
-    Ok(remote_head(&remote)? != revision)
+    let head = remote_head(&remote)?;
+    if head == revision {
+        return Ok(UpdateCheck::Current);
+    }
+    // The version only labels the update. A remote that moved but will not serve its manifest
+    // still has an update, which the picker then names by commit.
+    let version = remote_manifest_version(&root, &remote).unwrap_or(None);
+    Ok(UpdateCheck::Available {
+        revision: head,
+        version,
+    })
 }
 
 pub(crate) fn update(id: &str) -> Result<UpdatedExtension, String> {
@@ -708,6 +732,56 @@ fn remote_head(remote: &str) -> Result<String, String> {
     validate_git_revision(revision, "remote")
 }
 
+/// Longest remote version shown, in characters. Matches the discovery index's `version` bound.
+const MAX_REMOTE_VERSION_CHARS: usize = 64;
+
+fn remote_manifest_version(root: &Path, remote: &str) -> Result<Option<String>, String> {
+    let staging = staging_path(&root.join(CONTROL_DIRECTORY))?;
+    let manifest = shallow_manifest(remote, &staging);
+    cleanup_staging(&staging);
+    Ok(manifest_version(&manifest?))
+}
+
+fn shallow_manifest(remote: &str, destination: &Path) -> Result<String, String> {
+    let mut clone = Command::new("git");
+    clone
+        .args(["clone", "--quiet", "--depth", "1", "--no-checkout", "--"])
+        .arg(remote)
+        .arg(destination);
+    let output = non_interactive_git(&mut clone)
+        .output()
+        .map_err(|error| format!("Could not run `git clone`: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Could not fetch Git extension from `{remote}`: {}",
+            command_failure(&output)
+        ));
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(destination)
+        .args(["show", "HEAD:extension.toml"])
+        .output()
+        .map_err(|error| format!("Could not run `git show`: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Could not read the remote extension manifest: {}",
+            command_failure(&output)
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|_| "The remote extension manifest is not UTF-8".to_string())
+}
+
+fn manifest_version(manifest: &str) -> Option<String> {
+    let manifest: toml::Table = manifest.parse().ok()?;
+    let version = manifest.get("extension")?.get("version")?.as_str()?.trim();
+    (!version.is_empty()
+        && version.chars().count() <= MAX_REMOTE_VERSION_CHARS
+        && !version.chars().any(char::is_control))
+    .then(|| version.to_string())
+}
+
 fn non_interactive_git(command: &mut Command) -> &mut Command {
     command.env("GIT_TERMINAL_PROMPT", "0")
 }
@@ -1091,5 +1165,63 @@ mod tests {
             fs::read_to_string(destination.join("value")).unwrap(),
             "first"
         );
+    }
+
+    #[test]
+    fn shallow_manifest_reads_the_remote_head_without_a_checkout() {
+        let source = tempfile::tempdir().unwrap();
+        assert!(git(source.path(), &["init", "--quiet"]).status.success());
+        assert!(
+            git(source.path(), &["config", "user.name", "Rozi test"])
+                .status
+                .success()
+        );
+        assert!(
+            git(
+                source.path(),
+                &["config", "user.email", "test@example.invalid"]
+            )
+            .status
+            .success()
+        );
+        let manifest = "[extension]\nid = \"git-tools\"\nversion = \"0.2.2\"\n";
+        fs::write(source.path().join("extension.toml"), manifest).unwrap();
+        assert!(
+            git(source.path(), &["add", "extension.toml"])
+                .status
+                .success()
+        );
+        assert!(
+            git(source.path(), &["commit", "--quiet", "-m", "release"])
+                .status
+                .success()
+        );
+
+        let parent = tempfile::tempdir().unwrap();
+        let destination = parent.path().join("probe");
+        let read = shallow_manifest(source.path().to_str().unwrap(), &destination).unwrap();
+        assert_eq!(read, manifest);
+        assert!(!destination.join("extension.toml").exists());
+        assert_eq!(manifest_version(&read).as_deref(), Some("0.2.2"));
+    }
+
+    #[test]
+    fn manifest_version_rejects_values_unfit_for_a_picker_row() {
+        assert_eq!(
+            manifest_version("[extension]\nversion = \" 1.0.0 \"\n").as_deref(),
+            Some("1.0.0")
+        );
+        for manifest in [
+            "[extension]\nid = \"git-tools\"\n",
+            "[extension]\nversion = \"\"\n",
+            "[extension]\nversion = 2\n",
+            "[extension]\nversion = \"1.0\\u001b[31m\"\n",
+            "version = \"1.0.0\"\n",
+            "not toml",
+        ] {
+            assert_eq!(manifest_version(manifest), None, "accepted {manifest:?}");
+        }
+        let long = format!("[extension]\nversion = \"{}\"\n", "9".repeat(65));
+        assert_eq!(manifest_version(&long), None);
     }
 }

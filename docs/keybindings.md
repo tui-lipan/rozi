@@ -386,8 +386,9 @@ the selected row or submits a prompt.
 - Extensions: `Tab`, `Shift+Tab`, and `Left`/`Right` switch between the **Installed** and
   **Discover** tabs. On an installed row, `Enter` enables or disables it and `Ctrl+D` opens its
   report; on a **Discover** row, `Enter` opens its installation report. `Ctrl+I` opens the manual
-  install prompt, `Ctrl+U` updates a Git-managed installation, and `Ctrl+R` rescans installed
-  manifests on **Installed** or refetches the index on **Discover**. `Ctrl+O` opens an installed
+  install prompt, `Ctrl+U` updates a Git-managed installation or checks it again when no update is
+  known, and `Ctrl+R` rescans installed manifests on **Installed** or refetches the index on
+  **Discover**. `Ctrl+O` opens an installed
   manifest, `Ctrl+Y` copies an installed report, and `Ctrl+K` twice removes an installation. Use
   the arrow and paging keys to scroll details. `Ctrl+L` opens a report's link in your browser: a
   discovery entry's source at its indexed commit, or an installed extension's homepage. A

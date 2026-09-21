@@ -10,11 +10,15 @@ use crate::config::{
     ReportTone,
 };
 use crate::state::{
-    CatalogExtensionDetailState, ExtensionDetailState, ExtensionPickerRow, ExtensionsState,
-    ExtensionsTab,
+    CatalogExtensionDetailState, ExtensionDetailState, ExtensionPickerRow, ExtensionUpdateCheck,
+    ExtensionsState, ExtensionsTab,
 };
 
 pub(crate) const EXTENSION_UPDATING_LABEL: &str = "updating…";
+/// Concurrent `git ls-remote` probes. Enough that one slow host does not stall the rest, few enough
+/// not to open a burst of connections to a single forge.
+const UPDATE_CHECK_WORKERS: usize = 4;
+const SHORT_REVISION_LEN: usize = 7;
 
 static NEXT_UPDATE_CHECK_EPOCH: AtomicU64 = AtomicU64::new(1);
 static NEXT_CATALOG_EPOCH: AtomicU64 = AtomicU64::new(1);
@@ -29,9 +33,7 @@ struct ManagerScan {
 
 pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     let scan = scan(ctx);
-    let update_check_epoch = next_update_check_epoch();
     let catalog_epoch = next_catalog_epoch();
-    let git_ids = git_installation_ids(&scan.installation_kinds);
     ctx.state.show_palette = false;
     ctx.state.keybindings = None;
     ctx.state.show_settings = false;
@@ -56,15 +58,15 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
         catalog_loading: false,
         catalog_detail: None,
         installation_kinds: scan.installation_kinds,
-        available_updates: BTreeSet::new(),
-        update_check_epoch,
+        update_checks: BTreeMap::new(),
+        update_check_epoch: 0,
         updating_id: None,
         manifest_entries: scan.manifest_entries,
         removable_entries: scan.removable_entries,
     });
     ctx.state.commands_dirty = true;
     crate::ops::focus::request_extensions_focus(ctx);
-    request_update_checks(ctx, update_check_epoch, git_ids);
+    start_update_check(ctx);
     // Loaded with the picker rather than the tab, so Discover is ready when it is first shown.
     load_catalog(ctx);
     normalize_selection(ctx);
@@ -588,8 +590,25 @@ pub(crate) fn update_selected(ctx: &mut Context<AppRoot>) -> Update {
     {
         return Update::none();
     }
+    match state.update_checks.get(&id) {
+        Some(ExtensionUpdateCheck::Available { .. }) => {}
+        Some(ExtensionUpdateCheck::Checking) => return Update::none(),
+        // Without a known update the same key asks again, so a failed or stale check is one
+        // keypress from an answer instead of a full clone that may change nothing.
+        _ => {
+            let epoch = state.update_check_epoch;
+            if request_update_checks(ctx, epoch, vec![id.clone()])
+                && let Some(state) = ctx.state.extensions.as_mut()
+            {
+                state
+                    .update_checks
+                    .insert(id, ExtensionUpdateCheck::Checking);
+            }
+            refresh_detail_report(ctx);
+            return Update::full();
+        }
+    }
     state.updating_id = Some(id.clone());
-    state.update_check_epoch = next_update_check_epoch();
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
             let result = crate::extension_installation::update(&id).map(|updated| updated.changed);
@@ -623,14 +642,18 @@ pub(crate) fn update_finished(
         return Update::none();
     }
     state.updating_id = None;
-    state.available_updates.remove(&id);
     match result {
         Ok(true) => {
+            state.update_checks.remove(&id);
             let update = crate::ops::config::reload_extensions_quiet(ctx);
             select_by_id(ctx, &id);
             update
         }
         Ok(false) => {
+            state
+                .update_checks
+                .insert(id.clone(), ExtensionUpdateCheck::Current);
+            refresh_detail_report(ctx);
             notify_info(ctx, &format!("{id} is up to date"));
             Update::full()
         }
@@ -641,18 +664,24 @@ pub(crate) fn update_finished(
     }
 }
 
-pub(crate) fn updates_checked(
+pub(crate) fn update_checked(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
-    available: Vec<String>,
+    id: String,
+    check: ExtensionUpdateCheck,
 ) -> Update {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
-    if state.update_check_epoch != epoch {
+    // A running update owns the row, and its reload starts a fresh check.
+    if state.update_check_epoch != epoch
+        || state.updating_id.as_deref() == Some(id.as_str())
+        || !state.update_checks.contains_key(&id)
+    {
         return Update::none();
     }
-    state.available_updates = available.into_iter().collect();
+    state.update_checks.insert(id, check);
+    refresh_detail_report(ctx);
     Update::full()
 }
 
@@ -733,7 +762,10 @@ pub(crate) fn copy_report(ctx: &mut Context<AppRoot>) -> Update {
             return Update::none();
         };
         let merged = merged_for(&ctx.state, entry);
-        crate::config::report_sections(entry, &merged)
+        let Some(state) = ctx.state.extensions.as_ref() else {
+            return Update::none();
+        };
+        installed_report_sections(state, entry, &merged)
     };
     copy(
         ctx,
@@ -832,10 +864,10 @@ pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
     };
     let path = identity(&entry);
     let merged = merged_for(&ctx.state, &entry);
-    let sections = crate::config::report_sections(&entry, &merged);
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
+    let sections = installed_report_sections(state, &entry, &merged);
     state.detail = Some(ExtensionDetailState { path, sections });
     crate::ops::focus::request_extension_detail_focus(ctx);
     Update::full()
@@ -876,9 +908,9 @@ fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
     state.manifest_entries = scan.manifest_entries;
     state.removable_entries = scan.removable_entries;
     state.installation_kinds = scan.installation_kinds;
-    state
-        .available_updates
-        .retain(|id| state.installation_kinds.contains_key(id));
+    state.update_checks.retain(|id, _| {
+        state.installation_kinds.get(id) == Some(&crate::extension_installation::InstallKind::Git)
+    });
     state.selected = selected
         .as_deref()
         .and_then(|selected| {
@@ -902,7 +934,7 @@ fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
             .unwrap_or_else(|| entry.settings.clone());
         Some(ExtensionDetailState {
             path: detail_path,
-            sections: crate::config::report_sections(entry, &merged),
+            sections: installed_report_sections(state, entry, &merged),
         })
     });
     normalize_selection(ctx);
@@ -1034,6 +1066,7 @@ fn git_installation_ids(
         .collect()
 }
 
+/// Rechecks every Git installation, replacing whatever an earlier check found.
 fn start_update_check(ctx: &mut Context<AppRoot>) {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return;
@@ -1041,20 +1074,160 @@ fn start_update_check(ctx: &mut Context<AppRoot>) {
     let epoch = next_update_check_epoch();
     state.update_check_epoch = epoch;
     let ids = git_installation_ids(&state.installation_kinds);
-    request_update_checks(ctx, epoch, ids);
+    let checking = request_update_checks(ctx, epoch, ids.clone());
+    if let Some(state) = ctx.state.extensions.as_mut() {
+        state.update_checks = if checking {
+            ids.into_iter()
+                .map(|id| (id, ExtensionUpdateCheck::Checking))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+    }
 }
 
-fn request_update_checks(ctx: &Context<AppRoot>, epoch: u64, ids: Vec<String>) {
+/// Checks `ids` on a few worker threads, each answer sent as soon as it is known, so one slow
+/// remote holds back only its own row. Reports whether any check started.
+fn request_update_checks(ctx: &Context<AppRoot>, epoch: u64, ids: Vec<String>) -> bool {
+    if ids.is_empty() {
+        return false;
+    }
     let Some(link) = ctx.state.command_link.clone() else {
+        return false;
+    };
+    let workers = ids.len().min(UPDATE_CHECK_WORKERS);
+    let queue = std::sync::Arc::new(std::sync::Mutex::new(ids.into_iter()));
+    for _ in 0..workers {
+        let queue = queue.clone();
+        let link = link.clone();
+        std::thread::spawn(move || {
+            // The guard is consumed by the closure, so the lock is released before each check.
+            while let Some(id) = queue.lock().ok().and_then(|mut queue| queue.next()) {
+                let check = update_check(crate::extension_installation::check_update(&id));
+                link.send(crate::Msg::ExtensionUpdateChecked { epoch, id, check });
+            }
+        });
+    }
+    true
+}
+
+fn update_check(
+    result: std::result::Result<crate::extension_installation::UpdateCheck, String>,
+) -> ExtensionUpdateCheck {
+    match result {
+        Ok(crate::extension_installation::UpdateCheck::Current) => ExtensionUpdateCheck::Current,
+        Ok(crate::extension_installation::UpdateCheck::Available { revision, version }) => {
+            ExtensionUpdateCheck::Available { revision, version }
+        }
+        Err(error) => ExtensionUpdateCheck::Failed(error),
+    }
+}
+
+/// Rebuilds an open installed report, whose update row follows the background check.
+fn refresh_detail_report(ctx: &mut Context<AppRoot>) {
+    let Some(state) = ctx.state.extensions.as_ref() else {
         return;
     };
-    std::thread::spawn(move || {
-        let available = ids
-            .into_iter()
-            .filter(|id| crate::extension_installation::update_available(id).unwrap_or(false))
-            .collect();
-        link.send(crate::Msg::ExtensionsUpdatesChecked { epoch, available });
-    });
+    let Some(path) = state.detail.as_ref().map(|detail| detail.path.clone()) else {
+        return;
+    };
+    let Some(entry) = state.entries.iter().find(|entry| identity(entry) == path) else {
+        return;
+    };
+    let merged = state
+        .merged
+        .get(&path)
+        .cloned()
+        .unwrap_or_else(|| entry.settings.clone());
+    let sections = installed_report_sections(state, entry, &merged);
+    if let Some(detail) = ctx
+        .state
+        .extensions
+        .as_mut()
+        .and_then(|state| state.detail.as_mut())
+    {
+        detail.sections = sections;
+    }
+}
+
+/// The shared extension report, plus the manager's own knowledge of available updates.
+fn installed_report_sections(
+    state: &ExtensionsState,
+    entry: &ExtensionInfo,
+    merged: &ExtensionSettings,
+) -> Vec<ReportSection> {
+    let mut sections = crate::config::report_sections(entry, merged);
+    let check = entry
+        .id
+        .as_deref()
+        .and_then(|id| state.update_checks.get(id));
+    let row = match check {
+        None => None,
+        Some(ExtensionUpdateCheck::Checking) => {
+            Some(("Update", "checking…".to_string(), ReportTone::Muted))
+        }
+        Some(ExtensionUpdateCheck::Current) => {
+            Some(("Update", "up to date".to_string(), ReportTone::Muted))
+        }
+        Some(ExtensionUpdateCheck::Available { revision, version }) => Some((
+            "Update",
+            match version {
+                Some(version) => format!("{version} · {}", short_revision(revision)),
+                None => short_revision(revision).to_string(),
+            },
+            ReportTone::Accent,
+        )),
+        Some(ExtensionUpdateCheck::Failed(error)) => {
+            Some(("Update check", error.clone(), ReportTone::Warning))
+        }
+    };
+    if let Some((label, value, tone)) = row
+        && let Some(overview) = sections.first_mut()
+    {
+        let at = overview
+            .rows
+            .iter()
+            .position(|row| row.label == "Version")
+            .map_or(overview.rows.len().min(1), |index| index + 1);
+        overview.rows.insert(
+            at,
+            ReportRow {
+                label: label.to_string(),
+                value,
+                tone,
+                kind: ReportKind::Info,
+            },
+        );
+    }
+    sections
+}
+
+fn short_revision(revision: &str) -> &str {
+    &revision[..revision.len().min(SHORT_REVISION_LEN)]
+}
+
+/// The Installed tab's label, which counts known updates, or says a check is still running
+/// until one is known.
+pub(crate) fn installed_tab_label(state: &ExtensionsState) -> String {
+    let label = ExtensionsTab::Installed.label();
+    let checks = state.update_checks.values();
+    let updates = checks
+        .clone()
+        .filter(|check| matches!(check, ExtensionUpdateCheck::Available { .. }))
+        .count();
+    if updates > 0 {
+        format!(
+            "{label} · {updates} update{}",
+            if updates == 1 { "" } else { "s" }
+        )
+    } else if checks
+        .into_iter()
+        .any(|check| *check == ExtensionUpdateCheck::Checking)
+    {
+        format!("{label} · checking…")
+    } else {
+        label.to_string()
+    }
 }
 
 fn select_by_id(ctx: &mut Context<AppRoot>, id: &str) {
@@ -1204,9 +1377,10 @@ pub(crate) fn extension_description(entry: &ExtensionInfo, state: &ExtensionsSta
         return EXTENSION_UPDATING_LABEL.to_string();
     }
     let mut parts = Vec::new();
-    if let Some(version) = entry.version.as_deref() {
-        parts.push(version.to_string());
-    }
+    parts.extend(version_label(
+        entry.version.as_deref(),
+        id.and_then(|id| state.update_checks.get(id)),
+    ));
     parts.push(
         installation_kind_label(id.and_then(|id| state.installation_kinds.get(id))).to_string(),
     );
@@ -1215,9 +1389,6 @@ pub(crate) fn extension_description(entry: &ExtensionInfo, state: &ExtensionsSta
         ExtensionStatus::Loaded | ExtensionStatus::Disabled
     ) {
         parts.push(entry.status_detail());
-    }
-    if id.is_some_and(|id| state.available_updates.contains(id)) {
-        parts.push("update available".to_string());
     }
     let active = suggested_keybindings(
         entry,
@@ -1240,6 +1411,22 @@ pub(crate) fn extension_description(entry: &ExtensionInfo, state: &ExtensionsSta
         ));
     }
     parts.join(" · ")
+}
+
+/// The installed version, or `installed → latest` once a check found an update.
+fn version_label(installed: Option<&str>, check: Option<&ExtensionUpdateCheck>) -> Option<String> {
+    let Some(ExtensionUpdateCheck::Available { revision, version }) = check else {
+        return installed.map(str::to_string);
+    };
+    // A remote that moved without bumping its version is named by commit instead.
+    let latest = version
+        .as_deref()
+        .filter(|version| Some(*version) != installed)
+        .unwrap_or_else(|| short_revision(revision));
+    Some(match installed {
+        Some(installed) => format!("{installed} → {latest}"),
+        None => format!("→ {latest}"),
+    })
 }
 
 pub(crate) fn catalog_description(
@@ -1531,8 +1718,9 @@ fn notify_error(ctx: &mut Context<AppRoot>, title: &str, detail: impl Into<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{catalog_source_url, installation_kind_label};
+    use super::{catalog_source_url, installation_kind_label, version_label};
     use crate::extension_installation::InstallKind;
+    use crate::state::ExtensionUpdateCheck;
 
     #[test]
     fn catalog_source_links_the_indexed_commit() {
@@ -1565,6 +1753,44 @@ mod tests {
             "https://github.com/tui-lipan/vim-rozi-navigator/tree/\
              5b5c8b9323e260a7c10a63d792274ca155d51e26"
         );
+    }
+
+    #[test]
+    fn version_label_names_an_update_by_version_or_commit() {
+        let available = |version: Option<&str>| ExtensionUpdateCheck::Available {
+            revision: "89abcdef0123456789abcdef0123456789abcdef".to_string(),
+            version: version.map(str::to_string),
+        };
+        assert_eq!(version_label(Some("0.2.1"), None).as_deref(), Some("0.2.1"));
+        assert_eq!(
+            version_label(Some("0.2.1"), Some(&ExtensionUpdateCheck::Current)).as_deref(),
+            Some("0.2.1")
+        );
+        assert_eq!(
+            version_label(
+                Some("0.2.1"),
+                Some(&ExtensionUpdateCheck::Failed("offline".into()))
+            )
+            .as_deref(),
+            Some("0.2.1")
+        );
+        assert_eq!(
+            version_label(Some("0.2.1"), Some(&available(Some("0.2.2")))).as_deref(),
+            Some("0.2.1 → 0.2.2")
+        );
+        assert_eq!(
+            version_label(Some("0.2.1"), Some(&available(Some("0.2.1")))).as_deref(),
+            Some("0.2.1 → 89abcde")
+        );
+        assert_eq!(
+            version_label(Some("0.2.1"), Some(&available(None))).as_deref(),
+            Some("0.2.1 → 89abcde")
+        );
+        assert_eq!(
+            version_label(None, Some(&available(Some("0.2.2")))).as_deref(),
+            Some("→ 0.2.2")
+        );
+        assert_eq!(version_label(None, None), None);
     }
 
     #[test]

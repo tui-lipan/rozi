@@ -394,7 +394,7 @@ impl State {
         }
     }
 
-    fn activity_item_projections(&self) -> Vec<SidebarItemProjection> {
+    pub(crate) fn activity_item_projections(&self) -> Vec<SidebarItemProjection> {
         struct ActivityItem {
             target: RowTarget,
             host: Option<String>,

@@ -139,7 +139,7 @@ impl AgentScratch {
         }
     }
 
-    fn retire_integration(&mut self, integration: String) {
+    pub(super) fn retire_integration(&mut self, integration: String) {
         self.retired_integrations.insert(integration);
     }
 
@@ -189,6 +189,19 @@ fn runtime_occupants(runtime: &PaneRuntimeState) -> Vec<(Option<String>, &str)> 
                 .map(|_| vec![(None, "reported")])
                 .unwrap_or_default()
         })
+}
+
+fn integration_has_strong_replacement_evidence(
+    integration: &protocol::AgentIntegrationReport,
+    runtime: &PaneRuntimeState,
+) -> bool {
+    match runtime.detected_agent.as_ref() {
+        Some(detected) => detected.agent.id != integration.identity.id,
+        None => matches!(
+            runtime.command_phase,
+            PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. }
+        ),
+    }
 }
 
 type IntegrationPayload = (protocol::AgentState, Option<String>, Option<String>);
@@ -437,6 +450,7 @@ impl SessionServer {
             &previous_runtime,
             pane.runtime.status.as_ref(),
             pane.runtime.detected_agent.as_ref(),
+            pane.runtime.integration.as_deref(),
         );
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
@@ -528,7 +542,8 @@ impl SessionServer {
             seq,
         } = update;
         let report = state.map(|state| (state, reason, native_session));
-        let previous = pane.runtime.integration.clone();
+        let previous_runtime = pane.runtime.clone();
+        let previous = previous_runtime.integration.clone();
         validate_integration_update(pane, &integration, report.as_ref(), seq, pane_id)?;
 
         if let Some((state, reason, native_session)) = report {
@@ -552,6 +567,12 @@ impl SessionServer {
             pane.agent.retire_integration(integration);
             pane.runtime.integration = None;
         }
+        pane.runtime.work_started_at = next_work_started_at(
+            &previous_runtime,
+            pane.runtime.status.as_ref(),
+            pane.runtime.detected_agent.as_ref(),
+            pane.runtime.integration.as_deref(),
+        );
         pane.agent.sync_references(&pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
@@ -720,13 +741,19 @@ impl SessionServer {
             detect_agent.then(|| agents.as_ref()),
             scan,
         );
-        let integration_replaced = next.integration.as_ref().is_some_and(|integration| {
-            next.detected_agent
-                .as_ref()
-                .is_none_or(|detected| detected.agent.id != integration.identity.id)
+        let integration_replaced = next.integration.as_deref().is_some_and(|integration| {
+            integration_has_strong_replacement_evidence(integration, &next)
         });
         if integration_replaced && let Some(integration) = next.integration.take() {
             pane.agent.retire_integration(integration.integration);
+            let mut previous = pane.runtime.clone();
+            previous.work_started_at = None;
+            next.work_started_at = next_work_started_at(
+                &previous,
+                next.status.as_ref(),
+                next.detected_agent.as_ref(),
+                None,
+            );
         }
         if next == pane.runtime {
             return;
@@ -956,6 +983,7 @@ fn compute_runtime_state(
         &pane.runtime,
         pane.runtime.status.as_ref(),
         detected_agent.as_ref(),
+        pane.runtime.integration.as_deref(),
     );
     let candidate = PaneRuntimeState {
         cwd: path.cwd,
@@ -1351,16 +1379,22 @@ fn next_work_started_at(
     previous: &PaneRuntimeState,
     next_status: Option<&PaneStatus>,
     next_detected: Option<&DetectedAgent>,
+    next_integration: Option<&protocol::AgentIntegrationReport>,
 ) -> Option<u64> {
-    let previous_status = crate::session::protocol::effective_agent_status(
+    let previous_status = crate::session::protocol::effective_semantic_agent_state(
+        previous.integration.as_deref(),
         previous.status.as_ref(),
         previous.detected_agent.as_ref(),
     );
-    let next_status = crate::session::protocol::effective_agent_status(next_status, next_detected);
-    next_run_start(
-        previous_status,
-        previous.work_started_at,
+    let next_status = crate::session::protocol::effective_semantic_agent_state(
+        next_integration,
         next_status,
+        next_detected,
+    );
+    next_run_start(
+        previous_status.map(protocol::AgentState::as_str),
+        previous.work_started_at,
+        next_status.map(protocol::AgentState::as_str),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -1808,6 +1842,58 @@ mod tests {
         scratch.sync_references(&runtime);
 
         assert_eq!(scratch.references(pane_ref), vec![reference]);
+    }
+
+    #[test]
+    fn integration_retires_only_on_strong_process_replacement_evidence() {
+        let integration = protocol::AgentIntegrationReport {
+            integration: "hook-a".into(),
+            identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: protocol::AgentRef {
+                pane: protocol::PaneRef {
+                    session_instance: protocol::SessionInstanceId::for_test("server"),
+                    pane_id: 3,
+                    generation: 7,
+                },
+                slot: None,
+                incarnation: 1,
+            },
+            state: protocol::AgentState::Working,
+            reason: None,
+            native_session: None,
+            seq: 1,
+            reported_at_unix_ms: 42,
+        };
+        let mut runtime = PaneRuntimeState {
+            command_phase: PaneCommandPhase::Executing,
+            ..PaneRuntimeState::default()
+        };
+        assert!(!integration_has_strong_replacement_evidence(
+            &integration,
+            &runtime
+        ));
+
+        runtime.command_phase = PaneCommandPhase::Prompt;
+        assert!(integration_has_strong_replacement_evidence(
+            &integration,
+            &runtime
+        ));
+        runtime.detected_agent = Some(DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        assert!(!integration_has_strong_replacement_evidence(
+            &integration,
+            &runtime
+        ));
+        runtime.detected_agent = Some(DetectedAgent {
+            agent: protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: protocol::DetectedAgentState::Working,
+        });
+        assert!(integration_has_strong_replacement_evidence(
+            &integration,
+            &runtime
+        ));
     }
 
     #[test]
@@ -2957,7 +3043,7 @@ mod tests {
         };
 
         assert_eq!(
-            next_work_started_at(&previous, Some(&idle), Some(&blocked)),
+            next_work_started_at(&previous, Some(&idle), Some(&blocked), None),
             Some(42)
         );
     }

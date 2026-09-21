@@ -1447,7 +1447,13 @@ mod tests {
 
     #[test]
     fn snapshot_records_only_explicit_native_agent_session_facts() {
-        let mut server = SessionServer::new_named("native-agent");
+        let mut server = SessionServer::new_named_with_settings(
+            "native-agent",
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
         let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),

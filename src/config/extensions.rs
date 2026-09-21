@@ -490,11 +490,15 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         )),
         Some(_) => None,
     };
+    // Validated unconditionally, and *before* any short-circuit: whether `min_rozi` is even a
+    // version is a fact about the manifest, and a platform mismatch must not be allowed to skip
+    // recording it.
+    let minimum_rozi = validate_min_rozi(info.min_rozi.as_deref(), &mut info.errors);
     // Facts about *this machine*, as opposed to facts about the manifest. The platform reason wins
     // over the version one because an extension for another operating system is not also "too new",
     // and neither is worth reporting as the other.
-    let environment_error = unsupported_platform(&info.platforms)
-        .or_else(|| rozi_too_old(info.min_rozi.as_deref(), &mut info.errors));
+    let environment_error =
+        unsupported_platform(&info.platforms).or_else(|| rozi_too_old(minimum_rozi.as_ref()));
 
     let mut commands = Vec::new();
     let mut services = Vec::new();
@@ -783,23 +787,31 @@ fn unsupported_platform(platforms: &[String]) -> Option<String> {
     Some(format!("supports {names} but this is {current}"))
 }
 
-/// `None` when this rozi is new enough, or when the extension said nothing about it.
+/// Parse `min_rozi`, recording a malformed one as a manifest mistake.
 ///
-/// A `min_rozi` that is not a version is a manifest mistake rather than an incompatibility, so it
-/// is reported as one and does not block loading: refusing to run an extension because its
-/// *metadata* is malformed would be a worse failure than ignoring the field.
-fn rozi_too_old(min_rozi: Option<&str>, errors: &mut Vec<String>) -> Option<String> {
+/// Separate from [`rozi_too_old`] so that validating the field cannot be skipped by an unrelated
+/// incompatibility. Folded together, a manifest declaring both a foreign platform and a malformed
+/// `min_rozi` short-circuited before this ran, and its typo went unreported.
+fn validate_min_rozi(min_rozi: Option<&str>, errors: &mut Vec<String>) -> Option<semver::Version> {
     let declared = min_rozi?;
-    let Ok(minimum) = declared.parse::<semver::Version>() else {
-        errors.push(format!(
-            "`extension.min_rozi` must be a version like `0.0.25`, got `{declared}`"
-        ));
-        return None;
-    };
+    match declared.parse::<semver::Version>() {
+        Ok(minimum) => Some(minimum),
+        Err(_) => {
+            errors.push(format!(
+                "`extension.min_rozi` must be a version like `0.0.25`, got `{declared}`"
+            ));
+            None
+        }
+    }
+}
+
+/// `None` when this rozi is new enough, or when the extension declared no usable minimum.
+fn rozi_too_old(minimum: Option<&semver::Version>) -> Option<String> {
+    let minimum = minimum?;
     let current = env!("CARGO_PKG_VERSION")
         .parse::<semver::Version>()
         .expect("rozi's own version is valid semver");
-    (current < minimum).then(|| format!("needs rozi {minimum} or newer, this is {current}"))
+    (current < *minimum).then(|| format!("needs rozi {minimum} or newer, this is {current}"))
 }
 
 fn read_partial_metadata(value: &toml::Value, info: &mut ExtensionInfo) {
@@ -1014,6 +1026,43 @@ mod tests {
         assert_eq!(entry.status, ExtensionStatus::Invalid);
         assert!(
             entry.errors.iter().any(|error| error.contains("darwin")),
+            "{:?}",
+            entry.errors
+        );
+    }
+
+    /// Whether `min_rozi` is even a version is a fact about the manifest, so it has to be checked
+    /// whatever else is true. Evaluating it only as part of the environment verdict meant a
+    /// recognized foreign platform short-circuited first and the typo was never reported: the
+    /// extension read as merely built for another machine.
+    #[test]
+    fn a_malformed_min_rozi_is_reported_even_when_the_platform_already_excludes_this_machine() {
+        let temp = tempfile::tempdir().unwrap();
+        let elsewhere = if std::env::consts::OS == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
+        write_manifest(
+            temp.path(),
+            "both-wrong",
+            &format!(
+                "{}platforms = [\"{elsewhere}\"]\nmin_rozi = \"soon\"\n",
+                manifest("both-wrong", "1")
+            ),
+        );
+
+        let entries = scan_extensions_in(temp.path());
+        let entry = &entries.entries()[0];
+
+        assert_eq!(
+            entry.status,
+            ExtensionStatus::Invalid,
+            "a manifest mistake outranks being built for another machine: {:?}",
+            entry.errors
+        );
+        assert!(
+            entry.errors.iter().any(|error| error.contains("min_rozi")),
             "{:?}",
             entry.errors
         );

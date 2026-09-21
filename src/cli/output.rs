@@ -569,6 +569,13 @@ fn format_agents_text(data: Option<&serde_json::Value>, styles: OutputStyles) ->
             };
             vec![
                 TableCell::plain(text("label")),
+                TableCell::plain(
+                    agent
+                        .get("ref")
+                        .and_then(|reference| reference.get("slot"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("—"),
+                ),
                 TableCell::plain(text("state")),
                 TableCell::plain(
                     agent
@@ -587,7 +594,7 @@ fn format_agents_text(data: Option<&serde_json::Value>, styles: OutputStyles) ->
         })
         .collect::<Vec<_>>();
     format_table(
-        &["AGENT", "STATE", "PANE", "WORKSPACE", "CWD"],
+        &["AGENT", "ACTIVITY", "STATE", "PANE", "WORKSPACE", "CWD"],
         &rows,
         styles,
     )

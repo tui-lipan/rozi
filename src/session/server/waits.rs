@@ -35,9 +35,20 @@ impl SessionServer {
         capabilities: protocol::Capabilities,
         effective_protocol: u32,
     ) -> Option<ControlResponse> {
-        let reference = match self.resolve_agent_wait_target(target) {
-            Ok(reference) => reference,
-            Err(response) => return Some(response),
+        let reference = match target {
+            AgentTarget::Ref(reference) if until == AgentWaitCondition::Gone => {
+                if reference.pane.session_instance != self.instance_id {
+                    return Some(ControlResponse::error_with(
+                        ControlErrorCode::StaleReference,
+                        "agent reference belongs to a different session server instance",
+                    ));
+                }
+                reference
+            }
+            target => match self.resolve_agent_wait_target(target) {
+                Ok(reference) => reference,
+                Err(response) => return Some(response),
+            },
         };
         match self.evaluate_agent_wait(&reference, until) {
             WaitEvaluation::Ready(agent) => Some(ControlResponse::ok(AgentWaitResult {
@@ -400,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn gone_is_a_success_condition() {
+    fn registration_accepts_an_exact_reference_that_is_already_gone() {
         let server = server_with_agent(protocol::DetectedAgentState::Working);
         let reference = server
             .resolve_agent_wait_target(AgentTarget::Pane(3))
@@ -408,10 +419,18 @@ mod tests {
         let mut server = server;
         server.panes.remove(&3);
 
-        assert!(matches!(
-            server.evaluate_agent_wait(&reference, AgentWaitCondition::Gone),
-            WaitEvaluation::Ready(None)
-        ));
+        let response = server
+            .register_agent_wait(
+                1,
+                AgentTarget::Ref(reference),
+                AgentWaitCondition::Gone,
+                None,
+                protocol::Capabilities::default(),
+                PROTOCOL_VERSION,
+            )
+            .expect("already-gone wait should complete");
+        assert!(response.ok);
+        assert!(server.agent_waits.is_empty());
     }
 
     #[test]

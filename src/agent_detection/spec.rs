@@ -35,9 +35,16 @@ pub struct AgentSpec {
     pub resume: Option<AgentResumeSpec>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum AgentResumeSpec {
+    Command(AgentResumeCommandSpec),
+    Disabled(bool),
+}
+
 #[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
-pub struct AgentResumeSpec {
+pub struct AgentResumeCommandSpec {
     pub argv: Vec<String>,
 }
 
@@ -140,9 +147,10 @@ pub fn build_definitions(
             warnings.push(format!("Ignored duplicate {noun} `{id}`"));
             continue;
         }
+        let inherited = inherit.iter().find(|candidate| candidate.id() == id);
 
         let (names, paths) = if spec.r#match.is_empty() {
-            match inherit.iter().find(|candidate| candidate.id() == id) {
+            match inherited {
                 Some(inherited) => (inherited.names.clone(), inherited.paths.clone()),
                 None => {
                     warnings.push(format!(
@@ -173,9 +181,19 @@ pub fn build_definitions(
             .into_iter()
             .filter_map(|state| build_state_rule(state, &noun, &id, warnings))
             .collect();
-        let resume_argv = spec
-            .resume
-            .and_then(|resume| validate_resume_argv(resume.argv, &noun, &id, warnings));
+        let resume_argv = match spec.resume {
+            Some(AgentResumeSpec::Command(resume)) => {
+                validate_resume_argv(resume.argv, &noun, &id, warnings)
+            }
+            Some(AgentResumeSpec::Disabled(false)) => None,
+            Some(AgentResumeSpec::Disabled(true)) => {
+                warnings.push(format!(
+                    "Ignored {noun} `{id}` resume capability: use a resume table or `resume = false`"
+                ));
+                None
+            }
+            None => inherited.and_then(|definition| definition.resume_argv.clone()),
+        };
 
         let label = spec
             .label
@@ -458,6 +476,40 @@ mod tests {
         assert_eq!(built[0].names, vec!["claude".to_string()]);
         assert_eq!(built[0].label(), "Claude");
         assert_eq!(built[0].states.len(), 1);
+        assert_eq!(
+            built[0].resume_argv,
+            Some(vec![
+                "claude".to_string(),
+                "--resume".to_string(),
+                "{session}".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_builtin_override_can_explicitly_disable_resume() {
+        let mut warnings = Vec::new();
+        let inherit = vec![AgentDefinition {
+            identity: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            names: vec!["claude".into()],
+            paths: Vec::new(),
+            base: true,
+            states: Vec::new(),
+            resume_argv: Some(vec!["claude".into(), "--resume".into(), "{session}".into()]),
+        }];
+        let built = build_definitions(
+            parse(
+                r#"
+                [[agents]]
+                id = "claude"
+                resume = false
+                "#,
+            ),
+            AgentOrigin::Config,
+            &inherit,
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
         assert!(built[0].resume_argv.is_none());
     }
 

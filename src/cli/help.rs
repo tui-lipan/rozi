@@ -177,10 +177,13 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Safely submit a prompt",
             ),
             row(
-                "agents report --state <STATE> --seq <N>",
+                "agents report --agent <ID> --integration <TOKEN> --state <STATE> --seq <N>",
                 "Report integration state",
             ),
-            row("agents release --seq <N>", "Release integration state"),
+            row(
+                "agents release --integration <TOKEN> --seq <N>",
+                "Release integration state",
+            ),
         ],
     },
     HelpSection {

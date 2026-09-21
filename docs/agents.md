@@ -168,14 +168,22 @@ send and wait requests.
 Agent hooks can report state that screen detection cannot see:
 
 ```bash
-rozi --session dev agents report --state working --native-session abc123 --seq 42
-rozi --session dev agents release --seq 43
+rozi --session dev agents report --target "$ROZI_PANE" \
+  --agent claude --integration "$AGENT_RUN_ID" \
+  --state working --native-session abc123 --seq 1
+rozi --session dev agents release --target "$ROZI_PANE" \
+  --integration "$AGENT_RUN_ID" --seq 2
 ```
 
-`--target` defaults to `ROZI_PANE`. Sequence numbers must increase monotonically; stale reports and
-releases fail with `conflict`, so an asynchronously delivered older hook cannot overwrite newer
-state. A live integration report has authority over published rows and screen detection. Releasing
-it returns the pane to those fallback sources.
+The caller generates one unique `--integration` token per agent process. Sequence numbers increase
+within that token. A released token cannot claim the pane again, so delayed hooks from an old
+process fail with `conflict` even after a replacement starts its own sequence at 1. `--agent` binds
+the claim to the currently detected agent incarnation.
+
+Against a UI endpoint, an omitted `--target` uses the calling pane's `ROZI_PANE`. With
+`--session`, pass `--target` explicitly because an inherited pane number belongs to another session
+namespace. A live integration report has authority over screen detection and clears older published
+rows. Releasing it returns the pane to current detection or subsequently published rows.
 
 ## Publish state instead of reading the screen
 
@@ -205,6 +213,9 @@ argv = ["mca", "--resume", "{session}"]
 into the argument vector; it never builds a shell command, so spaces and shell metacharacters in an
 opaque reference remain data. Invalid resume declarations are ignored with a config warning while
 the agent's detection rules continue to work.
+
+An override of a built-in agent inherits its resume capability when `resume` is omitted. Set
+`resume = false` on the `[[agents]]` entry to disable native resume for that override.
 
 ## Test a definition
 

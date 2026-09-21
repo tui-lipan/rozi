@@ -86,7 +86,8 @@ Scripts should branch on `code`; the message may gain context or change wording.
 `invalid-request`, `request-timeout`, `message-too-large`, `extension-inactive`, `unknown-event`,
 `pane-not-found`, `target-required`, `pane-not-running`, `session-not-attached`,
 `session-not-connected`, `input-locked`, `read-only`, `not-controller`, `unsupported`,
-`invalid-argument`, `spawn-failed`, `conflict`, `unavailable`, and `request-failed`.
+`invalid-argument`, `spawn-failed`, `conflict`, `unavailable`, `agent-gone`, `agent-blocked`,
+`agent-replaced`, `stale-reference`, `timeout`, and `request-failed`.
 `request-failed` is the fallback for failures without a narrower category. Older servers may omit
 `code`, so clients that support version skew must still handle that shape.
 
@@ -253,9 +254,10 @@ or client count (including `metrics`, which counts attached clients rather than 
 never holds layout control, and receives no replay. A script cannot make an idle session look
 occupied — and equally gains nothing an attached client would not have.
 
-Supported requests are `list-panes`, `metrics`, `capture-pane`, `send-text`, `send-keys`,
-`new-pane`, `set-status`, and `pane-logging`. Every other `cmd` is answered with `ok: false` and a
-reason naming what it needed a UI for; none is silently accepted.
+Supported requests are `list-panes`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
+`agent-prompt`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
+`send-keys`, `new-pane`, `set-status`, and `pane-logging`. Every other `cmd` is answered with
+`ok: false` and a reason naming what it needed a UI for; none is silently accepted.
 
 Differences from the same request against a UI:
 

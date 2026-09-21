@@ -74,7 +74,7 @@ session:
 ```json
 {
   "api": 1,
-  "session_protocol": 8,
+  "session_protocol": 9,
   "capabilities": ["agent-waits", "pane-control", "published-activity", "session-control"]
 }
 ```
@@ -89,8 +89,8 @@ session:
 | `agents read --target ID [--scrollback N\|full]` | Capture an agent's terminal. | yes |
 | `agents wait --target ID --until STATE [--timeout DURATION]` | Wait atomically for semantic state. | yes |
 | `agents prompt --target ID [--wait STATE] TEXT` | Validate, submit, and optionally wait atomically. | yes |
-| `agents report --state STATE --seq N` | Publish sequence-fenced native agent state. | yes |
-| `agents release --seq N` | Release integration authority. | yes |
+| `agents report --agent ID --integration TOKEN --state STATE --seq N` | Publish incarnation- and sequence-fenced native agent state. | yes |
+| `agents release --integration TOKEN --seq N` | Release integration authority. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
 | `focus <PANE_ID>` | Focus a pane. | no |
 | `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. | yes |
@@ -145,6 +145,9 @@ from:
 ```text
 session `dev` has 3 panes and no focused pane; pass --target (ids: 1, 2, 5)
 ```
+
+`agents report` and `agents release` always require `--target` with `--session`, including for a
+one-pane session. Integration hooks must opt into the named session's pane namespace explicitly.
 
 A pane addressing its own session names itself explicitly:
 

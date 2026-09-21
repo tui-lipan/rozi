@@ -735,11 +735,11 @@ impl TerminalPane {
             .filter(|title| !title.is_empty())
     }
 
-    /// The effective agent status for a detected-agent pane. An explicit active status wins, while
-    /// a detected blocked prompt elevates over a stale quiescent `idle`/`done` report.
-    /// `None` when the pane is not a detected agent. Single source of truth shared by the sidebar
-    /// and the "unseen finish" edge detector so they never disagree on what "working" means. See
-    /// [`Self::is_blocked`] and [`Self::is_working`] for reported-only status predicates.
+    /// The pane's effective agent status: integration report, then explicit pane status, then
+    /// detection. A detected blocked prompt still elevates over a stale quiescent `idle`/`done`
+    /// report. `None` when no source currently names an agent. Shared by the sidebar and the
+    /// "unseen finish" edge detector so they never disagree on what "working" means. See
+    /// [`Self::is_blocked`] and [`Self::is_working`] for the same rule as predicates.
     pub fn agent_status(&self) -> Option<String> {
         if let Some(integration) = &self.agent_integration {
             return Some(integration.state.as_str().to_string());
@@ -751,10 +751,8 @@ impl TerminalPane {
         .map(str::to_string)
     }
 
-    /// Whether this pane's agent is waiting on the user.
-    ///
-    /// Uses the shared reported/detected authority rule from [`Self::agent_status`].
-    /// Unlike `agent_status`, a reported-only pane can be blocked.
+    /// Whether this pane's agent is waiting on the user, under the same authority rule as
+    /// [`Self::agent_status`].
     pub fn is_blocked(&self) -> bool {
         self.agent_status().is_some_and(|status| {
             status

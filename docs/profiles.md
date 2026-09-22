@@ -77,6 +77,10 @@ startup = "profile"
 A missing or invalid default falls back to a fresh pane for ordinary new-session creation. An
 explicit target that depends on a missing or invalid profile reports an error.
 
+Git worktree sessions ignore `[profile] default`, because its pane directories usually point at
+another checkout. `[worktrees] profile` names the profile they use instead, with its repository
+paths rebased onto the new checkout. See [Worktrees](sessions.md#worktrees).
+
 ## Write a profile
 
 This example uses the common fields:

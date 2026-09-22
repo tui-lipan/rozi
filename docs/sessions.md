@@ -71,8 +71,14 @@ happens to have changed directory into the checkout.
 
 The new-worktree form has **Branch**, **Base** (`HEAD` by default), and **Path**. Rozi previews a
 visible sibling path on the session host; edit Path to choose another absolute host path. `Tab`
-and `Shift+Tab` change fields. New worktree sessions start with a plain shell, so a default profile
-whose pane paths point at another checkout cannot pull the session away from its worktree.
+and `Shift+Tab` change fields.
+
+New worktree sessions start with a plain shell in the checkout; `[profile] default` does not apply.
+To seed them with a layout, set `[worktrees] profile`. Its pane directories inside any checkout of
+the repository are rebased onto the new one: a pane saved at `~/src/rozi/frontend` opens at
+`~/src/rozi-worktrees/feat-login/frontend`. Directories outside the repository are kept, and panes
+without a directory start in the checkout. The session records both the profile and the worktree
+as its origin.
 
 Removal never deletes a branch. It refuses a primary or locked checkout and any checkout owned
 by a running or restorable Rozi session. `force` only asks Git to remove a dirty checkout; stop or

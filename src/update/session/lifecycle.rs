@@ -372,14 +372,18 @@ pub(crate) fn attached(
                 ctx.state.current_mut().pending_profile_loaded =
                     Some((profile.clone(), path.clone(), session.clone()));
             }
-            crate::state::AttachIntent::WorktreeSeed { path } => {
+            crate::state::AttachIntent::WorktreeSeed { path, profile } => {
                 if let Some(client) = ctx.state.current().session_client.as_ref() {
                     client.set_session_origin(crate::session::origin::SessionOrigin {
+                        profile: profile.as_ref().map(|(name, _)| name.clone()),
                         worktree: Some(crate::session::origin::WorktreeOrigin {
                             path: path.clone(),
                         }),
-                        ..Default::default()
                     });
+                }
+                if let Some((name, path)) = profile {
+                    ctx.state.current_mut().pending_profile_loaded =
+                        Some((name.clone(), path.clone(), session.clone()));
                 }
             }
             crate::state::AttachIntent::Plain => {}
@@ -390,6 +394,10 @@ pub(crate) fn attached(
         && !matches!(
             pending.intent,
             crate::state::AttachIntent::ProfileSeed { .. }
+                | crate::state::AttachIntent::WorktreeSeed {
+                    profile: Some(_),
+                    ..
+                }
         )
     {
         crate::events::emit(

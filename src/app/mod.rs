@@ -221,13 +221,9 @@ impl AppRoot {
                     path: profile.path.clone(),
                 }
             }
-            (
-                _,
-                Some(StartupCwd {
-                    path,
-                    worktree: true,
-                }),
-            ) => crate::state::AttachIntent::WorktreeSeed { path: path.clone() },
+            (_, Some(cwd)) => cwd
+                .seed(&ctx.state.config)
+                .map_or(crate::state::AttachIntent::Plain, |(_, intent)| intent),
             _ => crate::state::AttachIntent::Plain,
         };
         let remote_host = self.remote.as_ref().map(|target| target.display_label());
@@ -293,7 +289,13 @@ impl Component for AppRoot {
             State::new(self.config.clone(), self.initial_theme.clone())
         };
         if let Some(cwd) = &self.startup_cwd {
-            state.current_mut().workspaces[0].panes[0].identity.cwd = Some(cwd.path.clone());
+            match cwd.seed(&self.config) {
+                Some((attachment, _)) => state.attachment = attachment,
+                None => {
+                    state.current_mut().workspaces[0].panes[0].identity.cwd =
+                        Some(cwd.path.clone());
+                }
+            }
         }
         state.system_theme = self.initial_system_theme.clone();
         state.control_socket_path = self

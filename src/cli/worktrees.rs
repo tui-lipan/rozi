@@ -80,8 +80,12 @@ fn open_checkout(
     path: String,
     name: Option<String>,
 ) -> Result<CliArgs, String> {
-    let (worktree, sessions) = match call(target.as_ref(), HostCall::Resolve { path })? {
-        HostReply::Resolved { worktree, sessions } => (worktree, sessions),
+    let (worktree, sessions, checkouts) = match call(target.as_ref(), HostCall::Resolve { path })? {
+        HostReply::Resolved {
+            worktree,
+            sessions,
+            checkouts,
+        } => (worktree, sessions, checkouts),
         other => return Err(unexpected(other)),
     };
     let mut launch = CliArgs {
@@ -108,7 +112,7 @@ fn open_checkout(
     launch.attach_session = Some(name);
     launch.session_command = SessionCommand::New;
     launch.cwd = Some(worktree.path);
-    launch.worktree_origin = true;
+    launch.worktree_checkouts = Some(checkouts);
     Ok(launch)
 }
 

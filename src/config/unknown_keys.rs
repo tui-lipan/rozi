@@ -13,6 +13,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "animations",
     "theme",
     "profile",
+    "worktrees",
     "session",
     "remote",
     "layout",
@@ -237,6 +238,7 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
     collect_named_table(table, "", "animations", ANIMATION_KEYS, unknown);
     collect_named_table(table, "", "theme", &["name"], unknown);
     collect_named_table(table, "", "profile", &["default"], unknown);
+    collect_named_table(table, "", "worktrees", &["profile"], unknown);
     collect_named_table(table, "", "session", SESSION_KEYS, unknown);
     collect_remote(table, unknown);
     collect_named_table(

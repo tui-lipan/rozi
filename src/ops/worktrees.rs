@@ -179,11 +179,20 @@ fn enter_tree(ctx: &mut Context<AppRoot>, tree: crate::git::worktrees::WorktreeI
     }
     let name = new_session_name(ctx, tree.branch.as_deref(), &tree.path);
     let target = picker.target.clone();
+    let checkouts = picker
+        .entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .chain(std::iter::once(tree.path.clone()))
+        .collect();
     ctx.state.worktree_picker = None;
     crate::ops::session::open::open_named_target(
         ctx,
         name,
-        crate::ops::session::open::OpenNamedIntent::CreateInWorktree { path: tree.path },
+        crate::ops::session::open::OpenNamedIntent::CreateInWorktree {
+            path: tree.path,
+            checkouts,
+        },
         target,
     )
 }

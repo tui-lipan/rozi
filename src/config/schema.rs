@@ -228,6 +228,13 @@ pub struct ProfileConfig {
     pub default: Option<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct WorktreesConfig {
+    /// Profile seeding a new worktree session. Its pane directories inside the repository are
+    /// rebased onto the new checkout; see [`crate::profiles::rebase_onto_worktree`].
+    pub profile: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct LayoutConfig {
     /// Terminal cell height divided by cell width, used to compare tile dimensions visually.
@@ -1155,6 +1162,7 @@ pub struct Config {
     pub animations: WindowAnimationConfig,
     pub theme: ThemeConfig,
     pub profile: ProfileConfig,
+    pub worktrees: WorktreesConfig,
     pub session: SessionConfig,
     pub remote: RemoteConfig,
     pub layout: LayoutConfig,
@@ -1832,6 +1840,7 @@ impl Default for Config {
             animations: WindowAnimationConfig::default(),
             theme: ThemeConfig::default(),
             profile: ProfileConfig::default(),
+            worktrees: WorktreesConfig::default(),
             session: SessionConfig::default(),
             remote: RemoteConfig::default(),
             layout: LayoutConfig::default(),

@@ -326,6 +326,14 @@ See [Themes](themes.md).
 
 See [Profiles](profiles.md).
 
+## `[worktrees]`
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `profile` | string | none | Profile seeding a new worktree session, from the Worktrees picker or `rozi worktrees open`. Pane directories inside any checkout of the repository are rebased onto the new checkout, directories outside it are kept, and panes without one start in the checkout. A profile that fails to load is skipped with a warning. |
+
+See [Worktrees](sessions.md#worktrees).
+
 ## `[clipboard]`
 
 | Key | Type | Default | Constraints and behavior |

@@ -52,8 +52,9 @@ pub(crate) struct CliArgs {
     pub(crate) remote: Option<String>,
     /// First-pane directory for a `sessions new` session, on the session's host (`--cwd`).
     pub(crate) cwd: Option<String>,
-    /// Record [`Self::cwd`] as the session's worktree origin. Set by `worktrees open`, never by argv.
-    pub(crate) worktree_origin: bool,
+    /// Record [`Self::cwd`] as the session's worktree origin, with its repository's checkouts on the
+    /// session host. Set by `worktrees open`, never by argv.
+    pub(crate) worktree_checkouts: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

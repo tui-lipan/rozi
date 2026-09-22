@@ -276,7 +276,7 @@ mod tests {
         };
         assert_eq!(created.cwd.as_deref(), Some("~/src/rozi"));
         assert!(
-            !created.worktree_origin,
+            created.worktree_checkouts.is_none(),
             "argv never records a worktree origin"
         );
 

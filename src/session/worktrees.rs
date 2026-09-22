@@ -123,6 +123,8 @@ pub enum HostReply {
     Resolved {
         worktree: WorktreeInfo,
         sessions: Vec<String>,
+        /// Every checkout of the repository, for rebasing a profile onto `worktree`.
+        checkouts: Vec<String>,
     },
     Failed {
         message: String,
@@ -145,19 +147,22 @@ pub fn run_host_call(call: HostCall) -> HostReply {
             create(&cwd, &branch, &base, path).map(|worktree| HostReply::Created { worktree })
         })(),
         HostCall::Remove { path, force } => (|| {
-            let path = host_path(&path)?;
-            let tree = containing_worktree(&path)?;
-            let primary = primary_checkout(&path)?;
+            let (tree, trees) = containing_worktree(&host_path(&path)?)?;
+            let primary = trees
+                .first()
+                .map(|primary| PathBuf::from(&primary.path))
+                .ok_or("Git reported no primary worktree")?;
             remove(&primary, Path::new(&tree.path), force)?;
             Ok(HostReply::Removed { path: tree.path })
         })(),
         HostCall::Resolve { path } => (|| {
-            let tree = containing_worktree(&host_path(&path)?)?;
+            let (tree, trees) = containing_worktree(&host_path(&path)?)?;
             let sessions = super::discovery::worktree_session_origins()?
                 .sessions_at(&canonical(Path::new(&tree.path)));
             Ok(HostReply::Resolved {
                 worktree: tree,
                 sessions,
+                checkouts: trees.into_iter().map(|tree| tree.path).collect(),
             })
         })(),
     };
@@ -177,22 +182,18 @@ fn list_with_sessions(cwd: &Path) -> Result<HostReply, String> {
     Ok(HostReply::Listed { worktrees })
 }
 
-/// The registered checkout that contains `path`, preferring the innermost when checkouts nest.
-fn containing_worktree(path: &Path) -> Result<WorktreeInfo, String> {
+/// The registered checkout that contains `path`, preferring the innermost when checkouts nest,
+/// with every checkout of its repository (primary first).
+fn containing_worktree(path: &Path) -> Result<(WorktreeInfo, Vec<WorktreeInfo>), String> {
     let path = canonical(path);
-    worktrees::list(&path)?
-        .into_iter()
+    let trees = worktrees::list(&path)?;
+    let tree = trees
+        .iter()
         .filter(|tree| path.starts_with(canonical(Path::new(&tree.path))))
         .max_by_key(|tree| tree.path.len())
-        .ok_or_else(|| format!("{} is not inside a Git worktree", path.display()))
-}
-
-fn primary_checkout(path: &Path) -> Result<PathBuf, String> {
-    worktrees::list(path)?
-        .into_iter()
-        .next()
-        .map(|tree| PathBuf::from(tree.path))
-        .ok_or_else(|| "Git reported no primary worktree".to_string())
+        .cloned()
+        .ok_or_else(|| format!("{} is not inside a Git worktree", path.display()))?;
+    Ok((tree, trees))
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -345,6 +346,10 @@ mod tests {
             HostReply::Resolved {
                 worktree: worktree.clone(),
                 sessions: Vec::new(),
+                checkouts: vec![
+                    canonical(&repo).to_string_lossy().into_owned(),
+                    worktree.path.clone(),
+                ],
             }
         );
 

@@ -78,8 +78,16 @@ pub struct PendingSessionAttach {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AttachIntent {
     Plain,
-    ProfileSeed { profile: String, path: PathBuf },
-    WorktreeSeed { path: String },
+    ProfileSeed {
+        profile: String,
+        path: PathBuf,
+    },
+    /// A new session for the checkout at `path`, seeded from `profile` (name, file) when one was
+    /// applied.
+    WorktreeSeed {
+        path: String,
+        profile: Option<(String, PathBuf)>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

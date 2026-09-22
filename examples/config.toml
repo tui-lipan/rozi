@@ -218,6 +218,12 @@
 # session.startup = "profile" also makes this the session a bare launch opens.
 #default = "dev"
 
+[worktrees]
+# Profile seeding each new session opened for a Git worktree. Pane directories inside the
+# repository move into the new checkout; directories outside it stay put. No default: a new
+# worktree session starts as one shell in its checkout.
+#profile = "dev"
+
 [clipboard]
 # Copy mouse selections automatically. Linux defaults to "both"; other platforms default to
 # "clipboard". Other choices are "off", "primary", and "clipboard".

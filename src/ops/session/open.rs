@@ -15,8 +15,11 @@ pub(crate) enum OpenNamedIntent {
         profile: String,
         path: std::path::PathBuf,
     },
+    /// A new session for the checkout at `path`; `checkouts` are the repository's worktrees, which
+    /// `[worktrees] profile` pane directories are rebased from.
     CreateInWorktree {
         path: String,
+        checkouts: Vec<String>,
     },
 }
 
@@ -91,7 +94,9 @@ pub(crate) fn open_named_target(
         OpenNamedIntent::CreateFromProfile { profile, path } => {
             SessionSeed::Profile { profile, path }
         }
-        OpenNamedIntent::CreateInWorktree { path } => SessionSeed::FreshWorktree { path },
+        OpenNamedIntent::CreateInWorktree { path, checkouts } => {
+            SessionSeed::FreshWorktree { path, checkouts }
+        }
     };
     let (attachment, attach_intent) = match seed {
         SessionSeed::Profile { profile, path } => {
@@ -110,7 +115,16 @@ pub(crate) fn open_named_target(
             )
         }
         SessionSeed::Default => crate::profiles::default_session_seed(&ctx.state.config),
-        SessionSeed::FreshWorktree { path } => worktree_session_seed(&ctx.state.config, path),
+        SessionSeed::FreshWorktree { path, checkouts } => {
+            // A broken worktree profile should not keep the checkout from opening at all.
+            let profile = crate::profiles::load_worktree_profile(&ctx.state.config).unwrap_or_else(
+                |message| {
+                    crate::pane::pty_events::notify_error(ctx, "Worktree profile skipped", message);
+                    None
+                },
+            );
+            crate::profiles::worktree_session_seed(&ctx.state.config, &path, &checkouts, profile)
+        }
     };
     let epoch = ctx.state.mint_attachment_id();
     let (parked_epoch, left) =
@@ -178,45 +192,6 @@ enum SessionSeed {
     },
     FreshWorktree {
         path: String,
+        checkouts: Vec<String>,
     },
-}
-
-fn worktree_session_seed(
-    config: &crate::config::Config,
-    path: String,
-) -> (crate::state::Attachment, crate::state::AttachIntent) {
-    let mut attachment = crate::state::fresh_default_attachment(config);
-    attachment.workspaces[0].panes[0].identity.cwd = Some(path.clone());
-    (
-        attachment,
-        crate::state::AttachIntent::WorktreeSeed { path },
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn worktree_seed_overrides_launch_cwd_without_applying_default_profile() {
-        let config = crate::config::Config {
-            cwd: Some("/source".into()),
-            profile: crate::config::ProfileConfig {
-                default: Some("dev".into()),
-            },
-            ..Default::default()
-        };
-        let (attachment, intent) = worktree_session_seed(&config, "/checkout/feature".into());
-        assert_eq!(attachment.workspaces[0].panes.len(), 1);
-        assert_eq!(
-            attachment.workspaces[0].panes[0].identity.cwd.as_deref(),
-            Some("/checkout/feature")
-        );
-        assert_eq!(
-            intent,
-            crate::state::AttachIntent::WorktreeSeed {
-                path: "/checkout/feature".into()
-            }
-        );
-    }
 }

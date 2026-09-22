@@ -102,6 +102,7 @@ struct FileConfig {
     animations: AnimationFileConfig,
     theme: ThemeFileConfig,
     profile: ProfileFileConfig,
+    worktrees: WorktreesFileConfig,
     session: SessionFileConfig,
     remote: RemoteFileConfig,
     layout: LayoutFileConfig,
@@ -363,6 +364,12 @@ pub(super) enum WorkbarSegmentSpec {
 #[serde(default)]
 struct ProfileFileConfig {
     default: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct WorktreesFileConfig {
+    profile: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -791,6 +798,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(name) = non_empty(parsed.profile.default) {
         config.profile.default = Some(name);
+    }
+    if let Some(name) = non_empty(parsed.worktrees.profile) {
+        config.worktrees.profile = Some(name);
     }
     if let Some(autosave) = parsed.session.autosave {
         config.session.autosave = autosave;

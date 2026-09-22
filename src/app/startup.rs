@@ -17,11 +17,35 @@ pub(super) struct StartupProfile {
 }
 
 /// Where a created session's first pane starts, on the session's host.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct StartupCwd {
     pub(super) path: String,
-    /// Record `path` as the session's worktree origin (`worktrees open`).
-    pub(super) worktree: bool,
+    /// Set when `path` is a checkout to record as the session's worktree origin (`worktrees open`).
+    pub(super) worktree: Option<StartupWorktree>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct StartupWorktree {
+    /// The repository's checkouts on the session host.
+    pub(super) checkouts: Vec<String>,
+    /// `[worktrees] profile`, rebased onto the checkout when the session is seeded.
+    pub(super) profile: Option<profiles::LoadedProfile>,
+}
+
+impl StartupCwd {
+    /// The attachment and intent this launch seeds its session with.
+    pub(super) fn seed(
+        &self,
+        config: &Config,
+    ) -> Option<(crate::state::Attachment, crate::state::AttachIntent)> {
+        let worktree = self.worktree.as_ref()?;
+        Some(profiles::worktree_session_seed(
+            config,
+            &self.path,
+            &worktree.checkouts,
+            worktree.profile.clone(),
+        ))
+    }
 }
 
 pub(super) struct StartupTasks {
@@ -160,7 +184,8 @@ impl StartupPlan {
             want_picker: false,
             config: loaded.config,
         };
-        plan.cwd = resolve_startup_cwd(cli, plan.remote.is_some());
+        plan.cwd =
+            resolve_startup_cwd(cli, plan.remote.is_some(), &plan.config, &mut plan.messages);
         plan.apply_session_policy(cli);
         plan.resolve_session_target(cli, explicit_target);
         plan.load_fallback_profile();
@@ -362,9 +387,14 @@ impl StartupPlan {
 
 /// `--cwd` for a created session. A local directory is resolved here, where it was typed; a remote
 /// one is the far host's path and is passed through untouched.
-fn resolve_startup_cwd(cli: &cli::CliArgs, remote: bool) -> Option<StartupCwd> {
+fn resolve_startup_cwd(
+    cli: &cli::CliArgs,
+    remote: bool,
+    config: &Config,
+    messages: &mut Vec<String>,
+) -> Option<StartupCwd> {
     let raw = cli.cwd.as_deref()?;
-    let path = if remote || cli.worktree_origin {
+    let path = if remote || cli.worktree_checkouts.is_some() {
         raw.to_string()
     } else {
         let path = crate::session::worktrees::host_path(raw).unwrap_or_else(|err| {
@@ -375,10 +405,18 @@ fn resolve_startup_cwd(cli: &cli::CliArgs, remote: bool) -> Option<StartupCwd> {
         }
         path.to_string_lossy().into_owned()
     };
-    Some(StartupCwd {
-        path,
-        worktree: cli.worktree_origin,
-    })
+    let worktree = cli
+        .worktree_checkouts
+        .clone()
+        .map(|checkouts| StartupWorktree {
+            checkouts,
+            // A broken worktree profile still opens the checkout, with a plain shell.
+            profile: profiles::load_worktree_profile(config).unwrap_or_else(|message| {
+                messages.push(message);
+                None
+            }),
+        });
+    Some(StartupCwd { path, worktree })
 }
 
 fn requested_new_profile(cli: &cli::CliArgs) -> Option<StartupProfile> {

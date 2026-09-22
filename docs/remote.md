@@ -34,8 +34,9 @@ arguments, a pinned binary path. See
 [Browse remote hosts](sessions.md#browse-remote-hosts).
 
 Rozi supports Linux, macOS, and Windows as either client or remote server hosts. The local machine
-needs `ssh` and `curl` on `PATH`. Automatic installation also needs `tar` for a Linux or macOS
-target, or `unzip` and `scp` for a Windows target.
+needs `ssh` on `PATH`; automatic installation onto a Windows target also needs `scp`. Rozi downloads
+and authenticates release metadata and archives in-process, so bootstrap does not require `curl`,
+`tar`, or `unzip`.
 
 ## Set up SSH authentication
 
@@ -152,9 +153,10 @@ confirmation modal shows the host, install destination, and version, and offers 
 Discovery checks PATH and common install locations, including `~/.local/bin`, `~/.cargo/bin`,
 `~/bin`, `~/.nix-profile/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, and `/usr/bin` on POSIX hosts.
 Windows hosts are checked on PATH and under `%USERPROFILE%\.local\bin` and
-`%USERPROFILE%\.cargo\bin`. Session listing, attachment, monitoring, and session termination
-use the discovered path, so a non-interactive SSH PATH does not need to include these directories.
-Use `binary_path` to select an installation elsewhere.
+`%USERPROFILE%\.cargo\bin`. Rozi also checks its private managed-runtime directory after these
+user-owned locations. Session listing, attachment, monitoring, and session termination use the
+discovered path, so a non-interactive SSH PATH does not need to include these directories. Use
+`binary_path` to select an installation elsewhere.
 
 Background discovery and monitoring never install software. Installation is part of connecting to
 a host or session. Resolved paths are cached briefly and rechecked after a failed remote command.
@@ -165,14 +167,25 @@ a host or session. Resolved paths are cached briefly and rechecked after a faile
 | `always` | Install when needed without asking. | Fail without changing the host. |
 | `never` | Fail when no compatible binary is found. | Fail without changing the host. |
 
-On Linux and macOS, automatic installation writes `$HOME/.local/bin/rozi`. On Windows it writes
-`%USERPROFILE%\.local\bin\rozi.exe`.
+Automatic installation does not replace a user-installed Rozi CLI. It provisions a runtime for the
+client's exact version under `$HOME/.local/share/rozi/remote/<version>/rozi` on POSIX hosts or
+`%USERPROFILE%\.local\share\rozi\remote\<version>\rozi.exe` on Windows. Multiple client versions
+can therefore coexist.
 
 When client and server platforms match, Rozi can copy the running executable. For a different
-platform, it downloads the matching release archive, verifies its checksum, and uploads the binary.
-Rozi checks that the uploaded binary runs and speaks a compatible protocol before continuing.
-Set `ROZI_REMOTE_BINARY` to upload a specific local binary, or `ROZI_RELEASE_BASE_URL` to use a
-release mirror.
+platform, it downloads the signed manifest and matching archive for the client's exact version and
+remote target. The manifest is authenticated against Rozi's compiled release trust anchor, checked
+for expiry, and used to verify the archive and payload. A release server or
+`ROZI_RELEASE_BASE_URL` mirror is therefore an untrusted transport, not a signing authority.
+
+Rozi uploads to a temporary path and checks that the staged binary runs and speaks a compatible
+protocol before moving it into the managed runtime path. A failed check removes the temporary and
+leaves an existing runtime untouched.
+
+Set `ROZI_REMOTE_BINARY` to force-upload a specific local binary for development or CI. This
+explicit override supersedes `[remote] install`, including `install = "never"`, and authorizes the
+upload without a confirmation prompt. Set `ROZI_RELEASE_BASE_URL` to the HTTPS directory containing
+the exact version's `rozi-release.json`, `rozi-release.signatures.json`, and release archives.
 
 Rozi refuses to overwrite a non-regular install target. Set `install = "never"` or pin
 `binary_path` if remote installation is not acceptable.

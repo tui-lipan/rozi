@@ -12,15 +12,6 @@ pub(crate) fn clipboard_config(config: &Config) -> ClipboardConfig {
     // that is what we want: copy from a remote pane reaches the local clipboard. Disabling
     // `enable_osc52` drops OSC52 without redirecting copies to the remote host.
     ClipboardConfig {
-        // Ask the provider to validate PRIMARY support whenever a configured gesture needs it;
-        // tui-lipan then degrades `Both` to `Clipboard` and PRIMARY-only gestures to disabled.
-        enable_primary_selection: matches!(
-            config.clipboard.copy_on_select,
-            config::CopyOnSelect::PrimarySelection | config::CopyOnSelect::Both
-        ) || matches!(
-            config.clipboard.middle_click_paste,
-            config::MiddleClickPaste::PrimarySelection
-        ),
         copy_on_mouse_select: match config.clipboard.copy_on_select {
             config::CopyOnSelect::Disabled => CopyOnSelect::Disabled,
             config::CopyOnSelect::PrimarySelection => CopyOnSelect::PrimarySelection,
@@ -382,7 +373,18 @@ mod tests {
         assert_eq!(runtime.copy_on_mouse_select, CopyOnSelect::Both);
         assert_eq!(runtime.middle_click_paste, PasteSource::Clipboard);
         assert_eq!(runtime.right_click_action, RightClickAction::CopyOrPaste);
-        assert!(runtime.enable_primary_selection);
         assert!(!runtime.enable_osc52);
+    }
+
+    #[test]
+    fn mouse_policy_preserves_framework_primary_capability() {
+        let mut config = Config::default();
+        config.clipboard.copy_on_select = config::CopyOnSelect::Clipboard;
+        config.clipboard.middle_click_paste = config::MiddleClickPaste::Disabled;
+
+        assert_eq!(
+            clipboard_config(&config).enable_primary_selection,
+            ClipboardConfig::default().enable_primary_selection
+        );
     }
 }

@@ -63,7 +63,7 @@ program does not build an input backlog. Presses, releases, and wheel events are
 ## Select, copy, and paste
 
 Drag to select text. On Linux, releasing the mouse copies it to both the regular clipboard and the
-primary selection; on macOS and Windows, it copies to the regular clipboard. The selection remains
+primary selection; on other platforms, it copies to the regular clipboard. The selection remains
 visible after copying, and its anchors stay attached to scrollback lines while you scroll. Pressing
 `Ctrl+C` also copies the active selection to the regular clipboard.
 

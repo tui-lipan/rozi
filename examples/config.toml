@@ -212,7 +212,7 @@
 #default = "dev"
 
 [clipboard]
-# Copy mouse selections automatically. Linux defaults to "both"; macOS and Windows default to
+# Copy mouse selections automatically. Linux defaults to "both"; other platforms default to
 # "clipboard". Other choices are "off", "primary", and "clipboard".
 #copy_on_select = "both"
 # Paste PRIMARY with middle click on Linux. Other choices are "off" and "clipboard".

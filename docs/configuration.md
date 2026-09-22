@@ -324,8 +324,8 @@ See [Profiles](profiles.md).
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `copy_on_select` | string | Linux: `"both"`; macOS/Windows: `"clipboard"` | Clipboard target updated when a mouse text selection finishes: `"off"`, `"primary"`, `"clipboard"`, or `"both"`. Unsupported PRIMARY access is disabled while regular clipboard access remains active. |
-| `middle_click_paste` | string | Linux: `"primary"`; macOS/Windows: `"off"` | Source pasted by middle click: `"off"`, `"primary"`, or `"clipboard"`. Unsupported PRIMARY access disables the gesture. |
+| `copy_on_select` | string | Linux: `"both"`; other platforms: `"clipboard"` | Clipboard target updated when a mouse text selection finishes: `"off"`, `"primary"`, `"clipboard"`, or `"both"`. Unsupported PRIMARY access is disabled while regular clipboard access remains active. |
+| `middle_click_paste` | string | Linux: `"primary"`; other platforms: `"off"` | Source pasted by middle click: `"off"`, `"primary"`, or `"clipboard"`. Unsupported PRIMARY access disables the gesture. |
 | `right_click` | string | `"off"` | Fallback for an otherwise-unhandled right click: `"off"`, `"paste"` from the clipboard, or `"copy-or-paste"` to copy an active selection and otherwise paste. Widget and application handlers retain priority. |
 | `enable_osc52` | bool | `true` | Allows pane programs to set the system clipboard with OSC 52. |
 

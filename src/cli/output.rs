@@ -72,7 +72,6 @@ impl OutputStyles {
             OutputTone::Plain => (false, None),
             OutputTone::Accent => (false, Some(palette::ROSE)),
             OutputTone::Heading => (true, Some(palette::ROSE)),
-            OutputTone::Label => (true, None),
             OutputTone::Success => (false, Some(palette::SUCCESS)),
             OutputTone::Warning => (false, Some(palette::WARNING)),
             OutputTone::Error => (false, Some(palette::ERROR)),
@@ -103,10 +102,8 @@ impl OutputStyles {
 pub(super) enum OutputTone {
     Plain,
     Accent,
-    /// A section title, styled like the headings in `--help`.
+    /// A section title or table column header, styled like the headings in `--help`.
     Heading,
-    /// A table column header, styled like the command names in `--help`.
-    Label,
     Success,
     Warning,
     Error,
@@ -165,7 +162,7 @@ pub(super) fn format_table(
         &mut out,
         headers
             .iter()
-            .map(|header| TableCell::new(*header, OutputTone::Label))
+            .map(|header| TableCell::new(*header, OutputTone::Heading))
             .collect(),
     );
     for row in rows {

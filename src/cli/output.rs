@@ -70,15 +70,15 @@ impl OutputStyles {
         }
     }
 
-    /// The palette colour for a tone, and whether it is bold. Headings and table keys follow the
-    /// `--help` layout: bold accent headings over a bold, softened key column.
+    /// The palette colour for a tone, and whether it is bold. Headings are bold accent, as in
+    /// `--help`; the key column beneath them is the softened accent of [`CliPalette::key`].
     fn style_for(self, tone: OutputTone) -> (bool, Option<crate::platform::ansi::Rgb>) {
         let palette = self.palette;
         match tone {
             OutputTone::Plain => (false, None),
             OutputTone::Accent => (false, Some(palette.accent)),
             OutputTone::Heading => (true, Some(palette.accent)),
-            OutputTone::Key => (true, Some(palette.key())),
+            OutputTone::Key => (false, Some(palette.key())),
             OutputTone::Success => (false, Some(palette.success)),
             OutputTone::Warning => (false, Some(palette.warning)),
             OutputTone::Error => (false, Some(palette.error)),

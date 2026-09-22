@@ -36,8 +36,8 @@ exclude = [
 ]
 
 [dependencies]
-# 0.12.2: explicit right-click copies flash like a copy shortcut.
-tui-lipan = { version = "0.12.3", features = [
+# 0.12.4: right-click and middle-click paste and copy act on the pane under the pointer.
+tui-lipan = { version = "0.12.4", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

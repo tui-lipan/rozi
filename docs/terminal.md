@@ -45,7 +45,7 @@ mouse-aware editors and TUIs working normally.
 | Gesture | Action |
 | --- | --- |
 | Drag over terminal text | Select text and copy it on release |
-| Middle click (Linux) | Paste the primary selection |
+| Middle click (Linux) | Paste the primary selection into the pane under the pointer |
 | Wheel over a pane | Scroll history |
 | `Ctrl` plus click a visible link | Open it |
 | WM modifier plus left-drag | Move a pane |
@@ -67,8 +67,11 @@ primary selection; on other platforms, it copies to the regular clipboard. The s
 visible after copying, and its anchors stay attached to scrollback lines while you scroll. Pressing
 `Ctrl+C` also copies the active selection to the regular clipboard.
 
-Middle click pastes the primary selection on Linux. Right click remains available to the pane or
-Rozi rather than acting as a clipboard shortcut. These defaults can be changed under
+Middle click pastes the primary selection on Linux. The paste goes to the pane under the pointer,
+not the focused one: clicking another pane focuses it first, and a click on a pane border or title
+bar pastes nothing. Right click remains available to the pane or Rozi rather than acting as a
+clipboard shortcut. If you set `right_click`, it follows the same rule, and `"copy-or-paste"` copies
+only a selection in the pane you click. These defaults can be changed under
 [`[clipboard]`](configuration.md#clipboard); changes apply when the config reloads. If the host does
 not support a primary selection, Rozi keeps regular clipboard copying enabled and disables
 PRIMARY-only gestures.

@@ -161,6 +161,107 @@ pub fn fg(color: Rgb, truecolor: bool) -> String {
 pub const RESET: &str = "\x1b[0m";
 /// Bold text. Kept beside the colour helpers so command output never assembles SGR escapes itself.
 pub const BOLD: &str = "\x1b[1m";
+/// Faint text, which a terminal draws by blending the foreground toward its background.
+const DIM: &str = "\x1b[2m";
+
+/// What a piece of human-facing command output is, so its colour can be chosen by where it will be
+/// drawn rather than by the call site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// Section titles and table column headers, as in `--help`.
+    Heading,
+    /// A value worth picking out: a version, a command to run, a session name.
+    Accent,
+    /// The first column of a table row, which names the row. Kept in the heading's family without
+    /// merging into the header above it.
+    Key,
+    /// Labels, units, and supporting text.
+    Muted,
+    Success,
+    Warning,
+    Error,
+}
+
+/// How command output spells its colours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoleColors {
+    /// A terminal rozi does not own: the brand palette as exact RGB, or its 256-colour
+    /// approximation when truecolor was not advertised.
+    Brand { truecolor: bool },
+    /// Inside a rozi pane: ANSI palette slots, which every client attached to the pane resolves
+    /// through its own theme's terminal palette.
+    ///
+    /// Theme is client-local, but pane output is shared. Exact RGB would be the same bytes for
+    /// every client watching the pane, for output a theme change arrives after, and for panes on a
+    /// remote host, so no single client's resolved colour can be right for all of them. A palette
+    /// slot is semantic, and each client's terminal palette maps it to its own theme.
+    PaneTheme,
+}
+
+impl RoleColors {
+    /// The colours for output from this process, which runs inside a rozi pane when rozi set
+    /// `ROZI_PANE` in its environment.
+    pub fn detect() -> Self {
+        if std::env::var_os("ROZI_PANE").is_some() {
+            Self::PaneTheme
+        } else {
+            Self::Brand {
+                truecolor: supports_truecolor(),
+            }
+        }
+    }
+
+    /// The SGR sequence that starts a run of `role`. End the run with [`RESET`].
+    pub fn sgr(self, role: Role) -> String {
+        match self {
+            Self::Brand { truecolor } => {
+                let color = |rgb| fg(rgb, truecolor);
+                match role {
+                    Role::Heading => format!("{BOLD}{}", color(palette::ROSE)),
+                    Role::Accent => color(palette::ROSE),
+                    Role::Key => color(palette::ROSE.mix(palette::LAVENDER, 1, 2)),
+                    Role::Muted => color(palette::LAVENDER),
+                    Role::Success => color(palette::SUCCESS),
+                    Role::Warning => color(palette::WARNING),
+                    Role::Error => color(palette::ERROR),
+                }
+            }
+            Self::PaneTheme => match role {
+                Role::Heading => pane_heading_style(),
+                Role::Accent => pane_accent_style().to_string(),
+                Role::Key => pane_key_style(),
+                // Rozi's terminal palette puts the theme's muted colour in bright black and its
+                // status colours in red, green, and yellow, exactly.
+                Role::Muted => "\x1b[90m".to_string(),
+                Role::Success => "\x1b[32m".to_string(),
+                Role::Warning => "\x1b[33m".to_string(),
+                Role::Error => "\x1b[31m".to_string(),
+            },
+        }
+    }
+}
+
+/// The theme's accent, as a process inside a rozi pane can name it.
+///
+/// Bright blue is not a colour choice here. Rozi's terminal palette fills that slot with the
+/// theme's accent, lightened slightly, which makes it the only theme-relative accent a child
+/// process can name. Do not "correct" it to the brand rose: see [`RoleColors::PaneTheme`] for why
+/// pane output must not carry one client's resolved RGB.
+fn pane_accent_style() -> &'static str {
+    "\x1b[94m"
+}
+
+/// Headings inside a pane: the theme's accent, bold, as the brand palette's are.
+fn pane_heading_style() -> String {
+    format!("{BOLD}{}", pane_accent_style())
+}
+
+/// The key column inside a pane: the theme's accent, faint. It is the pane-side counterpart of the
+/// brand palette's rose-toward-lavender blend. An exact blend is not something a palette slot can
+/// express, but faint accent keeps it in the heading's family and still sets it apart.
+fn pane_key_style() -> String {
+    format!("{DIM}{}", pane_accent_style())
+}
 
 /// Move to column one and clear the line, so the next write replaces the current row.
 ///
@@ -326,5 +427,50 @@ mod tests {
             no_color: true,
             ..tty()
         }));
+    }
+
+    const ROLES: [Role; 7] = [
+        Role::Heading,
+        Role::Accent,
+        Role::Key,
+        Role::Muted,
+        Role::Success,
+        Role::Warning,
+        Role::Error,
+    ];
+
+    #[test]
+    fn pane_output_names_palette_slots_and_never_a_resolved_colour() {
+        for role in ROLES {
+            let sgr = RoleColors::PaneTheme.sgr(role);
+            assert!(
+                !sgr.contains("38;2;") && !sgr.contains("38;5;"),
+                "{role:?} carries a resolved colour: {sgr:?}"
+            );
+        }
+        let accent = pane_accent_style();
+        assert_eq!(
+            RoleColors::PaneTheme.sgr(Role::Heading),
+            format!("{BOLD}{accent}")
+        );
+        assert_eq!(
+            RoleColors::PaneTheme.sgr(Role::Key),
+            format!("{DIM}{accent}")
+        );
+    }
+
+    #[test]
+    fn plain_terminals_keep_the_exact_brand_palette() {
+        let brand = RoleColors::Brand { truecolor: true };
+        assert_eq!(
+            brand.sgr(Role::Heading),
+            format!("{BOLD}{}", fg(palette::ROSE, true))
+        );
+        assert_eq!(
+            brand.sgr(Role::Key),
+            fg(Rgb(0xC5, 0x6F, 0x9A), true),
+            "rose halfway toward lavender, regular weight"
+        );
+        assert_eq!(brand.sgr(Role::Muted), fg(palette::LAVENDER, true));
     }
 }

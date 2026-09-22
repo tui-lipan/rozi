@@ -4,7 +4,7 @@
 //! module: those are protocols even when a person sometimes reads them.
 
 use crate::control;
-use crate::platform::cli_palette::CliPalette;
+use crate::platform::ansi::{Role, RoleColors};
 
 /// Write a finished report to stdout, treating a closed reader as a normal end.
 ///
@@ -26,24 +26,20 @@ pub(super) fn print_or_stop(text: &str) {
 /// JSON forms, publish/subscribe streams, and the version/protocol preamble deliberately bypass
 /// this type: those streams are protocols even when a person sometimes reads them. Reports meant
 /// for a terminal share this palette and fall back to plain text when colour was disabled through
-/// the standard environment variables. Inside a rozi pane the colours follow the app's theme; see
-/// [`CliPalette::current`].
+/// the standard environment variables. Inside a rozi pane the colours are theme-relative; see
+/// [`RoleColors`].
 #[derive(Clone, Copy)]
 pub(super) struct OutputStyles {
     /// Whether to emit any styling at all.
     color: bool,
-    /// Whether the terminal advertised 24-bit colour, so the palette can be sent exactly rather
-    /// than approximated into the 256-colour cube.
-    truecolor: bool,
-    palette: CliPalette,
+    colors: RoleColors,
 }
 
 impl OutputStyles {
     pub(super) const fn plain() -> Self {
         Self {
             color: false,
-            truecolor: false,
-            palette: CliPalette::BRAND,
+            colors: RoleColors::Brand { truecolor: false },
         }
     }
 
@@ -53,8 +49,16 @@ impl OutputStyles {
     pub(super) const fn colored() -> Self {
         Self {
             color: true,
-            truecolor: true,
-            palette: CliPalette::BRAND,
+            colors: RoleColors::Brand { truecolor: true },
+        }
+    }
+
+    /// The styling a command run inside a rozi pane gets, for tests.
+    #[cfg(test)]
+    pub(super) const fn in_pane() -> Self {
+        Self {
+            color: true,
+            colors: RoleColors::PaneTheme,
         }
     }
 
@@ -62,46 +66,32 @@ impl OutputStyles {
         if crate::platform::ansi::stdout_supports_color() {
             Self {
                 color: true,
-                truecolor: crate::platform::ansi::supports_truecolor(),
-                palette: CliPalette::current(),
+                colors: RoleColors::detect(),
             }
         } else {
             Self::plain()
         }
     }
 
-    /// The palette colour for a tone, and whether it is bold. Headings are bold accent, as in
-    /// `--help`; the key column beneath them is the softened accent of [`CliPalette::key`].
-    fn style_for(self, tone: OutputTone) -> (bool, Option<crate::platform::ansi::Rgb>) {
-        let palette = self.palette;
-        match tone {
-            OutputTone::Plain => (false, None),
-            OutputTone::Accent => (false, Some(palette.accent)),
-            OutputTone::Heading => (true, Some(palette.accent)),
-            OutputTone::Key => (false, Some(palette.key())),
-            OutputTone::Success => (false, Some(palette.success)),
-            OutputTone::Warning => (false, Some(palette.warning)),
-            OutputTone::Error => (false, Some(palette.error)),
-            OutputTone::Muted => (false, Some(palette.muted)),
-        }
-    }
-
     pub(super) fn paint(self, text: &str, tone: OutputTone) -> String {
-        use crate::platform::ansi;
-        let (bold, color) = self.style_for(tone);
-        if !self.color || (!bold && color.is_none()) {
-            return text.to_string();
+        let role = match tone {
+            OutputTone::Plain => None,
+            OutputTone::Accent => Some(Role::Accent),
+            OutputTone::Heading => Some(Role::Heading),
+            OutputTone::Key => Some(Role::Key),
+            OutputTone::Success => Some(Role::Success),
+            OutputTone::Warning => Some(Role::Warning),
+            OutputTone::Error => Some(Role::Error),
+            OutputTone::Muted => Some(Role::Muted),
+        };
+        match role.filter(|_| self.color) {
+            Some(role) => format!(
+                "{}{text}{}",
+                self.colors.sgr(role),
+                crate::platform::ansi::RESET
+            ),
+            None => text.to_string(),
         }
-        let mut out = String::new();
-        if bold {
-            out.push_str(ansi::BOLD);
-        }
-        if let Some(color) = color {
-            out.push_str(&ansi::fg(color, self.truecolor));
-        }
-        out.push_str(text);
-        out.push_str(ansi::RESET);
-        out
     }
 }
 
@@ -111,7 +101,7 @@ pub(super) enum OutputTone {
     Accent,
     /// A section title or table column header, styled like the headings in `--help`.
     Heading,
-    /// The first column of a table row, which names the row. See [`CliPalette::key`].
+    /// The first column of a table row, which names the row.
     Key,
     Success,
     Warning,
@@ -769,5 +759,66 @@ mod tests {
         assert!(rendered.contains("8.0 MiB"));
         assert!(rendered.contains("Attach duration"));
         assert!(rendered.contains("attach-catch-up-overflow"));
+    }
+
+    /// Theme is client-local, but a pane's output is stored once and shared by every client that
+    /// shows it. A report printed inside a pane must therefore resolve through whichever theme
+    /// renders it: the bytes below are fed once, then drawn under two themes with nothing
+    /// rewritten in between.
+    #[test]
+    fn pane_output_resolves_through_each_clients_theme_without_being_rewritten() {
+        use crate::state::ThemePreset;
+        use tui_lipan::prelude::{Style, TerminalColorPalette, TerminalScreen, Theme};
+
+        let report = format_table(
+            &["NAME", "STATUS"],
+            &[vec![
+                TableCell::new("dev", OutputTone::Key),
+                TableCell::new("running", OutputTone::Success),
+            ]],
+            OutputStyles::in_pane(),
+        );
+        assert!(
+            !report.contains("38;2;") && !report.contains("38;5;"),
+            "pane output must not carry a resolved colour: {report:?}"
+        );
+
+        let mut screen = TerminalScreen::new(4, 40, 0);
+        screen.process_bytes(report.replace('\n', "\r\n").as_bytes());
+
+        let render = |screen: &mut TerminalScreen, theme: &Theme| {
+            screen.set_palette(TerminalColorPalette::from_theme(
+                theme,
+                theme.surface.backdrop,
+            ));
+            let snapshot = screen.render_snapshot();
+            let style = |text: &str| -> Style {
+                snapshot
+                    .color_lines
+                    .iter()
+                    .flatten()
+                    .find(|span| span.content.contains(text))
+                    .map(|span| span.style)
+                    .unwrap_or_else(|| panic!("`{text}` was not rendered"))
+            };
+            let (header, key, status) = (style("NAME"), style("dev"), style("running"));
+            assert_eq!(header.bold, Some(true), "headings stay bold");
+            assert_eq!(key.dim, Some(true), "the key column stays faint");
+            (
+                header.resolved_fg(),
+                key.resolved_fg(),
+                status.resolved_fg(),
+            )
+        };
+
+        let dark = ThemePreset::TokyoNight.theme();
+        let light = ThemePreset::SolarizedLight.theme();
+        let (dark_header, dark_key, dark_status) = render(&mut screen, &dark);
+        let (light_header, light_key, light_status) = render(&mut screen, &light);
+
+        assert_ne!(dark_header, light_header);
+        assert_ne!(dark_key, light_key);
+        assert_eq!(dark_status, Some(dark.status.success));
+        assert_eq!(light_status, Some(light.status.success));
     }
 }

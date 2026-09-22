@@ -3,7 +3,7 @@
 //! The help text is data ([`HELP_SECTIONS`]) rendered by [`help_text`], so the same rows can be
 //! measured by a test, styled for a terminal, or printed plain into a pipe.
 
-use crate::platform::cli_palette::CliPalette;
+use crate::platform::ansi::{Role, RoleColors};
 use crate::platform::paths::{self, PlatformEnv};
 
 pub(crate) fn print_help(advanced: bool) {
@@ -14,7 +14,6 @@ pub(crate) fn print_help(advanced: bool) {
 }
 
 /// Rozi-palette SGR sequences for the help screen, all empty when the stream cannot render them.
-/// Inside a rozi pane the palette follows the app's theme, as every report does.
 #[derive(Clone)]
 pub(super) struct HelpStyles {
     pub(super) title: String,
@@ -39,27 +38,25 @@ impl HelpStyles {
 
     #[cfg(test)]
     pub(super) fn colored() -> Self {
-        Self::palette(true, &CliPalette::BRAND)
+        Self::palette(RoleColors::Brand { truecolor: true })
     }
 
-    fn palette(truecolor: bool, palette: &CliPalette) -> Self {
+    /// Help inside a rozi pane is theme-relative like every other report; see [`RoleColors`].
+    fn palette(colors: RoleColors) -> Self {
         use crate::platform::ansi;
 
         Self {
-            title: format!("{}{}", ansi::BOLD, ansi::fg(palette.accent, truecolor)),
-            heading: format!("{}{}", ansi::BOLD, ansi::fg(palette.accent, truecolor)),
+            title: colors.sgr(Role::Heading),
+            heading: colors.sgr(Role::Heading),
             command: ansi::BOLD.to_string(),
-            muted: ansi::fg(palette.muted, truecolor),
+            muted: colors.sgr(Role::Muted),
             reset: ansi::RESET.to_string(),
         }
     }
 
     pub(super) fn detect() -> Self {
         if crate::platform::ansi::stdout_supports_color() {
-            Self::palette(
-                crate::platform::ansi::supports_truecolor(),
-                &CliPalette::current(),
-            )
+            Self::palette(RoleColors::detect())
         } else {
             Self::plain()
         }

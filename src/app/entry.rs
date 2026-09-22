@@ -125,6 +125,10 @@ pub fn run() -> Result<()> {
             cli::print_extensions_update_help();
             return Ok(());
         }
+        cli::ParsedCli::WorktreesHelp => {
+            cli::print_worktrees_help();
+            return Ok(());
+        }
         cli::ParsedCli::SessionsHelp => {
             cli::print_sessions_help();
             return Ok(());
@@ -219,6 +223,18 @@ pub fn run() -> Result<()> {
         cli::ParsedCli::RemoteControl { name } => {
             return cli::run_remote_control_cli(&name);
         }
+        cli::ParsedCli::RemoteWorktrees => return cli::run_remote_worktrees_cli(),
+        cli::ParsedCli::Worktrees(command) => {
+            apply_config_path(command.config_path.clone());
+            match cli::run_worktrees_cli(command) {
+                Ok(Some(launch)) => launch,
+                Ok(None) => return Ok(()),
+                Err(message) => {
+                    eprintln!("rozi: {message}");
+                    std::process::exit(1);
+                }
+            }
+        }
         cli::ParsedCli::Sessions(command) => match command {
             cli::SessionsCommand::Watch { config_path } => {
                 apply_config_path(config_path);
@@ -256,6 +272,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::Skill(_)
         | cli::ParsedCli::SkillHelp
         | cli::ParsedCli::SessionsHelp
+        | cli::ParsedCli::WorktreesHelp
         | cli::ParsedCli::AgentsHelp
         | cli::ParsedCli::Extensions(_)
         | cli::ParsedCli::ExtensionsHelp
@@ -333,22 +350,25 @@ pub fn run() -> Result<()> {
     }
 
     let outcome = app
-        .mount(AppRoot::new(
-            plan.config,
-            theme,
-            startup_system_theme,
-            plan.profile,
-            plan.messages,
-            control_listener,
-            control_guard,
-            plan.attach_session,
-            plan.autostart,
-            plan.create_only,
-            cli.read_only,
-            plan.remote,
-            plan.want_picker,
-            plan.last_session,
-        ))
+        .mount(
+            AppRoot::new(
+                plan.config,
+                theme,
+                startup_system_theme,
+                plan.profile,
+                plan.messages,
+                control_listener,
+                control_guard,
+                plan.attach_session,
+                plan.autostart,
+                plan.create_only,
+                cli.read_only,
+                plan.remote,
+                plan.want_picker,
+                plan.last_session,
+            )
+            .with_startup_cwd(plan.cwd),
+        )
         .exit_view(crate::view::exit::exit_view)
         .run();
     // The control socket has a guard the app owns; the askpass endpoint is reached from worker

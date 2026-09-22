@@ -30,9 +30,13 @@ rozi sessions attach dev              # attach only
 rozi sessions attach dev --read-only  # attach without input or layout authority
 rozi sessions new dev                 # create a fresh empty named session
 rozi sessions new review --profile dev
+rozi sessions new api --cwd ~/src/api  # first pane starts in ~/src/api
 rozi sessions list
 rozi sessions kill dev
 ```
+
+`--cwd` applies only to `sessions new` and cannot be combined with `--profile`. Under `--remote` it
+names a directory on the remote host and is passed through unchanged, so use an absolute path.
 
 `rozi sessions list --format json` includes an `origin` object when a session was seeded from a
 profile or a Git worktree. A worktree origin contains its checkout path on the session host; remote
@@ -74,6 +78,34 @@ Removal never deletes a branch. It refuses a primary or locked checkout and any 
 by a running or restorable Rozi session. `force` only asks Git to remove a dirty checkout; stop or
 forget an associated session first. A create or remove already underway finishes even if the
 picker closes, and Rozi reports the result.
+
+### Worktrees from the command line
+
+```bash
+rozi worktrees list                         # checkouts of the repository around this directory
+rozi worktrees list --cwd ~/src/rozi --format json
+rozi worktrees create feat/login            # new branch from HEAD, beside the repository
+rozi worktrees create fix/ssh --base origin/main --open
+rozi worktrees open ~/src/rozi-worktrees/feat-login
+rozi worktrees remove ~/src/rozi-worktrees/feat-login
+```
+
+`create` checks out an existing local branch, or creates the branch from `--base` (`HEAD` by
+default). Without `--path` the checkout goes to `<repo>-worktrees/<branch>` beside the primary
+checkout. It prints the new checkout's path, or a `worktree` object with `--format json`.
+`list --format json` prints a `worktrees` array; each entry adds the `sessions` whose recorded
+origin is that checkout.
+
+`open` accepts any path inside a checkout. It attaches to the checkout's session when there is
+exactly one, and otherwise creates a session named `wt-<branch>` whose first shell starts in the
+checkout and records it as the session's origin. When several sessions use the checkout, choose one
+with `--name <SESSION>`; a `--name` that is not yet associated creates another session for it.
+`create --open` opens the new checkout the same way.
+
+`remove` follows the same rules as the picker: it never deletes a branch, and `--force` only lets
+Git remove a dirty checkout. Paths resolve on the host that owns the repository, so under
+`--remote` a `~` or relative path means that host's home or working directory. See
+[Remote sessions](remote.md).
 
 ## Scope: where an action happens
 

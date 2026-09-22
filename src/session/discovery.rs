@@ -274,25 +274,35 @@ fn query_status(
     }
 }
 
-/// Conservative host-local removal guard. A session with an unreadable live endpoint blocks
-/// removal because its worktree provenance cannot be ruled out.
-pub(crate) fn sessions_using_worktree(path: &str) -> Result<Vec<String>, String> {
-    let mut users = BTreeSet::new();
-    let requested = std::path::Path::new(path)
-        .canonicalize()
-        .unwrap_or_else(|_| std::path::PathBuf::from(path));
-    let uses_worktree = |origin: &crate::session::origin::SessionOrigin| {
-        origin.worktree.as_ref().is_some_and(|tree| {
-            let recorded = std::path::Path::new(&tree.path);
-            recorded
-                .canonicalize()
-                .unwrap_or_else(|_| recorded.to_path_buf())
-                == requested
-        })
+/// Sessions on this host with a worktree origin, from snapshots and live servers.
+#[derive(Debug, Default)]
+pub(crate) struct WorktreeOrigins {
+    /// `(session, canonical checkout path)` for every session that records one.
+    pub known: Vec<(String, std::path::PathBuf)>,
+    /// Live sessions whose origin could not be read, such as a server speaking another protocol.
+    pub unverified: Vec<String>,
+}
+
+impl WorktreeOrigins {
+    pub fn sessions_at(&self, path: &std::path::Path) -> Vec<String> {
+        self.known
+            .iter()
+            .filter(|(_, tree)| tree == path)
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+}
+
+pub(crate) fn worktree_session_origins() -> Result<WorktreeOrigins, String> {
+    let canonical = |path: &str| {
+        let path = std::path::Path::new(path);
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
     };
+    let mut known = BTreeSet::new();
+    let mut unverified = Vec::new();
     for summary in crate::session::server::list_snapshot_summaries_by_recency() {
-        if uses_worktree(&summary.origin) {
-            users.insert(summary.session);
+        if let Some(tree) = summary.origin.worktree.as_ref() {
+            known.insert((summary.session, canonical(&tree.path)));
         }
     }
     let root = crate::control::runtime_dir().map_err(|err| err.to_string())?;
@@ -305,19 +315,37 @@ pub(crate) fn sessions_using_worktree(path: &str) -> Result<Vec<String>, String>
         let Ok(mut stream) = endpoint.connect() else {
             continue;
         };
-        let (status, origin, _) = query_status(&name, &mut stream, None).map_err(|err| {
-            format!("cannot verify session `{name}` before removing a worktree: {err}")
-        })?;
-        if !matches!(status, DiscoveredSessionStatus::Running { .. }) {
-            return Err(format!(
-                "cannot verify session `{name}` before removing a worktree"
-            ));
-        }
-        if uses_worktree(&origin) {
-            users.insert(name);
+        match query_status(&name, &mut stream, None) {
+            Ok((DiscoveredSessionStatus::Running { .. }, origin, _)) => {
+                if let Some(tree) = origin.worktree.as_ref() {
+                    known.insert((name, canonical(&tree.path)));
+                }
+            }
+            _ => unverified.push(name),
         }
     }
-    Ok(users.into_iter().collect())
+    Ok(WorktreeOrigins {
+        known: known.into_iter().collect(),
+        unverified,
+    })
+}
+
+/// Conservative removal guard: sessions whose recorded worktree origin is `path`, live or
+/// restorable. A live session whose origin cannot be read is an error, because a guard must not
+/// read "unknown" as "unused".
+pub(crate) fn sessions_using_worktree(path: &str) -> Result<Vec<String>, String> {
+    let origins = worktree_session_origins()?;
+    if let Some(name) = origins.unverified.first() {
+        return Err(format!(
+            "cannot verify the origin of session `{name}` before removing a worktree"
+        ));
+    }
+    let requested = std::path::Path::new(path);
+    Ok(origins.sessions_at(
+        &requested
+            .canonicalize()
+            .unwrap_or_else(|_| requested.to_path_buf()),
+    ))
 }
 
 /// Probes one session endpoint. Returns `None` whenever the server behind it is gone, so a killed

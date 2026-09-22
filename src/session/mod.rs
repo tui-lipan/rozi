@@ -7,6 +7,7 @@ pub mod protocol;
 pub(crate) mod queue;
 pub mod remote;
 pub mod server;
+pub mod worktrees;
 
 /// The map key for the local machine's own last session, alongside one key per remote target spec.
 /// `local` is not a valid [`remote::RemoteTarget::to_spec`] output (those are `ssh://…` or a bare

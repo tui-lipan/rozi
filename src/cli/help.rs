@@ -167,12 +167,20 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Create a session, optionally from a profile",
             ),
             row(
+                "sessions new <NAME> --cwd <DIR>",
+                "Create a session whose first pane starts in DIR",
+            ),
+            row(
                 "sessions list [--format text|json] [--remote <HOST>]",
                 "List connectable sessions",
             ),
             row(
                 "sessions kill <NAME> [--remote <HOST>]",
                 "Stop a session and all of its panes",
+            ),
+            row(
+                "worktrees list|create|open|remove",
+                "Manage Git checkouts and their sessions",
             ),
         ],
     },
@@ -506,7 +514,7 @@ mod tests {
     use super::*;
     use crate::cli::args::{
         AGENTS_HELP_SECTIONS, EXTENSIONS_HELP_SECTIONS, ParsedCli, SESSIONS_HELP_SECTIONS,
-        parse_cli_args,
+        WORKTREES_HELP_SECTIONS, parse_cli_args,
     };
     use crate::cli::skill::SKILL_HELP_SECTIONS;
 
@@ -551,6 +559,7 @@ mod tests {
         for (name, sections) in [
             ("agents", AGENTS_HELP_SECTIONS),
             ("sessions", SESSIONS_HELP_SECTIONS),
+            ("worktrees", WORKTREES_HELP_SECTIONS),
             ("extensions", EXTENSIONS_HELP_SECTIONS),
         ] {
             let mut namespace_help = format!("rozi {name}\n");

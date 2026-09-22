@@ -13,6 +13,8 @@ rozi --remote workbox sessions attach dev
 rozi --remote workbox sessions new review
 rozi sessions list --remote workbox
 rozi sessions kill dev --remote workbox
+rozi --remote workbox worktrees list --cwd '~/src/rozi'
+rozi --remote workbox worktrees create feat/login --cwd '~/src/rozi' --open
 ```
 
 The session commands behave like local commands. A named target attaches to its running session or
@@ -222,7 +224,9 @@ the remote server's `PATH` for change markers. File search only includes directo
 already expanded.
 
 Hooks run locally and receive `ROZI_REMOTE_HOST`. The UI control socket also remains local.
-`sessions list --remote` and `sessions kill --remote` are separate SSH commands.
+`sessions list --remote`, `sessions kill --remote`, and `worktrees --remote` are separate SSH
+commands. Worktree paths are resolved by the remote rozi, so quote `~` to keep your local shell from
+expanding it.
 
 Clipboard reads and writes happen on the client where the UI runs. OSC52 from a remote pane can
 therefore update the local clipboard when enabled. Direct rich-clipboard access by the pane still

@@ -13,6 +13,7 @@ pub(crate) mod monitor;
 mod preamble;
 mod proxy;
 mod target;
+pub mod worktrees;
 
 pub use askpass::AskpassKind;
 pub use bootstrap::ensure_remote_binary;

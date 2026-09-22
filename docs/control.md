@@ -448,9 +448,13 @@ rozi sessions attach dev
 rozi sessions attach dev --read-only
 rozi sessions new dev
 rozi sessions new review --profile dev
+rozi sessions new api --cwd ~/src/api
 rozi sessions list
 rozi sessions kill dev
 ```
+
+Git checkouts have their own `rozi worktrees` namespace. See
+[Worktrees from the command line](sessions.md#worktrees-from-the-command-line).
 
 Remote forms are limited to session lifecycle:
 

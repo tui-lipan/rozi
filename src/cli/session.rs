@@ -38,6 +38,26 @@ pub(crate) fn run_remote_control_cli(name: &str) -> Result<()> {
     }
 }
 
+/// `--remote-worktrees`: run one forwarded worktree call on this host.
+///
+/// A call the host ran and refused is still an answer, printed like a success. A non-zero exit
+/// means the call could not be read at all.
+pub(crate) fn run_remote_worktrees_cli() -> Result<()> {
+    match session::remote::worktrees::run_remote_worktrees() {
+        Ok(reply) => {
+            println!(
+                "{}",
+                serde_json::to_string(&reply).map_err(std::io::Error::other)?
+            );
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    }
+}
+
 pub(super) fn format_sessions_text(
     rows: &[session::discovery::DiscoveredSession],
     styles: OutputStyles,

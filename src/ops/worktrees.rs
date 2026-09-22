@@ -150,47 +150,14 @@ fn matching_sessions(picker: &WorktreePickerState, path: &str) -> Vec<Discovered
 }
 
 fn new_session_name(ctx: &Context<AppRoot>, branch: Option<&str>, path: &str) -> String {
-    let tail = branch.unwrap_or_else(|| path.rsplit(['/', '\\']).next().unwrap_or("worktree"));
-    let slug: String = tail
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .take(40)
-        .collect();
-    let base = format!("wt-{}", slug.trim_matches('-'));
-    let base = if base == "wt-" {
-        "wt-worktree".to_string()
-    } else {
-        base
-    };
-    let target = ctx
-        .state
-        .worktree_picker
-        .as_ref()
-        .and_then(|picker| picker.target.as_ref());
-    for suffix in 1..=9999 {
-        let name = if suffix == 1 {
-            base.clone()
-        } else {
-            format!("{base}-{suffix}")
-        };
-        let known = ctx
-            .state
-            .worktree_picker
-            .as_ref()
-            .is_some_and(|picker| picker.sessions.iter().any(|row| row.name == name));
-        if !known
-            && !crate::ops::session::lifecycle::session_name_already_running(ctx, &name, target)
-        {
-            return name;
-        }
-    }
-    format!("{base}-{}", ctx.state.next_worktree_request_id)
+    let base = crate::session::worktrees::session_name_base(branch, path);
+    let picker = ctx.state.worktree_picker.as_ref();
+    let target = picker.and_then(|picker| picker.target.as_ref());
+    crate::session::worktrees::unused_session_name(&base, |name| {
+        picker.is_some_and(|picker| picker.sessions.iter().any(|row| row.name == name))
+            || crate::ops::session::lifecycle::session_name_already_running(ctx, name, target)
+    })
+    .unwrap_or_else(|| format!("{base}-{}", ctx.state.next_worktree_request_id))
 }
 
 fn enter_tree(ctx: &mut Context<AppRoot>, tree: crate::git::worktrees::WorktreeInfo) -> Update {

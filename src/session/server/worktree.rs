@@ -1,7 +1,6 @@
 //! Serialized Git worktree work, independent of the browse queue and session pump.
 
 use super::*;
-use std::path::{Path, PathBuf};
 
 const QUEUE_CAPACITY: usize = 4;
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
@@ -30,64 +29,10 @@ impl WorktreeJob {
     }
 
     fn run(self) -> WorktreeDone {
-        use protocol::{WorktreeRequest as Request, WorktreeResult as ResultValue};
-        let result = match self.request {
-            Request::List { cwd } => crate::git::worktrees::list(Path::new(&cwd))
-                .map(|worktrees| ResultValue::Listed { worktrees }),
-            Request::Preview { cwd, branch } =>
-                crate::git::worktrees::default_path(Path::new(&cwd), &branch).map(|path| {
-                    ResultValue::Previewed {
-                        path: path.to_string_lossy().into_owned(),
-                    }
-                }),
-            Request::Create {
-                cwd,
-                branch,
-                base,
-                path,
-            } => {
-                let cwd = Path::new(&cwd);
-                let path = path
-                    .map(PathBuf::from)
-                    .map(Ok)
-                    .unwrap_or_else(|| crate::git::worktrees::default_path(cwd, &branch));
-                path.and_then(|path| {
-                    if !path.is_absolute() {
-                        return Err("worktree path must be absolute on the session host".to_string());
-                    }
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-                    }
-                    crate::git::worktrees::create(cwd, &branch, &base, &path)
-                })
-                .map(|worktree| ResultValue::Created { worktree })
-            }
-            Request::Remove { cwd, path, force } => {
-                let requested = Path::new(&path);
-                let result = if !requested.is_absolute() {
-                    Err("worktree path must be absolute on the session host".to_string())
-                } else {
-                    let canonical = requested.canonicalize().unwrap_or_else(|_| requested.to_path_buf());
-                    crate::session::discovery::sessions_using_worktree(&canonical.to_string_lossy())
-                        .and_then(|users| {
-                            if users.is_empty() {
-                                crate::git::worktrees::remove(Path::new(&cwd), &canonical, force)
-                            } else {
-                                Err(format!(
-                                    "worktree is used by session {}; stop or forget it before removal",
-                                    users.join(", ")
-                                ))
-                            }
-                        })
-                };
-                result.map(|()| ResultValue::Removed { path })
-            }
-        }
-        .unwrap_or_else(|message| ResultValue::Failed { message });
         WorktreeDone {
             client_id: self.client_id,
             request_id: self.request_id,
-            result,
+            result: crate::session::worktrees::execute(self.request),
         }
     }
 }

@@ -16,6 +16,14 @@ pub(super) struct StartupProfile {
     pub(super) records_origin: bool,
 }
 
+/// Where a created session's first pane starts, on the session's host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct StartupCwd {
+    pub(super) path: String,
+    /// Record `path` as the session's worktree origin (`worktrees open`).
+    pub(super) worktree: bool,
+}
+
 pub(super) struct StartupTasks {
     pub(super) enabled: bool,
     /// How long after the startup check the first re-check fires, or `None` when this client does
@@ -130,6 +138,7 @@ pub(super) struct StartupPlan {
     pub(super) autostart: bool,
     pub(super) create_only: bool,
     pub(super) profile: Option<StartupProfile>,
+    pub(super) cwd: Option<StartupCwd>,
     pub(super) remote: Option<crate::session::remote::RemoteTarget>,
     pub(super) last_session: Option<String>,
     pub(super) want_picker: bool,
@@ -145,11 +154,13 @@ impl StartupPlan {
             autostart: cli.attach_session.is_none(),
             create_only: false,
             profile: None,
+            cwd: None,
             remote,
             last_session: None,
             want_picker: false,
             config: loaded.config,
         };
+        plan.cwd = resolve_startup_cwd(cli, plan.remote.is_some());
         plan.apply_session_policy(cli);
         plan.resolve_session_target(cli, explicit_target);
         plan.load_fallback_profile();
@@ -347,6 +358,27 @@ impl StartupPlan {
             Err(err) => self.messages.push(format!("Session restore failed: {err}")),
         }
     }
+}
+
+/// `--cwd` for a created session. A local directory is resolved here, where it was typed; a remote
+/// one is the far host's path and is passed through untouched.
+fn resolve_startup_cwd(cli: &cli::CliArgs, remote: bool) -> Option<StartupCwd> {
+    let raw = cli.cwd.as_deref()?;
+    let path = if remote || cli.worktree_origin {
+        raw.to_string()
+    } else {
+        let path = crate::session::worktrees::host_path(raw).unwrap_or_else(|err| {
+            startup_fatal(format!("Invalid --cwd `{raw}`: {err}"));
+        });
+        if !path.is_dir() {
+            startup_fatal(format!("--cwd `{}` is not a directory.", path.display()));
+        }
+        path.to_string_lossy().into_owned()
+    };
+    Some(StartupCwd {
+        path,
+        worktree: cli.worktree_origin,
+    })
 }
 
 fn requested_new_profile(cli: &cli::CliArgs) -> Option<StartupProfile> {

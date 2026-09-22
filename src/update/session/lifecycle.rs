@@ -6,7 +6,7 @@ use crate::layout::shared::{ClientId, SharedLayout};
 use crate::session::client::SessionClient;
 use crate::session::protocol::{ClientInfo, PaneMeta};
 use crate::update::attach::{
-    apply_attached_panes, bind_attached_pane_backends, flush_pending_spawns,
+    apply_attached_panes, bind_attached_pane_backends, flush_pending_spawns, open_arriving_panes,
     reset_state_for_shared_seed, spawn_state_panes_on_session,
 };
 
@@ -332,6 +332,11 @@ pub(crate) fn attached(
         let generation = ctx.state.current().resize_flush_generation;
         crate::pane::pty_events::flush_pending_resizes(ctx, generation);
         if spawned.is_empty() {
+            Update::full()
+        } else if !reconnect {
+            // A new session view: its first panes arrive with it under the session reveal, rather
+            // than each playing a pane-open effect on top of it.
+            open_arriving_panes(ctx, &spawned);
             Update::full()
         } else {
             ctx.state

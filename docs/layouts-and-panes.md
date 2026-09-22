@@ -130,6 +130,10 @@ These are character-materialization effects, not transparent cutouts: unrevealed
 inside the pane's own painted surface rather than exposing arbitrary content underneath. The pane's
 outer visibility transition handles the fully hidden state.
 
+The panes a new session starts with, such as the launcher's shell or a profile's layout, do not
+play these effects: they arrive with the session under its switching animation (see
+[Sessions](sessions.md)).
+
 Turning animations off, or changing the master, spawn, or close switch, snaps the pane to its settled
 state. Pane geometry still stays fixed during Portal and Scan, so terminal dimensions do not change
 on every frame.

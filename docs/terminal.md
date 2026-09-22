@@ -44,7 +44,8 @@ mouse-aware editors and TUIs working normally.
 
 | Gesture | Action |
 | --- | --- |
-| Drag over terminal text | Select text |
+| Drag over terminal text | Select text and copy it on release |
+| Middle click (Linux) | Paste the primary selection |
 | Wheel over a pane | Scroll history |
 | `Ctrl` plus click a visible link | Open it |
 | WM modifier plus left-drag | Move a pane |
@@ -61,8 +62,16 @@ program does not build an input backlog. Presses, releases, and wheel events are
 
 ## Select, copy, and paste
 
-Drag to select text, then press `Ctrl+C` to copy it. Selection anchors remain attached to scrollback
-lines while you scroll.
+Drag to select text. On Linux, releasing the mouse copies it to both the regular clipboard and the
+primary selection; on other platforms, it copies to the regular clipboard. The selection remains
+visible after copying, and its anchors stay attached to scrollback lines while you scroll. Pressing
+`Ctrl+C` also copies the active selection to the regular clipboard.
+
+Middle click pastes the primary selection on Linux. Right click remains available to the pane or
+Rozi rather than acting as a clipboard shortcut. These defaults can be changed under
+[`[clipboard]`](configuration.md#clipboard); changes apply when the config reloads. If the host does
+not support a primary selection, Rozi keeps regular clipboard copying enabled and disables
+PRIMARY-only gestures.
 
 The `v` command key and direct `Ctrl+V` send text from the system clipboard with bracketed-paste
 markers. Direct `Ctrl+V` passes through when the clipboard contains a non-text format, allowing a
@@ -70,10 +79,10 @@ pane program to handle it. Prefix, modifier, and palette paste commands remain t
 
 Programs can write to the system clipboard with OSC52 when
 `[clipboard].enable_osc52 = true`, the default. Disable it if pane programs should not control the
-clipboard. Restart Rozi after changing this setting.
+clipboard. The change applies when the config reloads.
 
-For a remote attachment, OSC52 targets the local client's clipboard. A pane program that directly
-opens a clipboard API sees the remote host's clipboard.
+For a remote attachment, mouse selection and OSC52 target the local client's clipboard. A pane
+program that directly opens a clipboard API sees the remote host's clipboard.
 
 ## Copy, search, and hints
 

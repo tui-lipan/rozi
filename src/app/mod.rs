@@ -13,8 +13,8 @@ use crate::{commands, config, control, events, ops, state, update, view};
 mod entry;
 mod startup;
 
-pub(crate) use entry::clipboard_copy_feedback_duration;
 pub use entry::run;
+pub(crate) use entry::{clipboard_config, clipboard_copy_feedback_duration};
 use startup::{StartupProfile, StartupTasks};
 
 pub struct AppRoot {

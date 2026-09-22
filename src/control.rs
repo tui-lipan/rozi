@@ -280,6 +280,13 @@ pub enum ControlCommand {
         /// Extra chords offered beside select and cancel, advertised in the footer.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         actions: Vec<crate::state::PickAction>,
+        /// Pages shown as a tab strip, each with its own rows, filter, and highlight. Omitted is
+        /// one untitled page and no strip.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tabs: Vec<crate::state::PickTab>,
+        /// Id of the tab to open on. Omitted or unknown opens the first.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab: Option<String>,
     },
 }
 
@@ -836,6 +843,8 @@ fn run_pick_stream(
     empty: Option<String>,
     width: Option<u16>,
     actions: Vec<crate::state::PickAction>,
+    tabs: Vec<crate::state::PickTab>,
+    tab: Option<String>,
     extension: Option<crate::config::ExtensionProvenance>,
 ) {
     let Ok(reader_stream) = stream.try_clone() else {
@@ -846,7 +855,7 @@ fn run_pick_stream(
     };
 
     let (ack_tx, ack_rx) = mpsc::channel();
-    let (reply_tx, reply_rx) = mpsc::sync_channel::<String>(1);
+    let (reply_tx, reply_rx) = crate::state::PickReply::channel();
 
     link.send(Msg::PickStreamOpen {
         id,
@@ -855,6 +864,8 @@ fn run_pick_stream(
         empty,
         width,
         actions,
+        tabs,
+        tab,
         extension,
         sender: reply_tx,
         ack: ack_tx,
@@ -875,9 +886,14 @@ fn run_pick_stream(
 
     let _ = stream.set_read_timeout(None);
 
+    // Every reply line goes out, not just the first: actions and tab switches keep the picker
+    // open and report again later. The loop ends after the terminal line, or when the picker is
+    // dropped without one.
     let writer = std::thread::spawn(move || {
-        if let Ok(line) = reply_rx.recv() {
-            let _ = writer_stream.write_all(line.as_bytes());
+        while let Some(line) = reply_rx.recv() {
+            if writer_stream.write_all(line.as_bytes()).is_err() {
+                break;
+            }
         }
     });
 
@@ -904,7 +920,11 @@ fn run_pick_stream(
         if let Ok(report) = serde_json::from_str::<PickReport>(&line) {
             let mut rows = report.rows;
             rows.truncate(MAX_PICK_ROWS);
-            link.send(Msg::PickRowsReported { id, rows });
+            link.send(Msg::PickRowsReported {
+                id,
+                tab: report.tab,
+                rows,
+            });
         }
     }
 
@@ -923,6 +943,9 @@ struct PublishReport {
 /// One line written by a `pick` publisher.
 #[derive(Debug, serde::Deserialize)]
 struct PickReport {
+    /// The tab these rows fill. Required when the picker declared tabs, absent otherwise.
+    #[serde(default)]
+    tab: Option<String>,
     #[serde(default)]
     rows: Vec<crate::state::PickRow>,
 }
@@ -1130,6 +1153,8 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
         empty,
         width,
         actions,
+        tabs,
+        tab,
     } = &request.command
     {
         static NEXT_PICK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -1143,6 +1168,8 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             empty.clone(),
             *width,
             actions.clone(),
+            tabs.clone(),
+            tab.clone(),
             request.extension.clone(),
         );
         return;
@@ -1491,6 +1518,8 @@ mod tests {
                 empty: None,
                 width: None,
                 actions: Vec::new(),
+                tabs: Vec::new(),
+                tab: None,
             },
             source_pane: None,
             extension: None,

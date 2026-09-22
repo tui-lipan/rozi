@@ -342,8 +342,8 @@ git switch -- "$branch"
 Selection exits `0`, cancellation exits `1`, and transport failure exits `2`.
 
 Use `--json` for stable row IDs, descriptions, groups, disabled or active rows, custom actions,
-prompts, empty-collection copy, and live replacement. The first input line is picker metadata and
-may contain initial rows. Later input lines replace the complete row set.
+prompts, empty-collection copy, tabs, and live replacement. The first input line is picker metadata
+and may contain initial rows. Later input lines replace the complete row set.
 
 ```json
 {"title":"Branches","rows":[{"id":"main","label":"main","active":true},{"id":"old","label":"old","disabled":"protected"}]}
@@ -352,8 +352,20 @@ may contain initial rows. Later input lines replace the complete row set.
 JSON mode prints selection, cancellation, and action objects. An action without `close: true` keeps
 the picker open so the producer can send refreshed rows. `empty` is producer copy for an empty row
 list while the filter is empty; a filter miss always says `No matches`. `prompt` may be a title
-string or an object with `title`, `placeholder`, `value`, and `masked`. See
-[Picker protocol](control-protocol.md#picker-stream).
+string or an object with `title`, `placeholder`, `value`, and `masked`.
+
+Declare `tabs` to show several related lists under one picker. Each tab keeps its own rows, filter,
+and highlight; `Tab`/`Shift+Tab` or `Right`/`Left` switch between them. Row snapshots name their
+tab, and JSON mode prints `{"tab":"…"}` on each switch so the producer can load a tab when it is
+first shown:
+
+```json
+{"title":"Git","tabs":[{"id":"branches","label":"Branches"},{"id":"worktrees","label":"Worktrees"}],"rows":[{"id":"main","label":"main"}]}
+{"tab":"worktrees","rows":[{"id":"/src/rozi-review","label":"rozi-review"}]}
+```
+
+Selections and actions from a tabbed picker carry the tab: `{"selected":"main","tab":"branches"}`.
+See [Picker protocol](control-protocol.md#picker-stream).
 
 ## Published activity
 

@@ -63,8 +63,8 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
 - Drive a detached session with no client attached: list, capture, type, and open panes from a
   script or an SSH login that never starts a terminal.
 - Run hooks when pane, focus, workspace, session, or profile events occur.
-- Build extensions with static navigation targets plus out-of-process commands, services, pickers,
-  activity rows, and notifications.
+- Build extensions with static navigation targets plus out-of-process commands, services, tabbed
+  pickers, activity rows, and notifications.
 - Discover public `rozi-extension` repositories in-app and install their exact indexed commits after
   reviewing source, compatibility, and contribution counts.
 

@@ -482,6 +482,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             empty,
             width,
             actions,
+            tabs,
+            tab,
             extension,
             sender,
             ack,
@@ -494,6 +496,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
                 empty,
                 width,
                 actions,
+                tabs,
+                tab,
                 extension,
             },
             sender,
@@ -504,7 +508,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::PickPromptChanged(event) => crate::ops::pick::prompt_changed(ctx, event),
         Msg::PickPromptSubmit => crate::ops::pick::prompt_submit(ctx),
         Msg::PickPromptCancel => crate::ops::pick::prompt_cancel(ctx),
-        Msg::PickRowsReported { id, rows } => crate::ops::pick::rows_reported(ctx, id, rows),
+        Msg::PickRowsReported { id, tab, rows } => {
+            crate::ops::pick::rows_reported(ctx, id, tab, rows)
+        }
+        Msg::PickTabSelected(index) => crate::ops::pick::tab_selected(ctx, index),
         Msg::PickStreamClosed { id } => crate::ops::pick::stream_closed(ctx, id),
         Msg::ClosePick => crate::ops::pick::close_pick(ctx),
         Msg::PickSelect(index) => crate::ops::pick::pick_select(ctx, index),

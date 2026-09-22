@@ -470,8 +470,10 @@ pub enum Msg {
         empty: Option<String>,
         width: Option<u16>,
         actions: Vec<crate::state::PickAction>,
+        tabs: Vec<crate::state::PickTab>,
+        tab: Option<String>,
         extension: Option<crate::config::ExtensionProvenance>,
-        sender: std::sync::mpsc::SyncSender<String>,
+        sender: crate::state::PickReply,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },
     /// The picker's filter text changed; mirrored so a rebuild can restore it.
@@ -484,11 +486,14 @@ pub enum Msg {
     PickPromptSubmit,
     /// Dismissing it, which returns to the picker without reporting anything.
     PickPromptCancel,
-    /// A row list from an open `pick` stream.
+    /// A row list from an open `pick` stream, for the named tab when the picker has tabs.
     PickRowsReported {
         id: u64,
+        tab: Option<String>,
         rows: Vec<crate::state::PickRow>,
     },
+    /// A tab of the picker was chosen; the index is into `PickState::pages`.
+    PickTabSelected(usize),
     /// A `pick` stream closed.
     PickStreamClosed {
         id: u64,

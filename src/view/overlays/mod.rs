@@ -70,8 +70,8 @@ pub(in crate::view::overlays) use commands::settings_palette_aliases;
 pub(in crate::view::overlays) use common::{ctrl_letter, hint_pill, hint_row};
 pub(in crate::view::overlays) use confirm::{DialogButton, DialogChrome, dialog_overlay};
 pub(in crate::view::overlays) use palette::{
-    OverlayAction, OverlayItemRenderer, OverlayPalette, overlay_hints, overlay_interceptor,
-    picker_description, picker_row, picker_selection_style,
+    OverlayAction, OverlayItemRenderer, OverlayPalette, OverlayTabs, overlay_hints,
+    overlay_interceptor, picker_description, picker_row, picker_selection_style,
 };
 pub(in crate::view::overlays) use pick::fit_description;
 pub(in crate::view::overlays) use profiles::render_ephemeral_session_item;

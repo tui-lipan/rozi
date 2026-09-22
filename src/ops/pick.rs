@@ -7,7 +7,7 @@ use crate::control::ControlResponse;
 use crate::ops::focus::{
     request_current_pane_focus, request_pick_focus, request_pick_prompt_focus,
 };
-use crate::state::{Mode, PickRow, PickState};
+use crate::state::{Mode, PickPage, PickReply, PickRow, PickState, PickTab};
 
 /// Narrowest and widest a caller may make the modal.
 ///
@@ -25,13 +25,38 @@ pub(crate) struct PickOpen {
     pub empty: Option<String>,
     pub width: Option<u16>,
     pub actions: Vec<crate::state::PickAction>,
+    pub tabs: Vec<PickTab>,
+    pub tab: Option<String>,
     pub extension: Option<crate::config::ExtensionProvenance>,
+}
+
+/// The pages a picker opens with: one per usable declared tab, or the single implicit page.
+///
+/// A tab with an empty id, or one repeating an earlier id, is dropped for the same reason an
+/// unparseable action is: rows and replies address tabs by id, so it could never be told apart.
+fn opening_pages(tabs: &[PickTab]) -> Vec<PickPage> {
+    let mut pages: Vec<PickPage> = crate::state::usable_pick_tabs(tabs)
+        .into_iter()
+        .map(|tab| PickPage {
+            label: tab
+                .label
+                .clone()
+                .filter(|label| !label.is_empty())
+                .unwrap_or_else(|| tab.id.clone()),
+            tab: Some(tab.id.clone()),
+            ..PickPage::default()
+        })
+        .collect();
+    if pages.is_empty() {
+        pages.push(PickPage::default());
+    }
+    pages
 }
 
 pub(crate) fn open_pick_stream(
     ctx: &mut Context<AppRoot>,
     open: PickOpen,
-    sender: std::sync::mpsc::SyncSender<String>,
+    sender: PickReply,
     ack: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
     let PickOpen {
@@ -41,6 +66,8 @@ pub(crate) fn open_pick_stream(
         empty,
         width,
         actions,
+        tabs,
+        tab,
         extension,
     } = open;
     if extension.as_ref().is_some_and(|provenance| {
@@ -61,6 +88,14 @@ pub(crate) fn open_pick_stream(
     }
     let _ = ack.send(ControlResponse::empty());
 
+    let pages = opening_pages(&tabs);
+    let active = tab
+        .and_then(|tab| {
+            pages
+                .iter()
+                .position(|page| page.tab.as_ref() == Some(&tab))
+        })
+        .unwrap_or(0);
     ctx.state.pick = Some(PickState {
         id,
         extension,
@@ -80,11 +115,9 @@ pub(crate) fn open_pick_stream(
             })
             .collect(),
         prompt: None,
-        query: String::new(),
-        restore_query: String::new(),
         pending_action: None,
-        rows: Vec::new(),
-        selected: 0,
+        pages,
+        active,
         reply: sender,
     });
     ctx.state.show_pick = true;
@@ -100,26 +133,84 @@ pub(crate) fn open_pick_stream(
     Update::full()
 }
 
-pub(crate) fn rows_reported(ctx: &mut Context<AppRoot>, id: u64, rows: Vec<PickRow>) -> Update {
+/// Replace one page's rows.
+///
+/// A tabbed picker needs the snapshot to name its tab, and an untabbed one needs it not to: a
+/// snapshot aimed at no page, or at a tab that was never declared, is dropped like any other line
+/// that does not parse, rather than landing on whichever page happens to be showing.
+pub(crate) fn rows_reported(
+    ctx: &mut Context<AppRoot>,
+    id: u64,
+    tab: Option<String>,
+    rows: Vec<PickRow>,
+) -> Update {
     let Some(pick) = ctx.state.pick.as_mut().filter(|p| p.id == id) else {
         return Update::none();
     };
-    pick.rows = rows;
-    if pick.selected >= pick.rows.len() {
-        pick.selected = 0;
+    let Some(index) = pick.pages.iter().position(|page| page.tab == tab) else {
+        return Update::none();
+    };
+    let page = &mut pick.pages[index];
+    page.rows = rows;
+    if page.selected >= page.rows.len() {
+        page.selected = 0;
+    }
+    if index != pick.active {
+        // Filled out of sight. The strip labels do not change with the rows, so there is nothing
+        // to redraw until the user switches to it.
+        return Update::none();
     }
     // An arming survives a refresh only while its row does; otherwise the confirmation would be
     // aimed at whatever took that id's place.
     if let Some((_, row)) = pick.pending_action.clone() {
         let still_there = pick
+            .page()
             .rows
             .iter()
-            .any(|candidate| candidate.id.as_ref().unwrap_or(&candidate.label) == &row);
+            .any(|candidate| row_id(candidate) == row);
         if !still_there {
             pick.pending_action = None;
         }
     }
     Update::full()
+}
+
+/// Show another page, and tell the caller so it can fill a tab only once someone looks at it.
+pub(crate) fn tab_selected(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    let Some(pick) = ctx.state.pick.as_mut() else {
+        return Update::none();
+    };
+    if index == pick.active || index >= pick.pages.len() || pick.prompt.is_some() {
+        return Update::none();
+    }
+    // The armed row belongs to the page being left.
+    pick.pending_action = None;
+    pick.active = index;
+    // The palette remounts for the new page, so seed it with what was typed there last time.
+    let page = pick.page_mut();
+    page.restore_query = page.query.clone();
+    if let Some(tab) = page.tab.as_deref() {
+        let payload = serde_json::json!({ "tab": tab });
+        pick.reply.event(&payload);
+    }
+    request_pick_focus(ctx);
+    Update::full()
+}
+
+/// What a row reports as `selected`: its id, or its label when it has none.
+fn row_id(row: &PickRow) -> &str {
+    row.id.as_deref().unwrap_or(&row.label)
+}
+
+/// Add the active tab to a reply, so ids only need to be unique within their tab.
+fn with_tab(pick: &PickState, mut payload: serde_json::Value) -> serde_json::Value {
+    if let (Some(tab), Some(map)) = (pick.page().tab.as_deref(), payload.as_object_mut()) {
+        map.insert(
+            "tab".to_string(),
+            serde_json::Value::String(tab.to_string()),
+        );
+    }
+    payload
 }
 
 pub(crate) fn stream_closed(ctx: &mut Context<AppRoot>, id: u64) -> Update {
@@ -164,7 +255,7 @@ pub(crate) fn cancel_pick(ctx: &mut Context<AppRoot>, reason: Option<&str>) -> U
             Some(reason) => serde_json::json!({ "cancelled": true, "reason": reason }),
             None => serde_json::json!({ "cancelled": true }),
         };
-        let _ = pick.reply.try_send(format!("{payload}\n"));
+        pick.reply.finish(&payload);
         ctx.state.show_pick = false;
         ctx.state.commands_dirty = true;
         request_current_pane_focus(ctx);
@@ -178,12 +269,12 @@ pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update
         .state
         .pick
         .as_ref()
-        .is_some_and(|pick| pick.query.trim().is_empty());
+        .is_some_and(|pick| pick.page().query.trim().is_empty());
     let Some(pick) = ctx.state.pick.as_mut() else {
         return Update::none();
     };
-    pick.query = query;
-    let is_empty = pick.query.trim().is_empty();
+    pick.page_mut().query = query;
+    let is_empty = pick.page().query.trim().is_empty();
     let disarmed = pick.pending_action.take().is_some();
     if was_empty != is_empty || disarmed {
         Update::full()
@@ -194,8 +285,9 @@ pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update
 
 pub(crate) fn pick_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if let Some(pick) = ctx.state.pick.as_mut() {
-        let moved = pick.selected != index;
-        pick.selected = index;
+        let page = pick.page_mut();
+        let moved = page.selected != index;
+        page.selected = index;
         // Moving off the armed row disarms it, so a confirmation can never land on a row the user
         // has since navigated to.
         if moved && pick.pending_action.is_some() {
@@ -210,21 +302,26 @@ pub(crate) fn pick_activate(ctx: &mut Context<AppRoot>, index: usize) -> Update 
     let Some(pick) = ctx.state.pick.as_ref() else {
         return Update::none();
     };
-    let Some(row) = pick.rows.get(index) else {
+    let Some(row) = pick.page().rows.get(index) else {
         return Update::none();
     };
     if row.disabled.is_some() {
         return Update::none();
     }
-    let selected_id = row.id.as_deref().unwrap_or(&row.label);
-    let line = format!("{}\n", serde_json::json!({ "selected": selected_id }));
-    let _ = pick.reply.try_send(line);
+    let payload = with_tab(pick, serde_json::json!({ "selected": row_id(row) }));
+    close_with(ctx, &payload);
+    Update::full()
+}
 
-    ctx.state.pick = None;
+/// End the picker with its terminal line, which [`PickReply::finish`] guarantees reaches the
+/// caller however full the event queue is.
+fn close_with(ctx: &mut Context<AppRoot>, payload: &serde_json::Value) {
+    if let Some(pick) = ctx.state.pick.take() {
+        pick.reply.finish(payload);
+    }
     ctx.state.show_pick = false;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
-    Update::full()
 }
 
 /// Fire an action chord.
@@ -241,8 +338,7 @@ pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update 
     };
 
     if action.confirm {
-        let row = visible_selected_row(pick)
-            .map(|row| row.id.clone().unwrap_or_else(|| row.label.clone()));
+        let row = visible_selected_row(pick).map(|row| row_id(row).to_string());
         let Some(row) = row else {
             return Update::none();
         };
@@ -261,7 +357,8 @@ pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update 
     if let Some(spec) = action.prompt {
         if let Some(pick) = ctx.state.pick.as_mut() {
             // The picker unmounts while the prompt is up, so capture what to rebuild it with.
-            pick.restore_query = pick.query.clone();
+            let page = pick.page_mut();
+            page.restore_query = page.query.clone();
             pick.prompt = Some(crate::state::PickPrompt {
                 action: index,
                 title: spec.title().to_string(),
@@ -327,8 +424,7 @@ fn report_action(ctx: &mut Context<AppRoot>, index: usize, input: Option<String>
     };
     // The row under the cursor rides along, so an action can be about a row without the caller
     // tracking the highlight itself.
-    let selected =
-        visible_selected_row(pick).map(|row| row.id.clone().unwrap_or_else(|| row.label.clone()));
+    let selected = visible_selected_row(pick).map(|row| row_id(row).to_string());
 
     let mut payload = serde_json::json!({ "action": action.id });
     if let Some(map) = payload.as_object_mut() {
@@ -343,22 +439,21 @@ fn report_action(ctx: &mut Context<AppRoot>, index: usize, input: Option<String>
             map.insert("input".to_string(), serde_json::Value::String(text));
         }
     }
-    let _ = pick.reply.try_send(format!("{payload}\n"));
+    let payload = with_tab(pick, payload);
 
     if action.close {
-        ctx.state.pick = None;
-        ctx.state.show_pick = false;
-        ctx.state.commands_dirty = true;
-        request_current_pane_focus(ctx);
+        close_with(ctx, &payload);
     } else {
+        pick.reply.event(&payload);
         request_pick_focus(ctx);
     }
     Update::full()
 }
 
 fn visible_selected_row(pick: &crate::state::PickState) -> Option<&crate::state::PickRow> {
-    let row = pick.rows.get(pick.selected)?;
-    if pick.query.trim().is_empty() {
+    let page = pick.page();
+    let row = page.rows.get(page.selected)?;
+    if page.query.trim().is_empty() {
         return Some(row);
     }
     let description = row
@@ -370,7 +465,7 @@ fn visible_selected_row(pick: &crate::state::PickState) -> Option<&crate::state:
         .description(ItemDescription::new().right(description))];
     (!tui_lipan::rank_search_palette_indices_with_mode(
         &items,
-        &pick.query,
+        &page.query,
         SearchMatchMode::Hybrid,
         |_, _, score| score as f64,
     )
@@ -401,7 +496,7 @@ mod tests {
     #[test]
     fn reported_rows_reach_state() {
         with_backend(|backend| {
-            let (tx, _rx) = mpsc::sync_channel(1);
+            let (tx, _rx) = crate::state::PickReply::channel();
             let (ack_tx, ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -412,6 +507,8 @@ mod tests {
                     placeholder: None,
                     empty: None,
                     extension: None,
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -422,6 +519,7 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickRowsReported {
                     id: 1,
+                    tab: None,
                     rows: vec![PickRow {
                         id: Some("main".into()),
                         label: "main".into(),
@@ -435,8 +533,8 @@ mod tests {
                 .expect("dispatch rows");
 
             let pick = backend.state().pick.as_ref().expect("pick state present");
-            assert_eq!(pick.rows.len(), 1);
-            assert_eq!(pick.rows[0].label, "main");
+            assert_eq!(pick.page().rows.len(), 1);
+            assert_eq!(pick.page().rows[0].label, "main");
         });
     }
 
@@ -446,7 +544,7 @@ mod tests {
             backend.state_mut().show_palette = true;
             backend.state_mut().command_palette_handoff = Some(7);
 
-            let (tx, _rx) = mpsc::sync_channel(1);
+            let (tx, _rx) = crate::state::PickReply::channel();
             let (ack_tx, ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -457,6 +555,8 @@ mod tests {
                     placeholder: None,
                     empty: None,
                     extension: None,
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -482,7 +582,7 @@ mod tests {
     #[test]
     fn activating_writes_selected_json() {
         with_backend(|backend| {
-            let (tx, rx) = mpsc::sync_channel(1);
+            let (tx, rx) = crate::state::PickReply::channel();
             let (ack_tx, _ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -493,6 +593,8 @@ mod tests {
                     placeholder: None,
                     empty: None,
                     extension: None,
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -501,6 +603,7 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickRowsReported {
                     id: 1,
+                    tab: None,
                     rows: vec![PickRow {
                         id: Some("feat/x".into()),
                         label: "Feature X".into(),
@@ -526,7 +629,7 @@ mod tests {
     #[test]
     fn close_pick_writes_cancelled_json() {
         with_backend(|backend| {
-            let (tx, rx) = mpsc::sync_channel(1);
+            let (tx, rx) = crate::state::PickReply::channel();
             let (ack_tx, _ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -537,6 +640,8 @@ mod tests {
                     placeholder: None,
                     empty: None,
                     extension: None,
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -555,7 +660,7 @@ mod tests {
     #[test]
     fn a_second_open_is_rejected() {
         with_backend(|backend| {
-            let (tx1, _rx1) = mpsc::sync_channel(1);
+            let (tx1, _rx1) = crate::state::PickReply::channel();
             let (ack_tx1, ack_rx1) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -566,13 +671,15 @@ mod tests {
                     placeholder: None,
                     empty: None,
                     extension: None,
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx1,
                     ack: ack_tx1,
                 })
                 .expect("dispatch open 1");
             assert!(ack_rx1.recv().unwrap().ok);
 
-            let (tx2, _rx2) = mpsc::sync_channel(1);
+            let (tx2, _rx2) = crate::state::PickReply::channel();
             let (ack_tx2, ack_rx2) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -583,6 +690,8 @@ mod tests {
                     placeholder: None,
                     empty: None,
                     extension: None,
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx2,
                     ack: ack_tx2,
                 })
@@ -598,7 +707,7 @@ mod tests {
         with_backend(|backend| {
             backend.state_mut().keybindings = Some(Default::default());
 
-            let (tx, _rx) = mpsc::sync_channel(1);
+            let (tx, _rx) = crate::state::PickReply::channel();
             let (ack_tx, ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -609,6 +718,8 @@ mod tests {
                     placeholder: None,
                     empty: None,
                     extension: None,
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -634,8 +745,8 @@ mod tests {
         backend: &mut TestBackend<crate::AppRoot>,
         actions: Vec<crate::state::PickAction>,
         width: Option<u16>,
-    ) -> mpsc::Receiver<String> {
-        let (tx, rx) = mpsc::sync_channel(4);
+    ) -> crate::state::PickReplyReceiver {
+        let (tx, rx) = crate::state::PickReply::channel();
         let (ack_tx, _ack_rx) = mpsc::channel();
         backend
             .dispatch(crate::Msg::PickStreamOpen {
@@ -646,6 +757,8 @@ mod tests {
                 width,
                 actions,
                 extension: None,
+                tabs: Vec::new(),
+                tab: None,
                 sender: tx,
                 ack: ack_tx,
             })
@@ -653,6 +766,7 @@ mod tests {
         backend
             .dispatch(crate::Msg::PickRowsReported {
                 id: 1,
+                tab: None,
                 rows: vec![PickRow {
                     id: Some("feat/x".into()),
                     label: "feat/x".into(),
@@ -708,7 +822,7 @@ mod tests {
                 .dispatch(crate::Msg::PickActionKey(0))
                 .expect("dispatch action");
 
-            assert!(rx.try_recv().is_ok());
+            assert!(rx.try_recv().is_some());
             assert!(!backend.state().show_pick);
         });
     }
@@ -726,7 +840,7 @@ mod tests {
                 .dispatch(crate::Msg::PickActionKey(0))
                 .expect("dispatch action");
             assert!(
-                rx.try_recv().is_err(),
+                rx.try_recv().is_none(),
                 "reported before the prompt was answered"
             );
             assert!(
@@ -774,7 +888,7 @@ mod tests {
                 .dispatch(crate::Msg::PickPromptCancel)
                 .expect("dispatch cancel");
 
-            assert!(rx.try_recv().is_err(), "a cancelled prompt reported");
+            assert!(rx.try_recv().is_none(), "a cancelled prompt reported");
             assert!(backend.state().show_pick, "picker did not come back");
             assert!(
                 backend
@@ -803,7 +917,7 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickActionKey(0))
                 .expect("first press");
-            assert!(rx.try_recv().is_err(), "fired on the first press");
+            assert!(rx.try_recv().is_none(), "fired on the first press");
             assert!(
                 backend
                     .state()
@@ -851,6 +965,7 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickRowsReported {
                     id: 1,
+                    tab: None,
                     rows: vec![PickRow {
                         id: Some("other".into()),
                         label: "other".into(),
@@ -870,7 +985,7 @@ mod tests {
                     .is_some_and(|pick| pick.pending_action.is_none()),
                 "arming outlived the row it was aimed at"
             );
-            assert!(rx.try_recv().is_err());
+            assert!(rx.try_recv().is_none());
         });
     }
 
@@ -894,7 +1009,8 @@ mod tests {
             let pick = backend.state().pick.as_ref().expect("session still open");
             assert!(pick.prompt.is_some(), "prompt did not open");
             assert_eq!(
-                pick.restore_query, "feat/",
+                pick.page().restore_query,
+                "feat/",
                 "the filter was not captured for the rebuild"
             );
 
@@ -903,7 +1019,11 @@ mod tests {
                 .expect("dismiss the prompt");
             let pick = backend.state().pick.as_ref().expect("picker came back");
             assert!(pick.prompt.is_none());
-            assert_eq!(pick.restore_query, "feat/", "rebuild lost the filter");
+            assert_eq!(
+                pick.page().restore_query,
+                "feat/",
+                "rebuild lost the filter"
+            );
         });
     }
 
@@ -974,7 +1094,7 @@ mod tests {
     #[test]
     fn producer_empty_copy_is_kept_for_an_empty_filter() {
         with_backend(|backend| {
-            let (tx, _rx) = mpsc::sync_channel(1);
+            let (tx, _rx) = crate::state::PickReply::channel();
             let (ack_tx, _ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -985,6 +1105,8 @@ mod tests {
                     width: None,
                     actions: Vec::new(),
                     extension: None,
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -999,7 +1121,7 @@ mod tests {
                     .state()
                     .pick
                     .as_ref()
-                    .map(|pick| pick.query.as_str()),
+                    .map(|pick| pick.page().query.as_str()),
                 Some("feat")
             );
         });
@@ -1037,7 +1159,7 @@ mod tests {
     #[test]
     fn disabled_row_is_inert_on_activate() {
         with_backend(|backend| {
-            let (tx, rx) = mpsc::sync_channel(1);
+            let (tx, rx) = crate::state::PickReply::channel();
             let (ack_tx, _ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -1048,6 +1170,8 @@ mod tests {
                     placeholder: None,
                     empty: None,
                     extension: None,
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -1056,6 +1180,7 @@ mod tests {
             backend
                 .dispatch(crate::Msg::PickRowsReported {
                     id: 1,
+                    tab: None,
                     rows: vec![PickRow {
                         id: Some("locked".into()),
                         label: "Locked option".into(),
@@ -1072,7 +1197,7 @@ mod tests {
                 .dispatch(crate::Msg::PickActivate(0))
                 .expect("dispatch activate");
 
-            assert!(rx.try_recv().is_err());
+            assert!(rx.try_recv().is_none());
             assert!(backend.state().show_pick);
         });
     }
@@ -1080,7 +1205,7 @@ mod tests {
     #[test]
     fn materially_unloaded_extension_cancels_its_open_picker() {
         with_backend(|backend| {
-            let (tx, rx) = mpsc::sync_channel(1);
+            let (tx, rx) = crate::state::PickReply::channel();
             let (ack_tx, ack_rx) = mpsc::channel();
             let provenance = crate::config::ExtensionProvenance {
                 id: "git-tools".to_string(),
@@ -1099,6 +1224,8 @@ mod tests {
                     placeholder: None,
                     empty: None,
                     extension: Some(provenance),
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -1119,7 +1246,7 @@ mod tests {
     #[test]
     fn inactive_extension_cannot_open_a_picker() {
         with_backend(|backend| {
-            let (tx, _rx) = mpsc::sync_channel(1);
+            let (tx, _rx) = crate::state::PickReply::channel();
             let (ack_tx, ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
@@ -1133,6 +1260,8 @@ mod tests {
                         id: "git-tools".to_string(),
                         generation: "retired".to_string(),
                     }),
+                    tabs: Vec::new(),
+                    tab: None,
                     sender: tx,
                     ack: ack_tx,
                 })
@@ -1141,6 +1270,301 @@ mod tests {
             assert!(!response.ok);
             assert_eq!(response.error.as_deref(), Some("extension is not active"));
             assert!(!backend.state().show_pick);
+        });
+    }
+
+    fn tab(id: &str, label: Option<&str>) -> crate::state::PickTab {
+        crate::state::PickTab {
+            id: id.into(),
+            label: label.map(str::to_string),
+        }
+    }
+
+    fn row(id: &str) -> PickRow {
+        PickRow {
+            id: Some(id.into()),
+            label: id.into(),
+            description: None,
+            group: None,
+            disabled: None,
+            active: false,
+            priority: None,
+        }
+    }
+
+    fn open_tabbed(
+        backend: &mut TestBackend<crate::AppRoot>,
+        tabs: Vec<crate::state::PickTab>,
+        tab: Option<&str>,
+        actions: Vec<crate::state::PickAction>,
+    ) -> crate::state::PickReplyReceiver {
+        let (tx, rx) = crate::state::PickReply::channel();
+        let (ack_tx, ack_rx) = mpsc::channel();
+        backend
+            .dispatch(crate::Msg::PickStreamOpen {
+                id: 1,
+                title: Some("Git".into()),
+                placeholder: None,
+                empty: None,
+                width: None,
+                actions,
+                tabs,
+                tab: tab.map(str::to_string),
+                extension: None,
+                sender: tx,
+                ack: ack_tx,
+            })
+            .expect("dispatch open");
+        assert!(ack_rx.recv().unwrap().ok);
+        rx
+    }
+
+    fn report(backend: &mut TestBackend<crate::AppRoot>, tab: Option<&str>, ids: &[&str]) {
+        backend
+            .dispatch(crate::Msg::PickRowsReported {
+                id: 1,
+                tab: tab.map(str::to_string),
+                rows: ids.iter().map(|id| row(id)).collect(),
+            })
+            .expect("dispatch rows");
+    }
+
+    fn page_ids(backend: &TestBackend<crate::AppRoot>) -> Vec<Vec<String>> {
+        backend
+            .state()
+            .pick
+            .as_ref()
+            .expect("pick open")
+            .pages
+            .iter()
+            .map(|page| page.rows.iter().map(|row| row.label.clone()).collect())
+            .collect()
+    }
+
+    /// Tabs are addressed by id, so one that cannot be told apart from another is dropped, and
+    /// the picker opens on the tab asked for when it exists.
+    #[test]
+    fn declared_tabs_become_pages_and_open_on_the_requested_one() {
+        with_backend(|backend| {
+            open_tabbed(
+                backend,
+                vec![
+                    tab("branches", Some("Branches")),
+                    tab("", Some("Nameless")),
+                    tab("tags", None),
+                    tab("branches", Some("Again")),
+                ],
+                Some("tags"),
+                Vec::new(),
+            );
+            let pick = backend.state().pick.as_ref().unwrap();
+            assert!(pick.tabbed());
+            let labels: Vec<&str> = pick.pages.iter().map(|page| page.label.as_str()).collect();
+            assert_eq!(labels, ["Branches", "tags"]);
+            assert_eq!(pick.active, 1);
+        });
+        with_backend(|backend| {
+            open_tabbed(
+                backend,
+                vec![tab("branches", None), tab("tags", None)],
+                Some("missing"),
+                Vec::new(),
+            );
+            assert_eq!(backend.state().pick.as_ref().unwrap().active, 0);
+        });
+    }
+
+    /// A snapshot fills the page it names and nothing else, so a slow producer can never paint
+    /// one tab's rows into whichever tab the user has since switched to.
+    #[test]
+    fn rows_land_only_on_the_tab_they_name() {
+        with_backend(|backend| {
+            open_tabbed(
+                backend,
+                vec![tab("branches", None), tab("tags", None)],
+                None,
+                Vec::new(),
+            );
+            report(backend, Some("tags"), &["v1"]);
+            report(backend, None, &["stray"]);
+            report(backend, Some("worktrees"), &["stray"]);
+            assert_eq!(page_ids(backend), [Vec::<String>::new(), vec!["v1".into()]]);
+        });
+        with_backend(|backend| {
+            open_tabbed(backend, Vec::new(), None, Vec::new());
+            assert!(!backend.state().pick.as_ref().unwrap().tabbed());
+            report(backend, Some("tags"), &["stray"]);
+            report(backend, None, &["main"]);
+            assert_eq!(page_ids(backend), [vec!["main".to_string()]]);
+        });
+    }
+
+    /// Each tab keeps its own filter and highlight, and the producer hears about every switch so
+    /// it can fill a tab only once someone looks at it.
+    #[test]
+    fn each_tab_keeps_its_own_filter_and_highlight() {
+        with_backend(|backend| {
+            let rx = open_tabbed(
+                backend,
+                vec![tab("branches", None), tab("tags", None)],
+                None,
+                Vec::new(),
+            );
+            report(backend, Some("branches"), &["main", "dev"]);
+            backend
+                .dispatch(crate::Msg::PickQueryChanged("de".into()))
+                .unwrap();
+            backend.dispatch(crate::Msg::PickSelect(1)).unwrap();
+
+            backend.dispatch(crate::Msg::PickTabSelected(1)).unwrap();
+            assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"tags"}"#);
+            let pick = backend.state().pick.as_ref().unwrap();
+            assert_eq!(pick.page().query, "");
+            assert_eq!(pick.page().restore_query, "");
+
+            // Choosing the tab already showing is not a switch.
+            backend.dispatch(crate::Msg::PickTabSelected(1)).unwrap();
+            assert!(rx.try_recv().is_none());
+
+            backend.dispatch(crate::Msg::PickTabSelected(0)).unwrap();
+            assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"branches"}"#);
+            let page = backend.state().pick.as_ref().unwrap().page();
+            assert_eq!(page.restore_query, "de", "the filter was not brought back");
+            assert_eq!(page.selected, 1, "the highlight was not brought back");
+        });
+    }
+
+    /// An armed row belongs to its page, and every reply names the tab it came from, so row ids
+    /// only need to be unique within a tab.
+    #[test]
+    fn switching_disarms_and_replies_carry_the_tab() {
+        with_backend(|backend| {
+            let rx = open_tabbed(
+                backend,
+                vec![tab("branches", None), tab("tags", None)],
+                None,
+                vec![confirming("delete", "ctrl-d")],
+            );
+            report(backend, Some("branches"), &["main"]);
+            report(backend, Some("tags"), &["main"]);
+
+            backend.dispatch(crate::Msg::PickActionKey(0)).unwrap();
+            assert!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .unwrap()
+                    .pending_action
+                    .is_some()
+            );
+            backend.dispatch(crate::Msg::PickTabSelected(1)).unwrap();
+            assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"tags"}"#);
+            assert!(
+                backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .unwrap()
+                    .pending_action
+                    .is_none(),
+                "the arming followed the user to another tab"
+            );
+
+            backend.dispatch(crate::Msg::PickActionKey(0)).unwrap();
+            backend.dispatch(crate::Msg::PickActionKey(0)).unwrap();
+            assert_eq!(
+                rx.try_recv().unwrap().trim(),
+                r#"{"action":"delete","selected":"main","tab":"tags"}"#
+            );
+
+            backend.dispatch(crate::Msg::PickActivate(0)).unwrap();
+            assert_eq!(
+                rx.try_recv().unwrap().trim(),
+                r#"{"selected":"main","tab":"tags"}"#
+            );
+        });
+    }
+
+    /// Drain everything the picker sent, in order.
+    fn drain(rx: &crate::state::PickReplyReceiver) -> Vec<String> {
+        std::iter::from_fn(|| rx.try_recv())
+            .map(|line| line.trim().to_string())
+            .collect()
+    }
+
+    /// Flood the event queue with tab switches nobody reads, the way key repeat on Tab can while
+    /// the producer is busy.
+    fn saturate(backend: &mut TestBackend<crate::AppRoot>) {
+        for switch in 0..crate::state::PICK_REPLY_BACKLOG * 2 {
+            backend
+                .dispatch(crate::Msg::PickTabSelected((switch + 1) % 2))
+                .unwrap();
+        }
+    }
+
+    /// Once rozi closes a picker, the caller hears why, however far behind on reading it is.
+    /// Dropping the terminal line would leave it waiting on a picker that is already gone.
+    #[test]
+    fn a_full_event_queue_never_costs_the_terminal_line() {
+        let tabs = || vec![tab("branches", None), tab("tags", None)];
+        with_backend(move |backend| {
+            let rx = open_tabbed(backend, tabs(), None, Vec::new());
+            report(backend, Some("branches"), &["main"]);
+            saturate(backend);
+            backend.dispatch(crate::Msg::PickActivate(0)).unwrap();
+            let lines = drain(&rx);
+            assert_eq!(lines.len(), crate::state::PICK_REPLY_BACKLOG + 1);
+            assert_eq!(
+                lines.last().map(String::as_str),
+                Some(r#"{"selected":"main","tab":"branches"}"#)
+            );
+        });
+        with_backend(move |backend| {
+            let rx = open_tabbed(
+                backend,
+                tabs(),
+                None,
+                vec![action("open", "ctrl-o", None, true)],
+            );
+            report(backend, Some("branches"), &["main"]);
+            saturate(backend);
+            backend.dispatch(crate::Msg::PickActionKey(0)).unwrap();
+            assert_eq!(
+                drain(&rx).last().map(String::as_str),
+                Some(r#"{"action":"open","selected":"main","tab":"branches"}"#)
+            );
+        });
+        with_backend(move |backend| {
+            let rx = open_tabbed(backend, tabs(), None, Vec::new());
+            saturate(backend);
+            backend.dispatch(crate::Msg::ClosePick).unwrap();
+            assert_eq!(
+                drain(&rx).last().map(String::as_str),
+                Some(r#"{"cancelled":true}"#)
+            );
+        });
+    }
+
+    /// Tabs live on the UI thread, so a producer cannot declare an unbounded number of them.
+    #[test]
+    fn tabs_are_capped_and_deduplicated() {
+        with_backend(|backend| {
+            let mut tabs: Vec<_> = (0..crate::state::MAX_PICK_TABS * 4)
+                .map(|index| {
+                    tab(
+                        &format!("t{}", index % (crate::state::MAX_PICK_TABS + 8)),
+                        None,
+                    )
+                })
+                .collect();
+            tabs.insert(0, tab("t1", None));
+            open_tabbed(backend, tabs, Some("t35"), Vec::new());
+            let pick = backend.state().pick.as_ref().unwrap();
+            assert_eq!(pick.pages.len(), crate::state::MAX_PICK_TABS);
+            assert_eq!(pick.pages[0].tab.as_deref(), Some("t1"));
+            assert_eq!(pick.pages[1].tab.as_deref(), Some("t0"));
+            assert_eq!(pick.active, 0, "a tab past the cap is not openable");
         });
     }
 }

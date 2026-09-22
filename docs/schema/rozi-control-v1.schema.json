@@ -1156,6 +1156,20 @@
                 "null"
               ]
             },
+            "tab": {
+              "description": "Id of the tab to open on. Omitted or unknown opens the first.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tabs": {
+              "description": "Pages shown as a tab strip, each with its own rows, filter, and highlight. Omitted is\none untitled page and no strip.",
+              "items": {
+                "$ref": "#/$defs/PickTab"
+              },
+              "type": "array"
+            },
             "title": {
               "default": null,
               "type": [
@@ -1866,6 +1880,20 @@
                 "null"
               ]
             },
+            "tab": {
+              "description": "Id of the tab to open on. Omitted or unknown opens the first.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tabs": {
+              "description": "Pages shown as a tab strip, each with its own rows, filter, and highlight. Omitted is\none untitled page and no strip.",
+              "items": {
+                "$ref": "#/$defs/PickTab"
+              },
+              "type": "array"
+            },
             "title": {
               "default": null,
               "type": [
@@ -2336,6 +2364,26 @@
         }
       ],
       "description": "How a pick action describes the stacked text prompt.\n\nThe string form is the title. The object form is additive: every existing `\"prompt\":\"Title\"`\ncaller stays valid."
+    },
+    "PickTab": {
+      "description": "One tab a `pick` caller declares up front. Rows arrive per tab afterwards.",
+      "properties": {
+        "id": {
+          "description": "Names the tab in row snapshots, and rides back as `tab` on selections, actions, and tab\nswitches. Row ids only need to be unique within their tab.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Strip text. Defaults to `id`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
     },
     "PublishedRow": {
       "description": "One logical agent or activity inside a pane that publishes several.",

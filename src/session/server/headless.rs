@@ -2068,6 +2068,8 @@ mod tests {
                 empty: None,
                 width: None,
                 actions: Vec::new(),
+                tabs: Vec::new(),
+                tab: None,
             },
             ControlCommand::Publish,
             ControlCommand::Subscribe { events: Vec::new() },

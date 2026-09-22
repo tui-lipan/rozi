@@ -317,8 +317,32 @@ appearance. Actions with an empty ID or invalid key chord are omitted.
 `prompt` and any future form are substates of this picker, not a second overlay. A second `pick`
 while one is open is still refused.
 
+`tabs` turns the picker into pages under one title, shown as a tab strip above the query. Each tab
+has its own rows, filter text, and highlight, so switching away and back keeps what was typed.
+`tab` names the tab to open on; an omitted or unknown `tab` opens the first. Tabs with an empty or
+repeated `id` are omitted, and Rozi keeps at most 32. Actions, `placeholder`, `empty`, and `width`
+apply to every tab.
+
+```json
+{"cmd":"pick","title":"Git","tabs":[{"id":"branches","label":"Branches"},{"id":"worktrees","label":"Worktrees"}],"tab":"branches"}
+```
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `id` | string | required | Names the tab in row snapshots and replies. Row IDs only need to be unique within a tab. |
+| `label` | string | `id` | Tab strip text. |
+
+`Tab`/`Shift+Tab` and `Right`/`Left` cycle tabs, and a click on a tab selects it, unless an action
+claims that key.
+
 The client may then write row snapshots. Each line replaces the full row set. Rozi keeps at most
-512 rows from each snapshot.
+512 rows from each snapshot. In a tabbed picker, a snapshot names its tab and replaces only that
+tab's rows; one without `tab` or with an undeclared `tab` is ignored, as is a snapshot with `tab`
+sent to an untabbed picker. Rows may arrive for a hidden tab at any time.
+
+```json
+{"tab":"worktrees","rows":[{"id":"/src/rozi-review","label":"rozi-review","description":"~/src/rozi-review"}]}
+```
 
 ```json
 {"rows":[{"id":"main","label":"main","description":"current","group":"Local","active":true},{"id":"old","label":"old","disabled":"protected"}]}
@@ -355,6 +379,19 @@ An action writes an object and keeps the picker open unless that action declared
 {"action":"new","input":"feat/api","selected":"main"}
 ```
 
+A tabbed picker adds the active tab to selections and actions, and reports each tab switch without
+closing, so a producer can fill a tab only when it is first shown:
+
+```json
+{"tab":"worktrees"}
+{"action":"delete","selected":"old","tab":"branches"}
+{"selected":"main","tab":"branches"}
+```
+
+Lines that keep the picker open, actions and tab switches, are queued for the client. If it stops
+reading and 64 are waiting, later ones are dropped. The terminal line — selection, cancellation, or
+a closing action — is never dropped and always arrives last.
+
 Action fields:
 
 | Field | Type | Default | Meaning |
@@ -384,7 +421,8 @@ The string form is the shortcut for `{ "title": "…" }`:
 ```
 
 The CLI bridge uses a simpler plain-line mode or a JSON mode. In JSON mode, the first stdin line
-contains picker metadata and optional initial `rows`; later lines are row snapshots:
+contains picker metadata and optional initial `rows`, which fill the tab the picker opens on; later
+lines are row snapshots:
 
 ```sh
 printf '%s\n' '{"title":"Branches","rows":[{"id":"main","label":"main"}]}' |

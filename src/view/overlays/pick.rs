@@ -37,13 +37,14 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
         return Text::new("").into();
     };
 
+    let page = pick.page();
     let title = pick.title.clone();
     let placeholder = pick.placeholder.clone();
     let width = pick.width;
-    let restore_query = pick.restore_query.clone();
-    let rows = pick.rows.clone();
+    let restore_query = page.restore_query.clone();
+    let rows = page.rows.clone();
     let has_groups = rows.iter().any(|r| r.group.is_some());
-    let selected_index = Some(pick.selected);
+    let selected_index = Some(page.selected);
 
     let entries = if has_groups {
         let mut groups: Vec<(String, Vec<SearchEntry<usize>>)> = Vec::new();
@@ -108,9 +109,9 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
         OverlayAction::new(
             "enter",
             "select",
-            Msg::PickActivate(pick.selected),
-            pick.rows
-                .get(pick.selected)
+            Msg::PickActivate(page.selected),
+            page.rows
+                .get(page.selected)
                 .is_some_and(|row| row.disabled.is_none()),
         )
         .hint_only(),
@@ -191,11 +192,18 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
     if let Some(text) = pick_empty_text(pick) {
         palette = palette.empty_text(text);
     }
+    if pick.tabbed() {
+        palette = palette.tabs(OverlayTabs::new(
+            pick.pages.iter().map(|page| page.label.clone()).collect(),
+            pick.active,
+            Msg::PickTabSelected,
+        ));
+    }
     palette.render(ctx)
 }
 
 fn pick_empty_text(pick: &crate::state::PickState) -> Option<&str> {
-    if pick.query.trim().is_empty() {
+    if pick.page().query.trim().is_empty() {
         pick.empty.as_deref()
     } else {
         Some("No matches")

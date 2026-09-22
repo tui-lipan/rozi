@@ -91,7 +91,6 @@ pub enum CaptureScrollback {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum CaptureScrollbackNamed {
     Full,
-    #[serde(alias = "last_output")]
     LastOutput,
 }
 
@@ -100,7 +99,7 @@ impl CaptureScrollback {
         if value.eq_ignore_ascii_case("full") {
             return Ok(Self::Named(CaptureScrollbackNamed::Full));
         }
-        if value.eq_ignore_ascii_case("last-output") || value.eq_ignore_ascii_case("last_output") {
+        if value.eq_ignore_ascii_case("last-output") {
             return Ok(Self::Named(CaptureScrollbackNamed::LastOutput));
         }
         value

@@ -305,7 +305,7 @@ pub struct CachedHostSession {
 }
 
 /// Per-host cache of last-seen sessions, keyed by [`remote::RemoteTarget::to_spec`]. Persisted
-/// under the state dir. Readers accept legacy display-label keys until the next mutation.
+/// under the state dir.
 pub type HostSessionCache = std::collections::HashMap<String, Vec<CachedHostSession>>;
 
 fn host_sessions_path() -> Option<std::path::PathBuf> {
@@ -328,15 +328,12 @@ pub(crate) fn read_host_session_cache() -> HostSessionCache {
     })
 }
 
-/// Read one target's cache by canonical identity, with a legacy display-label fallback.
+/// Read one target's cache by its canonical spec.
 pub(crate) fn host_sessions_for<'a>(
     cache: &'a HostSessionCache,
     target: &remote::RemoteTarget,
 ) -> Option<&'a [CachedHostSession]> {
-    cache
-        .get(&target.to_spec())
-        .or_else(|| cache.get(&target.display_label()))
-        .map(Vec::as_slice)
+    cache.get(&target.to_spec()).map(Vec::as_slice)
 }
 
 pub(crate) fn host_cache_contains_target(
@@ -346,9 +343,8 @@ pub(crate) fn host_cache_contains_target(
     host_sessions_for(cache, target).is_some()
 }
 
-/// Install a canonical in-memory entry. A different legacy display-label key is retained because
-/// it may now be the canonical key of an alias with the same label; deleting it would collapse the
-/// exact identity this migration is meant to preserve.
+/// Install this target's entry under its canonical spec. A different target that shares a display
+/// label keeps its own key.
 pub(crate) fn set_cached_host_sessions(
     cache: &mut HostSessionCache,
     target: &remote::RemoteTarget,
@@ -362,12 +358,7 @@ pub(crate) fn remove_cached_host_sessions(
     cache: &mut HostSessionCache,
     target: &remote::RemoteTarget,
 ) {
-    let canonical = target.to_spec();
-    let legacy = target.display_label();
-    let had_canonical = cache.remove(&canonical).is_some();
-    if legacy != canonical && !had_canonical {
-        cache.remove(&legacy);
-    }
+    cache.remove(&target.to_spec());
 }
 
 fn write_host_session_cache(cache: &HostSessionCache) {
@@ -400,7 +391,7 @@ pub(crate) fn record_host_sessions(
     });
 }
 
-/// Remove both canonical and legacy cache identities for one exact target.
+/// Remove the cached sessions for one exact target.
 pub(crate) fn forget_host_sessions(target: &remote::RemoteTarget) {
     persist_io(|| {
         let mut cache = read_host_session_cache();
@@ -494,37 +485,43 @@ mod tests {
     }
 
     #[test]
-    fn host_cache_prefers_canonical_identity_and_migrates_legacy_on_write() {
+    fn host_cache_keeps_alias_and_endpoint_entries_distinct() {
         let alias = remote::RemoteTarget::Alias("box".into());
         let url = remote::RemoteTarget::Url {
             user: None,
             host: "box".into(),
             port: None,
         };
-        let legacy = vec![CachedHostSession {
-            name: "legacy".into(),
+        let alias_sessions = vec![CachedHostSession {
+            name: "alias".into(),
             ephemeral: false,
             panes: 1,
         }];
-        let canonical = vec![CachedHostSession {
-            name: "canonical".into(),
+        let endpoint_sessions = vec![CachedHostSession {
+            name: "endpoint".into(),
             ephemeral: false,
             panes: 2,
         }];
         let mut cache = HostSessionCache::new();
-        cache.insert("box".into(), legacy.clone());
-        cache.insert("ssh://box".into(), canonical.clone());
+        cache.insert("box".into(), alias_sessions.clone());
+        cache.insert("ssh://box".into(), endpoint_sessions.clone());
 
-        assert_eq!(host_sessions_for(&cache, &alias), Some(legacy.as_slice()));
-        assert_eq!(host_sessions_for(&cache, &url), Some(canonical.as_slice()));
+        assert_eq!(
+            host_sessions_for(&cache, &alias),
+            Some(alias_sessions.as_slice())
+        );
+        assert_eq!(
+            host_sessions_for(&cache, &url),
+            Some(endpoint_sessions.as_slice())
+        );
 
-        set_cached_host_sessions(&mut cache, &url, legacy.clone());
-        assert_eq!(cache.get("ssh://box"), Some(&legacy));
-        assert_eq!(cache.get("box"), Some(&legacy));
+        set_cached_host_sessions(&mut cache, &url, alias_sessions.clone());
+        assert_eq!(cache.get("ssh://box"), Some(&alias_sessions));
+        assert_eq!(cache.get("box"), Some(&alias_sessions));
 
         remove_cached_host_sessions(&mut cache, &url);
         assert!(!cache.contains_key("ssh://box"));
-        assert_eq!(cache.get("box"), Some(&legacy));
+        assert_eq!(cache.get("box"), Some(&alias_sessions));
     }
 
     #[test]

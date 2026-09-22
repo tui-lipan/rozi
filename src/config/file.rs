@@ -1267,13 +1267,6 @@ fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Opt
             return None;
         }
     };
-    if value.get("hooks").is_some_and(toml::Value::is_table) {
-        warnings.push(
-            "Legacy [hooks] is no longer supported; migrate each command to `[[hooks]]` with `event = \"…\"` and `run = \"…\"`"
-                .to_string(),
-        );
-        return None;
-    }
     let unknown = value
         .as_table()
         .map(super::unknown_keys::collect_unknown_keys)
@@ -1482,22 +1475,6 @@ mod file_tests {
                 .iter()
                 .any(|warning| warning.contains("empty hook"))
         );
-    }
-
-    #[test]
-    fn legacy_flat_hooks_report_migration_warning() {
-        let mut warnings = Vec::new();
-        let parsed = parse_file_config(
-            "[hooks]\npane-exited = \"notify-send exited\"",
-            Path::new("config.toml"),
-            &mut warnings,
-        );
-        assert!(parsed.is_none());
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(warnings[0].contains("Legacy [hooks]"));
-        assert!(warnings[0].contains("[[hooks]]"));
-        assert!(warnings[0].contains("event"));
-        assert!(warnings[0].contains("run"));
     }
 
     #[test]

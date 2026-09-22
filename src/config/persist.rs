@@ -201,7 +201,7 @@ fn upsert_theme_name(text: &str, name: &str) -> String {
         if in_theme
             && trimmed
                 .split_once('=')
-                .is_some_and(|(key, _)| matches!(key.trim(), "name" | "preset" | "path"))
+                .is_some_and(|(key, _)| key.trim() == "name")
         {
             if !wrote_name {
                 output.push_str(&format!("name = \"{name}\"\n"));
@@ -1754,9 +1754,9 @@ name = \"rozi\"
     }
 
     #[test]
-    fn theme_upsert_replaces_name_and_removes_legacy_keys() {
+    fn theme_upsert_replaces_name() {
         let updated = upsert_theme_name(
-            "[theme]\npreset = \"dracula\"\npath = \"~/theme.toml\"\n\n[session]\nautosave = true\n",
+            "[theme]\nname = \"dracula\"\n\n[session]\nautosave = true\n",
             "my-nord",
         );
         assert_eq!(

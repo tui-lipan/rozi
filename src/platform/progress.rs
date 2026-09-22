@@ -2,7 +2,9 @@
 //!
 //! This is the non-TUI counterpart to the app's own rendering: `rozi update` and `rozi install`
 //! run before or instead of the full screen, so they get one rewritten row rather than a frame.
-//! The escapes all come from [`super::ansi`]; nothing here assembles a sequence itself.
+//! The escapes all come from [`super::ansi`]; nothing here assembles a sequence itself. Colours
+//! follow the same [`RoleColors`] policy as command reports, so a row drawn inside a rozi pane is
+//! painted through the viewing client's theme rather than in fixed brand RGB.
 //!
 //! The bar and the track are styled separately on purpose. A meter whose remainder is painted in
 //! the accent reads as one solid shape and hides where the fill actually ends, which is the whole
@@ -14,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use super::ansi::{self, Rgb, palette};
+use super::ansi::{self, Rgb, Role, RoleColors, palette};
 
 /// How wide the meter's track is, in cells. Sized to sit comfortably inside an 80-column row
 /// alongside its label and readout.
@@ -28,38 +30,51 @@ const TRACK_GLYPH: char = '─';
 /// How a meter should be painted.
 #[derive(Clone, Copy, Debug)]
 pub struct MeterStyle {
-    /// The colour the filled run starts at, on the left.
-    pub bar_from: Rgb,
-    /// The colour the filled run reaches at the far right of the track.
-    pub bar_to: Rgb,
-    /// The unfilled remainder.
-    pub track: Rgb,
     /// Whether to emit any escapes at all.
     pub color: bool,
-    /// Whether the terminal advertised 24-bit colour.
-    pub truecolor: bool,
+    /// How the bar and track spell their colours.
+    pub colors: RoleColors,
+    /// Whether the work has finished, which settles the bar on the success colour.
+    pub complete: bool,
 }
 
 impl MeterStyle {
-    /// The brand meter: the logo's rose-to-violet gradient over a chrome track.
-    pub fn brand(color: bool, truecolor: bool) -> Self {
+    /// A meter for work still in progress. Outside rozi that is the logo's rose-to-violet gradient
+    /// over a chrome track; inside a pane it is the theme's accent over its muted colour, since a
+    /// palette slot cannot express a gradient.
+    pub fn working(colors: RoleColors) -> Self {
         Self {
-            bar_from: palette::ROSE,
-            bar_to: palette::VIOLET,
-            track: palette::TRACK,
-            color,
-            truecolor,
+            color: true,
+            colors,
+            complete: false,
         }
     }
 
     /// A meter that has finished successfully - a flat run with no gradient left to travel.
-    pub fn complete(color: bool, truecolor: bool) -> Self {
+    pub fn complete(colors: RoleColors) -> Self {
         Self {
-            bar_from: palette::SUCCESS,
-            bar_to: palette::SUCCESS,
-            track: palette::TRACK,
-            color,
-            truecolor,
+            complete: true,
+            ..Self::working(colors)
+        }
+    }
+
+    /// The SGR for filled `cell` of a `width`-cell track.
+    fn bar(self, cell: usize, width: usize) -> String {
+        match (self.colors, self.complete) {
+            (_, true) => self.colors.sgr(Role::Success),
+            (RoleColors::Brand { truecolor }, false) => ansi::fg(
+                sample(palette::ROSE, palette::VIOLET, cell, width),
+                truecolor,
+            ),
+            (RoleColors::PaneTheme, false) => self.colors.sgr(Role::Accent),
+        }
+    }
+
+    /// The SGR for the unfilled remainder.
+    fn track(self) -> String {
+        match self.colors {
+            RoleColors::Brand { truecolor } => ansi::fg(palette::TRACK, truecolor),
+            RoleColors::PaneTheme => self.colors.sgr(Role::Muted),
         }
     }
 }
@@ -89,17 +104,20 @@ pub fn meter(fraction: f64, width: usize, style: MeterStyle) -> String {
         return out;
     }
 
-    if filled > 0 {
-        // One SGR per cell is what a per-cell gradient costs. The row is redrawn at most a few
-        // times a second over ~32 cells, so this is far below anything a terminal notices.
-        for cell in 0..filled {
-            let color = sample(style.bar_from, style.bar_to, cell, width);
-            out.push_str(&ansi::fg(color, style.truecolor));
-            out.push(BAR_GLYPH);
+    // One SGR per cell is what a per-cell gradient costs. The row is redrawn at most a few times a
+    // second over ~32 cells, so this is far below anything a terminal notices. A flat bar repeats
+    // the same SGR, so it is only emitted when it changes.
+    let mut current = String::new();
+    for cell in 0..filled {
+        let sgr = style.bar(cell, width);
+        if sgr != current {
+            out.push_str(&sgr);
+            current = sgr;
         }
+        out.push(BAR_GLYPH);
     }
     if filled < width {
-        out.push_str(&ansi::fg(style.track, style.truecolor));
+        out.push_str(&style.track());
         out.extend(std::iter::repeat_n(TRACK_GLYPH, width - filled));
     }
     out.push_str(ansi::RESET);
@@ -141,7 +159,7 @@ pub fn bytes(count: u64) -> String {
 pub struct StatusRow {
     label: String,
     color: bool,
-    truecolor: bool,
+    colors: RoleColors,
     /// When the row was last painted, so a fast link does not spend its time formatting.
     last_paint: Mutex<Option<Instant>>,
     /// When the transfer started, for the rate and the estimate. Set on the first report rather
@@ -178,12 +196,12 @@ impl ActivityRow {
 
         let label = label.into();
         let worker_stop = Arc::clone(&stop);
-        let truecolor = super::ansi::supports_truecolor();
+        let colors = RoleColors::detect();
         let worker = thread::Builder::new()
             .name("rozi-cli-activity".to_string())
             .spawn(move || {
-                let accent = ansi::fg(palette::ROSE, truecolor);
-                let text = ansi::fg(palette::LAVENDER, truecolor);
+                let accent = colors.sgr(Role::Accent);
+                let text = colors.sgr(Role::Muted);
                 let mut frame = 0;
                 let mut painted = false;
                 let mut cursor_claimed = false;
@@ -424,7 +442,7 @@ impl StatusRow {
         Self {
             label: label.into(),
             color,
-            truecolor: color && super::ansi::supports_truecolor(),
+            colors: RoleColors::detect(),
             last_paint: Mutex::new(None),
             started: Mutex::new(None),
             frame: AtomicUsize::new(0),
@@ -509,24 +527,24 @@ impl relswap::ProgressObserver for StatusRow {
             return;
         }
 
-        let accent = ansi::fg(palette::ROSE, self.truecolor);
-        let lavender = ansi::fg(palette::LAVENDER, self.truecolor);
+        let accent = self.colors.sgr(Role::Accent);
+        let muted = self.colors.sgr(Role::Muted);
         let reset = ansi::RESET;
         // Measured per redraw rather than cached: a terminal resized mid-download must re-fit
         // rather than keep drawing to the width it had when the transfer started.
         let columns = ansi::stderr_width();
         let (readout, readout_width) =
             choose_readout(columns, &readouts(downloaded, total, self.elapsed()));
-        // One lavender run over the whole readout: nesting a reset inside it would end the colour
-        // early and leave everything after it unstyled.
-        let readout = format!("{lavender}{readout}{reset}");
+        // One muted run over the whole readout: nesting a reset inside it would end the colour early
+        // and leave everything after it unstyled.
+        let readout = format!("{muted}{readout}{reset}");
 
         let row = match fraction {
             Some(fraction) => {
                 let style = if complete {
-                    MeterStyle::complete(true, self.truecolor)
+                    MeterStyle::complete(self.colors)
                 } else {
-                    MeterStyle::brand(true, self.truecolor)
+                    MeterStyle::working(self.colors)
                 };
                 // A finished transfer shows a settled mark rather than a spinner frozen mid-turn.
                 let mark = if complete { '●' } else { self.spin() };
@@ -535,14 +553,14 @@ impl relswap::ProgressObserver for StatusRow {
                 let percent = (fraction * 100.0) as u32;
                 match layout_for(columns, readout_width) {
                     RowLayout::Full(width) => format!(
-                        "  {accent}{mark}{reset} {lavender}{:<LABEL_WIDTH$}{reset} {} {percent:>3}%  {readout}",
+                        "  {accent}{mark}{reset} {muted}{:<LABEL_WIDTH$}{reset} {} {percent:>3}%  {readout}",
                         self.label,
                         meter(fraction, width, style),
                     ),
                     // Too narrow for a bar: the percentage and the readout still say everything a
                     // meter would, and they fit.
                     RowLayout::Compact => format!(
-                        "  {accent}{mark}{reset} {lavender}{:<LABEL_WIDTH$}{reset} {percent:>3}%  {readout}",
+                        "  {accent}{mark}{reset} {muted}{:<LABEL_WIDTH$}{reset} {percent:>3}%  {readout}",
                         self.label,
                     ),
                     RowLayout::Minimal => format!("  {accent}{mark}{reset} {percent:>3}%"),
@@ -551,7 +569,7 @@ impl relswap::ProgressObserver for StatusRow {
             // No Content-Length: there is no fraction to draw, so the spinner carries the fact that
             // something is still happening, and the byte count carries how much.
             None => format!(
-                "  {accent}{}{reset} {lavender}{:<LABEL_WIDTH$}{reset} {readout}",
+                "  {accent}{}{reset} {muted}{:<LABEL_WIDTH$}{reset} {readout}",
                 self.spin(),
                 self.label,
             ),
@@ -580,10 +598,12 @@ impl Drop for StatusRow {
 mod tests {
     use super::*;
 
+    const BRAND: RoleColors = RoleColors::Brand { truecolor: true };
+
     fn plain() -> MeterStyle {
         MeterStyle {
             color: false,
-            ..MeterStyle::brand(false, false)
+            ..MeterStyle::working(BRAND)
         }
     }
 
@@ -642,7 +662,7 @@ mod tests {
 
     #[test]
     fn a_styled_meter_paints_bar_and_track_in_different_colours() {
-        let styled = meter(0.5, 8, MeterStyle::brand(true, true));
+        let styled = meter(0.5, 8, MeterStyle::working(BRAND));
         assert!(styled.contains(&ansi::fg(palette::ROSE, true)));
         assert!(styled.contains(&ansi::fg(palette::TRACK, true)));
         assert!(styled.ends_with(ansi::RESET));
@@ -650,8 +670,48 @@ mod tests {
 
     #[test]
     fn a_full_meter_emits_no_track_colour() {
-        let styled = meter(1.0, 8, MeterStyle::brand(true, true));
+        let styled = meter(1.0, 8, MeterStyle::working(BRAND));
         assert!(!styled.contains(&ansi::fg(palette::TRACK, true)));
+    }
+
+    #[test]
+    fn a_finished_meter_settles_on_the_success_colour() {
+        let styled = meter(1.0, 8, MeterStyle::complete(BRAND));
+        assert_eq!(
+            styled,
+            format!(
+                "{}{}{}",
+                ansi::fg(palette::SUCCESS, true),
+                BAR_GLYPH.to_string().repeat(8),
+                ansi::RESET
+            )
+        );
+    }
+
+    #[test]
+    fn a_meter_inside_a_pane_names_theme_slots_rather_than_brand_rgb() {
+        // Pane output is shared by every client showing the pane, so the meter must name palette
+        // slots each client resolves through its own theme; see `RoleColors::PaneTheme`.
+        let pane = RoleColors::PaneTheme;
+        assert_eq!(
+            meter(0.5, 4, MeterStyle::working(pane)),
+            format!(
+                "{}━━{}──{}",
+                pane.sgr(Role::Accent),
+                pane.sgr(Role::Muted),
+                ansi::RESET
+            )
+        );
+        assert_eq!(
+            meter(1.0, 4, MeterStyle::complete(pane)),
+            format!("{}━━━━{}", pane.sgr(Role::Success), ansi::RESET)
+        );
+        for fraction in [0.0, 0.5, 1.0] {
+            for style in [MeterStyle::working(pane), MeterStyle::complete(pane)] {
+                let styled = meter(fraction, 32, style);
+                assert!(!styled.contains("38;2;") && !styled.contains("38;5;"));
+            }
+        }
     }
 
     #[test]

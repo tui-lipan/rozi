@@ -181,11 +181,12 @@ and related palette colors also affect terminal ANSI colors and pane alerts.
 
 ## Command output colors
 
-Inside a Rozi pane, `rozi --help` and the tables that commands such as `rozi list-panes` print
-follow the theme of whichever client shows the pane. Headings use the theme's accent. The first
-column of a table uses the accent at reduced intensity. Muted text and the success, warning, and
-error colors use the theme's own colors. Clients with different themes each see the same output
-in their own colors. Output already on screen changes when you switch themes.
+Inside a Rozi pane, `rozi --help`, the tables that commands such as `rozi list-panes` print, and
+the progress rows of `rozi update` and extension installs follow the theme of whichever client
+shows the pane. Headings, spinners, and the filled part of a download meter use the theme's accent.
+The first column of a table uses the accent at reduced intensity. Muted text and the success,
+warning, and error colors use the theme's own colors. Clients with different themes each see the
+same output in their own colors. Output already on screen changes when you switch themes.
 
 The accent in command output is the terminal palette's accent color, which Rozi derives slightly
 lighter than the interface accent.

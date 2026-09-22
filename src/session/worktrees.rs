@@ -10,15 +10,16 @@ use serde::{Deserialize, Serialize};
 use super::protocol::{WorktreeRequest, WorktreeResult};
 use crate::git::worktrees::{self, WorktreeInfo};
 
-/// Run one session-protocol worktree request. Removal refuses a checkout that a live or restorable
-/// session records as its origin; `force` never overrides that.
-pub(crate) fn execute(request: WorktreeRequest) -> WorktreeResult {
+/// Run one session-protocol worktree request. `directory` is `[worktrees] directory`, expanded on
+/// this host. Removal refuses a checkout that a live or restorable session records as its origin;
+/// `force` never overrides that.
+pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> WorktreeResult {
     let result = match request {
         WorktreeRequest::List { cwd } => {
             worktrees::list(Path::new(&cwd)).map(|worktrees| WorktreeResult::Listed { worktrees })
         }
         WorktreeRequest::Preview { cwd, branch } => {
-            worktrees::default_path(Path::new(&cwd), &branch).map(|path| {
+            worktrees::default_path(Path::new(&cwd), &branch, directory).map(|path| {
                 WorktreeResult::Previewed {
                     path: path.to_string_lossy().into_owned(),
                 }
@@ -29,8 +30,14 @@ pub(crate) fn execute(request: WorktreeRequest) -> WorktreeResult {
             branch,
             base,
             path,
-        } => create(Path::new(&cwd), &branch, &base, path.map(PathBuf::from))
-            .map(|worktree| WorktreeResult::Created { worktree }),
+        } => create(
+            Path::new(&cwd),
+            &branch,
+            &base,
+            path.map(PathBuf::from),
+            directory,
+        )
+        .map(|worktree| WorktreeResult::Created { worktree }),
         WorktreeRequest::Remove { cwd, path, force } => {
             remove(Path::new(&cwd), Path::new(&path), force)
                 .map(|()| WorktreeResult::Removed { path })
@@ -44,10 +51,11 @@ fn create(
     branch: &str,
     base: &str,
     path: Option<PathBuf>,
+    directory: Option<&Path>,
 ) -> Result<WorktreeInfo, String> {
     let path = match path {
         Some(path) => path,
-        None => worktrees::default_path(cwd, branch)?,
+        None => worktrees::default_path(cwd, branch, directory)?,
     };
     if !path.is_absolute() {
         return Err("worktree path must be absolute on the session host".to_string());
@@ -144,7 +152,9 @@ pub fn run_host_call(call: HostCall) -> HostReply {
         } => (|| {
             let cwd = host_path(cwd.as_deref().unwrap_or("."))?;
             let path = path.as_deref().map(host_path).transpose()?;
-            create(&cwd, &branch, &base, path).map(|worktree| HostReply::Created { worktree })
+            let directory = configured_directory();
+            create(&cwd, &branch, &base, path, directory.as_deref())
+                .map(|worktree| HostReply::Created { worktree })
         })(),
         HostCall::Remove { path, force } => (|| {
             let (tree, trees) = containing_worktree(&host_path(&path)?)?;
@@ -167,6 +177,15 @@ pub fn run_host_call(call: HostCall) -> HostReply {
         })(),
     };
     reply.unwrap_or_else(|message| HostReply::Failed { message })
+}
+
+/// `[worktrees] directory` from this host's config, expanded here.
+pub(crate) fn configured_directory() -> Option<PathBuf> {
+    crate::config::load_config()
+        .config
+        .worktrees
+        .directory
+        .map(crate::config::expand_path)
 }
 
 fn list_with_sessions(cwd: &Path) -> Result<HostReply, String> {

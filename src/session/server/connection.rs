@@ -752,7 +752,9 @@ impl SessionServer {
             return Some(failed("worktree request exceeds the server limit"));
         }
         if self.worktree_worker.is_none() {
-            self.worktree_worker = Some(WorktreeWorker::new());
+            self.worktree_worker = Some(WorktreeWorker::new(
+                self.settings.worktree_directory.clone(),
+            ));
         }
         match self.worktree_worker.as_ref()?.try_submit(job) {
             Ok(()) => None,

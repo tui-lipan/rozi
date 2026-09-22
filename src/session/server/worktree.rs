@@ -28,11 +28,11 @@ impl WorktreeJob {
         }
     }
 
-    fn run(self) -> WorktreeDone {
+    fn run(self, directory: Option<&std::path::Path>) -> WorktreeDone {
         WorktreeDone {
             client_id: self.client_id,
             request_id: self.request_id,
-            result: crate::session::worktrees::execute(self.request),
+            result: crate::session::worktrees::execute(self.request, directory),
         }
     }
 }
@@ -50,14 +50,15 @@ pub(super) struct WorktreeWorker {
 }
 
 impl WorktreeWorker {
-    pub fn new() -> Self {
+    /// `directory` is `[worktrees] directory` as this server started with it.
+    pub fn new(directory: Option<std::path::PathBuf>) -> Self {
         let (jobs, incoming) = mpsc::sync_channel::<WorktreeJob>(QUEUE_CAPACITY);
         let (completed, done) = mpsc::sync_channel::<WorktreeDone>(QUEUE_CAPACITY);
         let handle = std::thread::Builder::new()
             .name("rozi-worktrees".into())
             .spawn(move || {
                 for job in incoming {
-                    if completed.send(job.run()).is_err() {
+                    if completed.send(job.run(directory.as_deref())).is_err() {
                         break;
                     }
                 }

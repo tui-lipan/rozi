@@ -233,6 +233,9 @@ pub struct WorktreesConfig {
     /// Profile seeding a new worktree session. Its pane directories inside the repository are
     /// rebased onto the new checkout; see [`crate::profiles::rebase_onto_worktree`].
     pub profile: Option<String>,
+    /// Where new checkouts go by default, as `<directory>/<repo>/<branch>`, on the session host.
+    /// `None` puts them beside the repository in `<repo>-worktrees/<branch>`.
+    pub directory: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]

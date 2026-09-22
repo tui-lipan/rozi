@@ -253,6 +253,9 @@ pub struct ServerSettings {
     /// [`ClientMessage::SetAgentDefinitions`](crate::session::protocol::ClientMessage), which is
     /// how the controller keeps this in step with a config reload.
     pub agents: std::sync::Arc<crate::agent_detection::AgentCatalog>,
+    /// `[worktrees] directory`, expanded on this host: where a new checkout goes when a client
+    /// names no path.
+    pub worktree_directory: Option<PathBuf>,
 }
 
 impl Default for ServerSettings {
@@ -273,6 +276,7 @@ impl Default for ServerSettings {
             command_shell: Vec::new(),
             rules: Vec::new(),
             agents: crate::agent_detection::AgentCatalog::shared_builtin(),
+            worktree_directory: None,
         }
     }
 }
@@ -1877,6 +1881,11 @@ pub fn run_named_session_mode_with_nonce(
             command_shell,
             rules: loaded.config.rules,
             agents: agent_catalog(loaded.config.agents),
+            worktree_directory: loaded
+                .config
+                .worktrees
+                .directory
+                .map(crate::config::expand_path),
             ..ServerSettings::default()
         },
     );

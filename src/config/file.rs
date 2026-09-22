@@ -370,6 +370,7 @@ struct ProfileFileConfig {
 #[serde(default)]
 struct WorktreesFileConfig {
     profile: Option<String>,
+    directory: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -801,6 +802,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(name) = non_empty(parsed.worktrees.profile) {
         config.worktrees.profile = Some(name);
+    }
+    if let Some(directory) = non_empty(parsed.worktrees.directory) {
+        config.worktrees.directory = Some(directory);
     }
     if let Some(autosave) = parsed.session.autosave {
         config.session.autosave = autosave;
@@ -1771,6 +1775,20 @@ mod file_tests {
         let parsed: FileConfig =
             toml::from_str("[profile]\ndefault = \"dev\"").expect("config parses");
         assert_eq!(parsed.profile.default.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn worktrees_keys_load_without_warnings() {
+        let loaded = load_config_from_text(
+            "[worktrees]\nprofile = \"dev\"\ndirectory = \"~/worktrees\"",
+            Path::new("config.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.config.worktrees.profile.as_deref(), Some("dev"));
+        assert_eq!(
+            loaded.config.worktrees.directory.as_deref(),
+            Some("~/worktrees")
+        );
     }
 
     #[test]

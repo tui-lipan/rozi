@@ -28,8 +28,14 @@ pub fn list(cwd: &Path) -> Result<Vec<WorktreeInfo>, String> {
     parse_porcelain_z(&output)
 }
 
-/// A visible sibling checkout directory, calculated only with the server host's path rules.
-pub fn default_path(cwd: &Path, branch: &str) -> Result<std::path::PathBuf, String> {
+/// Where a new checkout goes when no path is given, calculated only with the server host's path
+/// rules: `<directory>/<repo>/<branch>` under a configured `directory`, otherwise the visible
+/// sibling `<repo>-worktrees/<branch>` beside the primary checkout.
+pub fn default_path(
+    cwd: &Path,
+    branch: &str,
+    directory: Option<&Path>,
+) -> Result<std::path::PathBuf, String> {
     let trees = list(cwd)?;
     let primary = trees
         .first()
@@ -55,7 +61,14 @@ pub fn default_path(cwd: &Path, branch: &str) -> Result<std::path::PathBuf, Stri
     if slug.is_empty() {
         return Err("worktree branch cannot be empty".to_string());
     }
-    Ok(parent.join(format!("{name}-worktrees")).join(slug))
+    let base = match directory {
+        Some(directory) if !directory.is_absolute() => {
+            return Err("[worktrees] directory must be an absolute path".to_string());
+        }
+        Some(directory) => directory.join(name.as_ref()),
+        None => parent.join(format!("{name}-worktrees")),
+    };
+    Ok(base.join(slug))
 }
 
 /// Check out an existing local branch, or create one from `base` before checking it out.
@@ -219,6 +232,7 @@ fn parse_porcelain_z(output: &[u8]) -> Result<Vec<WorktreeInfo>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::process::Command;
 
     #[test]
@@ -294,5 +308,32 @@ mod tests {
         );
         git(&repo, &["show-ref", "--verify", "refs/heads/feat/new"]);
         remove(&repo, &existing, false).unwrap();
+    }
+
+    #[test]
+    fn default_path_is_a_sibling_unless_a_directory_is_configured() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("rozi");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        let primary = PathBuf::from(&list(&repo).unwrap()[0].path);
+        let parent = primary.parent().unwrap();
+
+        assert_eq!(
+            default_path(&repo, "feat/login", None).unwrap(),
+            parent.join("rozi-worktrees").join("feat-login")
+        );
+        let directory = temp.path().join("worktrees");
+        assert_eq!(
+            default_path(&repo, "feat/login", Some(&directory)).unwrap(),
+            directory.join("rozi").join("feat-login")
+        );
+        assert_eq!(
+            default_path(&repo, "feat/login", Some(Path::new("relative"))),
+            Err("[worktrees] directory must be an absolute path".to_string())
+        );
     }
 }

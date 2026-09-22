@@ -69,8 +69,10 @@ happens to have changed directory into the checkout.
 | `Ctrl+K` | Remove a linked checkout; press again to force only if Git refused a dirty checkout |
 | `Esc` | Close the picker |
 
-The new-worktree form has **Branch**, **Base** (`HEAD` by default), and **Path**. Rozi previews a
-visible sibling path on the session host; edit Path to choose another absolute host path. `Tab`
+The new-worktree form has **Branch**, **Base** (`HEAD` by default), and **Path**. Rozi previews
+the default path on the session host: `<repo>-worktrees/<branch>` beside the repository, or
+`<directory>/<repo>/<branch>` when `[worktrees] directory` is set. Edit Path to choose another
+absolute host path. `Tab`
 and `Shift+Tab` change fields.
 
 New worktree sessions start with a plain shell in the checkout; `[profile] default` does not apply.
@@ -97,8 +99,7 @@ rozi worktrees remove ~/src/rozi-worktrees/feat-login
 ```
 
 `create` checks out an existing local branch, or creates the branch from `--base` (`HEAD` by
-default). Without `--path` the checkout goes to `<repo>-worktrees/<branch>` beside the primary
-checkout. It prints the new checkout's path, or a `worktree` object with `--format json`.
+default). Without `--path` the checkout goes to the same default location as in the picker. It prints the new checkout's path, or a `worktree` object with `--format json`.
 `list --format json` prints a `worktrees` array; each entry adds the `sessions` whose recorded
 origin is that checkout.
 

@@ -97,6 +97,8 @@ done
 printf 'probe_done=1\n'
 "#;
 
+const WINDOWS_FAMILY_PROBE_SCRIPT: &str = "if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) { Write-Output 'rozi_family=windows' }";
+
 /// PowerShell counterpart of [`PROBE_SCRIPT`] for a Windows remote host. Emits the same fixed keys
 /// the POSIX probe does; [`parse_probe_output`] handles both. Never treats binary output as code.
 const WINDOWS_PROBE_SCRIPT: &str = r#"
@@ -366,7 +368,7 @@ fn detect_remote_family(
     config: &RemoteConfig,
     connect_timeout_secs: u64,
 ) -> Result<RemoteFamily, String> {
-    let powershell_probe = encode_powershell_command("Write-Output 'rozi_family=windows'");
+    let powershell_probe = encode_powershell_command(WINDOWS_FAMILY_PROBE_SCRIPT);
     if let Ok(stdout) = run_family_probe(
         resolved,
         config,
@@ -1794,6 +1796,19 @@ protocol_max={beyond}
     fn encoded_powershell_command_round_trips() {
         // UTF-16LE + base64, decodable back to the original script (what -EncodedCommand expects).
         let encoded = encode_powershell_command("Write-Output 'hi'");
+        assert_eq!(decode_powershell_command(&encoded), "Write-Output 'hi'");
+    }
+
+    #[test]
+    fn powershell_family_probe_checks_the_runtime_os() {
+        let encoded = encode_powershell_command(WINDOWS_FAMILY_PROBE_SCRIPT);
+        assert_eq!(
+            decode_powershell_command(&encoded),
+            "if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) { Write-Output 'rozi_family=windows' }"
+        );
+    }
+
+    fn decode_powershell_command(encoded: &str) -> String {
         // Manually decode base64 -> UTF-16LE -> String.
         let decoded_bytes = {
             let table = |c: u8| -> Option<u32> {
@@ -1824,7 +1839,7 @@ protocol_max={beyond}
             .chunks(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
-        assert_eq!(String::from_utf16(&units).unwrap(), "Write-Output 'hi'");
+        String::from_utf16(&units).unwrap()
     }
 
     #[test]

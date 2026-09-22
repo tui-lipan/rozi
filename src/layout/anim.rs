@@ -782,17 +782,24 @@ pub const SESSION_REVEAL_FROM: f32 = 0.8;
 
 /// Curve for the incoming session's reveal, or `None` when the switch should snap.
 ///
-/// Only presentation moves, never geometry: see [`SessionAnimationStyle`]. The fade shares the
-/// scratchpad's shortened duration: changing session identity is a short visual delimiter, not a
-/// spatial move, and tying it to `geometry_ms` keeps the whole motion vocabulary in proportion
-/// when that is retuned. The portal has a whole screen to cross, so it takes the full geometry
-/// duration on the pane Portal's own curve.
+/// Only presentation moves, never geometry: see [`SessionAnimationStyle`]. Both styles are tied
+/// to `geometry_ms`, so retuning it keeps the whole motion vocabulary in proportion.
+///
+/// The fade must read as its own beat. A switch made from the Sessions picker starts it on the
+/// same frame the picker's backdrop begins to undim, over the scratchpad's two-thirds of
+/// `geometry_ms`; a fade on that duration and an ease-out curve finished alongside it and was
+/// indistinguishable from it, so switching looked animated even with the fade off. It takes one
+/// and a half times `geometry_ms` instead, on an ease-in-out curve: when the backdrop has settled
+/// the incoming session is still visibly resolving, and it finishes on its own.
+///
+/// The portal has a whole screen to cross, so it takes the full geometry duration on the pane
+/// Portal's own curve.
 pub fn session_reveal_transition(animations: WindowAnimationConfig) -> Option<TransitionConfig> {
     let config = match animations.session {
         SessionAnimationStyle::Off => return None,
         SessionAnimationStyle::Fade => TransitionConfig {
-            duration: scratch_transition_duration(animations.geometry_duration),
-            easing: Easing::EaseOutQuad,
+            duration: animations.geometry_duration * 3 / 2,
+            easing: Easing::EaseInOutCubic,
         },
         SessionAnimationStyle::Portal => TransitionConfig {
             duration: animations.geometry_duration,
@@ -996,6 +1003,27 @@ pub(crate) fn geometry_transition_for_pane(
 mod tests {
     use super::*;
     use crate::state::Pane;
+
+    /// A switch from the Sessions picker starts the fade on the frame the picker's backdrop starts
+    /// to undim. On the backdrop's own duration the two read as one motion, so switching looked
+    /// animated even with the fade off; the fade has to outlast it clearly, however `geometry_ms`
+    /// is tuned.
+    #[test]
+    fn the_session_fade_outlasts_the_picker_backdrop_it_starts_with() {
+        for geometry_ms in [220, 90, 600] {
+            let animations = WindowAnimationConfig {
+                geometry_duration: Duration::from_millis(geometry_ms),
+                ..WindowAnimationConfig::default()
+            };
+            let fade = session_reveal_transition(animations).expect("the fade is on by default");
+            let backdrop = scratch_transition_duration(animations.geometry_duration);
+            assert!(
+                fade.duration >= backdrop * 2,
+                "geometry_ms {geometry_ms}: fade {:?} vs backdrop {backdrop:?}",
+                fade.duration
+            );
+        }
+    }
 
     #[test]
     fn scratch_transition_duration_is_two_thirds_of_geometry_duration() {

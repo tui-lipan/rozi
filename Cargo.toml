@@ -36,8 +36,8 @@ exclude = [
 ]
 
 [dependencies]
-# 0.12.1: clipboard policy can be updated live when configuration reloads.
-tui-lipan = { version = "0.12.1", features = [
+# 0.12.2: explicit right-click copies flash like a copy shortcut.
+tui-lipan = { version = "0.12.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

@@ -75,6 +75,12 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     };
     let target = ctx.state.current().remote_target.clone();
     let mut picker = WorktreePickerState::new(cwd.clone(), target.clone());
+    // Open with the last list for this repository and refresh it in place: Git answers quickly,
+    // but an empty "loading" frame that then grows into the real list reads as a delay.
+    if let Some(cached) = ctx.state.worktree_lists.get(target.as_ref(), &cwd) {
+        picker.entries = cached.to_vec();
+        picker.selected = cached.iter().position(|tree| tree.path == cwd).unwrap_or(0);
+    }
     picker.sessions = crate::ops::session::discovery::immediate_picker_rows(ctx)
         .into_iter()
         .filter(|row| !row.ephemeral && row.remote_target == target)
@@ -481,11 +487,34 @@ pub(crate) fn apply_result(
         picker.pending_list = None;
         match result {
             WorktreeResult::Listed { worktrees } => {
+                // A refresh may reorder or drop rows; stay on the same checkout when it remains.
+                let selected_path = picker
+                    .entries
+                    .get(picker.selected)
+                    .map(|tree| tree.path.clone());
+                picker.selected = selected_path
+                    .and_then(|path| worktrees.iter().position(|tree| tree.path == path))
+                    .unwrap_or_else(|| {
+                        worktrees
+                            .iter()
+                            .position(|tree| tree.path == picker.cwd)
+                            .unwrap_or(0)
+                    });
                 picker.entries = worktrees;
-                picker.selected = picker.selected.min(picker.entries.len().saturating_sub(1));
                 picker.error = None;
+                let (target, cwd, list) = (
+                    picker.target.clone(),
+                    picker.cwd.clone(),
+                    picker.entries.clone(),
+                );
+                ctx.state.worktree_lists.put(target, cwd, list);
             }
-            WorktreeResult::Failed { message } => picker.error = Some(message),
+            WorktreeResult::Failed { message } => {
+                picker.entries.clear();
+                picker.error = Some(message);
+                let (target, cwd) = (picker.target.clone(), picker.cwd.clone());
+                ctx.state.worktree_lists.forget(target.as_ref(), &cwd);
+            }
             _ => {}
         }
         return Update::full();

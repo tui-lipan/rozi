@@ -57,6 +57,49 @@ impl WorktreePickerState {
     }
 }
 
+/// The last checkouts listed for each repository, per host, so the Worktrees picker opens with
+/// rows while it refreshes them in the background rather than drawing an empty loading list.
+#[derive(Clone, Debug, Default)]
+pub struct WorktreeListCache {
+    lists: Vec<(
+        Option<crate::session::remote::RemoteTarget>,
+        String,
+        Vec<crate::git::worktrees::WorktreeInfo>,
+    )>,
+}
+
+impl WorktreeListCache {
+    /// Repositories remembered at once; the least recently listed is dropped first.
+    const CAPACITY: usize = 8;
+
+    pub fn get(
+        &self,
+        target: Option<&crate::session::remote::RemoteTarget>,
+        cwd: &str,
+    ) -> Option<&[crate::git::worktrees::WorktreeInfo]> {
+        self.lists
+            .iter()
+            .find(|(host, repo, _)| host.as_ref() == target && repo == cwd)
+            .map(|(_, _, list)| list.as_slice())
+    }
+
+    pub fn put(
+        &mut self,
+        target: Option<crate::session::remote::RemoteTarget>,
+        cwd: String,
+        list: Vec<crate::git::worktrees::WorktreeInfo>,
+    ) {
+        self.forget(target.as_ref(), &cwd);
+        self.lists.insert(0, (target, cwd, list));
+        self.lists.truncate(Self::CAPACITY);
+    }
+
+    pub fn forget(&mut self, target: Option<&crate::session::remote::RemoteTarget>, cwd: &str) {
+        self.lists
+            .retain(|(host, repo, _)| !(host.as_ref() == target && repo == cwd));
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorktreeFormField {
     Branch,
@@ -1506,5 +1549,44 @@ mod tests {
         assert_eq!(spec.placeholder(), "git status");
         assert_eq!(spec.value(), "git status --short");
         assert!(spec.masked());
+    }
+}
+
+#[cfg(test)]
+mod worktree_cache_tests {
+    use super::WorktreeListCache;
+
+    fn tree(path: &str) -> crate::git::worktrees::WorktreeInfo {
+        crate::git::worktrees::WorktreeInfo {
+            path: path.into(),
+            branch: None,
+            detached: true,
+            bare: false,
+            prunable: false,
+            linked: true,
+            locked: false,
+        }
+    }
+
+    #[test]
+    fn the_cache_keeps_recent_repositories_per_host() {
+        let mut cache = WorktreeListCache::default();
+        let host = crate::session::remote::RemoteTarget::Alias("box".into());
+        cache.put(None, "/repo".into(), vec![tree("/repo")]);
+        cache.put(Some(host.clone()), "/repo".into(), vec![tree("/remote")]);
+        assert_eq!(cache.get(None, "/repo").unwrap()[0].path, "/repo");
+        assert_eq!(cache.get(Some(&host), "/repo").unwrap()[0].path, "/remote");
+
+        cache.put(None, "/repo".into(), vec![tree("/repo"), tree("/wt")]);
+        assert_eq!(cache.get(None, "/repo").unwrap().len(), 2);
+        for index in 0..WorktreeListCache::CAPACITY {
+            cache.put(None, format!("/other{index}"), Vec::new());
+        }
+        assert!(
+            cache.get(None, "/repo").is_none(),
+            "the oldest repository is dropped"
+        );
+        cache.forget(None, "/other0");
+        assert!(cache.get(None, "/other0").is_none());
     }
 }

@@ -144,6 +144,31 @@ pub(super) fn apply_attached_panes(
     }
 }
 
+/// Open the panes a newly shown session starts with at once, already live.
+///
+/// They are part of the session arriving, not panes added to a layout the user was looking at, so
+/// they take no open effect and make no neighbour reflow: the session reveal is the one animation
+/// that says a different session took over the screen. This is the state a pane reaches when spawn
+/// animations are off - open, activated, no snapshot - reached synchronously, because a zero-delay
+/// timer would still leave a frame where the panes sit invisible under the reveal. Keyboard focus
+/// is handed over by the caller along with the rest of the attach.
+pub(crate) fn open_arriving_panes(
+    ctx: &mut Context<AppRoot>,
+    panes: &[(crate::state::PaneId, u64)],
+) {
+    for &(id, generation) in panes {
+        if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
+            && pane.pty_generation == generation
+            && !pane.closing
+        {
+            pane.opening = false;
+            pane.opening_animation = None;
+            pane.terminal_active = true;
+        }
+    }
+    ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
+}
+
 /// Spawn every live pane the client holds in state on a freshly attached (empty) session.
 /// Used on initial attach and after detach when the new ephemeral server owns no panes yet.
 /// Spawn the panes the client already holds in state onto the freshly attached session, returning

@@ -2106,6 +2106,83 @@ fn session_view_revision_step(reconnect: bool) -> u64 {
         .expect("session-reveal test completes")
 }
 
+/// Attach onto an empty server that seeds pane 7 from client state, and report how that pane
+/// arrived: `(opening, has_open_snapshot, terminal_active)` and whether a spawn reflow began.
+fn seeded_pane_arrival(reconnect: bool) -> ((bool, bool, bool), bool) {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (client, _rx) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                let workspace = &mut state.current_mut().workspaces[0];
+                workspace.panes.push(crate::state::Pane::new(
+                    7,
+                    0,
+                    tui_lipan::prelude::FloatRect::default(),
+                ));
+                crate::layout::tiling::append_tiled_window(workspace, 7);
+                state.current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: 1,
+                        name: "dev".into(),
+                        client: Some(client),
+                        autostart: true,
+                        read_only: false,
+                        reconnect,
+                        remote_host: None,
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+            }
+            backend
+                .update_level(Msg::SessionAttached {
+                    epoch: 1,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
+                    session: "dev".into(),
+                    client_id: 1,
+                    panes: Vec::new(),
+                    layout_rev: 0,
+                    layout: None,
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    allow_takeover: false,
+                    read_only: false,
+                    created_from_profile: None,
+                })
+                .expect("dispatch attach");
+            let state = backend.state();
+            let pane = crate::pane::lifecycle::find_pane(state, 7).expect("seeded pane");
+            (
+                (
+                    pane.opening,
+                    pane.opening_animation.is_some(),
+                    pane.terminal_active,
+                ),
+                state.animation == crate::layout::anim::GeometryAnimation::Spawn,
+            )
+        })
+        .expect("spawn seeded-pane test")
+        .join()
+        .expect("seeded-pane test completes")
+}
+
+/// A new session's first panes arrive with the session, under its reveal: open and live at once,
+/// with no pane-open effect or spawn reflow of their own. Reconnecting to a session whose server
+/// came back empty reveals nothing new, so its re-seeded panes still open the usual way.
+#[test]
+fn a_new_sessions_first_panes_arrive_with_it_instead_of_animating_open() {
+    assert_eq!(seeded_pane_arrival(false), ((false, false, true), false));
+    let ((opening, animating, active), reflow) = seeded_pane_arrival(true);
+    assert!(
+        opening && animating && !active && reflow,
+        "reconnect keeps the pane-open path"
+    );
+}
+
 /// The Connecting scene giving way to a session is a new view; reconnecting to the session that
 /// was already on screen is not, and its reconnect chrome already owns that moment.
 #[test]

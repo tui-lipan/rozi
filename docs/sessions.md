@@ -200,7 +200,8 @@ to it takes control when nobody else has claimed it.
 The incoming session's workbar and panes fade in briefly when they replace another session,
 including when a connecting session arrives or the launcher takes over. Panes never move from the
 previous session's positions, the focused pane is highlighted from the first frame, and the sidebar
-stays still. Settings → Session switching animation chooses the effect, as does `session` in
+stays still. A new session's first panes arrive with it rather than each playing its own pane-open
+effect. Settings → Session switching animation chooses the effect, as does `session` in
 `[animations]`:
 
 | Choice | Effect |

@@ -6,6 +6,20 @@ use super::ExtensionSettingValue;
 use super::file::{config_home, config_path, note_config_text};
 use super::schema::ProfileEntry;
 
+/// Serializes in-app edits of the config file within this process.
+///
+/// Every edit reads the file, rewrites its text, and writes it back. Two of those interleaving lose
+/// one edit: the second writer never saw the first one's change. The UI saves preferences on one
+/// thread, but nothing else makes edits take turns - tests that save settings in parallel do not,
+/// and neither would a save that moved off the UI thread. Held from the read to the write.
+fn config_edit_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // An edit that panicked left the file either untouched or fully replaced, so the next one can
+    // proceed.
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Writes an updated config text, creating the config directory when needed, and records the
 /// text as last-seen so the live-reload watcher does not treat our own write as an edit.
 fn write_config_text(path: &Path, updated: String) -> std::result::Result<(), String> {
@@ -154,6 +168,7 @@ fn multiline_string_close_end(line: &str, quote: MultilineQuote) -> Option<usize
 }
 
 pub fn persist_theme_name(name: &str) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -219,6 +234,7 @@ pub fn persist_pane_flag(key: &str, value: bool) -> std::result::Result<PathBuf,
 /// Persist a top-level bool such as `nerd_icons`. TOML root keys must sit before any table, so
 /// this writes (or replaces) the assignment in the file prefix rather than inventing a section.
 pub fn persist_top_level_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -237,6 +253,7 @@ pub fn persist_pane_padding(
     vertical: u16,
     horizontal: u16,
 ) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -260,6 +277,7 @@ fn upsert_pane_padding(text: &str, vertical: u16, horizontal: u16) -> String {
 }
 
 pub fn persist_animation_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -273,6 +291,7 @@ pub fn persist_animation_flag(key: &str, value: bool) -> std::result::Result<Pat
 }
 
 pub fn persist_animation_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -337,6 +356,7 @@ pub fn apply_keymap_edit(text: &str, edit: &super::KeymapEdit) -> String {
 
 /// Persist a keybinding edit with one validated config write.
 pub fn persist_keymap_edit(edit: &super::KeymapEdit) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = apply_keymap_edit(&read_config_text()?, edit);
     write_config_text(&path, text)?;
@@ -373,6 +393,7 @@ pub fn persist_clipboard_flag(key: &str, value: bool) -> std::result::Result<Pat
     persist_bool("clipboard", key, value)
 }
 fn persist_bool(section: &str, key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -384,6 +405,7 @@ fn persist_bool(section: &str, key: &str, value: bool) -> std::result::Result<Pa
 }
 
 pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -397,6 +419,7 @@ pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBu
 }
 
 pub fn persist_session_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -410,6 +433,7 @@ pub fn persist_session_string(key: &str, value: &str) -> std::result::Result<Pat
 }
 
 pub fn persist_input_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -423,6 +447,7 @@ pub fn persist_input_string(key: &str, value: &str) -> std::result::Result<PathB
 }
 
 pub fn persist_clipboard_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -441,6 +466,7 @@ pub fn persist_workbar_alert_string(
     key: &str,
     value: &str,
 ) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -456,6 +482,7 @@ pub fn persist_workbar_alert_string(
 pub fn persist_layout_default(
     kind: crate::state::LayoutKind,
 ) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -507,6 +534,7 @@ pub fn persist_sidebar_panels(
 }
 
 fn persist_sidebar_value(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -519,6 +547,7 @@ fn persist_sidebar_value(key: &str, value: &str) -> std::result::Result<PathBuf,
 }
 
 pub fn persist_extensions_disabled(ids: &[String]) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -547,6 +576,7 @@ pub fn persist_extension_setting(
     key: &str,
     value: &ExtensionSettingValue,
 ) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -1060,6 +1090,7 @@ fn list_profiles_in(dir: &Path) -> Vec<ProfileEntry> {
 }
 
 pub fn persist_default_profile(name: &str) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -1092,6 +1123,7 @@ pub fn delete_profile_file(path: &Path) -> std::result::Result<(), String> {
 }
 
 pub fn clear_default_profile(name: &str) -> std::result::Result<Option<PathBuf>, String> {
+    let _edit = config_edit_lock();
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,

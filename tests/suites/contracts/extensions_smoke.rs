@@ -19,6 +19,8 @@ fn discovered_extension_command_is_registered_and_dispatched() {
 
 fn discovered_extension_command_is_registered_and_dispatched_inner() {
     rozi::test_support::isolate_user_dirs();
+    // Replaces the config file this binary's tests share and asserts on it: hold it throughout.
+    let _config = rozi::test_support::lock_config_file();
     let env = rozi::platform::paths::PlatformEnv::from_process();
     let extension_dir = rozi::platform::paths::extensions_dir(&env).join("smoke");
     let bin_dir = extension_dir.join("bin");

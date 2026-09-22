@@ -312,8 +312,15 @@ pub(crate) fn worktree_session_origins() -> Result<WorktreeOrigins, String> {
         if crate::scratchpad::runtime::is_client_scratch_session(&name) {
             continue;
         }
-        let Ok(mut stream) = endpoint.connect() else {
-            continue;
+        let mut stream = match endpoint.connect() {
+            Ok(stream) => stream,
+            Err(err) if connect_error_proves_stale(err.kind()) => continue,
+            // A busy Windows pipe, a timeout, or a permission error: something may be listening,
+            // and its origin is unknown, which a removal guard must not read as "unused".
+            Err(_) => {
+                unverified.push(name);
+                continue;
+            }
         };
         match query_status(&name, &mut stream, None) {
             Ok((DiscoveredSessionStatus::Running { .. }, origin, _)) => {
@@ -328,6 +335,16 @@ pub(crate) fn worktree_session_origins() -> Result<WorktreeOrigins, String> {
         known: known.into_iter().collect(),
         unverified,
     })
+}
+
+/// Whether a failed connect proves that nothing listens at an endpoint: no socket file or pipe at
+/// all, or a Unix socket file whose server is gone. Every other failure, including a Windows pipe
+/// whose instances are all momentarily busy, may still have a live server behind it.
+fn connect_error_proves_stale(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+    )
 }
 
 /// Conservative removal guard: sessions whose recorded worktree origin is `path`, live or
@@ -637,6 +654,28 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The worktree removal guard skips an endpoint only when connecting proves nobody is there.
+    /// Windows reports a pipe whose instances are all in use as `WouldBlock` - a live server - so
+    /// treating that like a missing endpoint would let a checkout be removed under its session.
+    #[test]
+    fn only_a_missing_or_refused_endpoint_proves_a_session_gone() {
+        use std::io::ErrorKind;
+        assert!(connect_error_proves_stale(ErrorKind::NotFound));
+        assert!(connect_error_proves_stale(ErrorKind::ConnectionRefused));
+        for live_or_unknown in [
+            ErrorKind::WouldBlock,
+            ErrorKind::TimedOut,
+            ErrorKind::PermissionDenied,
+            ErrorKind::Interrupted,
+            ErrorKind::Other,
+        ] {
+            assert!(
+                !connect_error_proves_stale(live_or_unknown),
+                "{live_or_unknown:?} must leave the session unverified"
+            );
+        }
+    }
 
     /// A private endpoint for one test, named so parallel tests and repeated runs never collide.
     ///

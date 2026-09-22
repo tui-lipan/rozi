@@ -4,6 +4,8 @@ use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::config::BadgeColor;
 use crate::ops::focus::request_theme_picker_focus;
+use crate::platform::ansi::Rgb;
+use crate::platform::cli_palette::CliPalette;
 use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ThemePreset};
 use crate::{AppRoot, Msg, schedule_theme_tick};
 
@@ -314,7 +316,45 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
             client.set_palette(scratch.id, scratch.pty_generation, true, palette);
         }
     }
+    sync_cli_palette(state);
     changed
+}
+
+/// Hand the resolved theme's colours to commands run inside panes, which cannot resolve a custom
+/// or `system` theme themselves (see [`CliPalette`]). A picker preview is not the user's theme
+/// yet, so it is not saved, and an unchanged palette is not rewritten: this runs on every focus
+/// change as well as on theme changes.
+fn sync_cli_palette(state: &mut State) {
+    if state.theme_picker_preview.is_some() {
+        return;
+    }
+    let palette = cli_palette_from_theme(&state.theme);
+    if state.cli_palette == Some(palette) {
+        return;
+    }
+    // Remembered even when the write fails, so an unwritable state directory costs one attempt
+    // per theme change rather than one per focus change. Commands then keep the brand palette.
+    state.cli_palette = Some(palette);
+    let _ = palette.save();
+}
+
+/// The command-output roles of a theme, each falling back to the brand colour when the theme
+/// leaves it to the terminal.
+pub(crate) fn cli_palette_from_theme(theme: &Theme) -> CliPalette {
+    let brand = CliPalette::BRAND;
+    let rgb = |color: Option<Color>, fallback: Rgb| {
+        color
+            .filter(|color| !color.is_sentinel())
+            .and_then(Color::to_rgb)
+            .map_or(fallback, |(r, g, b)| Rgb(r, g, b))
+    };
+    CliPalette {
+        accent: rgb(theme.role(ThemeRole::Accent).resolved_fg(), brand.accent),
+        muted: rgb(theme.role(ThemeRole::Muted).resolved_fg(), brand.muted),
+        success: rgb(Some(theme.status.success), brand.success),
+        warning: rgb(Some(theme.status.warning), brand.warning),
+        error: rgb(Some(theme.status.error), brand.error),
+    }
 }
 
 pub(crate) fn pane_frame_background(
@@ -1041,5 +1081,31 @@ mod tests {
             pane_border_title_foreground(&theme, false, Color::Black),
             pane_title_foreground(&theme, false, Color::Black)
         );
+    }
+
+    #[test]
+    fn the_rozi_theme_hands_commands_the_brand_palette() {
+        assert_eq!(
+            cli_palette_from_theme(&ThemePreset::Rozi.theme()),
+            CliPalette::BRAND
+        );
+    }
+
+    #[test]
+    fn commands_get_the_chosen_theme_but_not_a_picker_preview() {
+        let mut state = State::new(Config::default(), ThemePreset::Rozi.theme());
+        let tokyo = cli_palette_from_theme(&ThemePreset::TokyoNight.theme());
+        assert_ne!(tokyo, CliPalette::BRAND);
+
+        state.theme_picker_preview = Some(ThemePickerPreview {
+            theme: state.theme.clone(),
+        });
+        state.theme = ThemePreset::TokyoNight.theme();
+        apply_terminal_palette_to_state(&mut state);
+        assert_eq!(state.cli_palette, None);
+
+        state.theme_picker_preview = None;
+        apply_terminal_palette_to_state(&mut state);
+        assert_eq!(state.cli_palette, Some(tokyo));
     }
 }

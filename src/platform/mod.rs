@@ -39,6 +39,8 @@
 //!   an explicit "unavailable" implementation per the plan (no PEB or process-tree probing).
 //! - [`ansi`] - whether plain stdout (help, not the TUI) can render SGR styling, including the
 //!   Windows virtual-terminal switch a legacy console needs before it can.
+//! - [`cli_palette`] - the state file through which the running app hands its resolved theme's
+//!   colours to commands run inside its panes.
 //! - [`notifications`] - desktop notifications (Phase 10).
 //! - [`sound`] - best-effort alert cue playback.
 //! - [`install`] - thin rozi path/policy adapter over the `relswap` signed-release engine.
@@ -57,6 +59,7 @@ pub mod persist;
 pub mod user;
 
 pub mod ansi;
+pub mod cli_palette;
 pub mod command;
 pub mod cursor;
 pub mod environment;

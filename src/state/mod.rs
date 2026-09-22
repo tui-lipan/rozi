@@ -161,6 +161,9 @@ pub struct State {
     pub pane_padding_editor: Option<PanePaddingEditorState>,
     pub show_theme_picker: bool,
     pub theme_picker_preview: Option<ThemePickerPreview>,
+    /// The command-output palette this client last saved for its panes, so re-applying an
+    /// unchanged theme does not rewrite the file.
+    pub(crate) cli_palette: Option<crate::platform::cli_palette::CliPalette>,
     /// The theme picker's highlighted row, index into `theme_choices()`. Drives the palette's
     /// `initial_selected_item_index` so filtering preserves the user's selection (or falls to the
     /// first match) instead of snapping back to the active theme. `None` when the picker is closed.
@@ -457,6 +460,7 @@ impl State {
             pane_padding_editor: None,
             show_theme_picker: false,
             theme_picker_preview: None,
+            cli_palette: None,
             theme_picker_selected: None,
             show_layout_picker: false,
             layout_picker: None,

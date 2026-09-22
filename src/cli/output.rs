@@ -4,6 +4,7 @@
 //! module: those are protocols even when a person sometimes reads them.
 
 use crate::control;
+use crate::platform::cli_palette::CliPalette;
 
 /// Write a finished report to stdout, treating a closed reader as a normal end.
 ///
@@ -25,7 +26,8 @@ pub(super) fn print_or_stop(text: &str) {
 /// JSON forms, publish/subscribe streams, and the version/protocol preamble deliberately bypass
 /// this type: those streams are protocols even when a person sometimes reads them. Reports meant
 /// for a terminal share this palette and fall back to plain text when colour was disabled through
-/// the standard environment variables.
+/// the standard environment variables. Inside a rozi pane the colours follow the app's theme; see
+/// [`CliPalette::current`].
 #[derive(Clone, Copy)]
 pub(super) struct OutputStyles {
     /// Whether to emit any styling at all.
@@ -33,6 +35,7 @@ pub(super) struct OutputStyles {
     /// Whether the terminal advertised 24-bit colour, so the palette can be sent exactly rather
     /// than approximated into the 256-colour cube.
     truecolor: bool,
+    palette: CliPalette,
 }
 
 impl OutputStyles {
@@ -40,6 +43,7 @@ impl OutputStyles {
         Self {
             color: false,
             truecolor: false,
+            palette: CliPalette::BRAND,
         }
     }
 
@@ -50,6 +54,7 @@ impl OutputStyles {
         Self {
             color: true,
             truecolor: true,
+            palette: CliPalette::BRAND,
         }
     }
 
@@ -58,31 +63,32 @@ impl OutputStyles {
             Self {
                 color: true,
                 truecolor: crate::platform::ansi::supports_truecolor(),
+                palette: CliPalette::current(),
             }
         } else {
             Self::plain()
         }
     }
 
-    /// The rozi palette colour for a tone, and whether it is bold, so `--help`, `update`, and the
-    /// install scripts all describe rozi with the colours the app and the logo use.
-    fn style_for(tone: OutputTone) -> (bool, Option<crate::platform::ansi::Rgb>) {
-        use crate::platform::ansi::palette;
+    /// The palette colour for a tone, and whether it is bold. Headings and table keys follow the
+    /// `--help` layout: bold accent headings over a bold, softened key column.
+    fn style_for(self, tone: OutputTone) -> (bool, Option<crate::platform::ansi::Rgb>) {
+        let palette = self.palette;
         match tone {
             OutputTone::Plain => (false, None),
-            OutputTone::Accent => (false, Some(palette::ROSE)),
-            OutputTone::Heading => (true, Some(palette::ROSE)),
-            OutputTone::Key => (true, Some(palette::ROSE.mix(palette::LAVENDER, 1, 2))),
-            OutputTone::Success => (false, Some(palette::SUCCESS)),
-            OutputTone::Warning => (false, Some(palette::WARNING)),
-            OutputTone::Error => (false, Some(palette::ERROR)),
-            OutputTone::Muted => (false, Some(palette::LAVENDER)),
+            OutputTone::Accent => (false, Some(palette.accent)),
+            OutputTone::Heading => (true, Some(palette.accent)),
+            OutputTone::Key => (true, Some(palette.key())),
+            OutputTone::Success => (false, Some(palette.success)),
+            OutputTone::Warning => (false, Some(palette.warning)),
+            OutputTone::Error => (false, Some(palette.error)),
+            OutputTone::Muted => (false, Some(palette.muted)),
         }
     }
 
     pub(super) fn paint(self, text: &str, tone: OutputTone) -> String {
         use crate::platform::ansi;
-        let (bold, color) = Self::style_for(tone);
+        let (bold, color) = self.style_for(tone);
         if !self.color || (!bold && color.is_none()) {
             return text.to_string();
         }
@@ -105,8 +111,7 @@ pub(super) enum OutputTone {
     Accent,
     /// A section title or table column header, styled like the headings in `--help`.
     Heading,
-    /// The first column of a table row, which names the row. Rose softened halfway toward
-    /// lavender, so it stays in the heading's family without merging into the header above it.
+    /// The first column of a table row, which names the row. See [`CliPalette::key`].
     Key,
     Success,
     Warning,

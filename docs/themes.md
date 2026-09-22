@@ -179,5 +179,17 @@ Rozi applies the active theme's terminal palette to new and existing panes when 
 The `ansi` and `system` choices use the host terminal palette more directly. Custom status, accent,
 and related palette colors also affect terminal ANSI colors and pane alerts.
 
+## Command output colors
+
+`rozi --help` and the tables that commands such as `rozi list-panes` print use the active theme's
+accent, muted, and status colors when you run them inside a Rozi pane. Headings and table headers
+use the accent color, and the first column blends the accent with the muted color. Outside Rozi,
+the terminal has its own theme, so these commands use the Rozi palette. Picker previews do not
+change command output until you select a theme.
+
+Rozi saves these colors to `cli-palette.toml` in its state directory whenever the resolved theme
+changes. Rozi overwrites the file, so do not edit it. Commands fall back to the Rozi palette if the
+file is missing or unreadable. `NO_COLOR` and the other color switches still turn styling off.
+
 See [Terminal features](terminal.md) for clipboard, title, image, and scrollback behavior that is
 independent of the selected theme.

@@ -2996,6 +2996,13 @@ mod file_tests {
                         "{name} must not be wrapped in a geometry clip: {mid_clip:?}"
                     );
                 }
+                // Off is not part of this sweep. It draws no clip and no reveal.
+                PaneAnimationStyle::Off => {
+                    assert!(
+                        mid_clip.is_none(),
+                        "{name} must not wrap the pane in an effect clip: {mid_clip:?}"
+                    );
+                }
             }
         }
     }

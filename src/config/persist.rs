@@ -404,6 +404,33 @@ fn persist_bool(section: &str, key: &str, value: bool) -> std::result::Result<Pa
     Ok(path)
 }
 
+/// Update several keys of one section in a single read-modify-write.
+///
+/// A composite Settings row can change two `[pane]` keys at once. Writing them with separate
+/// saves can leave the file half-updated when the second write fails.
+pub fn persist_section_values(
+    section: &str,
+    values: &[(&str, &str)],
+) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+    write_config_text(&path, apply_section_values(&text, section, values))?;
+    Ok(path)
+}
+
+fn apply_section_values(text: &str, section: &str, values: &[(&str, &str)]) -> String {
+    values
+        .iter()
+        .fold(text.to_string(), |text, (key, line_value)| {
+            upsert_value_in_section(&text, section, key, line_value)
+        })
+}
+
 pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
     let _edit = config_edit_lock();
     let path = config_path();
@@ -1346,6 +1373,21 @@ mod tests {
         assert!(updated.contains("focus_on_hover = false"));
         assert!(updated.contains("# keep"));
         assert!(!updated.contains("focus_on_hover = true"));
+    }
+
+    #[test]
+    fn section_values_update_every_key_in_one_pass() {
+        let text = "[pane]\nshow_titles = false\ntitlebar = \"inset\"\n# keep\n";
+        let updated = apply_section_values(
+            text,
+            "pane",
+            &[("show_titles", "true"), ("titlebar", "\"integrated\"")],
+        );
+        assert!(updated.contains("show_titles = true"));
+        assert!(updated.contains("titlebar = \"integrated\""));
+        assert!(updated.contains("# keep"));
+        assert!(!updated.contains("show_titles = false"));
+        assert!(!updated.contains("titlebar = \"inset\""));
     }
 
     #[test]

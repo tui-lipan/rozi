@@ -22,8 +22,13 @@ pub(crate) fn transition_config_for(
 pub(crate) fn slide_progress(ctx: &Context<AppRoot>, pane: &Pane, key: String) -> f32 {
     let animations = ctx.state.config.animations;
     let spec = anim::pane_animation_for_pane(animations, pane);
-    if spec.kind != anim::PaneAnimationStyle::Slide || pane.floating {
-        return 1.0;
+    match spec.kind {
+        anim::PaneAnimationStyle::Slide if !pane.floating => {}
+        anim::PaneAnimationStyle::Off
+        | anim::PaneAnimationStyle::Scale
+        | anim::PaneAnimationStyle::Portal
+        | anim::PaneAnimationStyle::Scan
+        | anim::PaneAnimationStyle::Slide => return 1.0,
     }
     let (target, enabled) = open_close_target(pane, animations);
     // Disabled means no motion, not a pane parked outside its own tile: snap to deployed rather
@@ -62,8 +67,12 @@ fn open_close_target(pane: &Pane, animations: anim::WindowAnimationConfig) -> (f
 pub(crate) fn scale_progress(ctx: &Context<AppRoot>, pane: &Pane, key: String) -> f32 {
     let animations = ctx.state.config.animations;
     let spec = anim::pane_animation_for_pane(animations, pane);
-    if spec.kind != anim::PaneAnimationStyle::Scale {
-        return 1.0;
+    match spec.kind {
+        anim::PaneAnimationStyle::Scale => {}
+        anim::PaneAnimationStyle::Off
+        | anim::PaneAnimationStyle::Slide
+        | anim::PaneAnimationStyle::Portal
+        | anim::PaneAnimationStyle::Scan => return 1.0,
     }
     let (target, enabled) = open_close_target(pane, animations);
     if !enabled {
@@ -81,11 +90,11 @@ pub(crate) fn pane_reveal_progress(
 ) -> f32 {
     let animations = ctx.state.config.animations;
     let spec = anim::pane_animation_for_pane(animations, pane);
-    if !matches!(
-        spec.kind,
-        anim::PaneAnimationStyle::Portal | anim::PaneAnimationStyle::Scan
-    ) {
-        return 1.0;
+    match spec.kind {
+        anim::PaneAnimationStyle::Portal | anim::PaneAnimationStyle::Scan => {}
+        anim::PaneAnimationStyle::Off
+        | anim::PaneAnimationStyle::Scale
+        | anim::PaneAnimationStyle::Slide => return 1.0,
     }
     let (target, enabled) = open_close_target(pane, animations);
     if !enabled {

@@ -248,7 +248,7 @@ Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `succes
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds; `0` switches instantly. |
 | `session` | string or bool | `"fade"` | How the workbar and panes arrive when the foreground session changes: switching sessions, a session finishing its connect, or dropping to the launcher. `"fade"` resolves the incoming session in place from slightly dimmed, over two-thirds of `geometry_ms`. `"portal"` opens a portal from the centre onto it while the previous session recedes behind it, over `geometry_ms`, with the ring drawn in the theme's accents. `"off"` switches at once. `true` means `"fade"` and `false` means `"off"`. Pane geometry always snaps and the sidebar stays still. Case-insensitive; unknown values keep the fade with a warning. Also available as Session switching animation in Settings. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
-| `pane_style` | string | `"scale"` | `"scale"`, `"slide"`, `"portal"`, `"scan"`, or a recipe ID. Builtin values are case-insensitive. Unknown values fall back to Scale with a warning. |
+| `pane_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, or `"scan"`. Builtin values are case-insensitive. `"off"` shows or hides the pane at once, with no fade and no spawn delay; neighbouring panes still reflow over `geometry_ms`. Unknown values fall back to Scale with a warning. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds. |
 | `close_ms` | integer | `120` | Scale close duration in milliseconds. Tiled Slide, Portal, and Scan use `geometry_ms`; floating Slide uses Scale timing. |
 | `focus_chrome_ms` | integer | `160` | Focus color duration in milliseconds. |
@@ -257,8 +257,11 @@ Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `succes
 
 ### Pane animation curves and effect settings
 
+`pane_style = "off"` skips the pane's own effect. `spawn`, `close`, and `enabled` still govern whether
+neighbouring panes animate, and those neighbours keep `geometry_ms`.
+
 The four builtin effects take your own timing, motion curve, and one geometry parameter each. All of
-it lives directly under `[animations]`.
+it lives directly under `[animations]`. Off has none.
 
 ```toml
 [animations]

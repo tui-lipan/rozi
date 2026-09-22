@@ -83,7 +83,7 @@ fn apply_animation_style(
     match PaneAnimationStyle::parse(pane_style) {
         Some(style) => target.pane_style = style,
         None => warnings.push(format!(
-            "Ignored unknown animations.pane_style \"{pane_style}\" (expected one of: scale, slide, portal, scan)"
+            "Ignored unknown animations.pane_style \"{pane_style}\" (expected one of: off, scale, slide, portal, scan)"
         )),
     }
 }
@@ -352,10 +352,9 @@ mod tests {
         assert_eq!(animations.pane_style, PaneAnimationStyle::Scale);
         assert_eq!(warnings.len(), 1);
         assert!(
-            warnings[0].contains("scale, slide"),
+            warnings[0].contains("off, scale, slide, portal, scan"),
             "the warning should list the accepted values: {}",
             warnings[0]
         );
-        assert!(warnings[0].contains("portal, scan"));
     }
 }

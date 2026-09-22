@@ -253,9 +253,7 @@ fn settings_all_keeps_every_control_available() {
             "Terminal padding",
             "Background follows terminal",
             "Background follows canvas",
-            "Show titlebar",
             "Layout",
-            "Show workbar",
             "Position",
             "Background",
             "Badge style",
@@ -979,13 +977,121 @@ fn settings_empty_search_does_not_edit_a_stale_selection() {
 }
 
 #[test]
+fn merged_visibility_rows_render_save_and_restore_on_cancel() {
+    on_large_stack(|| {
+        use rozi::state::{PaneTitlebarMode, SettingsAction};
+        let mut backend = settings_backend(100, 80);
+        backend.state_mut().config.pane.show_titles = false;
+        backend.state_mut().config.pane.titlebar = PaneTitlebarMode::Inset;
+        backend.state_mut().config.pane.show_workbar = false;
+        backend.state_mut().config.pane.workbar_at_bottom = true;
+
+        let frame = rendered_rows(&mut backend);
+        let titlebar = group_rows(&frame, "Titlebar", "Workbar");
+        assert!(setting_row(titlebar, "Layout").contains("Hidden"));
+        assert!(setting_row(titlebar, "Style").contains("Needs titlebar"));
+        let workbar = group_rows(&frame, "Workbar", "Sidebar");
+        assert!(setting_row(workbar, "Position").contains("Hidden"));
+        assert!(setting_row(workbar, "Gap").contains("Needs workbar"));
+        assert!(setting_row(workbar, "Background").contains("Needs workbar"));
+        assert!(setting_row(workbar, "Style").contains("Needs workbar"));
+        assert!(setting_row(workbar, "Badge style").contains("Needs workbar"));
+        assert!(setting_row(workbar, "Tab style").contains("Needs workbar"));
+        assert!(setting_row(workbar, "Powerline").contains("Needs workbar"));
+
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(SettingsAction::ChooseTitlebar))
+            .unwrap();
+        let choices = rendered_rows(&mut backend);
+        for label in ["Hidden", "Bar", "Border", "Integrated", "Inset"] {
+            assert!(choices.contains(label), "{label} missing:\n{choices}");
+        }
+        backend.dispatch(rozi::Msg::SettingsChoicePick(3)).unwrap();
+        assert!(backend.state().config.pane.show_titles);
+        assert_eq!(
+            backend.state().config.pane.titlebar,
+            PaneTitlebarMode::Integrated
+        );
+        let saved = rozi::config::load_config().config;
+        assert!(saved.pane.show_titles);
+        assert_eq!(saved.pane.titlebar, PaneTitlebarMode::Integrated);
+
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(SettingsAction::ChooseTitlebar))
+            .unwrap();
+        backend.dispatch(rozi::Msg::SettingsChoicePick(0)).unwrap();
+        assert!(!backend.state().config.pane.show_titles);
+        assert_eq!(
+            backend.state().config.pane.titlebar,
+            PaneTitlebarMode::Integrated
+        );
+        let saved = rozi::config::load_config().config;
+        assert!(!saved.pane.show_titles);
+        assert_eq!(saved.pane.titlebar, PaneTitlebarMode::Integrated);
+
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(SettingsAction::ChooseWorkbar))
+            .unwrap();
+        let choices = rendered_rows(&mut backend);
+        for label in ["Hidden", "Top", "Bottom"] {
+            assert!(choices.contains(label), "{label} missing:\n{choices}");
+        }
+        backend.dispatch(rozi::Msg::SettingsChoicePick(2)).unwrap();
+        assert!(backend.state().config.pane.show_workbar);
+        assert!(backend.state().config.pane.workbar_at_bottom);
+        let saved = rozi::config::load_config().config;
+        assert!(saved.pane.show_workbar);
+        assert!(saved.pane.workbar_at_bottom);
+
+        backend.state_mut().config.pane.show_titles = false;
+        backend.state_mut().config.pane.titlebar = PaneTitlebarMode::Inset;
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(SettingsAction::ChooseTitlebar))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsChoiceSelect(1))
+            .unwrap();
+        assert_eq!(backend.state().config.pane.titlebar, PaneTitlebarMode::Bar);
+        key(&mut backend, KeyCode::Esc);
+        assert!(!backend.state().config.pane.show_titles);
+        assert_eq!(
+            backend.state().config.pane.titlebar,
+            PaneTitlebarMode::Inset
+        );
+
+        backend.state_mut().config.pane.show_workbar = false;
+        backend.state_mut().config.pane.workbar_at_bottom = true;
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(SettingsAction::ChooseWorkbar))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsChoiceSelect(1))
+            .unwrap();
+        assert!(!backend.state().config.pane.workbar_at_bottom);
+        key(&mut backend, KeyCode::Esc);
+        assert!(!backend.state().config.pane.show_workbar);
+        assert!(backend.state().config.pane.workbar_at_bottom);
+
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(
+                SettingsAction::CyclePaneAnimation,
+            ))
+            .unwrap();
+        let choices = rendered_rows(&mut backend);
+        for label in ["Off", "Scale", "Slide", "Portal", "Scan"] {
+            assert!(choices.contains(label), "{label} missing:\n{choices}");
+        }
+    });
+}
+
+#[test]
 fn settings_categories_cover_all_controls_and_keep_pane_motion_local() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
             (SettingsTab::General, 15, "Session switching animation"),
-            (SettingsTab::Panes, 14, "Open/close animation"),
-            (SettingsTab::Bars, 13, "Show workbar"),
+            (SettingsTab::Panes, 13, "Open/close animation"),
+            (SettingsTab::Bars, 12, "Position"),
             (SettingsTab::Alerts, 19, "Bell urgency"),
             (SettingsTab::Sessions, 4, "Startup mode"),
         ] {

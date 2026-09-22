@@ -208,7 +208,19 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
     let mut aliases = match action {
         Theme => alias_list(&["themes", "color scheme", "colour scheme"]),
         EditPadding => alias_list(&["pane padding", "terminal insets", "pane margins"]),
-        ToggleTitles => alias_list(&["title bar", "show titles", "toggle titlebar"]),
+        ChooseTitlebar => alias_list(&[
+            "title bar",
+            "show titles",
+            "show titlebar",
+            "toggle titlebar",
+            "titlebar layout",
+            "titlebar mode",
+            "bar titlebar",
+            "border titlebar",
+            "integrated titlebar",
+            "inset titlebar",
+            "hidden titlebar",
+        ]),
         CycleTitleStyle => alias_list(&[
             "titlebar cap style",
             "titlebar caps",
@@ -216,25 +228,19 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "titlebar pill",
             "titlebar arrow",
         ]),
-        CycleTitlebar => alias_list(&[
-            "titlebar layout",
-            "titlebar mode",
-            "bar titlebar",
-            "border titlebar",
-            "integrated titlebar",
-            "inset titlebar",
-        ]),
-        ToggleWorkbar => alias_list(&["show workbar", "toggle workbar"]),
-        ToggleWorkbarGap => alias_list(&["workbar gap", "workbar spacing", "workbar separator"]),
-        ToggleWorkbarBackground => {
-            alias_list(&["workbar background", "workbar strip", "workbar chrome"])
-        }
-        ToggleWorkbarPosition => alias_list(&[
+        ChooseWorkbar => alias_list(&[
+            "show workbar",
+            "toggle workbar",
             "workbar position",
             "workbar placement",
             "workbar top",
             "workbar bottom",
+            "hidden workbar",
         ]),
+        ToggleWorkbarGap => alias_list(&["workbar gap", "workbar spacing", "workbar separator"]),
+        ToggleWorkbarBackground => {
+            alias_list(&["workbar background", "workbar strip", "workbar chrome"])
+        }
         CycleWorkbarStyle => alias_list(&["workbar style", "workbar caps", "workbar pill"]),
         CycleWorkbarBadgeStyle => {
             alias_list(&["workbar badge style", "workbar badges", "workbar chips"])

@@ -27,7 +27,14 @@ pub(super) fn pane_reveal_scope(
             seed,
             spec,
         )),
-        _ => scope,
+        (
+            PaneAnimationStyle::Off
+            | PaneAnimationStyle::Scale
+            | PaneAnimationStyle::Slide
+            | PaneAnimationStyle::Portal
+            | PaneAnimationStyle::Scan,
+            _,
+        ) => scope,
     };
     let scoped: Element = scope.child(pane_tree).into();
     scoped.key(key)

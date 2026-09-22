@@ -38,7 +38,7 @@ fn picker() -> TestBackend<AppRoot> {
         locked: false,
     }];
     picker.sessions.push(DiscoveredSession {
-        name: "feature".into(),
+        name: "review".into(),
         origin: SessionOrigin {
             worktree: Some(WorktreeOrigin { path: path.into() }),
             ..Default::default()
@@ -63,7 +63,10 @@ fn picker_keeps_remote_paths_opaque_and_shows_restorable_association() {
             frame.contains("C:\\code\\repo-worktrees\\feature"),
             "{frame}"
         );
-        assert!(frame.contains("1 session"), "{frame}");
+        assert!(
+            frame.contains("review"),
+            "the associated session is named: {frame}"
+        );
         backend.dispatch(Msg::WorktreeNew).unwrap();
         backend.render();
         let form = backend.capture_frame().plain_text();

@@ -53,6 +53,11 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         ),
         OverlayAction::new("esc", "close", Msg::CloseWorktrees, true),
     ];
+    let primary = picker
+        .entries
+        .iter()
+        .find(|tree| !tree.linked)
+        .map(|tree| tree.path.as_str());
     let entries = picker
         .entries
         .iter()
@@ -62,7 +67,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
                 tree.branch
                     .as_deref()
                     .unwrap_or(if tree.detached { "detached" } else { "bare" });
-            let sessions = picker
+            let sessions: Vec<&str> = picker
                 .sessions
                 .iter()
                 .filter(|row| {
@@ -73,18 +78,16 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
                             .as_ref()
                             .is_some_and(|origin| origin.path == tree.path)
                 })
-                .count();
-            let label = format!("{branch}  {}", tree.path);
-            let description = if sessions > 0 {
-                format!("{sessions} session{}", if sessions == 1 { "" } else { "s" })
-            } else if !tree.linked {
-                "primary".to_string()
-            } else if tree.locked {
-                "locked".to_string()
-            } else if tree.prunable {
-                "prunable".to_string()
-            } else {
-                String::new()
+                .map(|row| row.name.as_str())
+                .collect();
+            let label = format!("{branch}  {}", short_checkout_path(&tree.path, primary));
+            let description = match sessions.as_slice() {
+                [] if !tree.linked => "primary".to_string(),
+                [] if tree.locked => "locked".to_string(),
+                [] if tree.prunable => "prunable".to_string(),
+                [] => String::new(),
+                [only] => (*only).to_string(),
+                [first, rest @ ..] => format!("{first} +{}", rest.len()),
             };
             SearchEntry::item(label, index).description(picker_description(description))
         })
@@ -227,4 +230,54 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
         .on_close(ctx.link().callback(|_| Msg::WorktreeFormClose))
         .child(body)
         .into()
+}
+
+/// A checkout's path relative to the directory holding the primary checkout, so rows differ in the
+/// part that stays visible: `rozi`, `rozi-worktrees/feat`. A checkout elsewhere keeps its full
+/// path. These are session-host paths, compared as text split on either separator.
+pub(crate) fn short_checkout_path(path: &str, primary: Option<&str>) -> String {
+    let components = |path: &str| -> Vec<String> {
+        path.split(['/', '\\'])
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let Some(primary) = primary.map(components).filter(|parts| parts.len() > 1) else {
+        return path.to_string();
+    };
+    let parent = &primary[..primary.len() - 1];
+    let parts = components(path);
+    if parts.len() <= parent.len() || !parts.starts_with(parent) {
+        return path.to_string();
+    }
+    let separator = if path.contains('\\') && !path.contains('/') {
+        "\\"
+    } else {
+        "/"
+    };
+    parts[parent.len()..].join(separator)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short_checkout_path;
+
+    #[test]
+    fn checkout_paths_are_shown_from_the_repository_parent() {
+        let primary = Some("/home/me/src/rozi");
+        assert_eq!(short_checkout_path("/home/me/src/rozi", primary), "rozi");
+        assert_eq!(
+            short_checkout_path("/home/me/src/rozi-worktrees/feat", primary),
+            "rozi-worktrees/feat"
+        );
+        assert_eq!(
+            short_checkout_path("/elsewhere/feat", primary),
+            "/elsewhere/feat"
+        );
+        assert_eq!(
+            short_checkout_path("C:\\code\\repo-worktrees\\x", Some("C:/code/repo")),
+            "repo-worktrees\\x"
+        );
+        assert_eq!(short_checkout_path("/wt/x", None), "/wt/x");
+    }
 }

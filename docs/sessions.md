@@ -49,6 +49,32 @@ Namespace names and retired CLI spellings cannot be bare session or profile targ
 
 Remote targets use the same session commands. See [Remote sessions](remote.md).
 
+## Worktrees
+
+Open **Worktrees** from the command palette or the Changes sidebar while a pane is focused in a
+Git repository. The picker lists checkouts on that pane's session host, including remote hosts.
+`Enter` opens an associated session; when none exists, Rozi creates a named session with its first
+shell in that checkout. Multiple sessions can use one checkout, in which case `Enter` shows those
+sessions to choose from. Association comes from the session's recorded origin, not a pane that
+happens to have changed directory into the checkout.
+
+| Key | Action |
+| --- | --- |
+| `Ctrl+N` | Create a checkout from a branch and base revision, then open it in a fresh session |
+| `Ctrl+R` | Refresh the worktree list |
+| `Ctrl+K` | Remove a linked checkout; press again to force only if Git refused a dirty checkout |
+| `Esc` | Close the picker |
+
+The new-worktree form has **Branch**, **Base** (`HEAD` by default), and **Path**. Rozi previews a
+visible sibling path on the session host; edit Path to choose another absolute host path. `Tab`
+and `Shift+Tab` change fields. New worktree sessions start with a plain shell, so a default profile
+whose pane paths point at another checkout cannot pull the session away from its worktree.
+
+Removal never deletes a branch. It refuses a primary or locked checkout and any checkout owned
+by a running or restorable Rozi session. `force` only asks Git to remove a dirty checkout; stop or
+forget an associated session first. A create or remove already underway finishes even if the
+picker closes, and Rozi reports the result.
+
 ## Scope: where an action happens
 
 Every surface names the scope it acts in, and its keys act only in that scope.

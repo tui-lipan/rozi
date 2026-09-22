@@ -79,6 +79,7 @@ pub struct PendingSessionAttach {
 pub enum AttachIntent {
     Plain,
     ProfileSeed { profile: String, path: PathBuf },
+    WorktreeSeed { path: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

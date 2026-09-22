@@ -26,6 +26,134 @@ pub struct ProfilePickerState {
     pub apply_mode: bool,
 }
 
+/// A repository picker scoped to the host and project root of the pane that opened it.
+pub struct WorktreePickerState {
+    pub cwd: String,
+    pub target: Option<crate::session::remote::RemoteTarget>,
+    pub entries: Vec<crate::git::worktrees::WorktreeInfo>,
+    pub sessions: Vec<DiscoveredSession>,
+    pub input: TextInput,
+    pub selected: usize,
+    pub pending_list: Option<u64>,
+    pub pending_remove: Option<String>,
+    pub form: Option<WorktreeFormState>,
+    pub error: Option<String>,
+}
+
+impl WorktreePickerState {
+    pub fn new(cwd: String, target: Option<crate::session::remote::RemoteTarget>) -> Self {
+        Self {
+            cwd,
+            target,
+            entries: Vec::new(),
+            sessions: Vec::new(),
+            input: TextInput::new(""),
+            selected: 0,
+            pending_list: None,
+            pending_remove: None,
+            form: None,
+            error: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorktreeFormField {
+    Branch,
+    Base,
+    Path,
+}
+
+impl WorktreeFormField {
+    pub const ORDER: [Self; 3] = [Self::Branch, Self::Base, Self::Path];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Branch => "Branch",
+            Self::Base => "Base",
+            Self::Path => "Path",
+        }
+    }
+}
+
+pub struct WorktreeFormState {
+    pub branch: TextInput,
+    pub base: TextInput,
+    pub path: TextInput,
+    pub focus: WorktreeFormField,
+    pub path_edited: bool,
+    pub preview_revision: u64,
+    pub pending_preview: Option<u64>,
+    pub error: Option<String>,
+}
+
+impl WorktreeFormState {
+    pub fn new() -> Self {
+        Self {
+            branch: TextInput::new(""),
+            base: TextInput::new("HEAD"),
+            path: TextInput::new(""),
+            focus: WorktreeFormField::Branch,
+            path_edited: false,
+            preview_revision: 0,
+            pending_preview: None,
+            error: None,
+        }
+    }
+
+    pub fn input(&self, field: WorktreeFormField) -> &TextInput {
+        match field {
+            WorktreeFormField::Branch => &self.branch,
+            WorktreeFormField::Base => &self.base,
+            WorktreeFormField::Path => &self.path,
+        }
+    }
+
+    pub fn input_mut(&mut self, field: WorktreeFormField) -> &mut TextInput {
+        match field {
+            WorktreeFormField::Branch => &mut self.branch,
+            WorktreeFormField::Base => &mut self.base,
+            WorktreeFormField::Path => &mut self.path,
+        }
+    }
+
+    pub fn cycle_focus(&mut self, forward: bool) {
+        let position = Self::field_index(self.focus);
+        let next = if forward {
+            (position + 1) % 3
+        } else {
+            (position + 2) % 3
+        };
+        self.focus = WorktreeFormField::ORDER[next];
+    }
+
+    fn field_index(field: WorktreeFormField) -> usize {
+        WorktreeFormField::ORDER
+            .iter()
+            .position(|item| *item == field)
+            .unwrap()
+    }
+}
+
+impl Default for WorktreeFormState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Git work continues when the picker closes; completion is still delivered as a toast.
+pub struct WorktreeOperation {
+    pub request_id: u64,
+    pub epoch: u64,
+    pub cwd: String,
+    pub kind: WorktreeOperationKind,
+}
+
+pub enum WorktreeOperationKind {
+    Create { branch: String },
+    Remove { path: String, force: bool },
+}
+
 pub struct SessionPickerState {
     pub entries: Vec<DiscoveredSession>,
     pub input: TextInput,

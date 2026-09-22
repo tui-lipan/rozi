@@ -47,6 +47,17 @@ pub(crate) fn handle_key_routing(
         );
     }
 
+    if ctx
+        .state
+        .worktree_picker
+        .as_ref()
+        .is_some_and(|picker| picker.form.is_some())
+        && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+    {
+        let forward = key.code == KeyCode::Tab && !key.mods.shift;
+        return (true, crate::ops::worktrees::form_cycle(ctx, forward));
+    }
+
     // The sidebar's row list and file tree are ordinary focusable widgets, so they consume their
     // own movement keys and only what they ignore reaches here. `FileTree` has no key-handler prop,
     // so claiming these at the root is also the one place that covers both widgets identically.

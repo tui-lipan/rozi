@@ -252,12 +252,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             epoch,
             request_id,
             result,
-        } => {
-            if epoch == ctx.state.runtime_epoch {
-                ctx.state.worktree_reply = Some((epoch, request_id, result));
-            }
-            Update::none()
-        }
+        } => crate::ops::worktrees::apply_result(ctx, epoch, request_id, result),
         Msg::SidebarCommandPoll { epoch, tab_id } => sidebar::poll_command(ctx, epoch, tab_id),
         Msg::SidebarCommandOutput {
             epoch,
@@ -303,6 +298,23 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ProfilePickerOpenAs => prompts::profile_picker_open_as(ctx),
         Msg::ProfilePickerNew => prompts::profile_picker_new(ctx),
         Msg::SelectProfile(index) => prompts::select_profile(ctx, index),
+        Msg::CloseWorktrees => crate::ops::worktrees::close(ctx),
+        Msg::WorktreeQueryChanged(query) => crate::ops::worktrees::query_changed(ctx, query),
+        Msg::WorktreeSelect(index) => crate::ops::worktrees::select(ctx, index),
+        Msg::WorktreeActivate(index) => crate::ops::worktrees::activate(ctx, index),
+        Msg::WorktreeOpenSelected => crate::ops::worktrees::open_selected(ctx),
+        Msg::WorktreeRefresh => crate::ops::worktrees::refresh(ctx),
+        Msg::WorktreeNew => crate::ops::worktrees::open_form(ctx),
+        Msg::WorktreeRemoveSelected => crate::ops::worktrees::remove_selected(ctx),
+        Msg::WorktreeFormChanged(field, event) => {
+            crate::ops::worktrees::form_changed(ctx, field, event)
+        }
+        Msg::WorktreeFormCycle(forward) => crate::ops::worktrees::form_cycle(ctx, forward),
+        Msg::WorktreeFormClose => crate::ops::worktrees::close_form(ctx),
+        Msg::WorktreeFormSubmit => crate::ops::worktrees::submit_form(ctx),
+        Msg::WorktreePreviewTick { epoch, revision } => {
+            crate::ops::worktrees::preview_tick(ctx, epoch, revision)
+        }
         Msg::CloseLayoutPicker => crate::ops::layout_picker::cancel_layout_picker(ctx),
         Msg::LayoutPickerQueryChanged(query) => {
             crate::ops::layout_picker::layout_picker_query_changed(ctx, query)

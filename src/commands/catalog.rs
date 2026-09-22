@@ -405,6 +405,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::OpenWorktrees,
+        label: "Worktrees…",
+        category: "Git",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::SaveProfile,
         label: "Capture session as profile…",
         category: "Profile",

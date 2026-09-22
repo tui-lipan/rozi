@@ -419,12 +419,13 @@ fn apply_create_session(
     crate::ops::overlay_return::leave(ctx);
     let intent = match profile_seed {
         Some((profile, path)) => {
-            crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path }
+            crate::ops::session::open::OpenNamedIntent::CreateFromProfile { profile, path }
         }
-        None => crate::ops::profile::OpenNamedIntent::CreateFresh,
+        None => crate::ops::session::open::OpenNamedIntent::CreateFresh,
     };
     if open_ephemeral {
-        let crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path } = intent
+        let crate::ops::session::open::OpenNamedIntent::CreateFromProfile { profile, path } =
+            intent
         else {
             return Update::none();
         };
@@ -436,7 +437,7 @@ fn apply_create_session(
             },
         );
     }
-    crate::ops::profile::open_named_target(ctx, name, intent, host_target)
+    crate::ops::session::open::open_named_target(ctx, name, intent, host_target)
 }
 
 fn confirm_empty_ephemeral_leave(

@@ -2,6 +2,7 @@ pub(crate) mod attach;
 pub(crate) mod control_lease;
 pub(crate) mod discovery;
 pub(crate) mod lifecycle;
+pub(crate) mod open;
 pub(crate) mod remotes;
 
 pub(crate) use attach::{

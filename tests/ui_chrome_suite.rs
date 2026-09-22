@@ -27,3 +27,5 @@ mod workbar_alert_visual;
 mod workbar_caps_smoke;
 #[path = "suites/ui_chrome/workbar_tab_interaction_smoke.rs"]
 mod workbar_tab_interaction_smoke;
+#[path = "suites/ui_chrome/worktree_picker_smoke.rs"]
+mod worktree_picker_smoke;

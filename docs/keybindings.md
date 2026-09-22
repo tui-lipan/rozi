@@ -367,6 +367,10 @@ The profile picker uses `Enter` for the same-name session, `Ctrl+O` to launch un
 `Ctrl+N` to capture, `Ctrl+R` twice to replace the current session, `Ctrl+F` to toggle the default,
 and `Ctrl+D` twice to delete. See [Profiles](profiles.md#use-the-profile-picker).
 
+**Worktrees** has no default command key; open it from the command palette or Changes sidebar.
+Inside it, `Enter` opens a checkout's session, `Ctrl+N` creates a checkout, `Ctrl+R` refreshes,
+and `Ctrl+K` removes a linked checkout. See [Worktrees](sessions.md#worktrees).
+
 ## Other overlay keys
 
 `Esc` closes an overlay, or returns to its parent overlay when one opened another. `Enter` activates

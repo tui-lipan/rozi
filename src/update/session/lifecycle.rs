@@ -360,17 +360,38 @@ pub(crate) fn attached(
     crate::ops::focus::request_current_pane_focus(ctx);
 
     let named = !crate::state::is_ephemeral_session_name(&session);
-    if !populated && let crate::state::AttachIntent::ProfileSeed { profile, path } = &pending.intent
-    {
-        if let Some(client) = ctx.state.current().session_client.as_ref() {
-            client.set_session_origin(crate::session::origin::SessionOrigin {
-                profile: Some(profile.clone()),
-                ..Default::default()
-            });
+    if !populated {
+        match &pending.intent {
+            crate::state::AttachIntent::ProfileSeed { profile, path } => {
+                if let Some(client) = ctx.state.current().session_client.as_ref() {
+                    client.set_session_origin(crate::session::origin::SessionOrigin {
+                        profile: Some(profile.clone()),
+                        ..Default::default()
+                    });
+                }
+                ctx.state.current_mut().pending_profile_loaded =
+                    Some((profile.clone(), path.clone(), session.clone()));
+            }
+            crate::state::AttachIntent::WorktreeSeed { path } => {
+                if let Some(client) = ctx.state.current().session_client.as_ref() {
+                    client.set_session_origin(crate::session::origin::SessionOrigin {
+                        worktree: Some(crate::session::origin::WorktreeOrigin {
+                            path: path.clone(),
+                        }),
+                        ..Default::default()
+                    });
+                }
+            }
+            crate::state::AttachIntent::Plain => {}
         }
-        ctx.state.current_mut().pending_profile_loaded =
-            Some((profile.clone(), path.clone(), session.clone()));
-    } else if named && !populated && matches!(pending.intent, crate::state::AttachIntent::Plain) {
+    }
+    if named
+        && !populated
+        && !matches!(
+            pending.intent,
+            crate::state::AttachIntent::ProfileSeed { .. }
+        )
+    {
         crate::events::emit(
             &ctx.state,
             crate::events::Event::new(

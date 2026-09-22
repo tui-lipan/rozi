@@ -219,10 +219,11 @@ pub struct State {
     pub save_profile_prompt: Option<SaveProfileState>,
     pub show_profile_picker: bool,
     pub profile_picker: Option<ProfilePickerState>,
+    pub worktree_picker: Option<WorktreePickerState>,
+    pub worktree_operation: Option<WorktreeOperation>,
+    pub next_worktree_request_id: u64,
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
-    /// Most recent host worktree reply, fenced by session epoch and request ID.
-    pub worktree_reply: Option<(u64, u64, crate::session::protocol::WorktreeResult)>,
     pub remote_picker: Option<RemotePickerState>,
     /// The global Agents view, listing every agent this client knows about across every machine it
     /// is connected to. Holds no rows of its own: they are a pure projection of live pane state and
@@ -512,9 +513,11 @@ impl State {
             save_profile_prompt: None,
             show_profile_picker: false,
             profile_picker: None,
+            worktree_picker: None,
+            worktree_operation: None,
+            next_worktree_request_id: 1,
             show_session_picker: false,
             session_picker: None,
-            worktree_reply: None,
             remote_picker: None,
             agent_picker: None,
             pending_agent_jump: None,
@@ -962,6 +965,7 @@ impl State {
             || self.rename_session.is_some()
             || self.save_profile_prompt.is_some()
             || self.show_profile_picker
+            || self.worktree_picker.is_some()
             || self.show_session_picker
             || self.remote_picker.is_some()
             || self.agent_picker.is_some()

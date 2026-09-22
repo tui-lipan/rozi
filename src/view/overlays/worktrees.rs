@@ -58,42 +58,76 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .iter()
         .find(|tree| !tree.linked)
         .map(|tree| tree.path.as_str());
-    let mut widest_row = 0;
-    let entries = picker
+    let rows: Vec<WorktreeRow> = picker
         .entries
         .iter()
+        .map(|tree| WorktreeRow::new(tree, picker, primary))
+        .collect();
+    // Branches are padded to one width so paths start in the same column. An unusually long branch
+    // pushes only its own path rather than every row's.
+    let branch_width = rows
+        .iter()
+        .map(|row| row.branch.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_BRANCH_COLUMN);
+    let widest_row = rows
+        .iter()
+        .map(|row| {
+            MARKER_WIDTH
+                + branch_width
+                + COLUMN_GAP
+                + row.path.chars().count()
+                + row.state.chars().count()
+        })
+        .max()
+        .unwrap_or(0);
+    let entries = rows
+        .iter()
         .enumerate()
-        .map(|(index, tree)| {
-            let branch =
-                tree.branch
-                    .as_deref()
-                    .unwrap_or(if tree.detached { "detached" } else { "bare" });
-            let sessions: Vec<&str> = picker
-                .sessions
-                .iter()
-                .filter(|row| {
-                    row.remote_target == picker.target
-                        && row
-                            .origin
-                            .worktree
-                            .as_ref()
-                            .is_some_and(|origin| origin.path == tree.path)
-                })
-                .map(|row| row.name.as_str())
-                .collect();
-            let label = format!("{branch}  {}", short_checkout_path(&tree.path, primary));
-            let description = match sessions.as_slice() {
-                [] if !tree.linked => "primary".to_string(),
-                [] if tree.locked => "locked".to_string(),
-                [] if tree.prunable => "prunable".to_string(),
-                [] => String::new(),
-                [only] => (*only).to_string(),
-                [first, rest @ ..] => format!("{first} +{}", rest.len()),
-            };
-            widest_row = widest_row.max(label.chars().count() + description.chars().count());
-            SearchEntry::item(label, index).description(picker_description(description))
+        .map(|(index, row)| {
+            // The label is what search ranks; paths still match through the aliases.
+            SearchEntry::Item(
+                SearchItem::new(row.branch.clone(), index)
+                    .aliases([row.path.clone(), row.full_path.clone()])
+                    .description(picker_description(&row.state)),
+            )
         })
         .collect();
+    let theme = &ctx.state.theme;
+    let styles = RowStyles {
+        branch: fg_only(&theme.primary).bold(),
+        path: fg_only(&theme.muted),
+        marker: fg_only(&theme.accent),
+        session: fg_only(&theme.accent),
+        state: fg_only(&theme.muted),
+    };
+    let rows = Arc::new(rows);
+    let render_item: OverlayItemRenderer<usize> =
+        Arc::new(move |item: &SearchItem<usize>, _highlight| {
+            let row = rows.get(item.value)?;
+            let branch = format!("{:<branch_width$}", row.branch);
+            let item = ListItem::from_spans([
+                Span::new(if row.current { "● " } else { "  " }).style(styles.marker),
+                Span::new(branch).style(styles.branch),
+                Span::new(" ".repeat(COLUMN_GAP)),
+                Span::new(row.path.clone()).style(styles.path),
+            ]);
+            if row.state.is_empty() {
+                return Some(item);
+            }
+            // Unlike most pickers, the path gives way before the state column: the branch already
+            // tells rows apart, while the session or `locked` is what decides what Enter does.
+            Some(
+                item.description(format!("  {}", row.state))
+                    .description_style(if row.has_sessions {
+                        styles.session
+                    } else {
+                        styles.state
+                    })
+                    .primary_truncate_description_first(false),
+            )
+        });
     let empty = if let Some(error) = picker.error.as_deref() {
         format!("Git: {error}")
     } else if picker.pending_list.is_some() {
@@ -103,19 +137,18 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
     } else {
         "No worktrees match".to_string()
     };
+    let host = picker
+        .target
+        .as_ref()
+        .map_or_else(|| "local".to_string(), |target| target.display_label());
     OverlayPalette::new(
-        "Worktrees",
+        format!("Worktrees · {host}"),
         crate::view::worktree_picker_key(),
         Msg::CloseWorktrees,
         picker_width(widest_row),
     )
-    .header_right(
-        picker
-            .target
-            .as_ref()
-            .map_or("local".to_string(), |target| target.display_label()),
-    )
     .entries(entries)
+    .render_item(render_item)
     .actions(actions)
     .armed_row(armed.then_some(picker.selected))
     .placeholder("Search branches or paths…")
@@ -232,6 +265,78 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
         .on_close(ctx.link().callback(|_| Msg::WorktreeFormClose))
         .child(body)
         .into()
+}
+
+/// Cells before the branch: the current-checkout marker.
+const MARKER_WIDTH: usize = 2;
+/// Widest the aligned branch column grows.
+const MAX_BRANCH_COLUMN: usize = 32;
+/// Cells between the branch and path columns.
+const COLUMN_GAP: usize = 2;
+
+#[derive(Clone, Copy)]
+struct RowStyles {
+    branch: Style,
+    path: Style,
+    marker: Style,
+    session: Style,
+    state: Style,
+}
+
+/// One checkout as the picker draws it.
+struct WorktreeRow {
+    branch: String,
+    /// Shortened for display; see [`short_checkout_path`].
+    path: String,
+    full_path: String,
+    /// Associated sessions, or the checkout's notable state.
+    state: String,
+    has_sessions: bool,
+    /// The checkout the focused pane is in.
+    current: bool,
+}
+
+impl WorktreeRow {
+    fn new(
+        tree: &crate::git::worktrees::WorktreeInfo,
+        picker: &crate::state::WorktreePickerState,
+        primary: Option<&str>,
+    ) -> Self {
+        let branch = match (&tree.branch, tree.bare) {
+            (_, true) => "(bare)".to_string(),
+            (Some(branch), false) => branch.clone(),
+            (None, false) => "(detached)".to_string(),
+        };
+        let sessions: Vec<&str> = picker
+            .sessions
+            .iter()
+            .filter(|row| {
+                row.remote_target == picker.target
+                    && row
+                        .origin
+                        .worktree
+                        .as_ref()
+                        .is_some_and(|origin| origin.path == tree.path)
+            })
+            .map(|row| row.name.as_str())
+            .collect();
+        let state = match sessions.as_slice() {
+            [] if !tree.linked => "primary".to_string(),
+            [] if tree.locked => "locked".to_string(),
+            [] if tree.prunable => "prunable".to_string(),
+            [] => String::new(),
+            [only] => (*only).to_string(),
+            [first, rest @ ..] => format!("{first} +{}", rest.len()),
+        };
+        Self {
+            branch,
+            path: short_checkout_path(&tree.path, primary),
+            full_path: tree.path.clone(),
+            state,
+            has_sessions: !sessions.is_empty(),
+            current: tree.path == picker.cwd,
+        }
+    }
 }
 
 /// Wide enough for the widest row, so a nested checkout path and its session both fit, within a

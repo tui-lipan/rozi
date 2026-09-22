@@ -56,7 +56,9 @@ Remote targets use the same session commands. See [Remote sessions](remote.md).
 ## Worktrees
 
 Open **Worktrees** from the command palette or the Changes sidebar while a pane is focused in a
-Git repository. The picker lists checkouts on that pane's session host, including remote hosts.
+Git repository. The picker lists checkouts on that pane's session host, including remote hosts,
+with `●` on the checkout the focused pane is in and each checkout's sessions on the right. It
+opens with the list it last showed for that repository and refreshes it in place.
 `Enter` opens an associated session; when none exists, Rozi creates a named session with its first
 shell in that checkout. Multiple sessions can use one checkout, in which case `Enter` shows those
 sessions to choose from. Association comes from the session's recorded origin, not a pane that

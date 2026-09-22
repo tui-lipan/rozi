@@ -58,6 +58,10 @@ fn picker_keeps_remote_paths_opaque_and_shows_restorable_association() {
         let mut backend = picker();
         backend.render();
         let frame = backend.capture_frame().plain_text();
+        assert!(
+            frame.contains("Worktrees · workbox"),
+            "the host titles the picker: {frame}"
+        );
         assert!(frame.contains("feat/worktrees"), "{frame}");
         assert!(
             frame.contains("C:\\code\\repo-worktrees\\feature"),
@@ -182,11 +186,100 @@ fn stale_list_reply_does_not_replace_a_new_picker_request() {
     });
 }
 
+/// A list reply is remembered per repository and host, so the next opening starts populated, and
+/// the refresh keeps the selection on the same checkout even when rows move.
+#[test]
+fn listed_worktrees_are_cached_and_keep_the_selection() {
+    on_large_stack(|| {
+        let mut backend = picker();
+        let epoch = backend.state().runtime_epoch;
+        let tree = |path: &str, branch: &str, linked: bool| rozi::git::worktrees::WorktreeInfo {
+            path: path.into(),
+            branch: Some(branch.into()),
+            detached: false,
+            bare: false,
+            prunable: false,
+            linked,
+            locked: false,
+        };
+        backend
+            .state_mut()
+            .worktree_picker
+            .as_mut()
+            .unwrap()
+            .pending_list = Some(7);
+        let refreshed = vec![
+            tree("C:\\code\\repo", "main", false),
+            tree("C:\\code\\repo-worktrees\\feature", "feat/worktrees", true),
+        ];
+        backend
+            .dispatch(Msg::SessionWorktreeResult {
+                epoch,
+                request_id: 7,
+                result: WorktreeResult::Listed {
+                    worktrees: refreshed.clone(),
+                },
+            })
+            .unwrap();
+        let state = backend.state();
+        assert_eq!(state.worktree_picker.as_ref().unwrap().selected, 1);
+        let target = RemoteTarget::Alias("workbox".into());
+        assert_eq!(
+            state.worktree_lists.get(Some(&target), "C:\\code\\repo"),
+            Some(refreshed.as_slice())
+        );
+        assert_eq!(state.worktree_lists.get(None, "C:\\code\\repo"), None);
+    });
+}
+
 #[cfg(feature = "ui-snapshot")]
 #[test]
 fn worktree_picker_visual_reference() {
     on_large_stack(|| {
         let mut backend = picker();
+        {
+            // The shape of a real repository with agent worktrees nested inside it.
+            let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+            let tree = |path: &str, branch: &str, linked: bool, locked: bool| {
+                rozi::git::worktrees::WorktreeInfo {
+                    path: path.into(),
+                    branch: Some(branch.into()),
+                    detached: false,
+                    bare: false,
+                    prunable: false,
+                    linked,
+                    locked,
+                }
+            };
+            picker.target = None;
+            picker.cwd = "/home/me/src/rozi".into();
+            picker.entries = vec![
+                tree("/home/me/src/rozi", "master", false, false),
+                tree(
+                    "/home/me/src/rozi/.claude/worktrees/extensions-checking-spinner",
+                    "worktree-extensions-checking-spinner",
+                    true,
+                    true,
+                ),
+                tree(
+                    "/home/me/src/rozi/.claude/worktrees/session-fade-duration",
+                    "fix/config-test-race",
+                    true,
+                    false,
+                ),
+                tree(
+                    "/home/me/src/rozi-worktrees/feat-login",
+                    "feat/login",
+                    true,
+                    false,
+                ),
+            ];
+            picker.sessions[0].remote_target = None;
+            picker.sessions[0].origin.worktree = Some(WorktreeOrigin {
+                path: "/home/me/src/rozi-worktrees/feat-login".into(),
+            });
+            picker.selected = 2;
+        }
         for (width, height) in [(72, 22), (100, 30), (140, 40)] {
             backend.set_viewport(Rect {
                 x: 0,

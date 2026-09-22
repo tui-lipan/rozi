@@ -448,15 +448,20 @@ mod tests {
                 "{role:?} carries a resolved colour: {sgr:?}"
             );
         }
-        let accent = pane_accent_style();
-        assert_eq!(
-            RoleColors::PaneTheme.sgr(Role::Heading),
-            format!("{BOLD}{accent}")
-        );
-        assert_eq!(
-            RoleColors::PaneTheme.sgr(Role::Key),
-            format!("{DIM}{accent}")
-        );
+        // The full specification. Each slot is the one rozi's terminal palette fills with that
+        // role's theme colour, so swapping one for another plain slot still breaks the contract.
+        let expected = [
+            (Role::Heading, "\x1b[1m\x1b[94m"),
+            (Role::Accent, "\x1b[94m"),
+            (Role::Key, "\x1b[2m\x1b[94m"),
+            (Role::Muted, "\x1b[90m"),
+            (Role::Success, "\x1b[32m"),
+            (Role::Warning, "\x1b[33m"),
+            (Role::Error, "\x1b[31m"),
+        ];
+        for (role, sgr) in expected {
+            assert_eq!(RoleColors::PaneTheme.sgr(role), sgr, "{role:?}");
+        }
     }
 
     #[test]

@@ -116,9 +116,6 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
         return report_config_issues(ctx, &loaded.warnings, true, None);
     }
     let mut new_config = loaded.config;
-    // The framework clipboard service is configured when the runtime starts. Keep the state-side
-    // gate aligned with it until restart so child OSC 52 and rozi-originated copies cannot disagree.
-    new_config.clipboard.enable_osc52 = ctx.state.config.clipboard.enable_osc52;
 
     let system_theme = ctx.state.system_theme.clone();
     let resolved = crate::config::resolve_theme(&new_config.theme.name, system_theme.as_ref());
@@ -164,6 +161,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     // The reveal delay lives in the runtime rather than in `State`, so a reload has to push it
     // across explicitly - otherwise it is the one `[input]` key that silently needs a restart.
     ctx.set_command_chord_reveal_delay(new_config.input.which_key.reveal_delay());
+    ctx.set_clipboard_config(crate::app::clipboard_config(&new_config));
     let (extension_generations, stale_extensions) = crate::config::reconcile_generations(
         Some(&ctx.state.config),
         &mut new_config,

@@ -212,6 +212,13 @@
 #default = "dev"
 
 [clipboard]
+# Copy mouse selections automatically. Linux defaults to "both"; macOS and Windows default to
+# "clipboard". Other choices are "off", "primary", and "clipboard".
+#copy_on_select = "both"
+# Paste PRIMARY with middle click on Linux. Other choices are "off" and "clipboard".
+#middle_click_paste = "primary"
+# Leave right click to panes and Rozi. Other choices are "paste" and "copy-or-paste".
+#right_click = "off"
 # Let programs in a pane set the system clipboard via the OSC52 escape sequence.
 #enable_osc52 = true
 

@@ -246,7 +246,18 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
         unknown,
     );
     collect_pane(table, unknown);
-    collect_named_table(table, "", "clipboard", &["enable_osc52"], unknown);
+    collect_named_table(
+        table,
+        "",
+        "clipboard",
+        &[
+            "copy_on_select",
+            "middle_click_paste",
+            "right_click",
+            "enable_osc52",
+        ],
+        unknown,
+    );
     collect_named_table(table, "", "updates", &["check", "interval_hours"], unknown);
     collect_named_table(table, "", "notifications", NOTIFICATION_KEYS, unknown);
     collect_named_table(table, "", "sounds", SOUND_KEYS, unknown);

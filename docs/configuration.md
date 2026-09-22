@@ -63,7 +63,6 @@ Most settings apply immediately. These settings have narrower behavior:
 | `command_shell` | New command, hook, service, sidebar, and workbar executions. |
 | `scrollback` | New terminal screens. Restart an existing session server before creating panes that should use the new capacity. Existing screens never resize. |
 | `frame_rate` | Next client launch or reattach. |
-| `clipboard.enable_osc52` | Next client launch. |
 | `updates.interval_hours` | The next re-check. A check already waiting keeps the old interval. |
 | `sidebar.visible` | Client startup only. Reload never opens or closes the sidebar. |
 | `session.startup` | Next bare launch. |
@@ -325,7 +324,12 @@ See [Profiles](profiles.md).
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `enable_osc52` | bool | `true` | Allows pane programs to set the system clipboard with OSC 52. Requires a client restart. |
+| `copy_on_select` | string | Linux: `"both"`; macOS/Windows: `"clipboard"` | Clipboard target updated when a mouse text selection finishes: `"off"`, `"primary"`, `"clipboard"`, or `"both"`. Unsupported PRIMARY access is disabled while regular clipboard access remains active. |
+| `middle_click_paste` | string | Linux: `"primary"`; macOS/Windows: `"off"` | Source pasted by middle click: `"off"`, `"primary"`, or `"clipboard"`. Unsupported PRIMARY access disables the gesture. |
+| `right_click` | string | `"off"` | Fallback for an otherwise-unhandled right click: `"off"`, `"paste"` from the clipboard, or `"copy-or-paste"` to copy an active selection and otherwise paste. Widget and application handlers retain priority. |
+| `enable_osc52` | bool | `true` | Allows pane programs to set the system clipboard with OSC 52. |
+
+These settings apply on config reload and are also available in the General tab of **Settings**.
 
 See [Terminal features](terminal.md#select-copy-and-paste).
 

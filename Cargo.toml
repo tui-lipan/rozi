@@ -36,8 +36,8 @@ exclude = [
 ]
 
 [dependencies]
-# 0.11.8: retained terminal text can be scanned as logical lines across soft wraps.
-tui-lipan = { version = "0.11.8", features = [
+# 0.12.1: clipboard policy can be updated live when configuration reloads.
+tui-lipan = { version = "0.12.1", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

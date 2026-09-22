@@ -379,6 +379,22 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "prefix hint delay",
             "chord panel timing",
         ]),
+        CycleCopyOnSelect => alias_list(&[
+            "copy on select",
+            "mouse selection copy",
+            "primary selection",
+        ]),
+        CycleMiddleClickPaste => alias_list(&[
+            "middle click paste",
+            "mouse paste",
+            "primary selection paste",
+        ]),
+        CycleRightClickClipboard => alias_list(&[
+            "right click paste",
+            "right click copy",
+            "context click clipboard",
+        ]),
+        ToggleOsc52 => alias_list(&["osc52", "terminal clipboard", "remote clipboard"]),
         ToggleFocusOnHover => alias_list(&["mouse focus", "hover focus"]),
         ToggleBellUrgency => alias_list(&["terminal bell", "urgent bell"]),
         CycleAlertBorder => alias_list(&[

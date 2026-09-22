@@ -7,11 +7,36 @@ use crate::{cli, config, control, ops, platform};
 
 use super::{AppRoot, startup::StartupPlan};
 
-fn clipboard_config(config: &Config) -> ClipboardConfig {
+pub(crate) fn clipboard_config(config: &Config) -> ClipboardConfig {
     // OSC52 always targets the *local* terminal emulator that hosts this client. Under `--remote`
     // that is what we want: copy from a remote pane reaches the local clipboard. Disabling
     // `enable_osc52` drops OSC52 without redirecting copies to the remote host.
     ClipboardConfig {
+        // Ask the provider to validate PRIMARY support whenever a configured gesture needs it;
+        // tui-lipan then degrades `Both` to `Clipboard` and PRIMARY-only gestures to disabled.
+        enable_primary_selection: matches!(
+            config.clipboard.copy_on_select,
+            config::CopyOnSelect::PrimarySelection | config::CopyOnSelect::Both
+        ) || matches!(
+            config.clipboard.middle_click_paste,
+            config::MiddleClickPaste::PrimarySelection
+        ),
+        copy_on_mouse_select: match config.clipboard.copy_on_select {
+            config::CopyOnSelect::Disabled => CopyOnSelect::Disabled,
+            config::CopyOnSelect::PrimarySelection => CopyOnSelect::PrimarySelection,
+            config::CopyOnSelect::Clipboard => CopyOnSelect::Clipboard,
+            config::CopyOnSelect::Both => CopyOnSelect::Both,
+        },
+        middle_click_paste: match config.clipboard.middle_click_paste {
+            config::MiddleClickPaste::Disabled => PasteSource::Disabled,
+            config::MiddleClickPaste::PrimarySelection => PasteSource::PrimarySelection,
+            config::MiddleClickPaste::Clipboard => PasteSource::Clipboard,
+        },
+        right_click_action: match config.clipboard.right_click {
+            config::RightClickClipboardAction::Disabled => RightClickAction::Disabled,
+            config::RightClickClipboardAction::PasteClipboard => RightClickAction::PasteClipboard,
+            config::RightClickClipboardAction::CopyOrPaste => RightClickAction::CopyOrPaste,
+        },
         enable_osc52: config.clipboard.enable_osc52,
         ..ClipboardConfig::default()
     }
@@ -339,4 +364,25 @@ pub fn run() -> Result<()> {
     // threads with no such owner, so it is retired here.
     crate::session::remote::askpass::shutdown();
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clipboard_policy_maps_to_framework_config() {
+        let mut config = Config::default();
+        config.clipboard.copy_on_select = config::CopyOnSelect::Both;
+        config.clipboard.middle_click_paste = config::MiddleClickPaste::Clipboard;
+        config.clipboard.right_click = config::RightClickClipboardAction::CopyOrPaste;
+        config.clipboard.enable_osc52 = false;
+
+        let runtime = clipboard_config(&config);
+        assert_eq!(runtime.copy_on_mouse_select, CopyOnSelect::Both);
+        assert_eq!(runtime.middle_click_paste, PasteSource::Clipboard);
+        assert_eq!(runtime.right_click_action, RightClickAction::CopyOrPaste);
+        assert!(runtime.enable_primary_selection);
+        assert!(!runtime.enable_osc52);
+    }
 }

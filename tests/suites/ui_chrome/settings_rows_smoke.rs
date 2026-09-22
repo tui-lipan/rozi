@@ -1,6 +1,7 @@
 //! Settings keeps persisted appearance and alert preferences in one searchable grouped list.
 
 use rozi::AppRoot;
+use rozi::config::{CopyOnSelect, MiddleClickPaste, RightClickClipboardAction};
 use rozi::state::{AlertMode, PaneBorderMode, SettingsAction, SettingsTab};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, KeyCode, KeyEvent, KeyMods, Rect};
@@ -242,6 +243,10 @@ fn settings_all_keeps_every_control_available() {
             "Workspace switching animation",
             "Nerd icons",
             "Which-key",
+            "Copy on selection",
+            "Middle-click paste",
+            "Right-click action",
+            "OSC 52",
             "Focus on hover",
             "Border",
             "Selection style",
@@ -882,6 +887,42 @@ fn settings_choice_lists_every_option() {
 }
 
 #[test]
+fn clipboard_settings_render_and_restore_cancelled_preview() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(90, 45);
+        backend.state_mut().config.clipboard.copy_on_select = CopyOnSelect::Disabled;
+        backend.state_mut().config.clipboard.middle_click_paste = MiddleClickPaste::Disabled;
+        backend.state_mut().config.clipboard.right_click = RightClickClipboardAction::Disabled;
+        backend.state_mut().config.clipboard.enable_osc52 = true;
+
+        let frame = rendered_rows(&mut backend);
+        let clipboard = group_rows(&frame, "Clipboard", "Pickers");
+        assert!(setting_row(clipboard, "Copy on selection").contains("Off"));
+        assert!(setting_row(clipboard, "Middle-click paste").contains("Off"));
+        assert!(setting_row(clipboard, "Right-click action").contains("Off"));
+        assert!(setting_row(clipboard, "OSC 52").contains("Enabled"));
+
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(
+                SettingsAction::CycleCopyOnSelect,
+            ))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsChoiceSelect(3))
+            .unwrap();
+        assert_eq!(
+            backend.state().config.clipboard.copy_on_select,
+            CopyOnSelect::Both
+        );
+        backend.dispatch(rozi::Msg::SettingsChoiceCancel).unwrap();
+        assert_eq!(
+            backend.state().config.clipboard.copy_on_select,
+            CopyOnSelect::Disabled
+        );
+    });
+}
+
+#[test]
 fn settings_empty_search_does_not_edit_a_stale_selection() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 35);
@@ -904,7 +945,7 @@ fn settings_categories_cover_all_controls_and_keep_pane_motion_local() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 10, "Workspace switching animation"),
+            (SettingsTab::General, 14, "Workspace switching animation"),
             (SettingsTab::Panes, 14, "Open/close animation"),
             (SettingsTab::Bars, 13, "Show workbar"),
             (SettingsTab::Alerts, 19, "Bell urgency"),

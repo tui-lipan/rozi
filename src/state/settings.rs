@@ -96,6 +96,7 @@ pub enum SettingsAction {
     EditPadding,
     ToggleAnimations,
     ToggleWorkspaceAnimation,
+    CycleSessionAnimation,
     ToggleNerdIcons,
     CycleWhichKey,
     CycleCopyOnSelect,
@@ -169,6 +170,7 @@ impl SettingsAction {
             Self::EditPadding,
             Self::ToggleAnimations,
             Self::ToggleWorkspaceAnimation,
+            Self::CycleSessionAnimation,
             Self::ToggleNerdIcons,
             Self::CycleWhichKey,
             Self::CycleCopyOnSelect,
@@ -346,6 +348,12 @@ impl SettingsAction {
                 pane.fullscreen_border_style,
                 PaneBorderStyle::label,
             )),
+            Self::CycleSessionAnimation => Some(choice_ring(
+                "Session switching animation",
+                crate::layout::anim::SessionAnimationStyle::all(),
+                config.animations.session,
+                crate::layout::anim::SessionAnimationStyle::label,
+            )),
             Self::CyclePaneAnimation => Some(choice_ring(
                 "Pane open/close animation",
                 PaneAnimationStyle::all(),
@@ -471,6 +479,11 @@ impl SettingsAction {
                 index,
                 &mut config.pane.fullscreen_border_style,
             ),
+            Self::CycleSessionAnimation => assign_choice(
+                crate::layout::anim::SessionAnimationStyle::all(),
+                index,
+                &mut config.animations.session,
+            ),
             Self::CyclePaneAnimation => assign_choice(
                 PaneAnimationStyle::all(),
                 index,
@@ -522,7 +535,9 @@ impl SettingsAction {
             {
                 Some("Unsupported in this mode")
             }
-            Self::CyclePaneAnimation | Self::ToggleWorkspaceAnimation
+            Self::CyclePaneAnimation
+            | Self::ToggleWorkspaceAnimation
+            | Self::CycleSessionAnimation
                 if !config.animations.enabled =>
             {
                 Some("Needs animations")

@@ -3,10 +3,11 @@ use std::time::Duration;
 use tui_lipan::animation::{CubicBezier, Easing};
 
 use crate::layout::anim::{
-    PaneAnimationOverrides, PaneAnimationStyle, ScanDirection, WindowAnimationConfig,
+    PaneAnimationOverrides, PaneAnimationStyle, ScanDirection, SessionAnimationStyle,
+    WindowAnimationConfig,
 };
 
-use super::file::{AnimationFileConfig, CurveSpec, PaddingSpec};
+use super::file::{AnimationFileConfig, CurveSpec, PaddingSpec, SessionSpec};
 
 /// Cap defensively: padding eats terminal grid on every side, so a large value would leave no
 /// usable pane. 8 cells is already generous for a cosmetic inset.
@@ -67,6 +68,7 @@ pub(super) fn apply_animations(
 ) {
     apply_animation_durations(target, &raw);
     apply_animation_style(target, raw.pane_style.as_deref(), warnings);
+    apply_session_animation(target, raw.session.as_ref(), warnings);
     apply_animation_flags(target, &raw);
     apply_animation_misc(target, &raw);
     target.pane_overrides = resolve_pane_overrides(&raw, warnings);
@@ -83,6 +85,24 @@ fn apply_animation_style(
         None => warnings.push(format!(
             "Ignored unknown animations.pane_style \"{pane_style}\" (expected one of: scale, slide, portal, scan)"
         )),
+    }
+}
+
+fn apply_session_animation(
+    target: &mut WindowAnimationConfig,
+    session: Option<&SessionSpec>,
+    warnings: &mut Vec<String>,
+) {
+    match session {
+        None => {}
+        Some(SessionSpec::Enabled(true)) => target.session = SessionAnimationStyle::Fade,
+        Some(SessionSpec::Enabled(false)) => target.session = SessionAnimationStyle::Off,
+        Some(SessionSpec::Style(style)) => match SessionAnimationStyle::parse(style) {
+            Some(style) => target.session = style,
+            None => warnings.push(format!(
+                "Ignored unknown animations.session \"{style}\" (expected one of: off, fade, portal)"
+            )),
+        },
     }
 }
 

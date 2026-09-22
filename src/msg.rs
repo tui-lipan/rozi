@@ -530,6 +530,9 @@ pub enum Msg {
         epoch: u64,
         message: String,
     },
+    /// The grace period for attach `epoch` ran out: stop holding the previous session's picture
+    /// and show the Connecting scene. See [`crate::state::ConnectHold`].
+    ConnectHoldElapsed(u64),
     SessionLost {
         epoch: u64,
         message: String,

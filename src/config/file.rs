@@ -579,6 +579,15 @@ struct NavigationFileConfig {
     editors: Option<Vec<String>>,
 }
 
+/// `[animations] session`: a style name, or a bool for the plain on/off every sibling key takes.
+/// `true` is the default fade.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub(super) enum SessionSpec {
+    Enabled(bool),
+    Style(String),
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub(super) struct AnimationFileConfig {
@@ -591,6 +600,7 @@ pub(super) struct AnimationFileConfig {
     pub(super) sidebar: Option<bool>,
     pub(super) workspace: Option<bool>,
     pub(super) workspace_ms: Option<u64>,
+    pub(super) session: Option<SessionSpec>,
     pub(super) focus_chrome: Option<bool>,
     pub(super) pane_style: Option<String>,
     pub(super) geometry_ms: Option<u64>,
@@ -2141,6 +2151,43 @@ mod file_tests {
         assert_eq!(
             defaults.config.animations.workspace_duration,
             std::time::Duration::from_millis(220)
+        );
+    }
+
+    #[test]
+    fn session_animation_is_a_style_or_a_bool_and_an_unknown_one_is_reported() {
+        use crate::layout::anim::SessionAnimationStyle;
+        let defaults = load_config_from_text("", Path::new("test.toml"));
+        assert_eq!(
+            defaults.config.animations.session,
+            SessionAnimationStyle::Fade
+        );
+        for (value, expected) in [
+            ("\"Portal\"", SessionAnimationStyle::Portal),
+            ("\"off\"", SessionAnimationStyle::Off),
+            ("false", SessionAnimationStyle::Off),
+            ("true", SessionAnimationStyle::Fade),
+        ] {
+            let loaded = load_config_from_text(
+                &format!("[animations]\nsession = {value}\n"),
+                Path::new("test.toml"),
+            );
+            assert!(loaded.warnings.is_empty(), "{value}: {:?}", loaded.warnings);
+            assert_eq!(loaded.config.animations.session, expected, "{value}");
+        }
+        let unknown =
+            load_config_from_text("[animations]\nsession = \"iris\"\n", Path::new("test.toml"));
+        assert_eq!(
+            unknown.config.animations.session,
+            SessionAnimationStyle::Fade
+        );
+        assert!(
+            unknown
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("animations.session") && warning.contains("iris")),
+            "{:?}",
+            unknown.warnings
         );
     }
 

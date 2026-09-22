@@ -533,6 +533,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             drain_session_frames(_app, ctx, epoch, mailbox).update
         }
         Msg::SessionAttachFailed { epoch, message } => session::attach_failed(ctx, epoch, message),
+        Msg::ConnectHoldElapsed(epoch) => crate::ops::session::connect_hold_elapsed(ctx, epoch),
         Msg::SessionLost { epoch, message } => session::lost(ctx, epoch, message),
         Msg::SessionAttached {
             epoch,
@@ -938,6 +939,7 @@ fn post_update_sync(
     }
 
     crate::commands::sync_if_needed(ctx);
+    crate::ops::session::arm_connect_hold(ctx);
 
     // The Keybindings search field owns every key while the list is showing; only its capture and
     // reset dialogs take focus away.

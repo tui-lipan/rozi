@@ -124,6 +124,7 @@ pub(crate) fn switch_to_parked(
     };
     discard_parked_if_disposable(ctx, old_epoch, disposition);
     ctx.state.runtime_epoch = restored_epoch;
+    ctx.state.session_view_revision += 1;
     // Back in the foreground: reclaim the lease, which the server grants outright when the session
     // has no active controller — the usual case for a session this client left parked.
     mark_current_parked(ctx, false);
@@ -149,6 +150,64 @@ pub(crate) fn switch_to_parked(
         return reconnect_current_session(ctx);
     }
     Update::full()
+}
+
+/// How long a fresh attach may keep the previous session's picture before the Connecting scene
+/// is shown. Long enough to cover a local attach, short enough that a slow one is admitted at
+/// once.
+pub(crate) const CONNECT_HOLD: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Start the grace period for a fresh attach that has just begun. Runs after every message, so
+/// every path that begins an attach is covered without each one having to remember it.
+///
+/// Only when something is on screen to hold (a first frame has nothing to keep) and when the
+/// expiry can be scheduled: a hold that could not end would hide Connecting for good.
+pub(crate) fn arm_connect_hold(ctx: &mut Context<AppRoot>) {
+    let Some(pending) = ctx.state.current().pending_session_attach.as_ref() else {
+        return;
+    };
+    if pending.reconnect {
+        return;
+    }
+    let epoch = pending.epoch;
+    if ctx
+        .state
+        .connect_hold
+        .is_some_and(|hold| hold.epoch == epoch)
+    {
+        return;
+    }
+    let active = ctx.state.session_reveal_seen.get().is_some()
+        && ctx.state.command_link.as_ref().is_some_and(|link| {
+            link.send_after(CONNECT_HOLD, crate::Msg::ConnectHoldElapsed(epoch));
+            true
+        });
+    ctx.state.connect_hold = Some(crate::state::ConnectHold { epoch, active });
+}
+
+pub(crate) fn connect_hold_elapsed(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
+    match ctx.state.connect_hold.as_mut() {
+        Some(hold) if hold.epoch == epoch && hold.active => {
+            hold.active = false;
+            Update::full()
+        }
+        _ => Update::none(),
+    }
+}
+
+/// Whether the view should still show the previous session instead of the Connecting scene.
+pub(crate) fn holding_previous_view(state: &crate::state::State) -> bool {
+    state.connect_hold.is_some_and(|hold| hold.active)
+        && state
+            .current()
+            .pending_session_attach
+            .as_ref()
+            .is_some_and(|pending| {
+                !pending.reconnect
+                    && state
+                        .connect_hold
+                        .is_some_and(|hold| hold.epoch == pending.epoch)
+            })
 }
 
 pub(crate) fn apply_pending_background_closes(ctx: &mut Context<AppRoot>) {
@@ -546,6 +605,7 @@ pub(crate) fn enter_sessionless(ctx: &mut Context<AppRoot>) {
     ctx.state.attachment = crate::state::Attachment::new();
     ctx.state.runtime_epoch = ctx.state.mint_attachment_id();
     ctx.state.current_mut().epoch = ctx.state.runtime_epoch;
+    ctx.state.session_view_revision += 1;
     finish_session_install(ctx);
 }
 

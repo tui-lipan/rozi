@@ -91,6 +91,39 @@ fn workspace_empty_panel(ctx: &Context<AppRoot>) -> Element {
     }
 }
 
+/// The session's own content: workbar and workspace pages, over the backdrop.
+fn session_content(
+    ctx: &Context<AppRoot>,
+    content_viewport: Rect,
+    viewport_changed: bool,
+) -> Element {
+    let theme = &ctx.state.theme;
+    let mut canvas = Canvas::new()
+        .style(Style::new().bg(theme.surface.backdrop))
+        .height(Length::Flex(1));
+
+    if ctx.state.config.pane.show_workbar {
+        let workbar_rect = if ctx.state.config.pane.workbar_at_bottom {
+            FloatRect {
+                x: 0.0,
+                y: f32::from(content_viewport.h.saturating_sub(WORKBAR_HEIGHT)),
+                w: f32::from(content_viewport.w),
+                h: f32::from(WORKBAR_HEIGHT),
+            }
+        } else {
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: f32::from(content_viewport.w),
+                h: f32::from(WORKBAR_HEIGHT),
+            }
+        };
+        canvas = canvas.child_at(workbar_rect.to_rect(), workbar(ctx));
+    }
+
+    workspace::workspace_pages(ctx, canvas, viewport_changed)
+}
+
 pub fn render(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let viewport = ctx.viewport();
@@ -145,36 +178,62 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     // compound.
     let workspace_dim =
         crate::scratchpad::backdrop_dim(scratch_backdrop_progress.max(dialog_dim_progress));
-    let mut canvas = Canvas::new()
-        .style(Style::new().bg(theme.surface.backdrop))
-        .height(Length::Flex(1));
-
-    if ctx.state.config.pane.show_workbar {
-        let workbar_rect = if ctx.state.config.pane.workbar_at_bottom {
-            FloatRect {
-                x: 0.0,
-                y: f32::from(content_viewport.h.saturating_sub(WORKBAR_HEIGHT)),
-                w: f32::from(content_viewport.w),
-                h: f32::from(WORKBAR_HEIGHT),
-            }
+    // A session switch resolves the workbar and panes in place over the backdrop. The sidebar is
+    // composed outside this layer and stays put: it navigates between sessions, so it is the
+    // anchor while the thing it navigates changes. Sampled before the workbar, panes, and sidebar
+    // are built: it also decides whether their focus chrome snaps on this frame.
+    let reveal = animation::session_reveal(ctx);
+    let workspace_opacity = workspace_dim * reveal.opacity;
+    // Keyed by attachment so a switch replaces the whole layer, and the outgoing one is retained
+    // frozen beneath its successor (see `animation::session_layer_exit`). A fresh attach still in
+    // its grace period draws nothing, so the previous session's last picture stands in for it.
+    let holding = crate::ops::session::holding_previous_view(&ctx.state);
+    let animations = ctx.state.config.animations;
+    let exit = animation::session_layer_exit(animations);
+    let empty = || -> Element { Canvas::new().height(Length::Flex(1)).into() };
+    let session_layer: Element = if crate::layout::anim::session_portal_enabled(animations) {
+        // The portal composites the session's content, already dimmed for any dialog, over the
+        // retained outgoing layer, which carries its own dim and must not be dimmed twice. That
+        // takes a dimming layer inside the portal and a retained one around it; only the portal
+        // pays for the two levels, since every level is recursion the whole view tree carries.
+        let content = if holding {
+            empty()
         } else {
-            FloatRect {
-                x: 0.0,
-                y: 0.0,
-                w: f32::from(content_viewport.w),
-                h: f32::from(WORKBAR_HEIGHT),
-            }
+            Animated::new(session_content(ctx, content_viewport, viewport_changed))
+                .height(Length::Flex(1))
+                .opacity(workspace_opacity)
+                .opacity_target(theme.surface.backdrop)
+                .transition(crate::layout::anim::instant_transition())
+                .into()
         };
-        canvas = canvas.child_at(workbar_rect.to_rect(), workbar(ctx));
-    }
-
-    let pages = workspace::workspace_pages(ctx, canvas, viewport_changed);
-    let workspace_layer: Element = Animated::new(pages)
+        Animated::new(pane_reveal::session_portal_scope(
+            content,
+            reveal.portal,
+            pane_reveal::SessionPortalRing::from_theme(theme),
+        ))
         .height(Length::Flex(1))
-        .opacity(workspace_dim)
-        .opacity_target(theme.surface.backdrop)
         .transition(crate::layout::anim::instant_transition())
-        .into();
+        .auto_exit(exit)
+        .into()
+    } else {
+        let layer = if holding {
+            Animated::new(empty())
+        } else {
+            Animated::new(session_content(ctx, content_viewport, viewport_changed))
+                .opacity(workspace_opacity)
+                .opacity_target(theme.surface.backdrop)
+        };
+        layer
+            .height(Length::Flex(1))
+            .transition(crate::layout::anim::instant_transition())
+            .auto_exit(exit)
+            .into()
+    };
+    // Alone in its own stack so a retained layer has no live sibling to be ordered against and
+    // lands beneath the live one; in the root stack it would sit above it, over the new session.
+    let workspace_layer: Element = ZStack::new()
+        .child(session_layer.key(format!("rozi-session-view-{}", ctx.state.runtime_epoch)))
+        .key("rozi-session-views");
     let mut root = ZStack::new()
         // The always-mounted popup host is intentionally empty while no popup is open. Let an
         // empty host miss fall through to the workspace instead of making it a pointer shield.

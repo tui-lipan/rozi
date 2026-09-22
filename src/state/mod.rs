@@ -85,6 +85,19 @@ pub struct ExtensionSubscriptionState {
     pub cancel: std::sync::mpsc::SyncSender<()>,
 }
 
+/// A fresh attach's grace period.
+///
+/// A local attach usually lands within a few tens of milliseconds. Showing the Connecting scene
+/// for that long flashes an empty workspace between two sessions, so for a short while the view
+/// keeps the outgoing session's last picture instead and only then admits the attach is slow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectHold {
+    /// The pending attach this hold belongs to.
+    pub epoch: AttachmentId,
+    /// Still inside the grace period. Kept after it lapses so the same attach is never re-armed.
+    pub active: bool,
+}
+
 pub struct State {
     pub config: Config,
     /// Opaque per-runtime fencing tokens keyed by stable extension id.
@@ -93,6 +106,12 @@ pub struct State {
     /// app has selected: a selected pane is only attended while the host window is focused too.
     pub window_focused: bool,
     pub runtime_epoch: u64,
+    /// Bumped whenever the session shown in the foreground actually changes: switching to a
+    /// parked session, a fresh attach landing, or dropping to the launcher. Deliberately not
+    /// `runtime_epoch`, which a pending attach allocates before the Connecting scene - keying the
+    /// session reveal on it would animate into Connecting and snap when the session arrives.
+    /// Reconnecting to the same session keeps it; the reconnect chrome already owns that moment.
+    pub session_view_revision: u64,
     /// Next candidate attachment id. Allocation also checks current/background ids so restored
     /// sessions can never cause an id to be reused.
     pub(crate) next_attachment_id: AttachmentId,
@@ -112,6 +131,16 @@ pub struct State {
     pub last_content_viewport: Cell<Option<Rect>>,
     /// Last rendered attachment, active workspace, and outgoing workspace.
     pub workspace_slide: Cell<Option<(u64, usize, usize)>>,
+    /// Last [`Self::session_view_revision`] the view rendered, so the reveal starts exactly once.
+    pub session_reveal_seen: Cell<Option<u64>>,
+    /// Whether the frame being rendered is the first to show a new session view. Focus chrome
+    /// snaps on that frame: its keyed transitions are named by pane id and workspace index, which
+    /// repeat across sessions, so without the snap the incoming session's chrome would fade from
+    /// whatever the outgoing session's same-numbered panes and tabs were showing.
+    pub session_view_changed: Cell<bool>,
+    /// Grace period of the attach in flight, during which the previous session's picture stays on
+    /// screen instead of the Connecting scene.
+    pub connect_hold: Option<ConnectHold>,
     /// Last box the scratchpad's panes tiled inside, in root coordinates. Compared each frame for
     /// the same reason as [`Self::last_content_viewport`]: the dropdown's box moves while it grows,
     /// and a pane transition chasing it would settle on its own curve instead. `None` while the
@@ -422,6 +451,7 @@ impl State {
             extension_generations,
             window_focused: true,
             runtime_epoch: 0,
+            session_view_revision: 0,
             next_attachment_id: 1,
             command_link: None,
             mode: Mode::Normal,
@@ -434,6 +464,9 @@ impl State {
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),
             workspace_slide: Cell::new(None),
+            session_reveal_seen: Cell::new(None),
+            session_view_changed: Cell::new(false),
+            connect_hold: None,
             last_scratch_rect: Cell::new(None),
             last_clock_text: RefCell::new(None),
             alert_pulse_phase: false,

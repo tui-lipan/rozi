@@ -357,6 +357,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleWorkbarBadgeStyle
         | CycleWorkbarTabStyle
         | CyclePaneAnimation
+        | CycleSessionAnimation
         | CycleWhichKey
         | CycleCopyOnSelect
         | CycleMiddleClickPaste
@@ -775,6 +776,14 @@ fn persist_applied_settings_choice(
             if let Err(err) = crate::config::persist_animation_string(
                 "pane_style",
                 ctx.state.config.animations.pane_style.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleSessionAnimation => {
+            if let Err(err) = crate::config::persist_animation_string(
+                "session",
+                ctx.state.config.animations.session.id(),
             ) {
                 preference_error(ctx, err);
             }

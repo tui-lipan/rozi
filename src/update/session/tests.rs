@@ -2061,6 +2061,59 @@ fn attach_with_controller(controller: crate::layout::shared::ClientId, reconnect
     rx.recv().expect("test result")
 }
 
+/// How far an attach landing moves the session view revision that drives the switch reveal.
+fn session_view_revision_step(reconnect: bool) -> u64 {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (client, _rx) = SessionClient::test_channel();
+            backend.state_mut().current_mut().pending_session_attach =
+                Some(crate::state::PendingSessionAttach {
+                    epoch: 1,
+                    name: "dev".into(),
+                    client: Some(client),
+                    autostart: false,
+                    read_only: false,
+                    reconnect,
+                    remote_host: None,
+                    intent: crate::state::AttachIntent::Plain,
+                    left: None,
+                    parked_epoch: None,
+                });
+            let before = backend.state().session_view_revision;
+            backend
+                .dispatch(Msg::SessionAttached {
+                    epoch: 1,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
+                    session: "dev".into(),
+                    client_id: 1,
+                    panes: Vec::new(),
+                    layout_rev: 0,
+                    layout: None,
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    allow_takeover: false,
+                    read_only: false,
+                    created_from_profile: None,
+                })
+                .expect("dispatch attach");
+            backend.state().session_view_revision - before
+        })
+        .expect("spawn session-reveal test")
+        .join()
+        .expect("session-reveal test completes")
+}
+
+/// The Connecting scene giving way to a session is a new view; reconnecting to the session that
+/// was already on screen is not, and its reconnect chrome already owns that moment.
+#[test]
+fn only_a_fresh_attach_reveals_a_new_session_view() {
+    assert_eq!(session_view_revision_step(false), 1);
+    assert_eq!(session_view_revision_step(true), 0);
+}
+
 #[test]
 fn attaching_to_an_occupied_session_asks_before_following() {
     assert!(attach_with_controller(1, false));

@@ -173,8 +173,9 @@
 #workspace = true
 #workspace_ms = 220
 # How the incoming session's workbar and panes arrive when switching sessions; geometry snaps.
-# "fade" resolves it in place over two-thirds of geometry_ms; "portal" opens a portal onto it from
-# the centre while the previous session recedes behind it, over geometry_ms; "off" switches at once.
+# "fade" resolves it in place over one and a half times geometry_ms; "portal" opens a portal onto it
+# from the centre while the previous session recedes behind it, over geometry_ms; "off" switches at
+# once.
 #session = "fade"
 #focus_chrome = true
 # Shape of the pane open/close animation. "off" shows and hides the pane at once while neighbouring

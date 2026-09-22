@@ -425,6 +425,17 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .dispatch(rozi::Msg::ExtensionsToggleSelected)
                 .expect("restore disabled fixture for the remaining checks");
 
+            // The config reloads above start fresh background update checks. Fence their replies
+            // before comparing report frames so only the scroll position can change the capture.
+            {
+                let state = backend
+                    .state_mut()
+                    .extensions
+                    .as_mut()
+                    .expect("extensions state");
+                state.update_check_epoch = u64::MAX;
+                state.update_checks.clear();
+            }
             backend
                 .dispatch(rozi::Msg::ExtensionsOpenDetail)
                 .expect("open extension detail");

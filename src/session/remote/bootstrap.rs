@@ -796,7 +796,9 @@ fn install_bytes_windows(
     if !program_exists("scp") {
         return Err("scp was not found on PATH (required to install onto a Windows remote)".into());
     }
-    let temp_name = format!("rozi.install.{}.tmp", random_hex_token());
+    // PowerShell only executes a PE payload directly when the staged path retains an executable
+    // extension. Keep the random component while ending in `.exe`.
+    let temp_name = windows_temp_name();
 
     let mut scp = scp_base_command(resolved, config);
     scp.arg(local);
@@ -891,6 +893,10 @@ fn random_hex_token() -> String {
         write!(token, "{byte:02x}").expect("writing to a String cannot fail");
     }
     token
+}
+
+fn windows_temp_name() -> String {
+    format!("rozi.install.{}.tmp.exe", random_hex_token())
 }
 
 /// `scp` argv mirroring [`ssh_base_command`]'s connection options (scp uses `-P` for the port, not
@@ -1881,11 +1887,17 @@ protocol_max={beyond}
     }
 
     #[test]
-    fn windows_upload_names_are_random_and_shell_safe() {
-        let first = random_hex_token();
-        let second = random_hex_token();
-        assert_eq!(first.len(), 32);
-        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    fn windows_upload_names_are_random_shell_safe_executables() {
+        let first = windows_temp_name();
+        let second = windows_temp_name();
+        assert_eq!(first.len(), "rozi.install..tmp.exe".len() + 32);
+        assert!(first.starts_with("rozi.install."));
+        assert!(first.ends_with(".tmp.exe"));
+        assert!(
+            first["rozi.install.".len()..][..32]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
         assert_ne!(first, second);
     }
 

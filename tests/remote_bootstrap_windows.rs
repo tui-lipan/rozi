@@ -94,10 +94,16 @@ fn run_case(case: &str) {
         _ => panic!("unknown case"),
     }
 
-    let mut paths = vec![bin];
-    paths.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
+    // Do not inherit Cargo's target directories: they contain another `rozi.exe`, which discovery
+    // must correctly prefer over the managed fixture. The child only needs our transports and
+    // Windows' built-in PowerShell/system commands.
+    let windows = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+    let paths = [
+        bin,
+        windows.join("System32/WindowsPowerShell/v1.0"),
+        windows.join("System32"),
+        windows,
+    ];
     let mut child = Command::new(std::env::current_exe().unwrap());
     child
         .args(["--exact", "bootstrap_windows_child", "--nocapture"])

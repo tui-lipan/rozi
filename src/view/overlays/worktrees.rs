@@ -24,7 +24,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .shared
         .as_ref()
         .is_none_or(|shared| !shared.read_only);
-    let busy = ctx.state.worktree_operation.is_some();
+    let busy = ctx.state.worktree_operation_reachable();
     let armed =
         selected.is_some_and(|tree| picker.pending_remove.as_deref() == Some(tree.path.as_str()));
     let actions = vec![

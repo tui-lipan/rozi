@@ -24,6 +24,29 @@ fn writable(ctx: &Context<AppRoot>) -> bool {
         .is_none_or(|shared| !shared.read_only)
 }
 
+/// Whether a started create or remove is still running. One whose attachment has gone, or has
+/// reconnected, can never be answered: its Git work may still have finished on the host, so it
+/// is retired with a note to look, rather than blocking every later operation.
+fn operation_in_flight(ctx: &mut Context<AppRoot>) -> bool {
+    if ctx.state.worktree_operation.is_none() {
+        return false;
+    }
+    if ctx.state.worktree_operation_reachable() {
+        return true;
+    }
+    if let Some(operation) = ctx.state.worktree_operation.take() {
+        let what = match operation.kind {
+            WorktreeOperationKind::Create { branch } => format!("creating `{branch}`"),
+            WorktreeOperationKind::Remove { path, .. } => format!("removing {path}"),
+        };
+        crate::pane::pty_events::notify_info(
+            ctx,
+            format!("Lost the session that was {what}; refresh Worktrees to see the result"),
+        );
+    }
+    false
+}
+
 fn selected(picker: &WorktreePickerState) -> Option<&crate::git::worktrees::WorktreeInfo> {
     let query = picker.input.text().trim().to_ascii_lowercase();
     picker.entries.get(picker.selected).filter(|entry| {
@@ -73,6 +96,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
         );
         return Update::full();
     };
+    operation_in_flight(ctx);
     let target = ctx.state.current().remote_target.clone();
     let mut picker = WorktreePickerState::new(cwd.clone(), target.clone());
     // Open with the last list for this repository and refresh it in place: Git answers quickly,
@@ -204,7 +228,7 @@ fn enter_tree(ctx: &mut Context<AppRoot>, tree: crate::git::worktrees::WorktreeI
 }
 
 pub(crate) fn open_selected(ctx: &mut Context<AppRoot>) -> Update {
-    if ctx.state.worktree_operation.is_some() {
+    if operation_in_flight(ctx) {
         crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
         return Update::full();
     }
@@ -227,7 +251,7 @@ pub(crate) fn open_form(ctx: &mut Context<AppRoot>) -> Update {
         crate::pane::pty_events::notify_error(ctx, "Create failed", "Client is read-only");
         return Update::full();
     }
-    if ctx.state.worktree_operation.is_some() {
+    if operation_in_flight(ctx) {
         crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
         return Update::full();
     }
@@ -355,6 +379,7 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.worktree_operation = Some(WorktreeOperation {
         request_id: id,
         epoch: ctx.state.runtime_epoch,
+        connection: client.connection_token(),
         cwd: cwd.clone(),
         kind: WorktreeOperationKind::Create {
             branch: branch.clone(),
@@ -380,7 +405,7 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     if !writable(ctx) {
         return Update::none();
     }
-    if ctx.state.worktree_operation.is_some() {
+    if operation_in_flight(ctx) {
         crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
         return Update::full();
     }
@@ -409,6 +434,7 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.worktree_operation = Some(WorktreeOperation {
         request_id: id,
         epoch: ctx.state.runtime_epoch,
+        connection: client.connection_token(),
         cwd: cwd.clone(),
         kind: WorktreeOperationKind::Remove {
             path: tree.path.clone(),
@@ -432,19 +458,20 @@ pub(crate) fn apply_result(
     request_id: u64,
     result: WorktreeResult,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
-        return Update::none();
-    }
+    // A create or remove belongs to the attachment that sent it, which may since have moved to the
+    // background: its reply is matched and reported wherever it comes from, or the operation
+    // would stay "in progress" forever.
     let operation = ctx
         .state
         .worktree_operation
         .take_if(|op| op.epoch == epoch && op.request_id == request_id);
     if let Some(operation) = operation {
-        let picker_here = ctx
-            .state
-            .worktree_picker
-            .as_ref()
-            .is_some_and(|picker| picker.cwd == operation.cwd);
+        let picker_here = epoch == ctx.state.runtime_epoch
+            && ctx
+                .state
+                .worktree_picker
+                .as_ref()
+                .is_some_and(|picker| picker.cwd == operation.cwd);
         match (operation.kind, result) {
             (WorktreeOperationKind::Create { .. }, WorktreeResult::Created { worktree }) => {
                 if picker_here {
@@ -479,6 +506,10 @@ pub(crate) fn apply_result(
             _ => {}
         }
         return Update::full();
+    }
+    // List and preview replies only ever feed the picker on screen.
+    if epoch != ctx.state.runtime_epoch {
+        return Update::none();
     }
     let Some(picker) = ctx.state.worktree_picker.as_mut() else {
         return Update::none();
@@ -533,4 +564,107 @@ pub(crate) fn apply_result(
         return Update::full();
     }
     Update::none()
+}
+
+#[cfg(test)]
+mod tests {
+    use tui_lipan::TestBackend;
+
+    use crate::session::client::SessionClient;
+    use crate::session::protocol::WorktreeResult;
+    use crate::state::{WorktreeOperation, WorktreeOperationKind, WorktreePickerState};
+    use crate::{AppRoot, Msg};
+
+    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(body)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    /// Start a create on the foreground attachment's connection.
+    fn start_create(backend: &mut TestBackend<AppRoot>, client: &SessionClient) -> u64 {
+        let state = backend.state_mut();
+        state.current_mut().session_client = Some(client.clone());
+        state.worktree_operation = Some(WorktreeOperation {
+            request_id: 41,
+            epoch: state.runtime_epoch,
+            connection: client.connection_token(),
+            cwd: "/src/repo".into(),
+            kind: WorktreeOperationKind::Create {
+                branch: "feat/x".into(),
+            },
+        });
+        state.runtime_epoch
+    }
+
+    #[test]
+    fn a_create_finishing_after_a_session_switch_still_completes() {
+        on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, _outbound) = SessionClient::test_channel();
+            let origin = start_create(&mut backend, &client);
+            {
+                // Switching sessions parks the attachment that sent the create.
+                let state = backend.state_mut();
+                state.park_current(origin, crate::state::Attachment::new());
+                state.runtime_epoch = origin + 100;
+            }
+            assert!(backend.state().worktree_operation_reachable());
+
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch: origin,
+                    request_id: 41,
+                    result: WorktreeResult::Created {
+                        worktree: crate::git::worktrees::WorktreeInfo {
+                            path: "/src/repo-worktrees/feat-x".into(),
+                            branch: Some("feat/x".into()),
+                            detached: false,
+                            bare: false,
+                            prunable: false,
+                            linked: true,
+                            locked: false,
+                        },
+                    },
+                })
+                .unwrap();
+            assert!(
+                backend.state().worktree_operation.is_none(),
+                "a background completion must retire the operation"
+            );
+        });
+    }
+
+    #[test]
+    fn an_operation_whose_connection_is_gone_stops_blocking_new_ones() {
+        on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (sent_on, _outbound) = SessionClient::test_channel();
+            start_create(&mut backend, &sent_on);
+            // The attachment reconnected: its reply can no longer arrive on the old connection.
+            let (reconnected, _outbound) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_client = Some(reconnected);
+                state.worktree_picker = Some(WorktreePickerState::new("/src/repo".into(), None));
+            }
+            assert!(!backend.state().worktree_operation_reachable());
+
+            backend.dispatch(Msg::WorktreeNew).unwrap();
+            let state = backend.state();
+            assert!(state.worktree_operation.is_none());
+            assert!(
+                state
+                    .worktree_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.form.is_some()),
+                "the new-worktree form opens instead of reporting an operation in progress"
+            );
+        });
+    }
 }

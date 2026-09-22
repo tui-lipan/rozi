@@ -607,6 +607,22 @@ impl State {
         &mut self.attachment
     }
 
+    /// Whether the started worktree create or remove can still report back: the attachment that
+    /// sent it, foreground or background, still holds the connection its reply will arrive on.
+    pub fn worktree_operation_reachable(&self) -> bool {
+        let Some(operation) = self.worktree_operation.as_ref() else {
+            return false;
+        };
+        let attachment = if operation.epoch == self.runtime_epoch {
+            Some(&self.attachment)
+        } else {
+            self.background.get(&operation.epoch)
+        };
+        attachment
+            .and_then(|attachment| attachment.session_client.as_ref())
+            .is_some_and(|client| operation.connection.is(client))
+    }
+
     pub(crate) fn scratch_client(&self) -> Option<crate::session::client::SessionClient> {
         self.scratch_runtime
             .as_ref()

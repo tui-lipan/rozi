@@ -102,6 +102,19 @@ impl Drop for ClientTransport {
     }
 }
 
+/// Which connection a request went out on, for matching a later reply or noticing that the
+/// connection it depends on has been replaced. Weak, so remembering it never keeps a detached
+/// session's socket open, and never mistaken for a newer connection at the same address.
+#[derive(Clone, Debug)]
+pub struct ConnectionToken(std::sync::Weak<ByteQueue<ClientOutbound>>);
+
+impl ConnectionToken {
+    /// Whether `client` is a handle to the connection this token was taken from.
+    pub fn is(&self, client: &SessionClient) -> bool {
+        std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(&client.outbound))
+    }
+}
+
 #[derive(Clone)]
 pub struct SessionClient {
     /// RAII owner for the transport's connection and worker threads. Dropping the final
@@ -753,6 +766,11 @@ impl SessionClient {
 
     pub fn set_session_origin(&self, origin: crate::session::origin::SessionOrigin) {
         self.send_control(ClientMessage::SetSessionOrigin { origin });
+    }
+
+    /// Identifies this connection without keeping it open.
+    pub fn connection_token(&self) -> ConnectionToken {
+        ConnectionToken(Arc::downgrade(&self.outbound))
     }
 
     pub fn worktree(&self, request_id: u64, request: protocol::WorktreeRequest) {

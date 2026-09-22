@@ -187,7 +187,11 @@ impl Default for WorktreeFormState {
 /// Git work continues when the picker closes; completion is still delivered as a toast.
 pub struct WorktreeOperation {
     pub request_id: u64,
+    /// The attachment that sent the request, which need not still be the foreground one.
     pub epoch: u64,
+    /// The connection the reply will come back on. Once that attachment is gone or has
+    /// reconnected, no reply can arrive.
+    pub connection: crate::session::client::ConnectionToken,
     pub cwd: String,
     pub kind: WorktreeOperationKind,
 }

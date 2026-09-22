@@ -651,14 +651,154 @@ impl Default for PaneConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyOnSelect {
+    Disabled,
+    PrimarySelection,
+    Clipboard,
+    Both,
+}
+
+impl CopyOnSelect {
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Disabled,
+            Self::PrimarySelection,
+            Self::Clipboard,
+            Self::Both,
+        ]
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Disabled),
+            "primary" => Some(Self::PrimarySelection),
+            "clipboard" => Some(Self::Clipboard),
+            "both" => Some(Self::Both),
+            _ => None,
+        }
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Disabled => "off",
+            Self::PrimarySelection => "primary",
+            Self::Clipboard => "clipboard",
+            Self::Both => "both",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "Off",
+            Self::PrimarySelection => "Primary",
+            Self::Clipboard => "Clipboard",
+            Self::Both => "Both",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MiddleClickPaste {
+    Disabled,
+    PrimarySelection,
+    Clipboard,
+}
+
+impl MiddleClickPaste {
+    pub const fn all() -> &'static [Self] {
+        &[Self::Disabled, Self::PrimarySelection, Self::Clipboard]
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Disabled),
+            "primary" => Some(Self::PrimarySelection),
+            "clipboard" => Some(Self::Clipboard),
+            _ => None,
+        }
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Disabled => "off",
+            Self::PrimarySelection => "primary",
+            Self::Clipboard => "clipboard",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "Off",
+            Self::PrimarySelection => "Primary",
+            Self::Clipboard => "Clipboard",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RightClickClipboardAction {
+    Disabled,
+    PasteClipboard,
+    CopyOrPaste,
+}
+
+impl RightClickClipboardAction {
+    pub const fn all() -> &'static [Self] {
+        &[Self::Disabled, Self::PasteClipboard, Self::CopyOrPaste]
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Disabled),
+            "paste" => Some(Self::PasteClipboard),
+            "copy-or-paste" => Some(Self::CopyOrPaste),
+            _ => None,
+        }
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Disabled => "off",
+            Self::PasteClipboard => "paste",
+            Self::CopyOrPaste => "copy-or-paste",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "Off",
+            Self::PasteClipboard => "Paste",
+            Self::CopyOrPaste => "Copy or paste",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClipboardConfig {
+    pub copy_on_select: CopyOnSelect,
+    pub middle_click_paste: MiddleClickPaste,
+    pub right_click: RightClickClipboardAction,
     pub enable_osc52: bool,
 }
 
 impl Default for ClipboardConfig {
     fn default() -> Self {
-        Self { enable_osc52: true }
+        let primary_selection = crate::platform::clipboard::has_primary_selection_convention();
+        Self {
+            copy_on_select: if primary_selection {
+                CopyOnSelect::Both
+            } else {
+                CopyOnSelect::Clipboard
+            },
+            middle_click_paste: if primary_selection {
+                MiddleClickPaste::PrimarySelection
+            } else {
+                MiddleClickPaste::Disabled
+            },
+            right_click: RightClickClipboardAction::Disabled,
+            enable_osc52: true,
+        }
     }
 }
 

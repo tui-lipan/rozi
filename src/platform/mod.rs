@@ -23,6 +23,7 @@
 //!   pane/hook/workbar/`[keys] run` spawn path, plus Windows `PATH`/`PATHEXT` program lookup
 //!   (Phase 10).
 //! - [`environment`] - the safe client environment overlay for newly created local panes.
+//! - [`clipboard`] - host clipboard conventions used by Rozi's default interaction policy.
 //! - `errno` (Unix only) - the per-libc `errno` accessor the signal handlers in [`cursor`] and
 //!   [`server_lifecycle`] need to save and restore it around their writes.
 //! - [`ipc`] - transport-neutral `IpcEndpoint`/`IpcListener`/`IpcConnection`/`BoundEndpoint`/
@@ -60,6 +61,7 @@ pub mod user;
 
 pub mod ansi;
 pub mod cli_palette;
+pub mod clipboard;
 pub mod command;
 pub mod cursor;
 pub mod environment;

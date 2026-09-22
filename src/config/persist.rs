@@ -369,6 +369,9 @@ pub fn persist_session_flag(key: &str, value: bool) -> std::result::Result<PathB
 pub fn persist_input_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
     persist_bool("input", key, value)
 }
+pub fn persist_clipboard_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    persist_bool("clipboard", key, value)
+}
 fn persist_bool(section: &str, key: &str, value: bool) -> std::result::Result<PathBuf, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {
@@ -415,6 +418,19 @@ pub fn persist_input_string(key: &str, value: &str) -> std::result::Result<PathB
     };
 
     let updated = upsert_value_in_section(&text, "input", key, &format!("\"{value}\""));
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
+pub fn persist_clipboard_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_value_in_section(text.as_str(), "clipboard", key, &toml_string(value));
     write_config_text(&path, updated)?;
     Ok(path)
 }
@@ -1298,6 +1314,19 @@ mod tests {
         assert!(updated.contains("focus_on_hover = false"));
         assert!(updated.contains("# keep"));
         assert!(!updated.contains("focus_on_hover = true"));
+    }
+
+    #[test]
+    fn clipboard_upserts_replace_values_without_disturbing_the_section() {
+        let text = "[clipboard]\ncopy_on_select = \"primary\"\nenable_osc52 = true\n# keep\n";
+        let updated =
+            upsert_value_in_section(text, "clipboard", "copy_on_select", &toml_string("both"));
+        let updated = upsert_bool_in_section(&updated, "clipboard", "enable_osc52", false);
+
+        assert!(updated.contains("copy_on_select = \"both\""));
+        assert!(updated.contains("enable_osc52 = false"));
+        assert!(updated.contains("# keep"));
+        assert!(!updated.contains("copy_on_select = \"primary\""));
     }
 
     #[test]

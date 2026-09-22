@@ -533,6 +533,9 @@ struct ThemeFileConfig {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct ClipboardFileConfig {
+    copy_on_select: Option<String>,
+    middle_click_paste: Option<String>,
+    right_click: Option<String>,
     enable_osc52: Option<bool>,
 }
 
@@ -991,6 +994,30 @@ fn load_config_from_text_with_extensions(
     }
     apply_workbar_style_config(&mut config.pane, &parsed.pane, &mut warnings);
     apply_picker_style_config(&mut config.pane, &parsed.pane, &mut warnings);
+    if let Some(value) = parsed.clipboard.copy_on_select.as_deref() {
+        match CopyOnSelect::parse(value) {
+            Some(policy) => config.clipboard.copy_on_select = policy,
+            None => warnings.push(format!(
+                "Ignored unknown clipboard.copy_on_select \"{value}\" (expected one of: off, primary, clipboard, both)"
+            )),
+        }
+    }
+    if let Some(value) = parsed.clipboard.middle_click_paste.as_deref() {
+        match MiddleClickPaste::parse(value) {
+            Some(source) => config.clipboard.middle_click_paste = source,
+            None => warnings.push(format!(
+                "Ignored unknown clipboard.middle_click_paste \"{value}\" (expected one of: off, primary, clipboard)"
+            )),
+        }
+    }
+    if let Some(value) = parsed.clipboard.right_click.as_deref() {
+        match RightClickClipboardAction::parse(value) {
+            Some(action) => config.clipboard.right_click = action,
+            None => warnings.push(format!(
+                "Ignored unknown clipboard.right_click \"{value}\" (expected one of: off, paste, copy-or-paste)"
+            )),
+        }
+    }
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
     }
@@ -1500,6 +1527,57 @@ mod file_tests {
             Some(ShellIntegrationMode::Off)
         );
         assert_eq!(ShellIntegrationMode::parse("sometimes"), None);
+    }
+
+    #[test]
+    fn clipboard_mouse_policies_parse() {
+        let loaded = load_config_from_text(
+            "[clipboard]\ncopy_on_select = \"primary\"\nmiddle_click_paste = \"clipboard\"\nright_click = \"copy-or-paste\"",
+            Path::new("config.toml"),
+        );
+
+        assert_eq!(
+            loaded.config.clipboard.copy_on_select,
+            CopyOnSelect::PrimarySelection
+        );
+        assert_eq!(
+            loaded.config.clipboard.middle_click_paste,
+            MiddleClickPaste::Clipboard
+        );
+        assert_eq!(
+            loaded.config.clipboard.right_click,
+            RightClickClipboardAction::CopyOrPaste
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    }
+
+    #[test]
+    fn unknown_clipboard_mouse_policies_warn_and_keep_defaults() {
+        let loaded = load_config_from_text(
+            "[clipboard]\ncopy_on_select = \"magic\"\nmiddle_click_paste = \"magic\"\nright_click = \"magic\"",
+            Path::new("config.toml"),
+        );
+
+        assert_eq!(loaded.config.clipboard, ClipboardConfig::default());
+        assert_eq!(loaded.warnings.len(), 3, "{:?}", loaded.warnings);
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("copy_on_select"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("middle_click_paste"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("right_click"))
+        );
     }
 
     #[test]

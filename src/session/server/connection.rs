@@ -163,7 +163,7 @@ impl SessionServer {
                 },
             ),
             ClientMessage::SetSessionOrigin { profile } => {
-                if self.created_from_profile.is_none()
+                if self.origin.is_empty()
                     && self.origin_seed_client == Some(client_id)
                     && !self.panes.is_empty()
                     && crate::session::discovery::valid_session_name(&profile)
@@ -171,14 +171,15 @@ impl SessionServer {
                         .client_mut(client_id)
                         .is_some_and(|client| !client.read_only)
                 {
-                    self.created_from_profile = Some(profile);
+                    self.origin.profile = Some(profile);
                     self.origin_seed_client = None;
                     self.mark_dirty();
                     return vec![(
                         Target::Broadcast,
                         ServerMessage::SessionOriginSet {
                             created_from_profile: self
-                                .created_from_profile
+                                .origin
+                                .profile
                                 .clone()
                                 .expect("origin set above"),
                         },
@@ -435,7 +436,7 @@ impl SessionServer {
                     )];
                 }
                 let initial_seed = !local
-                    && self.created_from_profile.is_none()
+                    && self.origin.is_empty()
                     && self.origin_seed_client.is_none()
                     && self.panes.is_empty()
                     && self.layout.is_none();
@@ -591,7 +592,7 @@ impl SessionServer {
             }
             ClientMessage::CommitLayout { base_rev, layout } => {
                 let responses = self.handle_commit_layout(client_id, base_rev, layout);
-                if self.created_from_profile.is_none()
+                if self.origin.is_empty()
                     && responses.iter().any(|(_, message)| {
                         matches!(message, ServerMessage::LayoutCommitted { .. })
                     })
@@ -942,7 +943,7 @@ impl SessionServer {
             clients,
             input_locked: self.input_locked,
             allow_takeover: self.allow_takeover,
-            created_from_profile: self.created_from_profile.clone(),
+            created_from_profile: self.origin.profile.clone(),
         };
         let mut responses = vec![(Target::Sender, attached)];
         responses.push((Target::Broadcast, self.clients_changed()));
@@ -1015,7 +1016,7 @@ impl SessionServer {
                 clients: self.attached_count(),
                 has_layout: self.layout.is_some(),
                 effective_protocol: effective,
-                created_from_profile: self.created_from_profile.clone(),
+                created_from_profile: self.origin.profile.clone(),
             },
         )]
     }

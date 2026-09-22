@@ -256,9 +256,28 @@ struct SnapshotMeta {
     session: String,
     saved_at: u64,
     layout_rev: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::session::origin::SessionOrigin::is_empty"
+    )]
+    origin: crate::session::origin::SessionOrigin,
+    /// Read older snapshots written before origins were structured. New writes omit this field.
+    #[serde(default, skip_serializing)]
     created_from_profile: Option<String>,
     panes: Vec<SnapshotPane>,
+}
+
+impl SnapshotMeta {
+    fn effective_origin(&self) -> crate::session::origin::SessionOrigin {
+        if !self.origin.is_empty() {
+            self.origin.clone()
+        } else {
+            crate::session::origin::SessionOrigin {
+                profile: self.created_from_profile.clone(),
+                ..Default::default()
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -630,7 +649,8 @@ impl SessionServer {
                     .unwrap_or_default()
                     .as_secs(),
                 layout_rev: self.layout_rev,
-                created_from_profile: self.created_from_profile.clone(),
+                origin: self.origin.clone(),
+                created_from_profile: None,
                 panes,
             },
             layout,
@@ -652,7 +672,7 @@ impl SessionServer {
                 "unsupported or mismatched session snapshot",
             ));
         }
-        self.created_from_profile = meta.created_from_profile.clone();
+        self.origin = meta.effective_origin();
         let mut layout: Option<SharedLayout> = fs::read(path.join("layout.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok());
@@ -1006,12 +1026,9 @@ pub fn list_snapshot_summaries_by_recency() -> Vec<SnapshotSummary> {
                 && meta.session == dir_name
                 && crate::session::discovery::valid_session_name(&meta.session))
             .then_some(SnapshotSummary {
-                session: meta.session,
+                session: meta.session.clone(),
                 saved_at: meta.saved_at,
-                origin: crate::session::origin::SessionOrigin {
-                    profile: meta.created_from_profile,
-                    ..Default::default()
-                },
+                origin: meta.effective_origin(),
                 panes: meta.panes.len(),
             })
         })
@@ -1046,7 +1063,21 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(meta.created_from_profile, None);
+        assert!(meta.effective_origin().is_empty());
+    }
+
+    #[test]
+    fn legacy_profile_origin_is_read_from_snapshot_metadata() {
+        let meta: SnapshotMeta = serde_json::from_value(serde_json::json!({
+            "version": SNAPSHOT_VERSION,
+            "session": "dev",
+            "saved_at": 0,
+            "layout_rev": 0,
+            "created_from_profile": "work",
+            "panes": []
+        }))
+        .unwrap();
+        assert_eq!(meta.effective_origin().profile.as_deref(), Some("work"));
     }
 
     /// A snapshot write killed before its rename leaves `.{session}.tmp-…` behind, complete with
@@ -1070,7 +1101,11 @@ mod tests {
                     session: session.to_string(),
                     saved_at: 1,
                     layout_rev: 0,
-                    created_from_profile: Some("work".to_string()),
+                    origin: crate::session::origin::SessionOrigin {
+                        profile: Some("work".to_string()),
+                        ..Default::default()
+                    },
+                    created_from_profile: None,
                     panes: Vec::new(),
                 })
                 .unwrap(),

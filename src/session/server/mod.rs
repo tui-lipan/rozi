@@ -14,6 +14,7 @@ use crate::runtime_metrics::{
     ByteBufferMetrics, QueueMetrics, ResurrectionMetrics, ServerOutboxMetrics,
     ServerRuntimeMetrics, unix_time_millis,
 };
+use crate::session::origin::SessionOrigin;
 use crate::session::protocol::{
     self, ClientInfo, ClientMessage, ControllerChangeReason, Frame, PROTOCOL_VERSION, PaneMeta,
     ServerMessage, WirePalette,
@@ -139,8 +140,8 @@ pub struct SessionServer {
     next_generation: u64,
     layout: Option<SharedLayout>,
     layout_rev: u64,
-    /// Immutable origin metadata claimed by the profile client that first seeds an empty session.
-    created_from_profile: Option<String>,
+    /// Immutable provenance claimed by the client that first seeds an empty session.
+    origin: SessionOrigin,
     origin_seed_client: Option<ClientId>,
     controller: Option<ClientId>,
     input_locked: bool,
@@ -1340,7 +1341,7 @@ impl SessionServer {
             next_generation: 1,
             layout: None,
             layout_rev: 0,
-            created_from_profile: None,
+            origin: SessionOrigin::default(),
             origin_seed_client: None,
             controller: None,
             input_locked: false,

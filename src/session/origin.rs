@@ -10,6 +10,12 @@ pub struct SessionOrigin {
     pub worktree: Option<WorktreeOrigin>,
 }
 
+impl SessionOrigin {
+    pub fn is_empty(&self) -> bool {
+        self.profile.is_none() && self.worktree.is_none()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorktreeOrigin {
     /// Absolute checkout path on the session server's host; remote clients keep it opaque.

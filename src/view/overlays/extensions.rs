@@ -227,24 +227,29 @@ fn installed_row(
         &theme.primary
     });
     let label = entry.display_name();
+    let id = entry.id.as_deref();
+    let updating = id.is_some_and(|id| state.updating_id.as_deref() == Some(id));
+    let checking = id.is_some_and(|id| {
+        state.update_checks.get(id) == Some(&crate::state::ExtensionUpdateCheck::Checking)
+    });
     let description = crate::ops::extensions_manager::extension_description(entry, state);
-    let row = picker_row(
-        [Span::new(label).style(style)],
-        fit_description(label, &description, EXTENSIONS_WIDTH),
-        style,
-    );
-    let updating = entry
-        .id
-        .as_deref()
-        .is_some_and(|id| state.updating_id.as_deref() == Some(id));
-    if !updating {
-        return row;
+    let description = fit_description(label, &description, EXTENSIONS_WIDTH);
+    let row = picker_row([Span::new(label).style(style)], description.as_str(), style);
+    if updating {
+        row.description(crate::ops::extensions_manager::EXTENSION_UPDATING_LABEL)
+            .description_style(style)
+            .description_spinner(crate::view::session_status::picker_circle_spinner(
+                Style::new().fg(theme.status.info),
+            ))
+    } else if checking {
+        // The spinner's slot replaces picker_row's leading separator, keeping the row's width and
+        // sitting one cell from the version.
+        row.description(description).description_spinner(
+            crate::view::session_status::picker_circle_spinner(fg_only(&theme.muted)),
+        )
+    } else {
+        row
     }
-    row.description(crate::ops::extensions_manager::EXTENSION_UPDATING_LABEL)
-        .description_style(style)
-        .description_spinner(crate::view::session_status::picker_circle_spinner(
-            Style::new().fg(theme.status.info),
-        ))
 }
 
 fn catalog_row(

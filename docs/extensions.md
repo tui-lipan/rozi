@@ -194,8 +194,9 @@ The command clones the recorded remote into staging, validates it, and replaces 
 only when the new extension is valid. It refuses to replace a managed checkout with local changes.
 Copied local extensions and linked development checkouts do not expose update actions.
 
-The Extensions picker checks Git remotes in the background whenever it opens or reloads. The
-**Installed** tab reads `checking…` while checks run and then counts the updates found. A changed
+The Extensions picker checks Git remotes in the background whenever it opens or reloads. Each
+Git-managed row spins a muted marker beside its version while its check runs, and the **Installed**
+tab counts the updates found. A changed
 installation's row shows `installed → latest`, taking the latest version from the remote
 `extension.toml`, or a short commit when the remote moved without changing its version. The
 report's **Update** row shows the same result, or the error when a remote could not be checked.

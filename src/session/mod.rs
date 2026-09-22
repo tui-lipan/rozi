@@ -294,11 +294,16 @@ pub(crate) fn replace_saved_host(
 }
 
 /// A last-seen session on a remote host, cached so a host's known workplaces stay visible when it is
-/// offline. Only the display metadata is stored — name, whether it was ephemeral, and pane count —
-/// never any credential or key material, which SSH handles out of band.
+/// offline. Provenance is retained so an offline host's worktree associations remain visible.
+/// Credentials and key material remain with SSH, out of band.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CachedHostSession {
     pub name: String,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::session::origin::SessionOrigin::is_empty"
+    )]
+    pub origin: crate::session::origin::SessionOrigin,
     #[serde(default)]
     pub ephemeral: bool,
     #[serde(default)]
@@ -458,17 +463,24 @@ mod tests {
 
     /// The host session cache is a plain string-keyed map of session summaries; it must survive a
     /// serialize/parse round-trip so an offline host's workplaces reload intact, and it must hold no
-    /// field beyond name/ephemeral/panes (never a credential).
+    /// no credential fields.
     #[test]
     fn host_session_cache_round_trips() {
         let sessions = vec![
             CachedHostSession {
                 name: "dev".into(),
+                origin: crate::session::origin::SessionOrigin {
+                    worktree: Some(crate::session::origin::WorktreeOrigin {
+                        path: "C:\\code\\feature".into(),
+                    }),
+                    ..Default::default()
+                },
                 ephemeral: false,
                 panes: 3,
             },
             CachedHostSession {
                 name: "api".into(),
+                origin: Default::default(),
                 ephemeral: false,
                 panes: 1,
             },
@@ -483,6 +495,7 @@ mod tests {
             serde_json::from_str(r#"{"box":[{"name":"only"}]}"#).unwrap();
         assert_eq!(sparse["box"][0].name, "only");
         assert_eq!(sparse["box"][0].panes, 0);
+        assert!(sparse["box"][0].origin.is_empty());
     }
 
     #[test]
@@ -495,11 +508,13 @@ mod tests {
         };
         let alias_sessions = vec![CachedHostSession {
             name: "alias".into(),
+            origin: Default::default(),
             ephemeral: false,
             panes: 1,
         }];
         let endpoint_sessions = vec![CachedHostSession {
             name: "endpoint".into(),
+            origin: Default::default(),
             ephemeral: false,
             panes: 2,
         }];

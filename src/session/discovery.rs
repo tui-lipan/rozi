@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcEndpoint};
@@ -13,7 +14,6 @@ pub enum DiscoveredSessionStatus {
         panes: usize,
         clients: u32,
         has_layout: bool,
-        created_from_profile: Option<String>,
     },
     /// No server is running, but a resurrection snapshot can seed one under this name.
     Restorable,
@@ -34,6 +34,7 @@ pub enum DiscoveredSessionStatus {
 pub struct DiscoveredSession {
     pub name: String,
     pub status: DiscoveredSessionStatus,
+    pub origin: crate::session::origin::SessionOrigin,
     /// Auto-managed per-process session (`eph-*`), disposable and not user-named.
     pub ephemeral: bool,
     /// Remote host alias/URL when discovered over `--remote`; `None` for local.
@@ -88,7 +89,7 @@ pub(crate) fn discover_sessions_with_snapshots() -> std::io::Result<Vec<Discover
     push_restorable_sessions(
         &mut rows,
         None,
-        crate::session::server::list_snapshot_names_by_recency(),
+        crate::session::server::list_snapshot_summaries_by_recency(),
     );
     Ok(rows)
 }
@@ -137,7 +138,7 @@ pub(crate) fn discover_sessions_with_agents() -> std::io::Result<(
     push_restorable_sessions(
         &mut rows,
         None,
-        crate::session::server::list_snapshot_names_by_recency(),
+        crate::session::server::list_snapshot_summaries_by_recency(),
     );
     Ok((rows, agents))
 }
@@ -182,7 +183,7 @@ pub(crate) fn discover_selectable_sessions(
     push_restorable_sessions(
         &mut rows,
         current_name,
-        crate::session::server::list_snapshot_names_by_recency(),
+        crate::session::server::list_snapshot_summaries_by_recency(),
     );
     Ok(rows)
 }
@@ -190,14 +191,16 @@ pub(crate) fn discover_selectable_sessions(
 fn push_restorable_sessions(
     rows: &mut Vec<DiscoveredSession>,
     current_name: Option<&str>,
-    snapshots: impl IntoIterator<Item = String>,
+    snapshots: impl IntoIterator<Item = crate::session::server::SnapshotSummary>,
 ) {
-    for name in snapshots {
+    for snapshot in snapshots {
+        let name = snapshot.session;
         if current_name == Some(name.as_str()) || rows.iter().any(|row| row.name == name) {
             continue;
         }
         rows.push(DiscoveredSession {
             name,
+            origin: snapshot.origin,
             status: DiscoveredSessionStatus::Restorable,
             ephemeral: false,
             host: None,
@@ -232,6 +235,7 @@ fn query_status(
     capabilities: Option<&crate::session::protocol::Capabilities>,
 ) -> std::io::Result<(
     DiscoveredSessionStatus,
+    crate::session::origin::SessionOrigin,
     Vec<crate::session::protocol::AgentSummary>,
 )> {
     let _ = stream.set_read_timeout(Some(QUERY_TIMEOUT));
@@ -250,7 +254,7 @@ fn query_status(
             panes,
             clients,
             has_layout,
-            created_from_profile,
+            origin,
             agents,
             ..
         } => Ok((
@@ -258,12 +262,62 @@ fn query_status(
                 panes,
                 clients,
                 has_layout,
-                created_from_profile,
             },
+            origin,
             agents,
         )),
-        _ => Ok((DiscoveredSessionStatus::Unknown, Vec::new())),
+        _ => Ok((
+            DiscoveredSessionStatus::Unknown,
+            Default::default(),
+            Vec::new(),
+        )),
     }
+}
+
+/// Conservative host-local removal guard. A session with an unreadable live endpoint blocks
+/// removal because its worktree provenance cannot be ruled out.
+pub(crate) fn sessions_using_worktree(path: &str) -> Result<Vec<String>, String> {
+    let mut users = BTreeSet::new();
+    let requested = std::path::Path::new(path)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(path));
+    let uses_worktree = |origin: &crate::session::origin::SessionOrigin| {
+        origin.worktree.as_ref().is_some_and(|tree| {
+            let recorded = std::path::Path::new(&tree.path);
+            recorded
+                .canonicalize()
+                .unwrap_or_else(|_| recorded.to_path_buf())
+                == requested
+        })
+    };
+    for summary in crate::session::server::list_snapshot_summaries_by_recency() {
+        if uses_worktree(&summary.origin) {
+            users.insert(summary.session);
+        }
+    }
+    let root = crate::control::runtime_dir().map_err(|err| err.to_string())?;
+    let endpoints =
+        EndpointRegistry::list_session_endpoints(&root).map_err(|err| err.to_string())?;
+    for (name, endpoint) in endpoints {
+        if crate::scratchpad::runtime::is_client_scratch_session(&name) {
+            continue;
+        }
+        let Ok(mut stream) = endpoint.connect() else {
+            continue;
+        };
+        let (status, origin, _) = query_status(&name, &mut stream, None).map_err(|err| {
+            format!("cannot verify session `{name}` before removing a worktree: {err}")
+        })?;
+        if !matches!(status, DiscoveredSessionStatus::Running { .. }) {
+            return Err(format!(
+                "cannot verify session `{name}` before removing a worktree"
+            ));
+        }
+        if uses_worktree(&origin) {
+            users.insert(name);
+        }
+    }
+    Ok(users.into_iter().collect())
 }
 
 /// Probes one session endpoint. Returns `None` whenever the server behind it is gone, so a killed
@@ -280,7 +334,7 @@ fn probe_session_endpoint(
     endpoint: &IpcEndpoint,
     capabilities: Option<&crate::session::protocol::Capabilities>,
 ) -> Option<ProbedSession> {
-    let (status, agents) = match endpoint.connect() {
+    let (status, origin, agents) = match endpoint.connect() {
         Ok(mut stream) => match query_status(name, &mut stream, capabilities) {
             Ok(answer) => answer,
             Err(err)
@@ -289,7 +343,11 @@ fn probe_session_endpoint(
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
-                (DiscoveredSessionStatus::Busy, Vec::new())
+                (
+                    DiscoveredSessionStatus::Busy,
+                    Default::default(),
+                    Vec::new(),
+                )
             }
             // Accepted, then hung up mid-handshake: a server on its way out, whose endpoint has
             // simply not been retired yet. Drop the row rather than reporting it "unavailable" for
@@ -298,7 +356,11 @@ fn probe_session_endpoint(
             // next sweep once connecting is refused outright.
             Err(err) if peer_hung_up(err.kind()) => return None,
             // Answered, but not in a language we speak. Stays listed so it can be killed.
-            Err(_) => (DiscoveredSessionStatus::Unknown, Vec::new()),
+            Err(_) => (
+                DiscoveredSessionStatus::Unknown,
+                Default::default(),
+                Vec::new(),
+            ),
         },
         Err(err)
             if matches!(
@@ -306,7 +368,11 @@ fn probe_session_endpoint(
                 std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
             ) =>
         {
-            (DiscoveredSessionStatus::Busy, Vec::new())
+            (
+                DiscoveredSessionStatus::Busy,
+                Default::default(),
+                Vec::new(),
+            )
         }
         Err(_) => {
             let _ = std::fs::remove_file(endpoint.path());
@@ -316,6 +382,7 @@ fn probe_session_endpoint(
     Some(ProbedSession {
         row: DiscoveredSession {
             name: name.to_string(),
+            origin,
             ephemeral: crate::state::is_ephemeral_session_name(name),
             status,
             host: None,
@@ -464,7 +531,7 @@ pub fn parse_remote_list_json(
         #[serde(default)]
         layout: Option<bool>,
         #[serde(default)]
-        created_from_profile: Option<String>,
+        origin: crate::session::origin::SessionOrigin,
         #[serde(default)]
         ephemeral: bool,
     }
@@ -477,7 +544,6 @@ pub fn parse_remote_list_json(
                     panes: row.panes.unwrap_or(0),
                     clients: row.clients.unwrap_or(0),
                     has_layout: row.layout.unwrap_or(false),
-                    created_from_profile: row.created_from_profile,
                 },
                 "restorable" => DiscoveredSessionStatus::Restorable,
                 "busy" => DiscoveredSessionStatus::Busy,
@@ -485,6 +551,7 @@ pub fn parse_remote_list_json(
             };
             DiscoveredSession {
                 name: row.name,
+                origin: row.origin,
                 status,
                 ephemeral: row.ephemeral,
                 host: host.clone(),
@@ -503,6 +570,9 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                 "name": row.name,
                 "ephemeral": row.ephemeral,
             });
+            if !row.origin.is_empty() {
+                obj["origin"] = serde_json::json!(row.origin);
+            }
             if let Some(host) = &row.host {
                 obj["host"] = serde_json::json!(host);
             }
@@ -511,15 +581,11 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                     panes,
                     clients,
                     has_layout,
-                    created_from_profile,
                 } => {
                     obj["status"] = serde_json::json!("running");
                     obj["panes"] = serde_json::json!(panes);
                     obj["clients"] = serde_json::json!(clients);
                     obj["layout"] = serde_json::json!(has_layout);
-                    if let Some(profile) = created_from_profile {
-                        obj["created_from_profile"] = serde_json::json!(profile);
-                    }
                 }
                 // The CLI probes live and never reads the client's host cache, so this does not
                 // occur today. Serialized honestly anyway: `panes` is a remembered count, and a
@@ -723,6 +789,7 @@ mod tests {
     fn restorable_snapshots_fill_picker_gaps_without_shadowing_live_sessions() {
         let mut rows = vec![DiscoveredSession {
             name: "live".into(),
+            origin: Default::default(),
             ephemeral: false,
             host: None,
             remote_target: None,
@@ -732,12 +799,30 @@ mod tests {
         push_restorable_sessions(
             &mut rows,
             Some("current"),
-            ["live", "current", "saved"].map(str::to_string),
+            ["live", "current", "saved"].map(|name| crate::session::server::SnapshotSummary {
+                session: name.to_string(),
+                saved_at: 1,
+                origin: crate::session::origin::SessionOrigin {
+                    worktree: Some(crate::session::origin::WorktreeOrigin {
+                        path: "C:\\code\\feature".into(),
+                    }),
+                    ..Default::default()
+                },
+                panes: 1,
+            }),
         );
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[1].name, "saved");
         assert_eq!(rows[1].status, DiscoveredSessionStatus::Restorable);
+        assert_eq!(
+            rows[1]
+                .origin
+                .worktree
+                .as_ref()
+                .map(|tree| tree.path.as_str()),
+            Some("C:\\code\\feature")
+        );
     }
 
     #[test]
@@ -745,6 +830,12 @@ mod tests {
         let rows = vec![
             DiscoveredSession {
                 name: "dev".into(),
+                origin: crate::session::origin::SessionOrigin {
+                    profile: Some("work".into()),
+                    worktree: Some(crate::session::origin::WorktreeOrigin {
+                        path: "C:\\code\\feature".into(),
+                    }),
+                },
                 ephemeral: false,
                 host: Some("workbox".into()),
                 remote_target: None,
@@ -752,11 +843,11 @@ mod tests {
                     panes: 2,
                     clients: 1,
                     has_layout: true,
-                    created_from_profile: Some("work".into()),
                 },
             },
             DiscoveredSession {
                 name: "saved".into(),
+                origin: Default::default(),
                 ephemeral: false,
                 host: None,
                 remote_target: None,
@@ -767,6 +858,7 @@ mod tests {
         let parsed = parse_remote_list_json(json.as_bytes(), Some("workbox".into())).unwrap();
         assert_eq!(parsed[0].name, "dev");
         assert_eq!(parsed[0].host.as_deref(), Some("workbox"));
+        assert_eq!(parsed[0].origin, rows[0].origin);
         assert!(matches!(
             parsed[0].status,
             DiscoveredSessionStatus::Running { panes: 2, .. }

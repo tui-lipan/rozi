@@ -781,12 +781,7 @@ fn session_status_description(
 ) -> String {
     use crate::session::discovery::DiscoveredSessionStatus;
     match &entry.status {
-        DiscoveredSessionStatus::Running {
-            panes,
-            clients,
-            created_from_profile,
-            ..
-        } => {
+        DiscoveredSessionStatus::Running { panes, clients, .. } => {
             let panes_label = panes_label(*panes);
             // `clients` counts every client attached to the server, ours included. Drop our own
             // connection (current or retained in the background) so this reports only *other* people
@@ -797,7 +792,7 @@ fn session_status_description(
                 1 => format!("{panes_label} · shared with 1 other"),
                 count => format!("{panes_label} · shared with {count} others"),
             };
-            if let Some(profile) = created_from_profile {
+            if let Some(profile) = &entry.origin.profile {
                 label.push_str(&format!(" · from {profile}"));
             }
             label

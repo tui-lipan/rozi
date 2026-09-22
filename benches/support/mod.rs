@@ -133,7 +133,7 @@ pub fn attached_message() -> ServerMessage {
     ServerMessage::Attached {
         capabilities: None,
         session_instance: rozi::session::protocol::SessionInstanceId::generate(),
-        created_from_profile: None,
+        origin: rozi::session::origin::SessionOrigin::default(),
         protocol_version: PROTOCOL_VERSION,
         effective_protocol: PROTOCOL_VERSION,
         session: "benchmark-session".to_string(),

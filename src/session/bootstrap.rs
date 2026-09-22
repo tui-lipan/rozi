@@ -700,7 +700,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 clients,
                 input_locked,
                 allow_takeover,
-                created_from_profile,
+                origin,
                 ..
             } => Msg::SessionAttached {
                 epoch,
@@ -718,7 +718,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 clients,
                 input_locked,
                 allow_takeover,
-                created_from_profile,
+                origin,
             },
             // Neither reaches an attached client: a probe and a headless control request each
             // answer their own short-lived connection. Arriving here means the server answered
@@ -738,12 +738,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 request_id,
                 response,
             },
-            ServerMessage::SessionOriginSet {
-                created_from_profile,
-            } => Msg::SessionOriginSet {
-                epoch,
-                created_from_profile,
-            },
+            ServerMessage::SessionOriginSet { origin } => Msg::SessionOriginSet { epoch, origin },
             ServerMessage::LayoutCommitted {
                 rev,
                 author,
@@ -811,6 +806,11 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 root,
                 changes,
                 error,
+            },
+            ServerMessage::WorktreeResult { request_id, result } => Msg::SessionWorktreeResult {
+                epoch,
+                request_id,
+                result,
             },
             ServerMessage::Resized {
                 pane_id,

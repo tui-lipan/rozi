@@ -14,7 +14,8 @@ pub(crate) fn open_save_profile_prompt(ctx: &mut Context<AppRoot>) -> Update {
     let initial = ctx
         .state
         .current()
-        .created_from_profile
+        .origin
+        .profile
         .as_deref()
         .or_else(|| {
             ctx.state.current().session_name.as_deref().filter(|name| {
@@ -172,6 +173,7 @@ fn profile_session_rows(
     if let Some(name) = &ctx.state.current().session_name {
         rows.push(crate::session::discovery::DiscoveredSession {
             name: name.clone(),
+            origin: ctx.state.current().origin.clone(),
             ephemeral: ctx.state.is_ephemeral_session(),
             host: None,
             remote_target: None,
@@ -185,7 +187,6 @@ fn profile_session_rows(
                     .sum(),
                 clients: ctx.state.attached_client_count(),
                 has_layout: true,
-                created_from_profile: ctx.state.current().created_from_profile.clone(),
             },
         });
     }
@@ -220,6 +221,7 @@ pub(crate) fn apply_profile_sessions(
         rows.retain(|row| row.name != *name);
         rows.push(crate::session::discovery::DiscoveredSession {
             name: name.clone(),
+            origin: ctx.state.current().origin.clone(),
             ephemeral: ctx.state.is_ephemeral_session(),
             host: None,
             remote_target: None,
@@ -233,7 +235,6 @@ pub(crate) fn apply_profile_sessions(
                     .sum(),
                 clients: ctx.state.attached_client_count(),
                 has_layout: true,
-                created_from_profile: ctx.state.current().created_from_profile.clone(),
             },
         });
     }
@@ -1053,7 +1054,7 @@ mod tests {
             );
 
             backend.state_mut().save_profile_prompt = None;
-            backend.state_mut().current_mut().created_from_profile = Some("rust-dev".to_string());
+            backend.state_mut().current_mut().origin.profile = Some("rust-dev".to_string());
             backend
                 .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
                 .expect("reopen save prompt with origin");
@@ -1069,7 +1070,7 @@ mod tests {
             );
 
             backend.state_mut().save_profile_prompt = None;
-            backend.state_mut().current_mut().created_from_profile = None;
+            backend.state_mut().current_mut().origin.profile = None;
             backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
             backend
                 .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))

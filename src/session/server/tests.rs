@@ -2054,7 +2054,10 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
     server.handle_message(
         first,
         ClientMessage::SetSessionOrigin {
-            profile: "too-early".into(),
+            origin: SessionOrigin {
+                profile: Some("too-early".into()),
+                ..Default::default()
+            },
         },
     );
     assert_eq!(server.origin.profile, None);
@@ -2081,7 +2084,10 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
     server.handle_message(
         first,
         ClientMessage::SetSessionOrigin {
-            profile: "work".into(),
+            origin: SessionOrigin {
+                profile: Some("work".into()),
+                ..Default::default()
+            },
         },
     );
     assert_eq!(server.origin.profile.as_deref(), Some("work"));
@@ -2091,7 +2097,10 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
     server.handle_message(
         second,
         ClientMessage::SetSessionOrigin {
-            profile: "other".into(),
+            origin: SessionOrigin {
+                profile: Some("other".into()),
+                ..Default::default()
+            },
         },
     );
     assert_eq!(server.origin.profile.as_deref(), Some("work"));
@@ -2102,7 +2111,7 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
         [(
             Target::Sender,
             ServerMessage::SessionInfo {
-                created_from_profile: Some(profile),
+                origin: SessionOrigin { profile: Some(profile), .. },
                 ..
             }
         )] if profile == "work"
@@ -2122,7 +2131,10 @@ fn profile_origin_claim_is_ignored_without_seeded_panes() {
     server.handle_message(
         client,
         ClientMessage::SetSessionOrigin {
-            profile: "too-late".into(),
+            origin: SessionOrigin {
+                profile: Some("too-late".into()),
+                ..Default::default()
+            },
         },
     );
     assert_eq!(server.origin.profile, None);

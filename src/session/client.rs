@@ -751,8 +751,15 @@ impl SessionClient {
         self.send_control(ClientMessage::SetInputLock { locked });
     }
 
-    pub fn set_session_origin(&self, profile: String) {
-        self.send_control(ClientMessage::SetSessionOrigin { profile });
+    pub fn set_session_origin(&self, origin: crate::session::origin::SessionOrigin) {
+        self.send_control(ClientMessage::SetSessionOrigin { origin });
+    }
+
+    pub fn worktree(&self, request_id: u64, request: protocol::WorktreeRequest) {
+        self.send_control(ClientMessage::Worktree {
+            request_id,
+            request,
+        });
     }
     /// Reply to a server heartbeat.
     pub fn pong(&self, seq: u64) {
@@ -1229,7 +1236,7 @@ mod tests {
             clients: Vec::new(),
             input_locked: false,
             allow_takeover: false,
-            created_from_profile: None,
+            origin: crate::session::origin::SessionOrigin::default(),
         }
     }
 

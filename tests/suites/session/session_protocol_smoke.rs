@@ -72,7 +72,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         session: attached_session,
         client_id: first_client_id,
         controller,
-        created_from_profile,
+        origin,
         ..
     } = attached.expect("attached control frame")
     else {
@@ -82,7 +82,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     assert_eq!(protocol_version, PROTOCOL_VERSION);
     assert_eq!(effective_protocol, PROTOCOL_VERSION);
     assert_eq!(controller, Some(first_client_id));
-    assert_eq!(created_from_profile, None);
+    assert!(origin.is_empty());
 
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     first.write_control(&ClientMessage::SpawnPane {
@@ -133,7 +133,10 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         saw_spawn && contains(&live_output, OUTPUT_MARKER)
     });
     first.write_control(&ClientMessage::SetSessionOrigin {
-        profile: "work".to_string(),
+        origin: rozi::session::origin::SessionOrigin {
+            profile: Some("work".to_string()),
+            ..Default::default()
+        },
     });
 
     let layout = SharedLayout {
@@ -207,7 +210,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         panes,
         layout_rev,
         layout: reattached_layout,
-        created_from_profile,
+        origin,
         ..
     } = reattached.expect("reattached control frame")
     else {
@@ -215,7 +218,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     };
     assert_eq!(layout_rev, 1);
     assert_eq!(reattached_layout, Some(layout));
-    assert_eq!(created_from_profile.as_deref(), Some("work"));
+    assert_eq!(origin.profile.as_deref(), Some("work"));
     assert!(
         panes
             .iter()

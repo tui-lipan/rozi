@@ -7,7 +7,7 @@ use std::path::Path;
 
 use super::command::{self, WORKTREE_LIST_TIMEOUT, WORKTREE_MUTATION_TIMEOUT};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorktreeInfo {
     pub path: String,
     pub branch: Option<String>,
@@ -26,6 +26,36 @@ pub fn list(cwd: &Path) -> Result<Vec<WorktreeInfo>, String> {
         WORKTREE_LIST_TIMEOUT,
     )?;
     parse_porcelain_z(&output)
+}
+
+/// A visible sibling checkout directory, calculated only with the server host's path rules.
+pub fn default_path(cwd: &Path, branch: &str) -> Result<std::path::PathBuf, String> {
+    let trees = list(cwd)?;
+    let primary = trees
+        .first()
+        .ok_or_else(|| "Git reported no primary worktree".to_string())?;
+    let source = Path::new(&primary.path);
+    let parent = source
+        .parent()
+        .ok_or_else(|| "primary worktree has no parent directory".to_string())?;
+    let name = source
+        .file_name()
+        .ok_or_else(|| "primary worktree has no directory name".to_string())?
+        .to_string_lossy();
+    let slug = branch
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    if slug.is_empty() {
+        return Err("worktree branch cannot be empty".to_string());
+    }
+    Ok(parent.join(format!("{name}-worktrees")).join(slug))
 }
 
 /// Check out an existing local branch, or create one from `base` before checking it out.

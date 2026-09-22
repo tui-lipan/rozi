@@ -1886,7 +1886,7 @@ mod reconciler_tests {
                     input_locked: false,
                     allow_takeover: false,
                     read_only: false,
-                    created_from_profile: None,
+                    origin: crate::session::origin::SessionOrigin::default(),
                 })
                 .expect("dispatch attach");
 
@@ -1914,7 +1914,7 @@ mod reconciler_tests {
             input_locked: false,
             allow_takeover: false,
             read_only: false,
-            created_from_profile: None,
+            origin: crate::session::origin::SessionOrigin::default(),
         }
     }
 

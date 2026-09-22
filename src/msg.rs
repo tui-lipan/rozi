@@ -554,11 +554,11 @@ pub enum Msg {
         input_locked: bool,
         allow_takeover: bool,
         read_only: bool,
-        created_from_profile: Option<String>,
+        origin: session::origin::SessionOrigin,
     },
     SessionOriginSet {
         epoch: u64,
-        created_from_profile: String,
+        origin: session::origin::SessionOrigin,
     },
     SessionLayoutCommitted {
         epoch: u64,
@@ -703,6 +703,11 @@ pub enum Msg {
         root: String,
         changes: Vec<crate::session::protocol::WireChange>,
         error: Option<String>,
+    },
+    SessionWorktreeResult {
+        epoch: u64,
+        request_id: u64,
+        result: crate::session::protocol::WorktreeResult,
     },
     /// The file tree needs a directory it does not have yet (emitted by the widget).
     SidebarTreeEntryRequest {

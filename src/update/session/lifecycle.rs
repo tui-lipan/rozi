@@ -210,7 +210,7 @@ pub(crate) fn attached(
     input_locked: bool,
     allow_takeover: bool,
     read_only: bool,
-    created_from_profile: Option<String>,
+    origin: crate::session::origin::SessionOrigin,
 ) -> Update {
     let Some(pending) = ctx.state.current().pending_session_attach.as_ref() else {
         return Update::none();
@@ -243,7 +243,7 @@ pub(crate) fn attached(
     if let Some(host) = pending.remote_host {
         ctx.state.current_mut().remote_host = Some(host);
     }
-    ctx.state.current_mut().created_from_profile = created_from_profile;
+    ctx.state.current_mut().origin = origin;
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connected;
     ctx.state.current_mut().remote_session_lost = false;
     ctx.state.current_mut().reconnect_read_only = read_only;
@@ -363,7 +363,10 @@ pub(crate) fn attached(
     if !populated && let crate::state::AttachIntent::ProfileSeed { profile, path } = &pending.intent
     {
         if let Some(client) = ctx.state.current().session_client.as_ref() {
-            client.set_session_origin(profile.clone());
+            client.set_session_origin(crate::session::origin::SessionOrigin {
+                profile: Some(profile.clone()),
+                ..Default::default()
+            });
         }
         ctx.state.current_mut().pending_profile_loaded =
             Some((profile.clone(), path.clone(), session.clone()));
@@ -387,8 +390,8 @@ pub(crate) fn attached(
         };
         crate::pane::pty_events::notify_info(ctx, message);
     }
-    if let Some(origin) = ctx.state.current().created_from_profile.clone() {
-        confirm_profile_origin(ctx, origin);
+    if let Some(profile) = ctx.state.current().origin.profile.clone() {
+        confirm_profile_origin(ctx, profile);
     }
     crate::update::sidebar::request_sessions_refresh(ctx);
     // The panes are installed by here, so a jump from the global Agents view can finally land on
@@ -418,20 +421,23 @@ pub(crate) fn attached(
 pub(crate) fn origin_set(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
-    created_from_profile: String,
+    origin: crate::session::origin::SessionOrigin,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
         if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
-            attachment.created_from_profile = Some(created_from_profile);
+            attachment.origin = origin;
         }
         return Update::none();
     }
-    confirm_profile_origin(ctx, created_from_profile);
+    ctx.state.current_mut().origin = origin;
+    if let Some(profile) = ctx.state.current().origin.profile.clone() {
+        confirm_profile_origin(ctx, profile);
+    }
     Update::full()
 }
 
 pub(crate) fn confirm_profile_origin(ctx: &mut Context<AppRoot>, created_from_profile: String) {
-    ctx.state.current_mut().created_from_profile = Some(created_from_profile.clone());
+    ctx.state.current_mut().origin.profile = Some(created_from_profile.clone());
     if let Some((profile, path, session)) = ctx.state.current_mut().pending_profile_loaded.take()
         && profile == created_from_profile
     {

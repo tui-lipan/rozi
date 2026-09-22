@@ -37,7 +37,9 @@ pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
 mod runtime;
 mod shutdown;
 mod waits;
+mod worktree;
 pub(crate) use shutdown::{shutdown_named_session, shutdown_named_session_if_present};
+use worktree::{WorktreeJob, WorktreeWorker};
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
@@ -179,6 +181,7 @@ pub struct SessionServer {
     /// one latest rerun, so repeated polling cannot queue unbounded duplicate work.
     browse_in_flight: HashMap<BrowseRequestKey, BrowseState>,
     browse_worker: Option<BrowseWorker>,
+    worktree_worker: Option<WorktreeWorker>,
     last_snapshot: Instant,
     last_runtime_poll: Instant,
     last_attached_count: u32,
@@ -1365,6 +1368,7 @@ impl SessionServer {
             pending_foreground: Vec::new(),
             browse_in_flight: HashMap::new(),
             browse_worker: None,
+            worktree_worker: None,
             last_snapshot: Instant::now(),
             last_runtime_poll: Instant::now(),
             last_attached_count: 0,
@@ -1453,6 +1457,7 @@ impl SessionServer {
         self.retry_browse_requests();
         activity |= self.pump_clients();
         self.retry_browse_requests();
+        self.drain_worktree_results();
         self.poll_pane_runtime();
         self.expire_agent_waits();
         self.flush_pending_foreground();
@@ -1608,6 +1613,9 @@ impl Drop for SessionServer {
     fn drop(&mut self) {
         self.events.close();
         if let Some(worker) = self.browse_worker.take() {
+            worker.finish();
+        }
+        if let Some(worker) = self.worktree_worker.take() {
             worker.finish();
         }
     }

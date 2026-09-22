@@ -184,11 +184,11 @@ mod tests {
         let rows = vec![
             session::discovery::DiscoveredSession {
                 name: "dev".into(),
+                origin: Default::default(),
                 status: session::discovery::DiscoveredSessionStatus::Running {
                     panes: 5,
                     clients: 1,
                     has_layout: true,
-                    created_from_profile: None,
                 },
                 ephemeral: false,
                 host: None,
@@ -196,6 +196,7 @@ mod tests {
             },
             session::discovery::DiscoveredSession {
                 name: "saved-work".into(),
+                origin: Default::default(),
                 status: session::discovery::DiscoveredSessionStatus::Restorable,
                 ephemeral: false,
                 host: None,

@@ -463,7 +463,6 @@ mod tests {
                         panes: 2,
                         clients: 1,
                         has_layout: true,
-                        created_from_profile: None,
                     },
                 );
                 backend.state_mut().config.profile.default = Some("rust-dev".to_string());
@@ -1688,6 +1687,7 @@ mod tests {
                     Some(crate::state::SessionPickerState::new(vec![
                         crate::session::discovery::DiscoveredSession {
                             name: session_name,
+                            origin: Default::default(),
                             ephemeral: true,
                             host: None,
                             remote_target: None,
@@ -1695,11 +1695,11 @@ mod tests {
                                 panes: 1,
                                 clients: 1,
                                 has_layout: true,
-                                created_from_profile: None,
                             },
                         },
                         crate::session::discovery::DiscoveredSession {
                             name: "shared-dev".to_string(),
+                            origin: Default::default(),
                             ephemeral: false,
                             host: None,
                             remote_target: None,
@@ -1707,11 +1707,11 @@ mod tests {
                                 panes: 2,
                                 clients: 1,
                                 has_layout: true,
-                                created_from_profile: None,
                             },
                         },
                         crate::session::discovery::DiscoveredSession {
                             name: "remote-dev".to_string(),
+                            origin: Default::default(),
                             ephemeral: false,
                             host: Some("workbox".to_string()),
                             remote_target: Some(crate::session::remote::RemoteTarget::Alias(
@@ -1721,7 +1721,6 @@ mod tests {
                                 panes: 3,
                                 clients: 0,
                                 has_layout: true,
-                                created_from_profile: None,
                             },
                         },
                     ]));
@@ -1832,6 +1831,7 @@ mod tests {
                     Some(crate::state::SessionPickerState::new(vec![
                         crate::session::discovery::DiscoveredSession {
                             name: "saved".to_string(),
+                            origin: Default::default(),
                             ephemeral: false,
                             host: None,
                             remote_target: None,

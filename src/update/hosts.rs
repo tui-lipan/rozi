@@ -267,6 +267,7 @@ mod tests {
                 }
                 let row = DiscoveredSession {
                     name: "dev".into(),
+                    origin: Default::default(),
                     host: Some(target.display_label()),
                     remote_target: Some(target.clone()),
                     ephemeral: false,
@@ -274,7 +275,6 @@ mod tests {
                         panes: 2,
                         clients: 0,
                         has_layout: false,
-                        created_from_profile: None,
                     },
                 };
                 backend

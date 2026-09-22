@@ -34,6 +34,11 @@ rozi sessions list
 rozi sessions kill dev
 ```
 
+`rozi sessions list --format json` includes an `origin` object when a session was seeded from a
+profile or a Git worktree. A worktree origin contains its checkout path on the session host; remote
+clients treat that path as an opaque string. Restorable sessions retain this origin in their
+snapshot metadata.
+
 `rozi dev` first looks for a running session named `dev`. If none exists, it launches the
 same-name profile. It reports an error when neither exists. It never creates an unknown empty
 session silently. `rozi sessions kill <NAME>` also reports an error when no live or restorable

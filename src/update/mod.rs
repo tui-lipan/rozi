@@ -248,6 +248,16 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             changes,
             error,
         } => sidebar::tree_changes_listed(ctx, epoch, root, changes, error),
+        Msg::SessionWorktreeResult {
+            epoch,
+            request_id,
+            result,
+        } => {
+            if epoch == ctx.state.runtime_epoch {
+                ctx.state.worktree_reply = Some((epoch, request_id, result));
+            }
+            Update::none()
+        }
         Msg::SidebarCommandPoll { epoch, tab_id } => sidebar::poll_command(ctx, epoch, tab_id),
         Msg::SidebarCommandOutput {
             epoch,
@@ -555,7 +565,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             input_locked,
             allow_takeover,
             read_only,
-            created_from_profile,
+            origin,
         } => session::attached(
             ctx,
             epoch,
@@ -570,12 +580,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             input_locked,
             allow_takeover,
             read_only,
-            created_from_profile,
+            origin,
         ),
-        Msg::SessionOriginSet {
-            epoch,
-            created_from_profile,
-        } => session::origin_set(ctx, epoch, created_from_profile),
+        Msg::SessionOriginSet { epoch, origin } => session::origin_set(ctx, epoch, origin),
         Msg::SessionLayoutCommitted {
             epoch,
             rev,

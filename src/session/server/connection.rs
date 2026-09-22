@@ -12,6 +12,18 @@ pub(super) struct AttachRequest {
     pub expected_server_nonce: Option<String>,
 }
 
+fn valid_origin(origin: &SessionOrigin) -> bool {
+    !origin.is_empty()
+        && origin
+            .profile
+            .as_deref()
+            .is_none_or(crate::session::discovery::valid_session_name)
+        && origin.worktree.as_ref().is_none_or(|worktree| {
+            worktree.path.len() <= MAX_BROWSE_PATH_BYTES
+                && std::path::Path::new(&worktree.path).is_absolute()
+        })
+}
+
 impl SessionServer {
     pub(super) fn accept_new(&mut self, listener: &IpcListener) -> io::Result<bool> {
         let mut accepted = false;
@@ -162,26 +174,22 @@ impl SessionServer {
                     expected_server_nonce,
                 },
             ),
-            ClientMessage::SetSessionOrigin { profile } => {
+            ClientMessage::SetSessionOrigin { origin } => {
                 if self.origin.is_empty()
                     && self.origin_seed_client == Some(client_id)
                     && !self.panes.is_empty()
-                    && crate::session::discovery::valid_session_name(&profile)
+                    && valid_origin(&origin)
                     && self
                         .client_mut(client_id)
                         .is_some_and(|client| !client.read_only)
                 {
-                    self.origin.profile = Some(profile);
+                    self.origin = origin;
                     self.origin_seed_client = None;
                     self.mark_dirty();
                     return vec![(
                         Target::Broadcast,
                         ServerMessage::SessionOriginSet {
-                            created_from_profile: self
-                                .origin
-                                .profile
-                                .clone()
-                                .expect("origin set above"),
+                            origin: self.origin.clone(),
                         },
                     )];
                 }
@@ -673,6 +681,13 @@ impl SessionServer {
                 .request_browse(BrowseRequest::Changes { client_id, root })
                 .map(|message| vec![(Target::Client(client_id), message)])
                 .unwrap_or_default(),
+            ClientMessage::Worktree {
+                request_id,
+                request,
+            } => self
+                .request_worktree(client_id, request_id, request)
+                .map(|message| vec![(Target::Client(client_id), message)])
+                .unwrap_or_default(),
             ClientMessage::RequestRuntimeMetrics => {
                 let known = self.clients.iter().any(|client| {
                     client.id == client_id
@@ -703,6 +718,72 @@ impl SessionServer {
                 }
                 Vec::new()
             }
+        }
+    }
+
+    fn request_worktree(
+        &mut self,
+        client_id: ClientId,
+        request_id: u64,
+        request: protocol::WorktreeRequest,
+    ) -> Option<ServerMessage> {
+        let failed = |message: &str| ServerMessage::WorktreeResult {
+            request_id,
+            result: protocol::WorktreeResult::Failed {
+                message: message.to_string(),
+            },
+        };
+        if !self.client_attached(client_id) {
+            return Some(failed("client is not attached"));
+        }
+        if !matches!(
+            &request,
+            protocol::WorktreeRequest::List { .. } | protocol::WorktreeRequest::Preview { .. }
+        ) && self.client_read_only(client_id)
+        {
+            return Some(failed("worktree mutation requires a writable client"));
+        }
+        let job = WorktreeJob {
+            client_id,
+            request_id,
+            request,
+        };
+        if worktree::request_too_large(&job) {
+            return Some(failed("worktree request exceeds the server limit"));
+        }
+        if self.worktree_worker.is_none() {
+            self.worktree_worker = Some(WorktreeWorker::new());
+        }
+        match self.worktree_worker.as_ref()?.try_submit(job) {
+            Ok(()) => None,
+            Err(mpsc::TrySendError::Full(_)) => {
+                Some(failed("too many worktree requests are pending"))
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => Some(failed("worktree worker unavailable")),
+        }
+    }
+
+    pub(super) fn drain_worktree_results(&mut self) {
+        let Some(worker) = self.worktree_worker.as_ref() else {
+            return;
+        };
+        for done in worker.drain() {
+            if !self.client_attached(done.client_id) {
+                continue;
+            }
+            let mut response = ServerMessage::WorktreeResult {
+                request_id: done.request_id,
+                result: done.result,
+            };
+            if encode_control(&response).is_none() {
+                response = ServerMessage::WorktreeResult {
+                    request_id: done.request_id,
+                    result: protocol::WorktreeResult::Failed {
+                        message: "worktree result exceeds the protocol limit".to_string(),
+                    },
+                };
+            }
+            self.enqueue(done.client_id, Target::Client(done.client_id), response);
         }
     }
 
@@ -943,7 +1024,7 @@ impl SessionServer {
             clients,
             input_locked: self.input_locked,
             allow_takeover: self.allow_takeover,
-            created_from_profile: self.origin.profile.clone(),
+            origin: self.origin.clone(),
         };
         let mut responses = vec![(Target::Sender, attached)];
         responses.push((Target::Broadcast, self.clients_changed()));
@@ -1016,7 +1097,7 @@ impl SessionServer {
                 clients: self.attached_count(),
                 has_layout: self.layout.is_some(),
                 effective_protocol: effective,
-                created_from_profile: self.origin.profile.clone(),
+                origin: self.origin.clone(),
             },
         )]
     }

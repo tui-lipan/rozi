@@ -221,6 +221,8 @@ pub struct State {
     pub profile_picker: Option<ProfilePickerState>,
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
+    /// Most recent host worktree reply, fenced by session epoch and request ID.
+    pub worktree_reply: Option<(u64, u64, crate::session::protocol::WorktreeResult)>,
     pub remote_picker: Option<RemotePickerState>,
     /// The global Agents view, listing every agent this client knows about across every machine it
     /// is connected to. Holds no rows of its own: they are a pure projection of live pane state and
@@ -512,6 +514,7 @@ impl State {
             profile_picker: None,
             show_session_picker: false,
             session_picker: None,
+            worktree_reply: None,
             remote_picker: None,
             agent_picker: None,
             pending_agent_jump: None,

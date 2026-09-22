@@ -289,6 +289,7 @@ impl State {
                                 for cached_entry in cached.iter().filter(|s| !s.ephemeral) {
                                     let entry = crate::session::discovery::DiscoveredSession {
                                         name: cached_entry.name.clone(),
+                                        origin: Default::default(),
                                         ephemeral: false,
                                         host: Some(host.alias.clone()),
                                         remote_target: Some(host.target.clone()),
@@ -297,7 +298,6 @@ impl State {
                                                 panes: cached_entry.panes,
                                                 clients: 0,
                                                 has_layout: false,
-                                                created_from_profile: None,
                                             },
                                     };
                                     items.push(SidebarItemProjection {

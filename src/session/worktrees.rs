@@ -346,7 +346,7 @@ mod tests {
             panic!("create failed");
         };
         let checkout = canonical(&temp.path().join("repo-worktrees").join("feat-cli"));
-        assert_eq!(Path::new(&worktree.path), checkout);
+        assert_eq!(canonical(Path::new(&worktree.path)), checkout);
 
         let HostReply::Listed { worktrees } = run_host_call(HostCall::List {
             cwd: Some(worktree.path.clone()),
@@ -358,19 +358,21 @@ mod tests {
 
         let nested = checkout.join("src");
         std::fs::create_dir(&nested).unwrap();
-        assert_eq!(
-            run_host_call(HostCall::Resolve {
-                path: nested.to_string_lossy().into_owned(),
-            }),
-            HostReply::Resolved {
-                worktree: worktree.clone(),
-                sessions: Vec::new(),
-                checkouts: vec![
-                    canonical(&repo).to_string_lossy().into_owned(),
-                    worktree.path.clone(),
-                ],
-            }
-        );
+        let HostReply::Resolved {
+            worktree: resolved,
+            sessions,
+            checkouts,
+        } = run_host_call(HostCall::Resolve {
+            path: nested.to_string_lossy().into_owned(),
+        })
+        else {
+            panic!("resolve failed");
+        };
+        assert_eq!(resolved, worktree);
+        assert!(sessions.is_empty());
+        assert_eq!(checkouts.len(), 2);
+        assert!(worktrees::same_path(Path::new(&checkouts[0]), &repo));
+        assert_eq!(checkouts[1], worktree.path);
 
         assert!(matches!(
             run_host_call(HostCall::Remove {

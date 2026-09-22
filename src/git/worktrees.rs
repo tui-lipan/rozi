@@ -125,10 +125,9 @@ pub fn create(cwd: &Path, branch: &str, base: &str, path: &Path) -> Result<Workt
     args.push(if existing_branch { branch } else { base }.into());
     command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT)?;
 
-    let requested = path.canonicalize().map_err(|err| err.to_string())?;
     list(cwd)?
         .into_iter()
-        .find(|tree| Path::new(&tree.path) == requested)
+        .find(|tree| same_path(Path::new(&tree.path), path))
         .ok_or_else(|| "created worktree was not found in Git's worktree list".to_string())
 }
 
@@ -136,13 +135,9 @@ pub fn create(cwd: &Path, branch: &str, base: &str, path: &Path) -> Result<Workt
 /// Rozi session or deletes a branch. Session-origin protection belongs at the RPC boundary.
 pub fn remove(cwd: &Path, path: &Path, force: bool) -> Result<(), String> {
     absolute_path(path)?;
-    let requested = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let worktree = list(cwd)?
         .into_iter()
-        .find(|tree| {
-            let listed = Path::new(&tree.path);
-            listed == requested || listed.canonicalize().is_ok_and(|path| path == requested)
-        })
+        .find(|tree| same_path(Path::new(&tree.path), path))
         .ok_or_else(|| "path is not a registered Git worktree".to_string())?;
     if !worktree.linked || worktree.bare {
         return Err("cannot remove the primary worktree".to_string());
@@ -158,6 +153,24 @@ pub fn remove(cwd: &Path, path: &Path, force: bool) -> Result<(), String> {
     args.push(worktree.path.into());
     command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT)?;
     Ok(())
+}
+
+/// Whether two host paths name the same directory. Git on Windows reports `C:/Users/...` where
+/// the rest of the system may say `C:\Users\RUNNER~1\...`, so both sides are resolved first;
+/// a path that does not exist compares as written.
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
+    let resolve = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    a == b || resolve(a) == resolve(b)
+}
+
+/// A path as Git printed it, with this host's separators. Git uses `/` even on Windows, where the
+/// paths Rozi compares it with (pane directories, recorded origins) use `\`.
+fn native_path(path: &str) -> String {
+    if cfg!(windows) {
+        path.replace('/', "\\")
+    } else {
+        path.to_string()
+    }
 }
 
 fn absolute_path(path: &Path) -> Result<(), String> {
@@ -198,7 +211,7 @@ fn parse_porcelain_z(output: &[u8]) -> Result<Vec<WorktreeInfo>, String> {
                 return Err("invalid Git worktree listing".to_string());
             }
             current = Some(WorktreeInfo {
-                path: path.to_string(),
+                path: native_path(path),
                 branch: None,
                 detached: false,
                 bare: false,

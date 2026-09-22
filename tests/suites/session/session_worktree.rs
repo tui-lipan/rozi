@@ -142,27 +142,34 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
         WorktreeRequest::List { cwd: cwd.clone() },
     ) {
         WorktreeResult::Listed { worktrees } => {
-            assert_eq!(worktrees[0].path, cwd);
+            // Git on Windows may spell the same directory differently (`/`, long names).
+            let resolve = |path: &str| std::path::Path::new(path).canonicalize().unwrap();
+            assert_eq!(resolve(&worktrees[0].path), resolve(&cwd));
             assert!(!worktrees[0].linked);
         }
         other => panic!("unexpected list reply: {other:?}"),
     }
+    let WorktreeResult::Previewed { path: preview } = worktree(
+        &mut read_only,
+        17,
+        WorktreeRequest::Preview {
+            cwd: cwd.clone(),
+            branch: "feat/preview".into(),
+        },
+    ) else {
+        panic!("preview failed");
+    };
+    // The preview does not exist yet, so compare its existing grandparent and name its tail.
+    let preview = std::path::Path::new(&preview);
+    assert!(preview.ends_with(std::path::Path::new("source repo-worktrees").join("feat-preview")));
     assert_eq!(
-        worktree(
-            &mut read_only,
-            17,
-            WorktreeRequest::Preview {
-                cwd: cwd.clone(),
-                branch: "feat/preview".into(),
-            }
-        ),
-        WorktreeResult::Previewed {
-            path: root
-                .join("source repo-worktrees")
-                .join("feat-preview")
-                .to_string_lossy()
-                .into_owned(),
-        }
+        preview
+            .parent()
+            .and_then(std::path::Path::parent)
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
+        root.canonicalize().unwrap()
     );
     assert!(matches!(
         worktree(&mut read_only, 11, WorktreeRequest::Create {
@@ -186,7 +193,10 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
         },
     );
     assert!(
-        matches!(created, WorktreeResult::Created { worktree } if worktree.path == checkout_path && worktree.linked)
+        matches!(&created, WorktreeResult::Created { worktree } if worktree.linked
+            && std::path::Path::new(&worktree.path).canonicalize().unwrap()
+                == checkout.canonicalize().unwrap()),
+        "{created:?}"
     );
     assert!(checkout.exists());
 

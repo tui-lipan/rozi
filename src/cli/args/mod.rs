@@ -232,17 +232,6 @@ pub(crate) enum ListFormat {
     Json,
 }
 
-const RETIRED: &[(&str, &str)] = &[
-    ("list-sessions", "sessions list"),
-    ("kill-session", "sessions kill"),
-    ("attach", "sessions attach"),
-    ("new", "sessions new"),
-    ("list-extensions", "extensions list"),
-    ("new-extension", "extensions new"),
-    ("check-extension", "extensions check"),
-    ("new-pane", "split"),
-];
-
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
     if args.first().is_some_and(|arg| arg == "--skill") {
         return if args.len() == 1 {
@@ -911,10 +900,6 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 if cli.attach_session.is_some() {
                     return Err(format!("unexpected argument `{name}`"));
                 }
-                if let Some((_, replacement)) = RETIRED.iter().find(|(retired, _)| *retired == name)
-                {
-                    return Err(format!("`{name}` was renamed to `{replacement}`"));
-                }
                 cli.attach_session = Some(name.to_string());
                 cli.session_command = SessionCommand::Dwim;
             }
@@ -1178,9 +1163,6 @@ mod tests {
             );
             assert_eq!(target.attach_session.as_deref(), Some(reserved));
         }
-        let retired =
-            expect_run(parse_cli_args(vec!["--session".into(), "attach".into()]).expect("parses"));
-        assert_eq!(retired.attach_session.as_deref(), Some("attach"));
     }
 
     #[test]
@@ -2274,14 +2256,6 @@ mod tests {
             panic!("expected sessions kill");
         };
         assert_eq!(config_path.as_deref(), Some("/tmp/alt.toml"));
-    }
-
-    #[test]
-    fn retired_cli_spellings_report_their_replacements() {
-        for (retired, replacement) in RETIRED {
-            let error = parse_cli_args(vec![(*retired).to_string()]).expect_err("must be retired");
-            assert_eq!(error, format!("`{retired}` was renamed to `{replacement}`"));
-        }
     }
 
     #[test]

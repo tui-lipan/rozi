@@ -103,7 +103,7 @@ pub(super) fn format_sessions_text(
                 ),
             };
             let mut cells = vec![
-                TableCell::new(&session.name, OutputTone::Accent),
+                TableCell::new(&session.name, OutputTone::Key),
                 TableCell::new(status, status_tone),
                 TableCell::plain(panes),
                 TableCell::plain(clients),
@@ -212,7 +212,13 @@ mod tests {
         assert!(plain.lines().all(|line| !line.ends_with(' ')));
 
         let colored = format_sessions_text(&rows, OutputStyles::colored());
-        assert!(colored.contains("\x1b["));
+        // Column headers read like the section headings in `--help`: bold rose. The key column
+        // under them is regular weight and softened toward lavender so it does not merge into them.
+        use crate::platform::ansi::{BOLD, RESET, fg, palette};
+        let heading = format!("{BOLD}{}", fg(palette::ROSE, true));
+        let key = fg(palette::ROSE.mix(palette::LAVENDER, 1, 2), true);
+        assert!(colored.starts_with(&format!("{heading}NAME{RESET}")));
+        assert!(colored.contains(&format!("\n{key}dev{RESET}")));
         let mut stripped = String::with_capacity(colored.len());
         let mut rest = colored.as_str();
         while let Some(start) = rest.find('\x1b') {

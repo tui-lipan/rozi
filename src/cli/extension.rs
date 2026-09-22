@@ -243,7 +243,7 @@ pub(super) fn format_extensions_text(
         .iter()
         .map(|extension| {
             vec![
-                TableCell::new(extension.display_name(), OutputTone::Accent),
+                TableCell::new(extension.display_name(), OutputTone::Key),
                 TableCell::plain(extension.title.as_deref().unwrap_or("—")),
                 TableCell::plain(extension.version.as_deref().unwrap_or("—")),
                 TableCell::plain(extension.commands.len().to_string()),

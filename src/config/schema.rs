@@ -349,7 +349,7 @@ impl SessionStartup {
 /// What resurrection does with the command a pane was observed running, as opposed to the command
 /// the pane was explicitly launched with.
 ///
-/// An explicit launch intent (`rozi new-pane -- btop`, a profile command) is replayable by
+/// An explicit launch intent (`rozi split -- btop`, a profile command) is replayable by
 /// construction: the user told Rozi to run it. A command typed at a prompt is only *observed*, and
 /// Rozi cannot tell `btop` from `terraform apply` by looking at argv. This is the knob that decides
 /// how much benefit of the doubt an observation gets, since no heuristic can earn it.

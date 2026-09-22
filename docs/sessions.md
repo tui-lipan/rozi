@@ -341,7 +341,7 @@ failures do not prevent the rest of the snapshot from loading.
 
 ### Commands a pane was running
 
-A pane created with a command, such as `rozi new-pane -- btop` or a pane from a profile, comes back
+A pane created with a command, such as `rozi split -- btop` or a pane from a profile, comes back
 running it. That command is what the pane is for.
 
 A pane that is a plain shell comes back as a plain shell, but a snapshot also records whatever was

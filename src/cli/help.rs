@@ -3,6 +3,7 @@
 //! The help text is data ([`HELP_SECTIONS`]) rendered by [`help_text`], so the same rows can be
 //! measured by a test, styled for a terminal, or printed plain into a pipe.
 
+use crate::platform::ansi::{Role, RoleColors};
 use crate::platform::paths::{self, PlatformEnv};
 
 pub(crate) fn print_help(advanced: bool) {
@@ -37,24 +38,25 @@ impl HelpStyles {
 
     #[cfg(test)]
     pub(super) fn colored() -> Self {
-        Self::palette(true)
+        Self::palette(RoleColors::Brand { truecolor: true })
     }
 
-    fn palette(truecolor: bool) -> Self {
-        use crate::platform::ansi::{self, palette};
+    /// Help inside a rozi pane is theme-relative like every other report; see [`RoleColors`].
+    fn palette(colors: RoleColors) -> Self {
+        use crate::platform::ansi;
 
         Self {
-            title: format!("{}{}", ansi::BOLD, ansi::fg(palette::ROSE, truecolor)),
-            heading: format!("{}{}", ansi::BOLD, ansi::fg(palette::ROSE, truecolor)),
+            title: colors.sgr(Role::Heading),
+            heading: colors.sgr(Role::Heading),
             command: ansi::BOLD.to_string(),
-            muted: ansi::fg(palette::LAVENDER, truecolor),
+            muted: colors.sgr(Role::Muted),
             reset: ansi::RESET.to_string(),
         }
     }
 
     pub(super) fn detect() -> Self {
         if crate::platform::ansi::stdout_supports_color() {
-            Self::palette(crate::platform::ansi::supports_truecolor())
+            Self::palette(RoleColors::detect())
         } else {
             Self::plain()
         }

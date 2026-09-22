@@ -249,12 +249,17 @@ fn resolve_directional_focus_target(
     // matter how many were open. Walking the whole order is what `cycle-focus` (Tab) already does,
     // so the key simply finds nothing among the tiles instead of lying about their arrangement. A
     // floating pane genuinely across the axis still scores normally and stays reachable.
+    //
+    // Scrollable never wraps along its strip either. Its ends are real edges, and wrapping would
+    // pan the whole strip from one end to the other to reach a column the user cannot see.
+    let tiled_focus = workspace
+        .panes
+        .iter()
+        .any(|pane| pane.id == current.id && !pane.floating && !pane.closing);
     let wrap = wrap
-        && !(strip_layout_cross_axis(workspace.layout_kind, direction)
-            && workspace
-                .panes
-                .iter()
-                .any(|pane| pane.id == current.id && !pane.floating && !pane.closing));
+        && !(tiled_focus
+            && (workspace.layout_kind == LayoutKind::Scrollable
+                || strip_layout_cross_axis(workspace.layout_kind, direction)));
     let continue_band = continue_focus_band(workspace, candidates, current.id, direction);
     let geometric =
         geometric_focus_target(candidates, current, direction, continue_band).or_else(|| {
@@ -1559,7 +1564,7 @@ mod tests {
         }
     }
 
-    /// The main axis is untouched: it still reaches every pane and still wraps at the edges.
+    /// Columns and Rows still reach every pane along the main axis and still wrap at the edges.
     #[test]
     fn strip_main_axis_focus_still_reaches_every_pane() {
         let viewport = Rect {
@@ -1584,6 +1589,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Scrollable's strip has real ends: focus walks it but stops at the first and last column
+    /// instead of panning across the whole strip to the other end.
+    #[test]
+    fn scrollable_main_axis_focus_stops_at_the_ends_of_the_strip() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut state = state_with_tiled(&[1, 2, 3]);
+        state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+        state.current_mut().focused_pane = Some(1);
+
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            None,
+            "Left from the first column must not wrap to the last"
+        );
+        assert_eq!(state.current().focused_pane, Some(1));
+        for expected in [2, 3] {
+            assert_eq!(
+                focus_in_direction(&mut state, Direction::Right, viewport),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Right, viewport),
+            None,
+            "Right from the last column must not wrap to the first"
+        );
+        assert_eq!(state.current().focused_pane, Some(3));
     }
 
     /// Suppressing the wrap must not strand floating panes: one genuinely above the columns is

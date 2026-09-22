@@ -75,6 +75,10 @@ and resize mode have no effect.
 Scrollable keeps panes as full-height columns. One pane fills the viewport. With more panes, Rozi
 keeps a width for each column and scrolls the strip to reveal the focused pane.
 
+Directional focus stops at the ends of the strip. Moving left from the first column or right from
+the last leaves focus where it is instead of wrapping to the other end. `Tab` and `Shift+Tab` still
+cycle through every pane and wrap.
+
 Focus on hover does not scroll. Pointing at a clipped column focuses it where it is, and the strip
 scrolls to reveal it when a key or click reaches that pane.
 

@@ -200,7 +200,10 @@ fn settings_rows_report_their_disabled_reasons() {
             .expect("disabled reason");
         assert_eq!(capture.cell(label as u16, row as u16).fg, divider_fg);
         assert_eq!(capture.cell(reason as u16, row as u16).fg, divider_fg);
-        type_query(&mut backend, "pane border effect");
+        type_query(&mut backend, "pane border");
+        backend
+            .dispatch(rozi::Msg::SettingsSelect(SettingsAction::CycleAlertBorder))
+            .unwrap();
         key(&mut backend, KeyCode::Enter);
         assert!(backend.state().settings_choice.is_none());
         assert_eq!(backend.state().config.pane.alert_border, AlertMode::Pulse);
@@ -214,7 +217,7 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
     on_large_stack(|| {
         let mut backend = settings_backend(70, 24);
         backend.state_mut().config.workbar.alert.mode = AlertMode::Off;
-        type_query(&mut backend, "effect");
+        type_query(&mut backend, "attention");
         let frame = rendered_rows(&mut backend);
         assert!(
             frame.contains("Alerts › Highlights"),
@@ -517,6 +520,37 @@ fn settings_reports_sidebar_values() {
             setting_row(sidebar, "Tab style").contains("Round"),
             "sidebar tab style row is misbound:\n{frame}"
         );
+    });
+}
+
+/// Search matches each query term against the label or a heading, so a short label under a section
+/// still answers to the phrase a user would type for it, with no alias spelling that phrase out.
+#[test]
+fn settings_search_combines_section_and_row_terms() {
+    on_large_stack(|| {
+        for (query, heading, label) in [
+            ("floating border", "Panes › Borders", "Floating"),
+            ("focused titlebar", "Panes › Titlebar", "Focused"),
+            ("active pane border", "Panes › Borders", "Focused"),
+            ("workbar gap", "Bars › Workbar", "Gap"),
+            ("idle mark", "Alerts › Marks", "Idle"),
+            ("pane animation", "General › Animations", "Pane open/close"),
+        ] {
+            let mut backend = settings_backend(100, 80);
+            type_query(&mut backend, query);
+            let frame = rendered_rows(&mut backend);
+            let start = frame
+                .find(heading)
+                .unwrap_or_else(|| panic!("`{query}` lost {heading}:\n{frame}"))
+                + heading.len();
+            let section = group_rows(&frame[start..], "", "›");
+            assert!(
+                section
+                    .lines()
+                    .any(|line| setting_label_matches(line, label)),
+                "`{query}` should reach {heading} › {label}:\n{frame}"
+            );
+        }
     });
 }
 

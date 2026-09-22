@@ -202,292 +202,73 @@ pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
     }
 }
 
+/// Search terms a row's label and headings do not already carry. The row's section and tab names
+/// are appended, and a multi-word query matches term by term across the label and every alias, so
+/// "workbar gap" needs no alias of its own. List synonyms, option values, and jargon only.
 pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>> {
     use SettingsAction::*;
 
     let mut aliases = match action {
-        Theme => alias_list(&["themes", "color scheme", "colour scheme"]),
-        EditPadding => alias_list(&["pane padding", "terminal insets", "pane margins"]),
-        ChooseTitlebar => alias_list(&[
-            "title bar",
-            "show titles",
-            "show titlebar",
-            "toggle titlebar",
-            "titlebar layout",
-            "titlebar mode",
-            "bar titlebar",
-            "border titlebar",
-            "integrated titlebar",
-            "inset titlebar",
-            "hidden titlebar",
-        ]),
-        CycleTitleStyle => alias_list(&[
-            "titlebar cap style",
-            "titlebar caps",
-            "titlebar style",
-            "titlebar pill",
-            "titlebar arrow",
-        ]),
-        ChooseWorkbar => alias_list(&[
-            "show workbar",
-            "toggle workbar",
-            "workbar position",
-            "workbar placement",
-            "workbar top",
-            "workbar bottom",
-            "hidden workbar",
-        ]),
-        ToggleWorkbarGap => alias_list(&["workbar gap", "workbar spacing", "workbar separator"]),
-        ToggleWorkbarBackground => {
-            alias_list(&["workbar background", "workbar strip", "workbar chrome"])
-        }
-        CycleWorkbarStyle => alias_list(&["workbar style", "workbar caps", "workbar pill"]),
-        CycleWorkbarBadgeStyle => {
-            alias_list(&["workbar badge style", "workbar badges", "workbar chips"])
-        }
-        ToggleWorkbarPowerline => alias_list(&["workbar powerline", "workbar badge chain"]),
-        CycleWorkbarTabStyle => {
-            alias_list(&["workbar tab style", "workspace tab style", "workbar tabs"])
-        }
-        ToggleWorkspaceAnimation => alias_list(&[
-            "workspace animation",
-            "workspace switching",
-            "workspace slide",
-        ]),
-        CycleSessionAnimation => alias_list(&[
-            "session animation",
-            "session switching",
-            "session reveal",
-            "session portal",
-            "session fade",
-        ]),
-        ToggleAnimations => alias_list(&[
-            "animations",
-            "animation effects",
-            "motion effects",
-            "transitions",
-        ]),
-        ToggleNerdIcons => {
-            alias_list(&["nerd font", "nerd icons", "patched font", "powerline icons"])
-        }
-        CyclePaneAnimation => alias_list(&[
-            "pane open animation",
-            "pane close animation",
-            "pane open/close animation",
-            "open/close animation",
-            "spawn animation",
-            "slide panes",
-            "scale panes",
-            "portal",
-            "portal panes",
-            "scan",
-            "scan panes",
-            "springy panes",
-        ]),
-        ToggleHighlightFocusedBackground => alias_list(&[
-            "focused background",
-            "focused pane background",
-            "active pane background",
-        ]),
-        ToggleHighlightFocusedBorder => alias_list(&[
-            "focused border",
-            "focused pane border",
-            "active pane border",
-        ]),
-        ToggleHighlightFocusedTitlebar => alias_list(&[
-            "focused titlebar",
-            "focused pane titlebar",
-            "active pane titlebar",
-        ]),
-        CycleBorderMode => alias_list(&[
-            "border mode",
-            "border merge",
-            "merge borders",
-            "borderless panes",
-            "pane dividers",
-        ]),
-        ToggleBackgroundFollowsTerminal => alias_list(&[
-            "background follows terminal",
-            "terminal background",
-            "match terminal",
-        ]),
-        ToggleSidebarPosition => alias_list(&[
-            "sidebar position",
-            "sidebar placement",
-            "sidebar left",
-            "sidebar right",
-            "dock left",
-            "dock right",
-        ]),
-        ToggleSidebarBackgroundFollowsCanvas => alias_list(&[
-            "sidebar canvas background",
-            "match canvas sidebar",
-            "sidebar follows canvas",
-            "app background",
-        ]),
-        ToggleSidebarGap => alias_list(&[
-            "sidebar gap",
-            "sidebar spacing",
-            "tab bar gap",
-            "sidebar tab gap",
-        ]),
-        ToggleSidebarBackground => alias_list(&[
-            "sidebar background",
-            "tab strip",
-            "tab bar",
-            "tab bar background",
-            "sidebar strip",
-            "sidebar tab strip",
-            "sidebar chrome",
-        ]),
-        CycleSidebarTabStyle => alias_list(&[
-            "sidebar tab style",
-            "sidebar tabs",
-            "sidebar tab caps",
-            "sidebar rounded tabs",
-        ]),
-        CycleBorderStyle => alias_list(&[
-            "border style",
-            "tiled border",
-            "pane border style",
-            "rounded borders",
-            "square borders",
-            "dashed borders",
-            "border glyphs",
-        ]),
-        CycleFloatBorderStyle => alias_list(&[
-            "floating border",
-            "float border",
-            "popup border",
-            "special pane border",
-        ]),
-        CycleScratchBorderStyle => {
-            alias_list(&["scratchpad border", "scratch border", "dropdown border"])
-        }
-        CycleFullscreenBorderStyle => alias_list(&[
-            "fullscreen border",
-            "full screen border",
-            "maximized border",
-            "maximised border",
-        ]),
-        CyclePickerBorderStyle => alias_list(&[
-            "picker border",
-            "palette border",
-            "modal border",
-            "overlay border",
-            "settings border",
-        ]),
-        TogglePickerTabBackground => alias_list(&[
-            "picker tab strip",
-            "picker strip",
-            "palette tab bar",
-            "settings tab strip",
-        ]),
-        CyclePickerTabStyle => alias_list(&[
-            "picker tab style",
-            "palette tabs",
-            "settings tabs",
-            "picker tab caps",
-        ]),
-        CyclePickerSelectionStyle => alias_list(&[
-            "picker selection style",
-            "picker selection",
-            "palette selection",
-            "list caps",
-            "selection pill",
-            "selection caps",
-        ]),
-        CycleWhichKey => alias_list(&[
-            "which key",
-            "prefix hints",
-            "key hints",
-            "chord panel",
-            "prefix hint delay",
-            "chord panel timing",
-        ]),
-        CycleCopyOnSelect => alias_list(&[
-            "copy on select",
-            "mouse selection copy",
-            "primary selection",
-        ]),
-        CycleMiddleClickPaste => alias_list(&[
-            "middle click paste",
-            "mouse paste",
-            "primary selection paste",
-        ]),
-        CycleRightClickClipboard => alias_list(&[
-            "right click paste",
-            "right click copy",
-            "context click clipboard",
-        ]),
-        ToggleOsc52 => alias_list(&["osc52", "terminal clipboard", "remote clipboard"]),
-        ToggleFocusOnHover => alias_list(&["mouse focus", "hover focus"]),
-        ToggleBellUrgency => alias_list(&["terminal bell", "urgent bell"]),
-        CycleAlertBorder => alias_list(&[
-            "pane border effect",
-            "blocked pane border",
-            "agent border",
-            "attention border",
-            "alert pulse",
-        ]),
-        CycleWorkbarAlert => alias_list(&[
-            "workspace tab effect",
-            "workspace tab alert",
-            "workspace marker",
-            "tab pulse",
-        ]),
-        CycleWorkbarAlertPaint => alias_list(&[
-            "workspace tab highlight",
-            "workspace tab alert paint",
-            "marker fill",
-        ]),
-        CycleStartupMode => alias_list(&[
-            "session startup",
-            "launch",
-            "bare launch",
-            "picker",
-            "ephemeral",
-            "last session",
-        ]),
-        ToggleSessionAutosave => {
-            alias_list(&["session autosave", "restore layout", "save layout on quit"])
-        }
-        ToggleSessionResurrect => {
-            alias_list(&["session resurrect", "restore sessions", "server restart"])
-        }
-        CycleResurrectForeground => alias_list(&[
-            "restore running commands",
-            "resurrect foreground",
-            "restart agents",
-            "rerun command on restore",
-        ]),
-        ToggleMarkBell => alias_list(&["bell mark", "bell marker", "bell tab marker"]),
-        ToggleMarkBlocked => alias_list(&["blocked mark", "blocked marker", "waiting marker"]),
-        ToggleMarkFinished => alias_list(&["finished mark", "done marker", "completed marker"]),
-        ToggleMarkWorking => alias_list(&["working mark", "busy marker", "running marker"]),
-        ToggleMarkIdle => alias_list(&["idle mark", "idle marker", "quiet marker"]),
-        ToggleDesktopEnabled => alias_list(&[
-            "desktop notifications",
-            "system notifications",
-            "notify send",
-        ]),
-        ToggleDesktopBlocked => alias_list(&[
-            "blocked notification",
-            "waiting notification",
-            "agent prompt",
-        ]),
-        ToggleDesktopDone => alias_list(&["finished notification", "done notification"]),
-        ToggleDesktopExit => alias_list(&["exit notification", "pane exit notification"]),
-        ToggleDesktopExitError => alias_list(&[
-            "exit error notification",
-            "failure notification",
-            "non-zero exit",
-        ]),
-        ToggleSoundEnabled => alias_list(&["play sounds", "audio cues", "sound effects"]),
-        ToggleSoundBell => alias_list(&["bell sound", "bell audio"]),
-        ToggleSoundBlocked => alias_list(&["blocked sound", "waiting sound"]),
-        ToggleSoundDone => alias_list(&["finished sound", "done sound"]),
-        ToggleSoundError => alias_list(&["error sound", "failure sound"]),
+        Theme => alias_list(&["color scheme", "colour scheme"]),
+        ToggleNerdIcons => alias_list(&["nerd font", "patched font", "glyphs"]),
+        CycleWhichKey => alias_list(&["prefix hints", "key hints", "chord panel"]),
+        ToggleFocusOnHover => alias_list(&["mouse"]),
+        ToggleAnimations => alias_list(&["motion", "transitions", "effects"]),
+        ToggleWorkspaceAnimation => alias_list(&["slide"]),
+        CycleSessionAnimation => alias_list(&["fade", "portal"]),
+        CyclePaneAnimation => alias_list(&["spawn", "scale", "slide", "portal", "scan"]),
+        CycleCopyOnSelect => alias_list(&["primary selection", "mouse"]),
+        CycleMiddleClickPaste => alias_list(&["primary selection", "mouse"]),
+        CycleRightClickClipboard => alias_list(&["copy", "paste", "mouse"]),
+        ToggleOsc52 => alias_list(&["osc52", "ssh", "remote"]),
+        CyclePickerBorderStyle => alias_list(&["palette", "modal", "overlay"]),
+        TogglePickerTabBackground => alias_list(&["palette", "tab bar"]),
+        CyclePickerTabStyle => alias_list(&["palette", "caps"]),
+        CyclePickerSelectionStyle => alias_list(&["palette", "highlight", "caps", "pill"]),
+        ToggleBackgroundFollowsTerminal => alias_list(&["match terminal"]),
+        ToggleHighlightFocusedBackground
+        | ToggleHighlightFocusedBorder
+        | ToggleHighlightFocusedTitlebar => alias_list(&["active", "highlight"]),
+        EditPadding => alias_list(&["margins", "insets", "spacing"]),
+        CycleBorderMode => alias_list(&["merge", "borderless", "dividers"]),
+        CycleBorderStyle => alias_list(&["tiled", "rounded", "square", "dashed"]),
+        CycleFloatBorderStyle => alias_list(&["float", "popup"]),
+        CycleScratchBorderStyle => alias_list(&["scratch", "dropdown"]),
+        CycleFullscreenBorderStyle => alias_list(&["full screen", "maximized", "maximised"]),
+        ChooseTitlebar => alias_list(&["title bar", "show titles", "integrated", "inset"]),
+        CycleTitleStyle => alias_list(&["caps", "pill"]),
+        ChooseWorkbar => alias_list(&["show", "hide", "top", "bottom"]),
+        ToggleWorkbarGap | ToggleSidebarGap => alias_list(&["spacing"]),
+        ToggleWorkbarBackground => alias_list(&["strip", "fill"]),
+        CycleWorkbarStyle => alias_list(&["caps", "pill"]),
+        CycleWorkbarBadgeStyle => alias_list(&["badges", "chips"]),
+        CycleWorkbarTabStyle => alias_list(&["workspace tabs"]),
+        ToggleWorkbarPowerline => alias_list(&["badge chain"]),
+        ToggleSidebarPosition => alias_list(&["left", "right", "dock"]),
+        ToggleSidebarBackgroundFollowsCanvas => alias_list(&["match canvas", "app background"]),
+        ToggleSidebarBackground => alias_list(&["background", "tab bar"]),
+        CycleSidebarTabStyle => alias_list(&["caps"]),
+        ToggleBellUrgency => alias_list(&["urgent", "terminal"]),
+        CycleAlertBorder => alias_list(&["attention", "pulse", "agent"]),
+        CycleWorkbarAlert => alias_list(&["attention", "pulse", "marker"]),
+        CycleWorkbarAlertPaint => alias_list(&["fill", "color", "colour"]),
+        ToggleMarkBell => alias_list(&["marker"]),
+        ToggleMarkBlocked => alias_list(&["marker", "waiting"]),
+        ToggleMarkFinished => alias_list(&["marker", "done", "completed"]),
+        ToggleMarkWorking => alias_list(&["marker", "busy", "running"]),
+        ToggleMarkIdle => alias_list(&["marker", "quiet"]),
+        ToggleDesktopEnabled => alias_list(&["system", "notify-send", "popups"]),
+        ToggleDesktopBlocked => alias_list(&["waiting", "agent prompt"]),
+        ToggleDesktopDone | ToggleSoundDone => alias_list(&["done"]),
+        ToggleDesktopExit => alias_list(&["quit"]),
+        ToggleDesktopExitError | ToggleSoundError => alias_list(&["failure", "non-zero", "crash"]),
+        ToggleSoundEnabled => alias_list(&["audio", "mute"]),
+        ToggleSoundBell => alias_list(&["beep"]),
+        ToggleSoundBlocked => alias_list(&["waiting"]),
+        CycleStartupMode => alias_list(&["launch", "picker", "ephemeral", "last session"]),
+        ToggleSessionAutosave => alias_list(&["restore"]),
+        ToggleSessionResurrect => alias_list(&["restore", "restart"]),
+        CycleResurrectForeground => alias_list(&["rerun", "agents", "foreground"]),
     };
     aliases.push(Arc::from(group));
     aliases
